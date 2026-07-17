@@ -137,24 +137,6 @@ impl AgoraRegistry {
 
         Ok(replayed)
     }
-
-    /// Write a value onto a session's blackboard.
-    #[deprecated(note = "Use AgoraService propose/commit; publish is backend compatibility only")]
-    pub async fn publish(&self, session: &str, key: &str, value: Value) -> Result<()> {
-        let slot = self.space(session).await;
-        let mut ws = slot.workspace.lock().await;
-        ws.blackboard.set(key, value);
-        Ok(())
-    }
-
-    /// Merge a JSON patch into the session workspace.
-    #[deprecated(note = "Use AgoraService propose/commit; update is backend compatibility only")]
-    pub async fn update(&self, session: &str, patch: Value) -> Result<()> {
-        let slot = self.space(session).await;
-        let mut ws = slot.workspace.lock().await;
-        ws.blackboard.merge(patch);
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -333,7 +315,6 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -342,10 +323,35 @@ mod tests {
         fabric::ProcessId(uuid::Uuid::from_u128(2))
     }
 
+    async fn commit_fact(
+        reg: &AgoraRegistry,
+        session: &str,
+        base_version: u64,
+        key: &str,
+        value: Value,
+    ) {
+        let proposal = AgoraProposal {
+            id: uuid::Uuid::new_v4(),
+            space: fabric::AgoraSpaceId(session.into()),
+            author: test_author(),
+            base_version,
+            operation: AgoraOperation::PublishFact {
+                key: key.into(),
+                value,
+            },
+            evidence: Vec::new(),
+            confidence: 1.0,
+            expires_at_ms: None,
+        };
+        let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX).unwrap();
+        let id = fabric::AgoraService::propose(reg, proposal).await.unwrap();
+        fabric::AgoraService::commit(reg, id, permit).await.unwrap();
+    }
+
     #[tokio::test]
-    async fn publish_then_recall() {
+    async fn committed_fact_can_be_recalled() {
         let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
-        reg.publish("s1", "k", json!("v")).await.unwrap();
+        commit_fact(&reg, "s1", 0, "k", json!("v")).await;
         assert_eq!(reg.recall("s1", "k").await.unwrap(), Some(json!("v")));
     }
 
@@ -356,17 +362,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_merges_patch() {
+    async fn sequential_commits_update_the_workspace() {
         let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
-        reg.publish("s1", "a", json!(1)).await.unwrap();
-        reg.update("s1", json!({"b": 2})).await.unwrap();
+        commit_fact(&reg, "s1", 0, "a", json!(1)).await;
+        commit_fact(&reg, "s1", 1, "b", json!(2)).await;
         assert_eq!(reg.recall("s1", "b").await.unwrap(), Some(json!(2)));
     }
 
     #[tokio::test]
     async fn snapshot_and_clear() {
         let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
-        reg.publish("s1", "k", json!(1)).await.unwrap();
+        commit_fact(&reg, "s1", 0, "k", json!(1)).await;
         let snap = reg.snapshot("s1").await.unwrap();
         assert_eq!(snap["blackboard"]["k"], json!(1));
         reg.clear("s1").await.unwrap();
@@ -376,7 +382,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_trace_payload_is_not_duplicated_in_agora() {
         let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
-        reg.publish("s1", "k", json!(1)).await.unwrap();
+        commit_fact(&reg, "s1", 0, "k", json!(1)).await;
         let before = reg.snapshot("s1").await.unwrap();
         assert_eq!(before["trace_len"], json!(0));
         reg.trace("s1", "tool_result", json!({"call_id": "c1", "ok": true}))
@@ -554,41 +560,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publish_still_works_alongside_new_api() {
+    async fn service_commits_and_legacy_read_view_agree() {
         let reg = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
-
-        // Old publish/recall API still works.
-        reg.publish("s1", "old_key", json!("old_val"))
-            .await
-            .unwrap();
+        commit_fact(&reg, "s1", 0, "old_key", json!("old_val")).await;
         assert_eq!(
             reg.recall("s1", "old_key").await.unwrap(),
             Some(json!("old_val"))
         );
-
-        // New propose/commit API works on the same session.
-        let prop = reg
-            .propose(
-                "s1",
-                0,
-                AgoraOperation::PublishFact {
-                    key: "new_key".into(),
-                    value: json!("new_val"),
-                },
-                test_author(),
-            )
-            .await
-            .unwrap();
-        reg.commit("s1", prop.id).await.unwrap();
-
-        // Both values are independently visible.
+        commit_fact(&reg, "s1", 1, "new_key", json!("new_val")).await;
         let snap = reg.snapshot("s1").await.unwrap();
         assert_eq!(snap["blackboard"]["old_key"], json!("old_val"));
-        // new_key was logged as a commit but the blackboard was populated
-        // directly via publish, not via commit application — verify commit
-        // count grew.
-        assert_eq!(snap["commit_count"], json!(1));
-        assert_eq!(snap["version"], json!(1));
+        assert_eq!(snap["blackboard"]["new_key"], json!("new_val"));
+        assert_eq!(snap["commit_count"], json!(2));
+        assert_eq!(snap["version"], json!(2));
     }
 
     #[tokio::test]

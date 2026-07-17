@@ -18,8 +18,8 @@ use aletheon_kernel::KernelRuntime;
 use cognit::harness::HarnessConfig;
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    AgoraOps, CapabilityCall, CapabilityResult, LlmProvider, Message, PrincipalId, ProcessId,
-    RecallSet, SandboxRequirement, ToolDefinition, TurnRequest, TurnServices,
+    CapabilityCall, CapabilityResult, LlmProvider, Message, PrincipalId, ProcessId, RecallSet,
+    SandboxRequirement, ToolDefinition, TurnRequest, TurnServices,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -210,7 +210,6 @@ impl ExecSessionBuilder {
             tool_definitions,
             system_prompt,
             capability,
-            agora: None,
         });
 
         let harness_config = HarnessConfig {
@@ -232,10 +231,6 @@ struct ExecTurnServices {
     tool_definitions: Vec<ToolDefinition>,
     system_prompt: String,
     capability: Arc<dyn TurnCapabilityInvoker>,
-    // Optional shared workspace for exec mode.
-    // When set (via with_agora), agora_view reflects real state.
-    // Default: None (CLI exec is single-user).
-    agora: Option<Arc<dyn AgoraOps>>,
 }
 
 #[async_trait::async_trait]
@@ -253,13 +248,6 @@ impl TurnServices for ExecTurnServices {
     /// If shared cognitive workspace is ever needed in exec mode, inject
     /// an Executive-owned DomainPorts Agora handle here.
     async fn agora_view(&self, _session_id: &str) -> Result<fabric::AgoraView> {
-        // Exec sessions are single-user CLI runs with no shared workspace.
-        // Agora is intentionally absent by default.
-        // If shared cognitive workspace is needed, inject via ExecSessionBuilder.
-        if let Some(ref agora) = self.agora {
-            // Could snapshot or return a real view here
-            let _ = agora;
-        }
         Ok(fabric::AgoraView::default())
     }
 

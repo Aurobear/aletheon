@@ -469,6 +469,17 @@ if [[ -e crates/executive/src/core/core_systems.rs ]] || \
   echo "architecture-check: retired god container escaped into production" >&2
   exit 1
 fi
+if rg -n '\bAgoraOps\b' \
+  crates/executive/src/core/domain_ports.rs \
+  crates/executive/src/service/turn_pipeline.rs \
+  crates/executive/src/service/exec_session.rs; then
+  echo "architecture-check: production composition bypasses authoritative AgoraService" >&2
+  exit 1
+fi
+if rg -n 'pub async fn (publish|update)\(' crates/agora/src/ops/mod.rs; then
+  echo "architecture-check: direct Agora mutation API was restored" >&2
+  exit 1
+fi
 composition_outside_bootstrap=$(rg -l '\bDaemonComposition\b' crates/executive/src -g '*.rs' \
   | grep -v '^crates/executive/src/impl/daemon/bootstrap/' || true)
 if [[ -n "$composition_outside_bootstrap" ]]; then

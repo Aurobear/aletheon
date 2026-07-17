@@ -14,11 +14,13 @@ use aletheon_kernel::KernelRuntime;
 use cognit::ChannelCognitiveStreamSink;
 use fabric::events::ui_event::ClientEvent;
 use fabric::hook::{HookContext, HookPoint, HookResult};
-use fabric::include::agora::{AgoraOperation, WorkspaceCommitPermit};
+use fabric::include::agora::{
+    AgoraOperation, AgoraProposal, AgoraService, AgoraViewRequest, WorkspaceCommitPermit,
+};
 use fabric::ipc::{StreamConfig, TurnEventStream, TurnEventV1};
 use fabric::{
-    AgoraOps, AgoraSpaceId, AgoraVersion, CapabilityCall, Clock, ContentBlock, ContextBinding,
-    Intent, IntentSource, OperationId, PrincipalId, ProcessId, Role, SandboxRequirement, SessionId,
+    AgoraSpaceId, AgoraVersion, CapabilityCall, Clock, ContentBlock, ContextBinding, Intent,
+    IntentSource, OperationId, PrincipalId, ProcessId, Role, SandboxRequirement, SessionId,
     SpaceId, TurnRequest,
 };
 use serde_json::json;
@@ -43,7 +45,7 @@ pub struct TurnPipeline {
     pub(crate) session_gateway: Arc<SessionGateway>,
     pub(crate) notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
     pub(crate) clock: Arc<dyn Clock>,
-    pub(crate) agora: Option<Arc<dyn AgoraOps>>,
+    pub(crate) agora: Option<Arc<dyn AgoraService>>,
     pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) current_scope: Arc<Mutex<Option<OperationScope>>>,
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
@@ -62,7 +64,7 @@ pub(crate) struct TurnPipelineResources {
     pub(crate) session_gateway: Arc<SessionGateway>,
     pub(crate) notify: Arc<Mutex<Option<mpsc::Sender<String>>>>,
     pub(crate) clock: Arc<dyn Clock>,
-    pub(crate) agora: Option<Arc<dyn AgoraOps>>,
+    pub(crate) agora: Option<Arc<dyn AgoraService>>,
     pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) current_scope: Arc<Mutex<Option<OperationScope>>>,
     pub(crate) daemon_cancel: Option<CancellationToken>,
@@ -251,7 +253,13 @@ impl TurnPipeline {
         // shared Agora fact. Shared visibility requires an explicit proposal.
         let agora = self.agora.clone();
         let mut agora_version = if let Some(ref agora) = agora {
-            agora.version(&sess_id).await.unwrap_or(0)
+            agora
+                .view(AgoraViewRequest {
+                    space: AgoraSpaceId(sess_id.clone()),
+                })
+                .await
+                .map(|view| view.version)
+                .unwrap_or(0)
         } else {
             tracing::warn!(target: "agora", "DomainPorts.agora is not configured; shared evidence commits disabled for this turn");
             0
@@ -436,32 +444,33 @@ impl TurnPipeline {
                                 call_id.clone(), name.clone(), content.clone(), *is_error,
                             );
                             if let Some(ref agora) = agora_for_events {
-                                match agora.propose(
-                                    &session_id_for_agora,
-                                    agora_version,
-                                    AgoraOperation::AcceptEvidence { evidence },
-                                    main_pid,
-                                ).await {
-                                    Ok(prop) => {
-                                        let permit = WorkspaceCommitPermit::issue_for(
-                                            &prop,
-                                            clock_for_agora.wall_now().0.saturating_add(30_000),
-                                        );
-                                        let result = match permit {
-                                            Ok(permit) => agora.commit_with_permit(
-                                                &session_id_for_agora,
-                                                prop.id,
-                                                permit,
-                                            ).await,
-                                            Err(error) => Err(error.to_string()),
-                                        };
+                                let proposal = AgoraProposal {
+                                    id: uuid::Uuid::new_v4(),
+                                    space: AgoraSpaceId(session_id_for_agora.clone()),
+                                    author: main_pid,
+                                    base_version: agora_version,
+                                    operation: AgoraOperation::AcceptEvidence { evidence },
+                                    evidence: vec![format!("tool-call:{call_id}")],
+                                    confidence: if *is_error { 0.5 } else { 1.0 },
+                                    expires_at_ms: Some(
+                                        clock_for_agora.wall_now().0.saturating_add(30_000),
+                                    ),
+                                };
+                                let permit = WorkspaceCommitPermit::issue_for(
+                                    &proposal,
+                                    clock_for_agora.wall_now().0.saturating_add(30_000),
+                                );
+                                match (agora.propose(proposal.clone()).await, permit) {
+                                    (Ok(id), Ok(permit)) => {
+                                        let result = agora.commit(id, permit).await;
                                         if let Err(e) = result {
                                             tracing::warn!(target: "agora", error = %e, "agora commit (evidence) failed");
                                         } else {
                                             agora_version += 1;
                                         }
                                     }
-                                    Err(e) => tracing::warn!(target: "agora", error = %e, "agora propose (evidence) failed"),
+                                    (Err(e), _) => tracing::warn!(target: "agora", error = %e, "agora propose (evidence) failed"),
+                                    (_, Err(e)) => tracing::warn!(target: "agora", error = %e, "agora permit issue failed"),
                                 }
                             } else {
                                 tracing::warn!(

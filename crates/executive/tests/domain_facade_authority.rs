@@ -14,7 +14,7 @@ fn production_source(path: impl AsRef<Path>) -> String {
 fn domain_ports_retain_only_authoritative_facades() {
     let source = production_source("src/core/domain_ports.rs");
     for contract in [
-        "Arc<dyn AgoraOps>",
+        "Arc<dyn AgoraService>",
         "Arc<dyn metacog::MetacogService>",
         "Arc<dyn corpus::CorpusService>",
         "Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>",
