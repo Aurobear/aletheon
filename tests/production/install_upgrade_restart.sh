@@ -4,6 +4,8 @@ repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 # shellcheck source=tests/production/lib/installed_host.sh
 source "$repo_root/tests/production/lib/installed_host.sh"
 require_disposable_installed_host
+installed_test_users >/dev/null
+export ALETHEON_TEST_USER_A ALETHEON_TEST_USER_B
 artifacts=$(init_release_artifacts)
 candidate=${ALETHEON_RELEASE_BINARY:-"$repo_root/target/release/aletheon"}
 [[ -x "$candidate" && ! -L "$candidate" ]] || {
@@ -14,16 +16,21 @@ candidate=${ALETHEON_RELEASE_BINARY:-"$repo_root/target/release/aletheon"}
 # script is intentionally impossible to run on an ordinary development host.
 ALETHEON_BINARY="$candidate" ALETHEON_CONFIG="$repo_root/config/production.toml.example" \
   "$repo_root/scripts/install-systemd.sh" --no-enable
-systemctl start aletheon.service
-"$repo_root/scripts/verify-systemd.sh" --readiness --socket /run/aletheon/aletheon.sock --timeout 30
+prepare_installed_test_users
+start_installed_runtime
+assert_installed_readiness
 assert_installed_boundaries "$artifacts"
-journalctl -u aletheon.service --no-pager -n 300 >"$artifacts/install-journal.txt"
+install -d -m 0700 "$artifacts/install-journal"
+capture_installed_journal "$artifacts/install-journal"
 capture_sqlite_integrity /var/lib/aletheon "$artifacts/install-integrity.txt"
+capture_installed_user_integrity "$artifacts/install-user-integrity.txt"
 
 # A controlled restart must preserve readiness and durable database integrity.
-systemctl restart aletheon.service
-"$repo_root/scripts/verify-systemd.sh" --readiness --socket /run/aletheon/aletheon.sock --timeout 30
+restart_installed_runtime
+assert_installed_readiness
+assert_installed_boundaries "$artifacts"
 capture_sqlite_integrity /var/lib/aletheon "$artifacts/restart-integrity.txt"
+capture_installed_user_integrity "$artifacts/restart-user-integrity.txt"
 
 # Preserve matching data before invoking the real upgrade asset. Staging mode is
 # deliberately unencrypted and is valid only inside this disposable release drill.
@@ -45,6 +52,8 @@ ALETHEON_BACKUP_MODE=staging ALETHEON_BACKUP_OUTPUT="$backup" \
   ALETHEON_DATA_ROOT=/var/lib/aletheon ALETHEON_CONFIG_ROOT=/etc/aletheon \
   ALETHEON_SCHEMA_VERSION="$(sha256sum "$repo_root/config/release/migration-matrix.toml" | cut -d' ' -f1)" \
   "$repo_root/scripts/backup-aletheon.sh"
+user_backup="$artifacts/pre-upgrade-user-state"
+backup_installed_user_state "$user_backup"
 sha256sum "$candidate" >"$artifacts/candidate.sha256"
 cat >"$artifacts/upgrade-backup.sh" <<UPGRADE_BACKUP
 #!/usr/bin/env bash
@@ -53,30 +62,57 @@ ALETHEON_DATA_ROOT=/var/lib/aletheon ALETHEON_CONFIG_ROOT=/etc/aletheon \\
 '$repo_root/scripts/backup-aletheon.sh'
 UPGRADE_BACKUP
 chmod 0700 "$artifacts/upgrade-backup.sh"
+cat >"$artifacts/upgrade-systemctl.sh" <<UPGRADE_SYSTEMCTL
+#!/usr/bin/env bash
+set -euo pipefail
+source '$repo_root/tests/production/lib/installed_host.sh'
+case "\${1-}:\${2-}" in
+  stop:aletheon.service) stop_installed_runtime ;;
+  start:aletheon.service) start_installed_runtime ;;
+  *) echo "refusing unexpected upgrade systemctl request: \$*" >&2; exit 64 ;;
+esac
+UPGRADE_SYSTEMCTL
+cat >"$artifacts/upgrade-healthcheck.sh" <<UPGRADE_HEALTHCHECK
+#!/usr/bin/env bash
+set -euo pipefail
+source '$repo_root/tests/production/lib/installed_host.sh'
+assert_installed_readiness
+UPGRADE_HEALTHCHECK
+chmod 0700 "$artifacts/upgrade-systemctl.sh" "$artifacts/upgrade-healthcheck.sh"
 ALETHEON_BACKUP_COMMAND="$artifacts/upgrade-backup.sh" \
 ALETHEON_PREFLIGHT_COMMAND=/usr/libexec/aletheon/verify-systemd.sh \
-ALETHEON_HEALTHCHECK_COMMAND=/usr/libexec/aletheon/aletheon-healthcheck.sh \
+ALETHEON_HEALTHCHECK_COMMAND="$artifacts/upgrade-healthcheck.sh" \
+ALETHEON_SYSTEMCTL_COMMAND="$artifacts/upgrade-systemctl.sh" \
   /usr/libexec/aletheon/upgrade-aletheon.sh --binary "$candidate" \
     --sha256-file "$artifacts/candidate.sha256" --config /etc/aletheon/config.toml
+assert_installed_readiness
+assert_installed_boundaries "$artifacts"
 cp -a /var/lib/aletheon/state/upgrades "$artifacts/upgrade-receipts"
 capture_sqlite_integrity /var/lib/aletheon "$artifacts/upgrade-integrity.txt"
+capture_installed_user_integrity "$artifacts/upgrade-user-integrity.txt"
 
 # Any data migration requires a matching data+binary rollback. Restore to empty
 # roots first, retain upgraded state as evidence, then place both matching parts.
-systemctl stop aletheon.service
+stop_installed_runtime
 mv /var/lib/aletheon "$artifacts/upgraded-data-root"
+archive_installed_user_state "$artifacts/upgraded-user-state"
 ALETHEON_RESTORE_SOURCE="$backup" ALETHEON_RESTORE_TARGET=/var/lib/aletheon \
   ALETHEON_RESTORE_CONFIG_TARGET="$artifacts/restored-config" \
   "$repo_root/scripts/restore-aletheon.sh"
 saved=$(find "$artifacts/upgraded-data-root/releases" -maxdepth 1 -type f -name 'aletheon.pre-*' ! -name '*.sha256' | sort | tail -n1)
 [[ -x "$saved" ]] || { echo "matching pre-upgrade binary was not preserved" >&2; exit 1; }
 install -m 0755 "$saved" /usr/bin/aletheon
-systemctl start aletheon.service
-"$repo_root/scripts/verify-systemd.sh" --readiness --socket /run/aletheon/aletheon.sock --timeout 30
+restore_installed_user_state "$user_backup"
+start_installed_runtime
+assert_installed_readiness
+assert_installed_boundaries "$artifacts"
 capture_sqlite_integrity /var/lib/aletheon "$artifacts/rollback-integrity.txt"
-journalctl -u aletheon.service --no-pager >"$artifacts/final-journal.txt"
+capture_installed_user_integrity "$artifacts/rollback-user-integrity.txt"
+install -d -m 0700 "$artifacts/final-journal"
+capture_installed_journal "$artifacts/final-journal"
 jq -n --arg completed_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg artifacts "$artifacts" --arg candidate_sha256 "$(cut -d' ' -f1 "$artifacts/candidate.sha256")" \
-  '{status:"PASS",lane:"disposable-installed-host",completed_utc:$completed_utc,artifacts:$artifacts,candidate_sha256:$candidate_sha256,rollback:"matching_data_and_binary"}' \
+  --arg user_a "$ALETHEON_TEST_USER_A" --arg user_b "$ALETHEON_TEST_USER_B" \
+  '{status:"PASS",lane:"disposable-installed-host",completed_utc:$completed_utc,artifacts:$artifacts,candidate_sha256:$candidate_sha256,rollback:"matching_data_and_binary",system_unit:"aletheon-core.service",user_socket_activation:true,test_users:[$user_a,$user_b]}' \
   >"$artifacts/operator-receipt.json"
 echo "installed-host release drill passed: $artifacts/operator-receipt.json"
