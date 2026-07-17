@@ -139,6 +139,14 @@
           "minimum": 0,
           "type": "integer"
         },
+        "provider_timeouts": {
+          "$ref": "#/$defs/ProviderTimeoutConfig",
+          "default": {
+            "connect_timeout_ms": 10000,
+            "request_timeout_ms": 90000,
+            "stream_idle_timeout_ms": 30000
+          }
+        },
         "system_prompt": {
           "default": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation.",
           "type": "string"
@@ -1085,6 +1093,37 @@
       ],
       "type": "object"
     },
+    "ProviderTimeoutConfig": {
+      "additionalProperties": false,
+      "description": "Bounded network waits for remote inference providers.",
+      "properties": {
+        "connect_timeout_ms": {
+          "default": 10000,
+          "description": "Maximum time spent establishing a provider connection.",
+          "format": "uint64",
+          "maximum": 60000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "request_timeout_ms": {
+          "default": 90000,
+          "description": "Maximum time for a non-stream response or streaming response headers.",
+          "format": "uint64",
+          "maximum": 300000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "stream_idle_timeout_ms": {
+          "default": 30000,
+          "description": "Maximum silence between streaming response body chunks.",
+          "format": "uint64",
+          "maximum": 120000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "RoleRuntimeConfig": {
       "additionalProperties": false,
       "description": "One cognitive role mapped to a stable runtime and strict model alias/spec.",
@@ -1212,6 +1251,11 @@
         "default_provider": null,
         "max_iterations": 0,
         "max_tokens": 100000,
+        "provider_timeouts": {
+          "connect_timeout_ms": 10000,
+          "request_timeout_ms": 90000,
+          "stream_idle_timeout_ms": 30000
+        },
         "system_prompt": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation."
       }
     },

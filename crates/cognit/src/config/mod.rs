@@ -40,6 +40,13 @@ pub struct CognitConfig {
     pub model_routing: ModelRoutingConfig,
 }
 
+impl CognitConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        self.agent.admission.validate()?;
+        self.agent.provider_timeouts.validate()
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentMode {
@@ -493,6 +500,55 @@ pub struct AgentConfig {
     pub system_prompt: String,
     #[serde(default)]
     pub admission: AgentAdmissionConfig,
+    #[serde(default)]
+    pub provider_timeouts: ProviderTimeoutConfig,
+}
+
+/// Bounded network waits for remote inference providers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProviderTimeoutConfig {
+    /// Maximum time spent establishing a provider connection.
+    #[schemars(range(min = 1, max = 60_000))]
+    pub connect_timeout_ms: u64,
+    /// Maximum time for a non-stream response or streaming response headers.
+    #[schemars(range(min = 1, max = 300_000))]
+    pub request_timeout_ms: u64,
+    /// Maximum silence between streaming response body chunks.
+    #[schemars(range(min = 1, max = 120_000))]
+    pub stream_idle_timeout_ms: u64,
+}
+
+impl Default for ProviderTimeoutConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout_ms: 10_000,
+            request_timeout_ms: 90_000,
+            stream_idle_timeout_ms: 30_000,
+        }
+    }
+}
+
+impl ProviderTimeoutConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            (1..=60_000).contains(&self.connect_timeout_ms),
+            "provider connect timeout must be between 1 and 60000 ms"
+        );
+        anyhow::ensure!(
+            (1..=300_000).contains(&self.request_timeout_ms),
+            "provider request timeout must be between 1 and 300000 ms"
+        );
+        anyhow::ensure!(
+            (1..=120_000).contains(&self.stream_idle_timeout_ms),
+            "provider stream idle timeout must be between 1 and 120000 ms"
+        );
+        anyhow::ensure!(
+            self.connect_timeout_ms <= self.request_timeout_ms,
+            "provider connect timeout must not exceed request timeout"
+        );
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -578,6 +634,7 @@ impl Default for AgentConfig {
             compaction_threshold: default_compaction_threshold(),
             system_prompt: default_system_prompt(),
             admission: AgentAdmissionConfig::default(),
+            provider_timeouts: ProviderTimeoutConfig::default(),
         }
     }
 }

@@ -6,6 +6,12 @@ default_model = "deepseek/deepseek-v4-pro"
 # 0 = no iteration cap (termination via LLM stop, circuit breaker, tool budget)
 max_iterations = 0
 
+[agent.provider_timeouts]
+# Bound connection setup, whole non-stream responses / stream headers, and SSE silence.
+connect_timeout_ms = 10000
+request_timeout_ms = 90000
+stream_idle_timeout_ms = 30000
+
 [agent.admission]
 max_agents_per_root = 64
 max_running_agents = 16

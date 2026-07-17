@@ -2,8 +2,10 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use super::provider::*;
+use crate::config::ProviderTimeoutConfig;
 use fabric::message::{ContentBlock, ImageSource, Message, Role};
 
 /// OpenAI-compatible provider (chat/completions).
@@ -15,6 +17,8 @@ pub struct OpenAiProvider {
     base_url: String,
     max_context: usize,
     max_tokens: u32,
+    request_timeout: Duration,
+    stream_idle_timeout: Duration,
 }
 
 impl OpenAiProvider {
@@ -23,14 +27,34 @@ impl OpenAiProvider {
         model: impl Into<String>,
         base_url: impl Into<String>,
     ) -> Self {
+        let timeouts = ProviderTimeoutConfig::default();
         Self {
-            client: Client::new(),
+            client: Self::client(&timeouts),
             api_key: api_key.into(),
             model: model.into(),
             base_url: base_url.into(),
             max_context: 128_000,
             max_tokens: 4096,
+            request_timeout: Duration::from_millis(timeouts.request_timeout_ms),
+            stream_idle_timeout: Duration::from_millis(timeouts.stream_idle_timeout_ms),
         }
+    }
+
+    fn client(timeouts: &ProviderTimeoutConfig) -> Client {
+        Client::builder()
+            .connect_timeout(Duration::from_millis(timeouts.connect_timeout_ms))
+            .build()
+            .expect("reqwest client configuration is valid")
+    }
+
+    pub fn with_timeouts(mut self, timeouts: ProviderTimeoutConfig) -> Self {
+        timeouts
+            .validate()
+            .expect("provider timeout configuration must be validated");
+        self.client = Self::client(&timeouts);
+        self.request_timeout = Duration::from_millis(timeouts.request_timeout_ms);
+        self.stream_idle_timeout = Duration::from_millis(timeouts.stream_idle_timeout_ms);
+        self
     }
 
     pub fn with_max_context(mut self, max_context: usize) -> Self {
@@ -41,6 +65,18 @@ impl OpenAiProvider {
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = max_tokens;
         self
+    }
+}
+
+fn provider_timeout() -> anyhow::Error {
+    anyhow::anyhow!("provider_timeout")
+}
+
+fn provider_request_error(error: reqwest::Error) -> anyhow::Error {
+    if error.is_timeout() {
+        provider_timeout()
+    } else {
+        anyhow::anyhow!("provider_request_failed")
     }
 }
 
@@ -371,22 +407,24 @@ impl LlmProvider for OpenAiProvider {
             self.base_url.trim_end_matches('/')
         );
 
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await?;
+        let api_resp: ChatResponse = tokio::time::timeout(self.request_timeout, async {
+            let response = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await
+                .map_err(provider_request_error)?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("OpenAI API error {}: {}", status, body);
-        }
-
-        let api_resp: ChatResponse = response.json().await?;
+            if !response.status().is_success() {
+                anyhow::bail!("OpenAI API error {}", response.status());
+            }
+            response.json().await.map_err(provider_request_error)
+        })
+        .await
+        .map_err(|_| provider_timeout())??;
 
         let choice = api_resp
             .choices
@@ -485,22 +523,25 @@ impl LlmProvider for OpenAiProvider {
             self.base_url.trim_end_matches('/')
         );
 
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await?;
+        let response = tokio::time::timeout(
+            self.request_timeout,
+            self.client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send(),
+        )
+        .await
+        .map_err(|_| provider_timeout())?
+        .map_err(provider_request_error)?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("OpenAI API error {}: {}", status, body);
+            anyhow::bail!("OpenAI API error {}", response.status());
         }
 
         let byte_stream = response.bytes_stream().map(|r| r.map(|b| b.to_vec()));
+        let stream_idle_timeout = self.stream_idle_timeout;
 
         let stream = futures::stream::unfold(
             (
@@ -508,7 +549,7 @@ impl LlmProvider for OpenAiProvider {
                 String::new(),
                 ToolCallState::default(),
             ),
-            |(mut byte_stream, mut buffer, mut tool_state)| async move {
+            move |(mut byte_stream, mut buffer, mut tool_state)| async move {
                 use futures::StreamExt;
 
                 loop {
@@ -627,27 +668,33 @@ impl LlmProvider for OpenAiProvider {
                                     }
                                 }
                                 Err(e) => {
-                                    tracing::warn!(data = %data, error = %e, "Failed to parse SSE chunk");
+                                    tracing::warn!(error = %e, "Failed to parse SSE chunk");
                                 }
                             }
                         }
                     } else {
                         // Need more data from the stream
-                        match byte_stream.next().await {
-                            Some(Ok(bytes)) => {
-                                let text = String::from_utf8_lossy(&bytes);
-                                buffer.push_str(&text);
-                            }
-                            Some(Err(e)) => {
+                        match tokio::time::timeout(stream_idle_timeout, byte_stream.next()).await {
+                            Err(_) => {
                                 return Some((
-                                    Err(anyhow::anyhow!("Stream read error: {}", e)),
+                                    Err(provider_timeout()),
                                     (byte_stream, buffer, tool_state),
                                 ));
                             }
-                            None => {
+                            Ok(Some(Ok(bytes))) => {
+                                let text = String::from_utf8_lossy(&bytes);
+                                buffer.push_str(&text);
+                            }
+                            Ok(Some(Err(e))) => {
+                                return Some((
+                                    Err(provider_request_error(e)),
+                                    (byte_stream, buffer, tool_state),
+                                ));
+                            }
+                            Ok(None) => {
                                 // Stream ended
                                 if !buffer.trim().is_empty() {
-                                    tracing::warn!(remaining = %buffer, "Stream ended with unprocessed data");
+                                    tracing::warn!("Stream ended with unprocessed data");
                                 }
                                 // Emit any completed tool calls
                                 if let Some(completed) = tool_state.take_completed() {

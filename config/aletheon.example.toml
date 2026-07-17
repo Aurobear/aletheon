@@ -8,6 +8,12 @@ default_provider = "anthropic"
 default_model = "claude-sonnet-4-5"
 max_iterations = 0
 
+[agent.provider_timeouts]
+# Remote inference must fail closed before the interactive turn deadline.
+connect_timeout_ms = 10000
+request_timeout_ms = 90000
+stream_idle_timeout_ms = 30000
+
 [[providers]]
 name = "anthropic"
 base_url = "https://api.anthropic.com"
