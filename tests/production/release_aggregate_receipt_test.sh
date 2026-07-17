@@ -95,6 +95,15 @@ fi
 release_script="$repo_root/scripts/release-acceptance.sh"
 grep -F 'git -C "$repo_root" worktree add --detach "$production_workspace" "$candidate_source_commit"' \
   "$release_script" >/dev/null
+trap_line=$(grep -nF 'trap cleanup_production_worktree EXIT' "$release_script" | cut -d: -f1)
+add_line=$(grep -nF 'git -C "$repo_root" worktree add --detach "$production_workspace" "$candidate_source_commit"' \
+  "$release_script" | cut -d: -f1)
+[[ "$trap_line" -lt "$add_line" ]] || {
+  echo "production worktree cleanup is not armed before registration" >&2
+  exit 1
+}
+grep -F 'if [[ -e "$production_workspace/.git" ]]; then worktree_registered=1; fi' \
+  "$release_script" >/dev/null
 grep -F 'chown -R "$production_uid:$production_gid" "$production_workspace"' \
   "$release_script" >/dev/null
 grep -F 'scenario --suite production --source-root "$production_workspace"' \
