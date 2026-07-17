@@ -24,6 +24,7 @@ pub struct DaemonStreamingTurnContext<F> {
     pub dasein_context: Arc<dyn Fn() -> Option<String> + Send + Sync>,
     pub cancel_token: CancellationToken,
     pub sessions: Arc<dyn CognitiveSessionFactory>,
+    pub batch_planner: Option<Arc<dyn cognit::harness::BatchPlanner>>,
 }
 
 /// Submit one daemon turn through Cognit's authoritative session facade.
@@ -45,6 +46,7 @@ where
         dasein_context,
         cancel_token,
         sessions,
+        batch_planner,
     } = context;
     let services = DaemonTurnServices {
         llm,
@@ -62,11 +64,12 @@ where
     };
     let harness_config = crate::service::harness_factory::harness_config_from_executive(&config);
     let mut session = sessions
-        .create_configured(
+        .create_configured_with_batch_planner(
             &session_record,
             &TurnPolicy::daemon(),
             harness_config,
             cancel_token,
+            batch_planner,
         )
         .await?;
     Ok(session

@@ -39,6 +39,7 @@ pub struct DaemonConfig {
     pub data_dir: String,
     pub system_prompt: String,
     pub sandbox_preference: String,
+    pub conscious_arbitration_mode: fabric::ConsciousArbitrationMode,
     /// Enable self-evolution loop (HIGH-risk autonomy — OFF by default).
     pub enable_evolution: bool,
     /// MCP server definitions loaded from config (passed through to McpManager at handler init).
@@ -53,6 +54,29 @@ pub struct DaemonConfig {
     pub deployment: cognit::config::DeploymentConfig,
     /// Root-scoped multi-Agent topology and rollout limits.
     pub agent_admission: cognit::config::AgentAdmissionConfig,
+}
+
+pub fn parse_conscious_arbitration_mode(
+    value: Option<&str>,
+) -> anyhow::Result<fabric::ConsciousArbitrationMode> {
+    match value {
+        None => Ok(fabric::ConsciousArbitrationMode::Observe),
+        Some("observe") => Ok(fabric::ConsciousArbitrationMode::Observe),
+        Some("enforce") => Ok(fabric::ConsciousArbitrationMode::Enforce),
+        Some(_) => Err(anyhow::anyhow!(
+            "ALETHEON_CONSCIOUS_ARBITRATION_MODE must be 'observe' or 'enforce'"
+        )),
+    }
+}
+
+pub fn conscious_arbitration_mode_from_env() -> anyhow::Result<fabric::ConsciousArbitrationMode> {
+    match std::env::var("ALETHEON_CONSCIOUS_ARBITRATION_MODE") {
+        Ok(value) => parse_conscious_arbitration_mode(Some(&value)),
+        Err(std::env::VarError::NotPresent) => parse_conscious_arbitration_mode(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("ALETHEON_CONSCIOUS_ARBITRATION_MODE must contain valid Unicode")
+        }
+    }
 }
 
 /// Default config file search paths.

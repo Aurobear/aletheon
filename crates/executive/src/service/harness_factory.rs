@@ -25,6 +25,18 @@ pub trait CognitiveSessionFactory: Send + Sync {
     ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
         self.create(session, policy, cancellation).await
     }
+
+    async fn create_configured_with_batch_planner(
+        &self,
+        session: &SessionRecord,
+        policy: &TurnPolicy,
+        config: HarnessConfig,
+        cancellation: CancellationToken,
+        _batch_planner: Option<std::sync::Arc<dyn cognit::harness::BatchPlanner>>,
+    ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+        self.create_configured(session, policy, config, cancellation)
+            .await
+    }
 }
 
 pub struct LinearCognitiveSessionFactory {
@@ -72,6 +84,26 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 cancellation,
                 compactor: Some(compactor),
                 batch_planner: None,
+            },
+        )))
+    }
+
+    async fn create_configured_with_batch_planner(
+        &self,
+        _session: &SessionRecord,
+        _policy: &TurnPolicy,
+        config: HarnessConfig,
+        cancellation: CancellationToken,
+        batch_planner: Option<std::sync::Arc<dyn cognit::harness::BatchPlanner>>,
+    ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+        let compactor = compactor(&config);
+        Ok(Box::new(cognit::harness::LinearCognitiveSession::new(
+            config,
+            cognit::CognitiveSessionDependencies {
+                clock: self.clock.clone(),
+                cancellation,
+                compactor: Some(compactor),
+                batch_planner,
             },
         )))
     }

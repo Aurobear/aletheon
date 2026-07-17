@@ -138,6 +138,10 @@ pub struct SelectedActionOutcomeReceipt {
 
 #[async_trait]
 pub trait GovernedActionLoop: Send + Sync {
+    fn arbitration_mode(&self) -> ConsciousArbitrationMode {
+        ConsciousArbitrationMode::Observe
+    }
+
     async fn select_action(&self, call: &CapabilityCall) -> Result<GovernedActionDecision>;
 
     async fn observe_modulation(
@@ -187,12 +191,12 @@ impl GovernedCapabilityInvoker {
     }
 
     pub fn with_action_loop(mut self, action_loop: Arc<dyn GovernedActionLoop>) -> Self {
+        self.arbitration_mode = action_loop.arbitration_mode();
         self.action_loop = Some(action_loop);
         self
     }
 
-    /// Select the conscious arbitration behavior for this trusted runtime.
-    /// Production composition remains observe-first until Task 8 threads config.
+    /// Override conscious arbitration for an explicitly configured runtime.
     pub fn with_arbitration_mode(mut self, mode: ConsciousArbitrationMode) -> Self {
         self.arbitration_mode = mode;
         self

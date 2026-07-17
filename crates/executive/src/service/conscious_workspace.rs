@@ -13,7 +13,9 @@ use aletheon_kernel::KernelRuntime;
 use anyhow::Context;
 use async_trait::async_trait;
 use fabric::{
-    AgoraSpaceId, Clock, ConsciousContextProjection, ConsciousProcessor, ContentId,
+    AgoraSpaceId, CapabilityBatchDecision, CapabilityBatchPlan, CapabilityCall, Clock,
+    ConsciousArbitrationMode, ConsciousContextProjection, ConsciousFieldReadout,
+    ConsciousProcessor, ContentId, FieldDecisionKind, FieldDecisionReason,
     LatestConsciousContextPort, MonoDeadline, PredictionFrame, ProcessId, ProcessorAck,
     ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse, SalienceVector,
     VisibilityScope, WorkspaceAttribution, WorkspaceBroadcast, WorkspaceCandidate,
@@ -41,6 +43,27 @@ use crate::r#impl::conscious::{
 const WORKSPACE_NAMESPACE: Uuid = Uuid::from_u128(0x4021_c073_f88b_45c9_b913_89b9_42f8_0671);
 const PROCESSOR_TTL: Duration = Duration::from_secs(60);
 
+/// Sort bounded priorities descending while retaining provider order for ties.
+pub fn stable_priority_order(priorities: &[(String, f32)]) -> anyhow::Result<Vec<String>> {
+    anyhow::ensure!(
+        priorities
+            .iter()
+            .all(|(_, priority)| priority.is_finite() && (0.0..=1.0).contains(priority)),
+        "conscious batch priority is outside [0,1]"
+    );
+    let mut indices: Vec<usize> = (0..priorities.len()).collect();
+    indices.sort_by(|left, right| {
+        priorities[*right]
+            .1
+            .total_cmp(&priorities[*left].1)
+            .then_with(|| left.cmp(right))
+    });
+    Ok(indices
+        .into_iter()
+        .map(|index| priorities[index].0.clone())
+        .collect())
+}
+
 #[async_trait]
 pub trait ConsciousTurnPort: GovernedActionLoopResolver {
     async fn observe_turn(
@@ -51,6 +74,106 @@ pub trait ConsciousTurnPort: GovernedActionLoopResolver {
         operation: fabric::OperationId,
         input: &str,
     ) -> anyhow::Result<ConsciousCycleReceipt>;
+
+    async fn batch_planner(
+        &self,
+        space: AgoraSpaceId,
+    ) -> anyhow::Result<Arc<dyn cognit::harness::BatchPlanner>>;
+}
+
+struct ConsciousWorkspaceBatchPlanner {
+    coordinator: Arc<ConsciousCoreCoordinator>,
+    mode: ConsciousArbitrationMode,
+}
+
+impl ConsciousWorkspaceBatchPlanner {
+    fn identity(&self, calls: &[CapabilityCall]) -> CapabilityBatchPlan {
+        let mut plan = CapabilityBatchPlan::identity(calls);
+        plan.mode = self.mode;
+        plan
+    }
+
+    fn priority(
+        readout: &ConsciousFieldReadout,
+        projection: &ConsciousContextProjection,
+        call: &CapabilityCall,
+    ) -> f32 {
+        projection
+            .latest_broadcast
+            .as_ref()
+            .and_then(|broadcast| {
+                broadcast.selected.iter().find_map(|candidate| {
+                    matches!(
+                        &candidate.content,
+                        WorkspaceContent::ActionProposal(action) if action.id == call.call_id
+                    )
+                    .then_some((candidate.confidence * readout.precision).clamp(0.0, 1.0))
+                })
+            })
+            .unwrap_or(readout.precision)
+    }
+}
+
+#[async_trait]
+impl cognit::harness::BatchPlanner for ConsciousWorkspaceBatchPlanner {
+    async fn plan(&self, calls: Vec<CapabilityCall>) -> anyhow::Result<CapabilityBatchPlan> {
+        let projection = match self
+            .coordinator
+            .latest_context(self.coordinator.space())
+            .await
+        {
+            Ok(projection) => projection,
+            Err(error) => {
+                tracing::warn!(%error, "conscious batch projection unavailable; preserving provider order");
+                return Ok(self.identity(&calls));
+            }
+        };
+        let readout = match ConsciousFieldReadout::from_projection(&projection) {
+            Ok(Some(readout)) => readout,
+            Ok(None) => return Ok(self.identity(&calls)),
+            Err(error) => {
+                tracing::warn!(%error, "conscious batch projection invalid; preserving provider order");
+                return Ok(self.identity(&calls));
+            }
+        };
+        let priorities: Vec<f32> = calls
+            .iter()
+            .map(|call| Self::priority(&readout, &projection, call))
+            .collect();
+        let ordered_call_ids = stable_priority_order(
+            &calls
+                .iter()
+                .zip(priorities.iter())
+                .map(|(call, priority)| (call.call_id.clone(), *priority))
+                .collect::<Vec<_>>(),
+        )?;
+        let decisions = calls
+            .iter()
+            .enumerate()
+            .map(|(original_index, call)| CapabilityBatchDecision {
+                call_id: call.call_id.clone(),
+                decision: if ordered_call_ids
+                    .iter()
+                    .position(|call_id| call_id == &call.call_id)
+                    == Some(original_index)
+                {
+                    FieldDecisionKind::Proceed
+                } else {
+                    FieldDecisionKind::Reorder
+                },
+                reason: FieldDecisionReason::Selected,
+                priority: priorities[original_index],
+                broadcast_epoch: Some(readout.epoch),
+            })
+            .collect();
+        let plan = CapabilityBatchPlan {
+            mode: self.mode,
+            ordered_call_ids,
+            decisions,
+        };
+        plan.validate_against(&calls)?;
+        Ok(plan)
+    }
 }
 
 pub struct ConsciousWorkspaceRegistry {
@@ -106,6 +229,30 @@ impl ConsciousWorkspaceRegistry {
         memory: Arc<dyn mnemosyne::MemoryService>,
         skills: Arc<Mutex<corpus::SkillLoader>>,
     ) -> anyhow::Result<Self> {
+        Self::production_with_mode(
+            path,
+            dasein,
+            kernel,
+            clock,
+            memory,
+            skills,
+            ConsciousArbitrationMode::Observe,
+        )
+    }
+
+    pub fn production_with_mode(
+        path: impl AsRef<Path>,
+        dasein: Arc<dyn DaseinWorkspacePort>,
+        kernel: Arc<KernelRuntime>,
+        clock: Arc<dyn Clock>,
+        memory: Arc<dyn mnemosyne::MemoryService>,
+        skills: Arc<Mutex<corpus::SkillLoader>>,
+        arbitration_mode: ConsciousArbitrationMode,
+    ) -> anyhow::Result<Self> {
+        let core_config = ConsciousCoreConfig {
+            arbitration_mode,
+            ..ConsciousCoreConfig::default()
+        };
         Self::open(
             path,
             dasein,
@@ -119,7 +266,7 @@ impl ConsciousWorkspaceRegistry {
                 max_coalition: 8,
                 policy: SelectionPolicy::default(),
             },
-            ConsciousCoreConfig::default(),
+            core_config,
         )
     }
 
@@ -296,18 +443,37 @@ impl GovernedActionLoopResolver for ConsciousWorkspaceRegistry {
         root: ProcessId,
     ) -> anyhow::Result<Arc<dyn GovernedActionLoop>> {
         let coordinator = self.coordinator(space, source, root)?;
-        Ok(Arc::new(ConsciousActionBridge::new(
-            coordinator,
-            source,
-            root,
-            self.clock.clone(),
-            Duration::from_secs(60),
-        )?))
+        Ok(Arc::new(
+            ConsciousActionBridge::new(
+                coordinator,
+                source,
+                root,
+                self.clock.clone(),
+                Duration::from_secs(60),
+            )?
+            .with_arbitration_mode(self.core_config.arbitration_mode),
+        ))
     }
 }
 
 #[async_trait]
 impl ConsciousTurnPort for ConsciousWorkspaceRegistry {
+    async fn batch_planner(
+        &self,
+        space: AgoraSpaceId,
+    ) -> anyhow::Result<Arc<dyn cognit::harness::BatchPlanner>> {
+        let coordinator = self
+            .spaces
+            .read()
+            .get(&space)
+            .cloned()
+            .context("conscious workspace has not observed a turn")?;
+        Ok(Arc::new(ConsciousWorkspaceBatchPlanner {
+            coordinator,
+            mode: self.core_config.arbitration_mode,
+        }))
+    }
+
     async fn observe_turn(
         &self,
         space: AgoraSpaceId,

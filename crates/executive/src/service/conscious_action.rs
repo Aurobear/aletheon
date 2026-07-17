@@ -38,6 +38,7 @@ pub struct ConsciousActionBridge {
     root: ProcessId,
     clock: Arc<dyn Clock>,
     candidate_ttl: Duration,
+    arbitration_mode: fabric::ConsciousArbitrationMode,
 }
 
 impl ConsciousActionBridge {
@@ -59,7 +60,13 @@ impl ConsciousActionBridge {
             root,
             clock,
             candidate_ttl,
+            arbitration_mode: fabric::ConsciousArbitrationMode::Observe,
         })
+    }
+
+    pub fn with_arbitration_mode(mut self, mode: fabric::ConsciousArbitrationMode) -> Self {
+        self.arbitration_mode = mode;
+        self
     }
 
     fn attribution(&self) -> WorkspaceAttribution {
@@ -122,6 +129,10 @@ impl ConsciousActionBridge {
 
 #[async_trait]
 impl GovernedActionLoop for ConsciousActionBridge {
+    fn arbitration_mode(&self) -> fabric::ConsciousArbitrationMode {
+        self.arbitration_mode
+    }
+
     async fn select_action(&self, call: &CapabilityCall) -> anyhow::Result<GovernedActionDecision> {
         let readout = match self
             .coordinator

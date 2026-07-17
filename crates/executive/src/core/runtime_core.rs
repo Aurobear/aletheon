@@ -83,6 +83,8 @@ impl RuntimeCore {
                 .unwrap_or_else(|_| app_config.agent.system_prompt.clone()),
             sandbox_preference: std::env::var("AGENT_SANDBOX_PREFERENCE")
                 .unwrap_or_else(|_| "auto".to_string()),
+            conscious_arbitration_mode: crate::r#impl::daemon::conscious_arbitration_mode_from_env(
+            )?,
             enable_evolution,
             mcp_servers: app_config
                 .mcp_servers

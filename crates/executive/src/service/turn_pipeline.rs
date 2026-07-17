@@ -306,6 +306,14 @@ impl TurnPipeline {
             ),
             None => None,
         };
+        let batch_planner = match &self.conscious_core {
+            Some(conscious) => Some(
+                conscious
+                    .batch_planner(AgoraSpaceId(sess_id.clone()))
+                    .await?,
+            ),
+            None => None,
+        };
         let prepared =
             self.runtime_ports
                 .capabilities
@@ -388,6 +396,7 @@ impl TurnPipeline {
                 dasein_context,
                 cancel_token: scope_token,
                 sessions: self.cognitive_sessions.clone(),
+                batch_planner,
             },
         ));
 

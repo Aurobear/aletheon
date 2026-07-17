@@ -12,14 +12,14 @@ use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use fabric::dasein::SelfTransitionReceipt;
 use fabric::{
-    AgoraSpaceId, BroadcastEpoch, BroadcastIntegrationReceipt, Clock, ConsciousContextProjection,
-    ConsciousFieldReadout, ConsciousProcessor, ConsciousTraceEvent, ContentId,
-    ContextProjectionReceipt, FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot,
-    GoalFrame, LatestConsciousContextPort, MonoDeadline, MonoTime, OperationKind, OperationRequest,
-    PredictionErrorFrame, PredictionFrame, ProcessId, ProcessorContext, ProcessorHealth,
-    ProcessorId, ProcessorResponse, SalienceVector, SchemaId, SelectionExplanation,
-    SelectionResult, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
-    WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
+    AgoraSpaceId, BroadcastEpoch, BroadcastIntegrationReceipt, Clock, ConsciousArbitrationMode,
+    ConsciousContextProjection, ConsciousFieldReadout, ConsciousProcessor, ConsciousTraceEvent,
+    ContentId, ContextProjectionReceipt, FieldMetricHistory, FieldMetricIndicators,
+    FieldMetricSnapshot, GoalFrame, LatestConsciousContextPort, MonoDeadline, MonoTime,
+    OperationKind, OperationRequest, PredictionErrorFrame, PredictionFrame, ProcessId,
+    ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse, SalienceVector, SchemaId,
+    SelectionExplanation, SelectionResult, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate,
+    WorkspaceContent, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use parking_lot::RwLock;
 use tokio::sync::{Mutex, Semaphore};
@@ -33,6 +33,7 @@ use super::conscious_core_ports::{
 
 #[derive(Debug, Clone)]
 pub struct ConsciousCoreConfig {
+    pub arbitration_mode: ConsciousArbitrationMode,
     pub max_processors: usize,
     pub max_processor_concurrency: usize,
     pub max_candidates_per_processor: usize,
@@ -45,6 +46,7 @@ pub struct ConsciousCoreConfig {
 impl Default for ConsciousCoreConfig {
     fn default() -> Self {
         Self {
+            arbitration_mode: ConsciousArbitrationMode::Observe,
             max_processors: 16,
             max_processor_concurrency: 4,
             max_candidates_per_processor: 8,

@@ -332,3 +332,40 @@ async fn empty_field_proceed_matches_legacy_execution() {
     assert_eq!(fixture.observations.lock().unwrap().len(), 0);
     assert_eq!(fixture.outcomes.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn conscious_arbitration_mode_is_strict_and_observe_first() {
+    assert_eq!(
+        executive::core::config::ExecutiveConfig::default().conscious_arbitration_mode,
+        ConsciousArbitrationMode::Observe
+    );
+    assert_eq!(
+        executive::r#impl::daemon::parse_conscious_arbitration_mode(None).unwrap(),
+        ConsciousArbitrationMode::Observe
+    );
+    assert_eq!(
+        executive::r#impl::daemon::parse_conscious_arbitration_mode(Some("enforce")).unwrap(),
+        ConsciousArbitrationMode::Enforce
+    );
+    assert!(executive::r#impl::daemon::parse_conscious_arbitration_mode(Some("warn")).is_err());
+    assert!(executive::r#impl::daemon::parse_conscious_arbitration_mode(Some("ENFORCE")).is_err());
+}
+
+#[test]
+fn stable_priority_order_keeps_original_tie_order() {
+    let ordered = executive::service::conscious_workspace::stable_priority_order(&[
+        ("low".into(), 0.2),
+        ("first-high".into(), 0.9),
+        ("second-high".into(), 0.9),
+    ])
+    .unwrap();
+
+    assert_eq!(
+        ordered,
+        vec![
+            "first-high".to_string(),
+            "second-high".to_string(),
+            "low".to_string(),
+        ]
+    );
+}

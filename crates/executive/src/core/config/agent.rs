@@ -26,6 +26,8 @@ pub struct ExecutiveConfig {
     pub target_summary_chars: usize,
     pub context_window_tokens: usize,
     #[serde(default)]
+    pub conscious_arbitration_mode: fabric::ConsciousArbitrationMode,
+    #[serde(default)]
     pub agent_loop: AgentLoopConfig,
     #[serde(default)]
     pub circuit_breaker: CircuitBreakerConfig,
@@ -46,6 +48,7 @@ impl Default for ExecutiveConfig {
             tail_token_budget: 16_000,
             target_summary_chars: 2_000,
             context_window_tokens: 128_000,
+            conscious_arbitration_mode: fabric::ConsciousArbitrationMode::Observe,
             agent_loop: AgentLoopConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
             harness_kind: HarnessKind::default(),

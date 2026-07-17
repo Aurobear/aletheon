@@ -69,6 +69,8 @@ impl UserRuntimeConfig {
             data_dir: paths.state_root.to_string_lossy().into_owned(),
             system_prompt: app.agent.system_prompt.clone(),
             sandbox_preference: "auto".into(),
+            conscious_arbitration_mode: crate::r#impl::daemon::conscious_arbitration_mode_from_env(
+            )?,
             enable_evolution,
             mcp_servers: app
                 .mcp_servers
