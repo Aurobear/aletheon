@@ -27,7 +27,6 @@ use fabric::{
 use std::sync::Arc;
 use tracing::info;
 
-use crate::bridge::hook::HookBridge;
 use crate::bridge::loop_detector::LoopBridge;
 use crate::bridge::policy::PolicyBridge;
 use crate::core::attention::AttentionLayer;
@@ -109,7 +108,6 @@ pub struct SelfField {
     // Bridges to external subsystems
     policy_bridge: PolicyBridge,
     loop_bridge: LoopBridge,
-    hook_bridge: HookBridge,
     // DaseinModule (optional, opt-in via config)
     dasein: Option<Arc<DaseinModule>>,
     dasein_event_tx: Option<tokio::sync::mpsc::Sender<DaseinEvent>>,
@@ -186,7 +184,6 @@ impl SelfField {
             store,
             policy_bridge: PolicyBridge::new(),
             loop_bridge: LoopBridge::new(),
-            hook_bridge: HookBridge::new(clock.clone()),
             dasein,
             permission_authority: None,
             dasein_event_tx,
@@ -425,24 +422,10 @@ impl SelfField {
 
 #[async_trait]
 impl fabric::SelfFieldOps for SelfField {
-    /// Core review pipeline: Hook -> Policy -> Boundary -> Care -> Permissions -> Narrative -> Verdict.
+    /// Core review pipeline: Policy -> Boundary -> Care -> Permissions -> Narrative -> Verdict.
     async fn review(&self, intent: &Intent, ctx: &Context) -> Result<Verdict> {
-        // 1. Hook check (pre-tool hooks can block)
-        if let Some(verdict) = self
-            .hook_bridge
-            .fire_pre_tool(&intent.action, &intent.parameters.to_string())
-            .await
-        {
-            self.narrative.record(
-                "hook_check",
-                &format!("Blocked by hook: {:?}", verdict),
-                Some(&intent.action),
-                &verdict,
-            );
-            return Ok(verdict);
-        }
-
-        // 2. Policy check (PolicyEngine)
+        // 1. Policy check (PolicyEngine). Executable lifecycle hooks are owned
+        // by the governed Corpus path and run before this semantic review.
         if let Some(verdict) = self.policy_bridge.check(&intent.action, &intent.parameters) {
             self.narrative.record(
                 "policy_check",
@@ -453,7 +436,7 @@ impl fabric::SelfFieldOps for SelfField {
             return Ok(verdict);
         }
 
-        // 3. Boundary check (fast gate)
+        // 2. Boundary check (fast gate)
         if let Some(verdict) = self.boundary.check(intent) {
             self.narrative.record(
                 "boundary_check",

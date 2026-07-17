@@ -14,7 +14,6 @@ legacy_event|crates/fabric/src/ipc/transport/unix_socket_transport.rs| let envel
 legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::new(
 legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::new(source, self.target, Pattern::FireAndForget, self.payload)
 legacy_event|crates/fabric/src/primitives/comm.rs| Envelope::request(source, self.target, self.payload, self.timeout)
-raw_process|crates/dasein/src/impl/hook/dispatcher.rs|use tokio::process::Command;
 raw_process|crates/dasein/src/impl/perception/sources/journald_source.rs| let mut child = match tokio::process::Command::new("journalctl")
 raw_process|crates/dasein/src/impl/security/rollback/mod.rs| let _ = tokio::process::Command::new("systemctl")
 raw_process|crates/dasein/src/impl/security/rollback/mod.rs| let output = tokio::process::Command::new("btrfs")

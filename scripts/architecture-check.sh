@@ -34,6 +34,10 @@ if [[ -d crates/corpus/src/tools/hooks || -d crates/corpus/src/tools/skills ]]; 
   echo "architecture-check: parallel Corpus hook/skill trees were restored" >&2
   exit 1
 fi
+if [[ -d crates/dasein/src/impl/hook || -e crates/dasein/src/bridge/hook.rs ]]; then
+  echo "architecture-check: Dasein restored an executable hook runtime" >&2
+  exit 1
+fi
 if rg -n '^\s*pub fn (?:care_mut|boundary_mut|narrative|attention|mutate|add_care|remove_care|adjust_weight|record_outcome|adjust_from_outcome|assert|negate|add_possibility|add_entity|remove_entity|add_edge|update_readiness|update_readiness_if|set_ultimate_concern|adjust_for_mood|add_concern|remove_concern|update_fallenness|update_projection|choose_projection|ingest|passive_synthesize|update_protentions_from_patterns)\b|^\s*pub rhythm:' \
   crates/dasein/src/core/mod.rs crates/dasein/src/core/care.rs \
   crates/dasein/src/core/identity.rs crates/dasein/src/dasein/self_model.rs \
