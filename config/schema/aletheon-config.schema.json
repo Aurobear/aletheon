@@ -932,6 +932,11 @@
           "default": "",
           "type": "string"
         },
+        "executable_sha256": {
+          "default": "",
+          "description": "Lowercase SHA-256 of the trusted Pi executable.",
+          "type": "string"
+        },
         "fixed_args": {
           "default": [],
           "items": {
@@ -946,6 +951,13 @@
           },
           "type": "array"
         },
+        "json_protocol_version": {
+          "default": 3,
+          "description": "Expected Pi JSON session header version.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "max_output_bytes": {
           "default": 1048576,
           "format": "uint",
@@ -956,6 +968,11 @@
           "default": false,
           "description": "Pi has no network access by default and initial M4 rejects enabling it.",
           "type": "boolean"
+        },
+        "package_version": {
+          "default": "",
+          "description": "Pinned upstream package version recorded in attempt evidence.",
+          "type": "string"
         },
         "require_namespace_isolation": {
           "default": true,
@@ -1369,10 +1386,13 @@
         "allowed_paths": [],
         "enabled": false,
         "executable": "",
+        "executable_sha256": "",
         "fixed_args": [],
         "forbidden_paths": [],
+        "json_protocol_version": 3,
         "max_output_bytes": 1048576,
         "network_enabled": false,
+        "package_version": "",
         "require_namespace_isolation": true,
         "timeout_ms": 1800000,
         "trusted_executable_dir": null,
