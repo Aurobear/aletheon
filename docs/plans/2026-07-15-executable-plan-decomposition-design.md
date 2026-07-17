@@ -1,6 +1,6 @@
 # Executable Architecture Plan Decomposition Design
 
-> **Status:** In progress — terminal Q02 and V02 acceptance remains open
+> **Status:** Blocked by V02 — all implementation slices are closed; the installed-production receipt remains open
 >
 > **Source baseline:** `65f74981`
 >

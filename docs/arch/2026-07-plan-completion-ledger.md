@@ -23,6 +23,10 @@ acceptance evidence are present. Active and partial plans remain indexed in
 | S01 | Complete | Canonical store: `crates/executive/src/impl/session/canonical_store.rs:13`; append/reopen/fork acceptance: `crates/executive/tests/session_append_store.rs:27-182`. |
 | X01 | Complete | Handler use-case ports: `crates/executive/src/impl/daemon/handler/ports.rs:21-54`; boundary checks: `crates/executive/tests/request_use_case_boundaries.rs:17-112`. |
 | X02 | Complete | Private composition root: `crates/executive/src/impl/daemon/bootstrap/mod.rs:18-35`; confinement checks: `crates/executive/tests/private_composition_root.rs:17-108`. |
+| E01 | Complete | Shrink-only architecture gates: `scripts/architecture-check.sh:37-160`; Bin now depends only on Executive and Interact domain surfaces: `crates/bin/Cargo.toml:16-23`. |
+| Q02 | Complete | Deterministic typed reducer/reconnect handling: `crates/interact/tests/tui_reducer.rs:20-107`; thin host routing: `crates/bin/tests/host_routing.rs:3-26`. |
+| S02 | Complete | Unified lifecycle and canonical replay acceptance: `crates/executive/tests/turn_coordinator_lifecycle.rs:40-167`; the required architecture gate now passes. |
+| V01 | Complete | Deterministic replay/authority evidence: `crates/executive/tests/cross_domain_acceptance.rs:20-93`; reproducible indicators and ablations: `crates/executive/tests/functional_indicators.rs:73-140`. |
 
 ## Completed conscious-core slices
 
@@ -46,6 +50,9 @@ acceptance evidence are present. Active and partial plans remain indexed in
 | M04 | Complete | Bounded projection: `crates/mnemosyne/src/projection.rs:78-168`; production processor: `crates/executive/src/impl/conscious/memory_processor.rs:65-102`. |
 | M07 | Complete | Governed tombstone/retention transaction: `crates/mnemosyne/src/retention/repository.rs:80-181`; management entry: `crates/executive/src/service/request_use_cases.rs:884-910`. |
 | M08 | Complete | Trusted child scope: `crates/mnemosyne/src/agent_scope.rs:115-184`; reviewed promotion: `crates/mnemosyne/src/promotion.rs:27-110`. |
+| M05 | Complete | Lifecycle-aware leased extraction: `crates/mnemosyne/src/service.rs:370-407,711-723`; deterministic insert/merge/reject/supersede: `crates/mnemosyne/src/consolidation/consolidator.rs:101-146`. |
+| M06 | Complete | Mnemosyne-owned receipt/retry/tombstone settlement: `crates/mnemosyne/src/backends/gbrain/reconcile.rs:132-276`; Executive is scheduling-only: `crates/executive/src/impl/gbrain/worker.rs:14-67`. |
+| Mnemosyne unified memory | Complete | Sanitized closed-label observability: `crates/mnemosyne/src/observability.rs:191-220`; production consolidation and GBrain ownership are covered by M05/M06 above. |
 
 ## Completed Agent and Kernel slices
 
@@ -61,6 +68,8 @@ acceptance evidence are present. Active and partial plans remain indexed in
 | G10 | Complete | Restart decisions: `crates/executive/src/service/agent_control/recovery.rs:60-155`; verified cleanup: `crates/executive/src/service/agent_control/cleanup.rs:37-82`. |
 | K01 | Complete | Exact lifecycle matrices: `crates/fabric/src/types/process.rs:85-105`, `crates/fabric/src/types/operation.rs:62-81`; opaque runtime: `crates/kernel/src/runtime.rs:28-52`. |
 | K02 | Complete | Terminal cleanup: `crates/kernel/src/runtime.rs:463-535`; hierarchical budget contract: `crates/fabric/src/types/admission.rs:115-153`. |
+| G08 | Complete | FIFO bounded waiting and admission: `crates/executive/src/service/agent_control/admission.rs:183-270`; exactly-once settlement/revocation: `crates/executive/src/service/agent_control/admission.rs:375-465`. |
+| SubAgent unified harness | Complete | Pinned Pi build/protocol identity: `crates/executive/src/impl/runtime/pi.rs:45-55`; strict fail-closed JSONL lifecycle parsing: `crates/executive/src/impl/runtime/pi_protocol.rs:19-149`. |
 
 ## Completed session-recovery repair
 
