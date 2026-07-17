@@ -253,3 +253,15 @@ The decomposition is complete only when:
 - each plan has a runnable focused test command and full workspace gate;
 - each plan ends in deployable behavior or an isolated unused contract;
 - V02 proves the final integrated production behavior rather than only unit tests.
+
+> **Code-reality reconciliation (2026-07-17):** the first criterion ("all 42
+> plan files exist") is historical. Decomposition and implementation are
+> complete; the per-plan slice files (E01…V02) have since been **intentionally
+> retired** and their evidence consolidated into
+> `docs/arch/2026-07-plan-completion-ledger.md` (see §9–12 and the retirement
+> commits). So "42 files exist" no longer holds on disk *by design* — the
+> criterion was met at decomposition time and the artifacts were then removed.
+> The one criterion still genuinely open is the last: **V02** must prove the
+> integrated production behavior; that remains blocked on external ops (a
+> disposable systemd host, authenticated Gmail ingress, and a real
+> failure-driver binary), not on any missing `crates/` code.
