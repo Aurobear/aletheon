@@ -993,10 +993,11 @@ impl RequestHandler {
             "Session event-spine recovery completed before turn admission"
         );
         let coordinator = Arc::new(
-            crate::service::turn_coordinator::TurnCoordinator::with_event_spine(
+            crate::service::turn_coordinator::TurnCoordinator::with_event_spine_and_grok(
                 kernel.clone(),
                 Arc::new(canonical_store),
                 canonical_event_spine.clone(),
+                grok_hardening.clone(),
             )
             .with_event_projections(event_projections.clone()),
         );
@@ -1088,6 +1089,7 @@ impl RequestHandler {
                 pipeline,
                 coordinator,
                 session_service,
+                grok_hardening: grok_hardening.clone(),
             },
         ));
 
@@ -1240,6 +1242,7 @@ impl RequestHandler {
             memory_group.episodic_memory.clone(),
             self_field.clone(),
             memory_group.supplemental_memory_health.clone(),
+            grok_hardening.clone(),
         );
         let session_lifecycle: Arc<
             dyn crate::service::request_use_cases::SessionLifecycleUseCases,

@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 use fabric::{Subsystem, SubsystemContext};
 
 use crate::core::orchestrator::AletheonExecutive;
+use crate::core::config::GrokHardeningConfig;
 use crate::service::request_use_cases::{
     CareWeight, ExecutiveRuntimePort, ReflectionEnginePort, ReflectionMemoryPort, ReflectionStats,
     RetentionAdminPort, RuntimeStatus, SelfStatus, SelfStatusPort, SupplementalMemoryStatus,
@@ -56,6 +57,7 @@ impl RequestFacadePorts {
         episodic: Arc<Mutex<EpisodicMemory>>,
         self_field: Arc<Mutex<SelfField>>,
         supplemental: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
+        _grok_hardening: GrokHardeningConfig,
     ) -> Self {
         Self {
             runtime_port: Arc::new(ExecutiveRuntimeAdapter { executive: runtime }),

@@ -10,6 +10,8 @@ use fabric::{
     SessionStatus, ThreadId, TurnId, TurnMetrics, TurnRequest, TurnResult, TurnStop,
     SESSION_SCHEMA_VERSION,
 };
+use fabric::types::prompt_queue::{evaluate_cancel, PromptEnvelope, PromptKind, PromptState};
+use crate::core::config::GrokHardeningConfig;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -30,6 +32,7 @@ struct CompletedExecution {
 #[derive(Clone)]
 pub struct ActiveTurn {
     pub operation_id: fabric::OperationId,
+    pub turn_id: TurnId,
     pub cancel: CancellationToken,
 }
 
@@ -59,6 +62,7 @@ pub struct TurnCoordinator {
     store: Arc<dyn SessionAppendStore>,
     event_spine: Arc<dyn EventSpine>,
     active: Arc<Mutex<HashMap<ActiveTurnKey, ActiveTurn>>>,
+    grok_hardening: GrokHardeningConfig,
 }
 
 impl TurnCoordinator {
@@ -71,6 +75,19 @@ impl TurnCoordinator {
         Self::with_components(kernel, store, event_spine, projections)
     }
 
+    pub fn new_with_grok(
+        kernel: Arc<KernelRuntime>,
+        store: Arc<dyn SessionAppendStore>,
+        grok_hardening: GrokHardeningConfig,
+    ) -> Self {
+        let event_spine = Arc::new(
+            crate::r#impl::events::SqliteEventSpine::open(":memory:")
+                .expect("in-memory event spine"),
+        );
+        let projections = Arc::new(crate::r#impl::events::DefaultEventProjectionSet::in_memory());
+        Self::with_components_and_grok(kernel, store, event_spine, projections, grok_hardening)
+    }
+
     pub fn with_event_spine(
         kernel: Arc<KernelRuntime>,
         store: Arc<dyn SessionAppendStore>,
@@ -80,11 +97,37 @@ impl TurnCoordinator {
         Self::with_components(kernel, store, event_spine, projections)
     }
 
+    pub fn with_event_spine_and_grok(
+        kernel: Arc<KernelRuntime>,
+        store: Arc<dyn SessionAppendStore>,
+        event_spine: Arc<dyn EventSpine>,
+        grok_hardening: GrokHardeningConfig,
+    ) -> Self {
+        let projections = Arc::new(crate::r#impl::events::DefaultEventProjectionSet::in_memory());
+        Self::with_components_and_grok(kernel, store, event_spine, projections, grok_hardening)
+    }
+
     fn with_components(
         kernel: Arc<KernelRuntime>,
         read_store: Arc<dyn SessionAppendStore>,
         event_spine: Arc<dyn EventSpine>,
         projections: Arc<dyn super::event_projection::EventProjectionSink>,
+    ) -> Self {
+        Self::with_components_and_grok(
+            kernel,
+            read_store,
+            event_spine,
+            projections,
+            GrokHardeningConfig::default(),
+        )
+    }
+
+    fn with_components_and_grok(
+        kernel: Arc<KernelRuntime>,
+        read_store: Arc<dyn SessionAppendStore>,
+        event_spine: Arc<dyn EventSpine>,
+        projections: Arc<dyn super::event_projection::EventProjectionSink>,
+        grok_hardening: GrokHardeningConfig,
     ) -> Self {
         let store: Arc<dyn SessionAppendStore> = Arc::new(
             crate::r#impl::session::event_sourced_store::EventSourcedSessionStore::new(
@@ -100,6 +143,7 @@ impl TurnCoordinator {
             store,
             event_spine,
             active: Arc::new(Mutex::new(HashMap::new())),
+            grok_hardening,
         }
     }
 
@@ -124,6 +168,9 @@ impl TurnCoordinator {
         self.active.clone()
     }
 
+    /// Cancel an in-flight turn by operation_id (legacy scan). When
+    /// `grok_hardening.prompt_queue` is enabled, callers should use
+    /// `cancel_operation_by_key` instead to enforce identity-aware lookup.
     pub async fn cancel_operation(&self, operation_id: fabric::OperationId) -> bool {
         let active = self.active.lock().await;
         if let Some(turn) = active
@@ -134,6 +181,71 @@ impl TurnCoordinator {
             true
         } else {
             false
+        }
+    }
+
+    /// Identity-aware cancel: look up by (principal_id, thread_id), verify
+    /// operation_id matches, and optionally validate via `evaluate_cancel`.
+    pub async fn cancel_operation_by_key(
+        &self,
+        principal_id: &PrincipalId,
+        thread_id: &ThreadId,
+        operation_id: fabric::OperationId,
+    ) -> Result<(), anyhow::Error> {
+        let key = ActiveTurnKey {
+            principal_id: principal_id.clone(),
+            thread_id: thread_id.clone(),
+        };
+        let active = self.active.lock().await;
+        let turn = active
+            .get(&key)
+            .ok_or_else(|| anyhow::anyhow!("no active turn for principal {principal_id:?} thread {thread_id:?}"))?;
+        if turn.operation_id != operation_id {
+            anyhow::bail!(
+                "operation_id mismatch: expected {:?}, got {operation_id:?}",
+                turn.operation_id
+            );
+        }
+        // G3 prompt_queue identity validation when flag is enabled.
+        if self.grok_hardening.prompt_queue {
+            self.validate_cancel_authority(principal_id, thread_id, &turn)?;
+        }
+        turn.cancel.cancel();
+        Ok(())
+    }
+
+    /// Construct a synthetic PromptEnvelope (version=0) and run
+    /// `evaluate_cancel` as a lightweight authority check.
+    fn validate_cancel_authority(
+        &self,
+        principal_id: &PrincipalId,
+        thread_id: &ThreadId,
+        _turn: &ActiveTurn,
+    ) -> Result<(), anyhow::Error> {
+        // First cancel on a thread has no persisted envelope yet, so we
+        // synthesize a version-0 placeholder.
+        let synthetic = PromptEnvelope {
+            prompt_id: fabric::types::prompt_queue::PromptId::new(),
+            version: 0,
+            principal_id: principal_id.clone(),
+            connection_id: fabric::ConnectionId(uuid::Uuid::nil()),
+            thread_id: thread_id.clone(),
+            kind: PromptKind::Prompt,
+            content: String::new(),
+            created_at_unix: 0,
+            updated_at_unix: 0,
+            state: PromptState::Queued,
+            idempotency_key: String::new(),
+        };
+        match evaluate_cancel(&synthetic, principal_id, 0) {
+            fabric::types::prompt_queue::QueueOpResult::Ok { .. } => Ok(()),
+            fabric::types::prompt_queue::QueueOpResult::Rejected { reason } => {
+                anyhow::bail!("cancel rejected by prompt_queue authority: {reason}")
+            }
+            fabric::types::prompt_queue::QueueOpResult::Conflict { .. } => {
+                // Version-0 synthetic can't conflict; treat as rejection.
+                anyhow::bail!("cancel rejected by prompt_queue authority: version conflict on synthetic envelope")
+            }
         }
     }
 
@@ -162,12 +274,14 @@ impl TurnCoordinator {
         self.kernel.start_operation(operation.id).await?;
         request.operation_id = operation.id;
         request.context.turn_id = Some(TurnId::new());
+        let turn_id = request.context.turn_id.unwrap_or_else(|| TurnId::new());
         let cancel = CancellationToken::new();
         let active_key = ActiveTurnKey::from_request(&request);
         self.active.lock().await.insert(
             active_key.clone(),
             ActiveTurn {
                 operation_id: operation.id,
+                turn_id: turn_id,
                 cancel: cancel.clone(),
             },
         );

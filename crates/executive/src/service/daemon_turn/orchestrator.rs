@@ -1,9 +1,10 @@
 //! Daemon turn orchestration over narrow lifecycle and pipeline resources.
 
+use crate::core::config::GrokHardeningConfig;
 use crate::service::turn_coordinator::TurnCoordinator;
 use crate::service::TurnPipeline;
 use aletheon_kernel::KernelRuntime;
-use fabric::{OperationId, ProcessId, ProcessSignal};
+use fabric::{OperationId, PrincipalId, ProcessId, ProcessSignal, ThreadId};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -17,6 +18,7 @@ pub struct DaemonTurnResources {
     pub pipeline: Arc<TurnPipeline>,
     pub coordinator: Arc<TurnCoordinator>,
     pub session_service: Arc<crate::service::session_service::SessionService>,
+    pub grok_hardening: GrokHardeningConfig,
 }
 
 pub struct DaemonTurnOrchestrator {
@@ -27,6 +29,8 @@ pub struct DaemonTurnOrchestrator {
     pub(crate) pipeline: Arc<TurnPipeline>,
     pub(crate) coordinator: Arc<TurnCoordinator>,
     pub(crate) session_service: Arc<crate::service::session_service::SessionService>,
+    #[allow(dead_code)]
+    pub(crate) grok_hardening: GrokHardeningConfig,
 }
 
 impl DaemonTurnOrchestrator {
@@ -39,6 +43,7 @@ impl DaemonTurnOrchestrator {
             pipeline: resources.pipeline,
             coordinator: resources.coordinator,
             session_service: resources.session_service,
+            grok_hardening: resources.grok_hardening,
         }
     }
 
@@ -62,7 +67,7 @@ impl DaemonTurnOrchestrator {
         self.kernel.wait_operation(operation_id).await
     }
 
-    /// Cancel an in-flight turn operation.
+    /// Cancel an in-flight turn operation (legacy: operation_id only).
     ///
     /// 1. Cancels the per-turn `OperationScope`'s `CancellationToken` so the
     ///    react task can cooperatively exit before its next tool call.
@@ -74,6 +79,21 @@ impl DaemonTurnOrchestrator {
         } else {
             anyhow::bail!("turn operation is not active")
         }
+    }
+
+    /// Cancel an in-flight turn with identity-aware lookup (G3 prompt_queue).
+    ///
+    /// When `grok_hardening.prompt_queue` is enabled, this validates the
+    /// cancel authority via `evaluate_cancel` before cancelling.
+    pub async fn cancel_turn_by_key(
+        &self,
+        principal_id: &PrincipalId,
+        thread_id: &ThreadId,
+        operation_id: OperationId,
+    ) -> anyhow::Result<()> {
+        self.coordinator
+            .cancel_operation_by_key(principal_id, thread_id, operation_id)
+            .await
     }
 
     /// Signal a process to exit (Terminate).

@@ -64,6 +64,8 @@ impl RequestHandler {
     ///
     /// JSON-RPC params:
     ///   operation_id: string (UUID) — the operation to cancel.
+    ///   thread_id: string (optional) — thread identifier for identity-aware cancel.
+    ///   turn_id: string (optional) — turn identifier for identity-aware cancel.
     ///
     /// Cancels the per-turn OperationScope's CancellationToken (cooperative)
     /// and propagates cancellation through the kernel operation tree.
@@ -91,9 +93,25 @@ impl RequestHandler {
             }
         };
 
-        match self.ports.turn.cancel(operation_id).await {
+        let thread_id = request["params"]["thread_id"].as_str().unwrap_or("");
+        let turn_id = request["params"]["turn_id"].as_str().unwrap_or("");
+
+        let result = if self.grok_hardening.prompt_queue && !thread_id.is_empty() {
+            // G3 identity-aware cancel: parse principal from connection context
+            // and use thread_id + operation_id for lookup.
+            self.ports.turn.cancel_by_key(
+                fabric::PrincipalId("local".into()),
+                thread_id.to_string(),
+                operation_id,
+            ).await
+        } else {
+            // Legacy cancel: operation_id only.
+            self.ports.turn.cancel(operation_id).await
+        };
+
+        match result {
             Ok(()) => {
-                info!(?operation_id, "turn.cancel succeeded");
+                info!(?operation_id, thread_id, turn_id, "turn.cancel succeeded");
                 json!({
                     "jsonrpc": "2.0",
                     "id": id,

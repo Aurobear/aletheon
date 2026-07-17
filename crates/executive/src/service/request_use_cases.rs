@@ -14,7 +14,7 @@ use fabric::ui_event::InterruptReason;
 use fabric::{
     Clock, EvolutionLogEntry, ExternalIdentityState, ExternalScope, GrantState, OperationId,
     OperationResult, PrincipalContext, PrincipalId, ProcessId, ReflectionEntry, ReflectionTrigger,
-    SessionId, LOCAL_OWNER_PRINCIPAL,
+    SessionId, ThreadId, LOCAL_OWNER_PRINCIPAL,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -446,8 +446,15 @@ pub trait TurnUseCases: Send + Sync {
     ) -> serde_json::Value;
     async fn wait(&self, id: OperationId) -> anyhow::Result<OperationResult>;
     async fn cancel(&self, id: OperationId) -> anyhow::Result<()>;
+    async fn cancel_by_key(
+        &self,
+        principal_id: PrincipalId,
+        thread_id: String,
+        operation_id: OperationId,
+    ) -> anyhow::Result<()>;
     async fn exit(&self, id: ProcessId) -> anyhow::Result<()>;
     async fn cancel_current(&self);
+    async fn cancel_current_with_thread(&self, thread_id: String);
     async fn session_resume(&self, id: SessionId) -> anyhow::Result<ResumeResult>;
     async fn session_fork(
         &self,
@@ -502,6 +509,17 @@ impl TurnUseCases for ProductionTurnUseCases {
     async fn cancel(&self, id: OperationId) -> anyhow::Result<()> {
         self.orchestrator.cancel_turn(id).await
     }
+    async fn cancel_by_key(
+        &self,
+        principal_id: PrincipalId,
+        thread_id: String,
+        operation_id: OperationId,
+    ) -> anyhow::Result<()> {
+        let tid = ThreadId(thread_id);
+        self.orchestrator
+            .cancel_turn_by_key(&principal_id, &tid, operation_id)
+            .await
+    }
     async fn exit(&self, id: ProcessId) -> anyhow::Result<()> {
         self.orchestrator.exit_process(id).await
     }
@@ -512,6 +530,15 @@ impl TurnUseCases for ProductionTurnUseCases {
         if let Some(token) = self.cancel_token.lock().await.take() {
             token.cancel();
         }
+    }
+    async fn cancel_current_with_thread(&self, thread_id: String) {
+        self.runtime_port
+            .request_interrupt(InterruptReason::Timeout)
+            .await;
+        if let Some(token) = self.cancel_token.lock().await.take() {
+            token.cancel();
+        }
+        let _ = thread_id;
     }
     async fn session_resume(&self, id: SessionId) -> anyhow::Result<ResumeResult> {
         self.sessions.resume(&id).await
