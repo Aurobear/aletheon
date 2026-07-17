@@ -46,7 +46,8 @@ before a disposable host exists, but are not release approval.
 ### Credential-free disposable-host lane
 
 Inside a freshly booted, virtualization-detectable systemd VM/container, set
-`ALETHEON_DISPOSABLE_HOST=1`, supply `ALETHEON_RELEASE_BINARY`, and run
+`ALETHEON_DISPOSABLE_HOST=1`, supply distinct `ALETHEON_BASELINE_BINARY` and
+`ALETHEON_RELEASE_BINARY` artifacts, and run
 `tests/production/install_upgrade_restart.sh`. The script installs the actual
 binary and checked-in units, verifies readiness, controlled restart, ownership,
 modes, AF_UNIX exposure, journal output, SQLite integrity, forward upgrade, and
@@ -69,12 +70,41 @@ evidence, SubAgent lifecycle records, and TUI reconnect/final-answer durability.
 Missing credentials produce `BLOCKED` and a nonzero exit; raw mailbox data is
 not emitted into the report.
 
-The failure lane additionally requires a real
-`ALETHEON_PRODUCTION_FAILURE_DRIVER`. The driver establishes and verifies the
-actual daemon boundary for event append, memory lease, remote GBrain success,
-and Agent runtime completion. It must also provide bounded disposable-scope
-queue-full, disk-full, corrupt-response, provider-timeout, and disconnect
-receipts. A mock driver cannot establish release evidence.
+The failure lane additionally requires a real executable
+`ALETHEON_PRODUCTION_FAILURE_DRIVER`. Every invocation is terminated after
+`ALETHEON_FAILURE_DRIVER_TIMEOUT_SECS` (default 120 seconds, maximum 600).
+The matrix exports the selected user/UID, user and machine unit/socket/state
+roots, peer-user state root, candidate SHA-256 and canonical provenance JSON as
+`ALETHEON_FAILURE_*`; the driver must act on those exact installed boundaries.
+
+The driver protocol is:
+
+```text
+prepare PHASE BEFORE.json
+verify PHASE BEFORE.json AFTER.json
+inject FAILURE RECEIPT.json
+recover FAILURE RECEIPT.json
+backup-matching BACKUP_ROOT BACKUP.json
+restore-matching BACKUP.json RESTORE.json
+compare-v01 RESTORE.json V01.json COMPARISON.json
+```
+
+`PHASE` is one of `event_append`, `memory_lease`, `gbrain_remote_success` or
+`agent_runtime_completion`; `FAILURE` is one of `queue_full`, `disk_full`,
+`corrupt_supplement`, `provider_timeout` or `tui_disconnect`. Each receipt must
+copy the exported provenance and candidate digest, contain the matrix-verifiable
+machine/target-user/peer-user state hashes, set `cross_scope_leak` to `false`,
+and contain an empty `ignored_cases` array. Prepare/verify and inject/recover
+pairs must preserve one non-empty `acknowledged_work.id` and advance its state
+from acknowledged/observed to settled without silent loss.
+
+`backup-matching` must create the requested non-symlink backup root and return a
+non-empty `backup_id`, `status: "complete"`, and
+`matching_binary_and_state: true`. `restore-matching` must restore that same
+backup ID with the candidate binary and return `status: "restored"`, matching
+state hashes and fresh runtime provenance. Only then may `compare-v01` compare
+the restored installed state with the V01 projections. A mock driver or a JSON
+receipt that is not bound to these identities cannot establish release evidence.
 
 ## Aggregate release gate
 
@@ -106,6 +136,27 @@ Installed-host and failure lanes write under a unique guest-local
 the gate copies those receipts and logs into `target/release-acceptance/guest`
 and records the original guest path without using the source checkout as the
 rollback staging area.
+
+### Aggregate receipt provenance
+
+The installed-host drill proves a matching baseline rollback and then reapplies
+the candidate through the production upgrade path before returning. The
+aggregate gate rejects the run unless the monitor preflight
+`binary_sha256`, the installed-host receipt `candidate_sha256`, and both live
+processes named by the failure receipt resolve to that same candidate digest.
+
+The final operator receipt embeds a release-case inventory derived from V01,
+the installed-host lane, all four named monitor scenarios, and the failure
+lane. `ignored_release_cases` is calculated from that validated inventory; it
+is not a constant. Any failed, blocked, skipped, or ignored inventory entry
+prevents receipt creation.
+
+`lane_evidence` records the SHA-256 digest and bundle-relative path for the V01
+report and recipe receipt, migration receipt, installed-host receipt, candidate
+activation receipt, monitor report, failure receipt, architecture receipt,
+dependency tree, and case inventory. The operator receipt also records the
+digest of this lane-evidence manifest so copied guest artifacts can be checked
+without trusting path names or a friendly `PASS` string alone.
 
 ## Rollback decision
 
