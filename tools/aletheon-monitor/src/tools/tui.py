@@ -10,6 +10,7 @@ from pathlib import Path
 from .. import frame as frame_mod
 from .. import tui_checks
 from .. import tui_session as ts
+from ..client import default_socket_path
 
 _EVENT_PATH = Path(tempfile.gettempdir()) / "aletheon-tui-debug-events.jsonl"
 
@@ -19,7 +20,7 @@ def _tui_cmd() -> str:
     override = os.environ.get("ALETHEON_TUI_CMD")
     if override:
         return override
-    sock = os.environ.get("ALETHEON_SOCKET", "/run/aletheon/aletheon.sock")
+    sock = os.environ.get("ALETHEON_SOCKET", default_socket_path())
     return f"aletheon --socket {sock} --record-events {_EVENT_PATH}"
 
 

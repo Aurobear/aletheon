@@ -9,29 +9,51 @@ import asyncio
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import time
 import uuid
 from pathlib import Path
 
 from .tools import tui
+from .client import default_socket_path
 
 
 def _command(*args: str, cwd: str | None = None) -> str:
     return subprocess.check_output(args, cwd=cwd, text=True, stderr=subprocess.STDOUT).strip()
 
 
+def _socket_provenance() -> dict:
+    path = Path(os.environ.get("ALETHEON_SOCKET", default_socket_path()))
+    metadata = path.stat()
+    if not stat.S_ISSOCK(metadata.st_mode):
+        raise RuntimeError(f"installed user endpoint is not a socket: {path}")
+    if stat.S_IMODE(metadata.st_mode) != 0o600 or metadata.st_uid != os.geteuid():
+        raise RuntimeError(f"installed user endpoint has unsafe ownership or mode: {path}")
+    return {"path": str(path), "uid": metadata.st_uid,
+            "gid": metadata.st_gid, "mode": "0600"}
+
+
 def preflight(source_root: str) -> dict:
     root = os.path.realpath(source_root)
     binary = _command("bash", "-lc", "command -v aletheon")
     digest = hashlib.sha256(Path(binary).read_bytes()).hexdigest()
+    service_state = _command("systemctl", "--user", "is-active", "aletheon.service")
+    socket_state = _command("systemctl", "--user", "is-active", "aletheon.socket")
+    if service_state != "active" or socket_state != "active":
+        raise RuntimeError("installed per-user runtime is not active")
     return {
         "source_root": root,
-        "source_commit": _command("git", "rev-parse", "HEAD", cwd=root),
+        "source_commit": _command(
+            "git", "-c", f"safe.directory={root}", "rev-parse", "HEAD", cwd=root
+        ),
         "binary": binary,
         "binary_sha256": digest,
+        "runtime_uid": os.geteuid(),
+        "socket": _socket_provenance(),
         "unit": _command(
-            "systemctl", "show", "aletheon", "-p", "ActiveState",
+            "systemctl", "--user", "show", "aletheon.service", "aletheon.socket",
+            "-p", "Id", "-p", "ActiveState",
             "-p", "ActiveEnterTimestamp", "-p", "ExecStart", "-p", "ReadWritePaths"
         ),
     }
