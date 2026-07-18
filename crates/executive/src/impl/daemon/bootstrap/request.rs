@@ -14,7 +14,7 @@ use anyhow::Context;
 use cognit::core::reflector::Reflector;
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
-use corpus::security::sandbox::executor::{create_default_executor, SandboxPreference};
+use corpus::security::sandbox::executor::{create_executor_with_front_backend, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
 use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
@@ -440,11 +440,48 @@ impl RequestHandler {
 
         // Security
         let sandbox_pref = SandboxPreference::from_str(&config.sandbox_preference);
-        let sandbox = create_default_executor(sandbox_pref, clock.clone());
+        let mut structured_exec_backend: Option<Arc<dyn corpus::security::StructuredToolSandbox>> =
+            None;
+        let exec_backend: Option<Box<dyn fabric::SandboxBackend>> = if grok_hardening
+            .streaming_tools
+        {
+            let binary_path = std::env::var_os("ALETHEON_EXEC_SERVER_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::env::current_exe()
+                        .ok()
+                        .and_then(|path| path.parent().map(|parent| parent.join("exec-server")))
+                        .unwrap_or_else(|| std::path::PathBuf::from("exec-server"))
+                });
+            let workspace = std::path::PathBuf::from(&config.working_dir)
+                .canonicalize()
+                .context("canonicalize exec-server workspace root")?;
+            let backend = crate::r#impl::channel::exec_server_client::ExecServerSandboxBackend::new(
+                crate::r#impl::channel::exec_server_client::ExecServerConfig {
+                    binary_path: binary_path.to_string_lossy().into_owned(),
+                    shared_secret: format!(
+                        "{}{}",
+                        uuid::Uuid::new_v4().simple(),
+                        uuid::Uuid::new_v4().simple()
+                    ),
+                    startup_timeout: std::time::Duration::from_secs(5),
+                    request_timeout: std::time::Duration::from_secs(30),
+                    workspace_roots: vec![workspace],
+                },
+            );
+            structured_exec_backend = Some(Arc::new(backend.clone()));
+            Some(Box::new(backend))
+        } else {
+            None
+        };
+        let sandbox = create_executor_with_front_backend(sandbox_pref, clock.clone(), exec_backend);
         let audit_path = data_dir.join("audit.jsonl");
         let audit_logger = AuditLogger::new(audit_path)?;
         let mut runner = ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
             .with_approval_gate(approval_gate);
+        if let Some(structured) = structured_exec_backend {
+            runner = runner.with_structured_sandbox(structured);
+        }
         if grok_hardening.sandbox_profiles {
             runner = runner.with_sandbox_profiles(sandbox_profiles);
         }

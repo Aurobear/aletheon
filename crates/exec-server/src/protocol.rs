@@ -94,6 +94,8 @@ pub struct ReadChunk {
     pub data: String,
     pub stream: String, // "stdout" or "stderr"
     pub eof: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 
 impl Response {

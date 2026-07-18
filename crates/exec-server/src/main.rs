@@ -134,7 +134,7 @@ fn dispatch(
 ) -> protocol::Response {
     match req.method.as_str() {
         "ping" => protocol::Response::ok(req.id.clone(), serde_json::json!({"status": "ok"})),
-        "process/start" => handle_process_start(req, pm, rt, connection_owner),
+        "process/start" => handle_process_start(req, pm, rt, connection_owner, workspace_roots),
         "process/read" => handle_process_read(req, pm, rt),
         "process/write" => handle_process_write(req, pm, rt),
         "process/signal" => handle_process_signal(req, pm, rt),
@@ -237,6 +237,7 @@ fn handle_process_start(
     pm: &process::ProcessManager,
     rt: &tokio::runtime::Runtime,
     connection_owner: &str,
+    workspace_roots: &filesystem::WorkspaceRoots,
 ) -> protocol::Response {
     let start_req: protocol::StartProcessRequest = match serde_json::from_value(req.params.clone())
     {
@@ -250,6 +251,16 @@ fn handle_process_start(
         }
     };
 
+    let working_dir = match workspace_roots
+        .execution_dir(start_req.working_dir.as_deref().map(std::path::Path::new))
+    {
+        Ok(path) => path,
+        Err(message) => {
+            return protocol::Response::err(req.id.clone(), protocol::FS_ACCESS_DENIED, message)
+        }
+    };
+    let mut start_req = start_req;
+    start_req.working_dir = Some(working_dir.to_string_lossy().into_owned());
     match rt.block_on(pm.spawn(connection_owner, &start_req)) {
         Ok(handle) => protocol::Response::ok(
             req.id.clone(),

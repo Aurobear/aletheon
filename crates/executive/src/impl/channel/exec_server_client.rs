@@ -16,6 +16,7 @@ const PROTOCOL_VERSION: u64 = 1;
 
 /// Configuration for spawning and communicating with the exec-server process.
 #[allow(dead_code)]
+#[derive(Clone)]
 pub(crate) struct ExecServerConfig {
     pub binary_path: String,
     pub shared_secret: String,
@@ -29,6 +30,20 @@ pub(crate) struct ProcessReadChunk {
     pub data: String,
     pub stream: String,
     pub eof: bool,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProcessHandle {
+    handle_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApplyPatchResponse {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +79,9 @@ pub(crate) struct ExecServerClient {
 impl ExecServerClient {
     /// Spawn the exec-server and perform the exact-secret handshake.
     pub async fn spawn(config: ExecServerConfig) -> Result<Self> {
+        if config.binary_path.is_empty() {
+            bail!("exec-server binary path must not be empty");
+        }
         if config.shared_secret.is_empty() {
             bail!("exec-server shared secret must not be empty");
         }
@@ -133,6 +151,33 @@ impl ExecServerClient {
         serde_json::from_value(response).context("decode exec-server process/read response")
     }
 
+    pub async fn process_start(
+        &mut self,
+        command: &str,
+        args: &[String],
+        working_dir: &std::path::Path,
+        env: &std::collections::BTreeMap<String, String>,
+        timeout: Duration,
+    ) -> Result<String> {
+        let result = self
+            .request(
+                "process/start",
+                serde_json::json!({
+                    "command": command,
+                    "args": args,
+                    "working_dir": working_dir,
+                    "env": env,
+                    // The caller enforces the exact wall-clock deadline. Keep
+                    // the server-side watchdog one second behind it so it is
+                    // an orphan-safety backstop rather than racing the client
+                    // and turning a normal timeout into PROCESS_NOT_FOUND.
+                    "timeout_secs": timeout.as_secs().saturating_add(1).max(1),
+                }),
+            )
+            .await?;
+        Ok(serde_json::from_value::<ProcessHandle>(result)?.handle_id)
+    }
+
     pub async fn process_kill(&mut self, handle_id: &str) -> Result<()> {
         if handle_id.is_empty() {
             bail!("exec-server process handle must not be empty");
@@ -143,6 +188,15 @@ impl ExecServerClient {
         if response.get("status").and_then(serde_json::Value::as_str) != Some("terminated") {
             bail!("exec-server process/kill returned an invalid response");
         }
+        Ok(())
+    }
+
+    pub async fn process_write(&mut self, handle_id: &str, data: &str) -> Result<()> {
+        self.request(
+            "process/write",
+            serde_json::json!({"handle_id": handle_id, "data": data}),
+        )
+        .await?;
         Ok(())
     }
 
@@ -225,6 +279,294 @@ impl ExecServerClient {
     }
 }
 
+/// Sandbox backend backed by a reconnecting exec-server client. A failed
+/// health preflight reconnects once before process/start; failures after start
+/// never replay the command, preventing duplicate side effects.
+pub(crate) struct ExecServerSandboxBackend {
+    config: ExecServerConfig,
+    client: std::sync::Arc<tokio::sync::Mutex<Option<ExecServerClient>>>,
+}
+
+impl Clone for ExecServerSandboxBackend {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            client: self.client.clone(),
+        }
+    }
+}
+
+impl ExecServerSandboxBackend {
+    pub fn new(config: ExecServerConfig) -> Self {
+        Self {
+            config,
+            client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
+    async fn ensure_connected(
+        &self,
+        guard: &mut tokio::sync::MutexGuard<'_, Option<ExecServerClient>>,
+    ) -> Result<()> {
+        let healthy = match guard.as_mut() {
+            Some(client) => client.ping().await.is_ok(),
+            None => false,
+        };
+        if !healthy {
+            **guard = Some(ExecServerClient::spawn(self.config.clone()).await?);
+        }
+        Ok(())
+    }
+
+    async fn execute_inner(
+        &self,
+        cmd: &str,
+        config: &fabric::SandboxConfig,
+        timeout: Duration,
+        sink: Option<&fabric::ToolEventSink>,
+    ) -> Result<fabric::SandboxResult> {
+        let mut guard = self.client.lock().await;
+        self.ensure_connected(&mut guard).await?;
+        let client = guard.as_mut().expect("client installed");
+        let started = std::time::Instant::now();
+        let handle = client
+            .process_start(
+                "bash",
+                &["-c".into(), cmd.into()],
+                config.working_dir(),
+                &config.environment,
+                timeout,
+            )
+            .await?;
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let read_result = tokio::time::timeout(timeout, async {
+            loop {
+                let chunks = client.process_read(&handle).await?;
+                let mut terminal = None;
+                for chunk in chunks {
+                    if !chunk.data.is_empty() {
+                        match chunk.stream.as_str() {
+                            "stdout" => stdout.push_str(&chunk.data),
+                            "stderr" => stderr.push_str(&chunk.data),
+                            _ => anyhow::bail!("exec-server returned unknown output stream"),
+                        }
+                        if let Some(sink) = sink {
+                            for line in chunk.data.lines() {
+                                let _ = sink.progress(fabric::ToolProgress::Text(line.to_owned()));
+                            }
+                        }
+                    }
+                    terminal = terminal.or(chunk.exit_code);
+                }
+                if let Some(code) = terminal {
+                    break Ok(code);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        let exit_code = match read_result {
+            Ok(Ok(code)) => {
+                client
+                    .process_kill(&handle)
+                    .await
+                    .context("release completed exec-server process handle")?;
+                code
+            }
+            Ok(Err(error)) => {
+                // Do not leak a live handle when output decoding or transport
+                // fails after process/start. The original failure remains the
+                // authoritative result; cleanup is best-effort.
+                let _ = client.process_kill(&handle).await;
+                return Err(error);
+            }
+            Err(_) => {
+                client
+                    .process_kill(&handle)
+                    .await
+                    .context("terminate timed-out exec-server process")?;
+                -1
+            }
+        };
+        Ok(fabric::SandboxResult {
+            stdout,
+            stderr,
+            exit_code,
+            backend_used: "exec-server".into(),
+            isolation_level: fabric::IsolationLevel::Process,
+            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl corpus::security::StructuredToolSandbox for ExecServerSandboxBackend {
+    async fn execute(
+        &self,
+        tool_name: &str,
+        input: serde_json::Value,
+        context: &fabric::ToolContext,
+        sandbox: &fabric::SandboxConfig,
+    ) -> std::result::Result<fabric::ToolResult, String> {
+        if tool_name == "apply_patch" {
+            if input
+                .get("base_dir")
+                .and_then(serde_json::Value::as_str)
+                .is_some()
+            {
+                return Err(
+                    "exec-server apply_patch does not yet support base_dir override".into(),
+                );
+            }
+            let patch = input
+                .get("patch")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    "exec-server apply_patch requires textual patch input".to_string()
+                })?;
+            let started = context.clock.mono_now();
+            let mut guard = self.client.lock().await;
+            self.ensure_connected(&mut guard)
+                .await
+                .map_err(|error| error.to_string())?;
+            let response = guard
+                .as_mut()
+                .expect("client installed")
+                .request(
+                    "fs/applyPatch",
+                    serde_json::json!({
+                        "patch": patch,
+                        "working_dir": sandbox.working_dir(),
+                        "deny_exact": sandbox
+                            .policy
+                            .as_ref()
+                            .map(|policy| policy.deny_exact.as_slice())
+                            .unwrap_or(&[]),
+                        "write_roots": sandbox
+                            .policy
+                            .as_ref()
+                            .map(|policy| policy.read_write_roots.as_slice()),
+                    }),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let result: ApplyPatchResponse =
+                serde_json::from_value(response).map_err(|error| error.to_string())?;
+            return Ok(fabric::ToolResult {
+                content: format!("{}\n{}", result.stdout, result.stderr)
+                    .trim()
+                    .to_string(),
+                is_error: result.exit_code != 0,
+                metadata: fabric::ToolResultMeta {
+                    execution_time_ms: context.clock.mono_now().0.saturating_sub(started.0),
+                    truncated: false,
+                },
+            });
+        }
+        if tool_name != "file_write" {
+            return Err(format!(
+                "exec-server structured adapter does not support {tool_name}; refusing in-process fallback"
+            ));
+        }
+        let path = input
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "file_write path is required".to_string())?;
+        let content = input
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "file_write content is required".to_string())?;
+        let workspace = context
+            .effective_workspace_policy()
+            .map_err(|e| e.to_string())?;
+        let path = if std::path::Path::new(path).is_absolute() {
+            std::path::PathBuf::from(path)
+        } else {
+            workspace.cwd().join(path)
+        };
+        let started = context.clock.mono_now();
+        let mut guard = self.client.lock().await;
+        self.ensure_connected(&mut guard)
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = guard
+            .as_mut()
+            .unwrap()
+            .request(
+                "fs/write",
+                serde_json::json!({
+                    "path": path,
+                    "content": content,
+                    "deny_exact": sandbox
+                        .policy
+                        .as_ref()
+                        .map(|policy| policy.deny_exact.as_slice())
+                        .unwrap_or(&[]),
+                    "write_roots": sandbox
+                        .policy
+                        .as_ref()
+                        .map(|policy| policy.read_write_roots.as_slice()),
+                }),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let bytes = result
+            .get("bytes_written")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        Ok(fabric::ToolResult {
+            content: format!("Wrote {bytes} bytes to {}", path.display()),
+            is_error: false,
+            metadata: fabric::ToolResultMeta {
+                execution_time_ms: context.clock.mono_now().0.saturating_sub(started.0),
+                truncated: false,
+            },
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl fabric::SandboxBackend for ExecServerSandboxBackend {
+    fn name(&self) -> &str {
+        "exec-server"
+    }
+    fn isolation_level(&self) -> fabric::IsolationLevel {
+        fabric::IsolationLevel::Process
+    }
+    fn is_available(&self) -> bool {
+        true
+    }
+    fn capabilities(&self) -> fabric::SandboxCapabilities {
+        fabric::SandboxCapabilities {
+            filesystem_isolation: false,
+            network_isolation: false,
+            resource_limits: false,
+            seccomp_filter: false,
+            limitations: vec![
+                "network isolation is delegated to the selected profile backend".into(),
+            ],
+        }
+    }
+    async fn execute(
+        &self,
+        cmd: &str,
+        config: &fabric::SandboxConfig,
+        timeout: Duration,
+    ) -> Result<fabric::SandboxResult> {
+        self.execute_inner(cmd, config, timeout, None).await
+    }
+    async fn execute_streaming(
+        &self,
+        cmd: &str,
+        config: &fabric::SandboxConfig,
+        timeout: Duration,
+        sink: &fabric::ToolEventSink,
+    ) -> Result<fabric::SandboxResult> {
+        self.execute_inner(cmd, config, timeout, Some(sink)).await
+    }
+}
+
 fn decode_response(expected_id: u64, line: &str) -> Result<serde_json::Value> {
     let response: RpcResponse =
         serde_json::from_str(line).context("decode exec-server response")?;
@@ -259,13 +601,14 @@ mod tests {
         let chunks: Vec<ProcessReadChunk> = serde_json::from_value(
             decode_response(
                 2,
-                r#"{"jsonrpc":"2.0","id":2,"result":[{"data":"out","stream":"stdout","eof":true}]}"#,
+                r#"{"jsonrpc":"2.0","id":2,"result":[{"data":"out","stream":"stdout","eof":true,"exit_code":7}]}"#,
             )
             .unwrap(),
         )
         .unwrap();
         assert_eq!(chunks[0].data, "out");
         assert!(chunks[0].eof);
+        assert_eq!(chunks[0].exit_code, Some(7));
         assert_eq!(
             decode_response(
                 3,

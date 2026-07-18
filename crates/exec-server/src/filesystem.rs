@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     fs::OpenOptions,
-    io::{Read, Seek, SeekFrom},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -57,6 +57,15 @@ impl WorkspaceRoots {
             .map_err(|e| format!("path {} is unavailable: {e}", path.display()))?;
         self.ensure_contained(canonical)
     }
+
+    pub fn execution_dir(&self, requested: Option<&Path>) -> Result<PathBuf, String> {
+        let path = requested.unwrap_or(&self.roots[0]);
+        let canonical = self.existing_path(path)?;
+        if !canonical.is_dir() {
+            return Err("process working_dir must be a directory".into());
+        }
+        Ok(canonical)
+    }
     fn write_path(&self, path: &Path) -> Result<PathBuf, String> {
         if path.exists() {
             return self.existing_path(path);
@@ -70,6 +79,27 @@ impl WorkspaceRoots {
             .canonicalize()
             .map_err(|e| format!("write parent is unavailable: {e}"))?;
         self.ensure_contained(parent.join(name))
+    }
+    fn prospective_write_path(&self, path: &Path) -> Result<PathBuf, String> {
+        if path.exists() || path.parent().is_some_and(Path::exists) {
+            return self.write_path(path);
+        }
+        let mut ancestor = path;
+        let mut missing = Vec::new();
+        while !ancestor.exists() {
+            let name = ancestor
+                .file_name()
+                .ok_or_else(|| "patch target must name an entry".to_string())?;
+            missing.push(name.to_os_string());
+            ancestor = ancestor
+                .parent()
+                .ok_or_else(|| "patch target has no existing ancestor".to_string())?;
+        }
+        let mut resolved = self.existing_path(ancestor)?;
+        for component in missing.iter().rev() {
+            resolved.push(component);
+        }
+        self.ensure_contained(resolved)
     }
     fn ensure_contained(&self, canonical: PathBuf) -> Result<PathBuf, String> {
         self.roots
@@ -109,6 +139,20 @@ struct PathParams {
 struct WriteParams {
     path: PathBuf,
     content: String,
+    #[serde(default)]
+    deny_exact: Vec<PathBuf>,
+    #[serde(default)]
+    write_roots: Option<Vec<PathBuf>>,
+}
+#[derive(Deserialize)]
+struct ApplyPatchParams {
+    patch: String,
+    #[serde(default)]
+    working_dir: Option<PathBuf>,
+    #[serde(default)]
+    deny_exact: Vec<PathBuf>,
+    #[serde(default)]
+    write_roots: Option<Vec<PathBuf>>,
 }
 #[derive(Deserialize)]
 struct ReadChunkParams {
@@ -146,6 +190,7 @@ pub fn handle_fs(
         "fs/read" => read(params, workspace),
         "fs/readChunk" => read_chunk(params, files),
         "fs/write" => write(params, workspace),
+        "fs/applyPatch" => apply_patch(params, workspace),
         "fs/list" => list(params, workspace),
         "fs/metadata" => metadata(params, workspace),
         "fs/walk" => walk(params, workspace),
@@ -194,8 +239,177 @@ fn read(v: &serde_json::Value, w: &WorkspaceRoots) -> Result<serde_json::Value, 
 fn write(v: &serde_json::Value, w: &WorkspaceRoots) -> Result<serde_json::Value, (i32, String)> {
     let p: WriteParams = params(v, "fs/write")?;
     let path = access(w.write_path(&p.path))?;
+    enforce_write_policy(&path, &p.deny_exact, p.write_roots.as_deref())?;
     internal(std::fs::write(path, p.content.as_bytes()), "write")?;
     Ok(serde_json::json!({"bytes_written":p.content.len()}))
+}
+
+fn apply_patch(
+    v: &serde_json::Value,
+    workspace: &WorkspaceRoots,
+) -> Result<serde_json::Value, (i32, String)> {
+    let request: ApplyPatchParams = params(v, "fs/applyPatch")?;
+    if request.patch.is_empty() {
+        return Err((INVALID_PARAMS, "patch must not be empty".into()));
+    }
+    let working_dir = access(workspace.execution_dir(request.working_dir.as_deref()))?;
+    let targets = patch_targets(&request.patch)?;
+    if targets.is_empty() {
+        return Err((
+            INVALID_PARAMS,
+            "patch contains no recognized file targets".into(),
+        ));
+    }
+    for target in &targets {
+        // `write_path` resolves existing symlinks and canonicalizes the parent
+        // of new paths. This rejects absolute/traversal targets and symlink
+        // escapes before the patch process receives any input.
+        let resolved = access(workspace.prospective_write_path(&working_dir.join(target)))?;
+        enforce_write_policy(
+            &resolved,
+            &request.deny_exact,
+            request.write_roots.as_deref(),
+        )?;
+    }
+
+    if request.patch.trim_start().starts_with("*** Begin Patch") {
+        let patch = corpus::tools::tools::structured_patch::parse_structured_patch(&request.patch)
+            .map_err(|error| (INVALID_PARAMS, format!("invalid structured patch: {error}")))?;
+        let result =
+            corpus::tools::tools::structured_patch::execute_structured_patch(&patch, &working_dir);
+        let exit_code = i32::from(!result.failed.is_empty());
+        return Ok(serde_json::json!({
+            "exit_code": exit_code,
+            "stdout": serde_json::to_string_pretty(&result).unwrap_or_default(),
+            "stderr": "",
+            "targets": targets,
+        }));
+    }
+
+    // Unified diffs use the standard patch utility only after every old/new
+    // target has crossed the canonical path and profile checks above. No shell
+    // is involved and the payload is sent over a private stdin pipe.
+    let mut child = std::process::Command::new("patch")
+        .args(["-p1", "--batch", "--forward"])
+        .current_dir(&working_dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            (
+                INTERNAL_ERROR,
+                format!("start unified patch adapter failed: {error}"),
+            )
+        })?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| (INTERNAL_ERROR, "unified patch stdin unavailable".into()))?
+        .write_all(request.patch.as_bytes())
+        .map_err(|error| (INTERNAL_ERROR, format!("write patch input failed: {error}")))?;
+    let output = child.wait_with_output().map_err(|error| {
+        (
+            INTERNAL_ERROR,
+            format!("wait for unified patch adapter failed: {error}"),
+        )
+    })?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Ok(serde_json::json!({
+        "exit_code": output.status.code().unwrap_or(-1),
+        "stdout": stdout,
+        "stderr": stderr,
+        "targets": targets,
+    }))
+}
+
+fn enforce_write_policy(
+    resolved: &Path,
+    deny_exact: &[PathBuf],
+    write_roots: Option<&[PathBuf]>,
+) -> Result<(), (i32, String)> {
+    if deny_exact.iter().any(|deny| {
+        deny.canonicalize()
+            .is_ok_and(|deny| resolved == deny || resolved.starts_with(deny))
+    }) {
+        return Err((
+            FS_ACCESS_DENIED,
+            format!(
+                "write target is denied by sandbox policy: {}",
+                resolved.display()
+            ),
+        ));
+    }
+    if let Some(write_roots) = write_roots {
+        let allowed = write_roots.iter().any(|root| {
+            root.canonicalize()
+                .is_ok_and(|root| resolved.starts_with(root))
+        });
+        if !allowed {
+            return Err((
+                FS_ACCESS_DENIED,
+                format!(
+                    "write target is outside sandbox writable roots: {}",
+                    resolved.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn patch_targets(patch: &str) -> Result<Vec<PathBuf>, (i32, String)> {
+    let mut targets = Vec::new();
+    for line in patch.lines() {
+        let candidate = [
+            "*** Add File: ",
+            "*** Delete File: ",
+            "*** Update File: ",
+            "*** Move to: ",
+            "Add File: ",
+            "Delete File: ",
+            "Update File: ",
+            "Append File: ",
+            "Move to: ",
+            "+++ ",
+            "--- ",
+        ]
+        .iter()
+        .find_map(|prefix| line.strip_prefix(prefix));
+        let Some(candidate) = candidate else {
+            continue;
+        };
+        let candidate = candidate.split('\t').next().unwrap_or("").trim();
+        if candidate == "/dev/null" || candidate.is_empty() {
+            continue;
+        }
+        let candidate = candidate
+            .strip_prefix("a/")
+            .or_else(|| candidate.strip_prefix("b/"))
+            .unwrap_or(candidate);
+        let path = Path::new(candidate);
+        if path.is_absolute()
+            || path.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err((
+                FS_ACCESS_DENIED,
+                format!("patch target is outside the workspace: {candidate}"),
+            ));
+        }
+        let path = path.to_path_buf();
+        if !targets.contains(&path) {
+            targets.push(path);
+        }
+    }
+    Ok(targets)
 }
 fn list(v: &serde_json::Value, w: &WorkspaceRoots) -> Result<serde_json::Value, (i32, String)> {
     let p: PathParams = params(v, "fs/list")?;
@@ -518,5 +732,142 @@ mod tests {
                 matches!(response.result, ResponseResult::Err { ref error } if error.code == FS_ACCESS_DENIED)
             );
         }
+    }
+
+    #[test]
+    fn process_working_directory_is_canonical_and_workspace_confined() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let roots = WorkspaceRoots::new(vec![workspace.clone()]).unwrap();
+        assert!(roots.execution_dir(Some(&outside)).is_err());
+        assert_eq!(
+            roots.execution_dir(None).unwrap(),
+            workspace.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn patch_targets_accept_workspace_relative_formats_and_reject_escape() {
+        assert_eq!(
+            patch_targets("*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch").unwrap(),
+            vec![PathBuf::from("src/lib.rs")]
+        );
+        assert_eq!(
+            patch_targets("--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@").unwrap(),
+            vec![PathBuf::from("src/lib.rs")]
+        );
+        assert!(matches!(
+            patch_targets("*** Begin Patch\n*** Add File: ../outside\n*** End Patch"),
+            Err((FS_ACCESS_DENIED, _))
+        ));
+        assert!(matches!(
+            patch_targets("--- /dev/null\n+++ /tmp/outside\n"),
+            Err((FS_ACCESS_DENIED, _))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn patch_target_symlink_escape_is_denied_before_adapter_spawn() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape")).unwrap();
+        let roots = WorkspaceRoots::new(vec![root.clone()]).unwrap();
+        let result = apply_patch(
+            &serde_json::json!({
+                "working_dir": root,
+                "patch": "*** Begin Patch\n*** Add File: escape/file\n+no\n*** End Patch"
+            }),
+            &roots,
+        );
+        assert!(matches!(result, Err((FS_ACCESS_DENIED, _))));
+        assert!(!outside.join("file").exists());
+    }
+
+    #[test]
+    fn patch_target_under_profile_deny_is_rejected_before_adapter_spawn() {
+        let temp = tempfile::tempdir().unwrap();
+        let denied = temp.path().join("credentials");
+        std::fs::create_dir_all(&denied).unwrap();
+        let roots = WorkspaceRoots::new(vec![temp.path().to_path_buf()]).unwrap();
+        let result = apply_patch(
+            &serde_json::json!({
+                "working_dir": temp.path(),
+                "deny_exact": [denied],
+                "patch": "*** Begin Patch\n*** Add File: credentials/token\n+no\n*** End Patch"
+            }),
+            &roots,
+        );
+        assert!(matches!(result, Err((FS_ACCESS_DENIED, _))));
+    }
+
+    #[test]
+    fn direct_write_obeys_profile_writable_roots_and_deny_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let allowed = temp.path().join("allowed");
+        let denied = allowed.join("credentials");
+        let outside_write_root = temp.path().join("other");
+        std::fs::create_dir_all(&denied).unwrap();
+        std::fs::create_dir_all(&outside_write_root).unwrap();
+        let roots = WorkspaceRoots::new(vec![temp.path().to_path_buf()]).unwrap();
+        assert!(write(
+            &serde_json::json!({
+                "path": allowed.join("ok"),
+                "content": "ok",
+                "write_roots": [&allowed],
+                "deny_exact": [&denied],
+            }),
+            &roots,
+        )
+        .is_ok());
+        assert!(matches!(
+            write(
+                &serde_json::json!({
+                    "path": denied.join("token"),
+                    "content": "no",
+                    "write_roots": [&allowed],
+                    "deny_exact": [&denied],
+                }),
+                &roots,
+            ),
+            Err((FS_ACCESS_DENIED, _))
+        ));
+        assert!(matches!(
+            write(
+                &serde_json::json!({
+                    "path": outside_write_root.join("no"),
+                    "content": "no",
+                    "write_roots": [&allowed],
+                }),
+                &roots,
+            ),
+            Err((FS_ACCESS_DENIED, _))
+        ));
+    }
+
+    #[test]
+    fn structured_patch_is_applied_in_process_through_confined_rpc() {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = WorkspaceRoots::new(vec![temp.path().to_path_buf()]).unwrap();
+        let result = apply_patch(
+            &serde_json::json!({
+                "working_dir": temp.path(),
+                "write_roots": [temp.path()],
+                "patch": "*** Begin Patch\nAdd File: created.txt\n>>>\nhello\n>>>\n*** End Patch"
+            }),
+            &roots,
+        )
+        .unwrap();
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("created.txt")).unwrap(),
+            "hello"
+        );
     }
 }

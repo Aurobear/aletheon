@@ -35,6 +35,7 @@ struct ManagedProcess {
     stdout_eof: bool,
     stderr_eof: bool,
     exited: bool,
+    exit_code: Option<i32>,
     max_output_bytes: u64,
 }
 
@@ -109,6 +110,7 @@ impl ProcessManager {
                 stdout_eof: false,
                 stderr_eof: false,
                 exited: false,
+                exit_code: None,
                 max_output_bytes,
             },
         );
@@ -188,12 +190,14 @@ impl ProcessManager {
                     data,
                     stream: "stdout".into(),
                     eof: proc.stdout_eof,
+                    exit_code: None,
                 });
             } else if proc.stdout_eof && (got_data || proc.start_time.elapsed() > Duration::ZERO) {
                 chunks.push(ReadChunk {
                     data: String::new(),
                     stream: "stdout".into(),
                     eof: true,
+                    exit_code: None,
                 });
             }
         }
@@ -244,20 +248,38 @@ impl ProcessManager {
                     data,
                     stream: "stderr".into(),
                     eof: proc.stderr_eof,
+                    exit_code: None,
                 });
             } else if proc.stderr_eof && got_data {
                 chunks.push(ReadChunk {
                     data: String::new(),
                     stream: "stderr".into(),
                     eof: true,
+                    exit_code: None,
                 });
             }
         }
 
         // Try to reap if both streams are at EOF
         if proc.stdout_eof && proc.stderr_eof && !proc.exited {
-            if let Ok(Some(_)) = proc.child.try_wait() {
+            if let Ok(Some(status)) = proc.child.try_wait() {
                 proc.exited = true;
+                proc.exit_code = status.code().or(Some(-1));
+            }
+        }
+
+        if proc.exited {
+            if chunks.is_empty() {
+                chunks.push(ReadChunk {
+                    data: String::new(),
+                    stream: "stdout".into(),
+                    eof: true,
+                    exit_code: proc.exit_code,
+                });
+            } else {
+                for chunk in &mut chunks {
+                    chunk.exit_code = proc.exit_code;
+                }
             }
         }
 
@@ -614,5 +636,36 @@ mod tests {
         .await
         .expect("configured timeout must remove the managed process");
         assert!(process_is_gone(handle.pid));
+    }
+
+    #[tokio::test]
+    async fn read_reports_authoritative_exit_code_after_both_streams_close() {
+        let manager = ProcessManager::new();
+        let request = StartProcessRequest {
+            command: "/bin/sh".into(),
+            args: vec!["-c".into(), "printf out; printf err >&2; exit 7".into()],
+            env: HashMap::new(),
+            working_dir: None,
+            timeout_secs: None,
+            max_output_bytes: None,
+        };
+        let handle = manager.spawn("connection-a", &request).await.unwrap();
+        let exit_code = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(code) = manager
+                    .read(&handle.handle_id)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .find_map(|chunk| chunk.exit_code)
+                {
+                    break code;
+                }
+            }
+        })
+        .await
+        .expect("exit code must become observable");
+        assert_eq!(exit_code, 7);
+        manager.terminate(&handle.handle_id).await.unwrap();
     }
 }
