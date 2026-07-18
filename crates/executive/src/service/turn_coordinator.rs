@@ -340,14 +340,41 @@ impl TurnCoordinator {
         let turn_id = request.context.turn_id.unwrap_or_default();
         let cancel = CancellationToken::new();
         let active_key = ActiveTurnKey::from_request(&request);
-        self.active.lock().await.insert(
-            active_key.clone(),
-            ActiveTurn {
-                operation_id: operation.id,
-                turn_id,
-                cancel: cancel.clone(),
-            },
-        );
+        {
+            // Admission and insertion share one lock. The earlier check is a
+            // cheap fast path only; this is the authoritative race-free gate.
+            let mut active = self.active.lock().await;
+            if self.backpressure.is_exceeded(active.len()) {
+                drop(active);
+                let _ = self
+                    .kernel
+                    .cancel_operation(
+                        operation.id,
+                        CancelReason::Other("server overloaded".into()),
+                    )
+                    .await;
+                anyhow::bail!(self.backpressure.overload_message());
+            }
+            if active.contains_key(&active_key) {
+                drop(active);
+                let _ = self
+                    .kernel
+                    .cancel_operation(
+                        operation.id,
+                        CancelReason::Other("thread already has an active turn".into()),
+                    )
+                    .await;
+                anyhow::bail!("thread already has an active turn");
+            }
+            active.insert(
+                active_key.clone(),
+                ActiveTurn {
+                    operation_id: operation.id,
+                    turn_id,
+                    cancel: cancel.clone(),
+                },
+            );
+        }
 
         let outcome = self
             .run_started_turn(&request, cancel.clone(), runner)

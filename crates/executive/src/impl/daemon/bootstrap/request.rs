@@ -1110,6 +1110,7 @@ impl RequestHandler {
                 grok_hardening.clone(),
             )
             .with_event_projections(event_projections.clone())
+            .with_backpressure(config.backpressure.clone())
             .with_session_input(session_input.clone()),
         );
         let workspace_checkpoint = Arc::new(

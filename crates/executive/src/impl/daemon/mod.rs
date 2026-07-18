@@ -52,6 +52,8 @@ pub struct DaemonConfig {
     pub gbrain_memory: cognit::config::McpMemoryConfig,
     /// Typed deployment paths, quotas, integrations, and health policy.
     pub deployment: cognit::config::DeploymentConfig,
+    /// Host-layer turn admission limits from the effective AppConfig.
+    pub backpressure: crate::core::config::BackpressureConfig,
     /// Root-scoped multi-Agent topology and rollout limits.
     pub agent_admission: cognit::config::AgentAdmissionConfig,
 }

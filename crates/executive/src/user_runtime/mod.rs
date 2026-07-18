@@ -79,6 +79,7 @@ impl UserRuntimeConfig {
             telegram: app.telegram.clone(),
             gbrain_memory: gbrain.clone(),
             deployment,
+            backpressure: app.backpressure.clone(),
             agent_admission: app.agent.admission.clone(),
         };
         Ok(Self {
