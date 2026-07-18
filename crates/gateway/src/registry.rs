@@ -211,7 +211,11 @@ impl ApprovalResolverRegistry {
         Self::default()
     }
 
-    pub fn register(&self, category: ApprovalCategory, resolver: std::sync::Arc<dyn ApprovalResolver>) {
+    pub fn register(
+        &self,
+        category: ApprovalCategory,
+        resolver: std::sync::Arc<dyn ApprovalResolver>,
+    ) {
         self.by_category.lock().unwrap().insert(category, resolver);
     }
 
@@ -221,7 +225,10 @@ impl ApprovalResolverRegistry {
 
     /// Resolve a resolver registered specifically for `category`, falling
     /// back to the default resolver (if any).
-    pub fn resolve(&self, category: ApprovalCategory) -> Option<std::sync::Arc<dyn ApprovalResolver>> {
+    pub fn resolve(
+        &self,
+        category: ApprovalCategory,
+    ) -> Option<std::sync::Arc<dyn ApprovalResolver>> {
         self.by_category
             .lock()
             .unwrap()

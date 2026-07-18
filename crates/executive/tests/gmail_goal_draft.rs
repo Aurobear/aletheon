@@ -13,16 +13,16 @@ use executive::r#impl::channel::gmail::sender_policy::{
 use executive::r#impl::channel::gmail::{
     GmailChannelMessage, GmailChannelStore, GmailGoalDraftCoordinator,
 };
-use gateway::dispatcher::{
-    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
-};
-use gateway::registry::ApprovalResolver;
-use gateway::store::ChannelStore;
 use executive::r#impl::external::ExternalIdentityRepository;
 use executive::r#impl::goal::ObjectiveStore;
 use fabric::{
     ApprovalCategory, ApprovalStatus, ExternalIdentityId, ExternalScope, GoalState, PrincipalId,
 };
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+};
+use gateway::registry::ApprovalResolver;
+use gateway::store::ChannelStore;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

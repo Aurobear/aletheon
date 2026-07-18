@@ -7,9 +7,7 @@
 
 use std::sync::Arc;
 
-use fabric::channel::{
-    ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage,
-};
+use fabric::channel::{ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage};
 use fabric::{ApprovalCategory, ApprovalSnapshot, ApprovalStatus, AttemptId, GoalId, GoalSnapshot};
 
 use super::effect::OutboundEffect;
@@ -20,7 +18,10 @@ use super::handlers::greeting::GreetingHandler;
 use super::intent::{classify_intent, Intent};
 use super::notify::render_approval_notification;
 use super::ports::ChannelApprovalPort;
-use super::registry::{ApprovalResolver, ApprovalResolverRegistry, CapabilityHandler, CapabilityRegistry, HandlerContext};
+use super::registry::{
+    ApprovalResolver, ApprovalResolverRegistry, CapabilityHandler, CapabilityRegistry,
+    HandlerContext,
+};
 use super::store::{ChannelStore, InsertOutcome};
 
 // ---------------------------------------------------------------------------
@@ -270,11 +271,7 @@ impl ChannelDispatcher {
             Err(error) => {
                 self.store
                     .mark_outbound_failed(&outbound.correlation_id, &error.to_string())?;
-                port.record_delivery_failed(
-                    &outbound.correlation_id,
-                    &error.to_string(),
-                    now_ms,
-                )?;
+                port.record_delivery_failed(&outbound.correlation_id, &error.to_string(), now_ms)?;
                 Ok(false)
             }
         }

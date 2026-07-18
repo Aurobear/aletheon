@@ -12,9 +12,7 @@ use fabric::{ApprovalCategory, GoalId};
 use crate::dispatcher::ChannelGoalExecutor;
 use crate::effect::OutboundEffect;
 use crate::intent::Intent;
-use crate::registry::{
-    ApprovalResolverRegistry, CapabilityHandler, HandlerContext, IntentKind,
-};
+use crate::registry::{ApprovalResolverRegistry, CapabilityHandler, HandlerContext, IntentKind};
 
 pub struct GoalHandler {
     executor: Arc<dyn ChannelGoalExecutor>,
@@ -118,12 +116,14 @@ impl CapabilityHandler for GoalHandler {
         let reply = self
             .execute_goal_command(&ctx.principal, command, args, ctx.timestamp_ms)
             .await?;
-        Ok(vec![OutboundEffect::Reply(fabric::channel::OutboundMessage {
-            conversation_id: ctx.conversation_id.clone(),
-            content: fabric::channel::MessageContent::Text { text: reply },
-            actions: vec![],
-            reply_to: Some(ctx.message_id.clone()),
-            correlation_id: ctx.correlation_id.clone(),
-        })])
+        Ok(vec![OutboundEffect::Reply(
+            fabric::channel::OutboundMessage {
+                conversation_id: ctx.conversation_id.clone(),
+                content: fabric::channel::MessageContent::Text { text: reply },
+                actions: vec![],
+                reply_to: Some(ctx.message_id.clone()),
+                correlation_id: ctx.correlation_id.clone(),
+            },
+        )])
     }
 }

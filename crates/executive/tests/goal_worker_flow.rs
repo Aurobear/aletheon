@@ -1,9 +1,5 @@
 use async_trait::async_trait;
 use executive::kernel::chronos::TestClock;
-use gateway::dispatcher::{
-    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
-};
-use gateway::store::ChannelStore;
 use executive::r#impl::goal::{
     goal_progress_from_outcome, AttemptCoordinationOutcome, AttemptCoordinator,
     AttemptCoordinatorError, AttemptExecutor, AttemptRequest, GoalCoordinator, ObjectiveStore,
@@ -14,6 +10,10 @@ use fabric::{
     AttemptEvidence, AttemptUsage, CognitiveRole, FailureClass, GoalBudget, GoalId, GoalSpec,
     GoalState, PrincipalId, RuntimeFailure, RuntimeId, RuntimeResult,
 };
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+};
+use gateway::store::ChannelStore;
 use rusqlite::Connection;
 use std::collections::VecDeque;
 use std::path::PathBuf;

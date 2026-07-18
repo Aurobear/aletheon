@@ -3,22 +3,20 @@ use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
 use corpus::tools::google::oauth::{GoogleOAuthProvider, OAuthClientConfig};
 use corpus::tools::mcp::token_store::{TokenEntry, TokenKey, TokenStore};
-use gateway::dispatcher::{
-    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
-};
-use gateway::handlers::chat::ChatHandler;
-use gateway::handlers::google_read::{
-    GoogleChannelAccountDirectory, GoogleReadPreprocessor,
-};
-use gateway::handlers::greeting::GreetingHandler;
-use gateway::registry::CapabilityRegistry;
-use gateway::store::ChannelStore;
 use executive::r#impl::external::{ExternalIdentityRepository, GoogleIntegration};
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,
 };
 use fabric::{ExternalIdentityId, ExternalScope, IdentityProvider, PrincipalId};
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+};
+use gateway::handlers::chat::ChatHandler;
+use gateway::handlers::google_read::{GoogleChannelAccountDirectory, GoogleReadPreprocessor};
+use gateway::handlers::greeting::GreetingHandler;
+use gateway::registry::CapabilityRegistry;
+use gateway::store::ChannelStore;
 use http_body_util::Full;
 use hyper::body::Bytes;
 use hyper::service::service_fn;

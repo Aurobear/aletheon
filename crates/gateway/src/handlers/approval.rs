@@ -96,9 +96,7 @@ impl ApprovalExecutor {
                 .resolvers
                 .resolve_category_only(ApprovalCategory::ActivateGoal)
                 .ok_or_else(|| anyhow::anyhow!("Gmail draft executor is not configured"))?;
-            resolver
-                .execute_resolved(&result.0, action, now_ms)
-                .await?;
+            resolver.execute_resolved(&result.0, action, now_ms).await?;
         } else if let Some(resolver) = self.resolvers.resolve(result.0.category) {
             resolver.execute_resolved(&result.0, action, now_ms).await?;
         }

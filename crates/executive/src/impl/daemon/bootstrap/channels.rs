@@ -15,9 +15,7 @@ use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
 use crate::r#impl::external::GoogleIntegration;
 use crate::r#impl::goal::ObjectiveStore;
 use fabric::ApprovalCategory;
-use gateway::dispatcher::{
-    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoalProgress,
-};
+use gateway::dispatcher::{ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoalProgress};
 use gateway::handlers::chat::ChatHandler;
 use gateway::handlers::google_read::{
     ChatPreprocessor, GoogleChannelAccountDirectory, GoogleReadPreprocessor,

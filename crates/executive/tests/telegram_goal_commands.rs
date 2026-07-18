@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use executive::r#impl::channel::daemon_adapter::DaemonChannelGoalExecutor;
-use gateway::dispatcher::{
-    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
-};
-use gateway::store::ChannelStore;
 use executive::r#impl::goal::ObjectiveStore;
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,
 };
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+};
+use gateway::store::ChannelStore;
 use tokio::sync::Mutex;
 
 struct NoTurn;

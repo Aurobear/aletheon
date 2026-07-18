@@ -3,14 +3,14 @@
 
 use std::sync::Arc;
 
-use gateway::dispatcher::{
-    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
-};
-use gateway::store::ChannelStore;
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,
 };
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+};
+use gateway::store::ChannelStore;
 use tokio::sync::Mutex;
 
 // ---------------------------------------------------------------------------

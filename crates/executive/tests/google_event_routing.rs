@@ -1,5 +1,4 @@
 use corpus::tools::google::oauth::GoogleBinding;
-use gateway::store::ChannelStore;
 use executive::r#impl::external::ExternalIdentityRepository;
 use executive::r#impl::goal::coordinator::{GoalCoordinator, GoogleEventWaitCondition};
 use executive::r#impl::goal::ObjectiveStore;
@@ -14,6 +13,7 @@ use fabric::{
     ExternalObjectRef, ExternalScope, GmailMessageSummary, GoogleEvent, IdentityProvider,
     MailChange, PrincipalId, ProviderRecordRef,
 };
+use gateway::store::ChannelStore;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -288,7 +288,8 @@ async fn subscriptions_route_once_wake_explicit_goals_and_keep_memory_as_proposa
         })
         .unwrap();
 
-    let notifications = Arc::new(DurableGoogleNotificationSink::open(&fixture.channel_path).unwrap());
+    let notifications =
+        Arc::new(DurableGoogleNotificationSink::open(&fixture.channel_path).unwrap());
     let tasks = Arc::new(TaskProjection::default());
     let memories = Arc::new(MemoryProposals::default());
     let router = Arc::new(
