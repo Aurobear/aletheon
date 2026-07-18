@@ -877,3 +877,112 @@ impl McpConnectionManager {
         client.handle_elicitation(params).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::security::approval::{ApprovalDecision, ApprovalGate, ApprovalRequest};
+
+    /// A test-only handler that always returns the configured value.
+    struct FixedElicitationHandler {
+        pub approved: bool,
+    }
+
+    #[async_trait]
+    impl ElicitationHandler for FixedElicitationHandler {
+        async fn handle_elicitation(&self, _message: &str, _mode: &str) -> Result<bool, String> {
+            Ok(self.approved)
+        }
+    }
+
+    /// A test-only handler that returns an error.
+    struct FailingElicitationHandler;
+
+    #[async_trait]
+    impl ElicitationHandler for FailingElicitationHandler {
+        async fn handle_elicitation(&self, _message: &str, _mode: &str) -> Result<bool, String> {
+            Err("simulated handler error".to_string())
+        }
+    }
+
+    /// A test-only approval gate that always returns the configured decision.
+    struct FixedDecisionGate {
+        decision: ApprovalDecision,
+    }
+
+    #[async_trait]
+    impl ApprovalGate for FixedDecisionGate {
+        async fn request(&self, _req: &ApprovalRequest) -> ApprovalDecision {
+            self.decision
+        }
+    }
+
+    #[test]
+    fn test_fixed_elicitation_handler_approves() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let handler = FixedElicitationHandler { approved: true };
+            let res = handler.handle_elicitation("Test message", "once").await;
+            assert_eq!(res, Ok(true));
+        });
+    }
+
+    #[test]
+    fn test_fixed_elicitation_handler_denies() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let handler = FixedElicitationHandler { approved: false };
+            let res = handler.handle_elicitation("Test message", "once").await;
+            assert_eq!(res, Ok(false));
+        });
+    }
+
+    #[test]
+    fn test_failing_elicitation_handler_returns_error() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let handler = FailingElicitationHandler;
+            let res = handler.handle_elicitation("Test message", "once").await;
+            assert!(res.is_err());
+        });
+    }
+
+    #[test]
+    fn test_mcp_elicitation_handler_approves_via_gate() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let gate = Arc::new(FixedDecisionGate {
+                decision: ApprovalDecision::Approve,
+            });
+            let handler = McpElicitationHandler::new(gate, "test-server".to_string());
+            let res = handler.handle_elicitation("do a thing", "once").await;
+            assert_eq!(res, Ok(true));
+        });
+    }
+
+    #[test]
+    fn test_mcp_elicitation_handler_denies_via_gate() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let gate = Arc::new(FixedDecisionGate {
+                decision: ApprovalDecision::Deny,
+            });
+            let handler = McpElicitationHandler::new(gate, "test-server".to_string());
+            let res = handler.handle_elicitation("do a thing", "once").await;
+            assert_eq!(res, Ok(false));
+        });
+    }
+
+    #[test]
+    fn test_mcp_elicitation_handler_approve_for_session_treated_as_approve() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let gate = Arc::new(FixedDecisionGate {
+                decision: ApprovalDecision::ApproveForSession,
+            });
+            let handler = McpElicitationHandler::new(gate, "test-server".to_string());
+            let res = handler.handle_elicitation("do a thing", "once").await;
+            assert_eq!(res, Ok(true));
+        });
+    }
+}
