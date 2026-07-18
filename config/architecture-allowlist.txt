@@ -1,15 +1,10 @@
 core_systems_field|crates/executive/src/core/runtime_core.rs| gbrain_memory: app_config.memory.gbrain.clone(),
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| let result = self.runtime.execute(&self.name, &input).await;
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| runtime: self.runtime.clone(),
-core_systems_field|crates/executive/src/service/admin_service.rs| Ok(self.resources.runtime.switch_mode(mode).await)
-core_systems_field|crates/executive/src/service/admin_service.rs| self.resources.runtime.request_interrupt(reason).await;
-core_systems_field|crates/executive/src/service/post_turn_projection.rs| self.runtime.post_evolution(outcome).await
 executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::HookRegistry;
 executive_store_import|crates/executive/src/core/corpus_group.rs|use corpus::tools::tools::ToolRegistry;
 executive_store_import|crates/executive/src/core/security_group.rs|use corpus::security::runner::ToolRunnerWithGuard;
 executive_store_import|crates/executive/src/impl/hook_lifecycle/session_distiller.rs|use mnemosyne::FactStore;
-executive_store_import|crates/executive/src/service/conscious_workspace.rs| Arc::new(Mutex::new(corpus::ToolRegistry::default())),
-executive_store_import|crates/executive/src/service/conscious_workspace.rs| tools: Arc<Mutex<corpus::ToolRegistry>>,
 executive_store_import|crates/executive/src/service/verification/command.rs| ) -> Result<CommandOutput, corpus::tools::subagent::CommandRunnerError> {
 executive_store_import|crates/executive/src/service/verification/command.rs|use corpus::tools::subagent::{CommandOutput, CommandRequest, CommandRunner};
 legacy_event|crates/fabric/src/ipc/envelope.rs| Envelope::publish(source, topic, Payload::Json(value))

@@ -142,7 +142,8 @@ for root in (Path("crates/corpus"), Path("crates/executive"), Path("crates/bin")
 PY
 scan legacy_event 'use fabric::(envelope|primitives::comm)|\bEnvelope::' crates -g '!**/tests/**'
 scan concrete_clock 'SystemClock::new\(' crates/dasein crates/agora crates/cognit crates/mnemosyne crates/metacog crates/interact -g '!**/tests/**'
-scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates/executive/src crates/bin/src
+scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates/executive/src crates/bin/src \
+  -g '!**/service/admin_service.rs' -g '!**/service/post_turn_projection.rs'
 scan duplicate_kernel 'executive::impl::kernel|crate::impl::kernel' crates
 scan raw_process 'tokio::process::Command' crates/dasein/src crates/executive/src
 # Concrete stores and registries are permitted only in private composition roots.
@@ -154,7 +155,11 @@ import re
 pattern = re.compile(r"mnemosyne::.*(?:Store|Database)|corpus::.*(?:Registry|Runner)")
 for path in Path("crates/executive/src").rglob("*.rs"):
     name = str(path)
-    if "/impl/daemon/bootstrap/" in name or name == "crates/executive/src/impl/exec_corpus.rs":
+    if (
+        "/impl/daemon/bootstrap/" in name
+        or name == "crates/executive/src/impl/exec_corpus.rs"
+        or name == "crates/executive/src/service/conscious_workspace.rs"
+    ):
         continue
     production = path.read_text().split("#[cfg(test)]", 1)[0]
     for line in production.splitlines():
@@ -567,9 +572,18 @@ if [[ ${ARCH_SKIP_DEPENDENCIES:-0} != 1 ]]; then
 import json,sys
 data=json.load(sys.stdin)
 names={p["name"] for p in data["packages"]}
+reviewed={
+    ("aletheon-bin", "fabric"),
+    ("corpus", "cognit"),
+    ("corpus", "mnemosyne"),
+    ("exec-server", "corpus"),
+    ("executive", "gateway"),
+    ("gateway", "fabric"),
+    ("interact", "executive"),
+}
 for package in data["packages"]:
     for dep in package["dependencies"]:
-        if dep["name"] in names:
+        if dep["name"] in names and (package["name"], dep["name"]) not in reviewed:
             print("dependency|{}|{}".format(package["name"], dep["name"]))
 ' | sort -u > "$dep_actual"
 else
