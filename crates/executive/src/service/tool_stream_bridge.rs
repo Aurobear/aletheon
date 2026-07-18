@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Maximum coalesced text payload emitted at once.
 pub const TOOL_PROGRESS_TEXT_BYTES: usize = 4 * 1024;
+pub const TOOL_PROGRESS_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 /// Per-call protection against flooding the downstream turn stream.
 pub const TOOL_PROGRESS_EVENT_LIMIT: usize = 64;
 
@@ -134,6 +135,10 @@ impl ProgressAccumulator {
         self.emit("text", payload, turn_events, tool_name, call_id);
     }
 
+    fn has_pending_text(&self) -> bool {
+        !self.text.is_empty()
+    }
+
     fn emit(
         &mut self,
         kind: &str,
@@ -178,15 +183,33 @@ pub async fn bridge_tool_stream(
     cancel: CancellationToken,
 ) -> ToolStreamOutcome {
     let mut accumulator = ProgressAccumulator::new();
+    let mut flush_deadline = None;
     let terminal = loop {
+        let flush_timer = async {
+            match flush_deadline {
+                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                None => std::future::pending().await,
+            }
+        };
         tokio::select! {
             biased;
             _ = cancel.cancelled() => {
                 break Err(ToolExecutionError::Cancelled("turn cancelled".into()));
             }
+            _ = flush_timer => {
+                accumulator.flush_text(&turn_events, &tool_name, &call_id);
+                flush_deadline = None;
+            }
             event = event_rx.recv() => match event {
                 Some(ToolExecutionEvent::Progress(progress)) => {
                     accumulator.accept(progress, &turn_events, &tool_name, &call_id);
+                    if accumulator.has_pending_text() {
+                        flush_deadline.get_or_insert_with(|| {
+                            tokio::time::Instant::now() + TOOL_PROGRESS_FLUSH_INTERVAL
+                        });
+                    } else {
+                        flush_deadline = None;
+                    }
                 }
                 Some(ToolExecutionEvent::Notification(_)) => {
                     // Notifications remain UI-only and are not model or terminal data.
@@ -255,6 +278,33 @@ mod tests {
             stream.try_recv(),
             Some(Ok(TurnEventV1::ToolProgress { .. }))
         ));
+    }
+
+    #[tokio::test]
+    async fn pending_text_flushes_before_terminal_after_time_window() {
+        let (mut sink, rx) = tool_event_channel();
+        assert!(sink.progress(ToolProgress::Text("still-running".into())));
+        let (mut stream, sender) = turn_stream(8);
+        let bridge = tokio::spawn(bridge_tool_stream(
+            rx,
+            sender,
+            "slow-tool".into(),
+            "call-window".into(),
+            CancellationToken::new(),
+        ));
+
+        let event = tokio::time::timeout(std::time::Duration::from_millis(300), stream.recv())
+            .await
+            .expect("progress must flush while tool is still running")
+            .unwrap();
+        assert!(matches!(
+            event,
+            TurnEventV1::ToolProgress { payload, .. }
+                if payload == serde_json::json!("still-running")
+        ));
+
+        sink.terminal(Ok(result())).await;
+        assert!(bridge.await.unwrap().terminal.is_ok());
     }
 
     #[tokio::test]
