@@ -172,12 +172,11 @@ impl RequestHandler {
             .workspace_trust
             .evaluate(
                 context.principal_id.clone(),
-                fabric::workspace_trust::WorkspaceIdentity {
-                    canonical_path: context.workspace.cwd().to_path_buf(),
-                    repo_fingerprint: None,
-                },
+                crate::service::workspace_trust::workspace_identity(context.workspace.cwd()),
                 fabric::workspace_trust::ClientMode::Headless,
-                false,
+                crate::service::workspace_trust::is_broad_unrecordable_root(
+                    context.workspace.cwd(),
+                ),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()

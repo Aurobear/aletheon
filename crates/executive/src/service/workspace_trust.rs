@@ -18,6 +18,161 @@ use fabric::{PrincipalId, SchemaId};
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 
+const MAX_GIT_CONFIG_BYTES: u64 = 1024 * 1024;
+
+/// Build the canonical trust identity without executing repository-provided
+/// commands. Git identity is derived by bounded, read-only parsing of git
+/// metadata; hooks, aliases and config includes are never interpreted.
+pub fn workspace_identity(canonical_path: &Path) -> WorkspaceIdentity {
+    WorkspaceIdentity {
+        canonical_path: canonical_path.to_path_buf(),
+        repo_fingerprint: repository_fingerprint(canonical_path),
+    }
+}
+
+/// Broad roots cannot receive durable trust. Besides the user's home, any
+/// filesystem root is broad by construction.
+pub fn is_broad_unrecordable_root(canonical_path: &Path) -> bool {
+    canonical_path.parent().is_none()
+        || dirs::home_dir().is_some_and(|home| {
+            let home = std::fs::canonicalize(&home).unwrap_or(home);
+            canonical_path == home
+        })
+}
+
+fn repository_fingerprint(workspace: &Path) -> Option<String> {
+    let config = git_config_path(workspace)?;
+    let metadata = std::fs::symlink_metadata(&config).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_GIT_CONFIG_BYTES {
+        return None;
+    }
+    let content = std::fs::read_to_string(config).ok()?;
+    let mut remotes = parse_remote_urls(&content)
+        .into_iter()
+        .filter_map(|remote| normalize_remote_url(&remote))
+        .collect::<Vec<_>>();
+    remotes.sort();
+    remotes.dedup();
+    if remotes.is_empty() {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    for remote in remotes {
+        hasher.update(remote.as_bytes());
+        hasher.update([0]);
+    }
+    Some(format!("sha256:{:x}", hasher.finalize()))
+}
+
+fn git_config_path(workspace: &Path) -> Option<PathBuf> {
+    for ancestor in workspace.ancestors() {
+        let dot_git = ancestor.join(".git");
+        let Ok(metadata) = std::fs::symlink_metadata(&dot_git) else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() {
+            return None;
+        }
+        if metadata.is_dir() {
+            return Some(dot_git.join("config"));
+        }
+        if metadata.is_file() && metadata.len() <= 4096 {
+            let pointer = std::fs::read_to_string(&dot_git).ok()?;
+            let git_dir = pointer.trim().strip_prefix("gitdir:")?.trim();
+            let git_dir = if Path::new(git_dir).is_absolute() {
+                PathBuf::from(git_dir)
+            } else {
+                ancestor.join(git_dir)
+            };
+            let common_dir_file = git_dir.join("commondir");
+            if std::fs::metadata(&common_dir_file).is_ok_and(|metadata| metadata.len() <= 4096) {
+                if let Ok(common_dir) = std::fs::read_to_string(common_dir_file) {
+                    let common_dir = common_dir.trim();
+                    let common_dir = if Path::new(common_dir).is_absolute() {
+                        PathBuf::from(common_dir)
+                    } else {
+                        git_dir.join(common_dir)
+                    };
+                    return Some(common_dir.join("config"));
+                }
+            }
+            return Some(git_dir.join("config"));
+        }
+    }
+    None
+}
+
+fn parse_remote_urls(config: &str) -> Vec<String> {
+    let mut in_remote = false;
+    let mut urls = Vec::new();
+    for raw in config.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            in_remote = line
+                .strip_prefix('[')
+                .and_then(|line| line.strip_suffix(']'))
+                .is_some_and(|section| {
+                    section
+                        .trim_start()
+                        .to_ascii_lowercase()
+                        .starts_with("remote \"")
+                });
+            continue;
+        }
+        if !in_remote || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            if key.trim().eq_ignore_ascii_case("url") {
+                let value = value.trim();
+                if !value.is_empty() {
+                    urls.push(value.to_string());
+                }
+            }
+        }
+    }
+    urls
+}
+
+fn normalize_remote_url(remote: &str) -> Option<String> {
+    let remote = remote.trim();
+    if let Ok(mut url) = reqwest::Url::parse(remote) {
+        if !matches!(url.scheme(), "http" | "https" | "ssh" | "git" | "file") {
+            return None;
+        }
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        url.set_query(None);
+        url.set_fragment(None);
+        let path = url.path().trim_end_matches('/').trim_end_matches(".git");
+        let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+        let port = url
+            .port()
+            .map(|port| format!(":{port}"))
+            .unwrap_or_default();
+        return Some(format!(
+            "{}://{host}{port}{path}",
+            url.scheme().to_ascii_lowercase()
+        ));
+    }
+    // Git's SCP-like syntax: [user@]host:path. Drop the user and normalize
+    // only host/path; this parser never shells out to git.
+    let (authority, path) = remote.split_once(':')?;
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if host.is_empty() || path.is_empty() || host.contains('/') || host.contains('\\') {
+        return None;
+    }
+    Some(format!(
+        "ssh://{}/{}",
+        host.to_ascii_lowercase(),
+        path.trim_start_matches('/')
+            .trim_end_matches('/')
+            .trim_end_matches(".git")
+    ))
+}
+
 #[async_trait]
 pub trait TrustStore: Send + Sync {
     async fn get(
@@ -367,6 +522,99 @@ mod tests {
             canonical_path: path.to_path_buf(),
             repo_fingerprint: None,
         }
+    }
+
+    #[test]
+    fn filesystem_root_is_broad_but_project_directory_is_not() {
+        assert!(is_broad_unrecordable_root(Path::new("/")));
+        if let Some(home) = dirs::home_dir() {
+            assert!(is_broad_unrecordable_root(&home));
+        }
+        assert!(!is_broad_unrecordable_root(Path::new(
+            "/tmp/aletheon-trust-project"
+        )));
+    }
+
+    #[test]
+    fn workspace_identity_hashes_normalized_remote_without_executing_git_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let git = temp.path().join(".git");
+        let forbidden_marker = temp.path().join("must-not-run");
+        std::fs::create_dir(&git).unwrap();
+        let config = git.join("config");
+        std::fs::write(
+            &config,
+            format!(
+                r#"
+[remote "origin"]
+    url = git@GitHub.COM:Example/Project.git
+[alias]
+    dangerous = !touch {}
+[core]
+    hooksPath = /tmp/untrusted-hooks
+"#,
+                forbidden_marker.display()
+            ),
+        )
+        .unwrap();
+
+        let first = workspace_identity(temp.path());
+        assert!(first.repo_fingerprint.is_some());
+        assert!(!forbidden_marker.exists());
+
+        // Equivalent URL spelling and unrelated executable git configuration
+        // do not change repository identity.
+        std::fs::write(
+            &config,
+            format!(
+                r#"
+[core]
+    hooksPath = /another/untrusted-hook
+[remote "origin"]
+    url = ssh://user@github.com/Example/Project.git/
+[alias]
+    dangerous = !touch {}
+"#,
+                forbidden_marker.display()
+            ),
+        )
+        .unwrap();
+        let equivalent = workspace_identity(temp.path());
+        assert_eq!(first.repo_fingerprint, equivalent.repo_fingerprint);
+        assert!(!forbidden_marker.exists());
+
+        std::fs::write(
+            config,
+            "[remote \"origin\"]\nurl = https://github.com/example/other.git\n",
+        )
+        .unwrap();
+        assert_ne!(
+            first.repo_fingerprint,
+            workspace_identity(temp.path()).repo_fingerprint
+        );
+    }
+
+    #[test]
+    fn workspace_identity_reads_worktree_common_config_without_git_process() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = temp.path().join("checkout");
+        let common = temp.path().join("repository.git");
+        let worktree_git_dir = common.join("worktrees/checkout");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::create_dir_all(&worktree_git_dir).unwrap();
+        std::fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", worktree_git_dir.display()),
+        )
+        .unwrap();
+        std::fs::write(worktree_git_dir.join("commondir"), "../..\n").unwrap();
+        std::fs::write(
+            common.join("config"),
+            "[remote \"origin\"]\nurl = https://example.com/team/project.git\n",
+        )
+        .unwrap();
+
+        assert!(workspace_identity(&checkout).repo_fingerprint.is_some());
     }
 
     fn receipt(
