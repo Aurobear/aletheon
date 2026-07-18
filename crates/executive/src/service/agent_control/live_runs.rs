@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use fabric::ipc::envelope_v2::Target;
 use fabric::{
-    AgentControlError, AgentControlErrorKind, AgentId, AgentSnapshot, BackgroundResourceDecl,
-    MAX_BACKGROUND_RESOURCES,
+    AgentBudget, AgentControlError, AgentControlErrorKind, AgentId, AgentSnapshot,
+    BackgroundResourceDecl, WorkspacePolicy, MAX_BACKGROUND_RESOURCES,
 };
 use tokio::sync::{watch, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -18,6 +18,59 @@ pub struct LiveAgentRun {
     accepting_calls: Arc<AtomicBool>,
     resources: Arc<RwLock<HashMap<String, BackgroundResourceDecl>>>,
     managed_resources: Arc<HashMap<String, ManagedResourceState>>,
+    reparent_authority: Arc<ReparentAuthority>,
+}
+
+#[derive(Clone)]
+pub struct ReparentAuthority {
+    workspace: Option<WorkspacePolicy>,
+    allowed_tools: Vec<String>,
+    budget: AgentBudget,
+}
+
+impl ReparentAuthority {
+    pub fn new(
+        workspace: Option<WorkspacePolicy>,
+        allowed_tools: Vec<String>,
+        budget: AgentBudget,
+    ) -> Self {
+        Self {
+            workspace,
+            allowed_tools,
+            budget,
+        }
+    }
+
+    pub fn covers(&self, child: &Self) -> bool {
+        let tools_cover = child
+            .allowed_tools
+            .iter()
+            .all(|tool| self.allowed_tools.contains(tool));
+        let workspace_covers = match (&self.workspace, &child.workspace) {
+            (Some(parent), Some(child)) => child.writable_roots().iter().all(|child_root| {
+                parent
+                    .writable_roots()
+                    .iter()
+                    .any(|parent_root| child_root.starts_with(parent_root))
+            }),
+            (None, None) => true,
+            _ => false,
+        };
+        tools_cover && workspace_covers
+    }
+
+    pub fn accepts_budget(&self, child: &Self) -> bool {
+        self.budget.max_input_tokens >= child.budget.max_input_tokens
+            && self.budget.max_output_tokens >= child.budget.max_output_tokens
+            && self.budget.max_tool_calls >= child.budget.max_tool_calls
+            && self.budget.max_elapsed_ms >= child.budget.max_elapsed_ms
+            && self.budget.max_depth >= child.budget.max_depth
+            && match (self.budget.max_cost_usd, child.budget.max_cost_usd) {
+                (None, _) => true,
+                (Some(parent), Some(child)) => parent >= child,
+                (Some(_), None) => false,
+            }
+    }
 }
 
 struct ManagedResourceState {
@@ -32,6 +85,7 @@ impl LiveAgentRun {
         mailbox_target: Target,
         cancellation: CancellationToken,
         resources: Vec<BackgroundResourceDecl>,
+        reparent_authority: ReparentAuthority,
     ) -> Result<Self, AgentControlError> {
         if resources.len() > MAX_BACKGROUND_RESOURCES {
             return Err(invalid("too many background resources"));
@@ -69,7 +123,12 @@ impl LiveAgentRun {
             accepting_calls: Arc::new(AtomicBool::new(true)),
             resources: Arc::new(RwLock::new(indexed)),
             managed_resources: Arc::new(managed_resources),
+            reparent_authority: Arc::new(reparent_authority),
         })
+    }
+
+    pub fn reparent_authority(&self) -> &ReparentAuthority {
+        &self.reparent_authority
     }
 
     /// Returns false once settlement has entered Quiescing.
@@ -138,7 +197,15 @@ impl LiveAgentRun {
         }
         *owner = new_owner.to_string();
         if let Some(parent_cancellation) = parent_cancellation {
-            *state.cancellation.lock().await = parent_cancellation.child_token();
+            // Keep the exact token already handed to the command producer.
+            // Replacing it would leave a running producer attached to the old
+            // child token and therefore orphan it from parent cancellation.
+            let resource_cancellation = state.cancellation.lock().await.clone();
+            let parent_cancellation = parent_cancellation.clone();
+            tokio::spawn(async move {
+                parent_cancellation.cancelled().await;
+                resource_cancellation.cancel();
+            });
         }
         actions.insert(action_key.to_string());
         Ok(())
@@ -189,6 +256,18 @@ mod tests {
             Target::from("agent:test"),
             CancellationToken::new(),
             resources,
+            ReparentAuthority::new(
+                None,
+                vec![],
+                AgentBudget {
+                    max_input_tokens: 1,
+                    max_output_tokens: 1,
+                    max_tool_calls: 1,
+                    max_elapsed_ms: 1,
+                    max_cost_usd: None,
+                    max_depth: 1,
+                },
+            ),
         )
         .unwrap()
     }
@@ -235,8 +314,9 @@ mod tests {
         .unwrap();
         let reparented = live.resource_cancellation("background").await.unwrap();
         parent.cancel();
+        tokio::task::yield_now().await;
         assert!(reparented.is_cancelled());
-        assert!(!token.is_cancelled());
+        assert!(token.is_cancelled());
 
         assert!(
             live.terminate_managed_resource("background", "terminate-1")
@@ -274,8 +354,52 @@ mod tests {
             Target::from("agent:test"),
             CancellationToken::new(),
             vec![resource.clone(), resource],
+            ReparentAuthority::new(
+                None,
+                vec![],
+                AgentBudget {
+                    max_input_tokens: 1,
+                    max_output_tokens: 1,
+                    max_tool_calls: 1,
+                    max_elapsed_ms: 1,
+                    max_cost_usd: None,
+                    max_depth: 1,
+                }
+            ),
         )
         .is_err());
+    }
+
+    #[test]
+    fn reparent_requires_parent_workspace_tools_and_budget_to_cover_child() {
+        let budget = |tokens, cost| AgentBudget {
+            max_input_tokens: tokens,
+            max_output_tokens: tokens,
+            max_tool_calls: tokens as u32,
+            max_elapsed_ms: tokens,
+            max_cost_usd: cost,
+            max_depth: tokens as u16,
+        };
+        let parent = ReparentAuthority::new(
+            Some(WorkspacePolicy::from_resolved_roots("/repo".into(), vec![]).unwrap()),
+            vec!["read".into(), "write".into()],
+            budget(10, Some(10.0)),
+        );
+        let child = ReparentAuthority::new(
+            Some(WorkspacePolicy::from_resolved_roots("/repo/child".into(), vec![]).unwrap()),
+            vec!["read".into()],
+            budget(5, Some(5.0)),
+        );
+        assert!(parent.covers(&child));
+        assert!(parent.accepts_budget(&child));
+
+        let excessive = ReparentAuthority::new(
+            child.workspace.clone(),
+            vec!["shell".into()],
+            budget(11, Some(11.0)),
+        );
+        assert!(!parent.covers(&excessive));
+        assert!(!parent.accepts_budget(&excessive));
     }
 }
 

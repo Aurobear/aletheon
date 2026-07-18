@@ -153,6 +153,7 @@ fn input_with_inbox(
         root_process_id: process,
         inbox,
         cancellation: CancellationToken::new(),
+        background_cancellations: std::collections::HashMap::new(),
     };
     (sender, input)
 }

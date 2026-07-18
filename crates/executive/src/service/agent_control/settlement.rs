@@ -809,6 +809,14 @@ mod tests {
             self.revoked += 1;
             Ok(())
         }
+
+        async fn transfer_remaining_to(
+            &mut self,
+            _parent: fabric::AgentId,
+            _usage: &fabric::AttemptUsage,
+        ) -> Result<fabric::BudgetTransferReceipt, AgentControlError> {
+            Err(invalid("fake admission transfer is unavailable"))
+        }
     }
 
     #[derive(Default)]

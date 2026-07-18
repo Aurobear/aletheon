@@ -196,6 +196,16 @@ pub struct AgentRuntimeInput {
     pub memory_context: mnemosyne::AgentMemoryContext,
     pub inbox: AgentRuntimeInbox,
     pub cancellation: CancellationToken,
+    /// Per-declaration cancellation authority for background command
+    /// producers. Producers must select by the reviewed resource ID instead
+    /// of deriving an unmanaged token from the whole agent scope.
+    pub background_cancellations: HashMap<String, CancellationToken>,
+}
+
+impl AgentRuntimeInput {
+    pub fn background_cancellation(&self, resource_id: &str) -> Option<CancellationToken> {
+        self.background_cancellations.get(resource_id).cloned()
+    }
 }
 
 #[derive(Debug, Clone)]

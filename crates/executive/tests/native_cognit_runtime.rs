@@ -206,6 +206,7 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
         inbox: AgentRuntimeInbox::empty(),
         request,
         cancellation: cancel,
+        background_cancellations: std::collections::HashMap::new(),
     }
 }
 

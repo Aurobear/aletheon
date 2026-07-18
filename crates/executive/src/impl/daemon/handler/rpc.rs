@@ -113,6 +113,15 @@ impl RequestHandler {
             "turn.wait" => self.handle_turn_wait(&id, &request).await,
             "turn.cancel" => self.handle_turn_cancel(connection, &id, &request).await,
             "turn.exit" => self.handle_turn_exit(&id, &request).await,
+            "prompt.edit" if self.grok_hardening.prompt_queue => {
+                self.handle_prompt_edit(connection, &id, &request).await
+            }
+            "prompt.cancel" if self.grok_hardening.prompt_queue => {
+                self.handle_prompt_cancel(connection, &id, &request).await
+            }
+            "prompt.metrics" if self.grok_hardening.prompt_queue => {
+                self.handle_prompt_metrics(connection, &id, &request).await
+            }
             "workspace.rewind" if self.grok_hardening.workspace_checkpoint => {
                 self.handle_workspace_rewind(connection, &id, &request)
                     .await

@@ -79,6 +79,7 @@ fn input() -> AgentRuntimeInput {
         root_process_id: root,
         inbox: AgentRuntimeInbox::empty(),
         cancellation: CancellationToken::new(),
+        background_cancellations: std::collections::HashMap::new(),
     }
 }
 

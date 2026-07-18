@@ -171,6 +171,15 @@ pub struct BudgetReservationReceipt {
     pub request: BudgetRequest,
 }
 
+/// Immutable proof that one live parent reservation atomically accepted the
+/// unused capacity of a closing child reservation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BudgetTransferReceipt {
+    pub child_reservation_id: BudgetReservationId,
+    pub parent_reservation_id: BudgetReservationId,
+    pub accepted: BudgetRequest,
+}
+
 impl Default for BudgetReservationId {
     fn default() -> Self {
         Self::new()

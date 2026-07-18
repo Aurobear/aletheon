@@ -7,6 +7,38 @@ use super::RequestHandler;
 use serde_json::json;
 use tracing::{info, warn};
 
+fn parse_prompt_version(
+    params: &serde_json::Value,
+) -> Result<(fabric::PromptId, u64), &'static str> {
+    let prompt_id = params
+        .get("prompt_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| uuid::Uuid::parse_str(value).ok())
+        .map(fabric::PromptId)
+        .ok_or("valid prompt_id and expected_version are required")?;
+    let expected_version = params
+        .get("expected_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("valid prompt_id and expected_version are required")?;
+    Ok((prompt_id, expected_version))
+}
+
+fn queue_op_response(id: &serde_json::Value, result: fabric::QueueOpResult) -> serde_json::Value {
+    match result {
+        fabric::QueueOpResult::Ok { new_version } => {
+            json!({"jsonrpc":"2.0", "id":id, "result":{"status":"ok", "new_version":new_version}})
+        }
+        fabric::QueueOpResult::Conflict { current } => json!({
+            "jsonrpc":"2.0", "id":id,
+            "error":{"code":-32045, "message":"prompt version conflict", "data":{"current":current}}
+        }),
+        fabric::QueueOpResult::Rejected { reason } => json!({
+            "jsonrpc":"2.0", "id":id,
+            "error":{"code":-32046, "message":"prompt operation rejected", "data":{"reason":reason}}
+        }),
+    }
+}
+
 fn parse_workspace_rewind_request(params: &serde_json::Value) -> Result<(&str, u64), &'static str> {
     if params.get("working_dir").is_some()
         || params.get("workspace_roots").is_some()
@@ -29,6 +61,103 @@ fn parse_workspace_rewind_request(params: &serde_json::Value) -> Result<(&str, u
 }
 
 impl RequestHandler {
+    pub(super) async fn handle_prompt_edit(
+        &self,
+        connection: &super::super::super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let (prompt_id, expected_version) = match parse_prompt_version(&request["params"]) {
+            Ok(value) => value,
+            Err(message) => {
+                return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602,"message":message}})
+            }
+        };
+        let Some(content) = request["params"]
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602,"message":"content is required"}});
+        };
+        match self
+            .ports
+            .session_input
+            .edit(
+                prompt_id,
+                expected_version,
+                (
+                    connection.principal_id.clone(),
+                    connection.connection_id.clone(),
+                ),
+                content.to_owned(),
+            )
+            .await
+        {
+            Ok(result) => queue_op_response(id, result),
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32603,"message":error.to_string()}})
+            }
+        }
+    }
+
+    pub(super) async fn handle_prompt_cancel(
+        &self,
+        connection: &super::super::super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let (prompt_id, expected_version) = match parse_prompt_version(&request["params"]) {
+            Ok(value) => value,
+            Err(message) => {
+                return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602,"message":message}})
+            }
+        };
+        match self
+            .ports
+            .session_input
+            .cancel(prompt_id, expected_version, connection.principal_id.clone())
+            .await
+        {
+            Ok(result) => queue_op_response(id, result),
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32603,"message":error.to_string()}})
+            }
+        }
+    }
+
+    pub(super) async fn handle_prompt_metrics(
+        &self,
+        connection: &super::super::super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let Some(thread_id) = request["params"]
+            .get("thread_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|v| !v.is_empty())
+        else {
+            return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602,"message":"thread_id is required"}});
+        };
+        match self
+            .ports
+            .session_input
+            .metrics(
+                &connection.principal_id,
+                &fabric::ThreadId(thread_id.to_owned()),
+            )
+            .await
+        {
+            Ok(metrics) => json!({"jsonrpc":"2.0", "id":id, "result":{
+                "prompt_queue_depth":metrics.prompt_queue_depth,
+                "prompt_edit_conflict_total":metrics.prompt_edit_conflict_total,
+                "interjection_dropped_bytes_total":metrics.interjection_dropped_bytes_total,
+            }}),
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32603,"message":error.to_string()}})
+            }
+        }
+    }
+
     /// Explicit user-triggered FS rewind. The caller supplies only the logical
     /// session/turn index. Workspace identity is resolved from immutable
     /// host-bound thread authority; no path or checkpoint data is accepted.
@@ -289,7 +418,7 @@ impl RequestHandler {
 
 #[cfg(test)]
 mod workspace_rewind_tests {
-    use super::parse_workspace_rewind_request;
+    use super::{parse_prompt_version, parse_workspace_rewind_request, queue_op_response};
 
     #[test]
     fn rewind_accepts_only_logical_session_and_turn() {
@@ -310,5 +439,33 @@ mod workspace_rewind_tests {
             params[forbidden] = serde_json::json!("attacker-controlled");
             assert!(parse_workspace_rewind_request(&params).is_err());
         }
+    }
+
+    #[test]
+    fn prompt_mutation_requires_uuid_and_expected_version() {
+        let id = uuid::Uuid::new_v4();
+        let parsed = parse_prompt_version(&serde_json::json!({
+            "prompt_id": id,
+            "expected_version": 4
+        }))
+        .unwrap();
+        assert_eq!(parsed, (fabric::PromptId(id), 4));
+        assert!(parse_prompt_version(&serde_json::json!({"prompt_id": id})).is_err());
+        assert!(parse_prompt_version(
+            &serde_json::json!({"prompt_id":"client-text", "expected_version":4})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rejected_prompt_operation_is_not_reported_as_success() {
+        let response = queue_op_response(
+            &serde_json::json!(9),
+            fabric::QueueOpResult::Rejected {
+                reason: "cross-principal".into(),
+            },
+        );
+        assert_eq!(response["error"]["code"], -32046);
+        assert_eq!(response["error"]["data"]["reason"], "cross-principal");
     }
 }

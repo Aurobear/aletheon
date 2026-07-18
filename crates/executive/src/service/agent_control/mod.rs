@@ -47,7 +47,7 @@ pub use execution::{
     AgentRuntimeLauncher, AgentRuntimeRegistry, CompatibilityRuntimeLauncher, NoopAgentEventSink,
     SpineAgentEventSink,
 };
-pub use live_runs::{LiveAgentRun, LiveAgentRuns};
+pub use live_runs::{LiveAgentRun, LiveAgentRuns, ReparentAuthority};
 pub use mailbox::{AgentMailboxBridge, AgentRuntimeInbox};
 pub use memory::MemoryRecordingAgentEventSink;
 pub use recovery::{
@@ -647,7 +647,8 @@ impl AgentControlPort for AgentControlService {
         };
         let mut admission = self
             .admission
-            .reserve(AgentAdmissionRequest::new(
+            .reserve(AgentAdmissionRequest::new_for_agent(
+                agent_id,
                 &request,
                 identity.depth,
                 identity.parent_profile.as_ref(),
@@ -839,18 +840,31 @@ impl AgentControlPort for AgentControlService {
         let (mailbox_bridge, inbox) =
             AgentMailboxBridge::bounded(mailbox, MAILBOX_CAPACITY, cancellation.clone())?;
         let (snapshots, _) = watch::channel(queued);
-        let inserted = self
-            .live
-            .insert(
-                agent_id,
-                LiveAgentRun::new(
-                    snapshots.clone(),
-                    mailbox_target,
-                    cancellation.clone(),
-                    request.background_decls.clone(),
-                )?,
-            )
-            .await;
+        let live_run = LiveAgentRun::new(
+            snapshots.clone(),
+            mailbox_target,
+            cancellation.clone(),
+            request.background_decls.clone(),
+            ReparentAuthority::new(
+                request.trusted_workspace.clone(),
+                request.allowed_tools.clone(),
+                request.budget.clone(),
+            ),
+        )?;
+        let mut background_cancellations = std::collections::HashMap::new();
+        for declaration in &request.background_decls {
+            let token = live_run
+                .resource_cancellation(&declaration.resource_id)
+                .await
+                .ok_or_else(|| {
+                    control_error(
+                        AgentControlErrorKind::Runtime,
+                        "reviewed background resource has no managed cancellation token",
+                    )
+                })?;
+            background_cancellations.insert(declaration.resource_id.clone(), token);
+        }
+        let inserted = self.live.insert(agent_id, live_run).await;
         if !inserted {
             let _ = self
                 .kernel
@@ -895,6 +909,7 @@ impl AgentControlPort for AgentControlService {
             memory_context: memory_context.clone(),
             inbox,
             cancellation,
+            background_cancellations,
         };
         let events: Arc<dyn AgentEventSink> = Arc::new(SpineAgentEventSink::new(
             events,
@@ -1188,6 +1203,11 @@ async fn run_agent(
         ))
         .await;
     let stop_hook_input = input.clone();
+    let wants_reparent = input
+        .request
+        .background_decls
+        .iter()
+        .any(|resource| resource.survive_child);
 
     let (outcome_sender, outcome_receiver) = tokio::sync::oneshot::channel();
     scope.spawn("agent-mailbox", async move {
@@ -1294,10 +1314,39 @@ async fn run_agent(
             _ => fabric::SettlementTerminal::Recoverable,
         };
         if let Some(live_run) = live.get(agent).await {
-            let parent_cancellation = match parent_agent {
-                Some(parent) => live.get(parent).await.map(|run| run.cancellation.clone()),
+            let parent_run = match parent_agent {
+                Some(parent) => live.get(parent).await,
                 None => None,
             };
+            // Both sides are host-minted, spawn-time authority envelopes.  A
+            // live parent is also the notification/cancellation route; no
+            // model-supplied settlement claim participates in this decision.
+            let parent_authority_covers = parent_run.as_ref().is_some_and(|parent| {
+                parent
+                    .reparent_authority()
+                    .covers(live_run.reparent_authority())
+            });
+            // Static maxima coverage is necessary; the authoritative proof is
+            // the atomic BudgetController transfer receipt below.
+            let _parent_budget_bounds_cover = parent_run.as_ref().is_some_and(|parent| {
+                parent
+                    .reparent_authority()
+                    .accepts_budget(live_run.reparent_authority())
+            });
+            let budget_transfer_receipt = match (parent_agent, settlement_usage.as_ref()) {
+                (Some(parent), Some(usage)) if parent_authority_covers && wants_reparent => {
+                    match admission.transfer_remaining_to(parent, usage).await {
+                        Ok(receipt) => Some(receipt),
+                        Err(error) => {
+                            tracing::warn!(agent = ?agent, %error, "parent budget rejected remaining child reservation");
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
+            let parent_budget_accepts = budget_transfer_receipt.is_some();
+            let parent_cancellation = parent_run.map(|run| run.cancellation.clone());
             let evidence = Arc::new(SpineSettlementEvidenceSink::new(
                 event_spine,
                 root_agent.0.to_string(),
@@ -1308,8 +1357,8 @@ async fn run_agent(
                 settlement_receipts,
                 Arc::new(ManagedSettlementResourcePort::new(
                     live_run.clone(),
-                    false,
-                    false,
+                    parent_authority_covers,
+                    parent_budget_accepts,
                     parent_cancellation,
                 )),
                 Arc::new(RepositorySettlementLeasePort::new(repository.clone())),
@@ -1319,14 +1368,19 @@ async fn run_agent(
                 Ok(resources) => {
                     let mut terminal =
                         terminal_with_memory_flush(terminal, memory_events.take_error());
-                    if let Err(error) =
-                        settle_admission(&mut *admission, &terminal, settlement_usage.as_ref())
-                            .await
-                    {
-                        tracing::error!(agent = ?agent, %error, "failed to settle Agent admission lease");
-                        terminal = fabric::SettlementTerminal::Failed {
-                            reason: format!("Agent admission settlement failed: {}", error.message),
-                        };
+                    if budget_transfer_receipt.is_none() {
+                        if let Err(error) =
+                            settle_admission(&mut *admission, &terminal, settlement_usage.as_ref())
+                                .await
+                        {
+                            tracing::error!(agent = ?agent, %error, "failed to settle Agent admission lease");
+                            terminal = fabric::SettlementTerminal::Failed {
+                                reason: format!(
+                                    "Agent admission settlement failed: {}",
+                                    error.message
+                                ),
+                            };
+                        }
                     }
                     let request = SettlementRequest {
                         agent_id: agent.0.to_string(),

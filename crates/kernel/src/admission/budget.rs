@@ -10,8 +10,8 @@
 use async_trait::async_trait;
 use fabric::{
     AdmissionError, BudgetController, BudgetRequest, BudgetReservationId, BudgetReservationReceipt,
-    BudgetScope, BudgetScopeId, BudgetScopeKind, OperationId, PermitId, UsageReport,
-    BUDGET_SCOPE_SCHEMA_VERSION,
+    BudgetScope, BudgetScopeId, BudgetScopeKind, BudgetTransferReceipt, OperationId, PermitId,
+    UsageReport, BUDGET_SCOPE_SCHEMA_VERSION,
 };
 use std::collections::HashMap;
 use tokio::sync::Mutex;
@@ -86,6 +86,7 @@ struct BudgetState {
     principal_roots: HashMap<String, BudgetScopeId>,
     legacy_chains: HashMap<BudgetReservationId, Vec<BudgetReservationId>>,
     operation_scopes: HashMap<OperationId, BudgetScopeId>,
+    transfers: HashMap<BudgetReservationId, BudgetTransferReceipt>,
 }
 
 /// Thread-safe owner of all rollout budget hierarchies.
@@ -231,6 +232,72 @@ impl InMemoryBudgetController {
     ) -> Result<(), AdmissionError> {
         let mut state = self.state.lock().await;
         Self::close_locked(&mut state, reservation, Some(usage))
+    }
+
+    pub async fn transfer_remaining_reservation(
+        &self,
+        child: BudgetReservationId,
+        parent: BudgetReservationId,
+        usage: &UsageReport,
+    ) -> Result<BudgetTransferReceipt, AdmissionError> {
+        let mut state = self.state.lock().await;
+        if let Some(receipt) = state.transfers.get(&child) {
+            return if receipt.parent_reservation_id == parent {
+                Ok(receipt.clone())
+            } else {
+                Err(AdmissionError::BudgetExceeded)
+            };
+        }
+        let child_scope_id = *state
+            .reservations
+            .get(&child)
+            .ok_or(AdmissionError::AlreadySettled)?;
+        let parent_scope_id = *state
+            .reservations
+            .get(&parent)
+            .ok_or(AdmissionError::AlreadySettled)?;
+        let (child_parent, accepted) = {
+            let scope = state
+                .scopes
+                .get(&child_scope_id)
+                .ok_or(AdmissionError::AlreadySettled)?;
+            if scope.closed {
+                return Err(AdmissionError::AlreadySettled);
+            }
+            (
+                scope.view.parent,
+                Amount::from_request(&scope.view.limit).unused(usage),
+            )
+        };
+        let parent_state = state
+            .scopes
+            .get(&parent_scope_id)
+            .ok_or(AdmissionError::AlreadySettled)?;
+        if parent_state.closed || child == parent || parent_state.view.parent != child_parent {
+            return Err(AdmissionError::BudgetExceeded);
+        }
+        state
+            .scopes
+            .get_mut(&child_scope_id)
+            .expect("checked child scope")
+            .closed = true;
+        state
+            .scopes
+            .get_mut(&parent_scope_id)
+            .expect("checked parent scope")
+            .remaining
+            .add(accepted);
+        state.reservations.remove(&child);
+        let receipt = BudgetTransferReceipt {
+            child_reservation_id: child,
+            parent_reservation_id: parent,
+            accepted: BudgetRequest {
+                max_tokens: accepted.tokens,
+                max_cost_micro: accepted.cost_micro,
+            },
+        };
+        state.transfers.insert(child, receipt.clone());
+        Ok(receipt)
     }
 
     pub async fn revoke_reservation(
@@ -512,6 +579,15 @@ impl BudgetController for InMemoryBudgetController {
         InMemoryBudgetController::settle_reservation(self, reservation, usage).await
     }
 
+    async fn transfer_remaining_reservation(
+        &self,
+        child: BudgetReservationId,
+        parent: BudgetReservationId,
+        usage: &UsageReport,
+    ) -> Result<BudgetTransferReceipt, AdmissionError> {
+        InMemoryBudgetController::transfer_remaining_reservation(self, child, parent, usage).await
+    }
+
     async fn revoke_reservation(
         &self,
         reservation: BudgetReservationId,
@@ -535,6 +611,61 @@ impl BudgetController for InMemoryBudgetController {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn remaining_reservation_transfer_is_atomic_and_replay_stable() {
+        let ctrl = InMemoryBudgetController::new();
+        let root = ctrl
+            .create_root(
+                "root",
+                BudgetRequest {
+                    max_tokens: Some(100),
+                    max_cost_micro: Some(100),
+                },
+            )
+            .await;
+        let parent = ctrl
+            .reserve_child(
+                root,
+                BudgetScopeKind::Process,
+                "parent",
+                BudgetRequest {
+                    max_tokens: Some(40),
+                    max_cost_micro: Some(40),
+                },
+            )
+            .await
+            .unwrap();
+        let child = ctrl
+            .reserve_child(
+                root,
+                BudgetScopeKind::Process,
+                "child",
+                BudgetRequest {
+                    max_tokens: Some(30),
+                    max_cost_micro: Some(30),
+                },
+            )
+            .await
+            .unwrap();
+        let usage = UsageReport {
+            tokens_used: 10,
+            cost_micro: 5,
+            ..Default::default()
+        };
+        let first = ctrl
+            .transfer_remaining_reservation(child.reservation_id, parent.reservation_id, &usage)
+            .await
+            .unwrap();
+        let replay = ctrl
+            .transfer_remaining_reservation(child.reservation_id, parent.reservation_id, &usage)
+            .await
+            .unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(first.accepted.max_tokens, Some(20));
+        assert_eq!(first.accepted.max_cost_micro, Some(25));
+        assert_eq!(ctrl.active_reservation_count().await, 1);
+    }
 
     #[tokio::test]
     async fn unlimited_account_always_approves() {

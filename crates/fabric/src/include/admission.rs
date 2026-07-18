@@ -7,8 +7,8 @@
 
 use crate::types::admission::{
     AdmissionError, AdmissionRequest, BudgetRequest, BudgetReservationId, BudgetReservationReceipt,
-    BudgetScope, BudgetScopeId, BudgetScopeKind, ExecutionPermit, LeaseRequest, PermitId,
-    ResourceLeaseId, RevokeReason, UsageReport,
+    BudgetScope, BudgetScopeId, BudgetScopeKind, BudgetTransferReceipt, ExecutionPermit,
+    LeaseRequest, PermitId, ResourceLeaseId, RevokeReason, UsageReport,
 };
 use async_trait::async_trait;
 
@@ -76,6 +76,16 @@ pub trait BudgetController: Send + Sync {
         reservation: BudgetReservationId,
         usage: &UsageReport,
     ) -> Result<(), AdmissionError>;
+
+    /// Atomically charge child usage, close the child reservation, and move
+    /// its unused capacity into a live parent reservation. Replays return the
+    /// same immutable receipt.
+    async fn transfer_remaining_reservation(
+        &self,
+        child: BudgetReservationId,
+        parent: BudgetReservationId,
+        usage: &UsageReport,
+    ) -> Result<BudgetTransferReceipt, AdmissionError>;
 
     /// Close a reservation, returning unused capacity to its parent. Repeating
     /// the call on an already-closed reservation is a successful no-op.

@@ -8,6 +8,7 @@ use tracing::warn;
 
 use super::approval::{ApprovalDecision, ApprovalGate, ApprovalRequest, AutoDenyGate};
 use super::audit::{AuditLogger, AuditRecord};
+use super::escape_detector::{EscapePolicy, ShellEscalationDetector};
 use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
 use super::output_guardrail::OutputGuardrail;
 use super::policy::{PolicyEngine, PolicyVerdict};
@@ -615,11 +616,48 @@ impl ToolRunnerWithGuard {
                     .await;
                 }
 
-                // TODO(D1-T11): Insert ShellEscalationDetector scan here, gated
-                // behind grok_hardening.escape_detection (flag to be added).
-                //   let detector = ShellEscalationDetector::new(EscapePolicy::Block);
-                //   if let Err(detection) = detector.evaluate(cmd) { … }
-                // When the flag is off, no detection runs (equivalent to current).
+                // D1-T11: the trusted sandbox-profile gate also enables shell
+                // escape detection. Legacy execution (profiles absent) remains
+                // byte-for-byte unchanged, while hardened execution blocks
+                // high-severity bypass patterns before any process is started.
+                if sandbox_config.policy.is_some() {
+                    let detector = ShellEscalationDetector::new(EscapePolicy::Block);
+                    match detector.evaluate(cmd) {
+                        Ok(detections) => {
+                            for detection in detections {
+                                warn!(
+                                    command = cmd,
+                                    pattern = detection.pattern,
+                                    severity = ?detection.severity,
+                                    "shell escalation pattern observed"
+                                );
+                            }
+                        }
+                        Err(detection) => {
+                            SANDBOX_FS_VIOLATION_TOTAL.fetch_add(1, Ordering::Relaxed);
+                            self.publish_sandbox_event(
+                                fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
+                                serde_json::json!({
+                                    "event": "sandbox.violation",
+                                    "target": cmd,
+                                    "operation": "shell_escape_detection",
+                                    "pattern": detection.pattern,
+                                    "severity": format!("{:?}", detection.severity),
+                                    "principal": ctx.approval_authority.as_ref().map(|a| a.principal_id.0.as_str()),
+                                    "agent": ctx.agent.as_ref().map(|a| a.parent_agent_id.0.to_string()),
+                                    "reason": detection.description,
+                                }),
+                            )
+                            .await;
+                            return Err(ToolError::PolicyDenied {
+                                reason: format!(
+                                    "shell escalation pattern '{}' blocked: {}",
+                                    detection.pattern, detection.description
+                                ),
+                            });
+                        }
+                    }
+                }
 
                 let sandbox_result = match sink.as_deref_mut() {
                     Some(sink) => {
