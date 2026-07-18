@@ -5,6 +5,18 @@ mod process;
 mod protocol;
 
 fn main() -> io::Result<()> {
+    let expected_secret = std::env::var("ALETHEON_EXEC_SERVER_SECRET").map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ALETHEON_EXEC_SERVER_SECRET must be set",
+        )
+    })?;
+    if expected_secret.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ALETHEON_EXEC_SERVER_SECRET must not be empty",
+        ));
+    }
     let stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
     let mut process_mgr = process::ProcessManager::new();
@@ -48,8 +60,9 @@ fn main() -> io::Result<()> {
             }
         };
 
-        // Require handshake as first message
-        if !handshake_done {
+        // Require an exact-secret handshake as the first successful message.
+        // A rejected attempt never authenticates the connection.
+        let response = if !handshake_done {
             if request.method != "handshake" {
                 let resp = protocol::Response::err(
                     request.id.clone(),
@@ -60,10 +73,12 @@ fn main() -> io::Result<()> {
                 stdout.flush()?;
                 continue;
             }
-            handshake_done = true;
-        }
-
-        let response = dispatch(&request, &mut process_mgr, &rt);
+            let response = handle_handshake(&request, &expected_secret);
+            handshake_done = matches!(&response.result, protocol::ResponseResult::Ok { .. });
+            response
+        } else {
+            dispatch(&request, &mut process_mgr, &rt)
+        };
 
         writeln!(
             stdout,
@@ -102,12 +117,13 @@ fn dispatch(
     rt: &tokio::runtime::Runtime,
 ) -> protocol::Response {
     match req.method.as_str() {
-        "handshake" => handle_handshake(req),
+        "ping" => protocol::Response::ok(req.id.clone(), serde_json::json!({"status": "ok"})),
         "process/start" => handle_process_start(req, pm, rt),
         "process/read" => handle_process_read(req, pm, rt),
         "process/write" => handle_process_write(req, pm, rt),
         "process/signal" => handle_process_signal(req, pm, rt),
         "process/terminate" => handle_process_terminate(req, pm, rt),
+        "process/kill" => handle_process_terminate(req, pm, rt),
         "shutdown" => protocol::Response::ok(
             req.id.clone(),
             serde_json::json!({"status": "shutting_down"}),
@@ -133,7 +149,7 @@ fn dispatch(
     }
 }
 
-fn handle_handshake(req: &protocol::Request) -> protocol::Response {
+fn handle_handshake(req: &protocol::Request, expected_secret: &str) -> protocol::Response {
     let hs_req: protocol::HandshakeRequest = match serde_json::from_value(req.params.clone()) {
         Ok(h) => h,
         Err(e) => {
@@ -145,12 +161,11 @@ fn handle_handshake(req: &protocol::Request) -> protocol::Response {
         }
     };
 
-    // Accept any non-empty secret (real validation in follow-up)
-    if hs_req.secret.is_empty() {
+    if hs_req.secret != expected_secret {
         return protocol::Response::err(
             req.id.clone(),
-            protocol::INVALID_PARAMS,
-            "Handshake secret must not be empty".to_string(),
+            protocol::UNAUTHORIZED,
+            "Handshake rejected".to_string(),
         );
     }
 
@@ -165,6 +180,38 @@ fn handle_handshake(req: &protocol::Request) -> protocol::Response {
         req.id.clone(),
         serde_json::to_value(hs_resp).unwrap_or_default(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn handshake(secret: &str) -> protocol::Request {
+        protocol::Request {
+            jsonrpc: "2.0".into(),
+            id: serde_json::json!(1),
+            method: "handshake".into(),
+            params: serde_json::json!({"secret": secret}),
+        }
+    }
+
+    #[test]
+    fn handshake_requires_exact_pre_shared_secret() {
+        assert!(matches!(
+            handle_handshake(&handshake("expected"), "expected").result,
+            protocol::ResponseResult::Ok { .. }
+        ));
+        assert!(matches!(
+            handle_handshake(&handshake("wrong"), "expected").result,
+            protocol::ResponseResult::Err { error }
+                if error.code == protocol::UNAUTHORIZED
+        ));
+        assert!(matches!(
+            handle_handshake(&handshake(""), "expected").result,
+            protocol::ResponseResult::Err { error }
+                if error.code == protocol::UNAUTHORIZED
+        ));
+    }
 }
 
 fn handle_process_start(
