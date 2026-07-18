@@ -8,11 +8,12 @@ use serde::{Deserialize, Serialize};
 
 /// Policy controlling which outbound network connections are permitted.
 ///
-/// Fields are empty by default (permissive — no restrictions).
-/// Any non-empty field becomes a restriction: the URL must satisfy it
-/// to be allowed.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+/// The production default is deny. Configuration must explicitly select
+/// `allow` (optionally constrained by allow lists) before network is usable.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
 pub struct NetworkPolicy {
+    pub default_action: NetworkDefaultAction,
     /// If non-empty, only these hosts (or suffix patterns) are allowed.
     pub allow_hosts: Vec<String>,
     /// Explicitly denied hosts or suffix patterns (highest priority).
@@ -28,6 +29,27 @@ pub struct NetworkPolicy {
     pub allow_dns: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkDefaultAction {
+    Allow,
+    #[default]
+    Deny,
+}
+
+impl Default for NetworkPolicy {
+    fn default() -> Self {
+        Self {
+            default_action: NetworkDefaultAction::Deny,
+            allow_hosts: Vec::new(),
+            deny_hosts: Vec::new(),
+            allow_protocols: Vec::new(),
+            allow_ports: Vec::new(),
+            allow_dns: false,
+        }
+    }
+}
+
 impl NetworkPolicy {
     /// Check whether a URL is permitted under this policy.
     ///
@@ -40,6 +62,10 @@ impl NetworkPolicy {
         // 1. Check deny_hosts (highest priority).
         if !self.deny_hosts.is_empty() && self.matches_any(&host, &self.deny_hosts) {
             return Err(format!("host '{host}' is in deny_hosts"));
+        }
+
+        if self.default_action == NetworkDefaultAction::Deny && self.allow_hosts.is_empty() {
+            return Err("network access is denied by default".into());
         }
 
         // 2. Check allow_hosts.
@@ -205,11 +231,12 @@ impl NetworkPolicy {
 mod tests {
     use super::*;
 
-    // -- Default policy (permissive) --
+    // -- Default policy (deny) --
 
     #[test]
-    fn default_policy_allows_anything_when_allow_dns_true() {
+    fn explicit_allow_policy_allows_anything_when_allow_dns_true() {
         let policy = NetworkPolicy {
+            default_action: NetworkDefaultAction::Allow,
             allow_dns: true,
             ..Default::default()
         };
@@ -222,7 +249,7 @@ mod tests {
     fn default_denies_dns_when_allow_dns_is_false() {
         let policy = NetworkPolicy::default();
         assert!(!policy.allow_dns);
-        assert!(policy.allows_url("http://93.184.216.34").is_ok());
+        assert!(policy.allows_url("http://93.184.216.34").is_err());
         assert!(policy.allows_url("http://example.com").is_err());
     }
 
@@ -273,6 +300,7 @@ mod tests {
     #[test]
     fn deny_hosts_exact_match() {
         let policy = NetworkPolicy {
+            default_action: NetworkDefaultAction::Allow,
             deny_hosts: vec!["evil.com".into()],
             allow_dns: true,
             ..Default::default()
@@ -286,6 +314,7 @@ mod tests {
     #[test]
     fn allow_protocols_filters_by_scheme() {
         let policy = NetworkPolicy {
+            default_action: NetworkDefaultAction::Allow,
             allow_protocols: vec!["https".into(), "wss".into()],
             allow_dns: true,
             ..Default::default()
@@ -302,6 +331,7 @@ mod tests {
     #[test]
     fn allow_ports_exact_match() {
         let policy = NetworkPolicy {
+            default_action: NetworkDefaultAction::Allow,
             allow_ports: vec!["8080".into()],
             allow_dns: true,
             ..Default::default()
@@ -316,6 +346,7 @@ mod tests {
     #[test]
     fn allow_ports_range() {
         let policy = NetworkPolicy {
+            default_action: NetworkDefaultAction::Allow,
             allow_ports: vec!["8000-9000".into()],
             allow_dns: true,
             ..Default::default()
@@ -332,6 +363,7 @@ mod tests {
     #[test]
     fn allow_ports_uses_default_port_when_url_has_no_explicit_port() {
         let policy = NetworkPolicy {
+            default_action: NetworkDefaultAction::Allow,
             allow_ports: vec!["443".into()],
             allow_dns: true,
             ..Default::default()
@@ -347,6 +379,7 @@ mod tests {
     #[test]
     fn allow_dns_false_blocks_hostnames() {
         let policy = NetworkPolicy {
+            default_action: NetworkDefaultAction::Allow,
             allow_dns: false,
             ..Default::default()
         };
@@ -360,6 +393,7 @@ mod tests {
     #[test]
     fn allow_dns_true_allows_hostnames() {
         let policy = NetworkPolicy {
+            default_action: NetworkDefaultAction::Allow,
             allow_dns: true,
             ..Default::default()
         };

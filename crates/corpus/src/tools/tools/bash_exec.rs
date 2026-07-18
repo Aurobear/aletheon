@@ -30,6 +30,11 @@ impl Tool for BashExecTool {
                     "type": "integer",
                     "description": "Timeout in seconds (default: 10)",
                     "default": 10
+                },
+                "network_enabled": {
+                    "type": "boolean",
+                    "description": "Request outbound network access. Defaults to false and always requires explicit per-call approval when true.",
+                    "default": false
                 }
             },
             "required": ["command"]

@@ -1,7 +1,7 @@
 //! Transport port for structured tools whose strategy requires isolation.
 
 use async_trait::async_trait;
-use fabric::tool::{ToolContext, ToolResult};
+use fabric::tool::{ToolContext, ToolExecutionDescriptor, ToolResult};
 use fabric::SandboxConfig;
 
 /// Executes a structured tool through an isolated filesystem-capable owner
@@ -20,6 +20,7 @@ pub trait StructuredToolSandbox: Send + Sync {
     async fn execute(
         &self,
         tool_name: &str,
+        descriptor: Option<&ToolExecutionDescriptor>,
         input: serde_json::Value,
         context: &ToolContext,
         sandbox: &SandboxConfig,

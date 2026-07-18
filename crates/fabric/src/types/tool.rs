@@ -150,6 +150,36 @@ pub enum ConcurrencyClass {
     SideEffect,
 }
 
+/// Host-authored execution identity for structured tools.
+///
+/// This value is obtained from the registered `Tool` implementation, never
+/// from model-provided JSON input. Transport implementations must continue to
+/// treat `input` and this descriptor as separate trust domains.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ToolExecutionDescriptor {
+    EbpfCompile,
+    KernelBuild,
+    ModuleBuild,
+    ModuleLoad,
+    Script { canonical_path: std::path::PathBuf },
+}
+
+impl std::fmt::Debug for ToolExecutionDescriptor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EbpfCompile => formatter.write_str("EbpfCompile"),
+            Self::KernelBuild => formatter.write_str("KernelBuild"),
+            Self::ModuleBuild => formatter.write_str("ModuleBuild"),
+            Self::ModuleLoad => formatter.write_str("ModuleLoad"),
+            Self::Script { .. } => formatter
+                .debug_struct("Script")
+                .field("canonical_path", &"[REDACTED]")
+                .finish(),
+        }
+    }
+}
+
 /// Canonical Tool trait. See shared/traits.md.
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -157,6 +187,12 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     fn input_schema(&self) -> serde_json::Value;
     fn permission_level(&self) -> PermissionLevel;
+
+    /// Trusted, host-only execution identity for isolated structured dispatch.
+    /// Read-only and legacy tools inherit `None` and remain unaffected.
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        None
+    }
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult;
 
     /// Execute through the additive G2 streaming contract. Legacy tools inherit
@@ -354,5 +390,36 @@ mod tests {
             .filter(|e| **e == ToolExposure::Direct)
             .collect();
         assert_eq!(direct.len(), 2);
+    }
+
+    #[test]
+    fn execution_descriptor_serializes_as_a_separate_typed_contract() {
+        let descriptor = ToolExecutionDescriptor::ModuleBuild;
+        let encoded = serde_json::to_value(&descriptor).unwrap();
+        assert_eq!(encoded, serde_json::json!({"kind": "module_build"}));
+        assert_eq!(
+            serde_json::from_value::<ToolExecutionDescriptor>(encoded).unwrap(),
+            descriptor
+        );
+    }
+
+    #[test]
+    fn script_descriptor_debug_redacts_host_path() {
+        let descriptor = ToolExecutionDescriptor::Script {
+            canonical_path: "/trusted/host/secret/tool.sh".into(),
+        };
+        let debug = format!("{descriptor:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("secret/tool.sh"));
+    }
+
+    #[test]
+    fn descriptor_rejects_model_supplied_extra_fields() {
+        let injected = serde_json::json!({
+            "kind": "module_load",
+            "canonical_path": "/tmp/model-controlled"
+        });
+        assert!(serde_json::from_value::<ToolExecutionDescriptor>(injected).is_err());
+        assert!(LegacyTool.execution_descriptor().is_none());
     }
 }

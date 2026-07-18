@@ -29,6 +29,7 @@ pub struct UserRuntimeConfig {
     pi_runtime: cognit::config::PiRuntimeConfig,
     grok_hardening: crate::core::config::GrokHardeningConfig,
     sandbox_profiles: fabric::SandboxProfiles,
+    network_policy: fabric::network_policy::NetworkPolicy,
 }
 
 impl UserRuntimeConfig {
@@ -96,6 +97,7 @@ impl UserRuntimeConfig {
             pi_runtime: app.pi_runtime,
             grok_hardening: app.grok_hardening,
             sandbox_profiles: app.sandbox_profiles,
+            network_policy: app.network_policy,
         })
     }
 
@@ -155,6 +157,7 @@ impl UserRuntime {
             config.pi_runtime,
             config.grok_hardening,
             config.sandbox_profiles.clone(),
+            config.network_policy.clone(),
             config.request.enable_evolution,
             None,
             cancel.clone(),

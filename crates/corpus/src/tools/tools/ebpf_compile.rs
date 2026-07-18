@@ -5,7 +5,9 @@ use serde_json::{json, Value};
 use std::path::Path;
 use tracing::info;
 
-use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use super::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,
+};
 
 pub struct EbpfCompileTool;
 
@@ -45,6 +47,10 @@ impl Tool for EbpfCompileTool {
 
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::L2 // system-level: compiling kernel code
+    }
+
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        Some(ToolExecutionDescriptor::EbpfCompile)
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {

@@ -325,18 +325,34 @@ impl ExecServerSandboxBackend {
         timeout: Duration,
         sink: Option<&fabric::ToolEventSink>,
     ) -> Result<fabric::SandboxResult> {
+        self.execute_process(
+            "bash",
+            &["-c".into(), cmd.into()],
+            config,
+            timeout,
+            sink,
+            &std::collections::BTreeMap::new(),
+        )
+        .await
+    }
+
+    async fn execute_process(
+        &self,
+        command: &str,
+        args: &[String],
+        config: &fabric::SandboxConfig,
+        timeout: Duration,
+        sink: Option<&fabric::ToolEventSink>,
+        extra_env: &std::collections::BTreeMap<String, String>,
+    ) -> Result<fabric::SandboxResult> {
         let mut guard = self.client.lock().await;
         self.ensure_connected(&mut guard).await?;
         let client = guard.as_mut().expect("client installed");
         let started = std::time::Instant::now();
+        let mut environment = config.environment.clone();
+        environment.extend(extra_env.clone());
         let handle = client
-            .process_start(
-                "bash",
-                &["-c".into(), cmd.into()],
-                config.working_dir(),
-                &config.environment,
-                timeout,
-            )
+            .process_start(command, args, config.working_dir(), &environment, timeout)
             .await?;
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -400,15 +416,199 @@ impl ExecServerSandboxBackend {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct TrustedToolInvocation {
+    command: std::path::PathBuf,
+    args: Vec<String>,
+    environment: std::collections::BTreeMap<String, String>,
+}
+
+/// Resolve a host-authored descriptor into a fixed executable identity.
+///
+/// Model input may populate narrowly validated data arguments, but it can
+/// never select the executable or introduce shell syntax. Destructive kernel
+/// installation/module loading deliberately remains unavailable until a
+/// separate privileged authority exists.
+fn trusted_tool_invocation(
+    descriptor: &fabric::tool::ToolExecutionDescriptor,
+    input: &serde_json::Value,
+    session_id: &str,
+) -> std::result::Result<TrustedToolInvocation, String> {
+    fn required_string<'a>(
+        input: &'a serde_json::Value,
+        field: &str,
+    ) -> std::result::Result<&'a str, String> {
+        input
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty() && !value.contains(['\0', '\n', '\r']))
+            .ok_or_else(|| format!("trusted descriptor requires valid string field '{field}'"))
+    }
+
+    match descriptor {
+        fabric::tool::ToolExecutionDescriptor::EbpfCompile => {
+            let source = required_string(input, "source_path")?;
+            if source.starts_with('-') {
+                return Err("eBPF source path cannot be interpreted as an option".into());
+            }
+            let output = input
+                .get("output_path")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty() && !value.contains(['\0', '\n', '\r']))
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| {
+                    std::path::Path::new(source)
+                        .with_extension("o")
+                        .to_string_lossy()
+                        .into_owned()
+                });
+            if output.starts_with('-') {
+                return Err("eBPF output path cannot be interpreted as an option".into());
+            }
+            let target = input
+                .get("target_arch")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("bpf");
+            if !matches!(target, "bpf" | "x86" | "arm64") {
+                return Err("unsupported eBPF target architecture".into());
+            }
+            Ok(TrustedToolInvocation {
+                command: "/usr/bin/clang".into(),
+                args: vec![
+                    "-target".into(),
+                    target.into(),
+                    "-O2".into(),
+                    "-g".into(),
+                    "-c".into(),
+                    source.into(),
+                    "-o".into(),
+                    output,
+                ],
+                environment: Default::default(),
+            })
+        }
+        fabric::tool::ToolExecutionDescriptor::ModuleBuild => {
+            let source = required_string(input, "source_dir")?;
+            let version = required_string(input, "kernel_version")?;
+            if !version
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '+' | '-'))
+            {
+                return Err("invalid kernel_version for module build".into());
+            }
+            Ok(TrustedToolInvocation {
+                command: "/usr/bin/make".into(),
+                args: vec![
+                    "-C".into(),
+                    format!("/lib/modules/{version}/build"),
+                    format!("M={source}"),
+                    "modules".into(),
+                ],
+                environment: Default::default(),
+            })
+        }
+        fabric::tool::ToolExecutionDescriptor::Script { canonical_path } => {
+            if !canonical_path.is_absolute() {
+                return Err("trusted script descriptor path must be absolute".into());
+            }
+            let canonical = std::fs::canonicalize(canonical_path)
+                .map_err(|_| "trusted script descriptor path is no longer resolvable".to_string())?;
+            if canonical != *canonical_path {
+                return Err("trusted script descriptor path changed after registration".into());
+            }
+            let encoded = serde_json::to_string(input)
+                .map_err(|_| "failed to encode trusted script input".to_string())?;
+            Ok(TrustedToolInvocation {
+                command: canonical,
+                args: Vec::new(),
+                environment: std::collections::BTreeMap::from([
+                    ("ALETHEON_SESSION_ID".into(), session_id.into()),
+                    ("ALETHEON_TOOL_INPUT".into(), encoded),
+                ]),
+            })
+        }
+        fabric::tool::ToolExecutionDescriptor::KernelBuild => Err(
+            "kernel build/install descriptor requires an unavailable privileged execution authority"
+                .into(),
+        ),
+        fabric::tool::ToolExecutionDescriptor::ModuleLoad => Err(
+            "kernel module load/unload descriptor requires an unavailable privileged execution authority"
+                .into(),
+        ),
+    }
+}
+
 #[async_trait::async_trait]
 impl corpus::security::StructuredToolSandbox for ExecServerSandboxBackend {
+    fn supports_tool(&self, tool_name: &str) -> bool {
+        matches!(
+            tool_name,
+            "file_write"
+                | "apply_patch"
+                | "ebpf_compile"
+                | "kernel_build"
+                | "module_build"
+                | "module_load"
+                | "script_tool"
+        )
+    }
+
     async fn execute(
         &self,
         tool_name: &str,
+        descriptor: Option<&fabric::tool::ToolExecutionDescriptor>,
         input: serde_json::Value,
         context: &fabric::ToolContext,
         sandbox: &fabric::SandboxConfig,
     ) -> std::result::Result<fabric::ToolResult, String> {
+        if let Some(descriptor) = descriptor {
+            let descriptor_matches_tool = matches!(
+                (tool_name, descriptor),
+                (
+                    "ebpf_compile",
+                    fabric::tool::ToolExecutionDescriptor::EbpfCompile
+                ) | (
+                    "kernel_build",
+                    fabric::tool::ToolExecutionDescriptor::KernelBuild
+                ) | (
+                    "module_build",
+                    fabric::tool::ToolExecutionDescriptor::ModuleBuild
+                ) | (
+                    "module_load",
+                    fabric::tool::ToolExecutionDescriptor::ModuleLoad
+                ) | (_, fabric::tool::ToolExecutionDescriptor::Script { .. })
+            );
+            if !descriptor_matches_tool {
+                return Err(format!(
+                    "trusted execution descriptor does not match registered tool '{tool_name}'"
+                ));
+            }
+            let invocation = trusted_tool_invocation(descriptor, &input, &context.session_id)?;
+            let result = self
+                .execute_process(
+                    invocation
+                        .command
+                        .to_str()
+                        .ok_or_else(|| "trusted executable path is not UTF-8".to_string())?,
+                    &invocation.args,
+                    sandbox,
+                    Duration::from_secs(300),
+                    None,
+                    &invocation.environment,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            return Ok(fabric::ToolResult {
+                content: format!("{}\n{}", result.stdout, result.stderr)
+                    .trim()
+                    .to_string(),
+                is_error: result.exit_code != 0,
+                metadata: fabric::ToolResultMeta {
+                    execution_time_ms: result.elapsed_ms,
+                    truncated: false,
+                },
+            });
+        }
         if tool_name == "apply_patch" {
             if input
                 .get("base_dir")
@@ -630,5 +830,91 @@ mod tests {
         assert!(
             decode_response(5, r#"{"jsonrpc":"2.0","id":6,"result":{"status":"ok"}}"#,).is_err()
         );
+    }
+
+    #[test]
+    fn trusted_descriptor_selects_fixed_executable_and_ignores_command_injection() {
+        let invocation = trusted_tool_invocation(
+            &fabric::tool::ToolExecutionDescriptor::EbpfCompile,
+            &serde_json::json!({
+                "command": "/tmp/model-command",
+                "source_path": "program.c",
+                "output_path": "program.o",
+                "target_arch": "bpf"
+            }),
+            "session",
+        )
+        .unwrap();
+
+        assert_eq!(invocation.command, std::path::Path::new("/usr/bin/clang"));
+        assert!(!invocation
+            .args
+            .iter()
+            .any(|arg| arg == "/tmp/model-command"));
+        assert_eq!(
+            invocation.args,
+            [
+                "-target",
+                "bpf",
+                "-O2",
+                "-g",
+                "-c",
+                "program.c",
+                "-o",
+                "program.o"
+            ]
+        );
+    }
+
+    #[test]
+    fn privileged_descriptors_fail_closed_without_authority() {
+        for descriptor in [
+            fabric::tool::ToolExecutionDescriptor::KernelBuild,
+            fabric::tool::ToolExecutionDescriptor::ModuleLoad,
+        ] {
+            let error = trusted_tool_invocation(&descriptor, &serde_json::json!({}), "session")
+                .unwrap_err();
+            assert!(error.contains("privileged execution authority"));
+        }
+    }
+
+    #[test]
+    fn module_build_rejects_kernel_version_argument_injection() {
+        let error = trusted_tool_invocation(
+            &fabric::tool::ToolExecutionDescriptor::ModuleBuild,
+            &serde_json::json!({
+                "source_dir": "/workspace/module",
+                "kernel_version": "6.9/../../evil"
+            }),
+            "session",
+        )
+        .unwrap_err();
+        assert!(error.contains("invalid kernel_version"));
+    }
+
+    #[test]
+    fn script_descriptor_rechecks_canonical_host_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("trusted-script");
+        std::fs::write(&script, "#!/bin/sh\n").unwrap();
+        let canonical = std::fs::canonicalize(&script).unwrap();
+        let invocation = trusted_tool_invocation(
+            &fabric::tool::ToolExecutionDescriptor::Script {
+                canonical_path: canonical.clone(),
+            },
+            &serde_json::json!({"command": "/tmp/model-command"}),
+            "trusted-session",
+        )
+        .unwrap();
+        assert_eq!(invocation.command, canonical);
+        assert_eq!(
+            invocation.environment.get("ALETHEON_SESSION_ID"),
+            Some(&"trusted-session".to_string())
+        );
+        assert!(invocation
+            .environment
+            .get("ALETHEON_TOOL_INPUT")
+            .unwrap()
+            .contains("model-command"));
     }
 }

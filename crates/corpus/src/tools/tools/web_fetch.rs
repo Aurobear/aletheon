@@ -10,18 +10,18 @@ use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024; // 1 MB
 
 pub struct WebFetchTool {
-    network_policy: Option<Arc<fabric::network_policy::NetworkPolicy>>,
+    network_policy: Arc<fabric::network_policy::NetworkPolicy>,
 }
 
 impl WebFetchTool {
     pub fn new() -> Self {
         Self {
-            network_policy: None,
+            network_policy: Arc::new(fabric::network_policy::NetworkPolicy::default()),
         }
     }
 
     pub fn with_network_policy(mut self, policy: fabric::network_policy::NetworkPolicy) -> Self {
-        self.network_policy = Some(Arc::new(policy));
+        self.network_policy = Arc::new(policy);
         self
     }
 }
@@ -92,8 +92,8 @@ impl Tool for WebFetchTool {
         };
 
         // Validate against network policy before making the request.
-        if let Some(ref policy) = self.network_policy {
-            if let Err(reason) = policy.allows_url(&url) {
+        {
+            if let Err(reason) = self.network_policy.allows_url(&url) {
                 return ToolResult {
                     content: format!("Error: Network policy blocked URL: {}", reason),
                     is_error: true,
@@ -261,7 +261,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_unsupported_method() {
-        let tool = WebFetchTool::new();
+        let tool = WebFetchTool::new().with_network_policy(NetworkPolicy {
+            default_action: fabric::network_policy::NetworkDefaultAction::Allow,
+            allow_dns: true,
+            ..Default::default()
+        });
         let input = json!({
             "url": "http://example.com",
             "method": "DELETE"
@@ -353,8 +357,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_network_policy_none_allows_all() {
-        let tool = WebFetchTool::new(); // no policy
+    async fn test_default_network_policy_denies_all() {
+        let tool = WebFetchTool::new();
         let input = json!({
             "url": "https://some-random-site-12345.example",
             "method": "GET"
@@ -374,11 +378,9 @@ mod tests {
             )
             .await;
 
-        // When no policy is set, the request should not be blocked by policy.
-        // It may fail due to DNS/network, but the error message should not mention policy.
         assert!(
-            !result.content.contains("Network policy blocked"),
-            "no-policy should not block: {}",
+            result.content.contains("Network policy blocked"),
+            "default policy should block: {}",
             result.content
         );
     }

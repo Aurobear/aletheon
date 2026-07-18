@@ -210,6 +210,7 @@ impl RuntimeCore {
             app_config.pi_runtime.clone(),
             app_config.grok_hardening.clone(),
             app_config.sandbox_profiles.clone(),
+            app_config.network_policy.clone(),
             config.enable_evolution,
             Some(bus.clone()),
             cancel_token.clone(),

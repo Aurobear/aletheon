@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::info;
 
-use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use super::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,
+};
 
 pub struct KernelBuildTool;
 
@@ -58,6 +60,10 @@ impl Tool for KernelBuildTool {
 
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::L3 // destructive: kernel install modifies bootloader
+    }
+
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        Some(ToolExecutionDescriptor::KernelBuild)
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {

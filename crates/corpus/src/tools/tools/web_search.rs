@@ -8,18 +8,18 @@ use serde_json::json;
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 pub struct WebSearchTool {
-    network_policy: Option<Arc<fabric::network_policy::NetworkPolicy>>,
+    network_policy: Arc<fabric::network_policy::NetworkPolicy>,
 }
 
 impl WebSearchTool {
     pub fn new() -> Self {
         Self {
-            network_policy: None,
+            network_policy: Arc::new(fabric::network_policy::NetworkPolicy::default()),
         }
     }
 
     pub fn with_network_policy(mut self, policy: fabric::network_policy::NetworkPolicy) -> Self {
-        self.network_policy = Some(Arc::new(policy));
+        self.network_policy = Arc::new(policy);
         self
     }
 }
@@ -119,8 +119,8 @@ impl Tool for WebSearchTool {
         };
 
         // Validate the API URL against network policy before making the request.
-        if let Some(ref policy) = self.network_policy {
-            if let Err(reason) = policy.allows_url(&api_url) {
+        {
+            if let Err(reason) = self.network_policy.allows_url(&api_url) {
                 return ToolResult {
                     content: format!("Error: Network policy blocked URL: {}", reason),
                     is_error: true,
@@ -237,7 +237,11 @@ mod tests {
         std::env::remove_var("SEARCH_API_URL");
         std::env::remove_var("SEARCH_API_KEY");
 
-        let tool = WebSearchTool::new();
+        let tool = WebSearchTool::new().with_network_policy(NetworkPolicy {
+            default_action: fabric::network_policy::NetworkDefaultAction::Allow,
+            allow_dns: true,
+            ..Default::default()
+        });
         let input = json!({
             "query": "test query"
         });
@@ -303,14 +307,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_network_policy_none_allows_all() {
-        let tool = WebSearchTool::new(); // no policy
+    async fn test_default_network_policy_denies_all() {
+        let tool = WebSearchTool::new();
         let input = json!({
             "query": "test query"
         });
         let tmp = tempfile::tempdir().unwrap();
 
-        // Set a valid-looking URL that might not exist but won't be policy-blocked
+        // Set a valid-looking URL; the default policy must reject it before I/O.
         std::env::set_var(
             "SEARCH_API_URL",
             "https://some-random-search-api-12345.example/search",
@@ -330,11 +334,9 @@ mod tests {
             )
             .await;
 
-        // When no policy is set, the request should not be blocked by policy.
-        // It may fail due to DNS/network, but the error message should not mention policy.
         assert!(
-            !result.content.contains("Network policy blocked"),
-            "no-policy should not block: {}",
+            result.content.contains("Network policy blocked"),
+            "default policy should block: {}",
             result.content
         );
 

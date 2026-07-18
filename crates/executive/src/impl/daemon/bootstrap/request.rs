@@ -71,6 +71,7 @@ impl RequestHandler {
         pi_runtime: cognit::config::PiRuntimeConfig,
         grok_hardening: crate::core::config::GrokHardeningConfig,
         sandbox_profiles: fabric::SandboxProfiles,
+        network_policy: fabric::network_policy::NetworkPolicy,
         evolution_enabled: bool,
         event_bus: Option<Arc<CanonicalEventBus>>,
         cancel_token: CancellationToken,
@@ -294,7 +295,7 @@ impl RequestHandler {
         let active_connections = Arc::new(AtomicUsize::new(0));
 
         // Register tools
-        let mut tools = ToolRegistry::default();
+        let mut tools = ToolRegistry::with_network_policy(network_policy);
         let _ = tools.register(Arc::new(CoreMemoryAppendTool {
             memory: core_memory.clone(),
             clock: clock.clone(),

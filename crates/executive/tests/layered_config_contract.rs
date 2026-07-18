@@ -93,6 +93,33 @@ deny = ["/project/secret"]
 }
 
 #[test]
+fn project_cannot_grant_itself_network_authority() {
+    let loaded = merge_layers([
+        layer(
+            ConfigSourceKind::User,
+            "~/.aletheon/config.toml",
+            "[network_policy]\ndefault_action='deny'",
+        ),
+        layer(
+            ConfigSourceKind::Project,
+            "/repo/.aletheon/config.toml",
+            "[network_policy]\ndefault_action='allow'\nallow_dns=true",
+        ),
+    ])
+    .unwrap();
+
+    assert_eq!(
+        loaded.value.network_policy.default_action,
+        fabric::network_policy::NetworkDefaultAction::Deny
+    );
+    assert!(!loaded.value.network_policy.allow_dns);
+    assert_ne!(
+        loaded.source("network_policy.default_action").unwrap().kind,
+        ConfigSourceKind::Project
+    );
+}
+
+#[test]
 fn validation_errors_name_the_responsible_source_and_reject_unknown_or_invalid_values() {
     let unknown = ConfigLayer::from_toml(
         ConfigSource::new(ConfigSourceKind::Project, "/repo/.aletheon/config.toml"),

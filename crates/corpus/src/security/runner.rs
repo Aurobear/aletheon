@@ -428,6 +428,74 @@ impl ToolRunnerWithGuard {
             PolicyVerdict::Allow => {}
         }
 
+        // D1-T12: shell networking is an explicit, per-call capability. It is
+        // intentionally independent of the ordinary permission mode and of
+        // session-wide tool grants: neither BypassAll nor an earlier approval
+        // for `bash_exec` may silently turn networking on for a later command.
+        let bash_network_requested = tool_name == "bash_exec"
+            && input
+                .get("network_enabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+        if bash_network_requested {
+            let Some(authority) = ctx.approval_authority.as_ref() else {
+                self.log_audit(
+                    audit_id,
+                    tool_name,
+                    &input,
+                    tool.permission_level(),
+                    turn_id,
+                    None,
+                    &start,
+                    "network_approval_authority_missing",
+                )
+                .await
+                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
+                return Err(ToolError::PolicyDenied {
+                    reason: "bash network access requires an authenticated approval authority"
+                        .into(),
+                });
+            };
+            let command = input
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let request = ApprovalRequest {
+                owner: fabric::ApprovalOwner::new(
+                    authority.principal_id.clone(),
+                    authority.thread_id.clone(),
+                ),
+                connection_id: authority.connection_id.clone(),
+                turn_id: authority.turn_id,
+                call_id: authority.call_id.clone(),
+                workspace: authority.workspace.clone(),
+                tool: tool_name.to_owned(),
+                action_summary: format!("bash network access: {command}"),
+                risk_level: "network".into(),
+                detail: Some(input.to_string()),
+            };
+            if !matches!(
+                self.approval_gate.request(&request).await,
+                ApprovalDecision::Approve | ApprovalDecision::ApproveForSession
+            ) {
+                self.log_audit(
+                    audit_id,
+                    tool_name,
+                    &input,
+                    tool.permission_level(),
+                    turn_id,
+                    None,
+                    &start,
+                    "network_approval_denied",
+                )
+                .await
+                .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
+                return Err(ToolError::PolicyDenied {
+                    reason: "bash network access was denied by the approval gate".into(),
+                });
+            }
+        }
+
         // 2. Loop detector pre-check
         let loop_verdict = self.loop_detector.pre_check(tool_name, &input, turn_id);
         match &loop_verdict {
@@ -491,12 +559,15 @@ impl ToolRunnerWithGuard {
         // 3. Determine the execution strategy for this tool. The profile layer
         // is the D1 feature flag boundary: when absent, preserve the legacy
         // contract exactly (only bash_exec is routed through SandboxExecutor).
+        let execution_descriptor = tool.execution_descriptor();
         let strategy = if self.sandbox_profiles.is_none() {
             if tool_name == "bash_exec" {
                 ToolExecutionStrategy::Sandboxed
             } else {
                 ToolExecutionStrategy::InProcess
             }
+        } else if execution_descriptor.is_some() {
+            ToolExecutionStrategy::Sandboxed
         } else {
             resolve_strategy(tool_name, tool.permission_level())
         };
@@ -514,7 +585,7 @@ impl ToolRunnerWithGuard {
 
                 // S1 T13: resolve the default sandbox profile when profiles are
                 // configured.
-                let policy = if let Some(profiles) = self.sandbox_profiles.as_ref() {
+                let mut policy = if let Some(profiles) = self.sandbox_profiles.as_ref() {
                     let name: ProfileName = profiles
                         .default_profile
                         .as_str()
@@ -593,6 +664,50 @@ impl ToolRunnerWithGuard {
                     None
                 };
 
+                // Bash is deny-by-default even when the profile feature is
+                // disabled or the selected trusted profile normally permits
+                // networking. Materialize a workspace policy for the legacy
+                // path so the backend receives an enforceable network bit.
+                // Only the per-call approval above may clear that bit.
+                if tool_name == "bash_exec" {
+                    if policy.is_none() {
+                        policy = Some(
+                            resolve_profile(
+                                &ProfileName::Workspace,
+                                &workspace,
+                                &SandboxProfiles::default(),
+                            )
+                            .map_err(|error| ToolError::PolicyDenied {
+                                reason: format!(
+                                    "default bash network sandbox could not be resolved (fail-closed): {error}"
+                                ),
+                            })?,
+                        );
+                    }
+                    if let Some(policy) = policy.as_mut() {
+                        policy.restrict_network = !bash_network_requested;
+                    }
+                }
+
+                // A denied-network bash command must not degrade onto a
+                // backend that cannot actually isolate the network. This is
+                // stricter than the generic BestEffort profile behavior.
+                if tool_name == "bash_exec" && !bash_network_requested {
+                    let backend = self.sandbox.select_backend().ok_or_else(|| {
+                        ToolError::ExecutionFailed(
+                            "no sandbox backend is available for bash network isolation".into(),
+                        )
+                    })?;
+                    if !backend.capabilities().network_isolation {
+                        return Err(ToolError::PolicyDenied {
+                            reason: format!(
+                                "bash network is denied, but sandbox backend '{}' cannot enforce network isolation (fail-closed)",
+                                backend.name()
+                            ),
+                        });
+                    }
+                }
+
                 let sandbox_config = SandboxConfig {
                     workspace,
                     environment: std::collections::BTreeMap::from([
@@ -632,13 +747,19 @@ impl ToolRunnerWithGuard {
                             tool: tool_name.to_owned(),
                         }
                     })?;
-                    if !transport.supports_tool(tool_name) {
+                    if execution_descriptor.is_none() && !transport.supports_tool(tool_name) {
                         return Err(ToolError::StructuredSandboxUnsupported {
                             tool: tool_name.to_owned(),
                         });
                     }
                     transport
-                        .execute(tool_name, input.clone(), ctx, &sandbox_config)
+                        .execute(
+                            tool_name,
+                            execution_descriptor.as_ref(),
+                            input.clone(),
+                            ctx,
+                            &sandbox_config,
+                        )
                         .await
                         .map_err(|error| {
                             ToolError::ExecutionFailed(format!(
@@ -912,6 +1033,10 @@ mod tests {
         calls: Arc<AtomicUsize>,
     }
 
+    struct DescriptorTool {
+        calls: Arc<AtomicUsize>,
+    }
+
     #[derive(Clone)]
     struct StreamingReadTool;
 
@@ -990,21 +1115,66 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl Tool for DescriptorTool {
+        fn name(&self) -> &str {
+            "module_build"
+        }
+
+        fn description(&self) -> &str {
+            "host-described structured build"
+        }
+
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+
+        fn permission_level(&self) -> PermissionLevel {
+            PermissionLevel::L2
+        }
+
+        fn execution_descriptor(&self) -> Option<fabric::tool::ToolExecutionDescriptor> {
+            Some(fabric::tool::ToolExecutionDescriptor::ModuleBuild)
+        }
+
+        async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            ToolResult {
+                content: "in-process build".into(),
+                is_error: false,
+                metadata: ToolResultMeta::default(),
+            }
+        }
+
+        fn boxed_clone(&self) -> Box<dyn Tool> {
+            Box::new(Self {
+                calls: Arc::clone(&self.calls),
+            })
+        }
+    }
+
     struct MockStructuredSandbox {
         calls: Arc<AtomicUsize>,
         expected_tool: &'static str,
+        expected_descriptor: Option<fabric::tool::ToolExecutionDescriptor>,
     }
 
     #[async_trait]
     impl StructuredToolSandbox for MockStructuredSandbox {
+        fn supports_tool(&self, tool_name: &str) -> bool {
+            tool_name == self.expected_tool
+        }
+
         async fn execute(
             &self,
             tool_name: &str,
+            descriptor: Option<&fabric::tool::ToolExecutionDescriptor>,
             input: serde_json::Value,
             _context: &ToolContext,
             sandbox: &SandboxConfig,
         ) -> Result<ToolResult, String> {
             assert_eq!(tool_name, self.expected_tool);
+            assert_eq!(descriptor, self.expected_descriptor.as_ref());
             assert_eq!(input["content"], "written");
             let policy = sandbox.policy.as_ref().expect("resolved policy required");
             assert_eq!(policy.name, "workspace");
@@ -1069,6 +1239,16 @@ mod tests {
 
     fn make_input_rm() -> serde_json::Value {
         serde_json::json!({ "command": "rm -rf /tmp/test" })
+    }
+
+    struct CountingApproveGate(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl ApprovalGate for CountingApproveGate {
+        async fn request(&self, _request: &ApprovalRequest) -> ApprovalDecision {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            ApprovalDecision::ApproveForSession
+        }
     }
 
     fn make_ctx() -> ToolContext {
@@ -1156,6 +1336,7 @@ mod tests {
             .with_structured_sandbox(Arc::new(MockStructuredSandbox {
                 calls: Arc::clone(&transport_calls),
                 expected_tool: "file_write",
+                expected_descriptor: None,
             }));
 
         let error = runner
@@ -1218,6 +1399,7 @@ mod tests {
                 .with_structured_sandbox(Arc::new(MockStructuredSandbox {
                     calls: Arc::clone(&transport_calls),
                     expected_tool: name,
+                    expected_descriptor: None,
                 }));
 
             let result = runner
@@ -1234,6 +1416,41 @@ mod tests {
             assert_eq!(in_process_calls.load(Ordering::SeqCst), 0);
             assert_eq!(transport_calls.load(Ordering::SeqCst), 1);
         }
+    }
+
+    #[tokio::test]
+    async fn structured_transport_receives_host_descriptor_separately_from_model_input() {
+        let in_process_calls = Arc::new(AtomicUsize::new(0));
+        let transport_calls = Arc::new(AtomicUsize::new(0));
+        let tool = DescriptorTool {
+            calls: Arc::clone(&in_process_calls),
+        };
+        let mut runner = make_runner(Arc::new(AutoApproveGate))
+            .with_sandbox_profiles(fabric::SandboxProfiles::default())
+            .with_structured_sandbox(Arc::new(MockStructuredSandbox {
+                calls: Arc::clone(&transport_calls),
+                expected_tool: "module_build",
+                expected_descriptor: Some(fabric::tool::ToolExecutionDescriptor::ModuleBuild),
+            }));
+
+        let result = runner
+            .execute_tool(
+                &tool,
+                // A model-controlled field that resembles the typed descriptor
+                // must remain ordinary input and cannot replace host identity.
+                serde_json::json!({
+                    "content": "written",
+                    "descriptor": {"kind": "module_load"}
+                }),
+                &make_ctx(),
+                "descriptor-trust-boundary-turn",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.content, "sandbox wrote artifact");
+        assert_eq!(in_process_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(transport_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -1279,7 +1496,8 @@ mod tests {
             .execute_tool_streaming_report(
                 &DummyL2Tool,
                 serde_json::json!({
-                    "command": "printf 'alpha\\n'; sleep 0.05; printf 'beta\\n'"
+                    "command": "printf 'alpha\\n'; sleep 0.05; printf 'beta\\n'",
+                    "network_enabled": true
                 }),
                 &make_ctx(),
                 "bash-streaming-turn",
@@ -1316,7 +1534,7 @@ mod tests {
         runner
             .execute_tool(
                 &DummyL2Tool,
-                serde_json::json!({"command": "printf ok"}),
+                serde_json::json!({"command": "printf ok", "network_enabled": true}),
                 &make_ctx(),
                 "sandbox-event-turn",
             )
@@ -1402,7 +1620,7 @@ mod tests {
         runner
             .execute_tool(
                 &DummyL2Tool,
-                serde_json::json!({"command": "printf ok"}),
+                serde_json::json!({"command": "printf ok", "network_enabled": true}),
                 &ctx,
                 "glob-expansion-turn",
             )
@@ -1470,7 +1688,7 @@ mod tests {
         runner
             .execute_tool(
                 &DummyL2Tool,
-                serde_json::json!({"command": "printf parent"}),
+                serde_json::json!({"command": "printf parent", "network_enabled": true}),
                 &parent_ctx,
                 "parent-profile-turn",
             )
@@ -1479,7 +1697,7 @@ mod tests {
         runner
             .execute_tool(
                 &DummyL2Tool,
-                serde_json::json!({"command": "printf child"}),
+                serde_json::json!({"command": "printf child", "network_enabled": true}),
                 &child_ctx,
                 "child-profile-turn",
             )
@@ -1498,7 +1716,15 @@ mod tests {
         let mut runner = make_runner(Arc::new(AutoDenyGate));
         let tool = DummyL2Tool;
         let result = runner
-            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .execute_tool(
+                &tool,
+                serde_json::json!({
+                    "command": "rm -rf /tmp/test",
+                    "network_enabled": true
+                }),
+                &make_ctx(),
+                "t1",
+            )
             .await;
         assert!(result.is_err(), "AutoDenyGate should deny L2 tool");
         match result.unwrap_err() {
@@ -1514,11 +1740,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bash_network_request_requires_authenticated_authority() {
+        let mut runner = make_runner(Arc::new(AutoApproveGate));
+        let mut context = make_ctx();
+        context.approval_authority = None;
+
+        let result = runner
+            .execute_tool(
+                &DummyL2Tool,
+                serde_json::json!({
+                    "command": "printf network",
+                    "network_enabled": true
+                }),
+                &context,
+                "network-authority-turn",
+            )
+            .await;
+
+        assert!(matches!(result, Err(ToolError::PolicyDenied { ref reason })
+            if reason.contains("authenticated approval authority")));
+    }
+
+    #[tokio::test]
+    async fn bash_network_approval_is_per_call_even_for_session_decision() {
+        let approvals = Arc::new(AtomicUsize::new(0));
+        let mut runner = make_runner(Arc::new(CountingApproveGate(Arc::clone(&approvals))));
+        let input = serde_json::json!({
+            "command": "printf network",
+            "network_enabled": true
+        });
+
+        runner
+            .execute_tool(&DummyL2Tool, input.clone(), &make_ctx(), "network-turn-1")
+            .await
+            .expect("first explicitly approved call");
+        runner
+            .execute_tool(&DummyL2Tool, input, &make_ctx(), "network-turn-2")
+            .await
+            .expect("second explicitly approved call");
+
+        assert_eq!(approvals.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn bash_without_network_request_fails_closed_on_nonisolating_backend() {
+        let mut runner = make_runner(Arc::new(AutoApproveGate));
+        let result = runner
+            .execute_tool(
+                &DummyL2Tool,
+                serde_json::json!({"command": "printf offline"}),
+                &make_ctx(),
+                "network-denied-turn",
+            )
+            .await;
+
+        assert!(matches!(result, Err(ToolError::PolicyDenied { ref reason })
+            if reason.contains("cannot enforce network isolation") && reason.contains("fail-closed")));
+    }
+
+    #[tokio::test]
     async fn l2_approved_by_gate_runs() {
         let mut runner = make_runner(Arc::new(AutoApproveGate));
         let tool = DummyL2Tool;
         let result = runner
-            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .execute_tool(
+                &tool,
+                serde_json::json!({
+                    "command": "rm -rf /tmp/test",
+                    "network_enabled": true
+                }),
+                &make_ctx(),
+                "t1",
+            )
             .await;
         assert!(
             matches!(result, Ok(_) | Err(ToolError::OutputRejected(_))),
@@ -1527,8 +1820,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bypass_all_approves_l2() {
-        // BypassAll mode should allow L2 tool without any approval gate prompt.
+    async fn bypass_all_does_not_bypass_explicit_network_approval() {
+        // BypassAll may bypass the ordinary tool policy, but it is not an
+        // authenticated grant of outbound network authority.
         let ctx = PermissionContext {
             mode: PermissionMode::BypassAll,
             ..Default::default()
@@ -1543,12 +1837,18 @@ mod tests {
         .with_permission_context(ctx);
         let tool = DummyL2Tool;
         let result = runner
-            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .execute_tool(
+                &tool,
+                serde_json::json!({
+                    "command": "rm -rf /tmp/test",
+                    "network_enabled": true
+                }),
+                &make_ctx(),
+                "t1",
+            )
             .await;
-        assert!(
-            matches!(result, Ok(_) | Err(ToolError::OutputRejected(_))),
-            "BypassAll should pass policy even if captured output is rejected: {result:?}"
-        );
+        assert!(matches!(result, Err(ToolError::PolicyDenied { ref reason })
+            if reason.contains("network access was denied")));
     }
 
     #[tokio::test]
@@ -1615,7 +1915,15 @@ mod tests {
 
         let tool = DummyL2Tool;
         let result = runner
-            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .execute_tool(
+                &tool,
+                serde_json::json!({
+                    "command": "rm -rf /tmp/test",
+                    "network_enabled": true
+                }),
+                &make_ctx(),
+                "t1",
+            )
             .await;
         assert!(
             matches!(result, Ok(_) | Err(ToolError::OutputRejected(_))),
@@ -1632,7 +1940,15 @@ mod tests {
 
         let tool = DummyL2Tool;
         let result = runner
-            .execute_tool(&tool, make_input_rm(), &make_ctx(), "t1")
+            .execute_tool(
+                &tool,
+                serde_json::json!({
+                    "command": "rm -rf /tmp/test",
+                    "network_enabled": true
+                }),
+                &make_ctx(),
+                "t1",
+            )
             .await;
         assert!(
             matches!(result, Ok(_) | Err(ToolError::OutputRejected(_))),

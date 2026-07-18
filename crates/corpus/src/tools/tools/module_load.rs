@@ -5,7 +5,9 @@ use fabric::Timer;
 use serde_json::{json, Value};
 use tracing::info;
 
-use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use super::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,
+};
 
 pub struct ModuleLoadTool;
 
@@ -45,6 +47,10 @@ impl Tool for ModuleLoadTool {
 
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::L3 // destructive: kernel module loading
+    }
+
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        Some(ToolExecutionDescriptor::ModuleLoad)
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {

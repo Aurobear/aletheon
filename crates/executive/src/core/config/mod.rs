@@ -89,6 +89,9 @@ pub struct AppConfig {
     /// S1 sandbox profiles (from trusted daemon config, never from repo).
     #[serde(default)]
     pub sandbox_profiles: fabric::SandboxProfiles,
+    /// Host-owned outbound network authority for built-in tools.
+    #[serde(default)]
+    pub network_policy: fabric::network_policy::NetworkPolicy,
     #[serde(default)]
     pub agent_profiles: AgentProfilesConfig,
 }
@@ -175,7 +178,7 @@ pub fn merge_layers(layers: impl IntoIterator<Item = ConfigLayer>) -> Result<Loa
     let mut provenance = ConfigProvenance::default();
     provenance::record_leaves(&merged, "", &ConfigSource::defaults(), &mut provenance);
 
-    for layer in layers {
+    for mut layer in layers {
         // Project configuration is the only lower-trust profile source. It may
         // add names, but cannot hollow out a daemon/system/user profile by
         // redefining the same name. Environment and CLI remain trusted daemon
@@ -200,6 +203,21 @@ pub fn merge_layers(layers: impl IntoIterator<Item = ConfigLayer>) -> Result<Loa
                 .expect("effective lower sandbox profiles remain typed")
         });
         let mut provenance_value = layer.value.clone();
+        if layer.source.kind == ConfigSourceKind::Project {
+            // Network authority is host-owned. Repository configuration cannot
+            // grant itself outbound access.
+            if let Some(table) = layer.value.as_table_mut() {
+                if table.remove("network_policy").is_some() {
+                    tracing::warn!(
+                        source = %layer.source.locator,
+                        "project network_policy ignored; outbound authority is host-owned"
+                    );
+                }
+            }
+            if let Some(table) = provenance_value.as_table_mut() {
+                table.remove("network_policy");
+            }
+        }
         if project_profiles.is_some() {
             // Ignored same-name definitions must never appear authoritative in
             // diagnostics. Profile authority is enforced by the typed merge;

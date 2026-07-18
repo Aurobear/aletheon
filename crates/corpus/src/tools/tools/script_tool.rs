@@ -13,7 +13,10 @@ use serde_json::{json, Value};
 use tokio::process::Command;
 use tracing::warn;
 
-use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult, ToolResultMeta};
+use fabric::tool::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolExposure, ToolResult,
+    ToolResultMeta,
+};
 
 /// A tool backed by an external executable script.
 #[derive(Debug, Clone)]
@@ -76,6 +79,15 @@ impl Tool for ScriptTool {
 
     fn permission_level(&self) -> PermissionLevel {
         self.permission
+    }
+
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        // Canonicalization is performed against the host-registered path, not
+        // model input. Missing/unresolvable paths do not acquire an execution
+        // identity and therefore cannot be dispatched as a trusted script.
+        std::fs::canonicalize(&self.script_path)
+            .ok()
+            .map(|canonical_path| ToolExecutionDescriptor::Script { canonical_path })
     }
 
     fn exposure(&self) -> ToolExposure {
@@ -217,6 +229,26 @@ mod tests {
         )
         .with_exposure(ToolExposure::Deferred);
         assert_eq!(tool.exposure(), ToolExposure::Deferred);
+    }
+
+    #[test]
+    fn script_descriptor_uses_host_canonical_path_only() {
+        let dir = TempDir::new().unwrap();
+        let script_path = dir.path().join("trusted.sh");
+        std::fs::write(&script_path, "#!/bin/sh\n").unwrap();
+        let tool = ScriptTool::new(
+            "trusted".into(),
+            "trusted host script".into(),
+            script_path.clone(),
+            PermissionLevel::L1,
+        );
+
+        assert_eq!(
+            tool.execution_descriptor(),
+            Some(ToolExecutionDescriptor::Script {
+                canonical_path: std::fs::canonicalize(script_path).unwrap(),
+            })
+        );
     }
 
     #[tokio::test]

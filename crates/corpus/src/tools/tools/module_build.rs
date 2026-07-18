@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::info;
 
-use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use super::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,
+};
 
 pub struct ModuleBuildTool;
 
@@ -40,6 +42,10 @@ impl Tool for ModuleBuildTool {
 
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::L2 // system-level: compiling kernel code
+    }
+
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        Some(ToolExecutionDescriptor::ModuleBuild)
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
