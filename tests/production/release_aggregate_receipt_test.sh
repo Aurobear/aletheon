@@ -93,6 +93,15 @@ if "$repo_root/scripts/release-acceptance.sh" --validate-release-lane-evidence \
 fi
 
 release_script="$repo_root/scripts/release-acceptance.sh"
+migration_script="$repo_root/scripts/verify-migration-matrix.sh"
+grep -F 'bash "$repo_root/scripts/cargo-agent.sh" test -p mnemosyne --test gbrain_spool' \
+  "$migration_script" >/dev/null
+grep -F 'bash "$repo_root/scripts/cargo-agent.sh" test -p executive --test agent_control_repository' \
+  "$migration_script" >/dev/null
+if grep -Eq '(^|[[:space:]])cargo[[:space:]]+test' "$migration_script"; then
+  echo "migration verifier bypasses the bounded Cargo wrapper" >&2
+  exit 1
+fi
 grep -F 'git -C "$repo_root" worktree add --detach "$production_workspace" "$candidate_source_commit"' \
   "$release_script" >/dev/null
 trap_line=$(grep -nF 'trap cleanup_production_worktree EXIT' "$release_script" | cut -d: -f1)
