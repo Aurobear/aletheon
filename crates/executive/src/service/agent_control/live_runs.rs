@@ -10,6 +10,8 @@ use fabric::{
 use tokio::sync::{watch, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
+use super::execution::BackgroundResourceRegistration;
+
 #[derive(Clone)]
 pub struct LiveAgentRun {
     pub snapshots: watch::Sender<AgentSnapshot>,
@@ -74,7 +76,7 @@ impl ReparentAuthority {
 }
 
 struct ManagedResourceState {
-    cancellation: Mutex<CancellationToken>,
+    registration: BackgroundResourceRegistration,
     owner: Mutex<String>,
     completed_actions: Mutex<std::collections::HashSet<String>>,
 }
@@ -104,12 +106,21 @@ impl LiveAgentRun {
         }
         let initial_owner = format!("process:{}", snapshots.borrow().handle.process_id.0);
         let managed_resources = indexed
-            .keys()
-            .map(|resource_id| {
+            .iter()
+            .map(|(resource_id, declaration)| {
+                // A reviewed survivable resource must not inherit the child
+                // token: that would cancel it before reparent can attach the
+                // exact producer token to the parent. Non-survivable resources
+                // remain structurally parented to child cancellation.
+                let resource_token = if declaration.survive_child {
+                    CancellationToken::new()
+                } else {
+                    cancellation.child_token()
+                };
                 (
                     resource_id.clone(),
                     ManagedResourceState {
-                        cancellation: Mutex::new(cancellation.child_token()),
+                        registration: BackgroundResourceRegistration::new(resource_token),
                         owner: Mutex::new(initial_owner.clone()),
                         completed_actions: Mutex::new(std::collections::HashSet::new()),
                     },
@@ -161,7 +172,16 @@ impl LiveAgentRun {
 
     pub async fn resource_cancellation(&self, resource_id: &str) -> Option<CancellationToken> {
         let state = self.managed_resources.get(resource_id)?;
-        Some(state.cancellation.lock().await.clone())
+        Some(state.registration.cancellation())
+    }
+
+    pub fn resource_registration(
+        &self,
+        resource_id: &str,
+    ) -> Option<BackgroundResourceRegistration> {
+        self.managed_resources
+            .get(resource_id)
+            .map(|state| state.registration.clone())
     }
 
     pub async fn terminate_managed_resource(&self, resource_id: &str, action_key: &str) -> bool {
@@ -170,7 +190,7 @@ impl LiveAgentRun {
         };
         let mut actions = state.completed_actions.lock().await;
         if actions.insert(action_key.to_string()) {
-            state.cancellation.lock().await.cancel();
+            state.registration.cancel_and_wait().await;
         }
         true
     }
@@ -200,7 +220,7 @@ impl LiveAgentRun {
             // Keep the exact token already handed to the command producer.
             // Replacing it would leave a running producer attached to the old
             // child token and therefore orphan it from parent cancellation.
-            let resource_cancellation = state.cancellation.lock().await.clone();
+            let resource_cancellation = state.registration.cancellation();
             let parent_cancellation = parent_cancellation.clone();
             tokio::spawn(async move {
                 parent_cancellation.cancelled().await;
@@ -301,6 +321,10 @@ mod tests {
             survive_child: true,
         }]);
         let token = live.resource_cancellation("background").await.unwrap();
+        let registration = live.resource_registration("background").unwrap();
+        registration
+            .bind(|cancellation| async move { cancellation.cancelled().await })
+            .unwrap();
         assert!(!token.is_cancelled());
         let parent = CancellationToken::new();
         live.reparent_managed_resource(
@@ -314,15 +338,97 @@ mod tests {
         .unwrap();
         let reparented = live.resource_cancellation("background").await.unwrap();
         parent.cancel();
-        tokio::task::yield_now().await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            registration.wait_stopped(),
+        )
+        .await
+        .unwrap();
         assert!(reparented.is_cancelled());
         assert!(token.is_cancelled());
+        assert!(registration.is_stopped());
 
         assert!(
             live.terminate_managed_resource("background", "terminate-1")
                 .await
         );
         assert!(reparented.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn child_cancel_stops_registered_non_surviving_producer() {
+        let live = run(vec![BackgroundResourceDecl {
+            resource_id: "foreground".into(),
+            class: AgentResourceClass::ForegroundCommand,
+            survive_child: false,
+        }]);
+        let registration = live.resource_registration("foreground").unwrap();
+        registration
+            .bind(|cancellation| async move { cancellation.cancelled().await })
+            .unwrap();
+
+        live.cancellation.cancel();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            registration.wait_stopped(),
+        )
+        .await
+        .unwrap();
+        assert!(registration.is_stopped());
+    }
+
+    #[tokio::test]
+    async fn reviewed_survivor_is_not_cancelled_before_reparent_decision() {
+        let live = run(vec![BackgroundResourceDecl {
+            resource_id: "survivor".into(),
+            class: AgentResourceClass::BackgroundCommand,
+            survive_child: true,
+        }]);
+        let registration = live.resource_registration("survivor").unwrap();
+        registration
+            .bind(|cancellation| async move { cancellation.cancelled().await })
+            .unwrap();
+
+        live.cancellation.cancel();
+        tokio::task::yield_now().await;
+        assert!(!registration.cancellation().is_cancelled());
+        assert!(!registration.is_stopped());
+        assert!(
+            live.terminate_managed_resource("survivor", "settlement-denied")
+                .await
+        );
+        assert!(registration.is_stopped());
+    }
+
+    #[tokio::test]
+    async fn foreground_settlement_waits_for_registered_producer_cleanup() {
+        struct CleanupSignal(Arc<AtomicBool>);
+        impl Drop for CleanupSignal {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
+        let live = run(vec![BackgroundResourceDecl {
+            resource_id: "foreground".into(),
+            class: AgentResourceClass::ForegroundCommand,
+            survive_child: false,
+        }]);
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let guard = CleanupSignal(cleaned.clone());
+        live.resource_registration("foreground")
+            .unwrap()
+            .bind(move |cancellation| async move {
+                let _guard = guard;
+                cancellation.cancelled().await;
+            })
+            .unwrap();
+
+        assert!(
+            live.terminate_managed_resource("foreground", "settle")
+                .await
+        );
+        assert!(cleaned.load(Ordering::Acquire));
     }
 
     #[test]

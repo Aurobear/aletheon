@@ -80,6 +80,7 @@ fn input() -> AgentRuntimeInput {
         inbox: AgentRuntimeInbox::empty(),
         cancellation: CancellationToken::new(),
         background_cancellations: std::collections::HashMap::new(),
+        background_registrations: std::collections::HashMap::new(),
     }
 }
 

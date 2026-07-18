@@ -154,6 +154,7 @@ fn input_with_inbox(
         inbox,
         cancellation: CancellationToken::new(),
         background_cancellations: std::collections::HashMap::new(),
+        background_registrations: std::collections::HashMap::new(),
     };
     (sender, input)
 }

@@ -44,8 +44,8 @@ pub use context_fork::{
 };
 pub use execution::{
     AgentEventSink, AgentRecoveryRuntimeInput, AgentRuntimeEvent, AgentRuntimeInput,
-    AgentRuntimeLauncher, AgentRuntimeRegistry, CompatibilityRuntimeLauncher, NoopAgentEventSink,
-    SpineAgentEventSink,
+    AgentRuntimeLauncher, AgentRuntimeRegistry, BackgroundResourceRegistration,
+    CompatibilityRuntimeLauncher, NoopAgentEventSink, SpineAgentEventSink,
 };
 pub use live_runs::{LiveAgentRun, LiveAgentRuns, ReparentAuthority};
 pub use mailbox::{AgentMailboxBridge, AgentRuntimeInbox};
@@ -855,6 +855,7 @@ impl AgentControlPort for AgentControlService {
             ),
         )?;
         let mut background_cancellations = std::collections::HashMap::new();
+        let mut background_registrations = std::collections::HashMap::new();
         for declaration in &request.background_decls {
             let token = live_run
                 .resource_cancellation(&declaration.resource_id)
@@ -866,6 +867,15 @@ impl AgentControlPort for AgentControlService {
                     )
                 })?;
             background_cancellations.insert(declaration.resource_id.clone(), token);
+            let registration = live_run
+                .resource_registration(&declaration.resource_id)
+                .ok_or_else(|| {
+                    control_error(
+                        AgentControlErrorKind::Runtime,
+                        "reviewed background resource has no producer registration",
+                    )
+                })?;
+            background_registrations.insert(declaration.resource_id.clone(), registration);
         }
         let inserted = self.live.insert(agent_id, live_run).await;
         if !inserted {
@@ -913,6 +923,7 @@ impl AgentControlPort for AgentControlService {
             inbox,
             cancellation,
             background_cancellations,
+            background_registrations,
         };
         let events: Arc<dyn AgentEventSink> = Arc::new(SpineAgentEventSink::new(
             events,
@@ -1076,6 +1087,33 @@ impl AgentControlPort for AgentControlService {
         let live = self.live.get(agent_id).await.ok_or_else(|| {
             control_error(AgentControlErrorKind::Runtime, "Agent runtime is not live")
         })?;
+        // Cancel the authoritative live subtree, not only the requested node.
+        // Runtime/model input cannot forge this topology: parent identities
+        // come from persisted host-created Agent handles.
+        let all_live = self.live.all().await;
+        let mut cancelled = std::collections::HashSet::from([agent_id]);
+        loop {
+            let mut changed = false;
+            for descendant in &all_live {
+                let snapshot = descendant.snapshots.borrow();
+                if snapshot
+                    .handle
+                    .parent_agent_id
+                    .is_some_and(|parent| cancelled.contains(&parent))
+                    && cancelled.insert(snapshot.handle.agent_id)
+                {
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for descendant in all_live {
+            if cancelled.contains(&descendant.snapshots.borrow().handle.agent_id) {
+                descendant.cancellation.cancel();
+            }
+        }
         live.cancellation.cancel();
         self.kernel
             .cancel_operation(run.snapshot.handle.operation_id, CancelReason::User)
@@ -1411,6 +1449,14 @@ async fn run_agent(
                 }
                 Err(error) => {
                     tracing::error!(agent = ?agent, %error, "Agent quiescing failed");
+                    for resource in live_run.begin_quiescing().await {
+                        let _ = live_run
+                            .terminate_managed_resource(
+                                &resource.resource_id,
+                                &format!("quiesce-failed:{}", resource.resource_id),
+                            )
+                            .await;
+                    }
                     let _ = admission.revoke().await;
                     for label in ["admission", "mailbox", "execution"] {
                         let _ = repository
@@ -1428,6 +1474,20 @@ async fn run_agent(
             }
         }
     } else {
+        // Even with the richer receipt/reparent state machine disabled, a
+        // concrete registered producer must never outlive its child. Legacy
+        // mode has no reparent protocol, so every declaration is cancelled
+        // and awaited before releasing admission/leases.
+        if let Some(live_run) = live.get(agent).await {
+            for resource in live_run.begin_quiescing().await {
+                let _ = live_run
+                    .terminate_managed_resource(
+                        &resource.resource_id,
+                        &format!("legacy-terminal:{}", resource.resource_id),
+                    )
+                    .await;
+            }
+        }
         let settlement = match settlement_usage {
             Some(usage) if next == AgentRunStatus::Succeeded => {
                 AgentAdmissionLease::settle(&mut *admission, &usage).await
