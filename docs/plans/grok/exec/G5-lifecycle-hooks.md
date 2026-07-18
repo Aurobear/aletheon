@@ -6,7 +6,7 @@
 ## 1. 目标与非目标
 
 **目标**：分两条线补强 Aletheon 已有的生命周期扩展能力：
-- **命令 hook 线（增强现有）**：Aletheon **已有两条可用 hook 路径**——corpus `execute_hook`（结构化，可 Block/ModifyInput/Inject）与 `run_hook_scripts`（config 驱动脚本，fire-and-forget）。本期：丰富脚本 hook 的 envelope（对齐 Grok），修正 `start` 只跑 corpus hook 而不跑脚本 hook 的不对称，扩展 `HookPoint` 覆盖至对齐 Grok 的事件集（session/turn/tool/subagent/compaction），接入 G1 信任门控（未信任 repo 的 hook 不跑）。
+- **命令 hook 线（增强现有）**：保留 **Corpus `HookRegistry`/`execute_hook` 单一权威路径**。配置脚本在 bootstrap 注册进同一 registry，不恢复 Executive 自有 subprocess runner。本期：丰富 Corpus hook envelope（对齐 Grok），补齐配置的 session start/end 对称注册，扩展 `HookPoint` 覆盖至 session/turn/tool/subagent/compaction，并接入 G1 信任门控（未信任 repo 的 hook 不跑）。
 - **typed contributor 线（新增）**：在**进程内**加一个有序、类型化、返回声明式 effect 的 contributor 注册表，用于 authority/安全/记忆投影等不可外置的逻辑；contributor 永不拥有 loop control。
 
 **非目标**：
@@ -14,19 +14,16 @@
 - 不让 contributor 直接调 tool（只返回 effect，Executive 重新授权/执行）。
 - 不一次实现所有 hook 点（先补已有调用点：session start/end、turn start/end、tool terminal）。
 
-## 2. 当前代码锚点（已验证 @ commit bec15695）
+## 2. 当前代码锚点（重新验证 @ 2026-07-18，含用户裁定）
 
 | 符号 | 位置 | 关键事实 |
 |---|---|---|
-| `SessionLifecycleUseCases` | `crates/executive/src/service/request_use_cases.rs:331-335` | `reset_turn_token`/`finish`/`start` |
-| `ProductionSessionLifecycle::finish` | 同上 `:394-417` | 调 `execute_hook(OnSessionEnd)`(:405) **+** `run_hook_scripts(config.on_session_end)`(:411) |
-| `ProductionSessionLifecycle::start` | 同上 `:419-434` | 只调 `execute_hook(OnSessionStart)`(:433)；**不跑脚本 hook**（与 finish 不对称） |
-| `run_hook_scripts` | `crates/executive/src/impl/daemon/handler/mod.rs:17-52` | **已实现**：spawn 脚本、JSON stdin、stdout/stderr **丢弃**、30s timeout、fail-open。纯 fire-and-forget |
-| envelope | `request_use_cases.rs:407-410` | 仅 `{ session_id, cwd }`——**比 Grok envelope 简陋**（无 hook_event_name/workspace_root/tool 信息） |
-| Corpus `execute_hook` | `crates/corpus/src/service.rs:140-142` | `execute_hook(&HookContext) -> HookResult`（结构化，可 Block） |
-| `HookRegistry` | `crates/corpus/src/hook/registry.rs:35,81-104` | `HashMap<HookPoint, Vec<RegisteredHook>>`；execute 聚合 Block>ModifyInput>Inject |
-| hook 进程执行（corpus 侧） | 同上 `:125-142` | `tokio::process::Command` + 30s timeout + JSON stdin |
-| `HooksConfig` | `crates/executive/src/core/config/agent.rs:64-79` | `{ pre_turn, post_tool, on_session_end, pre_tool }` |
+| `SessionLifecycleUseCases` | `crates/executive/src/service/request_use_cases.rs:368-435` | start/end 均调用 Corpus `execute_hook` |
+| 配置脚本注册 | `crates/executive/src/impl/daemon/bootstrap/turn_runtime.rs:21-46` | `HooksConfig` 脚本统一注册进权威 Corpus registry；当前缺 `on_session_start` |
+| Corpus `execute_hook` | `crates/corpus/src/service.rs:376-378` | 唯一命令 hook 执行入口，返回结构化 `HookResult` |
+| `HookRegistry` | `crates/corpus/src/hook/registry.rs:19-171` | priority 有序执行、30s timeout、聚合 Block/ModifyInput/Inject |
+| hook envelope | `crates/fabric/src/types/hook.rs:32-51` | 当前直接序列化 `HookContext`；缺稳定 event name/timestamp/workspace root，且未做 128KB 上限 |
+| `HooksConfig` | `crates/executive/src/core/config/agent.rs:79-92` | `{ pre_turn, post_tool, on_session_end, pre_tool }` |
 | 配置分层加载 | `crates/executive/src/core/config/mod.rs:153-194` | system/user/project/env/CLI |
 | turn 生命周期点 | `crates/executive/src/service/turn_pipeline.rs:189-213,215,417,638-647` | PreTurn hook、begin_user、tool terminal observe、finish |
 | `CapabilityExecutionContext` | `crates/executive/src/service/governed_capability.rs:21-37` | 完整可信字段（principal/thread/turn/workspace/sandbox/cancel/session_id/... ） |
@@ -34,9 +31,7 @@
 | `publish_event_v2` | `crates/fabric/src/ipc/bus/communication_bus.rs:164-179` | 事件发布 |
 | `TurnEvent` | `crates/fabric/src/types/turn.rs:62-74` | Started/Finished/ToolCall |
 
-**核心事实（已核实纠正）**：Aletheon 已有**两条可用 hook 路径**——corpus `execute_hook`（结构化，可 Block/ModifyInput/Inject）与 `run_hook_scripts`（脚本，fire-and-forget，已实现且被正确调用）。真实缺口是：(a) 脚本 envelope 简陋（仅 session_id+cwd）；(b) `start` 不跑脚本 hook（与 finish 不对称）；(c) HookPoint 覆盖窄（~6 点）；(d) 无 typed contributor 层；(e) 无信任门控。
-
-> **勘误**：本 spec 早期草稿曾称 `run_hook_scripts` "未实现"——经核实该函数存在于 `handler/mod.rs:17-52` 并在 `request_use_cases.rs:411` 被正确调用。无此 bug。
+**用户裁定（2026-07-18）**：保留单一 Corpus hook 权威路径。`run_hook_scripts` 已由 `42888eb8` 删除，配置脚本已迁入 Corpus registry；G5 不恢复第二条执行路径。
 
 ## 3. 权威归属决策（doc10 §6 八问）
 
@@ -81,35 +76,15 @@ impl HookPoint {
 }
 ```
 
-### 4.2 命令 hook script runner（补缺口） — `crates/executive/src/service/hook_scripts.rs`（新文件）
+### 4.2 Corpus 命令 hook runner（增强单一权威路径） — `crates/corpus/src/hook/registry.rs`
 
 ```rust
 use std::path::PathBuf;
 
-/// 增强现有 run_hook_scripts（handler/mod.rs:17-52）：承载更丰富的 envelope
-/// 构造与信任门控。复用现有进程执行模式（tokio::process::Command + 30s + JSON stdin）。
-/// 信任门控：未信任 workspace（G1 决策）的 repo-local hook 不执行。
-pub struct HookScriptRunner {
-    /// G1 trust decision 查询（flag 关时恒 trusted）。
-    trust: std::sync::Arc<dyn crate::service::workspace_trust::TrustQuery>,
-}
-
-impl HookScriptRunner {
-    /// 逐条执行 script 路径；非 blocking 点 fail-open；blocking 点（PreTool）
-    /// 返回 aggregate 决策。envelope 为 JSON（带 hook_event_name/session_id/cwd/...，
-    /// 对齐 Grok HookEventEnvelope），payload 超 128KB UTF-8 安全截断。
-    pub async fn run(
-        &self,
-        point: HookPoint,
-        scripts: &[String],
-        envelope: serde_json::Value,
-        workspace_trusted: bool,
-    ) -> HookResult {
-        // repo-local 且未信任 → 跳过并记事件（restricted）。
-        // 逐条 spawn，聚合 Block>ModifyInput>Inject>Continue（复用 registry 语义）。
-        unimplemented!()
-    }
-}
+/// Registry 在 spawn 前构造稳定 envelope（hook_event_name/session_id/
+/// workspace_root/timestamp/tool_*），以 UTF-8 边界截断至 128KB。
+/// config 来源是 host-configured；其它位于 workspace_root 内的脚本只有
+/// `repo_hooks_trusted=true` 时执行，否则跳过并记录 restricted。
 ```
 
 ### 4.3 Typed contributor 注册表 — `crates/executive/src/service/lifecycle_contributors.rs`（新文件）
@@ -186,8 +161,8 @@ pub const MAX_CONTEXT_FRAGMENT_BYTES: usize = 8 * 1024;
 |---|---|---|
 | 修改 | `crates/corpus/src/hook/` HookPoint 定义 | 扩展事件集 + `is_blocking` |
 | 修改 | `crates/corpus/src/hook/registry.rs` | 新 HookPoint 的注册/匹配；envelope 对齐（hook_event_name 等） |
-| 修改/新增 | `crates/executive/src/impl/daemon/handler/mod.rs:17-52` 或新 `hook_scripts.rs` | 把现有 `run_hook_scripts` 抽为 `HookScriptRunner`：丰富 envelope + 信任门控入口 |
-| 修改 | `crates/executive/src/service/request_use_cases.rs:411,433` | finish 调增强后的 runner；start 补跑脚本 hook（修不对称） |
+| 修改 | `crates/corpus/src/hook/registry.rs` | 在单一 runner 内丰富 envelope、限制 payload、执行信任门控 |
+| 修改 | `crates/executive/src/core/config/agent.rs` + `impl/daemon/bootstrap/turn_runtime.rs` | 增加 `on_session_start` 并与 end 一样注册进 Corpus |
 | 新增 | `crates/executive/src/service/lifecycle_contributors.rs` | typed contributor 注册表 |
 | 修改 | `crates/executive/src/service/turn_pipeline.rs` | 在已有生命周期点 dispatch contributor + 解释 effect |
 | 修改 | `crates/executive/src/core/config/agent.rs:64-79` | HooksConfig 补新点（subagent/compact 等）字段 |
@@ -196,9 +171,9 @@ pub const MAX_CONTEXT_FRAGMENT_BYTES: usize = 8 * 1024;
 ## 6. 任务分解（TDD）
 
 **阶段 A：增强现有脚本 hook（无 flag，行为增强）**
-- T1. envelope 对齐：把 `run_hook_scripts` 的 `{session_id, cwd}`（request_use_cases.rs:407-410）扩为对齐 Grok 的 envelope（加 `hook_event_name`/`workspace_root`/`timestamp`/`tool_*`）；payload 128KB UTF-8 截断。单测。
-- T2. 修正 `start`/`finish` 不对称：`start`（:419-434）也跑 `config.on_session_start` 脚本 hook（当前只跑 corpus hook）。集成测试：session start 触发配置的 script。
-- T3. 把 `run_hook_scripts` 抽为 `HookScriptRunner`（承载 envelope 构造 + 后续信任门控入口），保持现有 fire-and-forget 语义。回归测试：现有 on_session_end 脚本行为不变。
+- T1. Corpus envelope 对齐：加 `hook_event_name`/`workspace_root`/`timestamp`/`tool_*`；payload 128KB UTF-8 截断。单测。
+- T2. 配置注册对称：增加 `config.on_session_start`，与 `on_session_end` 一样注册进 Corpus。集成测试。
+- T3. 回归证明配置脚本仅经 Corpus registry 执行，不恢复 Executive subprocess runner。
 
 **阶段 B：扩展 HookPoint**
 - T4. HookPoint 加新变体 + `is_blocking`。`cargo check -p corpus`。
@@ -206,7 +181,7 @@ pub const MAX_CONTEXT_FRAGMENT_BYTES: usize = 8 * 1024;
 - T6. 在 turn_pipeline 已有点补发新 hook（PostToolFailure、SubagentStart/Stop 等挂到对应位置）。集成测试。
 
 **阶段 C：信任门控（依赖 G1；G1 未落地则 stub trusted）**
-- T7. `HookScriptRunner` 查询 G1 `TrustQuery`：repo-local hook 且未信任 → 跳过 + 记 restricted 事件。单测（mock trust）。
+- T7. Corpus registry 使用 host 注入的 trust metadata：非 config 的 repo-local hook 且未信任 → 跳过 + 记 restricted 事件。单测。
 
 **阶段 D：typed contributor（flag 后）**
 - T8. `lifecycle_contributors.rs` 类型 + 注册表。`cargo check -p executive`。
@@ -224,9 +199,9 @@ pub const MAX_CONTEXT_FRAGMENT_BYTES: usize = 8 * 1024;
 
 ## 7. 兼容与迁移
 
-- **脚本 hook 增强无 flag**：envelope 丰富、start/finish 对称化是对已工作路径的增强，向后兼容（现有 on_session_end 脚本行为不变），无需 flag。
+- **脚本 hook 增强无 flag**：envelope 丰富、start/end 配置注册对称化是单一 Corpus 路径的向后兼容增强，无需 flag。
 - **contributor flag 关闭**：不 dispatch，turn 行为等价当前。
-- **两条线并存**：命令 hook（外部、可不信任、只 PreTool 阻塞）用于用户集成；typed contributor（进程内、可信、可 fail-closed）用于 authority/安全/记忆。选择规则见研究文档 ../05 §8.4。
+- **两类扩展并存但不形成双 runner**：Corpus 命令 hook（外部）用于用户集成；typed contributor（进程内）用于 authority/安全/记忆。
 - **HookPoint 扩展向后兼容**：现有 6 点行为不变，新点默认无注册 = no-op。
 
 ## 8. 测试计划（映射研究文档 ../05 §7 验收方向）
