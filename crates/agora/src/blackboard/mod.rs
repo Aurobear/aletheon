@@ -54,7 +54,7 @@ impl Blackboard {
     /// Project all entries to a deterministically ordered JSON object.
     pub fn to_json(&self) -> Value {
         let mut entries = self.entries.iter().collect::<Vec<_>>();
-        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        entries.sort_by_key(|(key, _)| *key);
         Value::Object(
             entries
                 .into_iter()

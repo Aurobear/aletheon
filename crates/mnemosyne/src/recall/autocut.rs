@@ -41,7 +41,7 @@ pub fn apply_autocut<T>(
     });
 
     // Collect finite scores
-    let scores: Vec<f32> = items.iter().map(|item| score_of(item)).collect();
+    let scores: Vec<f32> = items.iter().map(score_of).collect();
     let has_finite = scores.iter().any(|s| s.is_finite());
     if !has_finite {
         return (

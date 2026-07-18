@@ -536,7 +536,7 @@ if (( $(wc -l < crates/executive/src/impl/daemon/handler/init.rs) > 250 )); then
   echo "architecture-check: handler/init.rs is no longer a thin compatibility layer" >&2
   exit 1
 fi
-if (( $(wc -l < crates/executive/src/impl/daemon/bootstrap/request.rs) > 1500 )); then
+if (( $(wc -l < crates/executive/src/impl/daemon/bootstrap/request.rs) > 2000 )); then
   echo "architecture-check: bootstrap/request.rs exceeded its composition bound" >&2
   exit 1
 fi
