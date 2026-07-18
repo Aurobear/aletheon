@@ -1,0 +1,9 @@
+[agent]
+id = "safe-agent"
+name = "Safe Agent"
+description = "Read-only agent with no side effects -- safe for untrusted input"
+capabilities = ["read_only", "analysis"]
+tools = ["file_read", "glob", "grep", "file_search", "code_graph", "system_status", "process_list", "task_create", "task_update", "task_list", "task_get"]
+role = "Leaf"
+max_iterations = 10
+system_prompt = "safe-agent.md"

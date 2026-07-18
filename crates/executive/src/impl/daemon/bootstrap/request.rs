@@ -992,6 +992,28 @@ impl RequestHandler {
             materialized = session_recovery.materialized,
             "Session event-spine recovery completed before turn admission"
         );
+
+        // M4-T2: scan for incomplete turns (start boundary without terminal).
+        // Runs once at daemon bootstrap when compaction_v2 is enabled.
+        let turn_recovery_report = crate::service::turn_recovery::scan_incomplete_turns(
+            &canonical_store,
+            &[fabric::SessionId(session_id.clone())],
+            &grok_hardening,
+        )
+        .await
+        .context("incomplete-turn recovery scan during daemon startup")?;
+        if !turn_recovery_report.incomplete_turns.is_empty() {
+            for turn in &turn_recovery_report.incomplete_turns {
+                info!(
+                    session = %turn.session_id,
+                    turn = %turn.turn_id,
+                    classification = ?turn.classification,
+                    items = turn.item_count,
+                    "Recovered incomplete turn at startup"
+                );
+            }
+        }
+
         let coordinator = Arc::new(
             crate::service::turn_coordinator::TurnCoordinator::with_event_spine_and_grok(
                 kernel.clone(),

@@ -24,8 +24,9 @@ use tokio::sync::Mutex;
 
 /// The sole cross-table lifecycle handle.
 ///
-/// Its components are deliberately private. Callers receive immutable typed
-/// snapshots/results rather than table or lock handles.
+/// Components are stored as owned concrete types and exposed through
+/// trait-object getters (`Arc<dyn Trait>`) so callers depend on the
+/// fabric boundary contract, never on kernel implementation types.
 pub struct KernelRuntime {
     clock: Arc<dyn Clock>,
     spaces: Arc<InMemorySpaceManager>,

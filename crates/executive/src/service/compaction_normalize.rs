@@ -55,8 +55,8 @@ pub fn normalize_tool_pairs(items: Vec<ItemPayload>) -> NormalizedItems {
                 call_id,
                 content,
                 is_error,
-                permit_id,
-                audit_id,
+                permit_id: _,
+                audit_id: _,
             } = &item
             {
                 if !tool_call_ids.contains(call_id) {
@@ -97,9 +97,8 @@ pub struct CompactionLineage {
 
 impl CompactionLineage {
     /// Produce a lineage SystemNotice for persistence at the end of
-    /// the compaction run. Returns None when `is_degenerate_summary`
-    /// is true AND the summary is degenerate.
-    pub fn to_item_payload(&self, summary: &str) -> ItemPayload {
+    /// the compaction run.
+    pub fn to_item_payload(&self, _summary: &str) -> ItemPayload {
         let lineage_json = serde_json::to_string(self).unwrap_or_default();
         ItemPayload::SystemNotice {
             content: format!(

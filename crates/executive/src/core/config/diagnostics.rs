@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use super::LoadedConfig;
+use super::{LoadedConfig, merge_layers};
 
 /// Stable, schema-aware output for `aletheon config effective`.
 /// Secrets are always redacted via `provenance::redact_json`.
