@@ -826,4 +826,41 @@ mod phase3_service_tests {
         assert_eq!(view.snapshot["trace_len"], json!(1));
         assert_eq!(view.snapshot["trace"][0]["kind"], json!("evidence"));
     }
+
+    #[tokio::test]
+    async fn committed_attention_survives_persistence_replay() {
+        let persistence = Arc::new(crate::persistence::InMemoryCommitLog::new());
+        let clock = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let source = AgoraRegistry::new_with_persistence(persistence.clone(), clock.clone());
+        let proposal = proposal(
+            "s1",
+            0,
+            AgoraOperation::UpdateAttention {
+                focus: Some("winner".into()),
+                priorities: vec!["winner".into(), "runner-up".into()],
+                selection_ref: "broadcast:s1:1".into(),
+            },
+        );
+        let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX).unwrap();
+        let id = AgoraService::propose(&source, proposal).await.unwrap();
+        AgoraService::commit(&source, id, permit).await.unwrap();
+
+        let recovered = AgoraRegistry::new_with_persistence(persistence, clock);
+        assert_eq!(recovered.recover_session("s1").await.unwrap(), 1);
+        assert_eq!(recovered.recover_session("s1").await.unwrap(), 0);
+        let view = AgoraService::view(
+            &recovered,
+            AgoraViewRequest {
+                space: AgoraSpaceId("s1".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(view.snapshot["attention"]["focus"], json!("winner"));
+        assert_eq!(
+            view.snapshot["attention"]["priorities"],
+            json!(["winner", "runner-up"])
+        );
+        assert_eq!(view.version, 1);
+    }
 }

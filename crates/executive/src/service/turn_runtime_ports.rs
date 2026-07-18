@@ -1,5 +1,6 @@
 //! Synchronous, turn-blocking runtime ports.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -51,6 +52,18 @@ pub trait TurnConfigPort: Send + Sync {
 
 pub trait TurnObservabilityPort: Send + Sync {
     fn record_turn(&self, tokens_in: u64, tokens_out: u64);
+}
+
+/// Immutable authorization snapshot resolved once at the start of a turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActiveAgentProfileSnapshot {
+    pub profile_name: String,
+    pub allowed_tools: HashSet<String>,
+}
+
+#[async_trait]
+pub trait ActiveAgentProfilePort: Send + Sync {
+    async fn snapshot(&self) -> anyhow::Result<ActiveAgentProfileSnapshot>;
 }
 
 #[derive(Clone, Debug)]

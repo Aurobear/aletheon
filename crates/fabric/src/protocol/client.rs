@@ -32,6 +32,8 @@ pub enum ClientRpcRequest {
     Resume(ResumeParams),
     Compact,
     ModelList,
+    AgentProfileList,
+    AgentProfileSet(AgentProfileSetParams),
     ModeSwitch(ModeSwitchParams),
     PlanApprove,
     Cancel,
@@ -121,6 +123,11 @@ pub struct ComputerHostParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ModeSwitchParams {
     pub mode: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct AgentProfileSetParams {
+    pub profile: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -280,6 +287,12 @@ impl ClientRpcRequest {
     pub fn resume(session_id: impl Into<SessionId>) -> Self {
         Self::Resume(ResumeParams {
             session_id: session_id.into(),
+        })
+    }
+
+    pub fn agent_profile_set(profile: impl Into<String>) -> Self {
+        Self::AgentProfileSet(AgentProfileSetParams {
+            profile: profile.into(),
         })
     }
 
@@ -455,6 +468,10 @@ impl ClientRpcRequest {
             Self::Resume(params) => ("resume", Some(serde_json::to_value(params)?)),
             Self::Compact => ("compact", None),
             Self::ModelList => ("model_list", None),
+            Self::AgentProfileList => ("agent.profile.list", None),
+            Self::AgentProfileSet(params) => {
+                ("agent.profile.set", Some(serde_json::to_value(params)?))
+            }
             Self::ModeSwitch(params) => ("mode_switch", Some(serde_json::to_value(params)?)),
             Self::PlanApprove => ("plan_approve", None),
             Self::Cancel => ("cancel", None),

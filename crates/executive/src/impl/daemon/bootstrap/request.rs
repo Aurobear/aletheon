@@ -138,7 +138,8 @@ impl corpus::security::approval::ApprovalGate for DurableSocketApprovalGate {
 }
 
 use super::request_ports::{
-    initialize_self_field, retention_admin_port, RequestFacadePorts, TurnRuntimeFacadePorts,
+    admin_runtime_port, initialize_self_field, post_turn_runtime_port, retention_admin_port,
+    RequestFacadePorts, TurnRuntimeFacadePorts,
 };
 
 impl RequestHandler {
@@ -152,6 +153,7 @@ impl RequestHandler {
         grok_hardening: crate::core::config::GrokHardeningConfig,
         sandbox_profiles: fabric::SandboxProfiles,
         network_policy: fabric::network_policy::NetworkPolicy,
+        agent_profiles: crate::core::config::AgentProfilesConfig,
         evolution_enabled: bool,
         event_bus: Option<Arc<CanonicalEventBus>>,
         cancel_token: CancellationToken,
@@ -829,8 +831,10 @@ impl RequestHandler {
             .await
             .dasein_handle()
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
+        let agora_service: Arc<dyn fabric::AgoraService> =
+            Arc::new(agora::AgoraRegistry::new(kernel.clock()));
         let conscious_registry = Arc::new(
-            crate::service::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_and_tools(
+            crate::service::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_tools_and_agora(
                 data_dir.join("conscious_workspace.db"),
                 Arc::new(
                     crate::service::dasein_workspace_adapter::DaseinWorkspaceAdapter::new(
@@ -843,6 +847,7 @@ impl RequestHandler {
                 gbrain_runtime.memory_service.clone(),
                 skill_loader.clone(),
                 tools.clone(),
+                agora_service.clone(),
                 config.conscious_arbitration_mode,
             )?,
         );
@@ -902,7 +907,7 @@ impl RequestHandler {
                 .collect(),
         ));
         let domains = crate::core::DomainPorts::new(
-            Arc::new(agora::AgoraRegistry::new(kernel.clock())),
+            agora_service,
             metacog,
             corpus.clone(),
             cognitive_sessions,
@@ -948,7 +953,7 @@ impl RequestHandler {
                 llm.clone(),
                 &definitions,
                 &runtime_config_snapshot,
-                &Default::default(), // agent_profiles config (full profiles config later)
+                &agent_profiles,
             )?;
             agent_profiles_for_tools = tool_profiles;
             agent_profile_registry = profiles.clone();
@@ -967,6 +972,22 @@ impl RequestHandler {
                 native,
             )?;
         }
+        let active_profile_name = if !agent_profiles.default.trim().is_empty() {
+            agent_profiles.default.clone()
+        } else if agent_profile_registry.resolve_by_name("code-agent").is_ok() {
+            "code-agent".to_owned()
+        } else {
+            let mut names = agent_profile_registry.names();
+            names.sort();
+            names
+                .into_iter()
+                .next()
+                .context("no Agent profile is available for the main turn")?
+        };
+        agent_profile_registry
+            .resolve_by_name(&active_profile_name)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let active_profile = Arc::new(Mutex::new(active_profile_name));
 
         // Goal worker/reviewer runtimes are opt-in and strictly alias-resolved.
         // Missing routes fail startup only when Goal execution is enabled.
@@ -1298,8 +1319,7 @@ impl RequestHandler {
                 crate::service::post_turn_projection::ProductionPostTurnProjection::new(
                     crate::service::post_turn_projection::PostTurnProjectionResources {
                         corpus: domains.corpus(),
-                        executive: runtime.clone(),
-                        evolution: domains.metacog(),
+                        runtime: post_turn_runtime_port(runtime.clone(), domains.metacog()),
                     },
                 ),
             );
@@ -1324,6 +1344,10 @@ impl RequestHandler {
                 memory: memory_group.memory_service.clone(),
                 config: turn_runtime_facades.config,
                 performance: debug_perf.clone(),
+                active_profile: Arc::new(super::turn_runtime::ProductionActiveAgentProfile::new(
+                    active_profile.clone(),
+                    agent_profile_registry.clone(),
+                )),
             },
         ));
         let lifecycle_registry =
@@ -1355,7 +1379,6 @@ impl RequestHandler {
             crate::service::daemon_turn::DaemonTurnResources {
                 kernel: kernel.clone(),
                 notify: shared_notify_tx.clone(),
-                default_session_id: session_group.default_session_id.clone(),
                 main_agent_process_id: main_agent_process_id.clone(),
                 turn_token: turn_token.clone(),
                 pipeline,
@@ -1437,7 +1460,7 @@ impl RequestHandler {
             ));
         let admin_use_cases: Arc<dyn crate::service::AdminUseCases> = Arc::new(
             crate::service::AdminService::new(crate::service::admin_service::AdminResources {
-                orchestrator: admin_runtime,
+                runtime: admin_runtime_port(admin_runtime),
                 skills: Arc::new(crate::service::admin_service::DefaultSkillAdmin::new(
                     admin_skill_loader,
                     admin_cached_prefix,
@@ -1490,7 +1513,12 @@ impl RequestHandler {
                 memory_admin: Some(memory_admin_use_cases),
                 agent_runs: Some(agent_repository),
                 agent_profiles: Some(agent_profile_registry),
-                current_profile: Some(Arc::new(tokio::sync::Mutex::new(String::from("default")))),
+                current_profile: Some(active_profile),
+                profile_switch_events: Arc::new(
+                    crate::service::admin_service::SpineProfileSwitchEventSink::new(
+                        canonical_event_spine.clone(),
+                    ),
+                ),
                 deployment_rollback: Some(Arc::new(
                     crate::core::deploy::DeploymentRollbackService::filesystem(
                         std::env::var_os("ALETHEON_DEPLOYMENT_MANIFEST")

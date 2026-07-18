@@ -5,6 +5,7 @@
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::{collections::BTreeSet, ffi::OsStr};
 
 // ── Data types ───────────────────────────────────────────────────────────────
 
@@ -89,6 +90,58 @@ impl AgentLoader {
     pub fn names(&self) -> Vec<&str> {
         self.agents.iter().map(|a| a.name.as_str()).collect()
     }
+
+    /// Verify optional legacy TOML mirrors cannot grant a different tool set
+    /// than the authoritative Markdown frontmatter.
+    pub fn validate_legacy_toml_grants(&self, dir: &Path) -> Result<()> {
+        if !dir.is_dir() {
+            return Ok(());
+        }
+        for entry in fs::read_dir(dir).context("reading legacy agent mirrors")? {
+            let path = entry?.path();
+            if !path.is_file() || path.extension() != Some(OsStr::new("toml")) {
+                continue;
+            }
+            let content = fs::read_to_string(&path)
+                .with_context(|| format!("reading legacy mirror {}", path.display()))?;
+            let mirror: LegacyAgentFile = toml::from_str(&content)
+                .with_context(|| format!("parsing legacy mirror {}", path.display()))?;
+            let role = self.get(&mirror.agent.id).with_context(|| {
+                format!(
+                    "legacy agent mirror '{}' has no authoritative Markdown profile",
+                    mirror.agent.id
+                )
+            })?;
+            let markdown = unique_grants(&role.tools, &role.name, "Markdown")?;
+            let legacy = unique_grants(&mirror.agent.tools, &mirror.agent.id, "legacy TOML")?;
+            anyhow::ensure!(
+                markdown == legacy,
+                "legacy TOML grants diverge from Markdown authority for profile '{}'",
+                role.name
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct LegacyAgentFile {
+    agent: LegacyAgentGrant,
+}
+
+#[derive(serde::Deserialize)]
+struct LegacyAgentGrant {
+    id: String,
+    tools: Vec<String>,
+}
+
+fn unique_grants(tools: &[String], profile: &str, source: &str) -> Result<BTreeSet<String>> {
+    let grants = tools.iter().cloned().collect::<BTreeSet<_>>();
+    anyhow::ensure!(
+        grants.len() == tools.len(),
+        "{source} profile '{profile}' contains duplicate tool grants"
+    );
+    Ok(grants)
 }
 
 impl Default for AgentLoader {
@@ -318,6 +371,53 @@ Body"#,
         assert_eq!(fixer.description, "Fixing");
 
         assert!(loader.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn legacy_toml_mirror_must_match_markdown_grants() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("safe.md"),
+            "---\nname: safe\ndescription: safe\ntools: [file_read, grep]\n---\nSafe.",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("safe.toml"),
+            "[agent]\nid = \"safe\"\ntools = [\"grep\", \"file_read\"]\n",
+        )
+        .unwrap();
+        let mut loader = AgentLoader::new();
+        loader.load_from_dir(tmp.path()).unwrap();
+        loader.validate_legacy_toml_grants(tmp.path()).unwrap();
+
+        std::fs::write(
+            tmp.path().join("safe.toml"),
+            "[agent]\nid = \"safe\"\ntools = [\"file_read\", \"bash_exec\"]\n",
+        )
+        .unwrap();
+        let error = loader.validate_legacy_toml_grants(tmp.path()).unwrap_err();
+        assert!(error.to_string().contains("diverge"));
+    }
+
+    #[test]
+    fn orphan_legacy_toml_profile_is_rejected() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("legacy.toml"),
+            "[agent]\nid = \"legacy\"\ntools = [\"file_read\"]\n",
+        )
+        .unwrap();
+        let loader = AgentLoader::new();
+        let error = loader.validate_legacy_toml_grants(tmp.path()).unwrap_err();
+        assert!(error.to_string().contains("no authoritative Markdown"));
+    }
+
+    #[test]
+    fn checked_in_legacy_mirrors_match_markdown_authority() {
+        let agents = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agents");
+        let mut loader = AgentLoader::new();
+        loader.load_from_dir(&agents).unwrap();
+        loader.validate_legacy_toml_grants(&agents).unwrap();
     }
 
     #[test]

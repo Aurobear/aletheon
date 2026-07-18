@@ -2,12 +2,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use corpus::security::approval::ApprovalDecision;
-use executive::core::config::ExecutiveConfig;
-use executive::core::orchestrator::AletheonExecutive;
 use executive::service::admin_service::{
-    AdminResources, AdminService, AdminServiceError, AdminUseCases, ApprovalOwner,
-    DefaultSkillAdmin, PendingApprovals, ScopedApprovalCache, SkillAdminPort,
-    TransientApprovalRequest,
+    AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases,
+    ApprovalOwner, DefaultSkillAdmin, ModeChange, PendingApprovals, ScopedApprovalCache,
+    SkillAdminPort, TransientApprovalRequest,
 };
 use fabric::ui_event::{CollaborationMode, InterruptReason};
 use tempfile::tempdir;
@@ -15,6 +13,28 @@ use tokio::sync::{oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
 
 struct FailingSkillAdmin;
+
+struct TestAdminRuntime {
+    mode: Mutex<CollaborationMode>,
+}
+
+#[async_trait::async_trait]
+impl AdminRuntimePort for TestAdminRuntime {
+    async fn request_interrupt(&self, _reason: InterruptReason) {}
+
+    async fn switch_mode(&self, mode: CollaborationMode) -> ModeChange {
+        let mut current = self.mode.lock().await;
+        let old = *current;
+        *current = mode;
+        ModeChange { old, new: mode }
+    }
+}
+
+fn test_runtime() -> Arc<dyn AdminRuntimePort> {
+    Arc::new(TestAdminRuntime {
+        mode: Mutex::new(CollaborationMode::Default),
+    })
+}
 
 fn noop_runtime_shutdown(
 ) -> Arc<dyn Fn() -> executive::service::admin_service::RuntimeShutdownFuture + Send + Sync> {
@@ -44,9 +64,7 @@ fn setup_with_rollback(
         "system prompt".into(),
     ));
     let service = AdminService::new(AdminResources {
-        orchestrator: Arc::new(Mutex::new(AletheonExecutive::new(
-            ExecutiveConfig::default(),
-        ))),
+        runtime: test_runtime(),
         skills,
         tool_catalog: Arc::new(|| Box::pin(async { vec![] })),
         hook_catalog: Arc::new(|| Box::pin(async { vec![] })),
@@ -61,6 +79,9 @@ fn setup_with_rollback(
         agent_runs: None,
         agent_profiles: None,
         current_profile: None,
+        profile_switch_events: Arc::new(
+            executive::service::admin_service::NoopProfileSwitchEventSink,
+        ),
         deployment_rollback,
     });
     (service, cancellation, cached_prefix)
@@ -129,9 +150,7 @@ async fn skill_reload_rebuilds_prefix_and_missing_directory_is_bounded() {
 async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
     let cancellation = CancellationToken::new();
     let service = AdminService::new(AdminResources {
-        orchestrator: Arc::new(Mutex::new(AletheonExecutive::new(
-            ExecutiveConfig::default(),
-        ))),
+        runtime: test_runtime(),
         skills: Arc::new(FailingSkillAdmin),
         tool_catalog: Arc::new(|| Box::pin(async { vec![] })),
         hook_catalog: Arc::new(|| Box::pin(async { vec![] })),
@@ -146,6 +165,9 @@ async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
         agent_runs: None,
         agent_profiles: None,
         current_profile: None,
+        profile_switch_events: Arc::new(
+            executive::service::admin_service::NoopProfileSwitchEventSink,
+        ),
         deployment_rollback: None,
     });
     assert!(matches!(
@@ -198,9 +220,7 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
         )
         .await;
     let service = AdminService::new(AdminResources {
-        orchestrator: Arc::new(Mutex::new(AletheonExecutive::new(
-            ExecutiveConfig::default(),
-        ))),
+        runtime: test_runtime(),
         skills: Arc::new(DefaultSkillAdmin::new(
             Arc::new(Mutex::new(corpus::SkillLoader::new(
                 directory.path().to_path_buf(),
@@ -227,6 +247,9 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
         agent_runs: None,
         agent_profiles: None,
         current_profile: None,
+        profile_switch_events: Arc::new(
+            executive::service::admin_service::NoopProfileSwitchEventSink,
+        ),
         deployment_rollback: None,
     });
 

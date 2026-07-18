@@ -32,8 +32,7 @@ pub struct PostTurnDispatch {
 
 pub struct ProductionPostTurnProjection {
     run_hook: Arc<HookProjectionFn>,
-    runtime: Arc<tokio::sync::Mutex<crate::core::orchestrator::AletheonExecutive>>,
-    evolution: Arc<dyn metacog::MetacogService>,
+    runtime: Arc<dyn PostTurnRuntimePort>,
 }
 
 type HookProjectionFn =
@@ -41,8 +40,12 @@ type HookProjectionFn =
 
 pub struct PostTurnProjectionResources {
     pub corpus: Arc<dyn corpus::CorpusService>,
-    pub executive: Arc<tokio::sync::Mutex<crate::core::orchestrator::AletheonExecutive>>,
-    pub evolution: Arc<dyn metacog::MetacogService>,
+    pub runtime: Arc<dyn PostTurnRuntimePort>,
+}
+
+#[async_trait]
+pub trait PostTurnRuntimePort: Send + Sync {
+    async fn post_evolution(&self, outcome: &PostTurnOutcome) -> anyhow::Result<()>;
 }
 
 impl ProductionPostTurnProjection {
@@ -56,8 +59,7 @@ impl ProductionPostTurnProjection {
         });
         Self {
             run_hook,
-            runtime: resources.executive,
-            evolution: resources.evolution,
+            runtime: resources.runtime,
         }
     }
 }
@@ -96,25 +98,11 @@ impl ProductionPostTurnProjection {
     }
 
     async fn run_evolution(&self, outcome: &PostTurnOutcome) -> anyhow::Result<()> {
-        self.runtime
-            .lock()
-            .await
-            .post_evolution(
-                &bounded_summary(&outcome.input, 100),
-                &outcome.output,
-                outcome.completed_normally && !outcome.output.starts_with("error:"),
-                outcome.tool_calls_made,
-                outcome.tool_errors,
-                outcome.elapsed_ms,
-                outcome.iterations,
-                self.evolution.as_ref(),
-            )
-            .await
-            .map(|_| ())
+        self.runtime.post_evolution(outcome).await
     }
 }
 
-fn bounded_summary(input: &str, max_chars: usize) -> String {
+pub(crate) fn bounded_summary(input: &str, max_chars: usize) -> String {
     let end = input
         .char_indices()
         .nth(max_chars)

@@ -13,9 +13,9 @@ use crate::service::governed_capability::{
     CapabilityExecutionContext, CapabilityRuntimeFactory, RegistryAuthorityProvider,
 };
 use crate::service::turn_runtime_ports::{
-    ApprovalNotice, GovernedTurnCapabilityPort, ModelSelectionPort, PreparedCapabilities,
-    SelfPolicyPort, StormStatePort, TurnApprovalPort, TurnConfigPort, TurnHookPort,
-    TurnObservabilityPort, TurnRuntimePorts, TurnSessionStatePort,
+    ActiveAgentProfilePort, ActiveAgentProfileSnapshot, ApprovalNotice, GovernedTurnCapabilityPort,
+    ModelSelectionPort, PreparedCapabilities, SelfPolicyPort, StormStatePort, TurnApprovalPort,
+    TurnConfigPort, TurnHookPort, TurnObservabilityPort, TurnRuntimePorts, TurnSessionStatePort,
 };
 
 pub(super) fn register_configured_hooks(
@@ -91,6 +91,7 @@ pub(super) struct TurnRuntimeResources {
     pub(crate) memory: Arc<dyn mnemosyne::MemoryService>,
     pub(crate) config: Arc<dyn TurnConfigPort>,
     pub(crate) performance: Arc<fabric::kernel::debug_bus::PerfCounter>,
+    pub(crate) active_profile: Arc<dyn ActiveAgentProfilePort>,
 }
 
 pub(super) fn compose_turn_runtime(resources: TurnRuntimeResources) -> TurnRuntimePorts {
@@ -118,6 +119,7 @@ pub(super) fn compose_turn_runtime(resources: TurnRuntimeResources) -> TurnRunti
             resources: resources.capabilities,
             admission: resources.admission,
             hooks: hooks.clone(),
+            active_profile: resources.active_profile,
         }),
         sessions: Arc::new(ProductionTurnSessions {
             registry: resources.sessions,
@@ -411,6 +413,47 @@ struct ProductionGovernedCapabilities {
     resources: crate::r#impl::daemon::handler::tool_executor::CapabilityResources,
     admission: Arc<dyn AdmissionController>,
     hooks: Arc<dyn TurnHookPort>,
+    active_profile: Arc<dyn ActiveAgentProfilePort>,
+}
+
+pub(super) struct ProductionActiveAgentProfile {
+    current: Arc<Mutex<String>>,
+    profiles: Arc<crate::r#impl::runtime::AgentProfileRegistry>,
+}
+
+impl ProductionActiveAgentProfile {
+    pub(super) fn new(
+        current: Arc<Mutex<String>>,
+        profiles: Arc<crate::r#impl::runtime::AgentProfileRegistry>,
+    ) -> Self {
+        Self { current, profiles }
+    }
+}
+
+#[async_trait]
+impl ActiveAgentProfilePort for ProductionActiveAgentProfile {
+    async fn snapshot(&self) -> anyhow::Result<ActiveAgentProfileSnapshot> {
+        // Clone the name under the switch lock, then resolve an owned profile.
+        // No live mutable profile state survives this call.
+        let profile_name = self.current.lock().await.clone();
+        let resolved = self
+            .profiles
+            .resolve_by_name(&profile_name)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        Ok(ActiveAgentProfileSnapshot {
+            profile_name,
+            allowed_tools: resolved.profile.allowed_tools.into_iter().collect(),
+        })
+    }
+}
+
+fn constrain_profile_capabilities(
+    snapshot: &ActiveAgentProfileSnapshot,
+    definitions: &mut Vec<fabric::ToolDefinition>,
+    risk_by_tool: &mut HashMap<String, fabric::types::admission::RiskLevel>,
+) {
+    definitions.retain(|definition| snapshot.allowed_tools.contains(&definition.name));
+    risk_by_tool.retain(|name, _| snapshot.allowed_tools.contains(name));
 }
 
 #[async_trait]
@@ -423,13 +466,17 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
             .streaming_tools
             .then(|| context.turn_event_sender.clone())
             .flatten();
-        let prepared = prepare_corpus(&self.resources, &context).await?;
-        let definitions = prepared
+        // One immutable snapshot controls both disclosure and execution for
+        // the entire turn. A concurrent profile switch is observed next turn.
+        let profile = self.active_profile.snapshot().await?;
+        let mut prepared = prepare_corpus(&self.resources, &context).await?;
+        let mut definitions = prepared
             .snapshot
             .entries
             .iter()
             .filter_map(|entry| entry.tool_definition.clone())
             .collect();
+        constrain_profile_capabilities(&profile, &mut definitions, &mut prepared.risk_by_tool);
         let executor = Arc::new(TurnToolExecutor::new(
             &self.resources,
             prepared.executor,
@@ -540,5 +587,61 @@ mod tests {
         assert_eq!(registry.count(&fabric::hook::HookPoint::PostTool), 1);
         assert_eq!(registry.count(&fabric::hook::HookPoint::PostToolFailure), 1);
         assert_eq!(registry.count(&fabric::hook::HookPoint::OnSessionEnd), 1);
+    }
+
+    #[test]
+    fn one_profile_snapshot_constrains_disclosure_and_executor_gate() {
+        let snapshot = ActiveAgentProfileSnapshot {
+            profile_name: "safe".into(),
+            allowed_tools: ["file_read".to_owned()].into_iter().collect(),
+        };
+        let mut definitions = ["file_read", "file_write"]
+            .into_iter()
+            .map(|name| fabric::ToolDefinition {
+                name: name.into(),
+                description: name.into(),
+                input_schema: serde_json::json!({"type": "object"}),
+            })
+            .collect::<Vec<_>>();
+        let mut risks = HashMap::from([
+            (
+                "file_read".into(),
+                fabric::types::admission::RiskLevel::ReadOnly,
+            ),
+            (
+                "file_write".into(),
+                fabric::types::admission::RiskLevel::Sandboxed,
+            ),
+        ]);
+
+        constrain_profile_capabilities(&snapshot, &mut definitions, &mut risks);
+
+        assert_eq!(
+            definitions
+                .iter()
+                .map(|definition| definition.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["file_read"]
+        );
+        assert_eq!(
+            risks.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["file_read"]
+        );
+    }
+
+    #[test]
+    fn completed_turn_snapshot_is_immutable_across_profile_switch() {
+        let mut active_allowed: std::collections::HashSet<_> =
+            ["file_read".to_owned()].into_iter().collect();
+        let turn_snapshot = ActiveAgentProfileSnapshot {
+            profile_name: "safe".into(),
+            allowed_tools: active_allowed.clone(),
+        };
+        active_allowed.clear();
+        active_allowed.insert("file_write".to_owned());
+
+        assert!(turn_snapshot.allowed_tools.contains("file_read"));
+        assert!(!turn_snapshot.allowed_tools.contains("file_write"));
+        assert!(active_allowed.contains("file_write"));
     }
 }

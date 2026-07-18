@@ -211,6 +211,7 @@ impl RuntimeCore {
             app_config.grok_hardening.clone(),
             app_config.sandbox_profiles.clone(),
             app_config.network_policy.clone(),
+            app_config.agent_profiles.clone(),
             config.enable_evolution,
             Some(bus.clone()),
             cancel_token.clone(),

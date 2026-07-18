@@ -204,6 +204,9 @@ pub use types::agent_control::{
     AgentRunStatus, AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentTaskId,
     AgentWaitRequest, ParentRestriction, RiskTier, RuntimeResumability, AGENT_MESSAGE_SCHEMA_V1,
 };
+pub use types::agent_profile_event::{
+    AgentProfileSwitchDecision, AgentProfileSwitchEventV1, AGENT_PROFILE_SWITCH_EVENT_SCHEMA_V1,
+};
 pub use types::agent_settlement::{
     authorize_background_disposition, can_reparent, settlement_idempotency_key, AgentResourceClass,
     BackgroundDisposition, BackgroundResourceDecl, HostDispositionAuthorization, ReparentContext,

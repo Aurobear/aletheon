@@ -21,9 +21,9 @@ use fabric::dasein::{
     SelfTransitionRequest, SelfVersion,
 };
 use fabric::{
-    AgentId, AgentProfileId, AgoraSpaceId, ConsciousProcessor, ContentId,
-    LatestConsciousContextPort, MonoDeadline, MonoTime, NamespaceId, PredictionFrame, ProcessId,
-    ProcessorAck, ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse,
+    AgentId, AgentProfileId, AgoraService, AgoraSpaceId, AgoraViewRequest, ConsciousProcessor,
+    ContentId, LatestConsciousContextPort, MonoDeadline, MonoTime, NamespaceId, PredictionFrame,
+    ProcessId, ProcessorAck, ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse,
     SalienceVector, SpawnSpec, VisibilityScope, WallTime, WorkspaceBroadcast, WorkspaceCandidate,
     WorkspaceContent, WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
@@ -36,6 +36,29 @@ struct ResponseProcessor {
     source: ProcessId,
     response_id: Option<ContentId>,
     calls: Arc<AtomicUsize>,
+}
+
+#[tokio::test]
+async fn failed_attention_commit_publishes_no_successful_cycle() {
+    let fixture = fixture_with_commit_failure(true).await;
+    fixture
+        .coordinator
+        .submit_candidate(observation(900, 1.0, None))
+        .await
+        .unwrap();
+
+    let error = fixture
+        .coordinator
+        .run_cycle(fixture.owner, 0)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("attention commit failure"));
+    assert!(fixture
+        .store
+        .replay(&AgoraSpaceId(SPACE.into()))
+        .unwrap()
+        .is_empty());
 }
 
 #[async_trait]
@@ -119,9 +142,45 @@ struct Fixture {
     owner: ProcessId,
     first_calls: Arc<AtomicUsize>,
     second_calls: Arc<AtomicUsize>,
+    agora: Arc<dyn AgoraService>,
+}
+
+struct RejectCommitAgora {
+    inner: Arc<agora::AgoraRegistry>,
+}
+
+#[async_trait]
+impl AgoraService for RejectCommitAgora {
+    async fn view(&self, request: AgoraViewRequest) -> anyhow::Result<fabric::agora::AgoraView> {
+        self.inner.view(request).await
+    }
+    async fn propose(&self, proposal: fabric::AgoraProposal) -> anyhow::Result<Uuid> {
+        self.inner.propose(proposal).await
+    }
+    async fn commit(
+        &self,
+        _id: Uuid,
+        _permit: fabric::WorkspaceCommitPermit,
+    ) -> anyhow::Result<fabric::CommitReceipt> {
+        anyhow::bail!("injected attention commit failure")
+    }
+    async fn reject(&self, id: Uuid, reason: fabric::RejectReason) -> anyhow::Result<()> {
+        self.inner.reject(id, reason).await
+    }
+    async fn changes_since(
+        &self,
+        space: AgoraSpaceId,
+        version: u64,
+    ) -> anyhow::Result<Vec<fabric::AgoraCommit>> {
+        self.inner.changes_since(space, version).await
+    }
 }
 
 async fn fixture() -> Fixture {
+    fixture_with_commit_failure(false).await
+}
+
+async fn fixture_with_commit_failure(reject_commit: bool) -> Fixture {
     let clock = Arc::new(TestClock::new(1_000, 5));
     let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
     let owner = kernel
@@ -162,6 +221,12 @@ async fn fixture() -> Fixture {
     let store = Arc::new(SqliteBroadcastStore::open_in_memory().unwrap());
     let hub = Arc::new(BroadcastHub::new(BroadcastHubConfig::default(), store.clone()).unwrap());
     let broadcast = Arc::new(BroadcastCoordinator::new(store.clone(), hub));
+    let inner_agora = Arc::new(agora::AgoraRegistry::new(kernel.clock()));
+    let transactional_agora: Arc<dyn AgoraService> = if reject_commit {
+        Arc::new(RejectCommitAgora { inner: inner_agora })
+    } else {
+        inner_agora
+    };
     let coordinator = Arc::new(
         ConsciousCoreCoordinator::new(
             AgoraSpaceId(SPACE.into()),
@@ -178,7 +243,8 @@ async fn fixture() -> Fixture {
             store.clone(),
             dasein_port,
             ProcessId(Uuid::from_u128(2)),
-            kernel,
+            kernel.clone(),
+            transactional_agora.clone(),
             ConsciousCoreConfig {
                 cycle_timeout: Duration::from_secs(5),
                 processor_timeout: Duration::from_millis(100),
@@ -219,6 +285,7 @@ async fn fixture() -> Fixture {
         owner,
         first_calls,
         second_calls,
+        agora: transactional_agora,
     }
 }
 
@@ -292,6 +359,18 @@ async fn observation_selection_self_integration_and_processor_response_recur() {
         .await
         .unwrap();
     let first_broadcast = first.broadcast.as_ref().unwrap();
+    let committed = fixture
+        .agora
+        .view(AgoraViewRequest {
+            space: AgoraSpaceId(SPACE.into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(first_broadcast.workspace_version, committed.version);
+    assert_eq!(
+        committed.snapshot["attention"]["focus"],
+        serde_json::json!(ContentId(Uuid::from_u128(100)).0.to_string())
+    );
     assert_eq!(
         first_broadcast.winner_ids,
         vec![ContentId(Uuid::from_u128(100))]

@@ -248,7 +248,8 @@ async fn completed_production_broadcast_records_content_free_field_metrics() {
         store,
         dasein,
         ProcessId(Uuid::from_u128(9_002)),
-        kernel,
+        kernel.clone(),
+        Arc::new(agora::AgoraRegistry::new(kernel.clock())),
         ConsciousCoreConfig::default(),
     )
     .unwrap();

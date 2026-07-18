@@ -136,4 +136,30 @@ mod tests {
         let recovered = log.recover("nope").await.unwrap();
         assert!(recovered.is_empty());
     }
+
+    #[tokio::test]
+    async fn attention_commit_payload_roundtrips_unchanged() {
+        let log = InMemoryCommitLog::new();
+        let proposal = fabric::AgoraProposal {
+            id: Uuid::new_v4(),
+            space: fabric::AgoraSpaceId("s".into()),
+            author: fabric::ProcessId(uuid::Uuid::from_u128(3)),
+            base_version: 0,
+            operation: AgoraOperation::UpdateAttention {
+                focus: Some("a".into()),
+                priorities: vec!["a".into(), "b".into()],
+                selection_ref: "selection:1".into(),
+            },
+            evidence: Vec::new(),
+            confidence: 1.0,
+            expires_at_ms: None,
+        };
+        let commit = AgoraCommit::from_proposal(&proposal, 1, 1000, None).unwrap();
+        log.append_commit("s", &commit).await.unwrap();
+        let recovered = log.recover("s").await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&recovered[0]).unwrap(),
+            serde_json::to_value(commit).unwrap()
+        );
+    }
 }

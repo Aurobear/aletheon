@@ -302,6 +302,7 @@ pub struct ConsciousWorkspaceRegistry {
     memory_service: Arc<dyn mnemosyne::MemoryService>,
     skills: Arc<Mutex<corpus::SkillLoader>>,
     tools: Arc<Mutex<corpus::ToolRegistry>>,
+    agora: Arc<dyn fabric::AgoraService>,
     pool_config: CandidatePoolConfig,
     core_config: ConsciousCoreConfig,
     spaces: RwLock<HashMap<AgoraSpaceId, Arc<ConsciousCoreCoordinator>>>,
@@ -317,6 +318,7 @@ impl ConsciousWorkspaceRegistry {
         memory: Arc<dyn mnemosyne::MemoryService>,
         skills: Arc<Mutex<corpus::SkillLoader>>,
         tools: Arc<Mutex<corpus::ToolRegistry>>,
+        agora: Arc<dyn fabric::AgoraService>,
         pool_config: CandidatePoolConfig,
         core_config: ConsciousCoreConfig,
     ) -> anyhow::Result<Self> {
@@ -335,6 +337,7 @@ impl ConsciousWorkspaceRegistry {
             memory_service: memory,
             skills,
             tools,
+            agora,
             pool_config,
             core_config,
             spaces: RwLock::new(HashMap::new()),
@@ -392,6 +395,31 @@ impl ConsciousWorkspaceRegistry {
         tools: Arc<Mutex<corpus::ToolRegistry>>,
         arbitration_mode: ConsciousArbitrationMode,
     ) -> anyhow::Result<Self> {
+        Self::production_with_mode_tools_and_agora(
+            path,
+            dasein,
+            kernel.clone(),
+            clock,
+            memory,
+            skills,
+            tools,
+            Arc::new(agora::AgoraRegistry::new(kernel.clock())),
+            arbitration_mode,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn production_with_mode_tools_and_agora(
+        path: impl AsRef<Path>,
+        dasein: Arc<dyn DaseinWorkspacePort>,
+        kernel: Arc<KernelRuntime>,
+        clock: Arc<dyn Clock>,
+        memory: Arc<dyn mnemosyne::MemoryService>,
+        skills: Arc<Mutex<corpus::SkillLoader>>,
+        tools: Arc<Mutex<corpus::ToolRegistry>>,
+        agora: Arc<dyn fabric::AgoraService>,
+        arbitration_mode: ConsciousArbitrationMode,
+    ) -> anyhow::Result<Self> {
         let core_config = ConsciousCoreConfig {
             arbitration_mode,
             ..ConsciousCoreConfig::default()
@@ -404,6 +432,7 @@ impl ConsciousWorkspaceRegistry {
             memory,
             skills,
             tools,
+            agora,
             CandidatePoolConfig {
                 capacity: 256,
                 per_source_capacity: 32,
@@ -476,6 +505,7 @@ impl ConsciousWorkspaceRegistry {
             self.dasein.clone(),
             dasein_source,
             self.kernel.clone(),
+            self.agora.clone(),
             self.core_config.clone(),
         )?);
         for registration in self.processors(&space, recipient, root) {

@@ -15,7 +15,6 @@ use tokio::sync::{oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::core::orchestrator::AletheonExecutive;
 use crate::service::request_use_cases::MemoryAdminUseCases;
 
 const MAX_ADMIN_ITEMS: usize = 200;
@@ -357,8 +356,68 @@ impl SkillAdminPort for DefaultSkillAdmin {
     }
 }
 
+#[async_trait]
+pub trait ProfileSwitchEventSink: Send + Sync {
+    async fn record(&self, event: fabric::AgentProfileSwitchEventV1);
+}
+
+#[derive(Debug, Default)]
+pub struct NoopProfileSwitchEventSink;
+
+#[async_trait]
+impl ProfileSwitchEventSink for NoopProfileSwitchEventSink {
+    async fn record(&self, _event: fabric::AgentProfileSwitchEventV1) {}
+}
+
+pub struct SpineProfileSwitchEventSink {
+    spine: Arc<dyn fabric::EventSpine>,
+}
+
+impl SpineProfileSwitchEventSink {
+    pub fn new(spine: Arc<dyn fabric::EventSpine>) -> Self {
+        Self { spine }
+    }
+}
+
+#[async_trait]
+impl ProfileSwitchEventSink for SpineProfileSwitchEventSink {
+    async fn record(&self, event: fabric::AgentProfileSwitchEventV1) {
+        let payload = match serde_json::to_value(&event) {
+            Ok(payload) => payload,
+            Err(error) => {
+                warn!(%error, "failed to encode profile switch event");
+                return;
+            }
+        };
+        let root = "daemon-admin";
+        let envelope = fabric::EnvelopeV2::new(
+            fabric::SchemaId::from(fabric::SchemaId::TURN_EVENT_V1),
+            fabric::EnvelopeV2Target("admin:profile".into()),
+            fabric::EnvelopeV2Target("daemon:admin".into()),
+            fabric::EnvelopeV2Delivery::Direct,
+            fabric::NamespaceId("daemon:admin".into()),
+            payload.clone(),
+        );
+        if let Err(error) = self.spine.append(fabric::UnsequencedEvent {
+            tree_id: fabric::EventTreeId::for_root_session(root),
+            event_id: fabric::EventId::new(),
+            parent: None,
+            identity: fabric::EventIdentity {
+                root_session_id: root.into(),
+                session_id: root.into(),
+                agent_id: None,
+            },
+            envelope,
+            visibility: fabric::EventVisibility::Control,
+            payload: fabric::EventPayload::Inline { value: payload },
+        }) {
+            warn!(%error, "failed to append profile switch event");
+        }
+    }
+}
+
 pub struct AdminResources {
-    pub orchestrator: Arc<Mutex<AletheonExecutive>>,
+    pub runtime: Arc<dyn AdminRuntimePort>,
     pub skills: Arc<dyn SkillAdminPort>,
     pub tool_catalog: Arc<dyn Fn() -> ToolCatalogFuture + Send + Sync>,
     pub hook_catalog: Arc<dyn Fn() -> HookCatalogFuture + Send + Sync>,
@@ -373,7 +432,14 @@ pub struct AdminResources {
     pub agent_runs: Option<Arc<dyn crate::service::agent_control::AgentRunRepository>>,
     pub agent_profiles: Option<Arc<crate::r#impl::runtime::AgentProfileRegistry>>,
     pub current_profile: Option<Arc<tokio::sync::Mutex<String>>>,
+    pub profile_switch_events: Arc<dyn ProfileSwitchEventSink>,
     pub deployment_rollback: Option<Arc<dyn DeploymentRollbackPort>>,
+}
+
+#[async_trait]
+pub trait AdminRuntimePort: Send + Sync {
+    async fn request_interrupt(&self, reason: InterruptReason);
+    async fn switch_mode(&self, mode: CollaborationMode) -> ModeChange;
 }
 
 pub type ToolCatalogFuture =
@@ -389,6 +455,36 @@ pub struct AdminService {
 impl AdminService {
     pub fn new(resources: AdminResources) -> Self {
         Self { resources }
+    }
+}
+
+fn authorize_agent_profile_switch(
+    current: &fabric::AgentProfile,
+    requested: &fabric::AgentProfile,
+) -> Result<(), AdminServiceError> {
+    if current.id == requested.id || current.allows_child(requested) {
+        return Ok(());
+    }
+    Err(AdminServiceError::Operation(format!(
+        "profile switch from '{}' ({:?}) to '{}' ({:?}) would escalate authority",
+        current.profile_name, current.risk_tier, requested.profile_name, requested.risk_tier
+    )))
+}
+
+fn profile_switch_event(
+    current: &fabric::AgentProfile,
+    requested: &fabric::AgentProfile,
+    decision: fabric::AgentProfileSwitchDecision,
+    reason: Option<String>,
+) -> fabric::AgentProfileSwitchEventV1 {
+    fabric::AgentProfileSwitchEventV1 {
+        schema_version: fabric::AGENT_PROFILE_SWITCH_EVENT_SCHEMA_V1,
+        previous_profile: current.profile_name.clone(),
+        requested_profile: requested.profile_name.clone(),
+        previous_risk_tier: current.risk_tier,
+        requested_risk_tier: requested.risk_tier,
+        decision,
+        reason,
     }
 }
 
@@ -458,20 +554,12 @@ impl AdminUseCases for AdminService {
     }
 
     async fn interrupt(&self, reason: InterruptReason) -> Result<(), AdminServiceError> {
-        self.resources
-            .orchestrator
-            .lock()
-            .await
-            .interrupt_flag()
-            .request(reason);
+        self.resources.runtime.request_interrupt(reason).await;
         Ok(())
     }
 
     async fn switch_mode(&self, mode: CollaborationMode) -> Result<ModeChange, AdminServiceError> {
-        let mut runtime = self.resources.orchestrator.lock().await;
-        let old = runtime.mode_router().current_mode();
-        runtime.mode_router_mut().set_mode(mode);
-        Ok(ModeChange { old, new: mode })
+        Ok(self.resources.runtime.switch_mode(mode).await)
     }
 
     async fn model_catalog(&self) -> Result<ModelCatalog, AdminServiceError> {
@@ -558,7 +646,6 @@ impl AdminUseCases for AdminService {
             .agent_profiles
             .as_ref()
             .ok_or_else(|| AdminServiceError::Operation("agent profiles unavailable".into()))?;
-        // Validate the profile exists before switching.
         let resolved = registry
             .resolve_by_name(&profile_name)
             .map_err(|error| AdminServiceError::Operation(error.to_string()))?;
@@ -573,7 +660,33 @@ impl AdminUseCases for AdminService {
                 .lock()
                 .await;
             let prev = current.clone();
-            *current = profile_name.clone();
+            let current_profile = registry
+                .resolve_by_name(&prev)
+                .map_err(|error| AdminServiceError::Operation(error.to_string()))?;
+            if let Err(error) =
+                authorize_agent_profile_switch(&current_profile.profile, &resolved.profile)
+            {
+                let event = profile_switch_event(
+                    &current_profile.profile,
+                    &resolved.profile,
+                    fabric::AgentProfileSwitchDecision::Denied,
+                    Some(error.to_string()),
+                );
+                drop(current);
+                self.resources.profile_switch_events.record(event).await;
+                return Err(error);
+            }
+            if prev != profile_name {
+                *current = profile_name.clone();
+            }
+            let event = profile_switch_event(
+                &current_profile.profile,
+                &resolved.profile,
+                fabric::AgentProfileSwitchDecision::Accepted,
+                None,
+            );
+            drop(current);
+            self.resources.profile_switch_events.record(event).await;
             prev
         };
         Ok(AgentProfileSwitchResult {
@@ -632,5 +745,86 @@ impl AdminUseCases for AdminService {
             AdminServiceError::Operation("deployment rollback is unavailable".into())
         })?;
         rollback.execute(expected_installed_sha).await
+    }
+}
+
+#[cfg(test)]
+mod profile_switch_tests {
+    use super::*;
+    use fabric::{AgentApprovalPolicy, AgentProfile, AgentProfileId, ParentRestriction, RiskTier};
+
+    fn profile(name: &str, risk_tier: RiskTier, tools: &[&str]) -> AgentProfile {
+        AgentProfile {
+            id: AgentProfileId(name.into()),
+            system_prompt: "test".into(),
+            model: "test".into(),
+            allowed_tools: tools.iter().map(|tool| (*tool).to_owned()).collect(),
+            max_iterations: 1,
+            max_input_tokens: 1,
+            max_output_tokens: 1,
+            max_tool_calls: 1,
+            max_elapsed_ms: 1,
+            profile_name: name.into(),
+            risk_tier,
+            approval_policy: AgentApprovalPolicy::PromptUser,
+            tool_timeout_ms: 1,
+            inheritable: true,
+            parent_restriction: ParentRestriction::SameOrSafer,
+        }
+    }
+
+    #[test]
+    fn safe_to_admin_profile_switch_is_denied() {
+        let safe = profile("safe", RiskTier::ReadOnly, &["file_read"]);
+        let admin = profile("admin", RiskTier::Unrestricted, &["file_read", "bash_exec"]);
+        assert!(authorize_agent_profile_switch(&safe, &admin).is_err());
+    }
+
+    #[test]
+    fn admin_to_safe_profile_switch_is_allowed() {
+        let safe = profile("safe", RiskTier::ReadOnly, &["file_read"]);
+        let admin = profile("admin", RiskTier::Unrestricted, &["file_read", "bash_exec"]);
+        assert!(authorize_agent_profile_switch(&admin, &safe).is_ok());
+    }
+
+    #[test]
+    fn accepted_profile_switch_event_is_typed_and_secret_free() {
+        let safe = profile("safe", RiskTier::ReadOnly, &["file_read"]);
+        let admin = profile("admin", RiskTier::Unrestricted, &["file_read", "bash_exec"]);
+        let event = profile_switch_event(
+            &admin,
+            &safe,
+            fabric::AgentProfileSwitchDecision::Accepted,
+            None,
+        );
+        assert_eq!(event.decision, fabric::AgentProfileSwitchDecision::Accepted);
+        assert_eq!(event.previous_profile, "admin");
+        assert_eq!(event.requested_profile, "safe");
+        let encoded = serde_json::to_value(event).unwrap();
+        assert!(encoded.get("prompt").is_none());
+        assert!(encoded.get("system_prompt").is_none());
+    }
+
+    #[test]
+    fn denied_profile_switch_event_records_bounded_reason() {
+        let safe = profile("safe", RiskTier::ReadOnly, &["file_read"]);
+        let admin = profile("admin", RiskTier::Unrestricted, &["file_read", "bash_exec"]);
+        let denial = authorize_agent_profile_switch(&safe, &admin)
+            .unwrap_err()
+            .to_string();
+        let event = profile_switch_event(
+            &safe,
+            &admin,
+            fabric::AgentProfileSwitchDecision::Denied,
+            Some(denial),
+        );
+        assert_eq!(event.decision, fabric::AgentProfileSwitchDecision::Denied);
+        assert!(event.reason.unwrap().contains("escalate authority"));
+    }
+
+    #[test]
+    fn same_profile_switch_is_idempotently_allowed() {
+        let safe = profile("safe", RiskTier::ReadOnly, &["file_read"]);
+        assert!(authorize_agent_profile_switch(&safe, &safe).is_ok());
     }
 }

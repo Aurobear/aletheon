@@ -153,7 +153,8 @@ async fn fixture() -> Fixture {
             store.clone(),
             dasein,
             ProcessId(Uuid::from_u128(2)),
-            kernel,
+            kernel.clone(),
+            Arc::new(agora::AgoraRegistry::new(kernel.clock())),
             ConsciousCoreConfig::default(),
         )
         .unwrap(),

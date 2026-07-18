@@ -30,6 +30,7 @@ pub struct UserRuntimeConfig {
     grok_hardening: crate::core::config::GrokHardeningConfig,
     sandbox_profiles: fabric::SandboxProfiles,
     network_policy: fabric::network_policy::NetworkPolicy,
+    agent_profiles: crate::core::config::AgentProfilesConfig,
 }
 
 impl UserRuntimeConfig {
@@ -98,6 +99,7 @@ impl UserRuntimeConfig {
             grok_hardening: app.grok_hardening,
             sandbox_profiles: app.sandbox_profiles,
             network_policy: app.network_policy,
+            agent_profiles: app.agent_profiles,
         })
     }
 
@@ -158,6 +160,7 @@ impl UserRuntime {
             config.grok_hardening,
             config.sandbox_profiles.clone(),
             config.network_policy.clone(),
+            config.agent_profiles.clone(),
             config.request.enable_evolution,
             None,
             cancel.clone(),

@@ -48,6 +48,7 @@ fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
         "src/impl/daemon/mcp_embedded.rs",
         "src/impl/runtime/provider_worker.rs",
         "src/service/request_use_cases.rs",
+        "src/service/admin_service.rs",
         "src/service/post_turn_projection.rs",
         "src/service/turn_pipeline.rs",
         "src/service/turn_runtime_ports.rs",
@@ -61,6 +62,7 @@ fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
         "MorphogenesisPipeline",
         "cognit::harness::linear",
         "LinearCognitiveSession",
+        "AletheonExecutive",
     ];
     let mut violations = Vec::new();
     for file in files {
@@ -76,6 +78,27 @@ fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
         "domain facade bypasses:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn admin_and_post_turn_retain_runtime_facades_not_executive() {
+    for (file, contract) in [
+        ("src/service/admin_service.rs", "Arc<dyn AdminRuntimePort>"),
+        (
+            "src/service/post_turn_projection.rs",
+            "Arc<dyn PostTurnRuntimePort>",
+        ),
+    ] {
+        let source = production_source(file);
+        assert!(
+            source.contains(contract),
+            "missing runtime facade in {file}"
+        );
+        assert!(
+            !source.contains("AletheonExecutive"),
+            "{file} retained concrete AletheonExecutive"
+        );
+    }
 }
 
 #[test]

@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use executive::core::config::ExecutiveConfig;
-use executive::core::orchestrator::AletheonExecutive;
 use executive::service::admin_service::{
-    AdminResources, AdminService, AdminServiceError, AdminUseCases, SkillAdminPort,
+    AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases, ModeChange,
+    SkillAdminPort,
 };
 use executive::service::request_use_cases::{ProductionMemoryAdminUseCases, RetentionAdminPort};
 use mnemosyne::{
@@ -13,10 +12,23 @@ use mnemosyne::{
     MemoryMetadata, MemoryRecord, MemoryRecordId, MemoryScope, MemoryService, MemoryStatus,
     RetentionRepository,
 };
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 struct NoopSkills;
+
+struct NoopAdminRuntime;
+
+#[async_trait]
+impl AdminRuntimePort for NoopAdminRuntime {
+    async fn request_interrupt(&self, _reason: fabric::ui_event::InterruptReason) {}
+
+    async fn switch_mode(&self, mode: fabric::ui_event::CollaborationMode) -> ModeChange {
+        ModeChange {
+            old: fabric::ui_event::CollaborationMode::Default,
+            new: mode,
+        }
+    }
+}
 #[async_trait]
 impl SkillAdminPort for NoopSkills {
     async fn reload(&self) -> Result<usize, AdminServiceError> {
@@ -109,9 +121,7 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         "owner",
     ));
     let service = AdminService::new(AdminResources {
-        orchestrator: Arc::new(Mutex::new(AletheonExecutive::new(
-            ExecutiveConfig::default(),
-        ))),
+        runtime: Arc::new(NoopAdminRuntime),
         skills: Arc::new(NoopSkills),
         tool_catalog: Arc::new(|| Box::pin(async { vec![] })),
         hook_catalog: Arc::new(|| Box::pin(async { vec![] })),
@@ -126,6 +136,9 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         agent_runs: None,
         agent_profiles: None,
         current_profile: None,
+        profile_switch_events: Arc::new(
+            executive::service::admin_service::NoopProfileSwitchEventSink,
+        ),
         deployment_rollback: None,
     });
     assert!(

@@ -178,6 +178,7 @@ files = [
     "crates/executive/src/impl/daemon/mcp_embedded.rs",
     "crates/executive/src/impl/runtime/provider_worker.rs",
     "crates/executive/src/service/request_use_cases.rs",
+    "crates/executive/src/service/admin_service.rs",
     "crates/executive/src/service/post_turn_projection.rs",
     "crates/executive/src/service/turn_pipeline.rs",
     "crates/executive/src/service/turn_runtime_ports.rs",
@@ -191,6 +192,7 @@ forbidden = [
     "MorphogenesisPipeline",
     "cognit::harness::linear",
     "LinearCognitiveSession",
+    "AletheonExecutive",
 ]
 violations = []
 for name in files:

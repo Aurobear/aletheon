@@ -23,6 +23,20 @@ pub(super) fn load_agent_profiles(
     let mut loader = AgentLoader::new();
     if agents_dir.exists() {
         loader.load_from_dir(agents_dir)?;
+        loader.validate_legacy_toml_grants(agents_dir)?;
+    }
+    for profile in profiles_config.overrides.keys() {
+        anyhow::ensure!(
+            loader.get(profile).is_some(),
+            "agent_profiles override references unknown Markdown profile '{profile}'"
+        );
+    }
+    if !profiles_config.default.trim().is_empty() {
+        anyhow::ensure!(
+            loader.get(&profiles_config.default).is_some(),
+            "agent_profiles.default references unknown Markdown profile '{}'",
+            profiles_config.default
+        );
     }
     let catalog = definitions
         .iter()
@@ -440,5 +454,52 @@ mod goal_runtime_tests {
         assert_eq!(profile.max_iterations, 3);
         assert_eq!(profile.max_tool_calls, 128);
         assert!(registry.resolve(&profile.id).is_ok());
+    }
+
+    #[test]
+    fn agent_profile_config_rejects_unknown_default_and_override() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("reviewer.md"),
+            "---\nname: reviewer\ndescription: review\ntools: [file_read]\n---\nReview.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let definitions = vec![fabric::ToolDefinition {
+            name: "file_read".into(),
+            description: "read".into(),
+            input_schema: serde_json::json!({"type":"object"}),
+        }];
+
+        let mut unknown_default = crate::core::config::AgentProfilesConfig {
+            default: "missing".into(),
+            ..Default::default()
+        };
+        assert!(super::load_agent_profiles(
+            directory.path(),
+            inference.clone(),
+            llm.clone(),
+            &definitions,
+            &crate::core::config::ExecutiveConfig::default(),
+            &unknown_default,
+        )
+        .is_err());
+
+        unknown_default.default.clear();
+        unknown_default.overrides.insert(
+            "missing".into(),
+            crate::core::config::ProfileOverride::default(),
+        );
+        assert!(super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &definitions,
+            &crate::core::config::ExecutiveConfig::default(),
+            &unknown_default,
+        )
+        .is_err());
     }
 }

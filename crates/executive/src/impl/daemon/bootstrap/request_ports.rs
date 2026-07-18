@@ -11,6 +11,8 @@ use fabric::{Subsystem, SubsystemContext};
 
 use crate::core::config::GrokHardeningConfig;
 use crate::core::orchestrator::AletheonExecutive;
+use crate::service::admin_service::{AdminRuntimePort, ModeChange};
+use crate::service::post_turn_projection::{PostTurnOutcome, PostTurnRuntimePort};
 use crate::service::request_use_cases::{
     CareWeight, ExecutiveRuntimePort, ReflectionEnginePort, ReflectionMemoryPort, ReflectionStats,
     RetentionAdminPort, RuntimeStatus, SelfStatus, SelfStatusPort, SupplementalMemoryStatus,
@@ -42,6 +44,25 @@ pub(super) fn reflection_engine_port(
     reflector: cognit::core::reflector::Reflector,
 ) -> Arc<dyn ReflectionEnginePort> {
     Arc::new(ReflectionEngineAdapter { reflector })
+}
+
+pub(super) fn admin_runtime_port(
+    runtime: Arc<Mutex<AletheonExecutive>>,
+) -> Arc<dyn AdminRuntimePort> {
+    Arc::new(ExecutiveDomainAdapter {
+        executive: runtime,
+        evolution: None,
+    })
+}
+
+pub(super) fn post_turn_runtime_port(
+    runtime: Arc<Mutex<AletheonExecutive>>,
+    evolution: Arc<dyn metacog::MetacogService>,
+) -> Arc<dyn PostTurnRuntimePort> {
+    Arc::new(ExecutiveDomainAdapter {
+        executive: runtime,
+        evolution: Some(evolution),
+    })
 }
 
 pub(super) struct RequestFacadePorts {
@@ -91,6 +112,50 @@ impl TurnRuntimeFacadePorts {
 
 struct ExecutiveRuntimeAdapter {
     executive: Arc<Mutex<AletheonExecutive>>,
+}
+
+struct ExecutiveDomainAdapter {
+    executive: Arc<Mutex<AletheonExecutive>>,
+    evolution: Option<Arc<dyn metacog::MetacogService>>,
+}
+
+#[async_trait::async_trait]
+impl AdminRuntimePort for ExecutiveDomainAdapter {
+    async fn request_interrupt(&self, reason: fabric::ui_event::InterruptReason) {
+        self.executive.lock().await.interrupt_flag().request(reason);
+    }
+
+    async fn switch_mode(&self, mode: fabric::CollaborationMode) -> ModeChange {
+        let mut runtime = self.executive.lock().await;
+        let old = runtime.mode_router().current_mode();
+        runtime.mode_router_mut().set_mode(mode);
+        ModeChange { old, new: mode }
+    }
+}
+
+#[async_trait::async_trait]
+impl PostTurnRuntimePort for ExecutiveDomainAdapter {
+    async fn post_evolution(&self, outcome: &PostTurnOutcome) -> anyhow::Result<()> {
+        let evolution = self
+            .evolution
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("post-turn evolution facade is not configured"))?;
+        self.executive
+            .lock()
+            .await
+            .post_evolution(
+                &crate::service::post_turn_projection::bounded_summary(&outcome.input, 100),
+                &outcome.output,
+                outcome.completed_normally && !outcome.output.starts_with("error:"),
+                outcome.tool_calls_made,
+                outcome.tool_errors,
+                outcome.elapsed_ms,
+                outcome.iterations,
+                evolution.as_ref(),
+            )
+            .await
+            .map(|_| ())
+    }
 }
 
 #[async_trait::async_trait]

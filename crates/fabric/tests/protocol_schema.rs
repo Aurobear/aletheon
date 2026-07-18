@@ -287,6 +287,18 @@ fn daemon_compatibility_requests_own_method_and_parameter_names() {
         assert!(request.get("params").is_none());
     }
 
+    let profile_list = ClientRpcRequest::AgentProfileList
+        .to_json_rpc(Some(1))
+        .unwrap();
+    assert_eq!(profile_list["method"], "agent.profile.list");
+    assert!(profile_list.get("params").is_none());
+
+    let profile_set = ClientRpcRequest::agent_profile_set("reviewer")
+        .to_json_rpc(Some(2))
+        .unwrap();
+    assert_eq!(profile_set["method"], "agent.profile.set");
+    assert_eq!(profile_set["params"]["profile"], "reviewer");
+
     let mode = ClientRpcRequest::mode_switch(fabric::ui_event::CollaborationMode::Plan)
         .to_json_rpc(Some(1))
         .unwrap();

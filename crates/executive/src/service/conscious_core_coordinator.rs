@@ -12,14 +12,15 @@ use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use fabric::dasein::SelfTransitionReceipt;
 use fabric::{
-    AgoraSpaceId, BroadcastEpoch, BroadcastIntegrationReceipt, Clock, ConsciousArbitrationMode,
-    ConsciousContextProjection, ConsciousFieldReadout, ConsciousProcessor, ConsciousTraceEvent,
-    ContentId, ContextProjectionReceipt, FieldMetricHistory, FieldMetricIndicators,
-    FieldMetricSnapshot, GoalFrame, LatestConsciousContextPort, MonoDeadline, MonoTime,
-    OperationKind, OperationRequest, PredictionErrorFrame, PredictionFrame, ProcessId,
-    ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse, SalienceVector, SchemaId,
-    SelectionExplanation, SelectionResult, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate,
-    WorkspaceContent, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
+    AgoraOperation, AgoraProposal, AgoraService, AgoraSpaceId, AgoraViewRequest, BroadcastEpoch,
+    BroadcastIntegrationReceipt, Clock, ConsciousArbitrationMode, ConsciousContextProjection,
+    ConsciousFieldReadout, ConsciousProcessor, ConsciousTraceEvent, ContentId,
+    ContextProjectionReceipt, FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot,
+    GoalFrame, LatestConsciousContextPort, MonoDeadline, MonoTime, OperationKind, OperationRequest,
+    PredictionErrorFrame, PredictionFrame, ProcessId, ProcessorContext, ProcessorHealth,
+    ProcessorId, ProcessorResponse, SalienceVector, SchemaId, SelectionExplanation,
+    SelectionResult, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
+    WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use parking_lot::RwLock;
 use tokio::sync::{Mutex, Semaphore};
@@ -120,7 +121,7 @@ pub struct ConsciousCoreCoordinator {
     clock: Arc<dyn Clock>,
     config: ConsciousCoreConfig,
     processors: RwLock<BTreeMap<String, RegisteredProcessor>>,
-    next_workspace_version: Mutex<u64>,
+    agora: Arc<dyn AgoraService>,
     predictions: Mutex<HashMap<ContentId, PredictionFrame>>,
     field_metrics: RwLock<FieldMetricHistory>,
     cycle: Mutex<()>,
@@ -189,14 +190,11 @@ impl ConsciousCoreCoordinator {
         dasein: Arc<dyn DaseinWorkspacePort>,
         dasein_source: ProcessId,
         kernel: Arc<KernelRuntime>,
+        agora: Arc<dyn AgoraService>,
         config: ConsciousCoreConfig,
     ) -> anyhow::Result<Self> {
         config.validate()?;
-        let replay = store.replay(&space)?;
-        let next_workspace_version = replay
-            .last()
-            .map(|entry| entry.broadcast.workspace_version.saturating_add(1))
-            .unwrap_or(1);
+        let _ = store.replay(&space)?;
         Ok(Self {
             pool: Mutex::new(CandidatePool::new(space.clone(), pool_config)?),
             space,
@@ -208,11 +206,52 @@ impl ConsciousCoreCoordinator {
             kernel,
             config,
             processors: RwLock::new(BTreeMap::new()),
-            next_workspace_version: Mutex::new(next_workspace_version),
+            agora,
             predictions: Mutex::new(HashMap::new()),
             field_metrics: RwLock::new(FieldMetricHistory::default()),
             cycle: Mutex::new(()),
         })
+    }
+
+    async fn commit_attention(
+        &self,
+        selection: &SelectionResult,
+        operation_id: fabric::OperationId,
+    ) -> anyhow::Result<u64> {
+        anyhow::ensure!(
+            !selection.selected.is_empty(),
+            "attention selection is empty"
+        );
+        let view = self
+            .agora
+            .view(AgoraViewRequest {
+                space: self.space.clone(),
+            })
+            .await?;
+        let priorities = selection
+            .selected
+            .iter()
+            .map(|candidate| candidate.id.0.to_string())
+            .collect::<Vec<_>>();
+        let deadline = self.clock.wall_now().0.saturating_add(5_000);
+        let proposal = AgoraProposal {
+            id: uuid::Uuid::new_v4(),
+            space: self.space.clone(),
+            author: self.dasein_source,
+            base_version: view.version,
+            operation: AgoraOperation::UpdateAttention {
+                focus: priorities.first().cloned(),
+                priorities,
+                selection_ref: format!("conscious-cycle:{}", operation_id.0),
+            },
+            evidence: vec![format!("operation:{}", operation_id.0)],
+            confidence: 1.0,
+            expires_at_ms: Some(deadline),
+        };
+        let permit = fabric::WorkspaceCommitPermit::issue_for(&proposal, deadline)?;
+        let proposal_id = self.agora.propose(proposal).await?;
+        let receipt = self.agora.commit(proposal_id, permit).await?;
+        Ok(receipt.commit.version)
     }
 
     pub fn register_processor(
@@ -343,8 +382,10 @@ impl ConsciousCoreCoordinator {
             });
         }
         self.ensure_before(deadline)?;
-        let mut version = self.next_workspace_version.lock().await;
-        let workspace_version = *version;
+        // Attention is committed through the authoritative transactional Agora
+        // before any broadcast becomes visible. A failed commit aborts the
+        // cycle and leaves the selected candidates unpublished.
+        let workspace_version = self.commit_attention(&selection, operation_id).await?;
         let broadcast = self
             .broadcast
             .broadcast_selection(
@@ -356,8 +397,6 @@ impl ConsciousCoreCoordinator {
                 self.clock.wall_now(),
             )
             .await?;
-        *version = version.saturating_add(1);
-        drop(version);
         drop(pool);
 
         self.ensure_before(deadline)?;
