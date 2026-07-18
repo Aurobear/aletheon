@@ -32,7 +32,7 @@ plans skill -> 实施
 | [G2 Streaming Tool Runtime](G2-streaming-tools.md) | ../03 | P0 | 草稿（锚点已核实） |
 | [G3 Prompt Queue / Interjection](G3-prompt-queue.md) | ../04 | P1 | 草稿（锚点已核实） |
 | [G5 Lifecycle & Hook System](G5-lifecycle-hooks.md) | ../05 | P1 | 草稿（锚点已核实） |
-| [G4 Workspace Checkpoint / Rewind](G4-checkpoint-rewind.md) | ../06 | P1 | 草稿（锚点已核实） |
+| [G4 Workspace Checkpoint / Rewind](G4-checkpoint-rewind.md) | ../06 | P1 | 已实施并通过聚焦验收（2026-07-18） |
 | [G6 Subagent Resource Settlement](G6-subagent-settlement.md) | ../07 | P2 | 草稿（锚点已核实） |
 | [G8 ACP Adapter](G8-acp-adapter.md) | ../08 | P2 | 草稿（锚点已核实） |
 | [S1 Sandbox Enforcement](S1-sandbox.md) | ../11 | P2 | 草稿（锚点已核实） |

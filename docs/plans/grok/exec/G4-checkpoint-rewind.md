@@ -2,6 +2,8 @@
 
 > 对应研究文档 `../06-workspace-checkpoint-and-rewind.md`。优先级 P1（高风险，Conscious-core/AgentControl 稳定后启动）。
 > 实施前按 `README.md §5` 重新核对 §2 锚点。
+>
+> **状态：已实施并通过聚焦验收（2026-07-18）。** G4 第一版范围内的 T1–T13 已完成；全工作区最终回归仍由总执行计划统一进行。
 
 ## 1. 目标与非目标
 
@@ -13,26 +15,20 @@
 - 模型不能提供任意文件路径或 checkpoint blob（只能请求 turn N）。
 - 不通过 FS rewind 删除 memory/event 历史。
 
-## 2. 当前代码锚点（已验证 @ commit bec15695）
+## 2. 当前代码锚点（重新验证 @ 2026-07-18）
 
 | 符号 | 位置 | 关键事实 |
 |---|---|---|
-| `FileSnap` | `crates/fabric/src/types/tool.rs:178-217` | `{ path, content: Option<String> }`；`capture()`(188)/`restore()`(201)。**已定义，零调用** |
-| `Previewer` trait | 同上 `:223-228` | 无 file-edit 工具实现 |
-| `RuntimeResumability` | `crates/fabric/src/types/agent_control.rs:26-43` | `{ Never, Checkpointed { reference } }`。**已定义，未用** |
-| `AgentRecoveryDecision` | 同上 `:45-52` | `{ Interrupt, Resume, Finalize, Reclaim }` |
-| `AgentRecoveryReceipt` | 同上 `:54-60` | `{ decision, daemon_generation, recovered_at_ms, idempotency_key }` |
-| `WorkspacePolicy` | `crates/fabric/src/types/local_authority.rs:71-118` | cwd(102)/writable_roots(106)/protected_paths(115)/from_resolved_roots(79) |
-| `canonical_directory` | 同上 `:235-248` | `std::fs::canonicalize` + is_dir 校验（workspace identity 基础） |
-| turn 开始 | `crates/executive/src/service/turn_pipeline.rs:215` | `sessions.begin_user(&message)` → (sess_id, turn_count) |
-| turn 结束 | 同上 `:640` | `sessions.finish(turn_succeeded, tool_calls, ...)` |
-| run() 范围 | 同上 `:104-680` | 单方法含 Pre/Cognit/Post |
-| `LeaseManager` | `crates/fabric/src/include/admission.rs:99-116` | `acquire(principal, req, now)`/`release(id)`/`is_leased(resource, now)` |
-| `LeaseRequest` | `crates/fabric/src/types/admission.rs:202-209` | `{ resource, duration_ms }` |
-| `AgentSpawnRequest.trusted_workspace` | `crates/fabric/src/types/agent_control.rs:200` | child 继承 workspace（`#[serde(skip)]`，host-minted） |
-| **checkpoint 基建** | — | **无**（grep 零结果） |
+| Fabric checkpoint 类型 | `crates/fabric/src/types/workspace_checkpoint.rs:36,68,127,152` | workspace identity、turn checkpoint、restore outcome 与 2048 文件硬上限已落地 |
+| checkpoint store / service | `crates/executive/src/service/workspace_checkpoint.rs:40,231,295,362,387` | 持久化端口、capture/finalize/rewind 事务编排已落地 |
+| SQLite store | `crates/executive/src/impl/session/checkpoint_store_sqlite.rs:24-162` | checkpoint 与文件快照持久化、重启读取、成功后截断 |
+| turn 边界 | `crates/executive/src/service/turn_pipeline.rs:129-149,715-727` | 副作用前 begin；整个 turn 的成功/错误结果之后统一 finalize |
+| RPC 权威边界 | `crates/executive/src/impl/daemon/handler/rpc/rpc_turn.rs:10-95` | 只收 session/turn；拒绝路径/blob；workspace 从 host-bound thread authority 解析 |
+| RPC flag 门控 | `crates/executive/src/impl/daemon/handler/rpc.rs:116-119` | flag 关闭时不暴露 `workspace.rewind` |
+| feature flag | `crates/executive/src/core/config/grok_hardening.rs:23-24` | `grok_hardening.workspace_checkpoint`，默认 false |
+| canonical events | `crates/fabric/src/ipc/envelope_v2.rs:330-334` | began/finalized/rewound schema 均已注册 |
 
-**核心事实**：`FileSnap` 与 runtime recovery 类型都已存在但**零集成**。`LeaseManager` 就绪可用于 rewind 排他。无持久 checkpoint 存储。
+**当前事实**：G4 使用独立的 FS checkpoint domain，不混入 runtime recovery；SQLite store、排他 lease、child 活跃拒绝、事务 restore 与 canonical event receipt 均已集成。
 
 ## 3. 权威归属决策（doc10 §6 八问）
 
@@ -231,3 +227,12 @@ impl WorkspaceCheckpointService {
 ## 10. 许可证
 
 重新实现 restore 事务顺序（identity→protect→fs→truncate）语义，不复制 Grok `xai-grok-workspace/session/checkpoint.rs`。无 NOTICE 变更。
+
+## 11. 实施验收记录（2026-07-18）
+
+- T1–T10：`service::workspace_checkpoint::tests` 8/8 通过，覆盖稳定有界捕获、成功/失败终态、identity fail-closed、当前修改保护失败、restore 失败保留未来 checkpoint、排他 lease、child 活跃拒绝、新增/修改/删除恢复，以及 event bus/spine receipt。
+- T3 crash/reopen：`impl::session::checkpoint_store_sqlite::tests` 1/1 通过。
+- T11：生产 pipeline 在 `turn_pipeline.rs:129-149,715-727` 包围完整 turn；`every_turn_result_leaves_a_terminal_checkpoint` 证明成功为 Finalized、失败为 Aborted，均不留 Open。
+- T12/RPC authority：`workspace_rewind_tests` 1/1、`thread_authority::tests` 2/2 通过；请求路径/blob 被拒，重启后仍从 host-bound authority 恢复 workspace。
+- T13：`bash scripts/cargo-agent.sh check -p executive` 与 `fmt --all -- --check` 通过；`clippy -p executive --all-targets -- -D warnings` 被既有 integration support dead-code 阻断（`tests/support/mock_llm_provider.rs:41,106,122`、`mock_sandbox.rs:66`），G4 生产目标改以 `clippy -p executive --lib -- -D warnings` 验收。
+- 灰度：仅开启 `grok_hardening.workspace_checkpoint = true` 的主体启用；磁盘观测使用 `checkpoint_disk_bytes`，单 turn 文件数硬上限为 2048。
