@@ -632,10 +632,93 @@ mod tests {
     use super::*;
     use fabric::{AdmissionError, ResourceLeaseId};
     use std::sync::atomic::AtomicBool;
+    use tokio::sync::Notify;
 
     #[derive(Default)]
     struct TestLeases {
         held: AtomicBool,
+    }
+
+    struct FailingIo {
+        fail_protect: bool,
+        fail_restore: bool,
+    }
+
+    #[async_trait]
+    impl WorkspaceSnapshotIo for FailingIo {
+        async fn capture(
+            &self,
+            workspace: &WorkspaceIdentity,
+            writable_roots: &[PathBuf],
+            limit: usize,
+        ) -> Result<CaptureResult> {
+            LocalWorkspaceSnapshotIo
+                .capture(workspace, writable_roots, limit)
+                .await
+        }
+
+        async fn protect_current(
+            &self,
+            workspace: &WorkspaceIdentity,
+        ) -> Result<Vec<CheckpointFileEntry>> {
+            if self.fail_protect {
+                anyhow::bail!("protection failed");
+            }
+            LocalWorkspaceSnapshotIo.protect_current(workspace).await
+        }
+
+        async fn restore(
+            &self,
+            workspace: &WorkspaceIdentity,
+            target: &[CheckpointFileEntry],
+            rollback: &[CheckpointFileEntry],
+        ) -> Result<()> {
+            if self.fail_restore {
+                anyhow::bail!("restore failed");
+            }
+            LocalWorkspaceSnapshotIo
+                .restore(workspace, target, rollback)
+                .await
+        }
+    }
+
+    struct BlockingIo {
+        entered: Arc<Notify>,
+        resume: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl WorkspaceSnapshotIo for BlockingIo {
+        async fn capture(
+            &self,
+            workspace: &WorkspaceIdentity,
+            writable_roots: &[PathBuf],
+            limit: usize,
+        ) -> Result<CaptureResult> {
+            LocalWorkspaceSnapshotIo
+                .capture(workspace, writable_roots, limit)
+                .await
+        }
+
+        async fn protect_current(
+            &self,
+            workspace: &WorkspaceIdentity,
+        ) -> Result<Vec<CheckpointFileEntry>> {
+            LocalWorkspaceSnapshotIo.protect_current(workspace).await
+        }
+
+        async fn restore(
+            &self,
+            workspace: &WorkspaceIdentity,
+            target: &[CheckpointFileEntry],
+            rollback: &[CheckpointFileEntry],
+        ) -> Result<()> {
+            self.entered.notify_one();
+            self.resume.notified().await;
+            LocalWorkspaceSnapshotIo
+                .restore(workspace, target, rollback)
+                .await
+        }
     }
 
     #[async_trait]
@@ -712,6 +795,11 @@ mod tests {
             .unwrap()
             .unwrap();
         service.finalize_turn(checkpoint_id, true).await.unwrap();
+        let (mut future, future_files) = store.load("session", 1).await.unwrap().unwrap();
+        future.checkpoint_id = CheckpointId::new();
+        future.prompt_index = 2;
+        future.turn_id = "turn-2".into();
+        store.begin(future, future_files).await.unwrap();
 
         std::fs::write(directory.path().join("modified"), "after").unwrap();
         std::fs::remove_file(directory.path().join("deleted")).unwrap();
@@ -736,6 +824,7 @@ mod tests {
             "restore-me"
         );
         assert!(!directory.path().join("added").exists());
+        assert!(store.load("session", 2).await.unwrap().is_none());
         for event in [
             began.recv().await.unwrap(),
             finalized.recv().await.unwrap(),
@@ -798,5 +887,136 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn bounded_capture_is_deterministic_and_reports_truncation() {
+        let directory = tempfile::tempdir().unwrap();
+        for name in ["c", "a", "b"] {
+            std::fs::write(directory.path().join(name), name).unwrap();
+        }
+        let captured = capture_files(
+            &identity(directory.path()),
+            &[directory.path().to_path_buf()],
+            2,
+        )
+        .unwrap();
+        assert!(captured.truncated);
+        assert_eq!(
+            captured
+                .files
+                .iter()
+                .map(|entry| entry.path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+    }
+
+    #[tokio::test]
+    async fn protection_and_restore_failures_do_not_truncate_future_checkpoints() {
+        for (fail_protect, fail_restore, expected) in [
+            (true, false, RestoreOutcome::UnprotectedChangesAbort),
+            (
+                false,
+                true,
+                RestoreOutcome::FsRestoreFailed {
+                    detail: "restore failed".into(),
+                },
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            std::fs::write(directory.path().join("file"), "one").unwrap();
+            let store = Arc::new(InMemoryCheckpointStore::default());
+            let service = WorkspaceCheckpointService::with_io(
+                store.clone(),
+                Arc::new(TestLeases::default()),
+                Arc::new(FailingIo {
+                    fail_protect,
+                    fail_restore,
+                }),
+                true,
+            );
+            for index in [1, 2] {
+                let id = service
+                    .begin_turn(context(directory.path(), index))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                service.finalize_turn(id, true).await.unwrap();
+            }
+
+            let outcome = service
+                .rewind_to(
+                    &PrincipalId("principal".into()),
+                    "session",
+                    1,
+                    &identity(directory.path()),
+                    0,
+                )
+                .await;
+            match (&outcome, &expected) {
+                (
+                    RestoreOutcome::FsRestoreFailed { detail },
+                    RestoreOutcome::FsRestoreFailed { .. },
+                ) => assert!(detail.contains("restore failed")),
+                _ => assert_eq!(outcome, expected),
+            }
+            assert!(store.load("session", 2).await.unwrap().is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn exclusive_lease_rejects_a_second_rewind_while_restore_is_active() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("file"), "one").unwrap();
+        let entered = Arc::new(Notify::new());
+        let resume = Arc::new(Notify::new());
+        let service = Arc::new(WorkspaceCheckpointService::with_io(
+            Arc::new(InMemoryCheckpointStore::default()),
+            Arc::new(TestLeases::default()),
+            Arc::new(BlockingIo {
+                entered: entered.clone(),
+                resume: resume.clone(),
+            }),
+            true,
+        ));
+        let id = service
+            .begin_turn(context(directory.path(), 1))
+            .await
+            .unwrap()
+            .unwrap();
+        service.finalize_turn(id, true).await.unwrap();
+        let workspace = identity(directory.path());
+        let first = {
+            let service = service.clone();
+            let workspace = workspace.clone();
+            tokio::spawn(async move {
+                service
+                    .rewind_to(
+                        &PrincipalId("principal".into()),
+                        "session",
+                        1,
+                        &workspace,
+                        0,
+                    )
+                    .await
+            })
+        };
+        entered.notified().await;
+        let second = service
+            .rewind_to(
+                &PrincipalId("principal".into()),
+                "session",
+                1,
+                &workspace,
+                0,
+            )
+            .await;
+        assert!(matches!(
+            second,
+            RestoreOutcome::FsRestoreFailed { detail } if detail.contains("lease unavailable")
+        ));
+        resume.notify_one();
+        assert_eq!(first.await.unwrap(), RestoreOutcome::Completed);
     }
 }
