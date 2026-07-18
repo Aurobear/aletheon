@@ -404,21 +404,6 @@ impl ProcessManager {
             .and_then(|process| process.child.id())
     }
 
-    /// Reap all exited processes and remove them from the registry.
-    pub async fn reap(&self) {
-        let mut procs = self.processes.lock().await;
-        procs.retain(|_id, proc| {
-            if proc.exited {
-                return false;
-            }
-            if let Ok(Some(_)) = proc.child.try_wait() {
-                proc.exited = true;
-                return false;
-            }
-            true
-        });
-    }
-
     /// Kill all managed processes on shutdown.
     pub async fn shutdown(&self) {
         let processes = {

@@ -65,6 +65,18 @@ fn main() -> io::Result<()> {
             }
         };
 
+        if request.jsonrpc != "2.0" {
+            let response = protocol::Response::err(
+                request.id.clone(),
+                protocol::INVALID_REQUEST,
+                "jsonrpc must be exactly 2.0".to_string(),
+            );
+            if write_response(&mut stdout, &response).is_err() {
+                break;
+            }
+            continue;
+        }
+
         // Require an exact-secret handshake as the first successful message.
         // A rejected attempt never authenticates the connection.
         let handshake_attempted = !handshake_done && request.method == "handshake";
@@ -198,38 +210,6 @@ fn handle_handshake(req: &protocol::Request, expected_secret: &str) -> protocol:
         req.id.clone(),
         serde_json::to_value(hs_resp).unwrap_or_default(),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn handshake(secret: &str) -> protocol::Request {
-        protocol::Request {
-            jsonrpc: "2.0".into(),
-            id: serde_json::json!(1),
-            method: "handshake".into(),
-            params: serde_json::json!({"secret": secret}),
-        }
-    }
-
-    #[test]
-    fn handshake_requires_exact_pre_shared_secret() {
-        assert!(matches!(
-            handle_handshake(&handshake("expected"), "expected").result,
-            protocol::ResponseResult::Ok { .. }
-        ));
-        assert!(matches!(
-            handle_handshake(&handshake("wrong"), "expected").result,
-            protocol::ResponseResult::Err { error }
-                if error.code == protocol::UNAUTHORIZED
-        ));
-        assert!(matches!(
-            handle_handshake(&handshake(""), "expected").result,
-            protocol::ResponseResult::Err { error }
-                if error.code == protocol::UNAUTHORIZED
-        ));
-    }
 }
 
 fn handle_process_start(
@@ -382,5 +362,37 @@ fn handle_process_terminate(
             protocol::Response::ok(req.id.clone(), serde_json::json!({"status": "terminated"}))
         }
         Err(rpc_err) => protocol::Response::err(req.id.clone(), rpc_err.code, rpc_err.message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn handshake(secret: &str) -> protocol::Request {
+        protocol::Request {
+            jsonrpc: "2.0".into(),
+            id: serde_json::json!(1),
+            method: "handshake".into(),
+            params: serde_json::json!({"secret": secret}),
+        }
+    }
+
+    #[test]
+    fn handshake_requires_exact_pre_shared_secret() {
+        assert!(matches!(
+            handle_handshake(&handshake("expected"), "expected").result,
+            protocol::ResponseResult::Ok { .. }
+        ));
+        assert!(matches!(
+            handle_handshake(&handshake("wrong"), "expected").result,
+            protocol::ResponseResult::Err { error }
+                if error.code == protocol::UNAUTHORIZED
+        ));
+        assert!(matches!(
+            handle_handshake(&handshake(""), "expected").result,
+            protocol::ResponseResult::Err { error }
+                if error.code == protocol::UNAUTHORIZED
+        ));
     }
 }
