@@ -1245,7 +1245,18 @@ mod terminal_event_tests {
         )
         .with_approval_gate(Arc::new(AutoApproveGate));
         let context = ToolContext {
-            approval_authority: None,
+            approval_authority: Some(fabric::ToolApprovalAuthority {
+                principal_id: fabric::PrincipalId("terminal-event-test".into()),
+                connection_id: fabric::ConnectionId::new(),
+                thread_id: fabric::ThreadId("g2-client-stream".into()),
+                turn_id: fabric::TurnId::new(),
+                call_id: "call-g2-real".into(),
+                workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                    temp.path().to_path_buf(),
+                    vec![],
+                )
+                .unwrap(),
+            }),
             agent: None,
             working_dir: temp.path().to_path_buf(),
             session_id: "g2-client-stream".into(),
@@ -1258,7 +1269,8 @@ mod terminal_event_tests {
             .execute_tool_streaming_report(
                 &corpus::tools::bash_exec::BashExecTool,
                 serde_json::json!({
-                    "command": "printf 'alpha\\n'; sleep 0.02; printf 'beta\\n'"
+                    "command": "printf 'alpha\\n'; sleep 0.02; printf 'beta\\n'",
+                    "network_enabled": true
                 }),
                 &context,
                 "g2-turn",
@@ -1267,7 +1279,8 @@ mod terminal_event_tests {
             .await;
         assert!(
             report.result.is_ok(),
-            "real BashExecTool must settle successfully"
+            "real BashExecTool must settle successfully: {:?}",
+            report.result
         );
         drop(sink);
 
