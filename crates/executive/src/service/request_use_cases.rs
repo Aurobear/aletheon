@@ -368,8 +368,8 @@ impl ReflectionUseCases for ProductionReflectionUseCases {
 #[async_trait]
 pub trait SessionLifecycleUseCases: Send + Sync {
     async fn reset_turn_token(&self);
-    async fn finish(&self, session_id: String, turn_count: usize);
-    async fn start(&self, session_id: String, clear_approvals: bool);
+    async fn finish(&self, session_id: String, turn_count: usize) -> anyhow::Result<()>;
+    async fn start(&self, session_id: String, clear_approvals: bool) -> anyhow::Result<()>;
 }
 
 pub struct ProductionSessionLifecycle {
@@ -401,9 +401,8 @@ impl ProductionSessionLifecycle {
         &self,
         phase: crate::service::lifecycle_contributors::LifecyclePhase,
         session_id: &str,
-    ) {
-        if let Err(error) = self
-            .lifecycle
+    ) -> anyhow::Result<()> {
+        self.lifecycle
             .dispatch_if_enabled(
                 self.lifecycle_enabled,
                 crate::service::lifecycle_contributors::LifecycleInput {
@@ -416,9 +415,8 @@ impl ProductionSessionLifecycle {
                 },
             )
             .await
-        {
-            tracing::error!(%error, ?phase, "Critical session lifecycle contributor failed closed");
-        }
+            .map_err(|error| anyhow::anyhow!("{phase:?} lifecycle rejected session: {error}"))?;
+        Ok(())
     }
 }
 
@@ -428,12 +426,12 @@ impl SessionLifecycleUseCases for ProductionSessionLifecycle {
         *self.cancel_token.lock().await = None;
     }
 
-    async fn finish(&self, session_id: String, turn_count: usize) {
+    async fn finish(&self, session_id: String, turn_count: usize) -> anyhow::Result<()> {
         self.dispatch(
             crate::service::lifecycle_contributors::LifecyclePhase::BeforeSessionEnd,
             &session_id,
         )
-        .await;
+        .await?;
         let context = HookContext {
             point: HookPoint::OnSessionEnd,
             session_id: session_id.clone(),
@@ -455,15 +453,16 @@ impl SessionLifecycleUseCases for ProductionSessionLifecycle {
             crate::service::lifecycle_contributors::LifecyclePhase::AfterSessionEnd,
             &session_id,
         )
-        .await;
+        .await?;
+        Ok(())
     }
 
-    async fn start(&self, session_id: String, clear_approvals: bool) {
+    async fn start(&self, session_id: String, clear_approvals: bool) -> anyhow::Result<()> {
         self.dispatch(
             crate::service::lifecycle_contributors::LifecyclePhase::BeforeSessionStart,
             &session_id,
         )
-        .await;
+        .await?;
         if clear_approvals {
             self.approvals.clear().await;
         }
@@ -488,7 +487,8 @@ impl SessionLifecycleUseCases for ProductionSessionLifecycle {
             crate::service::lifecycle_contributors::LifecyclePhase::AfterSessionStart,
             &session_id,
         )
-        .await;
+        .await?;
+        Ok(())
     }
 }
 

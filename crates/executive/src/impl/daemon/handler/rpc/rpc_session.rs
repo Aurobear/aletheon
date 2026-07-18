@@ -8,7 +8,7 @@ use super::RequestHandler;
 use serde_json::json;
 use tracing::info;
 
-use crate::service::legacy_session_service::{LegacySessionError, LegacySessionSnapshot};
+use crate::service::legacy_session_service::LegacySessionSnapshot;
 
 impl RequestHandler {
     pub(super) async fn handle_clear(
@@ -26,7 +26,9 @@ impl RequestHandler {
             Ok(transition) => transition,
             Err(error) => return session_error(id, -32022, error),
         };
-        self.finish_outgoing_session(&transition.previous).await;
+        if let Err(error) = self.finish_outgoing_session(&transition.previous).await {
+            return session_error(id, -32032, error);
+        }
         self.distill_session_facts(&transition.previous).await;
         self.ports.session_lifecycle.reset_turn_token().await;
         json!({
@@ -120,11 +122,17 @@ impl RequestHandler {
             Ok(transition) => transition,
             Err(error) => return session_error(id, -32030, error),
         };
-        self.finish_outgoing_session(&transition.previous).await;
-        self.ports
+        if let Err(error) = self.finish_outgoing_session(&transition.previous).await {
+            return session_error(id, -32032, error);
+        }
+        if let Err(error) = self
+            .ports
             .session_lifecycle
             .start(transition.current.session_id.clone(), true)
-            .await;
+            .await
+        {
+            return session_error(id, -32032, error);
+        }
         info!(session_id = %transition.current.session_id, "New session created");
         json!({"jsonrpc":"2.0", "id":id, "result":{"session_id":transition.current.session_id}})
     }
@@ -150,11 +158,14 @@ impl RequestHandler {
         }
     }
 
-    async fn finish_outgoing_session(&self, snapshot: &LegacySessionSnapshot) {
+    async fn finish_outgoing_session(
+        &self,
+        snapshot: &LegacySessionSnapshot,
+    ) -> anyhow::Result<()> {
         self.ports
             .session_lifecycle
             .finish(snapshot.session_id.clone(), snapshot.turn_count)
-            .await;
+            .await
     }
 
     async fn distill_session_facts(&self, snapshot: &LegacySessionSnapshot) {
@@ -241,7 +252,7 @@ impl RequestHandler {
 fn session_error(
     id: &serde_json::Value,
     code: i64,
-    error: LegacySessionError,
+    error: impl std::fmt::Display,
 ) -> serde_json::Value {
     json!({"jsonrpc":"2.0", "id":id, "error":{"code":code,"message":error.to_string()}})
 }

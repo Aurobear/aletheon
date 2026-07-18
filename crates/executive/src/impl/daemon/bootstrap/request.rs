@@ -1507,7 +1507,7 @@ impl RequestHandler {
             .ports
             .session_lifecycle
             .start(session_id.clone(), false)
-            .await;
+            .await?;
 
         // -- Telegram channel initialization (M1) -------------------------------
         let telegram_cfg = &config.telegram;
