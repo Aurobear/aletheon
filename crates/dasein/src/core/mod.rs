@@ -416,7 +416,19 @@ impl SelfField {
         let Ok(Some(readout)) = fabric::ConsciousFieldReadout::from_projection(&projection) else {
             return baseline;
         };
-        (baseline + (1.0 - baseline) * 0.25 * f64::from(readout.precision)).clamp(0.0, 1.0)
+        let effective =
+            (baseline + (1.0 - baseline) * 0.25 * f64::from(readout.precision)).clamp(0.0, 1.0);
+        tracing::info!(
+            target: "aletheon.conscious",
+            schema = "conscious.field.care_modulation.v1",
+            session_id = %ctx.session_id,
+            baseline,
+            effective,
+            delta = effective - baseline,
+            precision = f64::from(readout.precision),
+            "conscious field modulated SelfField care"
+        );
+        effective
     }
 }
 
