@@ -187,7 +187,7 @@ impl DoctorReport {
         let sandbox = SandboxStatus {
             status: config.sandbox.preference.clone(),
             command: config.sandbox.bubblewrap_path.clone(),
-            exec_server: if config.grok_hardening.streaming_tools {
+            exec_server: if config.grok_hardening.exec_server {
                 Some("configured (not yet connected)".to_string())
             } else {
                 Some("not configured".to_string())

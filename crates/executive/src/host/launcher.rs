@@ -40,6 +40,8 @@ pub struct DaemonLaunch {
     pub container: Option<String>,
     pub image: String,
     pub enable_evolution: bool,
+    /// Additively enable the isolated exec-server backend.
+    pub enable_exec_server: bool,
 }
 
 fn select_daemon_socket(
@@ -76,6 +78,7 @@ pub async fn run_daemon(request: DaemonLaunch) -> Result<()> {
         paths,
         socket,
         request.enable_evolution,
+        request.enable_exec_server,
     )?;
     let core_socket = std::env::var_os("ALETHEON_CORE_SOCKET")
         .map(PathBuf::from)

@@ -93,6 +93,9 @@ enum Commands {
         /// Enable self-evolution loop (HIGH-risk autonomy -- OFF by default)
         #[arg(long, default_value_t = false)]
         enable_evolution: bool,
+        /// Enable the isolated exec-server tool backend (OFF by default)
+        #[arg(long = "exec-server", default_value_t = false)]
+        exec_server: bool,
     },
     /// Non-interactive execution
     Exec {
@@ -195,6 +198,7 @@ async fn main() -> Result<()> {
                 container,
                 image,
                 enable_evolution,
+                exec_server,
             }),
             _,
         ) => {
@@ -207,6 +211,7 @@ async fn main() -> Result<()> {
                 container: container.clone(),
                 image: image.clone(),
                 enable_evolution: *enable_evolution,
+                enable_exec_server: *exec_server,
             })
             .await
         }
@@ -432,5 +437,31 @@ mod acp_cli_tests {
     fn acp_flag_is_exposed_only_in_acp_feature_build() {
         let cli = Cli::try_parse_from(["aletheon", "--acp"]).unwrap();
         assert!(cli.acp);
+    }
+}
+
+#[cfg(test)]
+mod daemon_cli_tests {
+    use super::*;
+
+    #[test]
+    fn exec_server_flag_defaults_off_and_enables_additively() {
+        let default_cli = Cli::try_parse_from(["aletheon", "daemon"]).unwrap();
+        assert!(matches!(
+            default_cli.command,
+            Some(Commands::Daemon {
+                exec_server: false,
+                ..
+            })
+        ));
+
+        let enabled_cli = Cli::try_parse_from(["aletheon", "daemon", "--exec-server"]).unwrap();
+        assert!(matches!(
+            enabled_cli.command,
+            Some(Commands::Daemon {
+                exec_server: true,
+                ..
+            })
+        ));
     }
 }

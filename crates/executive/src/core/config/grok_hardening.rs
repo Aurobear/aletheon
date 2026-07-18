@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct GrokHardeningConfig {
+    /// D1 — isolated exec-server backend activation.
+    pub exec_server: bool,
     /// G1 — folder trust gating of repo-executable config loading.
     pub folder_trust: bool,
     /// G2 — streaming tool-execution progress events.
@@ -41,6 +43,7 @@ impl GrokHardeningConfig {
     /// diagnostics without threading every individual flag.
     pub fn any_enabled(&self) -> bool {
         let Self {
+            exec_server,
             folder_trust,
             streaming_tools,
             prompt_queue,
@@ -52,7 +55,8 @@ impl GrokHardeningConfig {
             sandbox_profiles,
             compaction_v2,
         } = self;
-        *folder_trust
+        *exec_server
+            || *folder_trust
             || *streaming_tools
             || *prompt_queue
             || *workspace_checkpoint
@@ -73,6 +77,7 @@ mod tests {
     fn default_is_all_off() {
         let cfg = GrokHardeningConfig::default();
         assert!(!cfg.any_enabled());
+        assert!(!cfg.exec_server);
         assert!(!cfg.compaction_v2);
         assert!(!cfg.sandbox_profiles);
     }
@@ -85,6 +90,7 @@ mod tests {
         // Everything not named stays off.
         assert!(!cfg.sandbox_profiles);
         assert!(!cfg.folder_trust);
+        assert!(!cfg.exec_server);
     }
 
     #[test]

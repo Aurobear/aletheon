@@ -678,6 +678,11 @@
       "additionalProperties": false,
       "description": "Toggles for the staged Grok-hardening mechanisms. Fail-closed on typos\n(`deny_unknown_fields`) so a misspelled flag never silently reads as off.",
       "properties": {
+        "exec_server": {
+          "default": false,
+          "description": "D1 — isolated exec-server backend activation.",
+          "type": "boolean"
+        },
         "acp_adapter": {
           "default": false,
           "description": "G8 — ACP session-update adapter.",
@@ -1764,6 +1769,7 @@
     "grok_hardening": {
       "$ref": "#/$defs/GrokHardeningConfig",
       "default": {
+        "exec_server": false,
         "acp_adapter": false,
         "compaction_v2": false,
         "folder_trust": false,

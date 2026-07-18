@@ -441,9 +441,7 @@ impl RequestHandler {
         let sandbox_pref = SandboxPreference::from_str(&config.sandbox_preference);
         let mut structured_exec_backend: Option<Arc<dyn corpus::security::StructuredToolSandbox>> =
             None;
-        let exec_backend: Option<Box<dyn fabric::SandboxBackend>> = if grok_hardening
-            .streaming_tools
-        {
+        let exec_backend: Option<Box<dyn fabric::SandboxBackend>> = if grok_hardening.exec_server {
             let binary_path = std::env::var_os("ALETHEON_EXEC_SERVER_PATH")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| {
