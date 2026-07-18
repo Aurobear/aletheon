@@ -291,6 +291,7 @@ pub enum TurnEventV1 {
 ///
 /// Serializes `TurnEventV1` into an `EnvelopeV2` and pushes it into the
 /// underlying mpsc channel.
+#[derive(Clone)]
 pub struct TurnEventSender {
     tx: mpsc::Sender<crate::ipc::envelope_v2::EnvelopeV2>,
 }

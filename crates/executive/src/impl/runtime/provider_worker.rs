@@ -270,6 +270,8 @@ impl ProviderWorkerRuntime {
                                 cancel: cancel.clone(),
                                 turn_count: 0,
                                 action_loop: None,
+                                streaming_tools: false,
+                                turn_event_sender: None,
                             }
                         },
                     );
@@ -692,10 +694,12 @@ mod tests {
             .unwrap_err();
         assert_eq!(failure.class, FailureClass::ProviderTransient);
         assert!(failure.retryable);
-        assert!(runtime
-            .run("task", CancellationToken::new())
-            .await
-            .unwrap_err()
-            .contains("LLM error"));
+        assert!(
+            runtime
+                .run("task", CancellationToken::new())
+                .await
+                .unwrap_err()
+                .contains("LLM error")
+        );
     }
 }

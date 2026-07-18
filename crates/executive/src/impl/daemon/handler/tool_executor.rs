@@ -505,6 +505,8 @@ impl CapabilityService for ProductionCapabilityService {
             cancel,
             turn_count: 0,
             action_loop: None,
+            streaming_tools: false,
+            turn_event_sender: None,
         };
         let result = Self::invoke_existing(&self.resources, context, call).await;
         if result.is_error {

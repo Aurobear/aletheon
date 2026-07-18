@@ -7,7 +7,7 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use aletheon_kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use fabric::types::admission::RiskLevel;
 use fabric::{
@@ -36,6 +36,9 @@ pub struct CapabilityExecutionContext {
     pub cancel: CancellationToken,
     pub turn_count: usize,
     pub action_loop: Option<Arc<dyn GovernedActionLoop>>,
+    /// G2 additive progress path. Both fields are required to activate it.
+    pub streaming_tools: bool,
+    pub turn_event_sender: Option<fabric::ipc::TurnEventSender>,
 }
 
 #[async_trait]
@@ -175,6 +178,7 @@ pub struct GovernedCapabilityInvoker {
     authority: Arc<dyn TurnAuthorityProvider>,
     action_loop: Option<Arc<dyn GovernedActionLoop>>,
     arbitration_mode: ConsciousArbitrationMode,
+    stream_events: Option<fabric::ipc::TurnEventSender>,
 }
 
 impl GovernedCapabilityInvoker {
@@ -187,6 +191,7 @@ impl GovernedCapabilityInvoker {
             authority,
             action_loop: None,
             arbitration_mode: ConsciousArbitrationMode::Observe,
+            stream_events: None,
         }
     }
 
@@ -199,6 +204,11 @@ impl GovernedCapabilityInvoker {
     /// Override conscious arbitration for an explicitly configured runtime.
     pub fn with_arbitration_mode(mut self, mode: ConsciousArbitrationMode) -> Self {
         self.arbitration_mode = mode;
+        self
+    }
+
+    pub fn with_tool_stream(mut self, sender: fabric::ipc::TurnEventSender) -> Self {
+        self.stream_events = Some(sender);
         self
     }
 }
@@ -329,14 +339,33 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
             None
         };
         let observed_call = call.clone();
-        let result = self
-            .inner
-            .invoke(fabric::CapabilityRequest {
-                call,
-                authority: authorized.authority,
-                control: authorized.control,
-            })
-            .await;
+        let request = fabric::CapabilityRequest {
+            call,
+            authority: authorized.authority,
+            control: authorized.control,
+        };
+        let result = if let Some(turn_events) = &self.stream_events {
+            let tool_name = request.call.name.clone();
+            let call_id = request.call.call_id.clone();
+            let cancel = request.control.cancel.clone();
+            let (mut sink, event_rx) = fabric::tool_event_channel();
+            let invoke = self.inner.invoke_streaming(request, &mut sink);
+            let bridge = crate::service::tool_stream_bridge::bridge_tool_stream(
+                event_rx,
+                turn_events.clone(),
+                tool_name,
+                call_id,
+                cancel,
+            );
+            let (mut result, outcome) = tokio::join!(invoke, bridge);
+            if let Err(error) = outcome.terminal {
+                result.output = format!("streaming tool execution failed: {error}");
+                result.is_error = true;
+            }
+            result
+        } else {
+            self.inner.invoke(request).await
+        };
         if let (Some(action_loop), Some(selected)) = (&self.action_loop, selected.as_ref()) {
             if let Err(error) = action_loop
                 .observe_outcome(selected, &observed_call, &result)
@@ -380,6 +409,23 @@ impl CapabilityRuntimeFactory {
         let kernel: Arc<dyn CapabilityInvoker> =
             Arc::new(DefaultCapabilityInvoker::new(admission, executor));
         Arc::new(GovernedCapabilityInvoker::new(kernel, authority).with_action_loop(action_loop))
+    }
+
+    pub fn build_streaming(
+        admission: Arc<dyn AdmissionController>,
+        executor: Arc<dyn ToolExecutor>,
+        authority: Arc<dyn TurnAuthorityProvider>,
+        action_loop: Option<Arc<dyn GovernedActionLoop>>,
+        sender: fabric::ipc::TurnEventSender,
+    ) -> Arc<dyn TurnCapabilityInvoker> {
+        let kernel: Arc<dyn CapabilityInvoker> =
+            Arc::new(DefaultCapabilityInvoker::new(admission, executor));
+        let mut governed =
+            GovernedCapabilityInvoker::new(kernel, authority).with_tool_stream(sender);
+        if let Some(action_loop) = action_loop {
+            governed = governed.with_action_loop(action_loop);
+        }
+        Arc::new(governed)
     }
 }
 

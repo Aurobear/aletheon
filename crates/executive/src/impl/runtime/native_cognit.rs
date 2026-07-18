@@ -2,8 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -13,9 +13,9 @@ use fabric::{
     AgentRunStatus, ApprovalPolicy, AttemptEvidence, AttemptUsage, CapabilityCall,
     CapabilityResult, Clock, ConnectionId, LlmProvider, LocalOsPrincipal, Message,
     PermissionProfileId, PrincipalContext, PrincipalId, ProcessId, RecallRequest, RecallSet,
-    RuntimeId, SandboxRequirement, SessionId, SessionRecord, SessionStatus, ThreadId,
-    ToolDefinition, TurnEvent, TurnEventSink, TurnRequest, TurnServices, TurnStop, WorkspacePolicy,
-    SESSION_SCHEMA_VERSION,
+    RuntimeId, SESSION_SCHEMA_VERSION, SandboxRequirement, SessionId, SessionRecord, SessionStatus,
+    ThreadId, ToolDefinition, TurnEvent, TurnEventSink, TurnRequest, TurnServices, TurnStop,
+    WorkspacePolicy,
 };
 use parking_lot::RwLock;
 use tokio::sync::Mutex;
@@ -199,6 +199,8 @@ impl NativeCognitRuntime {
                 cancel: input.cancellation.clone(),
                 turn_count: 0,
                 action_loop,
+                streaming_tools: false,
+                turn_event_sender: None,
             },
             cancellation: input.cancellation.clone(),
             evidence: evidence.clone(),

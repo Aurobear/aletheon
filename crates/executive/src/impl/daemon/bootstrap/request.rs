@@ -1,9 +1,9 @@
 //! Handler initialization, construction, and setup-related methods.
 
+use super::super::DaemonConfig;
 use super::super::model_router::{ModelRouter, TaskType};
 use super::super::prefix_builder::PrefixBuilder;
 use super::super::session_manager::SessionManager;
-use super::super::DaemonConfig;
 use crate::core::config::ExecutiveConfig;
 use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonExecutive;
@@ -14,7 +14,7 @@ use anyhow::Context;
 use cognit::core::reflector::Reflector;
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
-use corpus::security::sandbox::executor::{create_default_executor, SandboxPreference};
+use corpus::security::sandbox::executor::{SandboxPreference, create_default_executor};
 use corpus::security::socket_approval::SocketApprovalGate;
 use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
@@ -25,31 +25,31 @@ use fabric::Registry;
 use fabric::Version;
 use fabric::{Subsystem, SubsystemContext};
 use metacog::DefaultMetaRuntime;
-use mnemosyne::episodic::EpisodicMemory;
-use mnemosyne::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
 use mnemosyne::CoreMemory;
 use mnemosyne::RecallMemory;
+use mnemosyne::episodic::EpisodicMemory;
+use mnemosyne::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use std::sync::atomic::AtomicUsize;
+use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
 use crate::r#impl::goal::ObjectiveStore;
 use crate::r#impl::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
-use crate::r#impl::runtime::{pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime};
-use crate::service::inference_port::{InferencePort, PortLlmProvider};
+use crate::r#impl::runtime::{PiRpcRuntime, pi_rpc_environment_from_process, register_pi_runtime};
 use crate::service::CapabilityService;
-use corpus::hook::builtin::audit_hook;
-use corpus::security::storm_breaker::StormBreaker;
-use corpus::skill::plugin::register_skill;
+use crate::service::inference_port::{InferencePort, PortLlmProvider};
 use corpus::HookRegistry;
 use corpus::SkillLoader;
 use corpus::SkillRouter;
+use corpus::hook::builtin::audit_hook;
+use corpus::security::storm_breaker::StormBreaker;
+use corpus::skill::plugin::register_skill;
 use mnemosyne::FactStore;
 
 use super::super::debug_handler::DebugHandler;
@@ -58,7 +58,7 @@ use crate::core::session_gateway::{ParamRegistry, SessionGateway};
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
 use super::request_ports::{
-    initialize_self_field, retention_admin_port, RequestFacadePorts, TurnRuntimeFacadePorts,
+    RequestFacadePorts, TurnRuntimeFacadePorts, initialize_self_field, retention_admin_port,
 };
 
 impl RequestHandler {
@@ -433,6 +433,7 @@ impl RequestHandler {
             context_window_tokens: context_window,
             conscious_arbitration_mode: config.conscious_arbitration_mode,
             compaction_v2: grok_hardening.compaction_v2,
+            streaming_tools: grok_hardening.streaming_tools,
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();

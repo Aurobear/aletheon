@@ -4,11 +4,11 @@
 //! and CLI exec paths share the same Pre/Cognit/Post turn pipeline.
 
 use crate::core::session_gateway::SessionGateway;
-use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
+use crate::service::daemon_react::{DaemonStreamingTurnContext, submit_streaming_daemon_turn};
 use crate::service::daemon_turn::helpers::bounded_text_history;
 use crate::service::governed_capability::CapabilityExecutionContext;
-use aletheon_kernel::operation::OperationScope;
 use aletheon_kernel::KernelRuntime;
+use aletheon_kernel::operation::OperationScope;
 use cognit::CanonicalTurnEventSink;
 use fabric::events::ui_event::ClientEvent;
 use fabric::hook::{HookContext, HookPoint, HookResult};
@@ -25,7 +25,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -310,6 +310,10 @@ impl TurnPipeline {
             ),
             None => None,
         };
+        // Create the canonical stream before capability composition so G2
+        // progress and cognitive events share the same per-turn spine.
+        let (mut turn_stream, turn_sender) = TurnEventStream::new(StreamConfig::turn_events(64));
+        let config = self.runtime_ports.config.config().await;
         let prepared =
             self.runtime_ports
                 .capabilities
@@ -334,6 +338,8 @@ impl TurnPipeline {
                     cancel: scope_token.clone(),
                     turn_count,
                     action_loop,
+                    streaming_tools: config.streaming_tools,
+                    turn_event_sender: Some(turn_sender.clone()),
                 })
                 .await?;
         let tool_defs = prepared.definitions;
@@ -357,11 +363,8 @@ impl TurnPipeline {
             }
         };
 
-        // Turn event stream — EnvelopeV2-typed channel for turn orchestration
-        let (mut turn_stream, turn_sender) = TurnEventStream::new(StreamConfig::turn_events(64));
         let event_sink = CanonicalTurnEventSink::new(turn_sender);
 
-        let config = self.runtime_ports.config.config().await;
         let goal_message = message.to_string();
         let goal_message_for_gw = goal_message.clone();
 

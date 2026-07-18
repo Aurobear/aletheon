@@ -5,9 +5,9 @@ use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 use async_trait::async_trait;
 use fabric::hook::{HookContext, HookResult};
 use fabric::{AdmissionController, Clock, ContentBlock, LlmProvider, Message, Role};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
-use crate::r#impl::daemon::handler::tool_executor::{prepare_corpus, TurnToolExecutor};
+use crate::r#impl::daemon::handler::tool_executor::{TurnToolExecutor, prepare_corpus};
 use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::service::governed_capability::{
     CapabilityExecutionContext, CapabilityRuntimeFactory, RegistryAuthorityProvider,
@@ -350,6 +350,10 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
         &self,
         context: CapabilityExecutionContext,
     ) -> anyhow::Result<PreparedCapabilities> {
+        let stream_sender = context
+            .streaming_tools
+            .then(|| context.turn_event_sender.clone())
+            .flatten();
         let prepared = prepare_corpus(&self.resources, &context).await?;
         let definitions = prepared
             .snapshot
@@ -381,14 +385,26 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
             )
             .with_agent_context(context.agent),
         );
-        let invoker = match context.action_loop {
-            Some(action_loop) => CapabilityRuntimeFactory::build_with_action_loop(
+        let action_loop = context.action_loop;
+        let invoker = match stream_sender {
+            Some(sender) => CapabilityRuntimeFactory::build_streaming(
                 self.admission.clone(),
                 executor,
                 authority,
                 action_loop,
+                sender,
             ),
-            None => CapabilityRuntimeFactory::build(self.admission.clone(), executor, authority),
+            None => match action_loop {
+                Some(action_loop) => CapabilityRuntimeFactory::build_with_action_loop(
+                    self.admission.clone(),
+                    executor,
+                    authority,
+                    action_loop,
+                ),
+                None => {
+                    CapabilityRuntimeFactory::build(self.admission.clone(), executor, authority)
+                }
+            },
         };
         Ok(PreparedCapabilities {
             definitions,

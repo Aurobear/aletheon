@@ -27,6 +27,9 @@ pub struct ExecutiveConfig {
     /// fed from `grok_hardening.compaction_v2` at handler construction.
     #[serde(default)]
     pub compaction_v2: bool,
+    /// G2: expose governed tool progress on the canonical turn stream.
+    #[serde(default)]
+    pub streaming_tools: bool,
     pub tail_token_budget: usize,
     pub target_summary_chars: usize,
     pub context_window_tokens: usize,
@@ -51,6 +54,7 @@ impl Default for ExecutiveConfig {
             learning_enabled: true,
             compaction_enabled: true,
             compaction_v2: false,
+            streaming_tools: false,
             tail_token_budget: 16_000,
             target_summary_chars: 2_000,
             context_window_tokens: 128_000,
