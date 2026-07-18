@@ -22,6 +22,7 @@ fn run(root: AgentId) -> AgentRunRecord {
         context: AgentContextFork::None,
         broadcast_refs: vec![],
         allowed_tools: vec![],
+        background_decls: vec![],
         budget: AgentBudget {
             max_input_tokens: 100,
             max_output_tokens: 100,

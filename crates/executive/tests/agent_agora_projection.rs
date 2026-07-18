@@ -44,6 +44,7 @@ fn input() -> AgentRuntimeInput {
             content_id: broadcast,
         }],
         allowed_tools: vec![],
+        background_decls: vec![],
         budget: AgentBudget {
             max_input_tokens: 1_000,
             max_output_tokens: 1_000,

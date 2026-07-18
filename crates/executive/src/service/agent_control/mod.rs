@@ -28,6 +28,7 @@ pub mod mailbox;
 pub mod memory;
 pub mod recovery;
 pub mod repository;
+pub mod settlement;
 pub mod sqlite_repository;
 
 pub use admission::{
@@ -56,6 +57,14 @@ pub use recovery::{
 pub use repository::{
     agent_workspace_id, AgentMessageRecord, AgentResourceLease, AgentResourceLeaseKind,
     AgentRunRecord, AgentRunRepository,
+};
+pub use settlement::{
+    recovery_disposition, settle_admission, terminal_with_memory_flush,
+    FailClosedSettlementResourcePort, InMemorySettlementReceiptStore, NoopSettlementEvidenceSink,
+    RecoveryResourceDisposition, RepositorySettlementLeasePort, SettlementEngine,
+    SettlementEvidence, SettlementEvidenceSink, SettlementLeasePort, SettlementReceiptStore,
+    SettlementRequest, SettlementResourcePort, SpineSettlementEvidenceSink,
+    SqliteSettlementReceiptStore,
 };
 pub use sqlite_repository::SqliteAgentRunRepository;
 
@@ -111,6 +120,9 @@ pub struct AgentControlService {
     tasks: Mutex<JoinSet<()>>,
     sibling_routes: parking_lot::RwLock<HashSet<(AgentId, AgentId, AgentId)>>,
     agent_memory_vault: Arc<mnemosyne::AgentMemoryVault>,
+    subagent_settlement: bool,
+    settlement_generation: String,
+    settlement_receipts: Arc<dyn SettlementReceiptStore>,
 }
 
 impl std::fmt::Debug for AgentControlService {
@@ -149,6 +161,9 @@ impl AgentControlService {
             agent_memory_vault: Arc::new(
                 mnemosyne::AgentMemoryVault::in_memory().expect("in-memory Agent memory vault"),
             ),
+            subagent_settlement: false,
+            settlement_generation: "disabled".into(),
+            settlement_receipts: Arc::new(InMemorySettlementReceiptStore::default()),
         }
     }
 
@@ -177,6 +192,18 @@ impl AgentControlService {
 
     pub fn with_memory_vault(mut self, memory: Arc<mnemosyne::AgentMemoryVault>) -> Self {
         self.agent_memory_vault = memory;
+        self
+    }
+
+    pub fn with_subagent_settlement(
+        mut self,
+        enabled: bool,
+        generation: impl Into<String>,
+        receipts: Arc<dyn SettlementReceiptStore>,
+    ) -> Self {
+        self.subagent_settlement = enabled;
+        self.settlement_generation = generation.into();
+        self.settlement_receipts = receipts;
         self
     }
 
@@ -788,11 +815,12 @@ impl AgentControlPort for AgentControlService {
             .live
             .insert(
                 agent_id,
-                LiveAgentRun {
-                    snapshots: snapshots.clone(),
+                LiveAgentRun::new(
+                    snapshots.clone(),
                     mailbox_target,
-                    cancellation: cancellation.clone(),
-                },
+                    cancellation.clone(),
+                    request.background_decls.clone(),
+                )?,
             )
             .await;
         if !inserted {
@@ -824,6 +852,9 @@ impl AgentControlPort for AgentControlService {
         let events = self.events.clone();
         let event_spine = self.event_spine.clone();
         let event_projections = self.event_projections.clone();
+        let settlement_enabled = self.subagent_settlement;
+        let settlement_generation = self.settlement_generation.clone();
+        let settlement_receipts = self.settlement_receipts.clone();
         let runtime_input = AgentRuntimeInput {
             workspace: request.trusted_workspace.clone(),
             request,
@@ -838,15 +869,16 @@ impl AgentControlPort for AgentControlService {
         };
         let events: Arc<dyn AgentEventSink> = Arc::new(SpineAgentEventSink::new(
             events,
-            event_spine,
+            event_spine.clone(),
             runtime_input.clone(),
             event_projections,
         ));
-        let events: Arc<dyn AgentEventSink> = Arc::new(MemoryRecordingAgentEventSink::new(
+        let memory_events = Arc::new(MemoryRecordingAgentEventSink::new(
             events,
             self.agent_memory_vault.clone(),
             memory_context,
         ));
+        let events: Arc<dyn AgentEventSink> = memory_events.clone();
         self.tasks.lock().await.spawn(async move {
             run_agent(
                 kernel,
@@ -860,6 +892,11 @@ impl AgentControlPort for AgentControlService {
                 snapshots,
                 scope,
                 admission,
+                settlement_enabled,
+                settlement_generation,
+                settlement_receipts,
+                event_spine,
+                memory_events,
             )
             .await;
         });
@@ -1035,8 +1072,15 @@ async fn run_agent(
     snapshots: watch::Sender<AgentSnapshot>,
     mut scope: OperationScope,
     mut admission: Box<dyn AgentAdmissionLease>,
+    settlement_enabled: bool,
+    settlement_generation: String,
+    settlement_receipts: Arc<dyn SettlementReceiptStore>,
+    event_spine: Arc<dyn EventSpine>,
+    memory_events: Arc<MemoryRecordingAgentEventSink>,
 ) {
     let agent = input.handle.agent_id;
+    let root_agent = input.handle.root_agent_id;
+    let parent_agent = input.handle.parent_agent_id;
     let process = input.handle.process_id;
     let operation = input.handle.operation_id;
     let start = async {
@@ -1188,20 +1232,94 @@ async fn run_agent(
         tracing::error!(agent = ?agent, reason = ?exit.reason, "failed to persist terminal Agent state");
     }
     let _ = kernel.terminate_process(process, process_exit).await;
-    let settlement = match settlement_usage {
-        Some(usage) if next == AgentRunStatus::Succeeded => {
-            AgentAdmissionLease::settle(&mut *admission, &usage).await
-        }
-        _ => admission.revoke().await,
-    };
-    if let Err(error) = settlement {
-        tracing::error!(agent = ?agent, %error, "failed to settle Agent admission lease");
-    }
     let lease_owner = format!("process:{}", process.0);
-    for label in ["admission", "mailbox", "execution"] {
-        let _ = repository
-            .delete_resource_lease(&format!("{label}:{}", agent.0), &lease_owner)
-            .await;
+    if settlement_enabled {
+        let terminal = match next {
+            AgentRunStatus::Succeeded => fabric::SettlementTerminal::Completed,
+            AgentRunStatus::Cancelled => fabric::SettlementTerminal::Cancelled,
+            AgentRunStatus::Failed => fabric::SettlementTerminal::Failed {
+                reason: "Agent runtime failed".into(),
+            },
+            _ => fabric::SettlementTerminal::Recoverable,
+        };
+        if let Some(live_run) = live.get(agent).await {
+            let evidence = Arc::new(SpineSettlementEvidenceSink::new(
+                event_spine,
+                root_agent.0.to_string(),
+                agent.0.to_string(),
+                operation,
+            ));
+            let engine = SettlementEngine::new(
+                settlement_receipts,
+                Arc::new(FailClosedSettlementResourcePort::new(
+                    live_run.cancellation.clone(),
+                )),
+                Arc::new(RepositorySettlementLeasePort::new(repository.clone())),
+                evidence,
+            );
+            match engine.quiesce(&live_run).await {
+                Ok(resources) => {
+                    let mut terminal =
+                        terminal_with_memory_flush(terminal, memory_events.take_error());
+                    if let Err(error) =
+                        settle_admission(&mut *admission, &terminal, settlement_usage.as_ref())
+                            .await
+                    {
+                        tracing::error!(agent = ?agent, %error, "failed to settle Agent admission lease");
+                        terminal = fabric::SettlementTerminal::Failed {
+                            reason: format!("Agent admission settlement failed: {}", error.message),
+                        };
+                    }
+                    let request = SettlementRequest {
+                        agent_id: agent.0.to_string(),
+                        attempt_id: operation.0.to_string(),
+                        generation: settlement_generation,
+                        old_owner: lease_owner.clone(),
+                        parent_owner: parent_agent.map(|parent| format!("agent:{}", parent.0)),
+                        terminal,
+                        lease_keys: ["admission", "mailbox", "execution"]
+                            .into_iter()
+                            .map(|label| format!("{label}:{}", agent.0))
+                            .collect(),
+                        settled_at_ms: clock.wall_now().0,
+                    };
+                    if let Err(error) = engine.settle(request, resources).await {
+                        tracing::error!(agent = ?agent, %error, "Agent settlement state machine failed");
+                    }
+                }
+                Err(error) => {
+                    tracing::error!(agent = ?agent, %error, "Agent quiescing failed");
+                    let _ = admission.revoke().await;
+                    for label in ["admission", "mailbox", "execution"] {
+                        let _ = repository
+                            .delete_resource_lease(&format!("{label}:{}", agent.0), &lease_owner)
+                            .await;
+                    }
+                }
+            }
+        } else {
+            let _ = admission.revoke().await;
+            for label in ["admission", "mailbox", "execution"] {
+                let _ = repository
+                    .delete_resource_lease(&format!("{label}:{}", agent.0), &lease_owner)
+                    .await;
+            }
+        }
+    } else {
+        let settlement = match settlement_usage {
+            Some(usage) if next == AgentRunStatus::Succeeded => {
+                AgentAdmissionLease::settle(&mut *admission, &usage).await
+            }
+            _ => admission.revoke().await,
+        };
+        if let Err(error) = settlement {
+            tracing::error!(agent = ?agent, %error, "failed to settle Agent admission lease");
+        }
+        for label in ["admission", "mailbox", "execution"] {
+            let _ = repository
+                .delete_resource_lease(&format!("{label}:{}", agent.0), &lease_owner)
+                .await;
+        }
     }
     live.remove(agent).await;
 }

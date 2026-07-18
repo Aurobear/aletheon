@@ -205,6 +205,7 @@ impl Tool for AgentControlTool {
                         context: input.context,
                         broadcast_refs: vec![],
                         allowed_tools: input.tools,
+                        background_decls: vec![],
                         budget: input.budget,
                     };
                     match request.validate() {

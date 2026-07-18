@@ -114,6 +114,7 @@ impl Tool for AgentTool {
             context: AgentContextFork::None,
             broadcast_refs: vec![],
             allowed_tools: profile.allowed_tools.clone(),
+            background_decls: vec![],
             budget: AgentBudget {
                 max_input_tokens: profile.max_input_tokens,
                 max_output_tokens: profile.max_output_tokens,

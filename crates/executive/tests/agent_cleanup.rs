@@ -41,6 +41,7 @@ fn run(status: AgentRunStatus, retain_until_ms: i64) -> AgentRunRecord {
         context: AgentContextFork::None,
         broadcast_refs: vec![],
         allowed_tools: vec![],
+        background_decls: vec![],
         budget: AgentBudget {
             max_input_tokens: 1,
             max_output_tokens: 1,

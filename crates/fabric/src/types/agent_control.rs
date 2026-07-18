@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use super::agent_settlement::{BackgroundResourceDecl, MAX_BACKGROUND_RESOURCES};
 use super::attempt::{AttemptEvidence, AttemptUsage, RuntimeId};
 use super::operation::{OperationId, ProcessId};
 use super::process::{AgentId, AgentProfileId};
@@ -282,6 +283,10 @@ pub struct AgentSpawnRequest {
     pub broadcast_refs: Vec<AgentBroadcastRef>,
     pub allowed_tools: Vec<String>,
     pub budget: AgentBudget,
+    /// Host-reviewed resource declarations fixed at spawn time. A child may
+    /// not add `survive_child` authorization while it is terminating.
+    #[serde(default)]
+    pub background_decls: Vec<BackgroundResourceDecl>,
 }
 
 impl AgentSpawnRequest {
@@ -294,6 +299,20 @@ impl AgentSpawnRequest {
             ensure_text(tool, 512, "allowed tool")?;
         }
         self.context.validate()?;
+        ensure_count(
+            self.background_decls.len(),
+            MAX_BACKGROUND_RESOURCES,
+            "background resource declarations",
+        )?;
+        let mut resource_ids = std::collections::HashSet::new();
+        for declaration in &self.background_decls {
+            ensure_text(&declaration.resource_id, 1024, "background resource ID")?;
+            if !resource_ids.insert(&declaration.resource_id) {
+                return Err(AgentControlError::invalid(
+                    "background resource declarations contain duplicate resource IDs",
+                ));
+            }
+        }
         ensure_count(
             self.broadcast_refs.len(),
             MAX_AGENT_BROADCAST_REFS,

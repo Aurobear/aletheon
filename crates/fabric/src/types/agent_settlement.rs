@@ -83,15 +83,15 @@ pub struct SettlementReceipt {
     pub released_leases: Vec<String>,
     pub reparented: Vec<ReparentReceipt>,
     pub settled_at_ms: i64,
+    /// Deterministic `agent_id + attempt_id + generation` identity. A durable
+    /// store uses this key to return the first receipt on replay rather than
+    /// repeating any side effect.
+    pub idempotency_key: String,
 }
 
-impl SettlementReceipt {
-    /// Deterministic idempotency key: `agent_id + attempt_id + generation`.
-    /// Two settlement attempts with the same key are the same logical
-    /// settlement and must not double-apply side effects.
-    pub fn idempotency_key(&self) -> String {
-        format!("{}:{}:{}", self.agent_id, self.attempt_id, self.generation)
-    }
+/// Build the canonical settlement idempotency key.
+pub fn settlement_idempotency_key(agent_id: &str, attempt_id: &str, generation: &str) -> String {
+    format!("{agent_id}:{attempt_id}:{generation}")
 }
 
 /// Inputs for the reparent decision (all trusted, host-supplied).
@@ -200,11 +200,13 @@ mod tests {
             released_leases: vec![],
             reparented: vec![],
             settled_at_ms: 0,
+            idempotency_key: settlement_idempotency_key("a1", "att1", "gen1"),
         };
-        assert_eq!(base.idempotency_key(), "a1:att1:gen1");
+        assert_eq!(base.idempotency_key, "a1:att1:gen1");
         let mut other = base.clone();
         other.generation = "gen2".to_string();
-        assert_ne!(base.idempotency_key(), other.idempotency_key());
+        other.idempotency_key = settlement_idempotency_key("a1", "att1", "gen2");
+        assert_ne!(base.idempotency_key, other.idempotency_key);
     }
 
     #[test]
@@ -226,6 +228,7 @@ mod tests {
                 at_ms: 5,
             }],
             settled_at_ms: 9,
+            idempotency_key: settlement_idempotency_key("a1", "att1", "gen1"),
         };
         let json = serde_json::to_string(&r).unwrap();
         let back: SettlementReceipt = serde_json::from_str(&json).unwrap();

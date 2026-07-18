@@ -171,6 +171,7 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
         },
         broadcast_refs: vec![],
         allowed_tools: vec!["echo".into()],
+        background_decls: vec![],
         budget: AgentBudget {
             max_input_tokens: 4_000,
             max_output_tokens: 500,

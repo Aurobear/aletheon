@@ -248,6 +248,7 @@ fn agent_spawn_request(root: AgentId, parent: fabric::ProcessId, label: &str) ->
         },
         broadcast_refs: vec![],
         allowed_tools: vec!["file_read".into()],
+        background_decls: vec![],
         budget: AgentBudget {
             max_input_tokens: 1_000,
             max_output_tokens: 1_000,
