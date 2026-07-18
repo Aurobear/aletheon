@@ -4,6 +4,7 @@
 //! In-memory only — no persistence.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, BufReader};
@@ -18,7 +19,7 @@ const TERMINATE_GRACE_MS: u64 = 500;
 const READ_TIMEOUT_MS: u64 = 10; // short timeout so RPC loop is responsive
 
 pub struct ProcessManager {
-    processes: Mutex<HashMap<String, ManagedProcess>>,
+    processes: Arc<Mutex<HashMap<String, ManagedProcess>>>,
 }
 
 struct ManagedProcess {
@@ -40,7 +41,7 @@ struct ManagedProcess {
 impl ProcessManager {
     pub fn new() -> Self {
         ProcessManager {
-            processes: Mutex::new(HashMap::new()),
+            processes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -74,6 +75,10 @@ impl ProcessManager {
         cmd.stderr(std::process::Stdio::piped());
         cmd.stdin(std::process::Stdio::piped());
         cmd.kill_on_drop(true);
+        // A fresh process group lets termination target the complete command
+        // tree rather than only the immediate shell child.
+        #[cfg(unix)]
+        cmd.process_group(0);
 
         let mut child = cmd.spawn().map_err(|e| RpcError {
             code: SPAWN_FAILED,
@@ -107,6 +112,22 @@ impl ProcessManager {
                 max_output_bytes,
             },
         );
+        drop(procs);
+
+        if let Some(timeout_secs) = req.timeout_secs {
+            let processes = Arc::downgrade(&self.processes);
+            let timed_handle = handle_id.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(timeout_secs)).await;
+                let Some(processes) = processes.upgrade() else {
+                    return;
+                };
+                let process = processes.lock().await.remove(&timed_handle);
+                if let Some(process) = process {
+                    terminate_and_reap(process).await;
+                }
+            });
+        }
 
         Ok(ProcessHandle { pid, handle_id })
     }
@@ -282,7 +303,7 @@ impl ProcessManager {
             if pid > 0 {
                 unsafe {
                     libc::kill(
-                        pid as i32,
+                        -(pid as i32),
                         if sig == 9 {
                             libc::SIGKILL
                         } else {
@@ -398,7 +419,7 @@ async fn terminate_and_reap(mut process: ManagedProcess) {
     #[cfg(unix)]
     unsafe {
         if pid > 0 {
-            libc::kill(pid as i32, libc::SIGTERM);
+            libc::kill(-(pid as i32), libc::SIGTERM);
         }
     }
     #[cfg(not(unix))]
@@ -411,6 +432,12 @@ async fn terminate_and_reap(mut process: ManagedProcess) {
     .await
     .is_err()
     {
+        #[cfg(unix)]
+        unsafe {
+            if pid > 0 {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
         let _ = process.child.start_kill();
         let _ = process.child.wait().await;
     }
@@ -434,6 +461,19 @@ mod tests {
     fn process_is_gone(pid: u32) -> bool {
         let result = unsafe { libc::kill(pid as i32, 0) };
         result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+
+    fn process_is_terminated(pid: u32) -> bool {
+        if process_is_gone(pid) {
+            return true;
+        }
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|stat| {
+                stat.rsplit_once(") ")
+                    .map(|(_, rest)| rest.starts_with('Z'))
+            })
+            .unwrap_or(false)
     }
 
     #[tokio::test]
@@ -513,5 +553,66 @@ mod tests {
         assert_eq!(stdout, "input");
         assert_eq!(stderr, "stder");
         manager.cleanup_owner("connection-a").await;
+    }
+
+    #[tokio::test]
+    async fn owner_cleanup_terminates_the_complete_process_group() {
+        let temp = tempfile::tempdir().unwrap();
+        let child_pid_path = temp.path().join("descendant.pid");
+        let request = StartProcessRequest {
+            command: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                format!(
+                    "sleep 30 & child=$!; printf '%s' \"$child\" > {}; wait",
+                    child_pid_path.display()
+                ),
+            ],
+            env: HashMap::new(),
+            working_dir: Some(temp.path().to_string_lossy().into_owned()),
+            timeout_secs: None,
+            max_output_bytes: None,
+        };
+        let manager = ProcessManager::new();
+        let parent = manager.spawn("connection-a", &request).await.unwrap();
+        let descendant_pid = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Ok(value) = std::fs::read_to_string(&child_pid_path) {
+                    if let Ok(pid) = value.parse::<u32>() {
+                        break pid;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("descendant pid must be reported");
+
+        manager.cleanup_owner("connection-a").await;
+        assert!(process_is_gone(parent.pid));
+        for _ in 0..50 {
+            if process_is_terminated(descendant_pid) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("descendant process survived process-group termination");
+    }
+
+    #[tokio::test]
+    async fn configured_timeout_terminates_and_reaps_process() {
+        let manager = ProcessManager::new();
+        let mut request = sleeping_process();
+        request.timeout_secs = Some(1);
+        let handle = manager.spawn("connection-a", &request).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while manager.contains(&handle.handle_id).await || !process_is_gone(handle.pid) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("configured timeout must remove the managed process");
+        assert!(process_is_gone(handle.pid));
     }
 }
