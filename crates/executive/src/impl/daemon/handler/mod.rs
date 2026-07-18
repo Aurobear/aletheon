@@ -33,6 +33,61 @@ pub struct RequestHandler {
 }
 
 impl RequestHandler {
+    pub(crate) async fn resolve_versioned_approval(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::client::ApprovalRequest,
+    ) -> anyhow::Result<fabric::ApprovalSnapshot> {
+        self.ports
+            .turn
+            .verify_active(
+                connection.principal_id.clone(),
+                request.thread_id.0,
+                request.turn_id,
+                request.operation_id,
+            )
+            .await?;
+        let decision = match request.decision {
+            fabric::protocol::client::ApprovalDecisionRequest::Approve => {
+                crate::r#impl::approval::ApprovalDecision::Approve
+            }
+            fabric::protocol::client::ApprovalDecisionRequest::Reject => {
+                crate::r#impl::approval::ApprovalDecision::Reject {
+                    reason: request.reason,
+                }
+            }
+        };
+        self.ports
+            .approvals
+            .resolve(crate::service::approval_service::ResolveApprovalRequest {
+                context: crate::service::approval_service::ApprovalContext {
+                    principal_id: connection.principal_id.clone(),
+                    channel: "versioned_local_rpc".into(),
+                },
+                approval_id: request.approval_id,
+                version: request.version,
+                decision,
+            })
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    pub(crate) async fn cancel_versioned_turn(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::client::CancelRequest,
+    ) -> anyhow::Result<()> {
+        self.ports
+            .turn
+            .cancel_by_key(
+                connection.principal_id.clone(),
+                request.thread_id.0,
+                request.turn_id,
+                request.operation_id,
+            )
+            .await
+    }
+
     pub(crate) async fn protocol_snapshot(
         &self,
         session_id: &fabric::SessionId,
@@ -258,6 +313,23 @@ impl RequestHandler {
                 })
             }
         };
+        self.execute_explicit_chat(connection, id, message.to_owned(), thread_id, workspace)
+            .await
+    }
+
+    /// Versioned chat boundary. `thread_id` is protocol data in its own right;
+    /// unlike the legacy adapter it is never selected from the workspace cwd.
+    pub(crate) async fn execute_explicit_chat(
+        &self,
+        connection: &super::server::ConnectionContext,
+        id: serde_json::Value,
+        message: String,
+        thread_id: fabric::ThreadId,
+        workspace: fabric::WorkspacePolicy,
+    ) -> serde_json::Value {
+        if thread_id.0.trim().is_empty() || message.trim().is_empty() {
+            return rpc_error(&id, -32602, "thread_id and message are required");
+        }
         let mut context = fabric::PrincipalContext::new(
             connection.principal_id.clone(),
             connection.os_principal,
@@ -299,11 +371,8 @@ impl RequestHandler {
             decision = ?trust_decision,
             "evaluated repository executable configuration trust"
         );
-        tracing::info!(message = %message, "Chat request received");
-        self.ports
-            .turn
-            .execute(id, message.to_owned(), context)
-            .await
+        tracing::info!(message = %message, thread_id = %context.thread_id.0, "Chat request received");
+        self.ports.turn.execute(id, message, context).await
     }
 
     /// Keep local conversation history scoped to its canonical workspace.

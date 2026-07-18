@@ -164,3 +164,101 @@ async fn daemon_cursor_reconnect_has_no_missing_or_duplicate_item_events() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn live_and_durable_item_phases_share_one_reconnect_cursor() {
+    let temp = tempfile::tempdir().unwrap();
+    let canonical_path = temp.path().join("sessions.db");
+    let journal_path = temp.path().join("protocol.db");
+    let store: Arc<dyn SessionAppendStore> =
+        Arc::new(CanonicalSessionStore::open(&canonical_path).unwrap());
+    let session_id = SessionId("live-reconnect".into());
+    store
+        .create(SessionRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: session_id.clone(),
+            parent: None,
+            created_at_ms: 1,
+            status: SessionStatus::Active,
+        })
+        .await
+        .unwrap();
+    let service = SessionService::with_protocol_journal(
+        store.clone(),
+        Arc::new(Mutex::new(Default::default())),
+        &journal_path,
+    )
+    .unwrap();
+    let turn_id = TurnId::new();
+    let logical_id = format!("turn:{}:assistant", turn_id.0);
+    let started = service
+        .append_protocol_item_event(
+            &session_id,
+            logical_id.clone(),
+            ItemPhase::Started,
+            None,
+            None,
+            None,
+            Some(format!("{logical_id}:assistant-started")),
+        )
+        .await
+        .unwrap();
+    service
+        .append_protocol_item_event(
+            &session_id,
+            logical_id.clone(),
+            ItemPhase::Streaming,
+            Some("partial".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .append(
+            &session_id,
+            1,
+            ItemRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: ItemId::new(),
+                session_id: session_id.clone(),
+                turn_id,
+                sequence: 1,
+                created_at_ms: 2,
+                payload: ItemPayload::AssistantMessage {
+                    content: "complete".into(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let started_cursor = match started {
+        ClientEvent::Item(item) => item.cursor,
+        _ => unreachable!(),
+    };
+    drop(service);
+    let reopened = SessionService::with_protocol_journal(
+        store,
+        Arc::new(Mutex::new(Default::default())),
+        &journal_path,
+    )
+    .unwrap();
+    let replay = reopened
+        .protocol_events_after(&session_id, &started_cursor)
+        .await
+        .unwrap();
+    let phases = item_events(&replay)
+        .into_iter()
+        .map(|event| event.phase)
+        .collect::<Vec<_>>();
+    assert_eq!(phases, vec![ItemPhase::Streaming, ItemPhase::Completed]);
+    let cursors = item_events(&replay)
+        .into_iter()
+        .map(|event| event.cursor.sequence)
+        .collect::<Vec<_>>();
+    assert_eq!(cursors, vec![2, 3]);
+    assert!(item_events(&replay)
+        .iter()
+        .all(|event| event.item_id == logical_id));
+}

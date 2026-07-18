@@ -272,6 +272,26 @@ impl TurnCoordinator {
         Ok(())
     }
 
+    pub async fn verify_active_turn(
+        &self,
+        principal_id: &PrincipalId,
+        thread_id: &ThreadId,
+        turn_id: TurnId,
+        operation_id: fabric::OperationId,
+    ) -> Result<(), anyhow::Error> {
+        let active = self.active.lock().await;
+        let turn = active
+            .get(&ActiveTurnKey {
+                principal_id: principal_id.clone(),
+                thread_id: thread_id.clone(),
+            })
+            .ok_or_else(|| anyhow::anyhow!("identified turn is not active"))?;
+        if turn.turn_id != turn_id || turn.operation_id != operation_id {
+            anyhow::bail!("turn or operation identity does not match active turn");
+        }
+        Ok(())
+    }
+
     /// Construct a synthetic PromptEnvelope (version=0) and run
     /// `evaluate_cancel` as a lightweight authority check.
     fn validate_cancel_authority(

@@ -1,8 +1,9 @@
 use fabric::protocol::client::{
-    client_schema, negotiate_protocol_version, ClientCapabilities, ClientEvent, ClientMessage,
-    ClientRequest, ClientRpcRequest, EventCursor, EventSubscription, InitializeParams,
-    InitializedResult, SnapshotRequest, TransientApprovalDecision, TurnCompletionError,
-    TurnCompletionUsage, CLIENT_PROTOCOL_VERSION,
+    client_schema, negotiate_protocol_version, ApprovalDecisionRequest, ApprovalRequest,
+    CancelRequest, ChatRequest, ClientCapabilities, ClientEvent, ClientMessage, ClientRequest,
+    ClientRpcRequest, EventCursor, EventSubscription, InitializeParams, InitializedResult,
+    SnapshotRequest, TransientApprovalDecision, TurnCompletionError, TurnCompletionUsage,
+    CLIENT_PROTOCOL_VERSION,
 };
 use fabric::{
     ConnectionId, LocalOsPrincipal, OperationId, PrincipalId, SessionId, ThreadId, TurnId,
@@ -58,6 +59,40 @@ fn typed_requests_round_trip_at_the_supported_version() {
         assert_eq!(wire.protocol_version, CLIENT_PROTOCOL_VERSION);
         let json = serde_json::to_value(&wire).unwrap();
         let decoded: ClientMessage<ClientRequest> = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.into_v1().unwrap(), request);
+    }
+}
+
+#[test]
+fn versioned_mutations_round_trip_explicit_identity_tuples() {
+    let thread_id = ThreadId("thread-explicit".into());
+    let turn_id = TurnId::new();
+    let operation_id = OperationId::new();
+    for request in vec![
+        ClientRequest::Chat(ChatRequest {
+            thread_id: thread_id.clone(),
+            message: "hello".into(),
+            working_dir: "/tmp".into(),
+            additional_writable_roots: vec![],
+        }),
+        ClientRequest::Approval(ApprovalRequest {
+            thread_id: thread_id.clone(),
+            turn_id,
+            operation_id,
+            approval_id: fabric::ApprovalId::new(),
+            version: 1,
+            decision: ApprovalDecisionRequest::Approve,
+            reason: None,
+        }),
+        ClientRequest::Cancel(CancelRequest {
+            thread_id,
+            turn_id,
+            operation_id,
+        }),
+    ] {
+        let encoded = request.to_json_rpc(7).unwrap();
+        let decoded: ClientMessage<ClientRequest> =
+            serde_json::from_value(encoded["params"].clone()).unwrap();
         assert_eq!(decoded.into_v1().unwrap(), request);
     }
 }

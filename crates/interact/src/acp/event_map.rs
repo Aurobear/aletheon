@@ -47,6 +47,7 @@ pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
         }
         ClientEvent::InitializeResponse(_)
         | ClientEvent::Agent(_)
+        | ClientEvent::CommandCompleted { .. }
         | ClientEvent::TurnStarted { .. } => None,
     }
 }

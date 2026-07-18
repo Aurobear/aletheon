@@ -1,6 +1,6 @@
 //! Resume, fork, interrupt, and replay over canonical session history.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, path::Path, sync::Arc};
 
 use anyhow::{bail, Result};
 use fabric::{
@@ -8,6 +8,7 @@ use fabric::{
     SessionAppendStore, SessionFork, SessionId, SessionRecord, SessionStatus, TurnId,
     SESSION_SCHEMA_VERSION,
 };
+use rusqlite::{params, Connection, OptionalExtension};
 use tokio::sync::Mutex;
 
 use crate::r#impl::session::canonical_store::project_messages;
@@ -30,18 +31,177 @@ pub struct SessionService {
     store: Arc<dyn SessionAppendStore>,
     active: Arc<Mutex<std::collections::HashMap<ActiveTurnKey, ActiveTurn>>>,
     interrupted: Mutex<HashSet<String>>,
+    protocol: std::sync::Mutex<Connection>,
 }
 
 impl SessionService {
+    pub async fn append_protocol_item_event(
+        &self,
+        session_id: &SessionId,
+        item_id: String,
+        phase: fabric::protocol::client::ItemPhase,
+        delta: Option<String>,
+        item: Option<ItemRecord>,
+        error: Option<String>,
+        dedupe_key: Option<String>,
+    ) -> Result<fabric::protocol::client::ClientEvent> {
+        let phase_name = format!("{phase:?}").to_ascii_lowercase();
+        let mut connection = self.protocol.lock().unwrap();
+        let tx = connection.transaction()?;
+        if let Some(key) = dedupe_key.as_deref() {
+            if let Some((sequence, json)) = tx
+                .query_row(
+                    "SELECT sequence,event_json FROM protocol_events WHERE session_id=?1 AND dedupe_key=?2",
+                    params![session_id.0, key],
+                    |row| Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?
+            {
+                if item.is_some() {
+                    let mut event: fabric::protocol::client::ClientEvent = serde_json::from_str(&json)?;
+                    if let fabric::protocol::client::ClientEvent::Item(existing) = &mut event {
+                        existing.item = item.clone();
+                        existing.error = error.clone();
+                    }
+                    tx.execute(
+                        "UPDATE protocol_events SET event_json=?3 WHERE session_id=?1 AND sequence=?2",
+                        params![session_id.0, sequence, serde_json::to_string(&event)?],
+                    )?;
+                    tx.commit()?;
+                    return Ok(event);
+                }
+                tx.commit()?;
+                return Ok(serde_json::from_str(&json)?);
+            }
+        }
+        let sequence: u64 = tx.query_row(
+            "SELECT COALESCE(MAX(sequence),0)+1 FROM protocol_events WHERE session_id=?1",
+            params![session_id.0],
+            |row| row.get(0),
+        )?;
+        let cursor = fabric::protocol::client::EventCursor {
+            sequence,
+            event_id: Some(uuid::Uuid::new_v4().to_string()),
+        };
+        let event =
+            fabric::protocol::client::ClientEvent::Item(fabric::protocol::client::ItemEvent {
+                cursor: cursor.clone(),
+                item_id: item_id.clone(),
+                phase,
+                delta,
+                item,
+                error,
+            });
+        tx.execute(
+            "INSERT INTO protocol_events(session_id,sequence,event_id,item_id,phase,dedupe_key,event_json)
+             VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                session_id.0,
+                sequence,
+                cursor.event_id.as_deref().unwrap_or_default(),
+                item_id,
+                phase_name,
+                dedupe_key,
+                serde_json::to_string(&event)?,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(event)
+    }
+
+    async fn sync_canonical_protocol_events(&self, session_id: &SessionId) -> Result<()> {
+        for item in self.items(session_id).await? {
+            let (item_id, phase, error, suffix) = match &item.payload {
+                ItemPayload::ToolCall { call_id, .. } => (
+                    format!("tool:{}:{call_id}", item.turn_id.0),
+                    fabric::protocol::client::ItemPhase::Started,
+                    None,
+                    "tool-started",
+                ),
+                ItemPayload::ToolResult {
+                    call_id,
+                    content,
+                    is_error,
+                    ..
+                } => (
+                    format!("tool:{}:{call_id}", item.turn_id.0),
+                    if *is_error {
+                        fabric::protocol::client::ItemPhase::Failed
+                    } else {
+                        fabric::protocol::client::ItemPhase::Completed
+                    },
+                    is_error.then(|| content.clone()),
+                    "tool-terminal",
+                ),
+                ItemPayload::AssistantMessage { .. } | ItemPayload::SystemNotice { .. } => (
+                    format!("turn:{}:assistant", item.turn_id.0),
+                    fabric::protocol::client::ItemPhase::Completed,
+                    None,
+                    "assistant-terminal",
+                ),
+                _ => (
+                    item.id.0.to_string(),
+                    fabric::protocol::client::ItemPhase::Completed,
+                    None,
+                    "canonical-terminal",
+                ),
+            };
+            self.append_protocol_item_event(
+                session_id,
+                item_id,
+                phase,
+                None,
+                Some(item.clone()),
+                error,
+                Some(format!(
+                    "{}:{suffix}",
+                    match &item.payload {
+                        ItemPayload::ToolCall { call_id, .. }
+                        | ItemPayload::ToolResult { call_id, .. } =>
+                            format!("tool:{}:{call_id}", item.turn_id.0),
+                        ItemPayload::AssistantMessage { .. } | ItemPayload::SystemNotice { .. } =>
+                            format!("turn:{}:assistant", item.turn_id.0),
+                        _ => item.id.0.to_string(),
+                    }
+                )),
+            )
+            .await?;
+        }
+        Ok(())
+    }
     pub fn new(
         store: Arc<dyn SessionAppendStore>,
         active: Arc<Mutex<std::collections::HashMap<ActiveTurnKey, ActiveTurn>>>,
     ) -> Self {
-        Self {
+        Self::with_protocol_journal(store, active, ":memory:").expect("in-memory protocol journal")
+    }
+
+    pub fn with_protocol_journal(
+        store: Arc<dyn SessionAppendStore>,
+        active: Arc<Mutex<std::collections::HashMap<ActiveTurnKey, ActiveTurn>>>,
+        path: impl AsRef<Path>,
+    ) -> Result<Self> {
+        let connection = Connection::open(path)?;
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS protocol_events(
+               session_id TEXT NOT NULL,
+               sequence INTEGER NOT NULL,
+               event_id TEXT NOT NULL,
+               item_id TEXT NOT NULL,
+               phase TEXT NOT NULL,
+               dedupe_key TEXT,
+               event_json TEXT NOT NULL,
+               PRIMARY KEY(session_id,sequence),
+               UNIQUE(session_id,event_id),
+               UNIQUE(session_id,dedupe_key)
+             );",
+        )?;
+        Ok(Self {
             store,
             active,
             interrupted: Mutex::new(HashSet::new()),
-        }
+            protocol: std::sync::Mutex::new(connection),
+        })
     }
 
     pub async fn resume(&self, session_id: &SessionId) -> Result<ResumeResult> {
@@ -78,10 +238,8 @@ impl SessionService {
         session_id: &SessionId,
     ) -> Result<fabric::protocol::client::UiSnapshot> {
         let items = self.items(session_id).await?;
-        let cursor = items
-            .last()
-            .map(item_cursor)
-            .unwrap_or_else(fabric::protocol::client::EventCursor::origin);
+        self.sync_canonical_protocol_events(session_id).await?;
+        let cursor = self.protocol_tail_cursor(session_id)?;
         Ok(fabric::protocol::client::UiSnapshot {
             session_id: session_id.clone(),
             cursor,
@@ -101,30 +259,55 @@ impl SessionService {
         session_id: &SessionId,
         after: &fabric::protocol::client::EventCursor,
     ) -> Result<Vec<fabric::protocol::client::ClientEvent>> {
+        self.sync_canonical_protocol_events(session_id).await?;
         if after.sequence == 0 {
             if after.event_id.is_some() {
                 bail!("origin cursor cannot carry an event_id");
             }
         } else {
-            let anchor = self
-                .store
-                .load_items(session_id, Some(after.sequence.saturating_sub(1)))
-                .await?
-                .into_iter()
-                .next()
-                .filter(|item| item.sequence == after.sequence)
-                .ok_or_else(|| anyhow::anyhow!("cursor sequence is not present"))?;
-            let anchor_event_id = anchor.id.0.to_string();
-            if after.event_id.as_deref() != Some(anchor_event_id.as_str()) {
+            let anchor_event_id: Option<String> = self
+                .protocol
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT event_id FROM protocol_events WHERE session_id=?1 AND sequence=?2",
+                    params![session_id.0, after.sequence],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if anchor_event_id.as_deref() != after.event_id.as_deref() {
                 bail!("cursor event_id does not match durable item");
             }
         }
+        let connection = self.protocol.lock().unwrap();
+        let mut statement = connection.prepare(
+            "SELECT event_json FROM protocol_events WHERE session_id=?1 AND sequence>?2 ORDER BY sequence",
+        )?;
+        let events = statement
+            .query_map(params![session_id.0, after.sequence], |row| {
+                row.get::<_, String>(0)
+            })?
+            .map(|row| Ok(serde_json::from_str(&row?)?))
+            .collect();
+        events
+    }
 
-        let items = self
-            .store
-            .load_items(session_id, Some(after.sequence))
-            .await?;
-        Ok(items.into_iter().map(item_terminal_event).collect())
+    fn protocol_tail_cursor(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<fabric::protocol::client::EventCursor> {
+        let row: Option<(u64, String)> = self.protocol.lock().unwrap().query_row(
+            "SELECT sequence,event_id FROM protocol_events WHERE session_id=?1 ORDER BY sequence DESC LIMIT 1",
+            params![session_id.0],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        Ok(row.map_or_else(
+            fabric::protocol::client::EventCursor::origin,
+            |(sequence, event_id)| fabric::protocol::client::EventCursor {
+                sequence,
+                event_id: Some(event_id),
+            },
+        ))
     }
 
     /// Persist lifecycle-provided workspace context into canonical history
@@ -254,35 +437,6 @@ impl SessionService {
         interrupted.insert(session_id.0.clone());
         Ok(InterruptOutcome::Interrupted)
     }
-}
-
-fn item_cursor(item: &ItemRecord) -> fabric::protocol::client::EventCursor {
-    fabric::protocol::client::EventCursor {
-        sequence: item.sequence,
-        event_id: Some(item.id.0.to_string()),
-    }
-}
-
-fn item_terminal_event(item: ItemRecord) -> fabric::protocol::client::ClientEvent {
-    let (phase, error) = match &item.payload {
-        ItemPayload::ToolResult {
-            content,
-            is_error: true,
-            ..
-        } => (
-            fabric::protocol::client::ItemPhase::Failed,
-            Some(content.clone()),
-        ),
-        _ => (fabric::protocol::client::ItemPhase::Completed, None),
-    };
-    fabric::protocol::client::ClientEvent::Item(fabric::protocol::client::ItemEvent {
-        cursor: item_cursor(&item),
-        item_id: item.id.0.to_string(),
-        phase,
-        delta: None,
-        item: Some(item),
-        error,
-    })
 }
 
 #[cfg(test)]

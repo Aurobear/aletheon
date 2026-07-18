@@ -142,7 +142,8 @@ pub fn reduce_terminal(
 ) -> bool {
     let status = match event {
         fabric::protocol::client::ClientEvent::TurnCompleted { status, stop, .. } => status
-            .clone()
+            .as_ref()
+            .copied()
             .unwrap_or_else(|| fabric::TurnTerminalStatus::from(stop.clone())),
         fabric::protocol::client::ClientEvent::TurnStopped { reason, .. } => {
             fabric::TurnTerminalStatus::from(reason.clone())

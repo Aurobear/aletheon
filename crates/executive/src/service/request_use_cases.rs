@@ -589,6 +589,13 @@ pub trait TurnUseCases: Send + Sync {
         turn_id: fabric::TurnId,
         operation_id: OperationId,
     ) -> anyhow::Result<()>;
+    async fn verify_active(
+        &self,
+        principal_id: PrincipalId,
+        thread_id: String,
+        turn_id: fabric::TurnId,
+        operation_id: OperationId,
+    ) -> anyhow::Result<()>;
     async fn exit(&self, id: ProcessId) -> anyhow::Result<()>;
     async fn rewind_workspace(
         &self,
@@ -663,6 +670,18 @@ impl TurnUseCases for ProductionTurnUseCases {
         let tid = ThreadId(thread_id);
         self.orchestrator
             .cancel_turn_by_key(&principal_id, &tid, turn_id, operation_id)
+            .await
+    }
+    async fn verify_active(
+        &self,
+        principal_id: PrincipalId,
+        thread_id: String,
+        turn_id: fabric::TurnId,
+        operation_id: OperationId,
+    ) -> anyhow::Result<()> {
+        self.orchestrator
+            .coordinator
+            .verify_active_turn(&principal_id, &ThreadId(thread_id), turn_id, operation_id)
             .await
     }
     async fn exit(&self, id: ProcessId) -> anyhow::Result<()> {

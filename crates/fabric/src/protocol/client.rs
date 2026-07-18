@@ -588,6 +588,45 @@ pub struct EventSubscription {
     pub after: EventCursor,
 }
 
+/// Start a turn on an explicitly named thread. Workspace authority is supplied
+/// independently and must be bound/verified by the host; it is never used to
+/// infer the thread identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ChatRequest {
+    pub thread_id: ThreadId,
+    pub message: String,
+    pub working_dir: std::path::PathBuf,
+    #[serde(default)]
+    pub additional_writable_roots: Vec<std::path::PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecisionRequest {
+    Approve,
+    Reject,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ApprovalRequest {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub operation_id: OperationId,
+    #[schemars(with = "String")]
+    pub approval_id: crate::ApprovalId,
+    pub version: u64,
+    pub decision: ApprovalDecisionRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CancelRequest {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub operation_id: OperationId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ClientRequest {
@@ -595,6 +634,9 @@ pub enum ClientRequest {
     Initialized,
     Snapshot(SnapshotRequest),
     Subscribe(EventSubscription),
+    Chat(ChatRequest),
+    Approval(ApprovalRequest),
+    Cancel(CancelRequest),
 }
 
 impl ClientRequest {
@@ -604,6 +646,9 @@ impl ClientRequest {
             Self::Initialized => "initialized",
             Self::Snapshot(_) => "session.snapshot",
             Self::Subscribe(_) => "session.subscribe",
+            Self::Chat(_) => "thread.chat",
+            Self::Approval(_) => "turn.approval",
+            Self::Cancel(_) => "turn.cancel",
         };
         serde_json::to_value(JsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION,
@@ -712,6 +757,16 @@ pub enum ClientEvent {
     Approval(ApprovalEvent),
     Agent(AgentEvent),
     Reconnected(EventCursor),
+    CommandCompleted {
+        command: String,
+        thread_id: ThreadId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<TurnId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        operation_id: Option<OperationId>,
+        #[schemars(with = "serde_json::Value")]
+        detail: serde_json::Value,
+    },
     Failed {
         cursor: Option<EventCursor>,
         message: String,

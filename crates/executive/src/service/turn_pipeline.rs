@@ -157,6 +157,63 @@ impl TurnPipeline {
         Ok(dispatch)
     }
 
+    async fn journal_protocol_turn_event(
+        &self,
+        session_id: &str,
+        turn_id: fabric::TurnId,
+        assistant_item_id: &str,
+        event: &TurnEventV1,
+    ) -> anyhow::Result<()> {
+        use fabric::protocol::client::ItemPhase;
+        let session_id = fabric::SessionId(session_id.to_owned());
+        let entry = match event {
+            TurnEventV1::TurnStarted { .. } => Some((
+                assistant_item_id.to_owned(),
+                ItemPhase::Started,
+                None,
+                Some(format!("{assistant_item_id}:assistant-started")),
+            )),
+            TurnEventV1::TextDelta { delta } => Some((
+                assistant_item_id.to_owned(),
+                ItemPhase::Streaming,
+                Some(delta.clone()),
+                None,
+            )),
+            TurnEventV1::ToolCallStart { call_id, .. } => {
+                let id = format!("tool:{}:{call_id}", turn_id.0);
+                Some((
+                    id.clone(),
+                    ItemPhase::Started,
+                    None,
+                    Some(format!("{id}:tool-started")),
+                ))
+            }
+            TurnEventV1::ToolProgress {
+                call_id, payload, ..
+            } => Some((
+                format!("tool:{}:{call_id}", turn_id.0),
+                ItemPhase::Streaming,
+                Some(payload.to_string()),
+                None,
+            )),
+            _ => None,
+        };
+        if let Some((item_id, phase, delta, dedupe_key)) = entry {
+            self.canonical_sessions
+                .append_protocol_item_event(
+                    &session_id,
+                    item_id,
+                    phase,
+                    delta,
+                    None,
+                    None,
+                    dedupe_key,
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Run the full Pre/Cognit/Post turn pipeline.
     ///
     /// Takes kernel-registered ids and a scope token from the orchestrator,
@@ -203,7 +260,10 @@ impl TurnPipeline {
         let lifecycle_thread = turn_request.context.thread_id.clone();
         let lifecycle_turn = turn_request.context.turn_id;
         let lifecycle_session = session_id.clone();
-
+        let assistant_protocol_item = format!(
+            "turn:{}:assistant",
+            lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)).0
+        );
         let turn_result: anyhow::Result<serde_json::Value> = async {
 
         let lifecycle_start = self
@@ -583,6 +643,12 @@ impl TurnPipeline {
                             continue;
                         }
                     };
+                    self.journal_protocol_turn_event(
+                        &lifecycle_session,
+                        lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)),
+                        &assistant_protocol_item,
+                        &event,
+                    ).await?;
                     let is_terminal = terminal_events.observe(&event);
                     match &event {
                         TurnEventV1::ToolCallStart { name, call_id } => {
@@ -713,6 +779,12 @@ impl TurnPipeline {
         loop {
             match turn_stream.try_recv() {
                 Some(Ok(event)) => {
+                    self.journal_protocol_turn_event(
+                        &lifecycle_session,
+                        lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)),
+                        &assistant_protocol_item,
+                        &event,
+                    ).await?;
                     let is_terminal = terminal_events.observe(&event);
                     if !is_terminal {
                         let sender = notify_tx.lock().await.clone();
