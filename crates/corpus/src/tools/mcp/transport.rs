@@ -185,7 +185,12 @@ pub fn is_auth_error(err: &anyhow::Error) -> bool {
 
 impl McpTransport {
     /// Create a stdio transport by spawning a subprocess.
-    pub async fn stdio(command: &str, args: &[String], request_timeout_ms: u64) -> Result<Self> {
+    pub async fn stdio(
+        command: &str,
+        args: &[String],
+        request_timeout_ms: u64,
+        notification_tx: mpsc::Sender<McpNotification>,
+    ) -> Result<Self> {
         let mut child = Command::new(command)
             .args(args)
             .stdin(std::process::Stdio::piped())
@@ -224,7 +229,14 @@ impl McpTransport {
                 match reader.read_line(&mut line).await {
                     Ok(0) => break,
                     Ok(_) => {
-                        let _ = stdout_tx.send(line.trim().to_string()).await;
+                        let message = line.trim();
+                        if let Ok(value) = serde_json::from_str::<Value>(message) {
+                            if let Some(notification) = McpNotification::parse(&value) {
+                                let _ = notification_tx.send(notification).await;
+                                continue;
+                            }
+                        }
+                        let _ = stdout_tx.send(message.to_string()).await;
                     }
                     Err(_) => break,
                 }
@@ -250,7 +262,10 @@ impl McpTransport {
         request_timeout_ms: u64,
     ) -> Self {
         Self::StreamableHttp {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("static MCP HTTP client configuration must build"),
             base_url: base_url.into(),
             auth,
             request_timeout_ms,
@@ -265,14 +280,18 @@ impl McpTransport {
         base_url: impl Into<String>,
         auth: Option<BearerTokenAuth>,
         request_timeout_ms: u64,
+        notification_tx: mpsc::Sender<McpNotification>,
     ) -> Result<Self> {
         let base_url = base_url.into();
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .context("build MCP SSE client")?;
 
         let sse_url = format!("{}/sse", base_url.trim_end_matches('/'));
         let mut req_builder = client.get(&sse_url);
         if let Some(ref a) = auth {
-            if let Some(hv) = a.header_value() {
+            if let Some(hv) = a.header_value_for(Some(&sse_url)) {
                 req_builder = req_builder.header("Authorization", hv);
             }
         }
@@ -304,6 +323,12 @@ impl McpTransport {
                         if let Some(data) = line.strip_prefix("data:") {
                             let data = data.trim();
                             if !data.is_empty() {
+                                if let Ok(value) = serde_json::from_str::<Value>(data) {
+                                    if let Some(notification) = McpNotification::parse(&value) {
+                                        let _ = notification_tx.send(notification).await;
+                                        continue;
+                                    }
+                                }
                                 let _ = event_tx.send(data.to_string()).await;
                             }
                         }
@@ -735,7 +760,8 @@ pub async fn connect_with_fallback(
     }
 
     // Fallback to SSE.
-    McpTransport::sse(base_url, auth, request_timeout_ms).await
+    let (notification_tx, _notification_rx) = mpsc::channel(64);
+    McpTransport::sse(base_url, auth, request_timeout_ms, notification_tx).await
 }
 
 // ===========================================================================

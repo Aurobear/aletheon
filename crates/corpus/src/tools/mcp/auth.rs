@@ -78,6 +78,7 @@ pub trait McpAuth: Send + Sync {
 pub struct BearerTokenAuth {
     env_var: String,
     grant: Option<EmbeddingCredentialGrant>,
+    additional_grants: Vec<EmbeddingCredentialGrant>,
     /// Clock for checking grant expiry. `None` when no grant is set.
     clock: Option<Arc<dyn Clock>>,
 }
@@ -88,6 +89,7 @@ impl BearerTokenAuth {
         Self {
             env_var: env_var.into(),
             grant: None,
+            additional_grants: Vec::new(),
             clock: None,
         }
     }
@@ -110,8 +112,16 @@ impl BearerTokenAuth {
         Self {
             env_var: env_var.into(),
             grant: Some(grant),
+            additional_grants: Vec::new(),
             clock: Some(clock),
         }
+    }
+
+    /// Add another explicitly authorized endpoint for a transport that uses
+    /// more than one URL (legacy SSE uses both the POST URL and `/sse`).
+    pub fn allow_endpoint(mut self, grant: EmbeddingCredentialGrant) -> Self {
+        self.additional_grants.push(grant);
+        self
     }
 
     /// Read the token from the environment.
@@ -142,7 +152,12 @@ impl BearerTokenAuth {
             // Grant present with URL → gate on approved_for.
             (Some(grant), Some(clock), Some(url)) => {
                 let now = now_epoch_secs(&**clock);
-                if grant.approved_for(url, now) {
+                if grant.approved_for(url, now)
+                    || self
+                        .additional_grants
+                        .iter()
+                        .any(|additional| additional.approved_for(url, now))
+                {
                     Some(format!("Bearer {}", token))
                 } else {
                     None
@@ -271,6 +286,7 @@ pub struct McpOAuthProvider {
     pending_states: HashMap<String, OAuthState>,
     clock: Arc<dyn Clock>,
     oauth_client: AsyncOAuthClient,
+    endpoint_grant: Option<EmbeddingCredentialGrant>,
 }
 
 impl McpOAuthProvider {
@@ -304,7 +320,22 @@ impl McpOAuthProvider {
             pending_states: HashMap::new(),
             clock,
             oauth_client,
+            endpoint_grant: None,
         }
+    }
+
+    /// Restrict token release to the configured MCP endpoint. OAuth tokens are
+    /// fail-closed until this grant is installed.
+    pub fn with_endpoint_scoping(mut self, approved_base_url: &str) -> Self {
+        self.endpoint_grant = Some(EmbeddingCredentialGrant::new(
+            format!("mcp:{}", self.server_id),
+            approved_base_url,
+            self.server_id.clone(),
+            u64::MAX,
+            0,
+            "oauth-token-store-handle",
+        ));
+        self
     }
 
     /// Set the optional client secret (for confidential clients).
@@ -425,8 +456,17 @@ impl McpOAuthProvider {
 
 #[async_trait::async_trait]
 impl McpAuth for McpOAuthProvider {
-    fn get_headers(&self, _target_url: Option<&str>) -> HashMap<String, String> {
+    fn get_headers(&self, target_url: Option<&str>) -> HashMap<String, String> {
         let mut headers = HashMap::new();
+        let Some(grant) = &self.endpoint_grant else {
+            return headers;
+        };
+        let Some(target_url) = target_url else {
+            return headers;
+        };
+        if !grant.approved_for(target_url, now_epoch_secs(&*self.clock)) {
+            return headers;
+        }
         if let Some(entry) = self.token_store.get(&self.server_id) {
             if !self.is_expired() {
                 let value = format!("{} {}", entry.token_type, entry.access_token);
@@ -908,9 +948,17 @@ mod tests {
             "srv",
             store,
             test_clock(),
-        );
+        )
+        .with_endpoint_scoping("https://mcp.example.com/rpc");
 
-        let headers = provider.get_headers(None);
+        assert!(provider.get_headers(None).is_empty());
+        assert!(provider
+            .get_headers(Some("https://mcp.example.com.evil/rpc"))
+            .is_empty());
+        assert!(provider
+            .get_headers(Some("https://redirected.example.com/rpc"))
+            .is_empty());
+        let headers = provider.get_headers(Some("https://mcp.example.com/rpc"));
         assert_eq!(
             headers.get("Authorization").map(|s| s.as_str()),
             Some("Bearer my_access_token")
@@ -949,9 +997,10 @@ mod tests {
             "srv",
             store,
             test_clock(),
-        );
+        )
+        .with_endpoint_scoping("https://mcp.example.com/rpc");
 
-        let headers = provider.get_headers(None);
+        let headers = provider.get_headers(Some("https://mcp.example.com/rpc"));
         assert!(headers.is_empty());
     }
 

@@ -75,6 +75,7 @@ pub struct McpClient {
     pub resources: Vec<McpResource>,
     /// Channel sender for notifications received from the server.
     pub notification_tx: mpsc::Sender<McpNotification>,
+    notification_rx: Option<mpsc::Receiver<McpNotification>>,
     /// Whether the server supports parallel tool calls.
     pub supports_parallel_tool_calls: bool,
     /// Handler for elicitation requests received from the server.
@@ -91,8 +92,9 @@ impl McpClient {
         trust_level: McpTrustLevel,
         request_timeout_ms: u64,
     ) -> Result<Self> {
-        let (notification_tx, _notification_rx) = mpsc::channel(64);
-        let mut transport = McpTransport::stdio(command, args, request_timeout_ms).await?;
+        let (notification_tx, notification_rx) = mpsc::channel(64);
+        let mut transport =
+            McpTransport::stdio(command, args, request_timeout_ms, notification_tx.clone()).await?;
 
         // Initialize handshake
         let init_result = transport
@@ -137,6 +139,7 @@ impl McpClient {
             tools,
             resources,
             notification_tx,
+            notification_rx: Some(notification_rx),
             supports_parallel_tool_calls,
             elicitation_handler: None,
         })
@@ -150,7 +153,7 @@ impl McpClient {
         trust_level: McpTrustLevel,
         request_timeout_ms: u64,
     ) -> Result<Self> {
-        let (notification_tx, _notification_rx) = mpsc::channel(64);
+        let (notification_tx, notification_rx) = mpsc::channel(64);
         let mut transport = McpTransport::streamable_http(url, auth, request_timeout_ms);
 
         // Initialize handshake
@@ -196,6 +199,7 @@ impl McpClient {
             tools,
             resources,
             notification_tx,
+            notification_rx: Some(notification_rx),
             supports_parallel_tool_calls,
             elicitation_handler: None,
         })
@@ -209,8 +213,9 @@ impl McpClient {
         trust_level: McpTrustLevel,
         request_timeout_ms: u64,
     ) -> Result<Self> {
-        let (notification_tx, _notification_rx) = mpsc::channel(64);
-        let mut transport = McpTransport::sse(url, auth, request_timeout_ms).await?;
+        let (notification_tx, notification_rx) = mpsc::channel(64);
+        let mut transport =
+            McpTransport::sse(url, auth, request_timeout_ms, notification_tx.clone()).await?;
 
         // Initialize handshake
         let init_result = transport
@@ -255,6 +260,7 @@ impl McpClient {
             tools,
             resources,
             notification_tx,
+            notification_rx: Some(notification_rx),
             supports_parallel_tool_calls,
             elicitation_handler: None,
         })
@@ -444,12 +450,16 @@ impl McpClient {
     }
 
     /// Watch for `ToolsListChanged` notifications and re-discover tools.
-    pub async fn watch_tool_changes(&mut self, mut rx: mpsc::Receiver<McpNotification>) {
+    pub async fn watch_tool_changes(
+        client: Arc<Mutex<Self>>,
+        mut rx: mpsc::Receiver<McpNotification>,
+    ) {
         while let Some(notification) = rx.recv().await {
             if matches!(notification, McpNotification::ToolsListChanged) {
-                let id = self.next_id;
-                self.next_id += 1;
-                match self
+                let mut client = client.lock().await;
+                let id = client.next_id;
+                client.next_id += 1;
+                match client
                     .transport
                     .request(id, "tools/list", serde_json::json!({}))
                     .await
@@ -457,16 +467,16 @@ impl McpClient {
                     Ok(result) => {
                         let tools = Self::parse_tools(&result);
                         tracing::info!(
-                            server = %self.server_name,
-                            old_count = self.tools.len(),
+                            server = %client.server_name,
+                            old_count = client.tools.len(),
                             new_count = tools.len(),
                             "MCP tools re-discovered after ToolsListChanged"
                         );
-                        self.tools = tools;
+                        client.tools = tools;
                     }
                     Err(e) => {
                         tracing::warn!(
-                            server = %self.server_name,
+                            server = %client.server_name,
                             error = %e,
                             "Failed to re-discover tools after ToolsListChanged"
                         );
@@ -578,19 +588,71 @@ impl McpConnectionManager {
         }
     }
 
+    fn install_client(&mut self, server_name: String, mut client: McpClient) {
+        let notification_rx = client.notification_rx.take();
+        let client = Arc::new(Mutex::new(client));
+        self.clients.insert(server_name, client.clone());
+        if let Some(rx) = notification_rx {
+            tokio::spawn(McpClient::watch_tool_changes(client, rx));
+        }
+    }
+
     /// Connect to all enabled servers in the config.
     pub async fn connect_all(&mut self) -> Result<()> {
         let global_timeout_ms = self.config.request_timeout_ms;
 
-        for server_config in &self.config.servers {
+        for server_config in self.config.servers.clone() {
             if !server_config.enabled {
                 continue;
             }
 
-            let auth: Option<BearerTokenAuth> = server_config
-                .bearer_token_env
-                .as_ref()
-                .map(|env_var| BearerTokenAuth::new(env_var.clone()));
+            let auth: Option<BearerTokenAuth> =
+                server_config.bearer_token_env.as_ref().and_then(|env_var| {
+                    match &server_config.transport {
+                        McpTransportConfig::StreamableHttp { url } => {
+                            Some(BearerTokenAuth::with_endpoint_scoping(
+                                env_var.clone(),
+                                mnemosyne::credential::EmbeddingCredentialGrant::new(
+                                    format!("mcp:{}", server_config.name),
+                                    url,
+                                    server_config.name.clone(),
+                                    u64::MAX,
+                                    0,
+                                    "environment-backed-mcp-token",
+                                ),
+                                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                            ))
+                        }
+                        McpTransportConfig::Sse { url } => {
+                            let principal = format!("mcp:{}", server_config.name);
+                            Some(
+                                BearerTokenAuth::with_endpoint_scoping(
+                                    env_var.clone(),
+                                    mnemosyne::credential::EmbeddingCredentialGrant::new(
+                                        principal.clone(),
+                                        url,
+                                        server_config.name.clone(),
+                                        u64::MAX,
+                                        0,
+                                        "environment-backed-mcp-token",
+                                    ),
+                                    Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                                )
+                                .allow_endpoint(
+                                    mnemosyne::credential::EmbeddingCredentialGrant::new(
+                                        principal,
+                                        &format!("{}/sse", url.trim_end_matches('/')),
+                                        server_config.name.clone(),
+                                        u64::MAX,
+                                        0,
+                                        "environment-backed-mcp-token",
+                                    ),
+                                ),
+                            )
+                        }
+                        McpTransportConfig::Stdio { .. } => None,
+                    }
+                });
 
             let timeout_ms = server_config
                 .request_timeout_ms
@@ -608,8 +670,7 @@ impl McpConnectionManager {
                     .await
                     {
                         Ok(client) => {
-                            self.clients
-                                .insert(server_config.name.clone(), Arc::new(Mutex::new(client)));
+                            self.install_client(server_config.name.clone(), client);
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -631,8 +692,7 @@ impl McpConnectionManager {
                     .await
                     {
                         Ok(client) => {
-                            self.clients
-                                .insert(server_config.name.clone(), Arc::new(Mutex::new(client)));
+                            self.install_client(server_config.name.clone(), client);
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -654,8 +714,7 @@ impl McpConnectionManager {
                     .await
                     {
                         Ok(client) => {
-                            self.clients
-                                .insert(server_config.name.clone(), Arc::new(Mutex::new(client)));
+                            self.install_client(server_config.name.clone(), client);
                         }
                         Err(e) => {
                             tracing::warn!(
