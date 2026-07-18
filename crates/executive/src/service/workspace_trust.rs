@@ -9,13 +9,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use fabric::PrincipalId;
 use fabric::workspace_trust::{
-    ClientMode, DiscoveredConfigDigest, ExecutableConfigSource, TrustEvaluationInput, TrustReceipt,
-    WorkspaceIdentity, WorkspaceTrustDecision, decide,
+    decide, ClientMode, DiscoveredConfigDigest, ExecutableConfigSource, TrustEvaluationInput,
+    TrustReceipt, WorkspaceIdentity, WorkspaceTrustDecision,
 };
+use fabric::PrincipalId;
 use sha2::{Digest, Sha256};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 #[async_trait]
 pub trait TrustStore: Send + Sync {
@@ -117,6 +117,66 @@ impl TrustStore for InMemoryTrustStore {
     async fn put(&self, receipt: TrustReceipt) {
         let key = receipt_key(&receipt.principal_id, &receipt.workspace);
         self.receipts.write().await.insert(key, receipt);
+    }
+}
+
+/// Durable JSON trust store with atomic replacement.
+///
+/// Read or decode failures fail closed through the `TrustStore` contract by
+/// returning no receipt. Writes are serialized and replace the file only after
+/// the complete new state has been flushed.
+pub struct FileTrustStore {
+    path: PathBuf,
+    write_lock: Mutex<()>,
+}
+
+impl FileTrustStore {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            write_lock: Mutex::new(()),
+        }
+    }
+
+    async fn read_all(&self) -> BTreeMap<String, TrustReceipt> {
+        let Ok(bytes) = tokio::fs::read(&self.path).await else {
+            return BTreeMap::new();
+        };
+        serde_json::from_slice(&bytes).unwrap_or_default()
+    }
+}
+
+#[async_trait]
+impl TrustStore for FileTrustStore {
+    async fn get(
+        &self,
+        principal: &PrincipalId,
+        workspace: &WorkspaceIdentity,
+    ) -> Option<TrustReceipt> {
+        self.read_all()
+            .await
+            .remove(&receipt_key(principal, workspace))
+    }
+
+    async fn put(&self, receipt: TrustReceipt) {
+        let _guard = self.write_lock.lock().await;
+        let mut receipts = self.read_all().await;
+        receipts.insert(
+            receipt_key(&receipt.principal_id, &receipt.workspace),
+            receipt,
+        );
+        let Ok(encoded) = serde_json::to_vec_pretty(&receipts) else {
+            return;
+        };
+        if let Some(parent) = self.path.parent() {
+            if tokio::fs::create_dir_all(parent).await.is_err() {
+                return;
+            }
+        }
+        let temporary = self.path.with_extension("tmp");
+        if tokio::fs::write(&temporary, encoded).await.is_ok() {
+            let _ = tokio::fs::rename(temporary, &self.path).await;
+        }
     }
 }
 
@@ -306,6 +366,56 @@ mod tests {
             2
         );
         assert_eq!(store.receipts.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn file_store_survives_reopen_and_upserts_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("trust/receipts.json");
+        let principal = PrincipalId("alice".into());
+        let workspace = identity(temp.path());
+        {
+            let store = FileTrustStore::new(path.clone());
+            store
+                .put(receipt(
+                    &principal,
+                    &workspace,
+                    DiscoveredConfigDigest::default(),
+                    1,
+                ))
+                .await;
+            store
+                .put(receipt(
+                    &principal,
+                    &workspace,
+                    DiscoveredConfigDigest::default(),
+                    2,
+                ))
+                .await;
+        }
+
+        let reopened = FileTrustStore::new(path);
+        assert_eq!(
+            reopened
+                .get(&principal, &workspace)
+                .await
+                .unwrap()
+                .updated_at_unix,
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn corrupt_file_store_fails_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("receipts.json");
+        std::fs::write(&path, b"not-json").unwrap();
+        let store = FileTrustStore::new(path);
+
+        assert!(store
+            .get(&PrincipalId("alice".into()), &identity(temp.path()))
+            .await
+            .is_none());
     }
 
     #[tokio::test]
