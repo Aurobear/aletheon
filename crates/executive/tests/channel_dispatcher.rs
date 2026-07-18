@@ -1,10 +1,10 @@
-//! Integration tests for [`ChannelRouter`]: durable routing with rejection
+//! Integration tests for [`ChannelDispatcher`]: durable routing with rejection
 //! before LLM and outbox-only retry on send failure.
 
 use std::sync::Arc;
 
-use executive::r#impl::channel::router::{
-    ChannelRouter, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+use executive::r#impl::channel::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
 use executive::r#impl::channel::store::ChannelStore;
 use fabric::channel::{
@@ -119,7 +119,7 @@ fn owner_command(
 /// Set up a test fixture with a bound owner and a store on a temp dir.
 /// Returns the router, transport, store path, and the stored turn executor.
 async fn setup() -> (
-    ChannelRouter,
+    ChannelDispatcher,
     Arc<FakeTurnExecutor>,
     FakeTransport,
     tempfile::TempDir,
@@ -130,7 +130,7 @@ async fn setup() -> (
     store.bind("telegram", "owner", "owner", "active").unwrap();
     let executor = Arc::new(FakeTurnExecutor::default());
     let transport = FakeTransport::new();
-    let router = ChannelRouter::new(store, executor.clone());
+    let router = ChannelDispatcher::new(store, executor.clone());
     (router, executor, transport, dir)
 }
 
@@ -342,7 +342,7 @@ async fn executor_failure_inbox_retryable_cursor_unchanged() {
     }
     let failing_executor = Arc::new(FailingExecutor);
     let store = ChannelStore::open(&db_path).unwrap();
-    let mut router = ChannelRouter::new(store, failing_executor);
+    let mut router = ChannelDispatcher::new(store, failing_executor);
 
     let msg = owner_text("6", "corr-fail", "trigger failure");
     let envelope = ProviderEnvelope {

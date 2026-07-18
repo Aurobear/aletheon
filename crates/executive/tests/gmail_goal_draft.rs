@@ -11,13 +11,16 @@ use executive::r#impl::channel::gmail::sender_policy::{
 use executive::r#impl::channel::gmail::{
     GmailChannelMessage, GmailChannelStore, GmailGoalDraftCoordinator,
 };
-use executive::r#impl::channel::router::{
-    ChannelRouter, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+use executive::r#impl::channel::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
+use executive::r#impl::channel::registry::ApprovalResolver;
 use executive::r#impl::channel::store::ChannelStore;
 use executive::r#impl::external::ExternalIdentityRepository;
 use executive::r#impl::goal::ObjectiveStore;
-use fabric::{ApprovalStatus, ExternalIdentityId, ExternalScope, GoalState, PrincipalId};
+use fabric::{
+    ApprovalCategory, ApprovalStatus, ExternalIdentityId, ExternalScope, GoalState, PrincipalId,
+};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -440,9 +443,11 @@ async fn telegram_review_has_confirm_edit_reject_and_replayed_confirm_is_idempot
         .bind("telegram", "telegram:7", "owner", "active")
         .unwrap();
     let approval_repo = coordinator.lock().unwrap().approval_repository();
-    let mut router = ChannelRouter::new(channels, Arc::new(NoTurn))
+    let gmail_resolver: Arc<dyn ApprovalResolver> =
+        Arc::new(DaemonGmailDraftApprovalExecutor::new(coordinator));
+    let mut router = ChannelDispatcher::new(channels, Arc::new(NoTurn))
         .with_approval_repository(approval_repo)
-        .with_gmail_draft_executor(Arc::new(DaemonGmailDraftApprovalExecutor::new(coordinator)));
+        .with_approval_resolver(ApprovalCategory::ActivateGoal, gmail_resolver);
     let transport = CaptureTransport::default();
     assert!(router
         .notify_approval(

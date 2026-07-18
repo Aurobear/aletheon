@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use executive::r#impl::approval::{ApprovalCreate, ApprovalRepository};
-use executive::r#impl::channel::router::{
-    ChannelRouter, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+use executive::r#impl::channel::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
 use executive::r#impl::channel::store::ChannelStore;
 use executive::r#impl::goal::ObjectiveStore;
@@ -116,12 +116,12 @@ impl Fixture {
     fn channel_path(&self) -> PathBuf {
         self.channels.path().join("channels.db")
     }
-    fn router(&self) -> ChannelRouter {
+    fn router(&self) -> ChannelDispatcher {
         let store = ChannelStore::open(&self.channel_path()).unwrap();
         store
             .bind("telegram", "telegram:7", "owner", "active")
             .unwrap();
-        ChannelRouter::new(store, Arc::new(NoTurn)).with_approval_repository(self.repo.clone())
+        ChannelDispatcher::new(store, Arc::new(NoTurn)).with_approval_repository(self.repo.clone())
     }
     fn callback(&self, message: &str, sender: &str, action: String, time: i64) -> ProviderEnvelope {
         ProviderEnvelope {

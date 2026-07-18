@@ -1,24 +1,28 @@
-//! Channel routing boundaries.
+//! Channel dispatching boundaries.
 //!
 //! Defines the minimal transport and turn-execution traits that decouple
-//! the channel router from the daemon runtime, plus a pure content-routing
-//! function so the router is testable without constructing the full stack.
+//! the channel dispatcher from the daemon runtime, plus a thin dispatcher
+//! that classifies inbound messages and hands them to a
+//! [`CapabilityRegistry`] of typed handlers (`handlers/`).
 
 use std::sync::{Arc, Mutex};
 
 use fabric::channel::{
     ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage,
 };
-use fabric::{
-    ApprovalCategory, ApprovalId, ApprovalSnapshot, ApprovalStatus, AttemptId, GoalId,
-    GoalSnapshot, PrincipalId,
-};
+use fabric::{ApprovalCategory, ApprovalSnapshot, ApprovalStatus, AttemptId, GoalId, GoalSnapshot};
 
-use crate::r#impl::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
+use crate::r#impl::approval::ApprovalRepository;
 use crate::r#impl::goal::{AttemptCoordinationOutcome, RetryDecision};
 
+use super::effect::OutboundEffect;
+use super::handlers::approval::ApprovalExecutor;
+use super::handlers::chat::ChatHandler;
+use super::handlers::goal::GoalHandler;
+use super::handlers::greeting::GreetingHandler;
 use super::intent::{classify_intent, Intent};
 use super::notify::render_approval_notification;
+use super::registry::{ApprovalResolver, ApprovalResolverRegistry, CapabilityHandler, CapabilityRegistry, HandlerContext};
 use super::store::{ChannelStore, InsertOutcome};
 
 // ---------------------------------------------------------------------------
@@ -51,12 +55,12 @@ pub struct ProviderEnvelope {
 }
 
 // ---------------------------------------------------------------------------
-// Turn-execution trait
+// Capability-facing traits
 // ---------------------------------------------------------------------------
 
 /// Minimal contract for executing a single turn.
 ///
-/// This prevents router tests from needing the entire daemon stack.
+/// This prevents dispatcher tests from needing the entire daemon stack.
 /// The production adapter calls `DaemonTurnOrchestrator::execute_turn()`
 /// and extracts either the `result` text or a stable error.
 #[async_trait::async_trait]
@@ -86,29 +90,6 @@ pub trait ChannelGoalExecutor: Send + Sync {
     async fn pause(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
     async fn resume(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
     async fn cancel(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
-}
-
-#[async_trait::async_trait]
-pub trait ChannelApprovalExecutor: Send + Sync {
-    async fn execute_resolved(&self, approval_id: ApprovalId) -> anyhow::Result<()>;
-}
-
-#[async_trait::async_trait]
-pub trait GmailDraftApprovalExecutor: Send + Sync {
-    async fn execute_draft_resolution(
-        &self,
-        approval: &ApprovalSnapshot,
-        action: &str,
-        now_ms: i64,
-    ) -> anyhow::Result<()>;
-
-    async fn revise_draft(
-        &self,
-        owner: &str,
-        goal_id: GoalId,
-        intent: &str,
-        now_ms: i64,
-    ) -> anyhow::Result<ApprovalSnapshot>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,45 +184,79 @@ impl GoalProgress {
 }
 
 // ---------------------------------------------------------------------------
-// Channel router
+// Channel dispatcher
 // ---------------------------------------------------------------------------
 
-/// Durable owner-only channel message router.
+/// Durable owner-only channel message dispatcher.
 ///
-/// Owns a [`ChannelStore`] for persistence and delegates AI turns to a
-/// [`ChannelTurnExecutor`]. Rejection-check happens before the LLM is
-/// invoked, and turn outcomes are persisted before the network send so
+/// Owns a [`ChannelStore`] for persistence and delegates capability
+/// handling to a [`CapabilityRegistry`]. Rejection-check happens before any
+/// handler runs, and turn outcomes are persisted before the network send so
 /// that a send failure retries only the outbox — never the LLM turn.
-pub struct ChannelRouter {
+pub struct ChannelDispatcher {
     store: ChannelStore,
-    turn_executor: Arc<dyn ChannelTurnExecutor>,
-    goal_executor: Option<Arc<dyn ChannelGoalExecutor>>,
+    registry: CapabilityRegistry,
     approval_repository: Option<Arc<Mutex<ApprovalRepository>>>,
-    approval_executor: Option<Arc<dyn ChannelApprovalExecutor>>,
-    gmail_draft_executor: Option<Arc<dyn GmailDraftApprovalExecutor>>,
-    google_accounts: Option<Arc<dyn GoogleChannelAccountDirectory>>,
+    approval_resolvers: Arc<ApprovalResolverRegistry>,
 }
 
-impl ChannelRouter {
-    /// Create a new router that owns `store` and uses `turn_executor` for
-    /// AI turn execution.
+impl ChannelDispatcher {
+    /// Create a new dispatcher that owns `store` and answers `Chat`/
+    /// `Greeting` intents using `turn_executor`. No goal/approval/google
+    /// capability is registered — use [`Self::with_registry`] or the
+    /// `with_*` builders to add more.
     pub fn new(store: ChannelStore, turn_executor: Arc<dyn ChannelTurnExecutor>) -> Self {
+        let mut registry = CapabilityRegistry::new();
+        registry.register(Arc::new(ChatHandler::new(turn_executor, None)));
+        registry.register(Arc::new(GreetingHandler));
+        Self::with_registry(store, registry)
+    }
+
+    /// Create a dispatcher from an already-assembled [`CapabilityRegistry`]
+    /// (e.g. a `ChatHandler` wired with Google account support).
+    pub fn with_registry(store: ChannelStore, registry: CapabilityRegistry) -> Self {
         Self {
             store,
-            turn_executor,
-            goal_executor: None,
+            registry,
             approval_repository: None,
-            approval_executor: None,
-            gmail_draft_executor: None,
-            google_accounts: None,
+            approval_resolvers: Arc::new(ApprovalResolverRegistry::new()),
         }
     }
 
-    pub fn with_google_accounts(
-        mut self,
-        accounts: Arc<dyn GoogleChannelAccountDirectory>,
+    /// Register (or replace) a capability handler.
+    pub fn with_capability(mut self, handler: Arc<dyn CapabilityHandler>) -> Self {
+        self.registry.register(handler);
+        self
+    }
+
+    /// Register the Goal-command capability, sharing this dispatcher's
+    /// approval resolver registry so `/edit` can reach the `ActivateGoal`
+    /// resolver regardless of registration order.
+    pub fn with_goal_executor(self, executor: Arc<dyn ChannelGoalExecutor>) -> Self {
+        let resolvers = self.approval_resolvers.clone();
+        self.with_capability(Arc::new(GoalHandler::new(executor, resolvers)))
+    }
+
+    pub fn with_approval_repository(mut self, repository: Arc<Mutex<ApprovalRepository>>) -> Self {
+        self.approval_repository = Some(repository);
+        self
+    }
+
+    /// Register an [`ApprovalResolver`] for a specific [`ApprovalCategory`]
+    /// (e.g. Gmail registers its `ActivateGoal` resolver here).
+    pub fn with_approval_resolver(
+        self,
+        category: ApprovalCategory,
+        resolver: Arc<dyn ApprovalResolver>,
     ) -> Self {
-        self.google_accounts = Some(accounts);
+        self.approval_resolvers.register(category, resolver);
+        self
+    }
+
+    /// Register the default approval resolver used for categories without
+    /// a dedicated resolver (replaces the old generic `ChannelApprovalExecutor`).
+    pub fn with_default_approval_resolver(self, resolver: Arc<dyn ApprovalResolver>) -> Self {
+        self.approval_resolvers.set_default(resolver);
         self
     }
 
@@ -276,24 +291,6 @@ impl ChannelRouter {
                 correlation_id: event.id.to_string(),
             },
         )
-    }
-
-    pub fn with_approval_repository(mut self, repository: Arc<Mutex<ApprovalRepository>>) -> Self {
-        self.approval_repository = Some(repository);
-        self
-    }
-
-    pub fn with_approval_executor(mut self, executor: Arc<dyn ChannelApprovalExecutor>) -> Self {
-        self.approval_executor = Some(executor);
-        self
-    }
-
-    pub fn with_gmail_draft_executor(
-        mut self,
-        executor: Arc<dyn GmailDraftApprovalExecutor>,
-    ) -> Self {
-        self.gmail_draft_executor = Some(executor);
-        self
     }
 
     /// Persist an approval notification before network delivery. Message text
@@ -350,11 +347,6 @@ impl ChannelRouter {
         }
     }
 
-    pub fn with_goal_executor(mut self, executor: Arc<dyn ChannelGoalExecutor>) -> Self {
-        self.goal_executor = Some(executor);
-        self
-    }
-
     /// Persist a proactive Goal progress notification, then attempt delivery.
     /// The caller can only construct `progress` from an already-persisted
     /// AttemptCoordinator outcome, preserving Goal-event-before-send ordering.
@@ -396,77 +388,8 @@ impl ChannelRouter {
             .enqueue_outbound(channel_id, &progress.outbound(conversation_id))
     }
 
-    async fn execute_goal_command(
-        &mut self,
-        owner: &str,
-        command: &str,
-        args: &str,
-        now_ms: i64,
-    ) -> anyhow::Result<String> {
-        if command == "/edit" {
-            let (id, intent) = args
-                .trim()
-                .split_once(char::is_whitespace)
-                .ok_or_else(|| anyhow::anyhow!("usage: /edit <goal-id> <revised-intent>"))?;
-            let id = id
-                .parse::<i64>()
-                .map(GoalId)
-                .map_err(|_| anyhow::anyhow!("usage: /edit <goal-id> <revised-intent>"))?;
-            if intent.trim().is_empty() {
-                anyhow::bail!("usage: /edit <goal-id> <revised-intent>");
-            }
-            let executor = self
-                .gmail_draft_executor
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Gmail draft executor is not configured"))?;
-            let approval = executor
-                .revise_draft(owner, id, intent.trim(), now_ms)
-                .await?;
-            return Ok(format!(
-                "Goal {} revised; fresh confirmation {} is pending.",
-                id.0, approval.id
-            ));
-        }
-        let executor = self
-            .goal_executor
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Goal runtime is not configured"))?;
-        if command == "/goal" {
-            if args.trim().is_empty() {
-                anyhow::bail!("usage: /goal <intent>");
-            }
-            let goal = executor.create_draft(owner, args.trim()).await?;
-            return Ok(format!(
-                "Goal {} created as draft: {}",
-                goal.id.0, goal.spec.original_intent
-            ));
-        }
-        if command == "/goals" {
-            let goals = executor.list(owner).await?;
-            if goals.is_empty() {
-                return Ok("No goals.".into());
-            }
-            return Ok(goals
-                .iter()
-                .map(|g| format!("{} {} {}", g.id.0, g.state, g.spec.original_intent))
-                .collect::<Vec<_>>()
-                .join("\n"));
-        }
-        let id = args
-            .trim()
-            .parse::<i64>()
-            .map(GoalId)
-            .map_err(|_| anyhow::anyhow!("usage: {command} <goal-id>"))?;
-        let goal = match command {
-            "/status" => executor.show(owner, id).await?,
-            "/pause" => executor.pause(owner, id).await?,
-            "/resume" => executor.resume(owner, id).await?,
-            "/cancel" => executor.cancel(owner, id).await?,
-            _ => anyhow::bail!("unsupported goal command"),
-        };
-        Ok(format!("Goal {}: {}", goal.id.0, goal.state))
-    }
-
+    /// Resolve an approval callback via the durable repository, executing
+    /// the matching [`ApprovalResolver`] side effect for resolved approvals.
     async fn execute_approval_action(
         &mut self,
         principal: &str,
@@ -475,77 +398,11 @@ impl ChannelRouter {
     ) -> anyhow::Result<String> {
         let repository = self
             .approval_repository
-            .as_ref()
+            .clone()
             .ok_or_else(|| anyhow::anyhow!("durable approvals are not configured"))?;
-        let (id, action) = action_data
-            .split_once(':')
-            .ok_or_else(|| anyhow::anyhow!("invalid approval action"))?;
-        let id = ApprovalId(uuid::Uuid::parse_str(id)?);
-        let context = ApprovalResolutionContext {
-            principal_id: PrincipalId(principal.to_owned()),
-            channel: "telegram".into(),
-        };
-        let result = match action {
-            "view_diff" => {
-                let repository = repository.lock().unwrap();
-                let approval = repository
-                    .get(id)?
-                    .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
-                let artifact = approval
-                    .artifacts
-                    .iter()
-                    .find(|artifact| artifact.kind == "diff")
-                    .ok_or_else(|| anyhow::anyhow!("approval diff artifact is unavailable"))?;
-                return Ok(format!(
-                    "Verified diff reference: {} (sha256 {}).",
-                    artifact.relative_path.display(),
-                    artifact.sha256
-                ));
-            }
-            "apply" | "confirm" => {
-                let repository = repository.lock().unwrap();
-                let current = repository
-                    .get(id)?
-                    .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
-                let resolved = repository.resolve(
-                    id,
-                    current.version,
-                    &context,
-                    ApprovalDecision::Approve,
-                    now_ms,
-                )?;
-                (resolved, "approved")
-            }
-            "revision" | "edit" | "reject" => {
-                let repository = repository.lock().unwrap();
-                let current = repository
-                    .get(id)?
-                    .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
-                let reason = matches!(action, "revision" | "edit")
-                    .then(|| "owner requested revision".to_string());
-                let resolved = repository.resolve(
-                    id,
-                    current.version,
-                    &context,
-                    ApprovalDecision::Reject { reason },
-                    now_ms,
-                )?;
-                (resolved, "rejected")
-            }
-            _ => anyhow::bail!("unknown approval action"),
-        };
-        if result.0.category == ApprovalCategory::ActivateGoal {
-            let executor = self
-                .gmail_draft_executor
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Gmail draft executor is not configured"))?;
-            executor
-                .execute_draft_resolution(&result.0, action, now_ms)
-                .await?;
-        } else if let Some(executor) = &self.approval_executor {
-            executor.execute_resolved(result.0.id).await?;
-        }
-        Ok(format!("Approval {}: {}", result.0.id, result.1))
+        ApprovalExecutor::new(repository, self.approval_resolvers.clone())
+            .execute_approval_action(principal, action_data, now_ms)
+            .await
     }
 
     /// Process a single provider message envelope.
@@ -555,14 +412,16 @@ impl ChannelRouter {
     /// 1. Insert into inbox; skip if duplicate.
     /// 2. Resolve the sender's active binding to a principal.
     /// 3. Unknown senders are marked rejected and cursor is advanced
-    ///    (no LLM invocation, no outbox).
-    /// 4. Normalize content via [`classify_intent`].
-    /// 5. Execute the AI turn only for chat messages.
-    /// 6. Build an outbound DTO from the routed input and optional AI reply.
-    /// 7. Persist inbox-completed + outbox + cursor in one transaction.
-    /// 8. Send the outbound message through the transport.
-    /// 9. Mark the outbox row as sent or failed (never rolls back the
-    ///    completed turn).
+    ///    (no capability invocation, no outbox).
+    /// 4. Resolve any approval callback via the durable repository.
+    /// 5. Normalize content via [`classify_intent`].
+    /// 6. Dispatch the classified intent to the [`CapabilityRegistry`] for
+    ///    non-callback messages.
+    /// 7. Build an outbound DTO from the routed input and optional reply.
+    /// 8. Persist inbox-completed + outbox + cursor in one transaction.
+    /// 9. Send the outbound message through the transport.
+    /// 10. Mark the outbox row as sent or failed (never rolls back the
+    ///     completed turn).
     pub async fn process(
         &mut self,
         transport: &dyn ChannelTransport,
@@ -582,22 +441,18 @@ impl ChannelRouter {
             .store
             .resolve_principal(channel, &message.sender_id.0)?;
 
-        // 3. Unknown sender: mark rejected, advance cursor, no LLM turn.
-        if principal.is_none() {
+        // 3. Unknown sender: mark rejected, advance cursor, no handler.
+        let Some(principal) = principal else {
             self.reject_inbound(channel, &message.message_id.0, &envelope.next_cursor)?;
             return Ok(());
-        }
+        };
 
         // 4. Resolve approval callbacks from authoritative repository state;
         // callback payload contains no subject details.
         let approval_reply = if let Some(action) = message.reply_to_action.as_deref() {
             Some(
-                self.execute_approval_action(
-                    principal.as_deref().expect("principal checked above"),
-                    action,
-                    message.timestamp_ms,
-                )
-                .await,
+                self.execute_approval_action(&principal, action, message.timestamp_ms)
+                    .await,
             )
         } else {
             None
@@ -606,71 +461,45 @@ impl ChannelRouter {
         // 5. Normalize ordinary message content through command routing.
         let routed = classify_intent(&message.content);
 
-        // 6. Execute AI turn only for non-callback chat messages.
         let mut ai_reply: Option<String> = approval_reply.map(|result| match result {
             Ok(reply) => reply,
             Err(error) => error.to_string(),
         });
+
+        // 6. Dispatch to the capability registry for non-callback messages.
         if message.reply_to_action.is_none() {
-            if let Intent::Chat(text) = &routed {
-                let principal = principal.as_deref().expect("principal checked above");
-                let mut selected_query = None;
-                if channel == "telegram"
-                    && super::telegram::is_google_read_query(text)
-                    && self.google_accounts.is_some()
-                {
-                    let labels = self
-                        .google_accounts
-                        .as_ref()
-                        .expect("checked above")
-                        .active_account_labels(principal)
-                        .await?;
-                    if labels.len() > 1 {
-                        ai_reply = Some(super::telegram::account_choice_prompt(&labels));
-                    } else if let Some(label) = labels.first() {
-                        selected_query =
-                            Some(super::telegram::selected_account_context(label, text));
+            let ctx = HandlerContext {
+                channel: channel.to_string(),
+                principal,
+                conversation_id: message.conversation_id.clone(),
+                message_id: message.message_id.clone(),
+                correlation_id: message.correlation_id.clone(),
+                timestamp_ms: message.timestamp_ms,
+            };
+            match self.registry.dispatch(&ctx, message, &routed).await {
+                Ok(Some(effects)) => {
+                    if let Some(text) = reply_text(&effects) {
+                        ai_reply = Some(text);
                     }
                 }
-                if ai_reply.is_some() {
-                    // Account selection is the only preflight response. The
-                    // actual provider query always continues through ReAct.
-                } else {
-                    let query = selected_query.as_deref().unwrap_or(text);
-                    match self
-                        .turn_executor
-                        .execute(principal, query, &message.correlation_id)
-                        .await
-                    {
-                        Ok(reply) => ai_reply = Some(reply),
-                        Err(e) => {
-                            // Executor failure: mark inbox failed so it stays
-                            // retryable, do NOT advance the cursor.
-                            self.fail_inbound(channel, &message.message_id.0, &e.to_string())?;
-                            return Err(e);
-                        }
+                Ok(None) => { /* no capability registered for this intent */ }
+                Err(e) => match &routed {
+                    Intent::Chat(_) => {
+                        // Chat failure: mark inbox failed so it stays
+                        // retryable, do NOT advance the cursor.
+                        self.fail_inbound(channel, &message.message_id.0, &e.to_string())?;
+                        return Err(e);
                     }
-                }
-            }
-        }
-        if message.reply_to_action.is_none() {
-            if let Intent::GoalCommand { command, args } = &routed {
-                match self
-                    .execute_goal_command(
-                        principal.as_deref().unwrap(),
-                        command,
-                        args,
-                        message.timestamp_ms,
-                    )
-                    .await
-                {
-                    Ok(reply) => ai_reply = Some(reply),
-                    Err(error) => ai_reply = Some(error.to_string()),
-                }
+                    _ => {
+                        // Goal-command (and any other) errors are swallowed
+                        // into the visible reply text.
+                        ai_reply = Some(e.to_string());
+                    }
+                },
             }
         }
 
-        // 6. Build the outbound message DTO.
+        // 7. Build the outbound message DTO.
         let outbound = build_outbound(
             &routed,
             &message.conversation_id,
@@ -679,7 +508,7 @@ impl ChannelRouter {
             ai_reply.as_deref(),
         );
 
-        // 7. Persist inbox+outbox+cursor in one atomic transaction.
+        // 8. Persist inbox+outbox+cursor in one atomic transaction.
         self.store.complete_inbound(
             channel,
             &message.message_id.0,
@@ -687,10 +516,10 @@ impl ChannelRouter {
             &outbound,
         )?;
 
-        // 8. Attempt the network send.
+        // 9. Attempt the network send.
         match transport.send(&outbound).await {
             Ok(_provider_msg_id) => {
-                // 9a. Mark outbox row as sent.
+                // 10a. Mark outbox row as sent.
                 self.store.db.execute(
                     "UPDATE channel_outbox SET status = 'sent', updated_at = datetime('now')
                      WHERE correlation_id = ?1",
@@ -698,7 +527,7 @@ impl ChannelRouter {
                 )?;
             }
             Err(e) => {
-                // 9b. Mark outbox row as failed so it can be retried
+                // 10b. Mark outbox row as failed so it can be retried
                 //     independently of the already-completed inbox turn.
                 self.store.db.execute(
                     "UPDATE channel_outbox SET status = 'failed', last_error = ?1, updated_at = datetime('now')
@@ -770,64 +599,40 @@ impl ChannelRouter {
             let principal = self
                 .store
                 .resolve_principal(channel_str, &msg.sender_id.0)?;
-            if principal.is_none() {
+            let Some(principal) = principal else {
                 self.reject_inbound(channel_str, &msg.message_id.0, &msg.message_id.0)?;
                 count += 1;
                 continue;
-            }
+            };
             let routed = classify_intent(&msg.content);
             let mut ai_reply: Option<String> = None;
-            if let Intent::Chat(text) = &routed {
-                let principal = principal.as_deref().expect("principal checked above");
-                let mut selected_query = None;
-                if channel_str == "telegram"
-                    && super::telegram::is_google_read_query(text)
-                    && self.google_accounts.is_some()
-                {
-                    let labels = self
-                        .google_accounts
-                        .as_ref()
-                        .expect("checked above")
-                        .active_account_labels(principal)
-                        .await?;
-                    if labels.len() > 1 {
-                        ai_reply = Some(super::telegram::account_choice_prompt(&labels));
-                    } else if let Some(label) = labels.first() {
-                        selected_query =
-                            Some(super::telegram::selected_account_context(label, text));
+
+            let ctx = HandlerContext {
+                channel: channel_str.to_string(),
+                principal,
+                conversation_id: msg.conversation_id.clone(),
+                message_id: msg.message_id.clone(),
+                correlation_id: msg.correlation_id.clone(),
+                timestamp_ms: msg.timestamp_ms,
+            };
+            match self.registry.dispatch(&ctx, msg, &routed).await {
+                Ok(Some(effects)) => {
+                    if let Some(text) = reply_text(&effects) {
+                        ai_reply = Some(text);
                     }
                 }
-                if ai_reply.is_some() {
-                    // Persist the same bounded account prompt used by the live path.
-                } else {
-                    let query = selected_query.as_deref().unwrap_or(text);
-                    match self
-                        .turn_executor
-                        .execute(principal, query, &msg.correlation_id)
-                        .await
-                    {
-                        Ok(reply) => ai_reply = Some(reply),
-                        Err(e) => {
-                            self.fail_inbound(channel_str, &msg.message_id.0, &e.to_string())?;
-                            return Err(e);
-                        }
+                Ok(None) => {}
+                Err(e) => match &routed {
+                    Intent::Chat(_) => {
+                        self.fail_inbound(channel_str, &msg.message_id.0, &e.to_string())?;
+                        return Err(e);
                     }
-                }
+                    _ => {
+                        ai_reply = Some(e.to_string());
+                    }
+                },
             }
-            if let Intent::GoalCommand { command, args } = &routed {
-                match self
-                    .execute_goal_command(
-                        principal.as_deref().unwrap(),
-                        command,
-                        args,
-                        msg.timestamp_ms,
-                    )
-                    .await
-                {
-                    Ok(reply) => ai_reply = Some(reply),
-                    Err(error) => ai_reply = Some(error.to_string()),
-                }
-            }
+
             let outbound = build_outbound(
                 &routed,
                 &msg.conversation_id,
@@ -927,7 +732,18 @@ impl ChannelRouter {
     }
 }
 
-/// Build an [`OutboundMessage`] from a routed input and optional AI reply.
+/// Extract the first `Reply` effect's text, if any.
+fn reply_text(effects: &[OutboundEffect]) -> Option<String> {
+    effects.iter().find_map(|effect| match effect {
+        OutboundEffect::Reply(msg) => match &msg.content {
+            MessageContent::Text { text } => Some(text.clone()),
+            MessageContent::Command { .. } => None,
+        },
+        OutboundEffect::Enqueue(_) | OutboundEffect::None => None,
+    })
+}
+
+/// Build an [`OutboundMessage`] from a routed input and optional reply.
 fn build_outbound(
     routed: &Intent,
     conversation_id: &ConversationId,
@@ -960,4 +776,3 @@ fn build_outbound(
         correlation_id: correlation_id.to_string(),
     }
 }
-

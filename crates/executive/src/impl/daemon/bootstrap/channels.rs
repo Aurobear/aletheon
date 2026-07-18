@@ -11,15 +11,19 @@ use crate::r#impl::channel::daemon_adapter::{
     DaemonChannelApprovalExecutor, DaemonChannelGoalExecutor, DaemonChannelTurnExecutor,
     DaemonGmailDraftApprovalExecutor,
 };
-use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
-use crate::r#impl::channel::router::{
-    ChannelApprovalExecutor, ChannelGoalExecutor, ChannelRouter, ChannelTransport,
-    ChannelTurnExecutor, GmailDraftApprovalExecutor, GoalProgress,
+use crate::r#impl::channel::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoalProgress,
+    GoogleChannelAccountDirectory,
 };
+use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
+use crate::r#impl::channel::handlers::chat::ChatHandler;
+use crate::r#impl::channel::handlers::greeting::GreetingHandler;
+use crate::r#impl::channel::registry::{ApprovalResolver, CapabilityRegistry};
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::channel::telegram::TelegramTransport;
 use crate::r#impl::external::GoogleIntegration;
 use crate::r#impl::goal::ObjectiveStore;
+use fabric::ApprovalCategory;
 
 /// Build the Telegram long-poll channel transport, router, and spawn the
 /// poll loop. Returns the task handle for graceful shutdown.
@@ -67,34 +71,37 @@ pub(super) fn init_telegram_channel(
     let turn_executor: Arc<dyn ChannelTurnExecutor> =
         Arc::new(DaemonChannelTurnExecutor::new(orchestrator));
 
-    let goal_executor: Arc<dyn ChannelGoalExecutor> =
-        Arc::new(DaemonChannelGoalExecutor::new(objective_store));
+    let goal_executor = Arc::new(DaemonChannelGoalExecutor::new(objective_store));
     let approval_repository_for_poll = approval_repository.clone();
     let approval_conversation = cfg
         .owner_user_id
         .map(|id| fabric::channel::ConversationId(id.to_string()));
-    let mut router = ChannelRouter::new(store, turn_executor)
+
+    let google_accounts: Option<Arc<dyn GoogleChannelAccountDirectory>> =
+        google.map(|g| g as Arc<dyn GoogleChannelAccountDirectory>);
+    let mut registry = CapabilityRegistry::new();
+    registry.register(Arc::new(ChatHandler::new(turn_executor, google_accounts)));
+    registry.register(Arc::new(GreetingHandler));
+
+    let mut dispatcher = ChannelDispatcher::with_registry(store, registry)
         .with_goal_executor(goal_executor)
         .with_approval_repository(approval_repository);
-    let gmail_executor: Arc<dyn GmailDraftApprovalExecutor> =
+
+    let gmail_resolver: Arc<dyn ApprovalResolver> =
         Arc::new(DaemonGmailDraftApprovalExecutor::new(gmail_goal_drafts));
-    router = router.with_gmail_draft_executor(gmail_executor);
-    if let Some(google) = google {
-        router = router.with_google_accounts(google);
-    }
+    dispatcher = dispatcher.with_approval_resolver(ApprovalCategory::ActivateGoal, gmail_resolver);
     if let Some(coordinator) = approved_apply {
-        let executor: Arc<dyn ChannelApprovalExecutor> =
-            Arc::new(DaemonChannelApprovalExecutor::new(
-                coordinator,
-                fabric::ProcessId::new(),
-                cancel.clone(),
-            ));
-        router = router.with_approval_executor(executor);
+        let resolver: Arc<dyn ApprovalResolver> = Arc::new(DaemonChannelApprovalExecutor::new(
+            coordinator,
+            fabric::ProcessId::new(),
+            cancel.clone(),
+        ));
+        dispatcher = dispatcher.with_default_approval_resolver(resolver);
     }
 
     tokio::spawn(async move {
         telegram_poll_loop(
-            router,
+            dispatcher,
             transport,
             cursor,
             approval_repository_for_poll,
@@ -108,7 +115,7 @@ pub(super) fn init_telegram_channel(
 
 /// Long-poll loop with jittered exponential backoff and cancellation.
 async fn telegram_poll_loop(
-    mut router: ChannelRouter,
+    mut router: ChannelDispatcher,
     transport: TelegramTransport,
     mut cursor: Option<String>,
     approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,

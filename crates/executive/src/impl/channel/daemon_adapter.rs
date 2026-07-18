@@ -7,13 +7,12 @@
 use std::sync::Arc;
 
 use crate::r#impl::approval::ApplyCoordinator;
+use crate::r#impl::channel::dispatcher::{ChannelGoalExecutor, ChannelTurnExecutor};
 use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
-use crate::r#impl::channel::router::{
-    ChannelApprovalExecutor, ChannelGoalExecutor, ChannelTurnExecutor, GmailDraftApprovalExecutor,
-};
+use crate::r#impl::channel::registry::ApprovalResolver;
 use crate::r#impl::goal::ObjectiveStore;
 use crate::service::DaemonTurnOrchestrator;
-use fabric::{ApprovalId, GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId, ProcessId};
+use fabric::{GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId, ProcessId};
 use tokio::sync::Mutex;
 
 /// Wraps a `DaemonTurnOrchestrator` so the channel router can invoke
@@ -43,8 +42,8 @@ impl DaemonGmailDraftApprovalExecutor {
 }
 
 #[async_trait::async_trait]
-impl GmailDraftApprovalExecutor for DaemonGmailDraftApprovalExecutor {
-    async fn execute_draft_resolution(
+impl ApprovalResolver for DaemonGmailDraftApprovalExecutor {
+    async fn execute_resolved(
         &self,
         approval: &fabric::ApprovalSnapshot,
         action: &str,
@@ -102,10 +101,15 @@ impl DaemonChannelApprovalExecutor {
 }
 
 #[async_trait::async_trait]
-impl ChannelApprovalExecutor for DaemonChannelApprovalExecutor {
-    async fn execute_resolved(&self, approval_id: ApprovalId) -> anyhow::Result<()> {
+impl ApprovalResolver for DaemonChannelApprovalExecutor {
+    async fn execute_resolved(
+        &self,
+        approval: &fabric::ApprovalSnapshot,
+        _action: &str,
+        _now_ms: i64,
+    ) -> anyhow::Result<()> {
         self.coordinator
-            .coordinate(approval_id, self.owner_process, self.cancel.child_token())
+            .coordinate(approval.id, self.owner_process, self.cancel.child_token())
             .await?;
         Ok(())
     }

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::channel::router::{ChannelRouter, ChannelTurnExecutor};
+use executive::r#impl::channel::dispatcher::{ChannelDispatcher, ChannelTurnExecutor};
 use executive::r#impl::channel::store::ChannelStore;
 use executive::r#impl::external::ExternalIdentityRepository;
 use executive::r#impl::goal::coordinator::{GoalCoordinator, GoogleEventWaitCondition};
@@ -305,7 +305,7 @@ async fn subscriptions_route_once_wake_explicit_goals_and_keep_memory_as_proposa
         .unwrap();
 
     let channel_store = ChannelStore::open(&fixture.channel_path).unwrap();
-    let channel_router = Arc::new(Mutex::new(ChannelRouter::new(
+    let channel_router = Arc::new(Mutex::new(ChannelDispatcher::new(
         channel_store,
         Arc::new(NoopTurns),
     )));

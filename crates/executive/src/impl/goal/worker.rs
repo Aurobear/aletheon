@@ -5,7 +5,7 @@ use super::{
     RetryPolicy,
 };
 use crate::core::runtime_registry::RuntimeRegistry;
-use crate::r#impl::channel::router::GoalProgress;
+use crate::r#impl::channel::dispatcher::GoalProgress;
 use crate::r#impl::storage_quota::StorageQuota;
 use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;

@@ -6,7 +6,7 @@ use fabric::{ExternalEventEnvelope, ExternalEventId};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
-use crate::r#impl::channel::router::ChannelRouter;
+use crate::r#impl::channel::dispatcher::ChannelDispatcher;
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::goal::GoalCoordinator;
 use fabric::channel::{MessageContent, OutboundMessage};
@@ -163,7 +163,7 @@ pub trait GoogleNotificationSink: Send + Sync {
 }
 
 struct ChannelRouterNotificationSink {
-    router: Arc<Mutex<ChannelRouter>>,
+    router: Arc<Mutex<ChannelDispatcher>>,
 }
 
 impl GoogleNotificationSink for ChannelRouterNotificationSink {
@@ -233,7 +233,7 @@ impl GoogleEventRouter {
     pub fn new(
         store: Arc<Mutex<GoogleSyncStore>>,
         goals: Arc<GoalCoordinator>,
-        channels: Arc<Mutex<ChannelRouter>>,
+        channels: Arc<Mutex<ChannelDispatcher>>,
     ) -> Self {
         Self {
             store,

@@ -3,10 +3,13 @@ use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
 use corpus::tools::google::oauth::{GoogleOAuthProvider, OAuthClientConfig};
 use corpus::tools::mcp::token_store::{TokenEntry, TokenKey, TokenStore};
-use executive::r#impl::channel::router::{
-    ChannelRouter, ChannelTransport, ChannelTurnExecutor, GoogleChannelAccountDirectory,
+use executive::r#impl::channel::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoogleChannelAccountDirectory,
     ProviderEnvelope,
 };
+use executive::r#impl::channel::handlers::chat::ChatHandler;
+use executive::r#impl::channel::handlers::greeting::GreetingHandler;
+use executive::r#impl::channel::registry::CapabilityRegistry;
 use executive::r#impl::channel::store::ChannelStore;
 use executive::r#impl::external::{ExternalIdentityRepository, GoogleIntegration};
 use fabric::channel::{
@@ -90,12 +93,18 @@ fn inbound(id: &str, sender: &str, text: &str) -> ProviderEnvelope {
     }
 }
 
-fn router(path: &std::path::Path, turn: Arc<Turn>, accounts: Vec<String>) -> ChannelRouter {
+fn router(path: &std::path::Path, turn: Arc<Turn>, accounts: Vec<String>) -> ChannelDispatcher {
     let store = ChannelStore::open(path).unwrap();
     store
         .bind("telegram", "telegram:7", "principal-7", "active")
         .unwrap();
-    ChannelRouter::new(store, turn).with_google_accounts(Arc::new(Accounts(accounts)))
+    let mut registry = CapabilityRegistry::new();
+    registry.register(Arc::new(ChatHandler::new(
+        turn,
+        Some(Arc::new(Accounts(accounts))),
+    )));
+    registry.register(Arc::new(GreetingHandler));
+    ChannelDispatcher::with_registry(store, registry)
 }
 
 #[tokio::test]

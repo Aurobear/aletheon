@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use executive::kernel::chronos::TestClock;
-use executive::r#impl::channel::router::{
-    ChannelRouter, ChannelTransport, ChannelTurnExecutor, GoalProgress, ProviderEnvelope,
+use executive::r#impl::channel::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoalProgress, ProviderEnvelope,
 };
 use executive::r#impl::channel::store::ChannelStore;
 use executive::r#impl::goal::{
@@ -115,7 +115,7 @@ struct Harness {
     goal: GoalCoordinator,
     attempts: AttemptCoordinator,
     executor: Arc<QueueExecutor>,
-    router: ChannelRouter,
+    router: ChannelDispatcher,
     transport: InspectingTransport,
     goal_id: GoalId,
 }
@@ -169,7 +169,7 @@ fn harness(outcomes: Vec<Result<RuntimeResult, RuntimeFailure>>) -> Harness {
 
     let channel_dir = tempfile::tempdir().unwrap();
     let channel_path = channel_dir.path().join("channels.db");
-    let router = ChannelRouter::new(
+    let router = ChannelDispatcher::new(
         ChannelStore::open(&channel_path).unwrap(),
         Arc::new(NoopTurn),
     );
