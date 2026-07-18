@@ -39,12 +39,29 @@ impl AcpBackend for ExecutiveAcpBackend {
         cwd: &Path,
     ) -> Result<CreatedAcpSession, AcpError> {
         verify_principal(principal, &self.connection)?;
-        let thread_id = self
+        // Establish the workspace-scoped predecessor first, then use the
+        // authoritative lifecycle use case to allocate a distinct Session.
+        let previous_thread = self
             .handler
             .select_workspace_session(cwd)
             .await
             .map_err(|error| AcpError::Backend(error.to_string()))?;
-        let session_id = thread_id.0.clone();
+        let response = self
+            .handler
+            .handle(
+                &self.connection,
+                serde_json::json!({
+                    "jsonrpc":"2.0", "id":1, "method":"new_session",
+                    "params":{"session_id":previous_thread.0}
+                }),
+            )
+            .await;
+        let session_id = rpc_result(&response)?["session_id"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AcpError::Backend("Executive omitted new session id".into()))?
+            .to_string();
+        let thread_id = ThreadId(session_id.clone());
         *self.active_session.lock().await = Some(session_id.clone());
         Ok(CreatedAcpSession {
             thread_id,
@@ -414,6 +431,13 @@ mod tests {
             connection_id: principal.connection_id.clone(),
         };
         assert!(verify_principal(&principal, &connection).is_err());
+    }
+
+    #[test]
+    fn stdio_principal_is_bound_to_kernel_process_credentials() {
+        let principal = authenticated_process_principal().unwrap();
+        assert_eq!(principal.uid, unsafe { libc::geteuid() });
+        assert_eq!(principal.gid, unsafe { libc::getegid() });
     }
 
     #[test]

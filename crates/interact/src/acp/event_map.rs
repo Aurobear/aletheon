@@ -22,9 +22,12 @@ pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
             "cursor": cursor.as_ref().map(cursor_json),
         })),
         ClientEvent::TurnCompleted { stop, .. } | ClientEvent::TurnStopped { reason: stop, .. } => {
+            let status = fabric::TurnTerminalStatus::from(stop.clone());
             Some(json!({
                 "sessionUpdate": "turn_end",
-                "stopReason": format!("{stop:?}").to_ascii_lowercase(),
+                // Use the protocol's canonical terminal projection so TUI and
+                // ACP do not disagree on Cancelled/Blocked semantics.
+                "stopReason": format!("{status:?}").to_ascii_lowercase(),
             }))
         }
         ClientEvent::InitializeResponse(_)
@@ -157,5 +160,28 @@ mod tests {
         assert_eq!(update["recovery"][0]["step"], "snapshot");
         assert_eq!(update["recovery"][1]["step"], "subscribe");
         assert_eq!(update["recovery"][1]["after"]["sequence"], 9);
+    }
+
+    #[test]
+    fn acp_terminal_status_matches_canonical_tui_projection() {
+        for stop in [
+            fabric::TurnStop::Completed,
+            fabric::TurnStop::Blocked,
+            fabric::TurnStop::Cancelled,
+            fabric::TurnStop::Failed,
+        ] {
+            let expected = format!("{:?}", fabric::TurnTerminalStatus::from(stop.clone()))
+                .to_ascii_lowercase();
+            let event = ClientEvent::TurnCompleted {
+                thread_id: fabric::ThreadId("thread".into()),
+                turn_id: fabric::TurnId::new(),
+                operation_id: fabric::OperationId::new(),
+                stop,
+            };
+            let update = map_client_event_to_acp(&event).unwrap();
+            assert_eq!(update["sessionUpdate"], "turn_end");
+            assert_eq!(update["stopReason"], expected);
+            assert!(is_turn_terminal(&event));
+        }
     }
 }
