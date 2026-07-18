@@ -4,11 +4,7 @@
 //! merges, validates, and reports application layers.
 
 mod agent;
-<<<<<<< Updated upstream
 pub mod backpressure;
-=======
-mod backpressure;
->>>>>>> Stashed changes
 pub mod diagnostics;
 mod genome;
 mod grok_hardening;
@@ -22,10 +18,6 @@ pub use agent::{
     HooksConfig, PerceptionConfig,
 };
 pub use backpressure::BackpressureConfig;
-<<<<<<< Updated upstream
-pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
-=======
->>>>>>> Stashed changes
 pub use cognit::config::{
     AgentAdmissionConfig, BackupMode, CognitConfig, DeploymentBackupConfig, DeploymentConfig,
     DeploymentHealthConfig, DeploymentIntegrationsConfig, DeploymentMode, DeploymentPathsConfig,
