@@ -3,4 +3,5 @@
 pub mod approval;
 pub mod chat;
 pub mod goal;
+pub mod google_read;
 pub mod greeting;

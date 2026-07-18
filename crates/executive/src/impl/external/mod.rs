@@ -138,7 +138,9 @@ impl GoogleIntegration {
 }
 
 #[async_trait]
-impl crate::r#impl::channel::dispatcher::GoogleChannelAccountDirectory for GoogleIntegration {
+impl crate::r#impl::channel::handlers::google_read::GoogleChannelAccountDirectory
+    for GoogleIntegration
+{
     async fn active_account_labels(&self, principal: &str) -> anyhow::Result<Vec<String>> {
         let bindings = self
             .repository

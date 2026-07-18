@@ -13,10 +13,12 @@ use crate::r#impl::channel::daemon_adapter::{
 };
 use crate::r#impl::channel::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoalProgress,
-    GoogleChannelAccountDirectory,
 };
 use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
 use crate::r#impl::channel::handlers::chat::ChatHandler;
+use crate::r#impl::channel::handlers::google_read::{
+    ChatPreprocessor, GoogleChannelAccountDirectory, GoogleReadPreprocessor,
+};
 use crate::r#impl::channel::handlers::greeting::GreetingHandler;
 use crate::r#impl::channel::registry::{ApprovalResolver, CapabilityRegistry};
 use crate::r#impl::channel::store::ChannelStore;
@@ -77,10 +79,12 @@ pub(super) fn init_telegram_channel(
         .owner_user_id
         .map(|id| fabric::channel::ConversationId(id.to_string()));
 
-    let google_accounts: Option<Arc<dyn GoogleChannelAccountDirectory>> =
-        google.map(|g| g as Arc<dyn GoogleChannelAccountDirectory>);
+    let chat_preprocessor: Option<Arc<dyn ChatPreprocessor>> = google.map(|g| {
+        let accounts = g as Arc<dyn GoogleChannelAccountDirectory>;
+        Arc::new(GoogleReadPreprocessor::new(accounts)) as Arc<dyn ChatPreprocessor>
+    });
     let mut registry = CapabilityRegistry::new();
-    registry.register(Arc::new(ChatHandler::new(turn_executor, google_accounts)));
+    registry.register(Arc::new(ChatHandler::new(turn_executor, chat_preprocessor)));
     registry.register(Arc::new(GreetingHandler));
 
     let mut dispatcher = ChannelDispatcher::with_registry(store, registry)

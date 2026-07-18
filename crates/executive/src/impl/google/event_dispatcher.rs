@@ -6,7 +6,6 @@ use fabric::{ExternalEventEnvelope, ExternalEventId};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
-use crate::r#impl::channel::dispatcher::ChannelDispatcher;
 use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::goal::GoalCoordinator;
 use fabric::channel::{MessageContent, OutboundMessage};
@@ -162,24 +161,6 @@ pub trait GoogleNotificationSink: Send + Sync {
     ) -> Result<bool, String>;
 }
 
-struct ChannelRouterNotificationSink {
-    router: Arc<Mutex<ChannelDispatcher>>,
-}
-
-impl GoogleNotificationSink for ChannelRouterNotificationSink {
-    fn enqueue(
-        &self,
-        conversation_id: ConversationId,
-        event: &ExternalEventEnvelope,
-    ) -> Result<bool, String> {
-        self.router
-            .lock()
-            .unwrap()
-            .enqueue_google_notification(conversation_id, event)
-            .map_err(|error| error.to_string())
-    }
-}
-
 /// Production notification sink that persists directly into the shared channel
 /// outbox. It does not need to hold the async Telegram poll-loop router.
 pub struct DurableGoogleNotificationSink {
@@ -230,21 +211,6 @@ pub struct GoogleEventRouter {
 }
 
 impl GoogleEventRouter {
-    pub fn new(
-        store: Arc<Mutex<GoogleSyncStore>>,
-        goals: Arc<GoalCoordinator>,
-        channels: Arc<Mutex<ChannelDispatcher>>,
-    ) -> Self {
-        Self {
-            store,
-            goals,
-            notifications: Arc::new(ChannelRouterNotificationSink { router: channels }),
-            mail_ingress: None,
-            current_tasks: None,
-            memory_proposals: None,
-        }
-    }
-
     pub fn new_with_notifications(
         store: Arc<Mutex<GoogleSyncStore>>,
         goals: Arc<GoalCoordinator>,

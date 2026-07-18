@@ -78,11 +78,6 @@ pub trait ChannelTurnExecutor: Send + Sync {
 }
 
 #[async_trait::async_trait]
-pub trait GoogleChannelAccountDirectory: Send + Sync {
-    async fn active_account_labels(&self, principal: &str) -> anyhow::Result<Vec<String>>;
-}
-
-#[async_trait::async_trait]
 pub trait ChannelGoalExecutor: Send + Sync {
     async fn create_draft(&self, owner: &str, intent: &str) -> anyhow::Result<GoalSnapshot>;
     async fn list(&self, owner: &str) -> anyhow::Result<Vec<GoalSnapshot>>;
@@ -258,39 +253,6 @@ impl ChannelDispatcher {
     pub fn with_default_approval_resolver(self, resolver: Arc<dyn ApprovalResolver>) -> Self {
         self.approval_resolvers.set_default(resolver);
         self
-    }
-
-    /// Persist a normalized Google notification before Telegram delivery.
-    /// The event ID is the cross-restart idempotency key.
-    pub fn enqueue_google_notification(
-        &self,
-        conversation_id: ConversationId,
-        event: &fabric::ExternalEventEnvelope,
-    ) -> anyhow::Result<bool> {
-        let summary = match &event.event {
-            fabric::GoogleEvent::MailReceived(change)
-            | fabric::GoogleEvent::MailUpdated(change) => format!(
-                "Important mail from {}: {}",
-                change.message.from, change.message.subject
-            ),
-            fabric::GoogleEvent::CalendarEventCreated(calendar)
-            | fabric::GoogleEvent::CalendarEventUpdated(calendar) => {
-                format!("Calendar changed: {}", calendar.summary)
-            }
-            fabric::GoogleEvent::CalendarEventDeleted(_) => "Calendar event cancelled".into(),
-            _ => return Ok(false),
-        };
-        let text: String = summary.chars().take(2_000).collect();
-        self.store.enqueue_outbound(
-            "telegram",
-            &OutboundMessage {
-                conversation_id,
-                content: MessageContent::Text { text },
-                actions: Vec::new(),
-                reply_to: None,
-                correlation_id: event.id.to_string(),
-            },
-        )
     }
 
     /// Persist an approval notification before network delivery. Message text

@@ -22,49 +22,6 @@ use types::{
 /// Default Telegram Bot API base URL.
 pub const DEFAULT_BASE_URL: &str = "https://api.telegram.org";
 
-/// Detect the bounded read-only Google intents that need an explicit account
-/// selection before entering the normal ReAct pipeline.
-pub(crate) fn is_google_read_query(text: &str) -> bool {
-    let normalized = text.to_ascii_lowercase();
-    [
-        "today's events",
-        "today’s events",
-        "today events",
-        "important unread",
-        "unread mail",
-        "unread email",
-        "今天的日程",
-        "今日事件",
-        "重要未读",
-        "未读邮件",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle))
-}
-
-pub(crate) fn account_choice_prompt(labels: &[String]) -> String {
-    let choices = labels
-        .iter()
-        .take(10)
-        .enumerate()
-        .map(|(index, label)| format!("{}. {}", index + 1, truncate_label(label)))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("Please choose a Google account before I run this read-only query:\n{choices}")
-}
-
-pub(crate) fn selected_account_context(label: &str, query: &str) -> String {
-    format!(
-        "<trusted-google-account>{}</trusted-google-account>\n{}",
-        truncate_label(label),
-        query
-    )
-}
-
-fn truncate_label(label: &str) -> String {
-    label.chars().take(128).collect()
-}
-
 /// HTTP long-poll transport for the Telegram Bot API.
 ///
 /// # Token safety

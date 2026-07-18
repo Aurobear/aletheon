@@ -1,34 +1,35 @@
 //! Chat capability: wraps [`ChannelTurnExecutor`] and executes the plain
 //! chat turn for [`Intent::Chat`].
 //!
-//! The Google-read preflight (account picker / `<trusted-google-account>`
-//! wrap) is kept inline here exactly as it was in the god-object router —
-//! extracting it into its own `GoogleReadHandler` capability is Phase 2.
+//! An optional [`ChatPreprocessor`] hook runs before the turn executor. The
+//! only current implementation is [`super::google_read::GoogleReadPreprocessor`],
+//! wired in only when a Google integration is configured — this handler
+//! itself carries no domain knowledge of Google.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabric::channel::{InboundMessage, MessageContent, OutboundMessage};
 
-use crate::r#impl::channel::dispatcher::{ChannelTurnExecutor, GoogleChannelAccountDirectory};
+use crate::r#impl::channel::dispatcher::ChannelTurnExecutor;
 use crate::r#impl::channel::effect::OutboundEffect;
+use crate::r#impl::channel::handlers::google_read::{ChatPreprocess, ChatPreprocessor};
 use crate::r#impl::channel::intent::Intent;
 use crate::r#impl::channel::registry::{CapabilityHandler, HandlerContext, IntentKind};
-use crate::r#impl::channel::telegram;
 
 pub struct ChatHandler {
     turn_executor: Arc<dyn ChannelTurnExecutor>,
-    google_accounts: Option<Arc<dyn GoogleChannelAccountDirectory>>,
+    preprocessor: Option<Arc<dyn ChatPreprocessor>>,
 }
 
 impl ChatHandler {
     pub fn new(
         turn_executor: Arc<dyn ChannelTurnExecutor>,
-        google_accounts: Option<Arc<dyn GoogleChannelAccountDirectory>>,
+        preprocessor: Option<Arc<dyn ChatPreprocessor>>,
     ) -> Self {
         Self {
             turn_executor,
-            google_accounts,
+            preprocessor,
         }
     }
 
@@ -60,31 +61,19 @@ impl CapabilityHandler for ChatHandler {
         };
         let principal = ctx.principal.as_str();
 
-        let mut selected_query = None;
-        if ctx.channel == "telegram"
-            && telegram::is_google_read_query(text)
-            && self.google_accounts.is_some()
-        {
-            let labels = self
-                .google_accounts
-                .as_ref()
-                .expect("checked above")
-                .active_account_labels(principal)
-                .await?;
-            if labels.len() > 1 {
-                return Ok(vec![Self::reply(
-                    ctx,
-                    telegram::account_choice_prompt(&labels),
-                )]);
-            } else if let Some(label) = labels.first() {
-                selected_query = Some(telegram::selected_account_context(label, text));
+        let query = if let Some(preprocessor) = &self.preprocessor {
+            match preprocessor.preprocess(principal, text).await? {
+                ChatPreprocess::Reply(text) => return Ok(vec![Self::reply(ctx, text)]),
+                ChatPreprocess::Rewrite(rewritten) => rewritten,
+                ChatPreprocess::Passthrough => text.clone(),
             }
-        }
+        } else {
+            text.clone()
+        };
 
-        let query = selected_query.as_deref().unwrap_or(text.as_str());
         let reply = self
             .turn_executor
-            .execute(principal, query, &ctx.correlation_id)
+            .execute(principal, &query, &ctx.correlation_id)
             .await?;
         Ok(vec![Self::reply(ctx, reply)])
     }

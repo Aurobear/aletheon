@@ -4,10 +4,12 @@ use corpus::tools::google::oauth::GoogleBinding;
 use corpus::tools::google::oauth::{GoogleOAuthProvider, OAuthClientConfig};
 use corpus::tools::mcp::token_store::{TokenEntry, TokenKey, TokenStore};
 use executive::r#impl::channel::dispatcher::{
-    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoogleChannelAccountDirectory,
-    ProviderEnvelope,
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
 use executive::r#impl::channel::handlers::chat::ChatHandler;
+use executive::r#impl::channel::handlers::google_read::{
+    GoogleChannelAccountDirectory, GoogleReadPreprocessor,
+};
 use executive::r#impl::channel::handlers::greeting::GreetingHandler;
 use executive::r#impl::channel::registry::CapabilityRegistry;
 use executive::r#impl::channel::store::ChannelStore;
@@ -101,7 +103,9 @@ fn router(path: &std::path::Path, turn: Arc<Turn>, accounts: Vec<String>) -> Cha
     let mut registry = CapabilityRegistry::new();
     registry.register(Arc::new(ChatHandler::new(
         turn,
-        Some(Arc::new(Accounts(accounts))),
+        Some(Arc::new(GoogleReadPreprocessor::new(Arc::new(Accounts(
+            accounts,
+        ))))),
     )));
     registry.register(Arc::new(GreetingHandler));
     ChannelDispatcher::with_registry(store, registry)

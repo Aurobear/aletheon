@@ -1,14 +1,12 @@
-use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::channel::dispatcher::{ChannelDispatcher, ChannelTurnExecutor};
 use executive::r#impl::channel::store::ChannelStore;
 use executive::r#impl::external::ExternalIdentityRepository;
 use executive::r#impl::goal::coordinator::{GoalCoordinator, GoogleEventWaitCondition};
 use executive::r#impl::goal::ObjectiveStore;
 use executive::r#impl::google::{
-    GoogleCurrentTaskProjection, GoogleEventDispatcher, GoogleEventRouter,
-    GoogleMemoryProposalSink, GoogleSubscription, GoogleSubscriptionQuery, GoogleSyncStore,
-    ProjectionWrite, SyncCommit, SyncStream,
+    DurableGoogleNotificationSink, GoogleCurrentTaskProjection, GoogleEventDispatcher,
+    GoogleEventRouter, GoogleMemoryProposalSink, GoogleSubscription, GoogleSubscriptionQuery,
+    GoogleSyncStore, ProjectionWrite, SyncCommit, SyncStream,
 };
 use fabric::goal::{GoalBudget, GoalSpec, GoalState, GoalWaitReason};
 use fabric::{
@@ -19,20 +17,6 @@ use fabric::{
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
-
-struct NoopTurns;
-
-#[async_trait]
-impl ChannelTurnExecutor for NoopTurns {
-    async fn execute(
-        &self,
-        _principal: &str,
-        _message: &str,
-        _correlation_id: &str,
-    ) -> anyhow::Result<String> {
-        Ok(String::new())
-    }
-}
 
 #[derive(Default)]
 struct TaskProjection {
@@ -304,18 +288,14 @@ async fn subscriptions_route_once_wake_explicit_goals_and_keep_memory_as_proposa
         })
         .unwrap();
 
-    let channel_store = ChannelStore::open(&fixture.channel_path).unwrap();
-    let channel_router = Arc::new(Mutex::new(ChannelDispatcher::new(
-        channel_store,
-        Arc::new(NoopTurns),
-    )));
+    let notifications = Arc::new(DurableGoogleNotificationSink::open(&fixture.channel_path).unwrap());
     let tasks = Arc::new(TaskProjection::default());
     let memories = Arc::new(MemoryProposals::default());
     let router = Arc::new(
-        GoogleEventRouter::new(
+        GoogleEventRouter::new_with_notifications(
             google_store.clone(),
             Arc::new(GoalCoordinator::new(objective_store.clone())),
-            channel_router,
+            notifications,
         )
         .with_current_tasks(tasks.clone())
         .with_memory_proposals(memories.clone()),
