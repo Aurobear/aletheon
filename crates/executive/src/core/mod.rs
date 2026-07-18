@@ -1,7 +1,7 @@
 pub mod checkpoint;
 pub mod config;
 pub(crate) mod corpus_group;
-pub(crate) mod deploy;
+pub mod deploy;
 pub mod domain_ports;
 pub mod evolution_coordinator;
 pub(crate) mod mcp_config;

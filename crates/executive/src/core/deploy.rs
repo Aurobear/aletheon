@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -64,7 +65,7 @@ pub struct RollbackPlan {
 
 /// External deployment tooling may implement this port. Executive only plans
 /// rollback and must not claim that files were restored without a real owner.
-pub trait RollbackExecutor {
+pub trait RollbackExecutor: Send + Sync {
     fn execute(&self, plan: &RollbackPlan) -> Result<()>;
 }
 
@@ -72,6 +73,56 @@ pub trait RollbackExecutor {
 /// the destination directory before the first installed artifact is replaced.
 pub struct FileRollbackExecutor {
     pub max_artifact_bytes: u64,
+}
+
+/// Receipt returned only after all four installed artifacts were restored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DeploymentRollbackReceipt {
+    pub installed_sha: String,
+    pub restored_artifacts: usize,
+}
+
+/// Production owner for an explicitly requested deployment rollback. The
+/// caller must bind the request to the manifest SHA it inspected, preventing
+/// a stale diagnostic from rolling back a newer deployment.
+#[derive(Clone)]
+pub struct DeploymentRollbackService {
+    manifest_path: PathBuf,
+    executor: Arc<dyn RollbackExecutor>,
+}
+
+impl DeploymentRollbackService {
+    pub fn filesystem(manifest_path: PathBuf) -> Self {
+        Self {
+            manifest_path,
+            executor: Arc::new(FileRollbackExecutor::default()),
+        }
+    }
+
+    pub fn execute_recommended(
+        &self,
+        expected_installed_sha: &str,
+    ) -> Result<DeploymentRollbackReceipt> {
+        anyhow::ensure!(
+            !expected_installed_sha.is_empty(),
+            "expected installed SHA is required"
+        );
+        let manifest = DeploymentManifest::load(&self.manifest_path)?;
+        anyhow::ensure!(
+            manifest.installed_sha == expected_installed_sha,
+            "deployment manifest changed since rollback was confirmed"
+        );
+        let mut deployment = DeploymentInfo::gather();
+        deployment.verify_manifest(&manifest);
+        let plan = deployment
+            .rollback_plan
+            .ok_or_else(|| anyhow::anyhow!("deployment has no recommended rollback"))?;
+        self.executor.execute(&plan)?;
+        Ok(DeploymentRollbackReceipt {
+            installed_sha: manifest.installed_sha,
+            restored_artifacts: 4,
+        })
+    }
 }
 
 static ROLLBACK_FILE_NONCE: AtomicU64 = AtomicU64::new(0);
@@ -349,6 +400,53 @@ mod tests {
         };
         FileRollbackExecutor::default().execute(&plan).unwrap();
         for name in names {
+            assert_eq!(
+                std::fs::read_to_string(installed.join(name)).unwrap(),
+                format!("previous-{name}")
+            );
+        }
+    }
+
+    #[test]
+    fn production_rollback_service_binds_confirmation_sha_and_restores_all_artifacts() {
+        let root = tempfile::tempdir().unwrap();
+        let backup = root.path().join("backup");
+        let installed = root.path().join("installed");
+        std::fs::create_dir_all(&backup).unwrap();
+        std::fs::create_dir_all(&installed).unwrap();
+        for name in ["core", "user", "core.toml", "user.toml"] {
+            std::fs::write(backup.join(name), format!("previous-{name}")).unwrap();
+            std::fs::write(installed.join(name), format!("current-{name}")).unwrap();
+        }
+        let manifest_path = root.path().join("deployment-manifest.json");
+        let manifest = DeploymentManifest {
+            installed_sha: "installed-sha".into(),
+            core_runtime_version: "mismatched-core".into(),
+            user_runtime_version: "mismatched-user".into(),
+            previous_core_binary: backup.join("core"),
+            previous_user_binary: backup.join("user"),
+            previous_core_config: backup.join("core.toml"),
+            previous_user_config: backup.join("user.toml"),
+            core_binary: Some(installed.join("core")),
+            user_binary: Some(installed.join("user")),
+            core_config: Some(installed.join("core.toml")),
+            user_config: Some(installed.join("user.toml")),
+        };
+        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let service = DeploymentRollbackService::filesystem(manifest_path);
+
+        assert!(service.execute_recommended("stale-sha").is_err());
+        for name in ["core", "user", "core.toml", "user.toml"] {
+            assert_eq!(
+                std::fs::read_to_string(installed.join(name)).unwrap(),
+                format!("current-{name}")
+            );
+        }
+
+        let receipt = service.execute_recommended("installed-sha").unwrap();
+        assert_eq!(receipt.installed_sha, "installed-sha");
+        assert_eq!(receipt.restored_artifacts, 4);
+        for name in ["core", "user", "core.toml", "user.toml"] {
             assert_eq!(
                 std::fs::read_to_string(installed.join(name)).unwrap(),
                 format!("previous-{name}")

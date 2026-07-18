@@ -1364,7 +1364,7 @@ impl RequestHandler {
                             .collect()
                     })
                 }),
-                pending_approvals: admin_pending_approvals,
+                pending_approvals: admin_pending_approvals.clone(),
                 session_approvals: admin_session_approvals,
                 daemon_cancel: cancel_token.clone(),
                 google_sync: google_sync.clone(),
@@ -1390,6 +1390,13 @@ impl RequestHandler {
                 agent_runs: Some(agent_repository),
                 agent_profiles: Some(agent_profile_registry),
                 current_profile: Some(Arc::new(tokio::sync::Mutex::new(String::from("default")))),
+                deployment_rollback: Some(Arc::new(
+                    crate::core::deploy::DeploymentRollbackService::filesystem(
+                        std::env::var_os("ALETHEON_DEPLOYMENT_MANIFEST")
+                            .map(std::path::PathBuf::from)
+                            .unwrap_or_else(|| data_dir.join("deployment-manifest.json")),
+                    ),
+                )),
             }),
         );
         let legacy_sessions: Arc<
@@ -1498,6 +1505,8 @@ impl RequestHandler {
             clock: clock.clone(),
         });
         let handler_ports = Arc::new(crate::r#impl::daemon::handler::ports::HandlerPorts::new(
+            kernel.clone(),
+            admin_pending_approvals.clone(),
             fact_use_cases,
             goal_use_cases,
             approval_use_cases,

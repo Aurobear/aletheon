@@ -49,6 +49,10 @@ impl RequestHandler {
 
             // ── Admin / meta ──────────────────────────────────────────
             "daemon.shutdown" => self.handle_daemon_shutdown(&id, &request).await,
+            "deployment.rollback" => {
+                self.handle_deployment_rollback(connection, &id, &request)
+                    .await
+            }
             "reload_skills" => self.handle_reload_skills(&id, &request).await,
             "approval_response" => {
                 self.handle_approval_response(connection, &id, &request)

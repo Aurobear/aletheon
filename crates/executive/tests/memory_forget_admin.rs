@@ -126,6 +126,7 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         agent_runs: None,
         agent_profiles: None,
         current_profile: None,
+        deployment_rollback: None,
     });
     assert!(
         service.forget_memory(policy("owner")).await.is_err(),

@@ -33,6 +33,19 @@ pub struct RequestHandler {
 }
 
 impl RequestHandler {
+    pub(crate) async fn cleanup_disconnected_connection(
+        &self,
+        connection_id: &fabric::ConnectionId,
+    ) -> anyhow::Result<Vec<fabric::ProcessId>> {
+        self.ports
+            .pending_approvals
+            .cancel_connection(connection_id)
+            .await;
+        self.ports
+            .kernel
+            .cleanup_disconnected_connection(connection_id)
+            .await
+    }
     async fn handle_workspace_trust_evaluate(
         &self,
         connection: &super::server::ConnectionContext,

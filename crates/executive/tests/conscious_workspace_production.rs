@@ -56,6 +56,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
             namespace: NamespaceId("production-conscious".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await
         .unwrap()
@@ -190,6 +191,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
             namespace: NamespaceId("production-conscious-child".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await
         .unwrap()

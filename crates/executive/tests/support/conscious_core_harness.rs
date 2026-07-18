@@ -789,6 +789,7 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
             namespace: NamespaceId("ablation".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await?
         .id;
@@ -902,6 +903,7 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
             namespace: NamespaceId("acceptance".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await?
         .id;

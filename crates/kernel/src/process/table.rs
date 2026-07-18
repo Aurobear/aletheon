@@ -30,6 +30,24 @@ impl std::fmt::Debug for ProcessTable {
 }
 
 impl ProcessTable {
+    pub async fn connection_foreground_ids(
+        &self,
+        connection_id: &fabric::ConnectionId,
+    ) -> Vec<ProcessId> {
+        self.records
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(id, runtime)| {
+                matches!(
+                    &runtime.record.ownership,
+                    fabric::ProcessOwnership::ConnectionForeground { connection_id: owner }
+                        if owner == connection_id
+                )
+                .then_some(*id)
+            })
+            .collect()
+    }
     /// Create a table with its own private space manager (tests, standalone).
     pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self::with_space_manager(clock, Arc::new(InMemorySpaceManager::new()))
@@ -152,6 +170,7 @@ impl ProcessTable {
             state: runtime.record.state,
             exit: runtime.record.exit.clone(),
             active_operation: runtime.active_operation,
+            ownership: runtime.record.ownership.clone(),
         }
     }
 }
@@ -199,6 +218,7 @@ impl ProcessManager for ProcessTable {
             created_at: self.clock.wall_now(),
             last_heartbeat: self.clock.mono_now(),
             exit: None,
+            ownership: spec.ownership,
         };
         let mut records = self.records.lock().await;
         records.insert(

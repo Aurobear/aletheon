@@ -7,6 +7,49 @@ use serde_json::json;
 use tracing::info;
 
 impl RequestHandler {
+    pub(super) async fn handle_deployment_rollback(
+        &self,
+        connection: &super::super::super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let params = &request["params"];
+        if params.get("confirm").and_then(|value| value.as_str())
+            != Some("restore-previous-deployment")
+        {
+            return json!({
+                "jsonrpc":"2.0", "id":id,
+                "error":{"code":-32602,"message":"explicit rollback confirmation is required"}
+            });
+        }
+        let Some(expected_sha) = params
+            .get("expected_installed_sha")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+        else {
+            return json!({
+                "jsonrpc":"2.0", "id":id,
+                "error":{"code":-32602,"message":"expected_installed_sha is required"}
+            });
+        };
+        match self
+            .ports
+            .admin
+            .rollback_deployment(expected_sha.to_owned())
+            .await
+        {
+            Ok(receipt) => {
+                info!(
+                    principal = ?connection.principal_id,
+                    installed_sha = %receipt.installed_sha,
+                    "authenticated deployment rollback completed"
+                );
+                json!({"jsonrpc":"2.0","id":id,"result":receipt})
+            }
+            Err(error) => admin_error(id, error),
+        }
+    }
+
     pub(super) async fn handle_daemon_shutdown(
         &self,
         id: &serde_json::Value,

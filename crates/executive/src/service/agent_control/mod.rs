@@ -669,6 +669,9 @@ impl AgentControlPort for AgentControlService {
                 namespace: NamespaceId(request.root_agent_id.0.to_string()),
                 initial_operation: None,
                 deadline,
+                ownership: fabric::ProcessOwnership::ThreadBackground {
+                    thread_id: fabric::ThreadId(request.root_agent_id.0.to_string()),
+                },
             })
             .await
         {

@@ -658,7 +658,62 @@ impl KernelRuntime {
     }
 
     pub async fn reap_process(&self, id: ProcessId) -> anyhow::Result<fabric::ProcessRecord> {
-        self.processes.reap(id).await
+        let record = self.processes.reap(id).await?;
+        self.spawn_specs.lock().await.remove(&id);
+        self.terminal_progress.lock().await.remove(&id);
+        self.terminal_outcomes.lock().await.remove(&id);
+        let mut budget_ownership = self.budget_ownership.lock().await;
+        budget_ownership.processes.remove(&id);
+        budget_ownership.process_rollouts.remove(&id);
+        drop(budget_ownership);
+        let mut identities = self.identities.lock().await;
+        identities.by_process.remove(&id);
+        if identities
+            .by_agent
+            .get(&record.agent_id)
+            .is_some_and(|identity| identity.process_id == id)
+        {
+            identities.by_agent.remove(&record.agent_id);
+        }
+        Ok(record)
+    }
+
+    /// Terminate and reap only foreground processes owned by a disconnected
+    /// transport connection. Thread-owned background processes are untouched.
+    pub async fn cleanup_disconnected_connection(
+        &self,
+        connection_id: &fabric::ConnectionId,
+    ) -> anyhow::Result<Vec<ProcessId>> {
+        let ids = self
+            .processes
+            .connection_foreground_ids(connection_id)
+            .await;
+        let mut reaped = Vec::with_capacity(ids.len());
+        let mut failures = Vec::new();
+        for id in ids {
+            if let Err(error) = self
+                .terminate_process(
+                    id,
+                    ExitReason::Cancelled("owning connection disconnected".into()),
+                )
+                .await
+            {
+                failures.push(format!("terminate {id:?}: {error}"));
+                continue;
+            }
+            if let Err(error) = self.reap_process(id).await {
+                failures.push(format!("reap {id:?}: {error}"));
+            } else {
+                reaped.push(id);
+            }
+        }
+        if !failures.is_empty() {
+            anyhow::bail!(
+                "connection process cleanup incomplete: {}",
+                failures.join("; ")
+            );
+        }
+        Ok(reaped)
     }
 
     pub async fn submit_operation(
@@ -843,6 +898,56 @@ impl ProcessManager for KernelRuntime {
 
     async fn inspect(&self, id: ProcessId) -> anyhow::Result<ProcessSnapshot> {
         self.inspect_process(id).await
+    }
+}
+
+#[cfg(test)]
+mod connection_cleanup_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn disconnect_reaps_only_connection_foreground_processes() {
+        let runtime = KernelRuntime::new();
+        let connection = fabric::ConnectionId::new();
+        let foreground = runtime
+            .spawn_process(SpawnSpec {
+                ownership: fabric::ProcessOwnership::ConnectionForeground {
+                    connection_id: connection.clone(),
+                },
+                ..SpawnSpec::default()
+            })
+            .await
+            .unwrap();
+        let background = runtime
+            .spawn_process(SpawnSpec {
+                ownership: fabric::ProcessOwnership::ThreadBackground {
+                    thread_id: fabric::ThreadId("durable-thread".into()),
+                },
+                ..SpawnSpec::default()
+            })
+            .await
+            .unwrap();
+        runtime
+            .signal_process(foreground.id, ProcessSignal::Start)
+            .await
+            .unwrap();
+        runtime
+            .signal_process(background.id, ProcessSignal::Start)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            runtime
+                .cleanup_disconnected_connection(&connection)
+                .await
+                .unwrap(),
+            vec![foreground.id]
+        );
+        assert!(runtime.inspect_process(foreground.id).await.is_err());
+        assert_eq!(
+            runtime.inspect_process(background.id).await.unwrap().state,
+            fabric::ProcessState::Running
+        );
     }
 }
 

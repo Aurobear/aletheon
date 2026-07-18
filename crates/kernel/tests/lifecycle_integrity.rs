@@ -14,6 +14,7 @@ fn child_spec(parent: ProcessId) -> SpawnSpec {
         namespace: NamespaceId("test".into()),
         initial_operation: None,
         deadline: None,
+        ownership: fabric::ProcessOwnership::Unowned,
     }
 }
 

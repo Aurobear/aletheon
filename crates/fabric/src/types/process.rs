@@ -1,5 +1,6 @@
 //! Agent process records and lifecycle types.
 
+use crate::types::local_authority::{ConnectionId, ThreadId};
 use crate::types::operation::{OperationId, OperationKind};
 use crate::types::time::{MonoDeadline, MonoTime, WallTime};
 use serde::{Deserialize, Serialize};
@@ -136,6 +137,21 @@ pub struct ProcessRecord {
     pub created_at: WallTime,
     pub last_heartbeat: MonoTime,
     pub exit: Option<ExitStatus>,
+    #[serde(default)]
+    pub ownership: ProcessOwnership,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(tag = "scope", rename_all = "snake_case")]
+pub enum ProcessOwnership {
+    #[default]
+    Unowned,
+    ConnectionForeground {
+        connection_id: ConnectionId,
+    },
+    ThreadBackground {
+        thread_id: ThreadId,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +162,8 @@ pub struct SpawnSpec {
     pub namespace: NamespaceId,
     pub initial_operation: Option<OperationKind>,
     pub deadline: Option<MonoDeadline>,
+    #[serde(default)]
+    pub ownership: ProcessOwnership,
 }
 
 impl Default for SpawnSpec {
@@ -157,6 +175,7 @@ impl Default for SpawnSpec {
             namespace: NamespaceId("default".into()),
             initial_operation: None,
             deadline: None,
+            ownership: ProcessOwnership::Unowned,
         }
     }
 }
@@ -180,4 +199,25 @@ pub struct ProcessSnapshot {
     pub state: ProcessState,
     pub exit: Option<ExitStatus>,
     pub active_operation: Option<OperationId>,
+    #[serde(default)]
+    pub ownership: ProcessOwnership,
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    #[test]
+    fn spawn_spec_without_ownership_deserializes_as_unowned() {
+        let value = serde_json::json!({
+            "agent_id": AgentId::new(),
+            "parent": null,
+            "profile": AgentProfileId("default".into()),
+            "namespace": NamespaceId("default".into()),
+            "initial_operation": null,
+            "deadline": null
+        });
+        let spec: SpawnSpec = serde_json::from_value(value).unwrap();
+        assert_eq!(spec.ownership, ProcessOwnership::Unowned);
+    }
 }

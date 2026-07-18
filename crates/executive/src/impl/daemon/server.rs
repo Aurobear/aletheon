@@ -14,7 +14,9 @@ use fabric::protocol::client::{
     ClientMessage, ClientRequest, InitializedResult,
 };
 use fabric::{Clock, ConnectionId, LocalOsPrincipal, PrincipalId, Timer};
+use futures::FutureExt;
 use nix::unistd::{Gid, Uid, User};
+use std::panic::AssertUnwindSafe;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
@@ -371,10 +373,20 @@ async fn dispatch_request(
     request_id: serde_json::Value,
     notify_tx: Option<mpsc::Sender<String>>,
 ) -> serde_json::Value {
-    let task = tokio::spawn(async move { handler.handle(&connection, request).await });
-    match task.await {
+    // Catch a handler panic without spawning a detached nested task. The
+    // connection's JoinSet can therefore cancel the complete request future
+    // before disconnect cleanup starts.
+    match AssertUnwindSafe(handler.handle(&connection, request))
+        .catch_unwind()
+        .await
+    {
         Ok(response) => response,
-        Err(error) => {
+        Err(payload) => {
+            let error = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("request handler panicked");
             let (response, terminal_events) = request_task_failure(request_id, error);
             error!(message = %response["error"]["message"], "Request handler task failed");
             if let Some(tx) = notify_tx {
@@ -613,6 +625,29 @@ impl UnixServer {
     async fn handle_connection(
         stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         handler: RequestHandler,
+        notify_rx: mpsc::Receiver<String>,
+        connection: ConnectionContext,
+    ) -> Result<()> {
+        let result =
+            Self::handle_connection_inner(stream, handler.clone(), notify_rx, connection.clone())
+                .await;
+        if let Err(error) = handler
+            .cleanup_disconnected_connection(&connection.connection_id)
+            .await
+        {
+            tracing::warn!(
+                connection_id = %connection.connection_id.0,
+                %error,
+                "failed to clean up connection-owned foreground processes"
+            );
+        }
+        handler.decrement_connections();
+        result
+    }
+
+    async fn handle_connection_inner(
+        stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        handler: RequestHandler,
         mut notify_rx: mpsc::Receiver<String>,
         connection: ConnectionContext,
     ) -> Result<()> {
@@ -628,6 +663,7 @@ impl UnixServer {
         // while the handler is processing a long-running request (e.g. LLM API call).
         let (resp_tx, mut resp_rx) = mpsc::channel::<String>(1);
         let mut protocol_state = ConnectionProtocolState::New;
+        let mut request_tasks = JoinSet::new();
 
         loop {
             tokio::select! {
@@ -668,7 +704,7 @@ impl UnixServer {
                                 let notify_tx = handler.notify_tx.clone();
                                 let resp_tx = resp_tx.clone();
                                 let connection = connection.clone();
-                                tokio::spawn(async move {
+                                request_tasks.spawn(async move {
                                     let response = dispatch_request(
                                         handler,
                                         connection,
@@ -703,7 +739,7 @@ impl UnixServer {
                     let notify_tx = handler.notify_tx.clone();
                     let resp_tx = resp_tx.clone();
                     let connection = connection.clone();
-                    tokio::spawn(async move {
+                    request_tasks.spawn(async move {
                         let response = dispatch_request(
                             handler,
                             connection,
@@ -730,6 +766,11 @@ impl UnixServer {
                             debug_subscriber_rx = Some(rx);
                             info!("Debug subscriber channel attached to client connection");
                         }
+                    }
+                }
+                completed = request_tasks.join_next(), if !request_tasks.is_empty() => {
+                    if let Some(Err(error)) = completed {
+                        warn!(%error, "connection request task failed");
                     }
                 }
                 // Forward out-of-band notifications from the handler to the client.
@@ -766,7 +807,10 @@ impl UnixServer {
             }
         }
 
-        handler.decrement_connections();
+        // No request started by this transport may outlive it. In particular,
+        // this closes the race where a detached request could register an
+        // approval after disconnect cleanup had already run.
+        request_tasks.shutdown().await;
         Ok(())
     }
 }

@@ -132,6 +132,7 @@ async fn fixture() -> Fixture {
             namespace: NamespaceId("recurrence".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await
         .unwrap()

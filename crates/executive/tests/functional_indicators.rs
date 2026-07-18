@@ -228,6 +228,7 @@ async fn completed_production_broadcast_records_content_free_field_metrics() {
             namespace: NamespaceId("field-metric-acceptance".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await
         .unwrap()

@@ -29,6 +29,13 @@ impl SkillAdminPort for FailingSkillAdmin {
 }
 
 fn setup(skills_dir: std::path::PathBuf) -> (AdminService, CancellationToken, Arc<Mutex<String>>) {
+    setup_with_rollback(skills_dir, None)
+}
+
+fn setup_with_rollback(
+    skills_dir: std::path::PathBuf,
+    deployment_rollback: Option<Arc<dyn executive::service::admin_service::DeploymentRollbackPort>>,
+) -> (AdminService, CancellationToken, Arc<Mutex<String>>) {
     let cancellation = CancellationToken::new();
     let cached_prefix = Arc::new(Mutex::new(String::new()));
     let skills = Arc::new(DefaultSkillAdmin::new(
@@ -54,8 +61,52 @@ fn setup(skills_dir: std::path::PathBuf) -> (AdminService, CancellationToken, Ar
         agent_runs: None,
         agent_profiles: None,
         current_profile: None,
+        deployment_rollback,
     });
     (service, cancellation, cached_prefix)
+}
+
+#[tokio::test]
+async fn admin_surface_executes_confirmed_dual_runtime_rollback() {
+    let root = tempdir().unwrap();
+    let backup = root.path().join("backup");
+    let installed = root.path().join("installed");
+    std::fs::create_dir_all(&backup).unwrap();
+    std::fs::create_dir_all(&installed).unwrap();
+    for name in ["core", "user", "core.toml", "user.toml"] {
+        std::fs::write(backup.join(name), format!("previous-{name}")).unwrap();
+        std::fs::write(installed.join(name), format!("current-{name}")).unwrap();
+    }
+    let manifest = executive::core::deploy::DeploymentManifest {
+        installed_sha: "confirmed-sha".into(),
+        core_runtime_version: "old-core".into(),
+        user_runtime_version: "old-user".into(),
+        previous_core_binary: backup.join("core"),
+        previous_user_binary: backup.join("user"),
+        previous_core_config: backup.join("core.toml"),
+        previous_user_config: backup.join("user.toml"),
+        core_binary: Some(installed.join("core")),
+        user_binary: Some(installed.join("user")),
+        core_config: Some(installed.join("core.toml")),
+        user_config: Some(installed.join("user.toml")),
+    };
+    let manifest_path = root.path().join("deployment-manifest.json");
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let rollback =
+        Arc::new(executive::core::deploy::DeploymentRollbackService::filesystem(manifest_path));
+    let (service, _, _) = setup_with_rollback(root.path().join("skills"), Some(rollback));
+
+    let receipt = service
+        .rollback_deployment("confirmed-sha".into())
+        .await
+        .unwrap();
+    assert_eq!(receipt.restored_artifacts, 4);
+    for name in ["core", "user", "core.toml", "user.toml"] {
+        assert_eq!(
+            std::fs::read_to_string(installed.join(name)).unwrap(),
+            format!("previous-{name}")
+        );
+    }
 }
 
 #[tokio::test]
@@ -95,6 +146,7 @@ async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
         agent_runs: None,
         agent_profiles: None,
         current_profile: None,
+        deployment_rollback: None,
     });
     assert!(matches!(
         service.reload_skills().await,
@@ -175,6 +227,7 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
         agent_runs: None,
         agent_profiles: None,
         current_profile: None,
+        deployment_rollback: None,
     });
 
     assert!(service
@@ -195,6 +248,61 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
     service.shutdown().await.unwrap();
     assert!(cancellation.is_cancelled());
     assert_eq!(runtime_shutdowns.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn disconnect_cancels_only_connection_owned_pending_approvals() {
+    let pending = PendingApprovals::default();
+    let disconnected = fabric::ConnectionId::new();
+    let live = fabric::ConnectionId::new();
+    let owner = ApprovalOwner::new(
+        fabric::PrincipalId::local_uid(1001),
+        fabric::ThreadId("thread-a".into()),
+    );
+    let (disconnected_tx, disconnected_rx) = oneshot::channel();
+    let (live_tx, live_rx) = oneshot::channel();
+    let disconnected_id = pending
+        .insert(
+            owner.clone(),
+            fabric::TurnId::new(),
+            "call-disconnected".into(),
+            "bash_exec".into(),
+            disconnected.clone(),
+            disconnected_tx,
+        )
+        .await;
+    let live_id = pending
+        .insert(
+            owner.clone(),
+            fabric::TurnId::new(),
+            "call-live".into(),
+            "bash_exec".into(),
+            live.clone(),
+            live_tx,
+        )
+        .await;
+
+    assert_eq!(pending.cancel_connection(&disconnected).await, 1);
+    assert_eq!(disconnected_rx.await.unwrap(), ApprovalDecision::Deny);
+    assert!(pending
+        .resolve_authenticated(
+            &owner.principal_id,
+            &disconnected,
+            &disconnected_id,
+            ApprovalDecision::Approve
+        )
+        .await
+        .is_err());
+    pending
+        .resolve_authenticated(
+            &owner.principal_id,
+            &live,
+            &live_id,
+            ApprovalDecision::Approve,
+        )
+        .await
+        .unwrap();
+    assert_eq!(live_rx.await.unwrap(), ApprovalDecision::Approve);
 }
 
 #[test]

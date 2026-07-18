@@ -20,6 +20,9 @@ impl DaemonTurnOrchestrator {
                 agent_id: AgentId::new(),
                 namespace: NamespaceId("daemon".into()),
                 initial_operation: Some(OperationKind::Turn),
+                ownership: fabric::ProcessOwnership::ThreadBackground {
+                    thread_id: fabric::ThreadId("daemon".into()),
+                },
                 ..SpawnSpec::default()
             })
             .await?;

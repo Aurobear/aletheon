@@ -190,6 +190,25 @@ impl PendingApprovals {
         };
         self.resolve(&owner, approval_id, decision).await
     }
+
+    /// Fail closed every still-pending request owned by a disconnected
+    /// transport connection. Requests belonging to other live connections are
+    /// left untouched.
+    pub async fn cancel_connection(&self, connection_id: &fabric::ConnectionId) -> usize {
+        let mut pending = self.inner.lock().await;
+        let keys = pending
+            .iter()
+            .filter_map(|(key, record)| {
+                (&record.connection_id == connection_id).then_some(key.clone())
+            })
+            .collect::<Vec<_>>();
+        for key in &keys {
+            if let Some(record) = pending.remove(key) {
+                let _ = record.respond.send(ApprovalDecision::Deny);
+            }
+        }
+        keys.len()
+    }
 }
 
 #[derive(Clone, Default)]
@@ -267,6 +286,34 @@ pub trait AdminUseCases: Send + Sync {
         now_ms: i64,
         policy: mnemosyne::RetentionCompactionPolicy,
     ) -> Result<mnemosyne::RetentionCompactionReport, AdminServiceError>;
+    async fn rollback_deployment(
+        &self,
+        expected_installed_sha: String,
+    ) -> Result<crate::core::deploy::DeploymentRollbackReceipt, AdminServiceError>;
+}
+
+#[async_trait]
+pub trait DeploymentRollbackPort: Send + Sync {
+    async fn execute(
+        &self,
+        expected_installed_sha: String,
+    ) -> Result<crate::core::deploy::DeploymentRollbackReceipt, AdminServiceError>;
+}
+
+#[async_trait]
+impl DeploymentRollbackPort for crate::core::deploy::DeploymentRollbackService {
+    async fn execute(
+        &self,
+        expected_installed_sha: String,
+    ) -> Result<crate::core::deploy::DeploymentRollbackReceipt, AdminServiceError> {
+        let service = self.clone();
+        tokio::task::spawn_blocking(move || service.execute_recommended(&expected_installed_sha))
+            .await
+            .map_err(|error| {
+                AdminServiceError::Operation(format!("rollback worker failed: {error}"))
+            })?
+            .map_err(|error| AdminServiceError::Operation(error.to_string()))
+    }
 }
 
 #[async_trait]
@@ -326,6 +373,7 @@ pub struct AdminResources {
     pub agent_runs: Option<Arc<dyn crate::service::agent_control::AgentRunRepository>>,
     pub agent_profiles: Option<Arc<crate::r#impl::runtime::AgentProfileRegistry>>,
     pub current_profile: Option<Arc<tokio::sync::Mutex<String>>>,
+    pub deployment_rollback: Option<Arc<dyn DeploymentRollbackPort>>,
 }
 
 pub type ToolCatalogFuture =
@@ -574,5 +622,15 @@ impl AdminUseCases for AdminService {
             .compact_retention(owner, now_ms, policy)
             .await
             .map_err(|error| AdminServiceError::Operation(error.to_string()))
+    }
+
+    async fn rollback_deployment(
+        &self,
+        expected_installed_sha: String,
+    ) -> Result<crate::core::deploy::DeploymentRollbackReceipt, AdminServiceError> {
+        let rollback = self.resources.deployment_rollback.as_ref().ok_or_else(|| {
+            AdminServiceError::Operation("deployment rollback is unavailable".into())
+        })?;
+        rollback.execute(expected_installed_sha).await
     }
 }

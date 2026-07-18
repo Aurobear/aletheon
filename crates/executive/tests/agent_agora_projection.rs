@@ -338,6 +338,7 @@ async fn root_broadcast_child_candidate_and_later_c01_selection_are_replayable()
             namespace: NamespaceId("projection-root".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await
         .unwrap()
@@ -350,6 +351,7 @@ async fn root_broadcast_child_candidate_and_later_c01_selection_are_replayable()
             namespace: NamespaceId("projection-child".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await
         .unwrap()
