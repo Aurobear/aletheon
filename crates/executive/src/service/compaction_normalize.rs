@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 
-use fabric::{is_degenerate_summary, ItemPayload};
+use fabric::{is_degenerate_summary, safe_tail_cut, ContentBlock, ItemPayload, Message, Role};
 use serde::Serialize;
 
 /// Result of normalizing a batch of turn items.
@@ -126,12 +126,32 @@ impl CompactionLineage {
 /// When the underlying items have already been projected into
 /// messages, call `fabric::include::compaction::safe_tail_cut`
 /// directly.
-pub fn safe_tool_tail_cut(_items: &[ItemPayload], _keep_from: usize) -> usize {
-    // Placeholder: the C1 safe_tail_cut operates on `Vec<Message>`.
-    // Executive callers should project items to messages first, then
-    // call the fabric function. This adapter exists for documentation
-    // and future consolidation.
-    _keep_from
+pub fn safe_tool_tail_cut(items: &[ItemPayload], keep_from: usize) -> usize {
+    let projected: Vec<Message> = items
+        .iter()
+        .map(|item| match item {
+            ItemPayload::ToolCall {
+                call_id,
+                name,
+                input,
+            } => Message {
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolUse {
+                    id: call_id.clone(),
+                    name: name.clone(),
+                    input: input.clone(),
+                }],
+            },
+            ItemPayload::ToolResult {
+                call_id,
+                content,
+                is_error,
+                ..
+            } => Message::tool_result(call_id, content, *is_error),
+            _ => Message::system("item"),
+        })
+        .collect();
+    safe_tail_cut(&projected, keep_from)
 }
 
 #[cfg(test)]
@@ -218,5 +238,27 @@ mod tests {
 
         let bad = lineage.with_degenerate_check("ok");
         assert!(bad.degenerate);
+    }
+
+    #[test]
+    fn safe_item_tail_cut_retreats_over_tool_pair() {
+        let items = vec![
+            ItemPayload::UserMessage {
+                content: "u".into(),
+            },
+            ItemPayload::ToolCall {
+                call_id: "c1".into(),
+                name: "x".into(),
+                input: serde_json::Value::Null,
+            },
+            ItemPayload::ToolResult {
+                call_id: "c1".into(),
+                content: "r".into(),
+                is_error: false,
+                permit_id: None,
+                audit_id: None,
+            },
+        ];
+        assert_eq!(safe_tool_tail_cut(&items, 2), 1);
     }
 }

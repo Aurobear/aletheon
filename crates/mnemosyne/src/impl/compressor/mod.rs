@@ -80,7 +80,9 @@ impl AdvancedCompressor {
             }
         }
 
-        let cut = find_tail_cut(messages, &self.tail_config);
+        // Keep the legacy production compaction path on the same authoritative
+        // C1 boundary guard as the rich v2 path.
+        let cut = safe_tail_cut(messages, find_tail_cut(messages, &self.tail_config));
         if cut == 0 || cut >= messages.len() {
             return Ok(false);
         }

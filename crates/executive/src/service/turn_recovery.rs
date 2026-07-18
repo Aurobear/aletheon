@@ -10,7 +10,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use async_trait::async_trait;
 use fabric::{ItemPayload, ItemRecord, SessionAppendStore, SessionId, TurnId};
 use serde::Serialize;
 
@@ -21,6 +22,19 @@ use crate::core::config::GrokHardeningConfig;
 pub enum RecoveryClassification {
     Interrupted,
     Failed,
+}
+
+/// Minimal durable mutation port used by startup recovery. Implementations
+/// must persist both the recovered turn terminal state and the owning
+/// session's aggregate status before returning success.
+#[async_trait]
+pub trait TurnRecoveryStore: SessionAppendStore {
+    async fn mark_recovered_turn(
+        &self,
+        session_id: &SessionId,
+        turn_id: TurnId,
+        classification: RecoveryClassification,
+    ) -> Result<()>;
 }
 
 /// A single turn discovered during the recovery scan.
@@ -50,7 +64,7 @@ impl TurnRecoveryReport {
 /// no terminal item. Gate: only runs when `grok_hardening.compaction_v2`
 /// is enabled.
 pub async fn scan_incomplete_turns(
-    store: &dyn SessionAppendStore,
+    store: &dyn TurnRecoveryStore,
     session_ids: &[SessionId],
     grok_hardening: &GrokHardeningConfig,
 ) -> Result<TurnRecoveryReport> {
@@ -64,19 +78,19 @@ pub async fn scan_incomplete_turns(
     };
 
     for session_id in session_ids {
-        let items = match store.load_items(session_id, None).await {
-            Ok(items) => items,
-            Err(e) => {
-                tracing::warn!(session = %session_id.0, error = %e, "recovery scan: failed to load items");
-                continue;
-            }
-        };
+        let items = store
+            .load_items(session_id, None)
+            .await
+            .with_context(|| format!("recovery scan failed to load session {}", session_id.0))?;
         if items.is_empty() {
             continue;
         }
         let incomplete = classify_incomplete_turns(&items);
         report.turns_scanned += count_turns(&items);
         for turn in incomplete {
+            store
+                .mark_recovered_turn(session_id, turn.turn_id, turn.classification.clone())
+                .await?;
             report.incomplete_turns.push(RecoveredTurn {
                 session_id: session_id.0.clone(),
                 turn_id: turn.turn_id.0.to_string(),

@@ -10,6 +10,8 @@ use fabric::{
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
+use crate::service::turn_recovery::{RecoveryClassification, TurnRecoveryStore};
+
 pub struct CanonicalSessionStore {
     connection: Mutex<Connection>,
 }
@@ -42,6 +44,13 @@ impl CanonicalSessionStore {
                item_json TEXT NOT NULL,
                PRIMARY KEY(session_id, sequence),
                FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+             );
+             CREATE TABLE IF NOT EXISTS recovered_turns(
+               session_id TEXT NOT NULL,
+               turn_id TEXT NOT NULL,
+               classification TEXT NOT NULL,
+               PRIMARY KEY(session_id, turn_id),
+               FOREIGN KEY(session_id) REFERENCES sessions(session_id)
              );",
         )?;
         Ok(Self {
@@ -73,6 +82,51 @@ impl CanonicalSessionStore {
                 expected
             );
         }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl TurnRecoveryStore for CanonicalSessionStore {
+    async fn mark_recovered_turn(
+        &self,
+        session_id: &SessionId,
+        turn_id: fabric::TurnId,
+        classification: RecoveryClassification,
+    ) -> Result<()> {
+        let mut connection = self.connection.lock().unwrap();
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let json: String = tx
+            .query_row(
+                "SELECT record_json FROM sessions WHERE session_id=?1",
+                params![session_id.0],
+                |row| row.get(0),
+            )
+            .context("recovery session not found")?;
+        let mut session: SessionRecord = serde_json::from_str(&json)?;
+        let (classification_name, status) = match classification {
+            RecoveryClassification::Interrupted => {
+                ("interrupted", fabric::SessionStatus::Interrupted)
+            }
+            RecoveryClassification::Failed => ("failed", fabric::SessionStatus::Failed),
+        };
+        // Failed is the stronger aggregate state when a session has more than
+        // one incomplete turn.
+        if session.status != fabric::SessionStatus::Failed
+            || status == fabric::SessionStatus::Failed
+        {
+            session.status = status;
+        }
+        tx.execute(
+            "UPDATE sessions SET record_json=?2 WHERE session_id=?1",
+            params![session_id.0, serde_json::to_string(&session)?],
+        )?;
+        tx.execute(
+            "INSERT INTO recovered_turns(session_id,turn_id,classification) VALUES(?1,?2,?3)
+             ON CONFLICT(session_id,turn_id) DO UPDATE SET classification=excluded.classification",
+            params![session_id.0, turn_id.0.to_string(), classification_name],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 }
@@ -240,7 +294,14 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
             );
         }
         previous = item.sequence;
-        let message = match &item.payload {
+    }
+    // Canonical records remain immutable. Normalize only the model-facing
+    // projection so an orphan result is never exposed during resume/replay.
+    let normalized = crate::service::compaction_normalize::normalize_tool_pairs(
+        items.iter().map(|item| item.payload.clone()).collect(),
+    );
+    for payload in &normalized.items {
+        let message = match payload {
             ItemPayload::UserMessage { content } => Some(Message::user(content)),
             ItemPayload::AssistantMessage { content } => Some(Message::assistant(content)),
             ItemPayload::SystemNotice { content } => Some(Message::system(content)),
@@ -269,4 +330,73 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
         }
     }
     Ok(messages)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn recovery_mutation_persists_turn_and_session_status() {
+        let store = CanonicalSessionStore::open(":memory:").unwrap();
+        let session_id = SessionId("recovery-test".into());
+        store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 0,
+                status: fabric::SessionStatus::Active,
+            })
+            .await
+            .unwrap();
+        let turn_id = fabric::TurnId::new();
+        store
+            .mark_recovered_turn(&session_id, turn_id, RecoveryClassification::Interrupted)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store
+                .load_session(&session_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            fabric::SessionStatus::Interrupted
+        );
+        let persisted: String = store
+            .connection
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT classification FROM recovered_turns WHERE session_id=?1 AND turn_id=?2",
+                params![session_id.0, turn_id.0.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(persisted, "interrupted");
+    }
+
+    #[test]
+    fn projection_hides_orphan_tool_result() {
+        let item = ItemRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: ItemId::new(),
+            session_id: SessionId("s".into()),
+            turn_id: fabric::TurnId::new(),
+            sequence: 1,
+            created_at_ms: 0,
+            payload: ItemPayload::ToolResult {
+                call_id: "missing".into(),
+                content: "output".into(),
+                is_error: false,
+                permit_id: None,
+                audit_id: None,
+            },
+        };
+        let messages = project_messages(&[item]).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, Role::System);
+    }
 }
