@@ -55,6 +55,14 @@ pub trait CheckpointStore: Send + Sync {
     ) -> Result<Option<(TurnCheckpoint, Vec<CheckpointFileEntry>)>>;
     async fn truncate_after(&self, session: &str, prompt_index: u64) -> Result<()>;
     async fn stored_bytes(&self) -> Result<u64>;
+    /// Number of persisted Open checkpoints atomically reconciled to Aborted
+    /// while this store instance was opened.
+    fn startup_reconciled_open(&self) -> u64 {
+        0
+    }
+    fn startup_stored_bytes(&self) -> u64 {
+        0
+    }
 }
 
 #[derive(Default)]
@@ -262,6 +270,13 @@ pub struct WorkspaceCheckpointMetrics {
     pub rewind_partial_total: u64,
     pub rewind_identity_mismatch_total: u64,
     pub checkpoint_quota_rejected_total: u64,
+    pub checkpoint_startup_aborted_total: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceCheckpointMetricSample {
+    pub name: &'static str,
+    pub value: u64,
 }
 
 pub struct WorkspaceCheckpointService {
@@ -279,6 +294,7 @@ pub struct WorkspaceCheckpointService {
     rewind_partial: AtomicU64,
     identity_mismatch: AtomicU64,
     quota_rejected: AtomicU64,
+    startup_aborted: AtomicU64,
 }
 
 impl WorkspaceCheckpointService {
@@ -301,6 +317,8 @@ impl WorkspaceCheckpointService {
         io: Arc<dyn WorkspaceSnapshotIo>,
         feature_enabled: bool,
     ) -> Self {
+        let startup_aborted = store.startup_reconciled_open();
+        let startup_stored_bytes = store.startup_stored_bytes();
         Self {
             store,
             leases,
@@ -312,10 +330,11 @@ impl WorkspaceCheckpointService {
             max_disk_bytes: u64::MAX,
             quota_lock: Mutex::new(()),
             files_captured: AtomicU64::new(0),
-            checkpoint_bytes: AtomicU64::new(0),
+            checkpoint_bytes: AtomicU64::new(startup_stored_bytes),
             rewind_partial: AtomicU64::new(0),
             identity_mismatch: AtomicU64::new(0),
             quota_rejected: AtomicU64::new(0),
+            startup_aborted: AtomicU64::new(startup_aborted),
         }
     }
 
@@ -457,12 +476,36 @@ impl WorkspaceCheckpointService {
         current_workspace: &WorkspaceIdentity,
         now_mono_ms: u64,
     ) -> RestoreOutcome {
+        tracing::info!(
+            event = "workspace.rewind.stage",
+            stage = "begin",
+            outcome = "started",
+            session,
+            prompt_index,
+            "workspace rewind started"
+        );
         if !self.feature_enabled {
+            tracing::warn!(
+                event = "workspace.rewind.stage",
+                stage = "feature_gate",
+                outcome = "disabled",
+                session,
+                prompt_index,
+                "workspace rewind rejected"
+            );
             return RestoreOutcome::FsRestoreFailed {
                 detail: "workspace checkpoint feature is disabled".into(),
             };
         }
         if !self.safety_guard.permits_single_agent_rewind().await {
+            tracing::warn!(
+                event = "workspace.rewind.stage",
+                stage = "agent_safety",
+                outcome = "rejected",
+                session,
+                prompt_index,
+                "workspace rewind rejected while child agent is active"
+            );
             return RestoreOutcome::FsRestoreFailed {
                 detail: "workspace rewind rejected while a child agent is active".into(),
             };
@@ -470,11 +513,20 @@ impl WorkspaceCheckpointService {
         let loaded = match self.store.load(session, prompt_index).await {
             Ok(Some(value)) => value,
             Ok(None) => {
+                tracing::warn!(
+                    event = "workspace.rewind.stage",
+                    stage = "load",
+                    outcome = "not_found",
+                    session,
+                    prompt_index,
+                    "workspace checkpoint load failed"
+                );
                 return RestoreOutcome::FsRestoreFailed {
                     detail: "checkpoint not found".into(),
                 };
             }
             Err(error) => {
+                tracing::warn!(event = "workspace.rewind.stage", stage = "load", outcome = "failed", session, prompt_index, %error, "workspace checkpoint load failed");
                 return RestoreOutcome::FsRestoreFailed {
                     detail: error.to_string(),
                 };
@@ -482,19 +534,44 @@ impl WorkspaceCheckpointService {
         };
         let (checkpoint, files) = loaded;
         if !checkpoint.verify_integrity(&files) {
+            tracing::warn!(
+                event = "workspace.rewind.stage",
+                stage = "integrity",
+                outcome = "failed",
+                session,
+                prompt_index,
+                "workspace checkpoint integrity rejected"
+            );
             return RestoreOutcome::FsRestoreFailed {
                 detail: "checkpoint integrity verification failed".into(),
             };
         }
         if checkpoint.finalize_state != CheckpointFinalizeState::Finalized {
+            tracing::warn!(event = "workspace.rewind.stage", stage = "finalize_state", outcome = "rejected", session, prompt_index, state = ?checkpoint.finalize_state, "workspace checkpoint is not restorable");
             return RestoreOutcome::FsRestoreFailed {
                 detail: "checkpoint is not finalized".into(),
             };
         }
         if !checkpoint.workspace.matches(current_workspace) {
             self.identity_mismatch.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                event = "workspace.rewind.stage",
+                stage = "identity",
+                outcome = "mismatch",
+                session,
+                prompt_index,
+                "workspace identity mismatch"
+            );
             return RestoreOutcome::IdentityMismatch;
         }
+        tracing::info!(
+            event = "workspace.rewind.stage",
+            stage = "identity",
+            outcome = "passed",
+            session,
+            prompt_index,
+            "workspace identity verified"
+        );
 
         let resource = format!(
             "workspace-rewind:{}",
@@ -514,6 +591,7 @@ impl WorkspaceCheckpointService {
         {
             Ok(lease) => lease,
             Err(error) => {
+                tracing::warn!(event = "workspace.rewind.stage", stage = "lease", outcome = "failed", session, prompt_index, %error, "workspace rewind lease unavailable");
                 return RestoreOutcome::FsRestoreFailed {
                     detail: format!("workspace rewind lease unavailable: {error}"),
                 };
@@ -521,28 +599,40 @@ impl WorkspaceCheckpointService {
         };
 
         let outcome = match self.io.protect_current(current_workspace).await {
-            Err(_) => RestoreOutcome::UnprotectedChangesAbort,
-            Ok(rollback) => match self.io.restore(current_workspace, &files, &rollback).await {
-                Err(error) => RestoreOutcome::FsRestoreFailed {
-                    detail: error.to_string(),
-                },
-                Ok(()) => match self.store.truncate_after(session, prompt_index).await {
-                    Ok(()) => {
-                        if let Ok(bytes) = self.store.stored_bytes().await {
-                            self.checkpoint_bytes.store(bytes, Ordering::Relaxed);
-                        }
-                        RestoreOutcome::Completed
-                    }
+            Err(error) => {
+                tracing::warn!(event = "workspace.rewind.stage", stage = "protect_current", outcome = "failed", session, prompt_index, %error, "current workspace could not be protected");
+                RestoreOutcome::UnprotectedChangesAbort
+            }
+            Ok(rollback) => {
+                match self.io.restore(current_workspace, &files, &rollback).await {
                     Err(error) => {
-                        self.rewind_partial.fetch_add(1, Ordering::Relaxed);
-                        RestoreOutcome::Partial {
-                            detail: format!(
+                        tracing::warn!(event = "workspace.rewind.stage", stage = "fs_restore", outcome = "failed_checkpoints_retained", session, prompt_index, %error, "workspace restore failed; checkpoints retained");
+                        RestoreOutcome::FsRestoreFailed {
+                            detail: error.to_string(),
+                        }
+                    }
+                    Ok(()) => {
+                        match self.store.truncate_after(session, prompt_index).await {
+                            Ok(()) => {
+                                if let Ok(bytes) = self.store.stored_bytes().await {
+                                    self.checkpoint_bytes.store(bytes, Ordering::Relaxed);
+                                }
+                                tracing::info!(event = "workspace.rewind.stage", stage = "truncate", outcome = "completed", session, prompt_index, "future workspace checkpoints truncated after successful restore");
+                                RestoreOutcome::Completed
+                            }
+                            Err(error) => {
+                                self.rewind_partial.fetch_add(1, Ordering::Relaxed);
+                                tracing::warn!(event = "workspace.rewind.stage", stage = "truncate", outcome = "partial", session, prompt_index, %error, "workspace restored but checkpoint truncation failed");
+                                RestoreOutcome::Partial {
+                                    detail: format!(
                                 "workspace restored but checkpoint truncation failed: {error}"
                             ),
+                                }
+                            }
                         }
                     }
-                },
-            },
+                }
+            }
         };
         self.leases.release(lease).await;
         self.publish_event(
@@ -555,6 +645,14 @@ impl WorkspaceCheckpointService {
             }),
         )
         .await;
+        tracing::info!(
+            event = "workspace.rewind.stage",
+            stage = "complete",
+            outcome = ?outcome,
+            session,
+            prompt_index,
+            "workspace rewind finished"
+        );
         outcome
     }
 
@@ -565,7 +663,40 @@ impl WorkspaceCheckpointService {
             rewind_partial_total: self.rewind_partial.load(Ordering::Relaxed),
             rewind_identity_mismatch_total: self.identity_mismatch.load(Ordering::Relaxed),
             checkpoint_quota_rejected_total: self.quota_rejected.load(Ordering::Relaxed),
+            checkpoint_startup_aborted_total: self.startup_aborted.load(Ordering::Relaxed),
         }
+    }
+
+    /// Fixed-cardinality aggregate export. No principal/session/thread/workspace
+    /// labels are admitted, preventing unbounded metric series.
+    pub fn metric_samples(&self) -> [WorkspaceCheckpointMetricSample; 6] {
+        let metrics = self.metrics();
+        [
+            WorkspaceCheckpointMetricSample {
+                name: "checkpoint_files_captured_total",
+                value: metrics.files_captured,
+            },
+            WorkspaceCheckpointMetricSample {
+                name: "checkpoint_disk_bytes",
+                value: metrics.checkpoint_disk_bytes,
+            },
+            WorkspaceCheckpointMetricSample {
+                name: "rewind_partial_total",
+                value: metrics.rewind_partial_total,
+            },
+            WorkspaceCheckpointMetricSample {
+                name: "rewind_identity_mismatch_total",
+                value: metrics.rewind_identity_mismatch_total,
+            },
+            WorkspaceCheckpointMetricSample {
+                name: "checkpoint_quota_rejected_total",
+                value: metrics.checkpoint_quota_rejected_total,
+            },
+            WorkspaceCheckpointMetricSample {
+                name: "checkpoint_startup_aborted_total",
+                value: metrics.checkpoint_startup_aborted_total,
+            },
+        ]
     }
 
     async fn publish_event(
@@ -885,6 +1016,28 @@ mod tests {
             writable_roots: vec![path.to_path_buf()],
             created_at_ms: 1,
         }
+    }
+
+    #[test]
+    fn checkpoint_metric_export_has_fixed_aggregate_cardinality() {
+        let service = WorkspaceCheckpointService::new(
+            Arc::new(InMemoryCheckpointStore::default()),
+            Arc::new(TestLeases::default()),
+            true,
+        );
+        let samples = service.metric_samples();
+        assert_eq!(samples.len(), 6);
+        assert_eq!(
+            samples.map(|sample| sample.name),
+            [
+                "checkpoint_files_captured_total",
+                "checkpoint_disk_bytes",
+                "rewind_partial_total",
+                "rewind_identity_mismatch_total",
+                "checkpoint_quota_rejected_total",
+                "checkpoint_startup_aborted_total",
+            ]
+        );
     }
 
     #[tokio::test]

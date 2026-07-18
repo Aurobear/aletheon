@@ -34,7 +34,7 @@
 
 1. **owner**：Fabric 定义 `TurnCheckpoint`/domain ref 类型；Executive 拥有 capture/finalize/restore 编排与持久化；host 铸造所有 ref（模型只给 turn 序号）。
 2. **scope**：checkpoint 按 `(session_id, thread_id, turn_id/prompt_index)` + workspace_identity 持久化。
-3. **crash 恢复**：checkpoint 持久（sqlite）；非 Completed 结果也须显式 finalize/abort，不留 open checkpoint；restore 幂等。
+3. **crash 恢复**：checkpoint 持久（sqlite）；非 Completed 结果也须显式 finalize/abort；进程崩溃遗留的 `Open` 在 store/daemon 启动事务中统一改为 `Aborted`，启动完成后不得存在 `Open`；restore 幂等。
 4. **fail 模式**：workspace identity 不匹配 → fail closed（不改任何内容）；未跟踪修改无法保护 → abort；FS restore 失败 → **保留 checkpoints 供重试**（不截断）。
 5. **上限**：checkpoint 磁盘配额；每 turn 捕获的变更文件数上限；超限告警。
 6. **兼容**：flag 关闭 → 不捕获、不暴露 rewind（等价当前）。
@@ -179,7 +179,7 @@ impl WorkspaceCheckpointService {
 - T1. 新建 `workspace_checkpoint.rs` 全类型 + `integrity_digest` 计算。`cargo check -p fabric`。单测：digest 稳定。
 
 **阶段 B：变更捕获（复用 FileSnap）**
-- T2. 变更扫描：给定 writable_roots，产出 `Vec<CheckpointFileEntry>`（复用 `FileSnap::capture` 语义）。超 `MAX_CHECKPOINT_FILES` → 告警 + 截断记录。单测。
+- T2. 变更扫描：给定 writable_roots，产出 `Vec<CheckpointFileEntry>`（复用 `FileSnap::capture` 语义）。超 `MAX_CHECKPOINT_FILES` → 告警，并持久化**无可恢复 blob 的 `Aborted` 记录**；截断捕获绝不作为可 rewind 的 `Finalized` checkpoint。单测。
 - T3. 内存 `CheckpointStore` 替身 + begin/finalize/load/truncate_after 单测。
 
 **阶段 C：restore 事务（核心，最需谨慎）**
@@ -203,7 +203,7 @@ impl WorkspaceCheckpointService {
 ## 7. 兼容与迁移
 
 - **flag 关闭**：无捕获、无 rewind（等价当前；FileSnap 仍未被其他路径使用）。
-- **分阶段**：第一版仅 FS + 单 Agent + 显式触发。durable/crash recovery、patch/hunk、git、multi-agent 各为后续独立计划（每阶段独立 flag + telemetry + 配额）。
+- **分阶段**：第一版仅 FS + 单 Agent + 显式触发，并包含 SQLite durability 与启动时 `Open → Aborted` crash reconciliation。后续仅指 patch/hunk、git、runtime-domain 与 multi-agent 协调（每阶段独立 flag + telemetry + 配额），不再把基础 durable/crash reconciliation 延后。
 - **runtime vs workspace**：本 spec 只碰 workspace FS；runtime checkpoint（`RuntimeResumability`）是 AgentControl 域，只做可选 ref 关联不嵌入。
 - **多 Agent**：第一版有活跃 child 时**拒绝** rewind（后续做协调取消）。
 
@@ -221,8 +221,10 @@ impl WorkspaceCheckpointService {
 ## 9. 可观测性
 
 - 事件：`workspace.checkpoint.began`/`finalized`（file_count、turn_id）、`workspace.rewound`（from_prompt_index、outcome）。
-- 指标：`checkpoint_files_captured{session}`、`checkpoint_disk_bytes`、`rewind_partial_total`、`rewind_identity_mismatch_total`。
+- 指标：固定 6 项 aggregate（**无 session/thread/workspace label**）：`checkpoint_files_captured_total`、`checkpoint_disk_bytes`、`rewind_partial_total`、`rewind_identity_mismatch_total`、`checkpoint_quota_rejected_total`、`checkpoint_startup_aborted_total`。
 - 日志：restore 各阶段结果；FS restore 失败带保留 checkpoint 提示。
+
+**2026-07-18 用户裁定**：启动 reconciliation 属于本期 durability，不是 future phase；session 仅可进入结构化日志/事件，不得作为 checkpoint metric label；文件数截断或 quota 超限均保留 `Aborted` 审计记录而非可恢复的部分 checkpoint。
 
 ## 10. 许可证
 
@@ -236,3 +238,4 @@ impl WorkspaceCheckpointService {
 - T12/RPC authority：`workspace_rewind_tests` 1/1、`thread_authority::tests` 2/2 通过；请求路径/blob 被拒，重启后仍从 host-bound authority 恢复 workspace。
 - T13：`bash scripts/cargo-agent.sh check -p executive` 与 `fmt --all -- --check` 通过；`clippy -p executive --all-targets -- -D warnings` 被既有 integration support dead-code 阻断（`tests/support/mock_llm_provider.rs:41,106,122`、`mock_sandbox.rs:66`），G4 生产目标改以 `clippy -p executive --lib -- -D warnings` 验收。
 - 灰度：仅开启 `grok_hardening.workspace_checkpoint = true` 的主体启用；磁盘观测使用 `checkpoint_disk_bytes`，单 turn 文件数硬上限为 2048。
+- 启动恢复补充：SQLite store 在单个 `IMMEDIATE` transaction 中校验所有记录并将遗留 `Open` 改为 `Aborted`；reopen 测试证明已终态记录不变、二次启动 reconciliation 为零。

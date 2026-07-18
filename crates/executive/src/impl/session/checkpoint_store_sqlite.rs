@@ -14,6 +14,8 @@ use crate::service::workspace_checkpoint::CheckpointStore;
 
 pub struct SqliteCheckpointStore {
     connection: Mutex<Connection>,
+    startup_reconciled_open: u64,
+    startup_stored_bytes: u64,
 }
 
 impl SqliteCheckpointStore {
@@ -25,7 +27,7 @@ impl SqliteCheckpointStore {
         Self::from_connection(Connection::open_in_memory()?)
     }
 
-    fn from_connection(connection: Connection) -> Result<Self> {
+    fn from_connection(mut connection: Connection) -> Result<Self> {
         connection.execute_batch(
             "PRAGMA journal_mode = WAL;
              CREATE TABLE IF NOT EXISTS workspace_checkpoints (
@@ -39,9 +41,65 @@ impl SqliteCheckpointStore {
              CREATE INDEX IF NOT EXISTS workspace_checkpoint_order
                ON workspace_checkpoints(session_id, prompt_index);",
         )?;
+        let (startup_reconciled_open, startup_stored_bytes) =
+            Self::abort_open_checkpoints(&mut connection)?;
+        if startup_reconciled_open != 0 {
+            tracing::warn!(
+                event = "workspace.checkpoint.startup_reconciled",
+                count = startup_reconciled_open,
+                "aborted workspace checkpoints left open by an earlier process"
+            );
+        }
         Ok(Self {
             connection: Mutex::new(connection),
+            startup_reconciled_open,
+            startup_stored_bytes,
         })
+    }
+
+    fn abort_open_checkpoints(connection: &mut Connection) -> Result<(u64, u64)> {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let rows = {
+            let mut statement = transaction.prepare(
+                "SELECT checkpoint_id, checkpoint_json, files_json FROM workspace_checkpoints",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        let mut reconciled = 0_u64;
+        let mut stored_bytes = 0_u64;
+        for (row_id, checkpoint_json, files_json) in rows {
+            let (mut checkpoint, files) = Self::decode_verified(&checkpoint_json, &files_json)?;
+            stored_bytes = stored_bytes.saturating_add(
+                files
+                    .iter()
+                    .filter_map(|entry| entry.content.as_ref())
+                    .map(|content| content.len() as u64)
+                    .sum::<u64>(),
+            );
+            anyhow::ensure!(
+                checkpoint.checkpoint_id.0.to_string() == row_id,
+                "checkpoint row identity mismatch during startup reconciliation"
+            );
+            if checkpoint.finalize_state == CheckpointFinalizeState::Open {
+                checkpoint.finalize_state = CheckpointFinalizeState::Aborted;
+                transaction.execute(
+                    "UPDATE workspace_checkpoints SET checkpoint_json = ?1 WHERE checkpoint_id = ?2",
+                    params![serde_json::to_string(&checkpoint)?, row_id],
+                )?;
+                reconciled = reconciled.saturating_add(1);
+            }
+        }
+        transaction.commit()?;
+        Ok((reconciled, stored_bytes))
     }
 
     fn decode_verified(
@@ -210,6 +268,14 @@ impl CheckpointStore for SqliteCheckpointStore {
         }
         Ok(total)
     }
+
+    fn startup_reconciled_open(&self) -> u64 {
+        self.startup_reconciled_open
+    }
+
+    fn startup_stored_bytes(&self) -> u64 {
+        self.startup_stored_bytes
+    }
 }
 
 #[cfg(test)]
@@ -308,6 +374,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reopen_atomically_aborts_every_checkpoint_left_open_by_crash() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("checkpoints.sqlite");
+        let first = checkpoint(1, CheckpointFinalizeState::Open);
+        let second = checkpoint(2, CheckpointFinalizeState::Open);
+        let finalized = checkpoint(3, CheckpointFinalizeState::Finalized);
+        {
+            let store = SqliteCheckpointStore::open(&path).unwrap();
+            for value in [&first, &second, &finalized] {
+                store
+                    .begin(
+                        value.clone(),
+                        vec![CheckpointFileEntry {
+                            path: PathBuf::from("file"),
+                            content: Some("one".into()),
+                        }],
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let store = SqliteCheckpointStore::open(&path).unwrap();
+        assert_eq!(store.startup_reconciled_open(), 2);
+        assert_eq!(store.startup_stored_bytes(), 9);
+        assert_eq!(
+            store
+                .load("session", 1)
+                .await
+                .unwrap()
+                .unwrap()
+                .0
+                .finalize_state,
+            CheckpointFinalizeState::Aborted
+        );
+        assert_eq!(
+            store
+                .load("session", 2)
+                .await
+                .unwrap()
+                .unwrap()
+                .0
+                .finalize_state,
+            CheckpointFinalizeState::Aborted
+        );
+        assert_eq!(
+            store
+                .load("session", 3)
+                .await
+                .unwrap()
+                .unwrap()
+                .0
+                .finalize_state,
+            CheckpointFinalizeState::Finalized
+        );
+        drop(store);
+
+        let reopened = SqliteCheckpointStore::open(&path).unwrap();
+        assert_eq!(reopened.startup_reconciled_open(), 0);
+    }
+
+    #[tokio::test]
     async fn reopen_rejects_tampered_checkpoint_metadata() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("checkpoints.sqlite");
@@ -343,8 +471,10 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let store = SqliteCheckpointStore::open(&path).unwrap();
-        let error = store.load("session", 1).await.unwrap_err();
+        let error = match SqliteCheckpointStore::open(&path) {
+            Ok(_) => panic!("tampered checkpoint must fail startup reconciliation"),
+            Err(error) => error,
+        };
         assert!(error.to_string().contains("integrity verification failed"));
     }
 
@@ -375,8 +505,10 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let store = SqliteCheckpointStore::open(&path).unwrap();
-        let error = store.load("session", 1).await.unwrap_err();
+        let error = match SqliteCheckpointStore::open(&path) {
+            Ok(_) => panic!("tampered snapshot must fail startup reconciliation"),
+            Err(error) => error,
+        };
         assert!(error.to_string().contains("integrity verification failed"));
     }
 }
