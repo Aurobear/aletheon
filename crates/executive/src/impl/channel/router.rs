@@ -7,8 +7,7 @@
 use std::sync::{Arc, Mutex};
 
 use fabric::channel::{
-    ActionType, ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage,
-    UserAction,
+    ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage,
 };
 use fabric::{
     ApprovalCategory, ApprovalId, ApprovalSnapshot, ApprovalStatus, AttemptId, GoalId,
@@ -18,6 +17,8 @@ use fabric::{
 use crate::r#impl::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
 use crate::r#impl::goal::{AttemptCoordinationOutcome, RetryDecision};
 
+use super::intent::{classify_intent, Intent};
+use super::notify::render_approval_notification;
 use super::store::{ChannelStore, InsertOutcome};
 
 // ---------------------------------------------------------------------------
@@ -110,23 +111,6 @@ pub trait GmailDraftApprovalExecutor: Send + Sync {
     ) -> anyhow::Result<ApprovalSnapshot>;
 }
 
-// ---------------------------------------------------------------------------
-// Input routing (pure)
-// ---------------------------------------------------------------------------
-
-/// Classification of an inbound message for routing purposes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RoutedInput {
-    /// `/start` — respond with a greeting, no LLM call.
-    Greeting,
-    /// Text to be executed as a chat turn.
-    Chat(String),
-    /// Owner-scoped persistent Goal lifecycle command.
-    GoalCommand { command: String, args: String },
-    /// Input that the router cannot handle.
-    Unsupported(String),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoalProgressKind {
     Succeeded,
@@ -214,32 +198,6 @@ impl GoalProgress {
             actions: vec![],
             reply_to: None,
             correlation_id: self.correlation_id(),
-        }
-    }
-}
-
-/// Classify a [`MessageContent`] into a [`RoutedInput`].
-///
-/// This is a pure function with no side-effects or async — easy to test.
-pub fn route_content(content: &MessageContent) -> RoutedInput {
-    match content {
-        MessageContent::Command { command, args } => match command.as_str() {
-            "/start" => RoutedInput::Greeting,
-            "/chat" => RoutedInput::Chat(args.clone()),
-            "/goal" | "/goals" | "/status" | "/pause" | "/resume" | "/cancel" | "/edit" => {
-                RoutedInput::GoalCommand {
-                    command: command.clone(),
-                    args: args.clone(),
-                }
-            }
-            _ => RoutedInput::Unsupported(command.clone()),
-        },
-        MessageContent::Text { text } => {
-            if text.trim().is_empty() {
-                RoutedInput::Unsupported(String::new())
-            } else {
-                RoutedInput::Chat(text.clone())
-            }
         }
     }
 }
@@ -598,7 +556,7 @@ impl ChannelRouter {
     /// 2. Resolve the sender's active binding to a principal.
     /// 3. Unknown senders are marked rejected and cursor is advanced
     ///    (no LLM invocation, no outbox).
-    /// 4. Normalize content via [`route_content`].
+    /// 4. Normalize content via [`classify_intent`].
     /// 5. Execute the AI turn only for chat messages.
     /// 6. Build an outbound DTO from the routed input and optional AI reply.
     /// 7. Persist inbox-completed + outbox + cursor in one transaction.
@@ -646,7 +604,7 @@ impl ChannelRouter {
         };
 
         // 5. Normalize ordinary message content through command routing.
-        let routed = route_content(&message.content);
+        let routed = classify_intent(&message.content);
 
         // 6. Execute AI turn only for non-callback chat messages.
         let mut ai_reply: Option<String> = approval_reply.map(|result| match result {
@@ -654,7 +612,7 @@ impl ChannelRouter {
             Err(error) => error.to_string(),
         });
         if message.reply_to_action.is_none() {
-            if let RoutedInput::Chat(text) = &routed {
+            if let Intent::Chat(text) = &routed {
                 let principal = principal.as_deref().expect("principal checked above");
                 let mut selected_query = None;
                 if channel == "telegram"
@@ -696,7 +654,7 @@ impl ChannelRouter {
             }
         }
         if message.reply_to_action.is_none() {
-            if let RoutedInput::GoalCommand { command, args } = &routed {
+            if let Intent::GoalCommand { command, args } = &routed {
                 match self
                     .execute_goal_command(
                         principal.as_deref().unwrap(),
@@ -817,9 +775,9 @@ impl ChannelRouter {
                 count += 1;
                 continue;
             }
-            let routed = route_content(&msg.content);
+            let routed = classify_intent(&msg.content);
             let mut ai_reply: Option<String> = None;
-            if let RoutedInput::Chat(text) = &routed {
+            if let Intent::Chat(text) = &routed {
                 let principal = principal.as_deref().expect("principal checked above");
                 let mut selected_query = None;
                 if channel_str == "telegram"
@@ -856,7 +814,7 @@ impl ChannelRouter {
                     }
                 }
             }
-            if let RoutedInput::GoalCommand { command, args } = &routed {
+            if let Intent::GoalCommand { command, args } = &routed {
                 match self
                     .execute_goal_command(
                         principal.as_deref().unwrap(),
@@ -969,93 +927,27 @@ impl ChannelRouter {
     }
 }
 
-fn render_approval_notification(
-    conversation_id: ConversationId,
-    approval: &ApprovalSnapshot,
-) -> OutboundMessage {
-    if approval.category == ApprovalCategory::ActivateGoal {
-        let text = format!(
-            "Goal {} requires owner confirmation.\nRisk: {:?}\nExpires: {} ms\n{}",
-            approval.goal_id.0, approval.risk, approval.expires_at_ms, approval.summary
-        );
-        let action = |suffix: &str, label: &str, action_type| UserAction {
-            action_id: format!("{}:{suffix}", approval.id),
-            label: label.into(),
-            action_type,
-        };
-        return OutboundMessage {
-            conversation_id,
-            content: MessageContent::Text { text },
-            actions: vec![
-                action("confirm", "Confirm", ActionType::Approve),
-                action("edit", "Edit", ActionType::Callback),
-                action("reject", "Reject", ActionType::Reject),
-            ],
-            reply_to: None,
-            correlation_id: format!("approval:{}", approval.id),
-        };
-    }
-    let changed_files = approval
-        .subject
-        .attributes
-        .get("changed_file_count")
-        .map(String::as_str)
-        .unwrap_or("unknown");
-    let verification = approval
-        .subject
-        .attributes
-        .get("verification_summary")
-        .map(String::as_str)
-        .unwrap_or("required checks passed");
-    let text = format!(
-        "Goal {} requires approval.\nChanged files: {}\nVerification: {}\nRisk: {:?}\nExpires: {} ms\n{}",
-        approval.goal_id.0,
-        changed_files,
-        verification,
-        approval.risk,
-        approval.expires_at_ms,
-        approval.summary
-    );
-    let action = |suffix: &str, label: &str, action_type| UserAction {
-        action_id: format!("{}:{suffix}", approval.id),
-        label: label.into(),
-        action_type,
-    };
-    OutboundMessage {
-        conversation_id,
-        content: MessageContent::Text { text },
-        actions: vec![
-            action("apply", "Apply", ActionType::Approve),
-            action("view_diff", "View Diff", ActionType::Callback),
-            action("revision", "Request Revision", ActionType::Callback),
-            action("reject", "Reject", ActionType::Reject),
-        ],
-        reply_to: None,
-        correlation_id: format!("approval:{}", approval.id),
-    }
-}
-
 /// Build an [`OutboundMessage`] from a routed input and optional AI reply.
 fn build_outbound(
-    routed: &RoutedInput,
+    routed: &Intent,
     conversation_id: &ConversationId,
     message_id: &MessageId,
     correlation_id: &str,
     ai_reply: Option<&str>,
 ) -> OutboundMessage {
     let content = match routed {
-        RoutedInput::Chat(_) => MessageContent::Text {
+        Intent::Chat(_) => MessageContent::Text {
             text: ai_reply.unwrap_or_default().to_string(),
         },
-        RoutedInput::Greeting => MessageContent::Text {
+        Intent::Greeting => MessageContent::Text {
             text: "Hello! I am Aletheon. How can I help you today?".into(),
         },
-        RoutedInput::GoalCommand { .. } => MessageContent::Text {
+        Intent::GoalCommand { .. } => MessageContent::Text {
             text: ai_reply
                 .unwrap_or("Goal runtime is not configured")
                 .to_string(),
         },
-        RoutedInput::Unsupported(_) => MessageContent::Text {
+        Intent::Unsupported(_) => MessageContent::Text {
             text: ai_reply.unwrap_or("Unsupported channel input.").to_string(),
         },
     };
@@ -1069,95 +961,3 @@ fn build_outbound(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn start_command_is_greeting() {
-        let content = MessageContent::Command {
-            command: "/start".into(),
-            args: String::new(),
-        };
-        assert_eq!(route_content(&content), RoutedInput::Greeting);
-    }
-
-    #[test]
-    fn chat_command_forwards_text() {
-        let content = MessageContent::Command {
-            command: "/chat".into(),
-            args: "hello world".into(),
-        };
-        assert_eq!(
-            route_content(&content),
-            RoutedInput::Chat("hello world".into())
-        );
-    }
-
-    #[test]
-    fn plain_text_is_chat() {
-        let content = MessageContent::Text {
-            text: "tell me a joke".into(),
-        };
-        assert_eq!(
-            route_content(&content),
-            RoutedInput::Chat("tell me a joke".into())
-        );
-    }
-
-    #[test]
-    fn empty_text_is_unsupported() {
-        let content = MessageContent::Text {
-            text: String::new(),
-        };
-        assert_eq!(
-            route_content(&content),
-            RoutedInput::Unsupported(String::new())
-        );
-    }
-
-    #[test]
-    fn whitespace_only_text_is_unsupported() {
-        let content = MessageContent::Text { text: "   ".into() };
-        assert_eq!(
-            route_content(&content),
-            RoutedInput::Unsupported(String::new())
-        );
-    }
-
-    #[test]
-    fn m2_commands_are_goal_commands() {
-        for cmd in &[
-            "/goal", "/goals", "/status", "/pause", "/resume", "/cancel", "/edit",
-        ] {
-            let content = MessageContent::Command {
-                command: (*cmd).into(),
-                args: String::new(),
-            };
-            assert_eq!(
-                route_content(&content),
-                RoutedInput::GoalCommand {
-                    command: (*cmd).into(),
-                    args: String::new()
-                },
-                "command {cmd} should be routed to Goal runtime"
-            );
-        }
-    }
-
-    #[test]
-    fn unknown_command_is_unsupported() {
-        let content = MessageContent::Command {
-            command: "/unknown".into(),
-            args: String::new(),
-        };
-        assert_eq!(
-            route_content(&content),
-            RoutedInput::Unsupported("/unknown".into())
-        );
-    }
-}
