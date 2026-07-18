@@ -1,7 +1,32 @@
 # Channel 子系统解耦重构 + 应用层定位
 
-> **Status:** Proposed（计划，未开工）
+> **Status:** In progress — Phase 0–2 完成并提交（分支 `auro/refactor/channel-gateway`）
 > **Author:** 架构调研 2026-07-18
+
+## 实施进度（2026-07-18）
+
+| Phase | Commit | 内容 | 状态 |
+|---|---|---|---|
+| 0 | `ef7d010e` | 抽 `intent.rs`（`Intent`/`classify_intent`）+ `notify.rs`，纯逻辑零行为变化 | ✅ 测试绿 |
+| 1 | `f4b9bf5a` | `CapabilityRegistry`/`CapabilityHandler`/`OutboundEffect`/`ApprovalResolver` 取代 god-object；`ChannelRouter`→`ChannelDispatcher`；5 个 `Option<Arc<dyn>>` 字段清零；`ActivateGoal` fork→resolver 注册表 | ✅ 41/41 |
+| 2 | `c35c1d95` | 中立层 google-free（dispatcher/telegram 仅剩文档注释）；`handlers/google_read.rs` + `ChatPreprocessor` 钩子；删 `enqueue_google_notification`，通知统一走 `DurableGoogleNotificationSink` | ✅ 33+40 绿 |
+
+**核心诉求「耦合太严重」已解决**：中立 dispatcher/transport 不再有任何 provider 领域分支。
+
+### Phase 4 阻塞点（需决策）—— approval 端口抽象
+物理搬迁到 `crates/gateway`（只依赖 `fabric`）被以下跨 crate 依赖卡住，均在 `executive::impl`：
+- `approval::{ApprovalRepository, ApprovalCreate, ApprovalDecision, ApprovalResolutionContext, ApplyCoordinator}`——dispatcher 用 `record_delivery_pending/sent/failed`、`resolve`、`list_pending`；gmail 用 `create`。
+- `goal::{ObjectiveStore, AttemptCoordinationOutcome, RetryDecision}`。
+- `gmail::GmailGoalDraftCoordinator`。
+
+要搬迁必须先把这些抽象成 **`fabric` 端口 trait + `executive` 实现**。其中 approval 抽象**会改动核心审批子系统契约，爆炸半径超出 channel 模块**——按「材料级范围扩张需再确认」，此步单列决策，不擅自展开。
+
+### 待办
+- **Phase 4**：先落 approval/goal 端口抽象（决策后），再建 `crates/gateway` 物理搬迁 + 配置泛化。与在跑的 MCP/multi-user 撞 `request.rs`/`config`，排最后 rebase。
+- **Phase 3（Gmail 统一）**：独立 PR。需保全 `(account_id,message_id)` 幂等、report reconciliation（`report.rs:197-327`）、sender deny-by-default。
+
+---
+
 > **Scope:** `crates/executive/src/impl/channel/` 的分层重构 + channel/edge 代码的 crate 归属
 > **决策前提（已与需求方确认）:** (a) Gmail 一并统一到新模型；(b) 清爽重命名并同步改测试，不留旧名兼容层；(c) 应用层落到**新建 `crates/gateway`**（变体 B），`interact` 保留纯人机 UI（TUI/CLI/ACP）。
 
