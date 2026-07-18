@@ -213,7 +213,24 @@ impl ToolRunnerWithGuard {
     ) -> GuardedToolExecution {
         let audit_id = fabric::AuditEventId::new();
         let result = self
-            .execute_tool_inner(tool, input, ctx, turn_id, audit_id)
+            .execute_tool_inner(tool, input, ctx, turn_id, audit_id, None)
+            .await;
+        GuardedToolExecution { result, audit_id }
+    }
+
+    /// Streaming counterpart that preserves the same policy, loop, output and
+    /// audit pipeline. Legacy/sandbox tools emit a terminal-only stream.
+    pub async fn execute_tool_streaming_report(
+        &mut self,
+        tool: &dyn Tool,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+        turn_id: &str,
+        sink: &mut fabric::ToolEventSink,
+    ) -> GuardedToolExecution {
+        let audit_id = fabric::AuditEventId::new();
+        let result = self
+            .execute_tool_inner(tool, input, ctx, turn_id, audit_id, Some(sink))
             .await;
         GuardedToolExecution { result, audit_id }
     }
@@ -225,6 +242,7 @@ impl ToolRunnerWithGuard {
         ctx: &ToolContext,
         turn_id: &str,
         audit_id: fabric::AuditEventId,
+        mut sink: Option<&mut fabric::ToolEventSink>,
     ) -> std::result::Result<ToolResult, ToolError> {
         let tool_name = tool.name();
         let start = self.clock.mono_now();
@@ -510,11 +528,28 @@ impl ToolRunnerWithGuard {
                 // confinement in their own implementation.
                 // NetworkProxied is Phase 2+; in Phase 1 it falls through to InProcess.
                 const TOOL_TIMEOUT_SECS: u64 = 60;
+                let execution = async {
+                    if let Some(sink) = sink.as_deref_mut() {
+                        tool.execute_streaming(input.clone(), ctx, sink).await;
+                        match sink.terminal_result().cloned() {
+                            Some(Ok(result)) => result,
+                            Some(Err(error)) => ToolResult {
+                                content: error.to_string(),
+                                is_error: true,
+                                metadata: ToolResultMeta::default(),
+                            },
+                            None => ToolResult {
+                                content: fabric::ToolExecutionError::NoTerminal.to_string(),
+                                is_error: true,
+                                metadata: ToolResultMeta::default(),
+                            },
+                        }
+                    } else {
+                        tool.execute(input.clone(), ctx).await
+                    }
+                };
                 match aletheon_kernel::chronos::SystemTimer
-                    .timeout(
-                        Duration::from_secs(TOOL_TIMEOUT_SECS),
-                        tool.execute(input.clone(), ctx),
-                    )
+                    .timeout(Duration::from_secs(TOOL_TIMEOUT_SECS), execution)
                     .await
                 {
                     Ok(result) => result,
@@ -563,6 +598,12 @@ impl ToolRunnerWithGuard {
 
         if let Some(reason) = output_rejection {
             return Err(ToolError::OutputRejected(reason));
+        }
+
+        if let Some(sink) = sink {
+            if !sink.terminal_sent() {
+                sink.terminal(Ok(final_result.clone())).await;
+            }
         }
 
         Ok(final_result)
@@ -643,6 +684,54 @@ mod tests {
 
     struct StructuredL1Tool {
         calls: Arc<AtomicUsize>,
+    }
+
+    #[derive(Clone)]
+    struct StreamingReadTool;
+
+    #[async_trait]
+    impl Tool for StreamingReadTool {
+        fn name(&self) -> &str {
+            "streaming_read"
+        }
+
+        fn description(&self) -> &str {
+            "streaming read operation"
+        }
+
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+
+        fn permission_level(&self) -> PermissionLevel {
+            PermissionLevel::L0
+        }
+
+        async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+            panic!("legacy execute path must not run when streaming is enabled")
+        }
+
+        async fn execute_streaming(
+            &self,
+            _input: serde_json::Value,
+            _ctx: &ToolContext,
+            sink: &mut fabric::ToolEventSink,
+        ) {
+            assert!(sink.progress(fabric::ToolProgress::Text("phase-1".into())));
+            assert!(sink.progress(fabric::ToolProgress::Structured(
+                serde_json::json!({"pct": 100})
+            )));
+            sink.terminal(Ok(ToolResult {
+                content: "streamed-result".into(),
+                is_error: false,
+                metadata: ToolResultMeta::default(),
+            }))
+            .await;
+        }
+
+        fn boxed_clone(&self) -> Box<dyn Tool> {
+            Box::new(self.clone())
+        }
     }
 
     #[async_trait]
@@ -762,6 +851,41 @@ mod tests {
 
         assert_eq!(result.content, "wrote artifact");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn guarded_streaming_executes_override_once_and_preserves_terminal() {
+        let mut runner = make_runner(Arc::new(AutoApproveGate));
+        let (mut sink, mut rx) = fabric::tool_event_channel();
+
+        let report = runner
+            .execute_tool_streaming_report(
+                &StreamingReadTool,
+                serde_json::json!({}),
+                &make_ctx(),
+                "streaming-turn",
+                &mut sink,
+            )
+            .await;
+
+        let result = report.result.expect("guarded streaming result");
+        assert_eq!(result.content, "streamed-result");
+        assert!(matches!(
+            rx.recv().await,
+            Some(fabric::ToolExecutionEvent::Progress(
+                fabric::ToolProgress::Text(_)
+            ))
+        ));
+        assert!(matches!(
+            rx.recv().await,
+            Some(fabric::ToolExecutionEvent::Progress(
+                fabric::ToolProgress::Structured(_)
+            ))
+        ));
+        assert!(matches!(
+            rx.recv().await,
+            Some(fabric::ToolExecutionEvent::Terminal(Ok(_)))
+        ));
     }
 
     #[tokio::test]

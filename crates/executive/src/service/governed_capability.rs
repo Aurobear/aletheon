@@ -7,7 +7,7 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use aletheon_kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use fabric::types::admission::RiskLevel;
 use fabric::{
@@ -349,7 +349,8 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
             let call_id = request.call.call_id.clone();
             let cancel = request.control.cancel.clone();
             let (mut sink, event_rx) = fabric::tool_event_channel();
-            let invoke = self.inner.invoke_streaming(request, &mut sink);
+            let inner = self.inner.clone();
+            let invoke = async move { inner.invoke_streaming(request, &mut sink).await };
             let bridge = crate::service::tool_stream_bridge::bridge_tool_stream(
                 event_rx,
                 turn_events.clone(),
@@ -359,8 +360,10 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
             );
             let (mut result, outcome) = tokio::join!(invoke, bridge);
             if let Err(error) = outcome.terminal {
-                result.output = format!("streaming tool execution failed: {error}");
-                result.is_error = true;
+                if !result.is_error {
+                    result.output = format!("streaming tool execution failed: {error}");
+                    result.is_error = true;
+                }
             }
             result
         } else {

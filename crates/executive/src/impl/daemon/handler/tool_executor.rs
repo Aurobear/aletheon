@@ -123,6 +123,7 @@ impl TurnToolExecutor {
         &self,
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
+        sink: Option<&mut fabric::ToolEventSink>,
     ) -> CapabilityResult {
         let name = &request.call.name;
         let input = &request.call.input;
@@ -230,7 +231,14 @@ impl TurnToolExecutor {
             }
         }
 
-        let mut result = inner.execute_with_permit(request, permit).await;
+        let mut result = match sink {
+            Some(sink) => {
+                inner
+                    .execute_streaming_with_permit(request, permit, sink)
+                    .await
+            }
+            None => inner.execute_with_permit(request, permit).await,
+        };
         let content = result.output.clone();
         let is_error = result.is_error;
 
@@ -301,7 +309,16 @@ impl ToolExecutor for TurnToolExecutor {
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
     ) -> CapabilityResult {
-        self.execute(request, permit).await
+        self.execute(request, permit, None).await
+    }
+
+    async fn execute_streaming_with_permit(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+        sink: &mut fabric::ToolEventSink,
+    ) -> CapabilityResult {
+        self.execute(request, permit, Some(sink)).await
     }
 }
 

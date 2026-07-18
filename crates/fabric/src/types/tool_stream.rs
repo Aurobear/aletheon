@@ -99,6 +99,7 @@ pub const TOOL_PROGRESS_CHANNEL_CAP: usize = 32;
 pub struct ToolEventSink {
     tx: mpsc::Sender<ToolExecutionEvent>,
     terminal_sent: bool,
+    terminal_result: Option<Result<ToolResult, ToolExecutionError>>,
 }
 
 impl ToolEventSink {
@@ -133,12 +134,19 @@ impl ToolEventSink {
             return;
         }
         self.terminal_sent = true;
+        self.terminal_result = Some(result.clone());
         let _ = self.tx.send(ToolExecutionEvent::Terminal(result)).await;
     }
 
     /// Whether the terminal has been sent.
     pub fn terminal_sent(&self) -> bool {
         self.terminal_sent
+    }
+
+    /// Borrow the terminal emitted by a tool so the governed executor can
+    /// validate and settle the same result without re-running side effects.
+    pub fn terminal_result(&self) -> Option<&Result<ToolResult, ToolExecutionError>> {
+        self.terminal_result.as_ref()
     }
 }
 
@@ -149,6 +157,7 @@ pub fn tool_event_channel() -> (ToolEventSink, mpsc::Receiver<ToolExecutionEvent
         ToolEventSink {
             tx,
             terminal_sent: false,
+            terminal_result: None,
         },
         rx,
     )

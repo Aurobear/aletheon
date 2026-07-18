@@ -131,6 +131,24 @@ pub trait CorpusService: Send + Sync {
     async fn invoke(&self, invocation: GovernedInvocation)
         -> Result<CapabilityResult, CorpusError>;
 
+    async fn invoke_streaming(
+        &self,
+        invocation: GovernedInvocation,
+        sink: &mut fabric::ToolEventSink,
+    ) -> Result<CapabilityResult, CorpusError> {
+        let result = self.invoke(invocation).await?;
+        sink.terminal(Ok(fabric::ToolResult {
+            content: result.output.clone(),
+            is_error: result.is_error,
+            metadata: fabric::ToolResultMeta {
+                execution_time_ms: result.usage.wall_time_ms,
+                truncated: false,
+            },
+        }))
+        .await;
+        Ok(result)
+    }
+
     /// Register a runtime-discovered tool through the authoritative catalog.
     async fn register_tool(&self, _tool: Arc<dyn Tool>) -> Result<(), CorpusError> {
         Err(CorpusError::ReadOnlyCatalog)
@@ -218,6 +236,53 @@ impl DefaultCorpusService {
             }
         }
     }
+
+    async fn validate_invocation(
+        &self,
+        invocation: &GovernedInvocation,
+    ) -> Result<(), CorpusError> {
+        let active = self
+            .activations
+            .read()
+            .await
+            .get(&invocation.activation_id)
+            .cloned()
+            .ok_or(CorpusError::ActivationNotFound)?;
+        if !active.extensions.contains(&invocation.extension_id) {
+            return Err(CorpusError::NotActivated(
+                invocation.extension_id.as_str().to_string(),
+            ));
+        }
+        let catalog = self.descriptors().await?;
+        let descriptor = catalog.get(&invocation.extension_id).ok_or_else(|| {
+            CorpusError::UnknownExtension(invocation.extension_id.as_str().to_string())
+        })?;
+        if !descriptor.is_executable() {
+            return Err(CorpusError::NotExecutable(
+                invocation.extension_id.as_str().to_string(),
+            ));
+        }
+        validate_binding(&active.grant, &invocation.request)?;
+        validate_scope(
+            &active.grant.resources,
+            &invocation.request.authority.requested_scope,
+        )?;
+        validate_scope(&active.grant.resources, &invocation.permit.granted_scope)?;
+        if descriptor
+            .primary_capability()
+            .map(|value| value.0.as_str())
+            .unwrap_or_default()
+            != invocation.request.call.name
+            || descriptor
+                .primary_capability()
+                .is_none_or(|capability| invocation.permit.capability != *capability)
+            || invocation.permit.operation_id != invocation.request.call.operation_id
+            || invocation.permit.process_id != invocation.request.call.process_id
+        {
+            return Err(CorpusError::PermitMismatch);
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -277,49 +342,22 @@ impl CorpusService for DefaultCorpusService {
         &self,
         invocation: GovernedInvocation,
     ) -> Result<CapabilityResult, CorpusError> {
-        let active = self
-            .activations
-            .read()
-            .await
-            .get(&invocation.activation_id)
-            .cloned()
-            .ok_or(CorpusError::ActivationNotFound)?;
-        if !active.extensions.contains(&invocation.extension_id) {
-            return Err(CorpusError::NotActivated(
-                invocation.extension_id.as_str().to_string(),
-            ));
-        }
-        let catalog = self.descriptors().await?;
-        let descriptor = catalog.get(&invocation.extension_id).ok_or_else(|| {
-            CorpusError::UnknownExtension(invocation.extension_id.as_str().to_string())
-        })?;
-        if !descriptor.is_executable() {
-            return Err(CorpusError::NotExecutable(
-                invocation.extension_id.as_str().to_string(),
-            ));
-        }
-        validate_binding(&active.grant, &invocation.request)?;
-        validate_scope(
-            &active.grant.resources,
-            &invocation.request.authority.requested_scope,
-        )?;
-        validate_scope(&active.grant.resources, &invocation.permit.granted_scope)?;
-        if descriptor
-            .primary_capability()
-            .map(|value| value.0.as_str())
-            .unwrap_or_default()
-            != invocation.request.call.name
-            || descriptor
-                .primary_capability()
-                .is_none_or(|capability| invocation.permit.capability != *capability)
-            || invocation.permit.operation_id != invocation.request.call.operation_id
-            || invocation.permit.process_id != invocation.request.call.process_id
-        {
-            return Err(CorpusError::PermitMismatch);
-        }
+        self.validate_invocation(&invocation).await?;
         Ok(self
             .executor
             .execute_with_permit(&invocation.request, &invocation.permit)
+            .await)
+    }
+
+    async fn invoke_streaming(
+        &self,
+        invocation: GovernedInvocation,
+        sink: &mut fabric::ToolEventSink,
+    ) -> Result<CapabilityResult, CorpusError> {
+        self.validate_invocation(&invocation).await?;
+        Ok(self
+            .executor
+            .execute_streaming_with_permit(&invocation.request, &invocation.permit, sink)
             .await)
     }
 
@@ -374,7 +412,7 @@ impl ToolExecutor for ActivatedCorpusExecutor {
                     is_error: true,
                     usage: Default::default(),
                     audit_id: None,
-                }
+                };
             }
         };
         self.service
@@ -384,6 +422,44 @@ impl ToolExecutor for ActivatedCorpusExecutor {
                 request: request.clone(),
                 permit: permit.clone(),
             })
+            .await
+            .unwrap_or_else(|error| CapabilityResult {
+                call_id: request.call.call_id.clone(),
+                output: error.to_string(),
+                is_error: true,
+                usage: Default::default(),
+                audit_id: None,
+            })
+    }
+
+    async fn execute_streaming_with_permit(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+        sink: &mut fabric::ToolEventSink,
+    ) -> CapabilityResult {
+        let extension_id = match ExtensionId::new(ExtensionKind::Tool, &request.call.name) {
+            Ok(id) => id,
+            Err(error) => {
+                return CapabilityResult {
+                    call_id: request.call.call_id.clone(),
+                    output: error.to_string(),
+                    is_error: true,
+                    usage: Default::default(),
+                    audit_id: None,
+                };
+            }
+        };
+        self.service
+            .invoke_streaming(
+                GovernedInvocation {
+                    activation_id: self.activation_id,
+                    extension_id,
+                    request: request.clone(),
+                    permit: permit.clone(),
+                },
+                sink,
+            )
             .await
             .unwrap_or_else(|error| CapabilityResult {
                 call_id: request.call.call_id.clone(),
