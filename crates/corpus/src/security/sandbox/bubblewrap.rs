@@ -507,4 +507,79 @@ mod tests {
         );
         assert!(!args.iter().any(|a| a == "--tmpfs"));
     }
+
+    /// Process-level coverage for S1 T10. The argv tests above protect mount
+    /// ordering; this test proves that bubblewrap actually applies those mounts.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn denied_file_content_is_hidden_while_permitted_file_is_readable() {
+        let Some(backend) = BubblewrapBackend::probe(Arc::new(TestClock::default())) else {
+            return;
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let denied = temp.path().join("denied.txt");
+        let permitted = temp.path().join("permitted.txt");
+        std::fs::write(&denied, "DENIED_SECRET").unwrap();
+        std::fs::write(&permitted, "PERMITTED_VALUE").unwrap();
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                temp.path().to_path_buf(),
+                vec![],
+            )
+            .unwrap(),
+            environment: BTreeMap::from([
+                ("DENIED_PATH".into(), denied.to_string_lossy().into_owned()),
+                (
+                    "PERMITTED_PATH".into(),
+                    permitted.to_string_lossy().into_owned(),
+                ),
+            ]),
+            policy: Some(resolved_policy(vec![denied.clone()])),
+        };
+
+        // A present bwrap binary can still be unusable when the host disables
+        // unprivileged user namespaces. Skip only that backend-reported case.
+        let probe = backend
+            .execute("true", &config, Duration::from_secs(5))
+            .await
+            .expect("bubblewrap probe must launch");
+        if probe.exit_code != 0
+            && [
+                "operation not permitted",
+                "permission denied",
+                "no permissions to create new namespace",
+                "creating new namespace failed",
+            ]
+            .iter()
+            .any(|message| probe.stderr.to_ascii_lowercase().contains(message))
+        {
+            return;
+        }
+        assert_eq!(
+            probe.exit_code, 0,
+            "bubblewrap probe failed: {}",
+            probe.stderr
+        );
+
+        let allowed = backend
+            .execute(
+                "cat -- \"$PERMITTED_PATH\"",
+                &config,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            allowed.exit_code, 0,
+            "permitted read failed: {}",
+            allowed.stderr
+        );
+        assert_eq!(allowed.stdout, "PERMITTED_VALUE");
+
+        let blocked = backend
+            .execute("cat -- \"$DENIED_PATH\"", &config, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_ne!(blocked.stdout, "DENIED_SECRET");
+    }
 }
