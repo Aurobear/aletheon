@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::tools::PermissionLevel;
 
+/// Default per-request timeout in milliseconds (30 seconds).
+pub fn default_request_timeout_ms() -> u64 {
+    30_000
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpConfig {
     pub servers: Vec<McpServerConfig>,
@@ -25,6 +30,10 @@ pub struct McpConfig {
     /// Overrides the default trust→permission mapping for specific tools.
     #[serde(default)]
     pub permission_overrides: HashMap<String, PermissionLevel>,
+    /// Global default per-request timeout in milliseconds.
+    /// Individual servers can override via [`McpServerConfig::request_timeout_ms`].
+    #[serde(default = "default_request_timeout_ms")]
+    pub request_timeout_ms: u64,
 }
 
 impl Default for McpConfig {
@@ -36,6 +45,7 @@ impl Default for McpConfig {
             tool_allowlist: Vec::new(),
             tool_denylist: Vec::new(),
             permission_overrides: HashMap::new(),
+            request_timeout_ms: default_request_timeout_ms(),
         }
     }
 }
@@ -52,6 +62,10 @@ pub struct McpServerConfig {
     /// An absent variable when a name is configured is a connection error.
     #[serde(default)]
     pub bearer_token_env: Option<String>,
+    /// Per-server request timeout override in milliseconds.
+    /// When `None`, the global [`McpConfig::request_timeout_ms`] is used.
+    #[serde(default)]
+    pub request_timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

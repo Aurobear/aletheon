@@ -30,6 +30,7 @@ pub(crate) fn convert_mcp_server(
         trust: McpTrustLevel::LocalTrusted,
         enabled: true,
         bearer_token_env: server.bearer_token_env.clone(),
+        request_timeout_ms: None,
     }
 }
 

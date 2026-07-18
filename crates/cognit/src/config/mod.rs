@@ -787,7 +787,7 @@ pub struct MemoryConfig {
     pub data_dir: String,
     /// Optional gbrain shared memory integration (disabled by default).
     #[serde(default)]
-    pub gbrain: GbrainMemoryConfig,
+    pub gbrain: McpMemoryConfig,
 }
 
 fn default_memory_backend() -> String {
@@ -802,14 +802,15 @@ impl Default for MemoryConfig {
         Self {
             backend: default_memory_backend(),
             data_dir: default_memory_data_dir(),
-            gbrain: GbrainMemoryConfig::default(),
+            gbrain: McpMemoryConfig::default(),
         }
     }
 }
 /// Optional GBrain supplemental memory over the configured HTTP MCP server.
+/// Renamed to `McpMemoryConfig` for generic MCP-based memory integration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct GbrainMemoryConfig {
+pub struct McpMemoryConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default = "default_gbrain_server_name")]
@@ -849,6 +850,9 @@ pub struct GbrainMemoryConfig {
     #[serde(default = "default_gbrain_outbox_dir", alias = "outbox_dir")]
     pub legacy_outbox_dir: String,
 }
+
+/// Backward-compatible type alias for the legacy `GbrainMemoryConfig` name.
+pub type GbrainMemoryConfig = McpMemoryConfig;
 
 fn default_gbrain_server_name() -> String {
     "gbrain".into()
@@ -902,7 +906,7 @@ fn default_gbrain_outbox_dir() -> String {
     "~/.aletheon/gbrain-outbox".into()
 }
 
-impl Default for GbrainMemoryConfig {
+impl Default for McpMemoryConfig {
     fn default() -> Self {
         Self {
             enabled: false,

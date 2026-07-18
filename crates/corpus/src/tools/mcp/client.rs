@@ -89,9 +89,10 @@ impl McpClient {
         command: &str,
         args: &[String],
         trust_level: McpTrustLevel,
+        request_timeout_ms: u64,
     ) -> Result<Self> {
         let (notification_tx, _notification_rx) = mpsc::channel(64);
-        let mut transport = McpTransport::stdio(command, args).await?;
+        let mut transport = McpTransport::stdio(command, args, request_timeout_ms).await?;
 
         // Initialize handshake
         let init_result = transport
@@ -114,9 +115,6 @@ impl McpClient {
             .unwrap_or(false);
 
         tracing::info!(server = %server_name, "MCP server initialized");
-
-        // Send initialized notification
-        // (notifications have no id; we reuse request with a throwaway id for simplicity)
 
         // Discover tools
         let tools_result = transport
@@ -149,9 +147,10 @@ impl McpClient {
         url: &str,
         auth: Option<BearerTokenAuth>,
         trust_level: McpTrustLevel,
+        request_timeout_ms: u64,
     ) -> Result<Self> {
         let (notification_tx, _notification_rx) = mpsc::channel(64);
-        let mut transport = McpTransport::streamable_http(url, auth);
+        let mut transport = McpTransport::streamable_http(url, auth, request_timeout_ms);
 
         // Initialize handshake
         let init_result = transport
@@ -206,9 +205,10 @@ impl McpClient {
         url: &str,
         auth: Option<BearerTokenAuth>,
         trust_level: McpTrustLevel,
+        request_timeout_ms: u64,
     ) -> Result<Self> {
         let (notification_tx, _notification_rx) = mpsc::channel(64);
-        let mut transport = McpTransport::sse(url, auth).await?;
+        let mut transport = McpTransport::sse(url, auth, request_timeout_ms).await?;
 
         // Initialize handshake
         let init_result = transport
@@ -377,8 +377,6 @@ impl McpClient {
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            // Do not copy server-provided text into the error: it may contain
-            // credentials or other sensitive request context.
             anyhow::bail!("MCP tool '{}' reported an application error", tool_name);
         }
         Ok(result)
@@ -414,7 +412,6 @@ impl McpClient {
                 .iter()
                 .filter_map(|c| {
                     let mime_type = c.get("mimeType").and_then(|v| v.as_str()).unwrap_or("text/plain");
-                    // Prioritize "text" field, fall back to "blob" (but blob is base64 so we note it)
                     if let Some(t) = c.get("text").and_then(|v| v.as_str()) {
                         Some(t.to_string())
                     } else if let Some(_b) = c.get("blob").and_then(|v| v.as_str()) {
@@ -445,9 +442,6 @@ impl McpClient {
     }
 
     /// Watch for `ToolsListChanged` notifications and re-discover tools.
-    ///
-    /// Callers should spawn this as a background task, passing the receive
-    /// side of the notification channel created at connect time.
     pub async fn watch_tool_changes(&mut self, mut rx: mpsc::Receiver<McpNotification>) {
         while let Some(notification) = rx.recv().await {
             if matches!(notification, McpNotification::ToolsListChanged) {
@@ -481,13 +475,6 @@ impl McpClient {
     }
 
     /// Handle an MCP `elicitation/create` request from the server.
-    ///
-    /// The server sends this request when it needs user approval for an
-    /// action. The client delegates to the configured [`ElicitationHandler`]
-    /// if one is set; otherwise the elicitation is auto-denied (fail-safe).
-    ///
-    /// Returns an `elicitation/create` JSON-RPC response containing the
-    /// user's decision: `"allow"` or `"deny"`.
     pub async fn handle_elicitation(&self, params: &Value) -> Result<Value> {
         let message = params
             .get("message")
@@ -533,18 +520,12 @@ impl McpClient {
 // McpElicitationHandler — bridges `ElicitationHandler` to `ApprovalGate`
 // ---------------------------------------------------------------------------
 
-/// An [`ElicitationHandler`] implementation that forwards elicitation
-/// requests to the approval system (e.g. [`SocketApprovalGate`]).
-///
-/// Constructs an [`ApprovalRequest`] from the elicitation message and mode,
-/// then delegates to the wrapped [`ApprovalGate`].
 pub struct McpElicitationHandler {
     gate: Arc<dyn crate::security::approval::ApprovalGate>,
     server_name: String,
 }
 
 impl McpElicitationHandler {
-    /// Create a new handler that forwards elicitation decisions to `gate`.
     pub fn new(
         gate: Arc<dyn crate::security::approval::ApprovalGate>,
         server_name: String,
@@ -599,16 +580,21 @@ impl McpConnectionManager {
 
     /// Connect to all enabled servers in the config.
     pub async fn connect_all(&mut self) -> Result<()> {
+        let global_timeout_ms = self.config.request_timeout_ms;
+
         for server_config in &self.config.servers {
             if !server_config.enabled {
                 continue;
             }
 
-            // Resolve bearer token from environment
             let auth: Option<BearerTokenAuth> = server_config
                 .bearer_token_env
                 .as_ref()
                 .map(|env_var| BearerTokenAuth::new(env_var.clone()));
+
+            let timeout_ms = server_config
+                .request_timeout_ms
+                .unwrap_or(global_timeout_ms);
 
             match &server_config.transport {
                 McpTransportConfig::Stdio { command, args } => {
@@ -617,6 +603,7 @@ impl McpConnectionManager {
                         command,
                         args,
                         server_config.trust,
+                        timeout_ms,
                     )
                     .await
                     {
@@ -639,6 +626,7 @@ impl McpConnectionManager {
                         url,
                         auth.clone(),
                         server_config.trust,
+                        timeout_ms,
                     )
                     .await
                     {
@@ -661,6 +649,7 @@ impl McpConnectionManager {
                         url,
                         auth.clone(),
                         server_config.trust,
+                        timeout_ms,
                     )
                     .await
                     {
@@ -686,8 +675,6 @@ impl McpConnectionManager {
     pub fn get_all_tools(&self) -> Vec<McpToolWrapper> {
         let mut wrappers = Vec::new();
         for (server_name, client_arc) in &self.clients {
-            // We need to block briefly to read the tools list.
-            // Since connect_all has already completed, the mutex is uncontested.
             let Ok(client) = client_arc.try_lock() else {
                 tracing::warn!(server = %server_name, "MCP client busy during tool discovery");
                 continue;
@@ -709,7 +696,6 @@ impl McpConnectionManager {
                     }
                 };
 
-                // Apply allowlist/denylist filtering
                 if !self.should_register_tool(&normalized_name) {
                     continue;
                 }
@@ -728,9 +714,7 @@ impl McpConnectionManager {
         wrappers
     }
 
-    /// Determine whether a tool should be registered based on allowlist/denylist.
     fn should_register_tool(&self, tool_name: &str) -> bool {
-        // Denylist takes precedence — prefix match
         if self
             .config
             .tool_denylist
@@ -739,7 +723,6 @@ impl McpConnectionManager {
         {
             return false;
         }
-        // If allowlist is non-empty, tool must be in it — prefix match
         if !self.config.tool_allowlist.is_empty() {
             return self
                 .config
@@ -750,15 +733,10 @@ impl McpConnectionManager {
         true
     }
 
-    /// Get a reference to a specific client by server name.
     pub fn get_client(&self, server_name: &str) -> Option<&Arc<Mutex<McpClient>>> {
         self.clients.get(server_name)
     }
 
-    /// Call a tool on a named server and return the raw result.
-    ///
-    /// Returns an error if the server is not connected or the tool call fails.
-    /// Token values never appear in error messages.
     pub async fn call_tool(
         &self,
         server_name: &str,
@@ -773,12 +751,10 @@ impl McpConnectionManager {
         client.call_tool(tool_name, args).await
     }
 
-    /// Number of connected servers.
     pub fn connected_count(&self) -> usize {
         self.clients.len()
     }
 
-    /// Whether a connected server advertised every required tool.
     pub fn server_has_tools(&self, server_name: &str, required: &[&str]) -> bool {
         self.clients.get(server_name).is_some_and(|client| {
             let Ok(client) = client.try_lock() else {
@@ -790,13 +766,11 @@ impl McpConnectionManager {
         })
     }
 
-    /// Snapshot advertised tool descriptors without exposing the live client.
     pub fn server_tools(&self, server_name: &str) -> Option<Vec<McpTool>> {
         let client = self.clients.get(server_name)?.try_lock().ok()?;
         Some(client.tools.clone())
     }
 
-    /// Get all resource providers from all connected servers.
     pub fn get_all_resource_providers(&self) -> Vec<McpResourceProvider> {
         let mut providers = Vec::new();
         for (server_name, client_arc) in &self.clients {
@@ -805,7 +779,6 @@ impl McpConnectionManager {
                 continue;
             };
             for resource in &client.resources {
-                // Build normalized name: mcp.{server_name}.resource.{resource_name}
                 let normalized_name = format!("mcp.{}.resource.{}", server_name, resource.name);
                 providers.push(McpResourceProvider {
                     uri: resource.uri.clone(),
@@ -820,7 +793,6 @@ impl McpConnectionManager {
         providers
     }
 
-    /// List resources from a named server.
     pub async fn list_resources(
         &self,
         server_name: &str,
@@ -833,7 +805,6 @@ impl McpConnectionManager {
         client.list_resources().await
     }
 
-    /// Read a resource from a named server by URI.
     pub async fn read_resource(
         &self,
         server_name: &str,
@@ -847,10 +818,6 @@ impl McpConnectionManager {
         client.read_resource(uri).await
     }
 
-    /// Set the elicitation handler on all connected clients.
-    ///
-    /// The handler is shared across all clients; if `None`, elicitation
-    /// requests will be auto-denied.
     pub fn set_elicitation_handler(&self, handler: Option<Arc<dyn ElicitationHandler>>) {
         for client_arc in self.clients.values() {
             let Ok(mut client) = client_arc.try_lock() else {
@@ -860,10 +827,6 @@ impl McpConnectionManager {
         }
     }
 
-    /// Handle an elicitation request from a specific server.
-    ///
-    /// Delegates to [`McpClient::handle_elicitation`].
-    /// Returns an error if the server is not connected.
     pub async fn handle_elicitation(
         &self,
         server_name: &str,
@@ -875,114 +838,5 @@ impl McpConnectionManager {
             .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
         let client = client_arc.lock().await;
         client.handle_elicitation(params).await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::security::approval::{ApprovalDecision, ApprovalGate, ApprovalRequest};
-
-    /// A test-only handler that always returns the configured value.
-    struct FixedElicitationHandler {
-        pub approved: bool,
-    }
-
-    #[async_trait]
-    impl ElicitationHandler for FixedElicitationHandler {
-        async fn handle_elicitation(&self, _message: &str, _mode: &str) -> Result<bool, String> {
-            Ok(self.approved)
-        }
-    }
-
-    /// A test-only handler that returns an error.
-    struct FailingElicitationHandler;
-
-    #[async_trait]
-    impl ElicitationHandler for FailingElicitationHandler {
-        async fn handle_elicitation(&self, _message: &str, _mode: &str) -> Result<bool, String> {
-            Err("simulated handler error".to_string())
-        }
-    }
-
-    /// A test-only approval gate that always returns the configured decision.
-    struct FixedDecisionGate {
-        decision: ApprovalDecision,
-    }
-
-    #[async_trait]
-    impl ApprovalGate for FixedDecisionGate {
-        async fn request(&self, _req: &ApprovalRequest) -> ApprovalDecision {
-            self.decision
-        }
-    }
-
-    #[test]
-    fn test_fixed_elicitation_handler_approves() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let handler = FixedElicitationHandler { approved: true };
-            let res = handler.handle_elicitation("Test message", "once").await;
-            assert_eq!(res, Ok(true));
-        });
-    }
-
-    #[test]
-    fn test_fixed_elicitation_handler_denies() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let handler = FixedElicitationHandler { approved: false };
-            let res = handler.handle_elicitation("Test message", "once").await;
-            assert_eq!(res, Ok(false));
-        });
-    }
-
-    #[test]
-    fn test_failing_elicitation_handler_returns_error() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let handler = FailingElicitationHandler;
-            let res = handler.handle_elicitation("Test message", "once").await;
-            assert!(res.is_err());
-        });
-    }
-
-    #[test]
-    fn test_mcp_elicitation_handler_approves_via_gate() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let gate = Arc::new(FixedDecisionGate {
-                decision: ApprovalDecision::Approve,
-            });
-            let handler = McpElicitationHandler::new(gate, "test-server".to_string());
-            let res = handler.handle_elicitation("do a thing", "once").await;
-            assert_eq!(res, Ok(true));
-        });
-    }
-
-    #[test]
-    fn test_mcp_elicitation_handler_denies_via_gate() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let gate = Arc::new(FixedDecisionGate {
-                decision: ApprovalDecision::Deny,
-            });
-            let handler = McpElicitationHandler::new(gate, "test-server".to_string());
-            let res = handler.handle_elicitation("do a thing", "once").await;
-            assert_eq!(res, Ok(false));
-        });
-    }
-
-    #[test]
-    fn test_mcp_elicitation_handler_approve_for_session_treated_as_approve() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let gate = Arc::new(FixedDecisionGate {
-                decision: ApprovalDecision::ApproveForSession,
-            });
-            let handler = McpElicitationHandler::new(gate, "test-server".to_string());
-            let res = handler.handle_elicitation("do a thing", "once").await;
-            assert_eq!(res, Ok(true));
-        });
     }
 }

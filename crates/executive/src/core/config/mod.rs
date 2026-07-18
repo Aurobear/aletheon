@@ -18,7 +18,7 @@ pub use agent::{
 pub use cognit::config::{
     AgentAdmissionConfig, BackupMode, CognitConfig, DeploymentBackupConfig, DeploymentConfig,
     DeploymentHealthConfig, DeploymentIntegrationsConfig, DeploymentMode, DeploymentPathsConfig,
-    DeploymentQuotaConfig, DeploymentSecretFilesConfig, GbrainMemoryConfig, GoalRuntimeConfig,
+    DeploymentQuotaConfig, DeploymentSecretFilesConfig, McpMemoryConfig, GoalRuntimeConfig,
     PiRuntimeConfig, RoleRuntimeConfig,
 };
 pub use genome::GenomeConfig;

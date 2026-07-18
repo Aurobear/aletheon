@@ -460,6 +460,81 @@ impl fmt::Display for McpOAuthProvider {
 }
 
 // ---------------------------------------------------------------------------
+// OAuth Metadata Discovery (RFC 8414)
+// ---------------------------------------------------------------------------
+
+/// OAuth 2.0 Authorization Server Metadata per RFC 8414.
+///
+/// Discovered from `/.well-known/oauth-authorization-server` at the MCP
+/// server's base URL. When the server config includes OAuth settings, the
+/// discovery endpoint is tried first; if it fails, the configured endpoints
+/// are used as a fallback.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthMetadata {
+    pub issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    #[serde(default)]
+    pub token_endpoint_auth_methods_supported: Vec<String>,
+    #[serde(default)]
+    pub scopes_supported: Vec<String>,
+}
+
+/// Discover OAuth 2.0 authorization server metadata per RFC 8414.
+///
+/// Fetches `{base_url}/.well-known/oauth-authorization-server` and parses
+/// the JSON response. Returns an error when the endpoint is unreachable,
+/// returns non-200, or the response fails to parse; callers should fall
+/// back to statically configured endpoints.
+pub async fn discover_oauth_metadata(base_url: &str) -> Result<OAuthMetadata> {
+    let url = format!(
+        "{}/.well-known/oauth-authorization-server",
+        base_url.trim_end_matches('/')
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .context("failed to build OAuth discovery HTTP client")?;
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("OAuth discovery request failed for {url}"))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!(
+            "OAuth discovery returned HTTP {status} from {url}: {body}"
+        );
+    }
+
+    resp.json::<OAuthMetadata>()
+        .await
+        .with_context(|| format!("OAuth discovery response from {url} is not valid RFC 8414 metadata"))
+}
+
+// ---------------------------------------------------------------------------
+// OAuth Client Authentication Methods
+// ---------------------------------------------------------------------------
+
+/// Client authentication method for the OAuth token endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthClientAuthMethod {
+    /// No client authentication (public client).
+    #[default]
+    None,
+    /// HTTP Basic Authentication with client_id as username and
+    /// client_secret as password (`Authorization: Basic ...` header).
+    ClientSecretBasic,
+    /// Send client_id and client_secret as POST body parameters.
+    ClientSecretPost,
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -943,5 +1018,132 @@ mod tests {
         provider.purge_expired_states();
         // State was just created, should survive purge.
         assert_eq!(provider.pending_states.len(), 1);
+    }
+
+    // -- OAuth discovery (RFC 8414) ---------------------------------------
+
+    #[tokio::test]
+    async fn discover_oauth_metadata_parses_valid_rfc8414_response() {
+        use hyper::body::Bytes;
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        use http_body_util::Full;
+        use hyper_util::rt::TokioIo;
+
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], 0).into();
+        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+        let bound_addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{bound_addr}");
+
+        let server_task = tokio::spawn(async move {
+            loop {
+                let (stream, _) = match listener.accept().await {
+                    Ok(conn) => conn,
+                    Err(_) => return,
+                };
+                let io = TokioIo::new(stream);
+                let svc = service_fn(
+                    |_req: hyper::Request<hyper::body::Incoming>| async move {
+                        let body = serde_json::json!({
+                            "issuer": "https://auth.example.com",
+                            "authorization_endpoint": "https://auth.example.com/authorize",
+                            "token_endpoint": "https://auth.example.com/token",
+                            "token_endpoint_auth_methods_supported": [
+                                "client_secret_basic",
+                                "client_secret_post"
+                            ],
+                            "scopes_supported": ["openid", "profile", "email"]
+                        })
+                        .to_string();
+                        Ok::<_, std::convert::Infallible>(
+                            hyper::Response::builder()
+                                .status(200)
+                                .header("content-type", "application/json")
+                                .body(Full::new(Bytes::from(body)))
+                                .unwrap(),
+                        )
+                    },
+                );
+                if http1::Builder::new().serve_connection(io, svc).await.is_err() {
+                    return;
+                }
+            }
+        });
+
+        let metadata = discover_oauth_metadata(&base_url).await.unwrap();
+        assert_eq!(metadata.issuer, "https://auth.example.com");
+        assert_eq!(
+            metadata.authorization_endpoint,
+            "https://auth.example.com/authorize"
+        );
+        assert_eq!(
+            metadata.token_endpoint,
+            "https://auth.example.com/token"
+        );
+        assert_eq!(
+            metadata.token_endpoint_auth_methods_supported,
+            vec!["client_secret_basic", "client_secret_post"]
+        );
+        assert_eq!(
+            metadata.scopes_supported,
+            vec!["openid", "profile", "email"]
+        );
+
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn discover_oauth_metadata_404_returns_error_not_panic() {
+        use hyper::body::Bytes;
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        use http_body_util::Full;
+        use hyper_util::rt::TokioIo;
+
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], 0).into();
+        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+        let bound_addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{bound_addr}");
+
+        let server_task = tokio::spawn(async move {
+            loop {
+                let (stream, _) = match listener.accept().await {
+                    Ok(conn) => conn,
+                    Err(_) => return,
+                };
+                let io = TokioIo::new(stream);
+                let svc = service_fn(
+                    |_req: hyper::Request<hyper::body::Incoming>| async move {
+                        Ok::<_, std::convert::Infallible>(
+                            hyper::Response::builder()
+                                .status(404)
+                                .body(Full::new(Bytes::from("not found")))
+                                .unwrap(),
+                        )
+                    },
+                );
+                if http1::Builder::new().serve_connection(io, svc).await.is_err() {
+                    return;
+                }
+            }
+        });
+
+        let result = discover_oauth_metadata(&base_url).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("404"), "expected 404 in error: {err}");
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn discover_oauth_metadata_connection_refused_returns_error_not_panic() {
+        let unreachable_url = "http://127.0.0.1:1";
+        let result = discover_oauth_metadata(unreachable_url).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains(unreachable_url),
+            "expected error to mention url: {err}"
+        );
     }
 }
