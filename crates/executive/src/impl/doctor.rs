@@ -30,6 +30,9 @@ pub struct DoctorReport {
     /// Recent writer failures (from M4-T1 persistence layer).
     pub writer_health: WriterHealth,
 
+    /// Bounded summary of the latest all-session startup recovery scan.
+    pub turn_recovery: crate::service::turn_recovery::TurnRecoveryHealth,
+
     /// Daemon daemon_version for diagnostics.
     pub daemon_version: &'static str,
 
@@ -160,6 +163,13 @@ impl DoctorReport {
                 }
             }
         };
+        let turn_recovery = match crate::service::turn_recovery::read_recovery_health(&data_dir) {
+            Ok(health) => health,
+            Err(error) => {
+                warnings.push(format!("turn recovery health unavailable: {error}"));
+                crate::service::turn_recovery::TurnRecoveryHealth::default()
+            }
+        };
 
         // Determine overall status.
         let status = if config_validity_is_ok(config)
@@ -194,6 +204,7 @@ impl DoctorReport {
             mcp_servers,
             sandbox,
             writer_health,
+            turn_recovery,
             daemon_version: env!("CARGO_PKG_VERSION"),
             warnings,
         }
@@ -269,5 +280,20 @@ mod tests {
         assert_eq!(health.recent_failures, 1);
         assert!(!health.writes_succeeding);
         assert_eq!(health.last_failure_phase.as_deref(), Some("terminal_flush"));
+    }
+
+    #[test]
+    fn doctor_reads_bounded_turn_recovery_summary() {
+        let temp = tempfile::tempdir().unwrap();
+        let report = crate::service::turn_recovery::TurnRecoveryReport {
+            sessions_scanned: 4,
+            turns_scanned: 9,
+            incomplete_turns: Vec::new(),
+        };
+        crate::service::turn_recovery::persist_recovery_health(temp.path(), &report).unwrap();
+        let health = crate::service::turn_recovery::read_recovery_health(temp.path()).unwrap();
+        assert_eq!(health.sessions_scanned, 4);
+        assert_eq!(health.turns_scanned, 9);
+        assert_eq!(health.incomplete_turns_recovered, 0);
     }
 }

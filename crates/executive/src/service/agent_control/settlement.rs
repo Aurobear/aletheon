@@ -246,6 +246,99 @@ pub struct FailClosedSettlementResourcePort {
     cancellation: tokio_util::sync::CancellationToken,
 }
 
+/// Production resource backend backed by the resource controls fixed in the
+/// live run at spawn time. Operations are independently cancellable and owner
+/// transitions are action-key idempotent.
+pub struct ManagedSettlementResourcePort {
+    live: LiveAgentRun,
+    parent_authority_covers: bool,
+    parent_budget_accepts: bool,
+    parent_cancellation: Option<tokio_util::sync::CancellationToken>,
+}
+
+impl ManagedSettlementResourcePort {
+    pub fn new(
+        live: LiveAgentRun,
+        parent_authority_covers: bool,
+        parent_budget_accepts: bool,
+        parent_cancellation: Option<tokio_util::sync::CancellationToken>,
+    ) -> Self {
+        Self {
+            live,
+            parent_authority_covers,
+            parent_budget_accepts,
+            parent_cancellation,
+        }
+    }
+}
+
+#[async_trait]
+impl SettlementResourcePort for ManagedSettlementResourcePort {
+    fn reparent_context(
+        &self,
+        resource: &BackgroundResourceDecl,
+        parent_owner: &str,
+    ) -> ReparentContext {
+        ReparentContext {
+            parent_authority_covers: self.parent_authority_covers
+                && self.live.has_managed_resource(&resource.resource_id),
+            parent_budget_accepts: self.parent_budget_accepts,
+            notification_route_transferable: !parent_owner.trim().is_empty(),
+        }
+    }
+
+    async fn settle_foreground(
+        &self,
+        resource: &BackgroundResourceDecl,
+        action_key: &str,
+    ) -> Result<(), AgentControlError> {
+        if self
+            .live
+            .terminate_managed_resource(&resource.resource_id, action_key)
+            .await
+        {
+            Ok(())
+        } else {
+            Err(invalid("managed foreground resource is unavailable"))
+        }
+    }
+
+    async fn terminate(
+        &self,
+        resource: &BackgroundResourceDecl,
+        _reason: &str,
+        action_key: &str,
+    ) -> Result<(), AgentControlError> {
+        if self
+            .live
+            .terminate_managed_resource(&resource.resource_id, action_key)
+            .await
+        {
+            Ok(())
+        } else {
+            Err(invalid("managed settlement resource is unavailable"))
+        }
+    }
+
+    async fn reparent(
+        &self,
+        resource: &BackgroundResourceDecl,
+        old_owner: &str,
+        new_owner: &str,
+        action_key: &str,
+    ) -> Result<(), AgentControlError> {
+        self.live
+            .reparent_managed_resource(
+                &resource.resource_id,
+                old_owner,
+                new_owner,
+                action_key,
+                self.parent_cancellation.as_ref(),
+            )
+            .await
+    }
+}
+
 impl FailClosedSettlementResourcePort {
     pub fn new(cancellation: tokio_util::sync::CancellationToken) -> Self {
         Self { cancellation }

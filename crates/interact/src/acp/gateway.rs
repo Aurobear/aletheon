@@ -72,6 +72,15 @@ pub struct AcpSessionEvent {
 #[async_trait]
 pub trait AcpEventSource: Send {
     async fn next_event(&mut self) -> Result<Option<AcpSessionEvent>, AcpError>;
+
+    /// Rebuild an authoritative snapshot and replay only events after `cursor`.
+    async fn recover(
+        &mut self,
+        _session_id: &str,
+        _cursor: &fabric::protocol::client::EventCursor,
+    ) -> Result<Vec<AcpSessionEvent>, AcpError> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -236,6 +245,20 @@ where
                     events_open = false;
                     continue;
                 };
+                if let ClientEvent::Reconnected(cursor) = &event.event {
+                    let recovered = events.recover(&event.session_id, cursor).await.map_err(acp_io_error)?;
+                    for recovered_event in recovered {
+                        match adapter.map_authorized_event(connection, recovered_event) {
+                            Ok(Some(frame)) => transport.write_frame(&frame).await?,
+                            Ok(None) => {}
+                            Err(error) => return Err(acp_io_error(error)),
+                        }
+                    }
+                    // The authoritative snapshot and replay supersede the stale
+                    // reconnect cursor; emitting it afterwards would move the
+                    // client-visible high-water mark backwards.
+                    continue;
+                }
                 match adapter.map_authorized_event(connection, event) {
                     Ok(Some(frame)) => transport.write_frame(&frame).await?,
                     Ok(None) => {}

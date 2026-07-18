@@ -4,14 +4,15 @@
 //! needs to depend on the other: Interact owns translation while Executive's
 //! existing authenticated request handler remains the runtime authority.
 
-use std::{path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use executive::{core::runtime_core::RuntimeCore, r#impl::daemon::server::ConnectionContext};
 use fabric::{
-    ApprovalPolicy, ConnectionId, LocalOsPrincipal, PermissionProfileId, PrincipalContext,
-    PrincipalId, ThreadId, WorkspacePolicy,
+    protocol::client::{ClientEvent, EventCursor, ItemEvent, ItemPhase, UiSnapshot},
+    ApprovalPolicy, ConnectionId, ItemRecord, LocalOsPrincipal, PermissionProfileId,
+    PrincipalContext, PrincipalId, SessionAppendStore, SessionId, ThreadId, WorkspacePolicy,
 };
 use interact::acp::{
     run_transport_loop, AcpAdapter, AcpBackend, AcpError, AcpEventSource, AcpSessionEvent,
@@ -106,6 +107,8 @@ impl AcpBackend for ExecutiveAcpBackend {
 struct ExecutiveEvents {
     receiver: mpsc::Receiver<String>,
     active_session: Arc<Mutex<Option<String>>>,
+    sessions: Arc<dyn SessionAppendStore>,
+    last_sequence: HashMap<String, u64>,
 }
 
 #[async_trait]
@@ -130,10 +133,109 @@ impl AcpEventSource for ExecutiveEvents {
                 );
                 continue;
             };
+            if let Some(sequence) = event_sequence(&event) {
+                let high_water = self.last_sequence.entry(session_id.clone()).or_default();
+                if sequence <= *high_water {
+                    continue;
+                }
+                *high_water = sequence;
+            }
             return Ok(Some(AcpSessionEvent { session_id, event }));
         }
         Ok(None)
     }
+
+    async fn recover(
+        &mut self,
+        session_id: &str,
+        cursor: &EventCursor,
+    ) -> Result<Vec<AcpSessionEvent>, AcpError> {
+        let id = SessionId(session_id.to_string());
+        self.sessions
+            .load_session(&id)
+            .await
+            .map_err(|error| AcpError::Backend(error.to_string()))?
+            .ok_or_else(|| {
+                AcpError::Backend(format!("canonical session {session_id} not found"))
+            })?;
+        let items = self
+            .sessions
+            .load_items(&id, None)
+            .await
+            .map_err(|error| AcpError::Backend(error.to_string()))?;
+        let events = recovery_events(session_id, cursor, items);
+        let high_water = events
+            .iter()
+            .filter_map(|event| event_sequence(&event.event))
+            .max()
+            .unwrap_or(cursor.sequence);
+        self.last_sequence
+            .insert(session_id.to_string(), high_water);
+        Ok(events)
+    }
+}
+
+fn event_sequence(event: &ClientEvent) -> Option<u64> {
+    match event {
+        ClientEvent::Snapshot(value) => Some(value.cursor.sequence),
+        ClientEvent::Item(value) => Some(value.cursor.sequence),
+        ClientEvent::Approval(value) => Some(value.cursor.sequence),
+        ClientEvent::Agent(value) => Some(value.cursor.sequence),
+        ClientEvent::Reconnected(value) => Some(value.sequence),
+        ClientEvent::Failed { cursor, .. } => cursor.as_ref().map(|value| value.sequence),
+        _ => None,
+    }
+}
+
+fn recovery_events(
+    session_id: &str,
+    cursor: &EventCursor,
+    items: Vec<ItemRecord>,
+) -> Vec<AcpSessionEvent> {
+    let maximum = items.iter().map(|item| item.sequence).max().unwrap_or(0);
+    let snapshot_sequence = cursor.sequence.min(maximum);
+    let snapshot_cursor = EventCursor {
+        sequence: snapshot_sequence,
+        event_id: (snapshot_sequence == cursor.sequence)
+            .then(|| cursor.event_id.clone())
+            .flatten(),
+    };
+    let mut result = vec![AcpSessionEvent {
+        session_id: session_id.to_string(),
+        event: ClientEvent::Snapshot(UiSnapshot {
+            session_id: SessionId(session_id.to_string()),
+            cursor: snapshot_cursor,
+            provider: None,
+            model: None,
+            items: items
+                .iter()
+                .filter(|item| item.sequence <= snapshot_sequence)
+                .cloned()
+                .collect(),
+            approvals: Vec::new(),
+            agents: Vec::new(),
+        }),
+    }];
+    result.extend(
+        items
+            .into_iter()
+            .filter(|item| item.sequence > snapshot_sequence)
+            .map(|item| AcpSessionEvent {
+                session_id: session_id.to_string(),
+                event: ClientEvent::Item(ItemEvent {
+                    cursor: EventCursor {
+                        sequence: item.sequence,
+                        event_id: Some(item.id.0.to_string()),
+                    },
+                    item_id: item.id.0.to_string(),
+                    phase: ItemPhase::Completed,
+                    delta: None,
+                    item: Some(item),
+                    error: None,
+                }),
+            }),
+    );
+    result
 }
 
 pub async fn run(workspace: WorkspaceLaunch) -> Result<()> {
@@ -160,6 +262,13 @@ pub async fn run(workspace: WorkspaceLaunch) -> Result<()> {
     );
     let authenticated = AuthenticatedAcpConnection::new(principal);
     let receiver = core.request_handler.create_notify_channel().await;
+    let sessions = Arc::new(
+        executive::r#impl::session::canonical_store::CanonicalSessionStore::open(
+            executive::r#impl::session::canonical_store::session_db_path(Path::new(
+                &core.daemon_config.data_dir,
+            )),
+        )?,
+    );
     let active_session = Arc::new(Mutex::new(None));
     let backend = ExecutiveAcpBackend {
         handler: core.request_handler.clone(),
@@ -169,6 +278,8 @@ pub async fn run(workspace: WorkspaceLaunch) -> Result<()> {
     let mut events = ExecutiveEvents {
         receiver,
         active_session,
+        sessions,
+        last_sequence: HashMap::new(),
     };
     let mut adapter = AcpAdapter::default();
     tracing::info!(
@@ -243,6 +354,40 @@ fn rpc_result(response: &serde_json::Value) -> Result<&serde_json::Value, AcpErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn item(sequence: u64) -> ItemRecord {
+        ItemRecord {
+            schema_version: fabric::SESSION_SCHEMA_VERSION,
+            id: fabric::ItemId::new(),
+            session_id: SessionId("s".into()),
+            turn_id: fabric::TurnId::new(),
+            sequence,
+            created_at_ms: sequence,
+            payload: fabric::ItemPayload::AssistantMessage {
+                content: format!("item-{sequence}"),
+            },
+        }
+    }
+
+    #[test]
+    fn recovery_is_snapshot_then_only_post_cursor_items() {
+        let events = recovery_events(
+            "s",
+            &EventCursor {
+                sequence: 1,
+                event_id: None,
+            },
+            vec![item(1), item(2), item(3)],
+        );
+        let ClientEvent::Snapshot(snapshot) = &events[0].event else {
+            panic!("snapshot must lead recovery");
+        };
+        assert_eq!(snapshot.items.len(), 1);
+        assert_eq!(snapshot.cursor.sequence, 1);
+        assert_eq!(event_sequence(&events[1].event), Some(2));
+        assert_eq!(event_sequence(&events[2].event), Some(3));
+        assert_eq!(events.len(), 3);
+    }
 
     #[test]
     fn principal_mismatch_fails_closed_before_executive_call() {

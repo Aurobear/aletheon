@@ -60,11 +60,11 @@ pub use repository::{
 };
 pub use settlement::{
     recovery_disposition, settle_admission, terminal_with_memory_flush,
-    FailClosedSettlementResourcePort, InMemorySettlementReceiptStore, NoopSettlementEvidenceSink,
-    RecoveryResourceDisposition, RepositorySettlementLeasePort, SettlementEngine,
-    SettlementEvidence, SettlementEvidenceSink, SettlementLeasePort, SettlementReceiptStore,
-    SettlementRequest, SettlementResourcePort, SpineSettlementEvidenceSink,
-    SqliteSettlementReceiptStore,
+    FailClosedSettlementResourcePort, InMemorySettlementReceiptStore,
+    ManagedSettlementResourcePort, NoopSettlementEvidenceSink, RecoveryResourceDisposition,
+    RepositorySettlementLeasePort, SettlementEngine, SettlementEvidence, SettlementEvidenceSink,
+    SettlementLeasePort, SettlementReceiptStore, SettlementRequest, SettlementResourcePort,
+    SpineSettlementEvidenceSink, SqliteSettlementReceiptStore,
 };
 pub use sqlite_repository::SqliteAgentRunRepository;
 
@@ -123,6 +123,28 @@ pub struct AgentControlService {
     subagent_settlement: bool,
     settlement_generation: String,
     settlement_receipts: Arc<dyn SettlementReceiptStore>,
+    lifecycle_hooks: Arc<dyn AgentLifecycleHookSink>,
+}
+
+#[async_trait]
+pub trait AgentLifecycleHookSink: Send + Sync {
+    async fn emit(&self, context: fabric::hook::HookContext);
+}
+
+struct NoopAgentLifecycleHookSink;
+
+#[async_trait]
+impl AgentLifecycleHookSink for NoopAgentLifecycleHookSink {
+    async fn emit(&self, _context: fabric::hook::HookContext) {}
+}
+
+pub struct CorpusAgentLifecycleHookSink(pub Arc<dyn corpus::CorpusService>);
+
+#[async_trait]
+impl AgentLifecycleHookSink for CorpusAgentLifecycleHookSink {
+    async fn emit(&self, context: fabric::hook::HookContext) {
+        self.0.execute_hook(&context).await;
+    }
 }
 
 impl std::fmt::Debug for AgentControlService {
@@ -164,7 +186,13 @@ impl AgentControlService {
             subagent_settlement: false,
             settlement_generation: "disabled".into(),
             settlement_receipts: Arc::new(InMemorySettlementReceiptStore::default()),
+            lifecycle_hooks: Arc::new(NoopAgentLifecycleHookSink),
         }
+    }
+
+    pub fn with_lifecycle_hooks(mut self, hooks: Arc<dyn AgentLifecycleHookSink>) -> Self {
+        self.lifecycle_hooks = hooks;
+        self
     }
 
     pub fn with_event_sink(mut self, events: Arc<dyn AgentEventSink>) -> Self {
@@ -855,6 +883,7 @@ impl AgentControlPort for AgentControlService {
         let settlement_enabled = self.subagent_settlement;
         let settlement_generation = self.settlement_generation.clone();
         let settlement_receipts = self.settlement_receipts.clone();
+        let lifecycle_hooks = self.lifecycle_hooks.clone();
         let runtime_input = AgentRuntimeInput {
             workspace: request.trusted_workspace.clone(),
             request,
@@ -897,6 +926,7 @@ impl AgentControlPort for AgentControlService {
                 settlement_receipts,
                 event_spine,
                 memory_events,
+                lifecycle_hooks,
             )
             .await;
         });
@@ -1077,6 +1107,7 @@ async fn run_agent(
     settlement_receipts: Arc<dyn SettlementReceiptStore>,
     event_spine: Arc<dyn EventSpine>,
     memory_events: Arc<MemoryRecordingAgentEventSink>,
+    lifecycle_hooks: Arc<dyn AgentLifecycleHookSink>,
 ) {
     let agent = input.handle.agent_id;
     let root_agent = input.handle.root_agent_id;
@@ -1149,6 +1180,14 @@ async fn run_agent(
         return;
     }
     snapshots.send_replace(running.snapshot);
+    lifecycle_hooks
+        .emit(agent_lifecycle_hook_context(
+            fabric::hook::HookPoint::SubagentStart,
+            &input,
+            "running",
+        ))
+        .await;
+    let stop_hook_input = input.clone();
 
     let (outcome_sender, outcome_receiver) = tokio::sync::oneshot::channel();
     scope.spawn("agent-mailbox", async move {
@@ -1231,6 +1270,18 @@ async fn run_agent(
     } else if let Some(exit) = task_exit {
         tracing::error!(agent = ?agent, reason = ?exit.reason, "failed to persist terminal Agent state");
     }
+    lifecycle_hooks
+        .emit(agent_lifecycle_hook_context(
+            fabric::hook::HookPoint::SubagentStop,
+            &stop_hook_input,
+            match next {
+                AgentRunStatus::Succeeded => "succeeded",
+                AgentRunStatus::Cancelled => "cancelled",
+                AgentRunStatus::Failed => "failed",
+                _ => "terminal",
+            },
+        ))
+        .await;
     let _ = kernel.terminate_process(process, process_exit).await;
     let lease_owner = format!("process:{}", process.0);
     if settlement_enabled {
@@ -1243,6 +1294,10 @@ async fn run_agent(
             _ => fabric::SettlementTerminal::Recoverable,
         };
         if let Some(live_run) = live.get(agent).await {
+            let parent_cancellation = match parent_agent {
+                Some(parent) => live.get(parent).await.map(|run| run.cancellation.clone()),
+                None => None,
+            };
             let evidence = Arc::new(SpineSettlementEvidenceSink::new(
                 event_spine,
                 root_agent.0.to_string(),
@@ -1251,8 +1306,11 @@ async fn run_agent(
             ));
             let engine = SettlementEngine::new(
                 settlement_receipts,
-                Arc::new(FailClosedSettlementResourcePort::new(
-                    live_run.cancellation.clone(),
+                Arc::new(ManagedSettlementResourcePort::new(
+                    live_run.clone(),
+                    false,
+                    false,
+                    parent_cancellation,
                 )),
                 Arc::new(RepositorySettlementLeasePort::new(repository.clone())),
                 evidence,
@@ -1322,6 +1380,46 @@ async fn run_agent(
         }
     }
     live.remove(agent).await;
+}
+
+fn agent_lifecycle_hook_context(
+    point: fabric::hook::HookPoint,
+    input: &AgentRuntimeInput,
+    status: &str,
+) -> fabric::hook::HookContext {
+    fabric::hook::HookContext {
+        point,
+        session_id: input.handle.root_agent_id.0.to_string(),
+        turn_count: 0,
+        tool_name: None,
+        tool_input: None,
+        tool_result: None,
+        message: Some(input.request.task.clone()),
+        metadata: std::collections::HashMap::from([
+            ("agent_id".into(), input.handle.agent_id.0.to_string()),
+            (
+                "parent_agent_id".into(),
+                input
+                    .handle
+                    .parent_agent_id
+                    .map(|id| id.0.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "operation_id".into(),
+                input.handle.operation_id.0.to_string(),
+            ),
+            ("status".into(), status.into()),
+            (
+                "workspace_root".into(),
+                input
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.cwd().to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            ),
+        ]),
+    }
 }
 
 fn control_error(kind: AgentControlErrorKind, message: impl Into<String>) -> AgentControlError {

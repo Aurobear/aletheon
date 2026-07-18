@@ -7,7 +7,7 @@ use fabric::{
     AgentControlError, AgentControlErrorKind, AgentId, AgentSnapshot, BackgroundResourceDecl,
     MAX_BACKGROUND_RESOURCES,
 };
-use tokio::sync::{watch, RwLock};
+use tokio::sync::{watch, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -17,6 +17,13 @@ pub struct LiveAgentRun {
     pub cancellation: CancellationToken,
     accepting_calls: Arc<AtomicBool>,
     resources: Arc<RwLock<HashMap<String, BackgroundResourceDecl>>>,
+    managed_resources: Arc<HashMap<String, ManagedResourceState>>,
+}
+
+struct ManagedResourceState {
+    cancellation: Mutex<CancellationToken>,
+    owner: Mutex<String>,
+    completed_actions: Mutex<std::collections::HashSet<String>>,
 }
 
 impl LiveAgentRun {
@@ -41,12 +48,27 @@ impl LiveAgentRun {
                 return Err(invalid("background resource IDs must be unique"));
             }
         }
+        let initial_owner = format!("process:{}", snapshots.borrow().handle.process_id.0);
+        let managed_resources = indexed
+            .keys()
+            .map(|resource_id| {
+                (
+                    resource_id.clone(),
+                    ManagedResourceState {
+                        cancellation: Mutex::new(cancellation.child_token()),
+                        owner: Mutex::new(initial_owner.clone()),
+                        completed_actions: Mutex::new(std::collections::HashSet::new()),
+                    },
+                )
+            })
+            .collect();
         Ok(Self {
             snapshots,
             mailbox_target,
             cancellation,
             accepting_calls: Arc::new(AtomicBool::new(true)),
             resources: Arc::new(RwLock::new(indexed)),
+            managed_resources: Arc::new(managed_resources),
         })
     }
 
@@ -72,6 +94,54 @@ impl LiveAgentRun {
 
     pub async fn remove_resource(&self, resource_id: &str) -> Option<BackgroundResourceDecl> {
         self.resources.write().await.remove(resource_id)
+    }
+
+    pub fn has_managed_resource(&self, resource_id: &str) -> bool {
+        self.managed_resources.contains_key(resource_id)
+    }
+
+    pub async fn resource_cancellation(&self, resource_id: &str) -> Option<CancellationToken> {
+        let state = self.managed_resources.get(resource_id)?;
+        Some(state.cancellation.lock().await.clone())
+    }
+
+    pub async fn terminate_managed_resource(&self, resource_id: &str, action_key: &str) -> bool {
+        let Some(state) = self.managed_resources.get(resource_id) else {
+            return false;
+        };
+        let mut actions = state.completed_actions.lock().await;
+        if actions.insert(action_key.to_string()) {
+            state.cancellation.lock().await.cancel();
+        }
+        true
+    }
+
+    pub async fn reparent_managed_resource(
+        &self,
+        resource_id: &str,
+        old_owner: &str,
+        new_owner: &str,
+        action_key: &str,
+        parent_cancellation: Option<&CancellationToken>,
+    ) -> Result<(), AgentControlError> {
+        let state = self
+            .managed_resources
+            .get(resource_id)
+            .ok_or_else(|| invalid("managed settlement resource is unavailable"))?;
+        let mut actions = state.completed_actions.lock().await;
+        if actions.contains(action_key) {
+            return Ok(());
+        }
+        let mut owner = state.owner.lock().await;
+        if owner.as_str() != old_owner && owner.as_str() != new_owner {
+            return Err(invalid("managed settlement resource owner mismatch"));
+        }
+        *owner = new_owner.to_string();
+        if let Some(parent_cancellation) = parent_cancellation {
+            *state.cancellation.lock().await = parent_cancellation.child_token();
+        }
+        actions.insert(action_key.to_string());
+        Ok(())
     }
 }
 
@@ -142,6 +212,37 @@ mod tests {
         assert!(!live.accepting_calls());
         assert_eq!(resources[0].resource_id, "a");
         assert_eq!(resources[1].resource_id, "z");
+    }
+
+    #[tokio::test]
+    async fn managed_resource_terminates_independently_and_reparents_to_parent_cancel() {
+        let live = run(vec![BackgroundResourceDecl {
+            resource_id: "background".into(),
+            class: AgentResourceClass::BackgroundCommand,
+            survive_child: true,
+        }]);
+        let token = live.resource_cancellation("background").await.unwrap();
+        assert!(!token.is_cancelled());
+        let parent = CancellationToken::new();
+        live.reparent_managed_resource(
+            "background",
+            &format!("process:{}", live.snapshots.borrow().handle.process_id.0),
+            "agent:parent",
+            "reparent-1",
+            Some(&parent),
+        )
+        .await
+        .unwrap();
+        let reparented = live.resource_cancellation("background").await.unwrap();
+        parent.cancel();
+        assert!(reparented.is_cancelled());
+        assert!(!token.is_cancelled());
+
+        assert!(
+            live.terminate_managed_resource("background", "terminate-1")
+                .await
+        );
+        assert!(reparented.is_cancelled());
     }
 
     #[test]

@@ -378,6 +378,8 @@ pub struct ProductionSessionLifecycle {
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     lifecycle: Arc<crate::service::lifecycle_contributors::LifecycleRegistry>,
     lifecycle_enabled: bool,
+    event_bus: Option<Arc<fabric::CanonicalEventBus>>,
+    sessions: Option<Arc<SessionService>>,
 }
 
 impl ProductionSessionLifecycle {
@@ -394,7 +396,19 @@ impl ProductionSessionLifecycle {
             cancel_token,
             lifecycle,
             lifecycle_enabled,
+            event_bus: None,
+            sessions: None,
         }
+    }
+
+    pub fn with_session_service(mut self, sessions: Arc<SessionService>) -> Self {
+        self.sessions = Some(sessions);
+        self
+    }
+
+    pub fn with_event_bus(mut self, event_bus: Option<Arc<fabric::CanonicalEventBus>>) -> Self {
+        self.event_bus = event_bus;
+        self
     }
 
     async fn dispatch(
@@ -402,7 +416,8 @@ impl ProductionSessionLifecycle {
         phase: crate::service::lifecycle_contributors::LifecyclePhase,
         session_id: &str,
     ) -> anyhow::Result<()> {
-        self.lifecycle
+        let dispatch = self
+            .lifecycle
             .dispatch_if_enabled(
                 self.lifecycle_enabled,
                 crate::service::lifecycle_contributors::LifecycleInput {
@@ -416,7 +431,72 @@ impl ProductionSessionLifecycle {
             )
             .await
             .map_err(|error| anyhow::anyhow!("{phase:?} lifecycle rejected session: {error}"))?;
+        for effect in dispatch.effects {
+            use crate::service::lifecycle_contributors::LifecycleEffect;
+            match effect {
+                LifecycleEffect::Continue => {}
+                LifecycleEffect::EmitEvent { schema, payload } => {
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_event(
+                            fabric::SchemaId::from(schema.as_str()),
+                            &format!("session:{session_id}"),
+                            payload,
+                        )
+                        .await?;
+                    }
+                }
+                LifecycleEffect::RequestCancellation { reason } => {
+                    if let Some(cancel) = self.cancel_token.lock().await.as_ref() {
+                        tracing::info!(%session_id, %reason, "Session lifecycle requested cancellation");
+                        cancel.cancel();
+                    }
+                }
+                LifecycleEffect::RequestCheckpoint => {
+                    return Err(anyhow::anyhow!(
+                        "{phase:?} lifecycle requested a checkpoint outside a turn"
+                    ));
+                }
+                LifecycleEffect::RejectInput { reason } => {
+                    return Err(anyhow::anyhow!(
+                        "{phase:?} lifecycle rejected session: {reason}"
+                    ));
+                }
+                LifecycleEffect::AddContextFragment { source, content } => {
+                    let sessions = self.sessions.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("session context-fragment persistence is unavailable")
+                    })?;
+                    sessions
+                        .persist_context_fragments(
+                            &SessionId(session_id.into()),
+                            fabric::TurnId::new(),
+                            fabric_lifecycle_phase(phase),
+                            vec![(source, content)],
+                        )
+                        .await?;
+                }
+            }
+        }
         Ok(())
+    }
+}
+
+fn fabric_lifecycle_phase(
+    phase: crate::service::lifecycle_contributors::LifecyclePhase,
+) -> fabric::types::lifecycle::LifecyclePhase {
+    use crate::service::lifecycle_contributors::LifecyclePhase as ExecutivePhase;
+    use fabric::types::lifecycle::LifecyclePhase as FabricPhase;
+    match phase {
+        ExecutivePhase::BeforeSessionStart => FabricPhase::BeforeSessionStart,
+        ExecutivePhase::AfterSessionStart => FabricPhase::AfterSessionStart,
+        ExecutivePhase::BeforeTurnInput => FabricPhase::BeforeTurnInput,
+        ExecutivePhase::AfterContextProjection => FabricPhase::AfterContextProjection,
+        ExecutivePhase::BeforeModelCall => FabricPhase::BeforeModelCall,
+        ExecutivePhase::BeforeToolBatch => FabricPhase::BeforeToolBatch,
+        ExecutivePhase::AfterToolTerminal => FabricPhase::AfterToolTerminal,
+        ExecutivePhase::AfterTurnTerminal => FabricPhase::AfterTurnTerminal,
+        ExecutivePhase::BeforeSessionEnd => FabricPhase::BeforeSessionEnd,
+        ExecutivePhase::AfterSessionEnd => FabricPhase::AfterSessionEnd,
+        ExecutivePhase::OnAbort => FabricPhase::OnAbort,
     }
 }
 

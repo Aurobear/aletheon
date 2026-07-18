@@ -10,6 +10,17 @@ use super::config::McpTrustLevel;
 use crate::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use fabric::tool::ConcurrencyClass;
 
+fn permission_override(
+    overrides: &HashMap<String, PermissionLevel>,
+    tool_name: &str,
+    server_name: &str,
+) -> Option<PermissionLevel> {
+    overrides
+        .get(tool_name)
+        .or_else(|| overrides.get(server_name))
+        .copied()
+}
+
 /// Wraps an MCP-discovered tool as a local `Tool` implementation.
 pub struct McpToolWrapper {
     pub normalized_name: String,
@@ -18,8 +29,8 @@ pub struct McpToolWrapper {
     pub trust_level: McpTrustLevel,
     /// The server this tool belongs to, used for permission override lookup.
     pub server_name: String,
-    /// Per-server permission level overrides (server_name → PermissionLevel).
-    /// If the tool's server has an entry, it overrides the trust→permission mapping.
+    /// Per-tool overrides keyed by normalized tool name. Server-name keys are
+    /// retained only as a compatibility fallback.
     pub overrides: HashMap<String, PermissionLevel>,
     /// Whether the MCP server supports parallel tool calls.
     pub supports_parallel: bool,
@@ -40,9 +51,10 @@ impl Tool for McpToolWrapper {
     }
 
     fn permission_level(&self) -> PermissionLevel {
-        // Check for override first
-        if let Some(override_level) = self.overrides.get(&self.server_name) {
-            return *override_level;
+        if let Some(override_level) =
+            permission_override(&self.overrides, &self.normalized_name, &self.server_name)
+        {
+            return override_level;
         }
         // Fall back to trust-based mapping
         match self.trust_level {
@@ -111,7 +123,7 @@ pub struct McpResourceProvider {
     pub client: Arc<Mutex<McpClient>>,
     /// The server this resource belongs to, used for permission override lookup.
     pub server_name: String,
-    /// Per-server permission level overrides (server_name → PermissionLevel).
+    /// Per-tool overrides keyed by normalized resource-tool name.
     pub overrides: HashMap<String, PermissionLevel>,
 }
 
@@ -133,8 +145,10 @@ impl Tool for McpResourceProvider {
     }
 
     fn permission_level(&self) -> PermissionLevel {
-        if let Some(override_level) = self.overrides.get(&self.server_name) {
-            return *override_level;
+        if let Some(override_level) =
+            permission_override(&self.overrides, &self.normalized_name, &self.server_name)
+        {
+            return override_level;
         }
         PermissionLevel::L0
     }
@@ -172,5 +186,40 @@ impl Tool for McpResourceProvider {
                 },
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod permission_override_tests {
+    use super::*;
+
+    #[test]
+    fn exact_tool_override_takes_precedence_over_legacy_server_override() {
+        let overrides = HashMap::from([
+            ("github".to_string(), PermissionLevel::L1),
+            ("github__delete_repo".to_string(), PermissionLevel::L3),
+        ]);
+        assert_eq!(
+            permission_override(&overrides, "github__delete_repo", "github"),
+            Some(PermissionLevel::L3)
+        );
+    }
+
+    #[test]
+    fn unrelated_tool_does_not_inherit_another_tools_override() {
+        let overrides = HashMap::from([("github__delete_repo".to_string(), PermissionLevel::L3)]);
+        assert_eq!(
+            permission_override(&overrides, "github__list_repos", "github"),
+            None
+        );
+    }
+
+    #[test]
+    fn legacy_server_override_remains_a_fallback() {
+        let overrides = HashMap::from([("github".to_string(), PermissionLevel::L2)]);
+        assert_eq!(
+            permission_override(&overrides, "github__list_repos", "github"),
+            Some(PermissionLevel::L2)
+        );
     }
 }

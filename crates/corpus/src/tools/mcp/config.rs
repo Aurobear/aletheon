@@ -25,9 +25,10 @@ pub struct McpConfig {
     /// Supports prefix matching.
     #[serde(default)]
     pub tool_denylist: Vec<String>,
-    /// Per-server permission overrides. Key is server_name, value is
-    /// a PermissionLevel override (L0=ReadOnly, L1=Sandboxed, L2=SystemModify, L3=Destructive).
-    /// Overrides the default trust→permission mapping for specific tools.
+    /// Per-tool permission overrides. The preferred key is the final registered
+    /// tool name (for example `github__delete_repo` or
+    /// `mcp.github.resource.readme`). Legacy server-name keys remain accepted as
+    /// a lower-precedence fallback.
     #[serde(default)]
     pub permission_overrides: HashMap<String, PermissionLevel>,
     /// Global default per-request timeout in milliseconds.

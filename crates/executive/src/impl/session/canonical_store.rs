@@ -88,6 +88,15 @@ impl CanonicalSessionStore {
 
 #[async_trait]
 impl TurnRecoveryStore for CanonicalSessionStore {
+    async fn list_session_ids(&self) -> Result<Vec<SessionId>> {
+        let connection = self.connection.lock().unwrap();
+        let mut statement =
+            connection.prepare("SELECT session_id FROM sessions ORDER BY session_id")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| row.map(SessionId).map_err(Into::into))
+            .collect()
+    }
+
     async fn mark_recovered_turn(
         &self,
         session_id: &SessionId,
@@ -336,6 +345,43 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
 mod tests {
     use super::*;
 
+    async fn create_incomplete_turn(
+        store: &CanonicalSessionStore,
+        session_id: &str,
+    ) -> fabric::TurnId {
+        let session_id = SessionId(session_id.into());
+        store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 0,
+                status: fabric::SessionStatus::Active,
+            })
+            .await
+            .unwrap();
+        let turn_id = fabric::TurnId::new();
+        store
+            .append(
+                &session_id,
+                1,
+                ItemRecord {
+                    schema_version: SESSION_SCHEMA_VERSION,
+                    id: ItemId::new(),
+                    session_id: session_id.clone(),
+                    turn_id,
+                    sequence: 1,
+                    created_at_ms: 0,
+                    payload: ItemPayload::UserMessage {
+                        content: "started".into(),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        turn_id
+    }
+
     #[tokio::test]
     async fn recovery_mutation_persists_turn_and_session_status() {
         let store = CanonicalSessionStore::open(":memory:").unwrap();
@@ -376,6 +422,34 @@ mod tests {
             )
             .unwrap();
         assert_eq!(persisted, "interrupted");
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_enumerates_all_durable_sessions() {
+        let store = CanonicalSessionStore::open(":memory:").unwrap();
+        create_incomplete_turn(&store, "session-a").await;
+        create_incomplete_turn(&store, "session-b").await;
+        let mut hardening = crate::core::config::GrokHardeningConfig::default();
+        hardening.compaction_v2 = true;
+
+        let report = crate::service::turn_recovery::scan_incomplete_turns(&store, &hardening)
+            .await
+            .unwrap();
+
+        assert_eq!(report.sessions_scanned, 2);
+        assert_eq!(report.turns_scanned, 2);
+        assert_eq!(report.incomplete_turns.len(), 2);
+        for session in ["session-a", "session-b"] {
+            assert_eq!(
+                store
+                    .load_session(&SessionId(session.into()))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                fabric::SessionStatus::Interrupted
+            );
+        }
     }
 
     #[test]

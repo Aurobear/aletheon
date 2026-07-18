@@ -147,6 +147,7 @@ pub struct McpClient {
     pub trust_level: McpTrustLevel,
     pub tools: Vec<McpTool>,
     pub resources: Vec<McpResource>,
+    pub resource_templates: Vec<McpResourceTemplate>,
     /// Channel sender for notifications received from the server.
     pub notification_tx: mpsc::Sender<McpNotification>,
     notification_rx: Option<mpsc::Receiver<McpNotification>>,
@@ -204,14 +205,20 @@ impl McpClient {
         let resources = Self::discover_resources(&mut transport, &server_name, 3)
             .await
             .unwrap_or_default();
+        let resource_templates = transport
+            .request(4, "resources/templates/list", serde_json::json!({}))
+            .await
+            .map(|value| Self::parse_resource_templates(&value))
+            .unwrap_or_default();
 
         Ok(Self {
             server_name,
             transport,
-            next_id: 4,
+            next_id: 5,
             trust_level,
             tools,
             resources,
+            resource_templates,
             notification_tx,
             notification_rx: Some(notification_rx),
             supports_parallel_tool_calls,
@@ -264,14 +271,20 @@ impl McpClient {
         let resources = Self::discover_resources(&mut transport, &server_name, 3)
             .await
             .unwrap_or_default();
+        let resource_templates = transport
+            .request(4, "resources/templates/list", serde_json::json!({}))
+            .await
+            .map(|value| Self::parse_resource_templates(&value))
+            .unwrap_or_default();
 
         Ok(Self {
             server_name,
             transport,
-            next_id: 4,
+            next_id: 5,
             trust_level,
             tools,
             resources,
+            resource_templates,
             notification_tx,
             notification_rx: Some(notification_rx),
             supports_parallel_tool_calls,
@@ -325,14 +338,20 @@ impl McpClient {
         let resources = Self::discover_resources(&mut transport, &server_name, 3)
             .await
             .unwrap_or_default();
+        let resource_templates = transport
+            .request(4, "resources/templates/list", serde_json::json!({}))
+            .await
+            .map(|value| Self::parse_resource_templates(&value))
+            .unwrap_or_default();
 
         Ok(Self {
             server_name,
             transport,
-            next_id: 4,
+            next_id: 5,
             trust_level,
             tools,
             resources,
+            resource_templates,
             notification_tx,
             notification_rx: Some(notification_rx),
             supports_parallel_tool_calls,
@@ -440,6 +459,29 @@ impl McpClient {
         resources
     }
 
+    fn parse_resource_templates(result: &Value) -> Vec<McpResourceTemplate> {
+        result
+            .get("resourceTemplates")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|value| {
+                Some(McpResourceTemplate {
+                    uri_template: value.get("uriTemplate")?.as_str()?.to_string(),
+                    name: value.get("name")?.as_str()?.to_string(),
+                    description: value
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    mime_type: value
+                        .get("mimeType")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                })
+            })
+            .collect()
+    }
+
     /// Call a tool on this server.
     pub async fn call_tool(&mut self, tool_name: &str, args: Value) -> Result<Value> {
         let id = self.next_id;
@@ -483,26 +525,7 @@ impl McpClient {
             .transport
             .request(id, "resources/templates/list", serde_json::json!({}))
             .await?;
-        Ok(result
-            .get("resourceTemplates")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|value| {
-                Some(McpResourceTemplate {
-                    uri_template: value.get("uriTemplate")?.as_str()?.to_string(),
-                    name: value.get("name")?.as_str()?.to_string(),
-                    description: value
-                        .get("description")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    mime_type: value
-                        .get("mimeType")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                })
-            })
-            .collect())
+        Ok(Self::parse_resource_templates(&result))
     }
 
     /// Read a specific resource by URI.
@@ -556,6 +579,7 @@ impl McpClient {
     pub async fn watch_tool_changes(
         client: Arc<Mutex<Self>>,
         mut rx: mpsc::Receiver<McpNotification>,
+        registry_change_tx: Option<mpsc::Sender<String>>,
     ) {
         while let Some(notification) = rx.recv().await {
             if let McpNotification::ElicitationCreate { id, params } = notification {
@@ -588,6 +612,11 @@ impl McpClient {
                             "MCP tools re-discovered after ToolsListChanged"
                         );
                         client.tools = tools;
+                        let server_name = client.server_name.clone();
+                        drop(client);
+                        if let Some(tx) = &registry_change_tx {
+                            let _ = tx.send(server_name).await;
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -689,17 +718,76 @@ impl ElicitationHandler for McpElicitationHandler {
     }
 }
 
+fn spawn_connected_health_supervisor(
+    client: Arc<Mutex<McpClient>>,
+    server_config: McpServerConfig,
+    global_timeout_ms: u64,
+    registry_change_tx: Option<mpsc::Sender<String>>,
+) {
+    if server_config.health_check_interval_sec == 0 {
+        return;
+    }
+    tokio::spawn(async move {
+        let interval =
+            std::time::Duration::from_secs(server_config.health_check_interval_sec.max(1));
+        loop {
+            tokio::time::sleep(interval).await;
+            let (healthy, elicitation_handler) = {
+                let mut current = client.lock().await;
+                let handler = current.elicitation_handler.clone();
+                let id = current.next_id;
+                current.next_id += 1;
+                let healthy = current
+                    .transport
+                    .request(id, "ping", serde_json::json!({}))
+                    .await
+                    .is_ok();
+                (healthy, handler)
+            };
+            if healthy {
+                continue;
+            }
+            match connect_mcp_server(&server_config, global_timeout_ms).await {
+                Ok(mut replacement) => {
+                    replacement.elicitation_handler = elicitation_handler;
+                    let notification_rx = replacement.notification_rx.take();
+                    *client.lock().await = replacement;
+                    if let Some(rx) = notification_rx {
+                        tokio::spawn(McpClient::watch_tool_changes(
+                            client.clone(),
+                            rx,
+                            registry_change_tx.clone(),
+                        ));
+                    }
+                    if let Some(tx) = &registry_change_tx {
+                        let _ = tx.send(server_config.name.clone()).await;
+                    }
+                    tracing::info!(server = %server_config.name, "reconnected unhealthy MCP server");
+                }
+                Err(error) => {
+                    tracing::warn!(server = %server_config.name, %error, "MCP reconnect attempt failed")
+                }
+            }
+        }
+    });
+}
+
 /// Manages connections to multiple MCP servers.
 pub struct McpConnectionManager {
-    clients: HashMap<String, Arc<Mutex<McpClient>>>,
+    clients: Arc<std::sync::RwLock<HashMap<String, Arc<Mutex<McpClient>>>>>,
     config: McpConfig,
+    registry_change_tx: Option<mpsc::Sender<String>>,
+    elicitation_gate:
+        Arc<std::sync::RwLock<Option<Arc<dyn crate::security::approval::ApprovalGate>>>>,
 }
 
 impl McpConnectionManager {
     pub fn new(config: McpConfig) -> Self {
         Self {
-            clients: HashMap::new(),
+            clients: Arc::new(std::sync::RwLock::new(HashMap::new())),
             config,
+            registry_change_tx: None,
+            elicitation_gate: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -712,48 +800,22 @@ impl McpConnectionManager {
         let notification_rx = client.notification_rx.take();
         let client = Arc::new(Mutex::new(client));
         self.clients
+            .write()
+            .expect("MCP clients lock poisoned")
             .insert(server_config.name.clone(), client.clone());
         if let Some(rx) = notification_rx {
-            tokio::spawn(McpClient::watch_tool_changes(client.clone(), rx));
+            tokio::spawn(McpClient::watch_tool_changes(
+                client.clone(),
+                rx,
+                self.registry_change_tx.clone(),
+            ));
         }
-        if server_config.health_check_interval_sec > 0 {
-            tokio::spawn(async move {
-                let interval =
-                    std::time::Duration::from_secs(server_config.health_check_interval_sec.max(1));
-                loop {
-                    tokio::time::sleep(interval).await;
-                    let (healthy, elicitation_handler) = {
-                        let mut current = client.lock().await;
-                        let handler = current.elicitation_handler.clone();
-                        let id = current.next_id;
-                        current.next_id += 1;
-                        let healthy = current
-                            .transport
-                            .request(id, "ping", serde_json::json!({}))
-                            .await
-                            .is_ok();
-                        (healthy, handler)
-                    };
-                    if healthy {
-                        continue;
-                    }
-                    match connect_mcp_server(&server_config, global_timeout_ms).await {
-                        Ok(mut replacement) => {
-                            replacement.elicitation_handler = elicitation_handler;
-                            let notification_rx = replacement.notification_rx.take();
-                            *client.lock().await = replacement;
-                            if let Some(rx) = notification_rx {
-                                tokio::spawn(McpClient::watch_tool_changes(client.clone(), rx));
-                            }
-                            tracing::info!(server = %server_config.name, "reconnected unhealthy MCP server");
-                        }
-                        Err(error) => {
-                            tracing::warn!(server = %server_config.name, %error, "MCP reconnect attempt failed")
-                        }
-                    }
-                }
-            });
-        }
+        spawn_connected_health_supervisor(
+            client,
+            server_config,
+            global_timeout_ms,
+            self.registry_change_tx.clone(),
+        );
     }
 
     /// Connect to all enabled servers in the config.
@@ -837,6 +899,7 @@ impl McpConnectionManager {
                                 error = %e,
                                 "Failed to connect MCP server"
                             );
+                            self.spawn_initial_reconnect(server_config.clone(), global_timeout_ms);
                         }
                     }
                 }
@@ -859,6 +922,7 @@ impl McpConnectionManager {
                                 error = %e,
                                 "Failed to connect MCP server via HTTP"
                             );
+                            self.spawn_initial_reconnect(server_config.clone(), global_timeout_ms);
                         }
                     }
                 }
@@ -881,6 +945,7 @@ impl McpConnectionManager {
                                 error = %e,
                                 "Failed to connect MCP server via SSE"
                             );
+                            self.spawn_initial_reconnect(server_config.clone(), global_timeout_ms);
                         }
                     }
                 }
@@ -889,10 +954,71 @@ impl McpConnectionManager {
         Ok(())
     }
 
+    fn spawn_initial_reconnect(&self, server_config: McpServerConfig, global_timeout_ms: u64) {
+        if server_config.health_check_interval_sec == 0 {
+            return;
+        }
+        let clients = self.clients.clone();
+        let registry_change_tx = self.registry_change_tx.clone();
+        let elicitation_gate = self.elicitation_gate.clone();
+        tokio::spawn(async move {
+            let interval =
+                std::time::Duration::from_secs(server_config.health_check_interval_sec.max(1));
+            loop {
+                tokio::time::sleep(interval).await;
+                match connect_mcp_server(&server_config, global_timeout_ms).await {
+                    Ok(mut client) => {
+                        if let Some(gate) = elicitation_gate
+                            .read()
+                            .expect("MCP elicitation gate lock poisoned")
+                            .clone()
+                        {
+                            client.elicitation_handler = Some(Arc::new(
+                                McpElicitationHandler::new(gate, server_config.name.clone()),
+                            ));
+                        }
+                        let rx = client.notification_rx.take();
+                        let client = Arc::new(Mutex::new(client));
+                        clients
+                            .write()
+                            .expect("MCP clients lock poisoned")
+                            .insert(server_config.name.clone(), client.clone());
+                        if let Some(rx) = rx {
+                            tokio::spawn(McpClient::watch_tool_changes(
+                                client.clone(),
+                                rx,
+                                registry_change_tx.clone(),
+                            ));
+                        }
+                        if let Some(tx) = &registry_change_tx {
+                            let _ = tx.send(server_config.name.clone()).await;
+                        }
+                        spawn_connected_health_supervisor(
+                            client,
+                            server_config.clone(),
+                            global_timeout_ms,
+                            registry_change_tx.clone(),
+                        );
+                        tracing::info!(server = %server_config.name, "connected MCP server after initial failure");
+                        break;
+                    }
+                    Err(error) => {
+                        tracing::warn!(server = %server_config.name, %error, "initial MCP reconnect attempt failed")
+                    }
+                }
+            }
+        });
+    }
+
+    pub fn set_registry_change_sender(&mut self, sender: mpsc::Sender<String>) {
+        self.registry_change_tx = Some(sender);
+    }
+
     /// Get all tool wrappers from all connected servers, subject to allowlist/denylist.
     pub fn get_all_tools(&self) -> Vec<McpToolWrapper> {
         let mut wrappers = Vec::new();
-        for (server_name, client_arc) in &self.clients {
+        let clients = self.clients.read().expect("MCP clients lock poisoned");
+        for (server_name, client_arc) in clients.iter() {
             let Ok(client) = client_arc.try_lock() else {
                 tracing::warn!(server = %server_name, "MCP client busy during tool discovery");
                 continue;
@@ -951,8 +1077,8 @@ impl McpConnectionManager {
         true
     }
 
-    pub fn get_client(&self, server_name: &str) -> Option<&Arc<Mutex<McpClient>>> {
-        self.clients.get(server_name)
+    pub fn get_client(&self, server_name: &str) -> Option<Arc<Mutex<McpClient>>> {
+        self.clients.read().ok()?.get(server_name).cloned()
     }
 
     pub async fn call_tool(
@@ -963,35 +1089,47 @@ impl McpConnectionManager {
     ) -> Result<Value> {
         let client_arc = self
             .clients
+            .read()
+            .expect("MCP clients lock poisoned")
             .get(server_name)
+            .cloned()
             .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
         let mut client = client_arc.lock().await;
         client.call_tool(tool_name, args).await
     }
 
     pub fn connected_count(&self) -> usize {
-        self.clients.len()
+        self.clients
+            .read()
+            .expect("MCP clients lock poisoned")
+            .len()
     }
 
     pub fn server_has_tools(&self, server_name: &str, required: &[&str]) -> bool {
-        self.clients.get(server_name).is_some_and(|client| {
-            let Ok(client) = client.try_lock() else {
-                return false;
-            };
-            required
-                .iter()
-                .all(|name| client.tools.iter().any(|tool| tool.name == *name))
-        })
+        self.clients
+            .read()
+            .expect("MCP clients lock poisoned")
+            .get(server_name)
+            .is_some_and(|client| {
+                let Ok(client) = client.try_lock() else {
+                    return false;
+                };
+                required
+                    .iter()
+                    .all(|name| client.tools.iter().any(|tool| tool.name == *name))
+            })
     }
 
     pub fn server_tools(&self, server_name: &str) -> Option<Vec<McpTool>> {
-        let client = self.clients.get(server_name)?.try_lock().ok()?;
+        let client_arc = self.clients.read().ok()?.get(server_name)?.clone();
+        let client = client_arc.try_lock().ok()?;
         Some(client.tools.clone())
     }
 
     pub fn get_all_resource_providers(&self) -> Vec<McpResourceProvider> {
         let mut providers = Vec::new();
-        for (server_name, client_arc) in &self.clients {
+        let clients = self.clients.read().expect("MCP clients lock poisoned");
+        for (server_name, client_arc) in clients.iter() {
             let Ok(client) = client_arc.try_lock() else {
                 tracing::warn!(server = %server_name, "MCP client busy during resource discovery");
                 continue;
@@ -1014,7 +1152,10 @@ impl McpConnectionManager {
     pub async fn list_resources(&self, server_name: &str) -> Result<Vec<McpResource>> {
         let client_arc = self
             .clients
+            .read()
+            .expect("MCP clients lock poisoned")
             .get(server_name)
+            .cloned()
             .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
         let mut client = client_arc.lock().await;
         client.list_resources().await
@@ -1027,7 +1168,10 @@ impl McpConnectionManager {
     ) -> Result<super::client::ResourceContent> {
         let client_arc = self
             .clients
+            .read()
+            .expect("MCP clients lock poisoned")
             .get(server_name)
+            .cloned()
             .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
         let mut client = client_arc.lock().await;
         client.read_resource(uri).await
@@ -1039,16 +1183,25 @@ impl McpConnectionManager {
     ) -> Result<Vec<McpResourceTemplate>> {
         let client_arc = self
             .clients
+            .read()
+            .expect("MCP clients lock poisoned")
             .get(server_name)
+            .cloned()
             .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
-        client_arc.lock().await.list_resource_templates().await
+        let mut client = client_arc.lock().await;
+        client.list_resource_templates().await
     }
 
     pub fn set_elicitation_approval_gate(
         &self,
         gate: Arc<dyn crate::security::approval::ApprovalGate>,
     ) {
-        for (server_name, client_arc) in &self.clients {
+        *self
+            .elicitation_gate
+            .write()
+            .expect("MCP elicitation gate lock poisoned") = Some(gate.clone());
+        let clients = self.clients.read().expect("MCP clients lock poisoned");
+        for (server_name, client_arc) in clients.iter() {
             let Ok(mut client) = client_arc.try_lock() else {
                 continue;
             };
@@ -1060,7 +1213,8 @@ impl McpConnectionManager {
     }
 
     pub fn set_elicitation_handler(&self, handler: Option<Arc<dyn ElicitationHandler>>) {
-        for client_arc in self.clients.values() {
+        let clients = self.clients.read().expect("MCP clients lock poisoned");
+        for client_arc in clients.values() {
             let Ok(mut client) = client_arc.try_lock() else {
                 continue;
             };
@@ -1071,7 +1225,10 @@ impl McpConnectionManager {
     pub async fn handle_elicitation(&self, server_name: &str, params: &Value) -> Result<Value> {
         let client_arc = self
             .clients
+            .read()
+            .expect("MCP clients lock poisoned")
             .get(server_name)
+            .cloned()
             .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
         let client = client_arc.lock().await;
         client.handle_elicitation(params).await

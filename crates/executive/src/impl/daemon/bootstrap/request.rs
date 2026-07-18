@@ -383,13 +383,15 @@ impl RequestHandler {
 
         // MCP servers. Keep the manager alive: gbrain recall/capture calls the
         // same authenticated connections after startup tool registration.
-        let mut retained_mcp = None;
-        {
+        let (mcp_registry_tx, mut mcp_registry_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let mut mcp_registration_ids = Vec::new();
+        let retained_mcp = {
             let mcp_config = corpus::tools::mcp::config::McpConfig {
                 servers: config.mcp_servers.clone(),
                 ..Default::default()
             };
             let mut mcp = corpus::tools::mcp::manager::McpManager::new(mcp_config);
+            mcp.set_registry_change_sender(mcp_registry_tx);
             if let Err(e) = mcp.connect_all().await {
                 tracing::warn!(error = %e, "MCP connect_all failed; continuing without MCP tools");
             }
@@ -400,26 +402,41 @@ impl RequestHandler {
             }
             for wrapper in mcp.tool_wrappers() {
                 let name = wrapper.name().to_string();
-                if let Err(e) = tools.register(Arc::from(wrapper)) {
-                    tracing::warn!(tool = %name, error = %e, "skip MCP tool (name clash?)");
-                } else {
-                    info!(tool = %name, "Registered MCP tool");
+                match tools.register(Arc::from(wrapper)) {
+                    Err(e) => {
+                        tracing::warn!(tool = %name, error = %e, "skip MCP tool (name clash?)");
+                    }
+                    Ok(id) => {
+                        mcp_registration_ids.push(id);
+                        info!(tool = %name, "Registered MCP tool");
+                    }
+                }
+            }
+            for wrapper in mcp.resource_wrappers() {
+                let name = wrapper.name().to_string();
+                match tools.register(Arc::from(wrapper)) {
+                    Err(e) => {
+                        tracing::warn!(tool = %name, error = %e, "skip MCP resource (name clash?)")
+                    }
+                    Ok(id) => {
+                        mcp_registration_ids.push(id);
+                        info!(tool = %name, "Registered MCP resource");
+                    }
                 }
             }
             if config.gbrain_memory.enabled {
                 if mcp
                     .server_tools(&config.gbrain_memory.server_name)
-                    .is_some()
+                    .is_none()
                 {
-                    retained_mcp = Some(Arc::new(mcp));
-                } else {
                     tracing::warn!(
                         server = %config.gbrain_memory.server_name,
                         "GBrain server unavailable; local memory remains active"
                     );
                 }
             }
-        }
+            Some(Arc::new(mcp))
+        };
 
         // Security
         let sandbox_pref = SandboxPreference::from_str(&config.sandbox_preference);
@@ -522,6 +539,34 @@ impl RequestHandler {
         info!(len = cached_prefix.len(), "Cache-stable prefix built");
 
         let tools = Arc::new(Mutex::new(tools));
+        if let Some(mcp) = retained_mcp.clone() {
+            let registry = tools.clone();
+            let registrations = Arc::new(Mutex::new(mcp_registration_ids));
+            let cancel = cancel_token.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        changed = mcp_registry_rx.recv() => {
+                            let Some(server) = changed else { break };
+                            let mut registry = registry.lock().await;
+                            let mut ids = registrations.lock().await;
+                            for id in ids.drain(..) {
+                                let _ = registry.unregister(id);
+                            }
+                            for wrapper in mcp.tool_wrappers().into_iter().chain(mcp.resource_wrappers()) {
+                                let name = wrapper.name().to_string();
+                                match registry.register(Arc::from(wrapper)) {
+                                    Ok(id) => ids.push(id),
+                                    Err(error) => tracing::warn!(%server, tool = %name, %error, "failed to refresh MCP registry entry"),
+                                }
+                            }
+                            tracing::info!(%server, count = ids.len(), "refreshed MCP ToolRegistry");
+                        }
+                    }
+                }
+            });
+        }
 
         // StormBreaker, CheckpointStore, SkillRouter, AgentLoader
         let storm_breaker = Arc::new(Mutex::new(StormBreaker::new(
@@ -724,7 +769,7 @@ impl RequestHandler {
         let domains = crate::core::DomainPorts::new(
             Arc::new(agora::AgoraRegistry::new(kernel.clock())),
             metacog,
-            corpus,
+            corpus.clone(),
             cognitive_sessions,
         );
         let session_group = crate::core::SessionGroup {
@@ -925,6 +970,9 @@ impl RequestHandler {
             )
             .with_event_spine(canonical_event_spine.clone())
             .with_event_projections(event_projections.clone())
+            .with_lifecycle_hooks(Arc::new(
+                crate::service::agent_control::CorpusAgentLifecycleHookSink(corpus.clone()),
+            ))
             .with_memory_vault(Arc::new(
                 mnemosyne::AgentMemoryVault::open(agent_state_root.join("agent_memory.db"))
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?,
@@ -1019,13 +1067,12 @@ impl RequestHandler {
 
         // M4-T2: scan for incomplete turns (start boundary without terminal).
         // Runs once at daemon bootstrap when compaction_v2 is enabled.
-        let turn_recovery_report = crate::service::turn_recovery::scan_incomplete_turns(
-            &canonical_store,
-            &[fabric::SessionId(session_id.clone())],
-            &grok_hardening,
-        )
-        .await
-        .context("incomplete-turn recovery scan during daemon startup")?;
+        let turn_recovery_report =
+            crate::service::turn_recovery::scan_incomplete_turns(&canonical_store, &grok_hardening)
+                .await
+                .context("incomplete-turn recovery scan during daemon startup")?;
+        crate::service::turn_recovery::persist_recovery_health(&data_dir, &turn_recovery_report)
+            .context("persist turn recovery health")?;
         if !turn_recovery_report.incomplete_turns.is_empty() {
             for turn in &turn_recovery_report.incomplete_turns {
                 info!(
@@ -1339,7 +1386,9 @@ impl RequestHandler {
                 turn_token.clone(),
                 lifecycle_registry,
                 grok_hardening.lifecycle_contributors,
-            ),
+            )
+            .with_event_bus(event_bus.clone())
+            .with_session_service(turn_orchestrator.session_service.clone()),
         );
         let health_use_cases: Arc<dyn crate::service::request_use_cases::HealthUseCases> = Arc::new(
             crate::service::request_use_cases::ProductionHealthUseCases::new(

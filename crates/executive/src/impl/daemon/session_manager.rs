@@ -255,7 +255,19 @@ mod tests {
             .unwrap();
         for index in 0..12 {
             manager
-                .push_assistant(&format!("assistant {index} {}", "x".repeat(400)))
+                .push_message(Message {
+                    role: Role::Assistant,
+                    content: vec![
+                        ContentBlock::Text {
+                            text: format!("assistant {index} {}", "x".repeat(400)),
+                        },
+                        ContentBlock::ToolUse {
+                            id: format!("tool-{index}"),
+                            name: "fixture".into(),
+                            input: serde_json::Value::Null,
+                        },
+                    ],
+                })
                 .await;
             manager
                 .push_message(Message::tool_result(

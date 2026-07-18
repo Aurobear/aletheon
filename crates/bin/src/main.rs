@@ -385,6 +385,12 @@ async fn handle_doctor(
         );
         println!("  sandbox:   {}", report.sandbox.status);
         println!("  writer:    {}", report.writer_health.status);
+        println!(
+            "  recovery:  {} sessions / {} turns / {} recovered",
+            report.turn_recovery.sessions_scanned,
+            report.turn_recovery.turns_scanned,
+            report.turn_recovery.incomplete_turns_recovered
+        );
         for warning in &report.warnings {
             println!("  WARNING:   {warning}");
         }

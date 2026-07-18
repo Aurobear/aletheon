@@ -29,6 +29,8 @@ pub enum RecoveryClassification {
 /// session's aggregate status before returning success.
 #[async_trait]
 pub trait TurnRecoveryStore: SessionAppendStore {
+    async fn list_session_ids(&self) -> Result<Vec<SessionId>>;
+
     async fn mark_recovered_turn(
         &self,
         session_id: &SessionId,
@@ -54,6 +56,45 @@ pub struct TurnRecoveryReport {
     pub incomplete_turns: Vec<RecoveredTurn>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
+pub struct TurnRecoveryHealth {
+    pub sessions_scanned: usize,
+    pub turns_scanned: usize,
+    pub incomplete_turns_recovered: usize,
+}
+
+impl From<&TurnRecoveryReport> for TurnRecoveryHealth {
+    fn from(report: &TurnRecoveryReport) -> Self {
+        Self {
+            sessions_scanned: report.sessions_scanned,
+            turns_scanned: report.turns_scanned,
+            incomplete_turns_recovered: report.incomplete_turns.len(),
+        }
+    }
+}
+
+pub fn persist_recovery_health(
+    data_dir: &std::path::Path,
+    report: &TurnRecoveryReport,
+) -> Result<()> {
+    let path = data_dir.join("turn-recovery-health.json");
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(
+        &temporary,
+        serde_json::to_vec(&TurnRecoveryHealth::from(report))?,
+    )?;
+    std::fs::rename(temporary, path)?;
+    Ok(())
+}
+
+pub fn read_recovery_health(data_dir: &std::path::Path) -> Result<TurnRecoveryHealth> {
+    let path = data_dir.join("turn-recovery-health.json");
+    if !path.exists() {
+        return Ok(TurnRecoveryHealth::default());
+    }
+    Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+}
+
 impl TurnRecoveryReport {
     pub fn is_clean(&self) -> bool {
         self.incomplete_turns.is_empty()
@@ -65,19 +106,19 @@ impl TurnRecoveryReport {
 /// is enabled.
 pub async fn scan_incomplete_turns(
     store: &dyn TurnRecoveryStore,
-    session_ids: &[SessionId],
     grok_hardening: &GrokHardeningConfig,
 ) -> Result<TurnRecoveryReport> {
     if !grok_hardening.compaction_v2 {
         return Ok(TurnRecoveryReport::default());
     }
 
+    let session_ids = store.list_session_ids().await?;
     let mut report = TurnRecoveryReport {
         sessions_scanned: session_ids.len(),
         ..TurnRecoveryReport::default()
     };
 
-    for session_id in session_ids {
+    for session_id in &session_ids {
         let items = store
             .load_items(session_id, None)
             .await

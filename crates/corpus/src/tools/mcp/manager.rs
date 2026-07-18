@@ -30,6 +30,10 @@ impl McpManager {
         self.inner.connect_all().await
     }
 
+    pub fn set_registry_change_sender(&mut self, sender: tokio::sync::mpsc::Sender<String>) {
+        self.inner.set_registry_change_sender(sender);
+    }
+
     /// Call a tool on a named server and return the raw result.
     ///
     /// Delegates to [`McpConnectionManager::call_tool`].
@@ -335,6 +339,11 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
+        spawn_mock_server_on(listener, state);
+        addr
+    }
+
+    fn spawn_mock_server_on(listener: TcpListener, state: Arc<Mutex<MockMcpState>>) {
         tokio::spawn(async move {
             loop {
                 let (stream, _) = match listener.accept().await {
@@ -350,8 +359,6 @@ mod tests {
                 });
             }
         });
-
-        addr
     }
 
     // ---------------------------------------------------------------------------
@@ -855,5 +862,82 @@ mod tests {
         }
 
         std::env::remove_var("TEST_PARALLEL_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn tools_list_changed_emits_registry_refresh_signal() {
+        std::env::set_var("TEST_REFRESH_TOKEN", "refresh-token");
+        let state = Arc::new(Mutex::new(MockMcpState::with_token("refresh-token")));
+        let addr = spawn_mock_server(state).await;
+        let config = McpConfig {
+            servers: vec![McpServerConfig {
+                name: "refresh-server".into(),
+                transport: McpTransportConfig::StreamableHttp {
+                    url: format!("http://{}/mcp", addr),
+                },
+                trust: McpTrustLevel::RemoteTrusted,
+                enabled: true,
+                bearer_token_env: Some("TEST_REFRESH_TOKEN".into()),
+                request_timeout_ms: None,
+                health_check_interval_sec: 0,
+            }],
+            ..McpConfig::default()
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let mut manager = McpManager::new(config);
+        manager.set_registry_change_sender(tx);
+        manager.connect_all().await.unwrap();
+        let client = manager.inner.get_client("refresh-server").unwrap().clone();
+        client
+            .lock()
+            .await
+            .notification_tx
+            .send(super::super::transport::McpNotification::ToolsListChanged)
+            .await
+            .unwrap();
+        let changed = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap();
+        assert_eq!(changed.as_deref(), Some("refresh-server"));
+        std::env::remove_var("TEST_REFRESH_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn initially_unavailable_server_reconnects_when_it_appears() {
+        std::env::set_var("TEST_INITIAL_RECONNECT_TOKEN", "reconnect-token");
+        let reservation = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = reservation.local_addr().unwrap();
+        drop(reservation);
+        let config = McpConfig {
+            servers: vec![McpServerConfig {
+                name: "late-server".into(),
+                transport: McpTransportConfig::StreamableHttp {
+                    url: format!("http://{}/mcp", addr),
+                },
+                trust: McpTrustLevel::RemoteTrusted,
+                enabled: true,
+                bearer_token_env: Some("TEST_INITIAL_RECONNECT_TOKEN".into()),
+                request_timeout_ms: Some(100),
+                health_check_interval_sec: 1,
+            }],
+            ..McpConfig::default()
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let mut manager = McpManager::new(config);
+        manager.set_registry_change_sender(tx);
+        manager.connect_all().await.unwrap();
+        assert_eq!(manager.connected_count(), 0);
+
+        let listener = TcpListener::bind(addr).await.unwrap();
+        spawn_mock_server_on(
+            listener,
+            Arc::new(Mutex::new(MockMcpState::with_token("reconnect-token"))),
+        );
+        let changed = tokio::time::timeout(std::time::Duration::from_secs(3), rx.recv())
+            .await
+            .expect("reconnect signal timed out");
+        assert_eq!(manager.connected_count(), 1);
+        assert_eq!(changed.as_deref(), Some("late-server"));
+        std::env::remove_var("TEST_INITIAL_RECONNECT_TOKEN");
     }
 }

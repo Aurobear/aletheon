@@ -4,7 +4,7 @@ use std::{collections::HashMap, future::Future, sync::Arc};
 
 use crate::core::config::{BackpressureConfig, GrokHardeningConfig};
 use aletheon_kernel::KernelRuntime;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use fabric::types::prompt_queue::{evaluate_cancel, PromptEnvelope, PromptKind, PromptState};
 use fabric::{
     CancelReason, EventSpine, ItemId, ItemPayload, ItemRecord, MonoDeadline, OperationKind,
@@ -30,6 +30,18 @@ pub struct TurnExecution {
 struct CompletedExecution {
     result: TurnResult,
     projection: Option<super::post_turn_projection::PostTurnDispatch>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("terminal durable write failed: {reason}")]
+struct TerminalDurableWriteFailure {
+    reason: String,
+}
+
+fn is_terminal_durable_write_failure(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<TerminalDurableWriteFailure>()
+        .is_some()
 }
 
 #[derive(Clone)]
@@ -341,11 +353,14 @@ impl TurnCoordinator {
             .run_started_turn(&request, cancel.clone(), runner)
             .await;
 
-        // M4-T1: when compaction_v2 is enabled, only remove from active
-        // index if terminal flush succeeded. Failure leaves entry intact
-        // for M4-T2 recovery scan and M5 doctor.
-        let durable = self.grok_hardening.compaction_v2 && outcome.is_err();
-        if !durable {
+        // M4-T1: retain only a typed terminal-persistence failure. Model,
+        // tool, admission, and other errors must not leak active entries.
+        let terminal_write_failed = self.grok_hardening.compaction_v2
+            && outcome
+                .as_ref()
+                .err()
+                .is_some_and(|error| is_terminal_durable_write_failure(error));
+        if !terminal_write_failed {
             self.active.lock().await.remove(&active_key);
         } else {
             tracing::warn!(
@@ -559,9 +574,7 @@ impl TurnCoordinator {
                     &mut write_tracker,
                 )
                 .await
-                .map_err(|append| {
-                    anyhow!("turn failed: {error}; failure notice append failed: {append}")
-                })?;
+                .with_context(|| format!("turn failed: {error}; failure notice append failed"))?;
 
                 // Error path: check write durability.
                 if let Some(ref tracker) = write_tracker {
@@ -608,13 +621,14 @@ impl TurnCoordinator {
             t.record(result.clone());
         }
         if result.is_failed() {
-            anyhow::bail!(
-                "append failed for phase {phase}: {}",
-                match &result {
-                    WriteResult::Failed { reason, .. } => reason,
-                    _ => unreachable!(),
-                }
-            );
+            let reason = match &result {
+                WriteResult::Failed { reason, .. } => reason.clone(),
+                _ => unreachable!(),
+            };
+            if phase == WritePhase::TerminalFlush {
+                return Err(TerminalDurableWriteFailure { reason }.into());
+            }
+            anyhow::bail!("append failed for phase {phase}: {}", reason);
         }
         *sequence += 1;
         Ok(())
@@ -642,5 +656,24 @@ pub fn cancelled_result() -> TurnResult {
             completed_normally: false,
             ..Default::default()
         },
+    }
+}
+
+#[cfg(test)]
+mod durable_failure_tests {
+    use super::*;
+
+    #[test]
+    fn active_retention_only_recognizes_terminal_durable_write_failure() {
+        let terminal: anyhow::Error = TerminalDurableWriteFailure {
+            reason: "disk full".into(),
+        }
+        .into();
+        assert!(is_terminal_durable_write_failure(&terminal));
+        let wrapped = terminal.context("turn execution also failed");
+        assert!(is_terminal_durable_write_failure(&wrapped));
+        assert!(!is_terminal_durable_write_failure(&anyhow!(
+            "model execution failed"
+        )));
     }
 }

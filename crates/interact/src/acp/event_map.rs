@@ -8,6 +8,14 @@ pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
         ClientEvent::Item(item) => Some(map_item_event(item)),
         ClientEvent::Approval(approval) => Some(map_approval_to_permission(approval)),
         ClientEvent::Reconnected(cursor) => Some(map_reconnect(cursor)),
+        ClientEvent::Snapshot(snapshot) => Some(json!({
+            "sessionUpdate": "snapshot",
+            "sessionId": snapshot.session_id.0,
+            "cursor": cursor_json(&snapshot.cursor),
+            "items": snapshot.items,
+            "approvals": snapshot.approvals,
+            "agents": snapshot.agents,
+        })),
         ClientEvent::Failed { cursor, message } => Some(json!({
             "sessionUpdate": "error",
             "message": message,
@@ -20,7 +28,6 @@ pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
             }))
         }
         ClientEvent::InitializeResponse(_)
-        | ClientEvent::Snapshot(_)
         | ClientEvent::Agent(_)
         | ClientEvent::TurnStarted { .. } => None,
     }
@@ -96,6 +103,24 @@ mod tests {
             sequence,
             event_id: Some(format!("event-{sequence}")),
         }
+    }
+
+    #[test]
+    fn snapshot_maps_before_incremental_replay() {
+        let update = map_client_event_to_acp(&ClientEvent::Snapshot(
+            fabric::protocol::client::UiSnapshot {
+                session_id: fabric::SessionId("s".into()),
+                cursor: cursor(4),
+                provider: None,
+                model: None,
+                items: Vec::new(),
+                approvals: Vec::new(),
+                agents: Vec::new(),
+            },
+        ))
+        .unwrap();
+        assert_eq!(update["sessionUpdate"], "snapshot");
+        assert_eq!(update["cursor"]["sequence"], 4);
     }
 
     #[test]
