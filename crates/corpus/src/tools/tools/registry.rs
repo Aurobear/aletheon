@@ -153,10 +153,10 @@ impl Default for ToolRegistry {
             .register(Arc::new(super::grep::GrepTool))
             .expect("duplicate built-in tool");
         registry
-            .register(Arc::new(super::web_fetch::WebFetchTool))
+            .register(Arc::new(super::web_fetch::WebFetchTool::new()))
             .expect("duplicate built-in tool");
         registry
-            .register(Arc::new(super::web_search::WebSearchTool))
+            .register(Arc::new(super::web_search::WebSearchTool::new()))
             .expect("duplicate built-in tool");
         // Task tools share a single TaskStore.
         let task_store = super::task_tools::new_shared_task_store();

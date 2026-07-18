@@ -1,5 +1,7 @@
 //! Web fetch tool — HTTP requests with response capping.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -7,7 +9,28 @@ use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024; // 1 MB
 
-pub struct WebFetchTool;
+pub struct WebFetchTool {
+    network_policy: Option<Arc<fabric::network_policy::NetworkPolicy>>,
+}
+
+impl WebFetchTool {
+    pub fn new() -> Self {
+        Self {
+            network_policy: None,
+        }
+    }
+
+    pub fn with_network_policy(mut self, policy: fabric::network_policy::NetworkPolicy) -> Self {
+        self.network_policy = Some(Arc::new(policy));
+        self
+    }
+}
+
+impl Default for WebFetchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl Tool for WebFetchTool {
@@ -46,7 +69,9 @@ impl Tool for WebFetchTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(WebFetchTool)
+        Box::new(Self {
+            network_policy: self.network_policy.clone(),
+        })
     }
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
@@ -65,6 +90,20 @@ impl Tool for WebFetchTool {
                 };
             }
         };
+
+        // Validate against network policy before making the request.
+        if let Some(ref policy) = self.network_policy {
+            if let Err(reason) = policy.allows_url(&url) {
+                return ToolResult {
+                    content: format!("Error: Network policy blocked URL: {}", reason),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                        truncated: false,
+                    },
+                };
+            }
+        }
 
         let method = input
             .get("method")
@@ -172,17 +211,18 @@ impl Tool for WebFetchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fabric::network_policy::NetworkPolicy;
 
     #[test]
     fn test_tool_metadata() {
-        let tool = WebFetchTool;
+        let tool = WebFetchTool::new();
         assert_eq!(tool.name(), "web_fetch");
         assert_eq!(tool.permission_level(), PermissionLevel::L1);
     }
 
     #[test]
     fn test_input_schema() {
-        let tool = WebFetchTool;
+        let tool = WebFetchTool::new();
         let schema = tool.input_schema();
 
         // Verify required fields
@@ -198,7 +238,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_url() {
-        let tool = WebFetchTool;
+        let tool = WebFetchTool::new();
         let input = json!({});
         let tmp = tempfile::tempdir().unwrap();
 
@@ -221,7 +261,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unsupported_method() {
-        let tool = WebFetchTool;
+        let tool = WebFetchTool::new();
         let input = json!({
             "url": "http://example.com",
             "method": "DELETE"
@@ -243,5 +283,103 @@ mod tests {
 
         assert!(result.is_error);
         assert!(result.content.contains("unsupported method"));
+    }
+
+    #[tokio::test]
+    async fn test_network_policy_blocks_denied_host() {
+        let policy = NetworkPolicy {
+            deny_hosts: vec!["evil.com".into()],
+            allow_dns: true,
+            ..Default::default()
+        };
+        let tool = WebFetchTool::new().with_network_policy(policy);
+        let input = json!({
+            "url": "https://evil.com/path",
+            "method": "GET"
+        });
+        let tmp = tempfile::tempdir().unwrap();
+
+        let result = tool
+            .execute(
+                input,
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                },
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert!(result.content.contains("Network policy blocked URL"));
+    }
+
+    #[tokio::test]
+    async fn test_network_policy_allows_clearn_url() {
+        let policy = NetworkPolicy {
+            allow_hosts: vec!["httpbin.org".into()],
+            allow_dns: true,
+            ..Default::default()
+        };
+        let tool = WebFetchTool::new().with_network_policy(policy);
+        let input = json!({
+            "url": "http://httpbin.org/get",
+            "method": "GET"
+        });
+        let tmp = tempfile::tempdir().unwrap();
+
+        let result = tool
+            .execute(
+                input,
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                },
+            )
+            .await;
+
+        // Should not be a network policy error — it should either make the request
+        // (possibly failing due to DNS/network) or succeed. The key is it's not blocked.
+        assert!(
+            !result.content.contains("Network policy blocked URL"),
+            "allowed URL was blocked by policy: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_network_policy_none_allows_all() {
+        let tool = WebFetchTool::new(); // no policy
+        let input = json!({
+            "url": "https://some-random-site-12345.example",
+            "method": "GET"
+        });
+        let tmp = tempfile::tempdir().unwrap();
+
+        let result = tool
+            .execute(
+                input,
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                },
+            )
+            .await;
+
+        // When no policy is set, the request should not be blocked by policy.
+        // It may fail due to DNS/network, but the error message should not mention policy.
+        assert!(
+            !result.content.contains("Network policy blocked"),
+            "no-policy should not block: {}",
+            result.content
+        );
     }
 }

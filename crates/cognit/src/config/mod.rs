@@ -1271,7 +1271,7 @@ schema_fixture = "config/gbrain/tools-schema.json"
 schema_version = "v0.42.59.0"
 legacy_outbox_dir = "/tmp/legacy"
 "#;
-        let cfg: GbrainMemoryConfig = toml::from_str(toml).unwrap();
+        let cfg: McpMemoryConfig = toml::from_str(toml).unwrap();
         assert!(cfg.enabled);
         assert_eq!(cfg.server_name, "gbrain-primary");
         assert_eq!(cfg.read_sources, ["project", "general"]);
