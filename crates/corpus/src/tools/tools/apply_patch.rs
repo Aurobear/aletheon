@@ -4,6 +4,9 @@ use tokio::fs;
 use tokio::process::Command;
 
 use super::mutation_path::validate_mutation_path;
+use super::structured_patch::{
+    PatchOperation, execute_structured_patch, parse_structured_patch, parse_structured_patch_json,
+};
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 pub struct ApplyPatchTool;
@@ -15,7 +18,7 @@ impl Tool for ApplyPatchTool {
     }
 
     fn description(&self) -> &str {
-        "Apply a unified diff patch to files. Supports creating new files, modifying existing files, and deleting files."
+        "Apply a unified diff or structured patch to files. Supports creating, modifying, moving, appending, and deleting files."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -24,14 +27,21 @@ impl Tool for ApplyPatchTool {
             "properties": {
                 "patch": {
                     "type": "string",
-                    "description": "Unified diff patch content (standard diff format)"
+                    "description": "Unified diff or *** Begin Patch structured patch content"
+                },
+                "patch_json": {
+                    "type": "object",
+                    "description": "Structured patch object containing an operations array"
                 },
                 "base_dir": {
                     "type": "string",
                     "description": "Base directory for applying the patch (default: current dir)"
                 }
             },
-            "required": ["patch"]
+            "anyOf": [
+                {"required": ["patch"]},
+                {"required": ["patch_json"]}
+            ]
         })
     }
 
@@ -45,11 +55,12 @@ impl Tool for ApplyPatchTool {
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let patch = input["patch"].as_str().unwrap_or("");
+        let patch_json = input.get("patch_json").filter(|value| !value.is_null());
         let base_dir = input["base_dir"].as_str();
 
         let start = ctx.clock.mono_now();
 
-        if patch.is_empty() {
+        if patch.is_empty() && patch_json.is_none() {
             return ToolResult {
                 content: "Error: empty patch content".to_string(),
                 is_error: true,
@@ -63,7 +74,7 @@ impl Tool for ApplyPatchTool {
         let workspace = match ctx.effective_workspace_policy() {
             Ok(workspace) => workspace,
             Err(error) => {
-                return tool_error(format!("Refused patch workspace: {error}"), start, ctx)
+                return tool_error(format!("Refused patch workspace: {error}"), start, ctx);
             }
         };
         let requested_base = match base_dir {
@@ -85,6 +96,51 @@ impl Tool for ApplyPatchTool {
             Ok(path) => path,
             Err(error) => return tool_error(format!("Refused patch base: {error}"), start, ctx),
         };
+
+        let structured = if let Some(value) = patch_json {
+            parse_structured_patch_json(&value.to_string()).map(Some)
+        } else if patch.trim_start().starts_with("*** Begin Patch") {
+            parse_structured_patch(patch).map(Some)
+        } else {
+            Ok(None)
+        };
+        let structured = match structured {
+            Ok(value) => value,
+            Err(error) => {
+                return tool_error(format!("Invalid structured patch: {error}"), start, ctx);
+            }
+        };
+
+        if let Some(structured) = structured {
+            for operation in &structured.operations {
+                for relative_path in operation_paths(operation) {
+                    if let Err(error) = validate_mutation_path(
+                        &workspace,
+                        workspace.protected_paths(),
+                        &base_path.join(relative_path),
+                    ) {
+                        return tool_error(
+                            format!("Refused structured patch target '{relative_path}': {error}"),
+                            start,
+                            ctx,
+                        );
+                    }
+                }
+            }
+
+            let result = execute_structured_patch(&structured, &base_path);
+            let is_error = !result.failed.is_empty();
+            return ToolResult {
+                content: serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|error| format!("failed to serialize patch result: {error}")),
+                is_error,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                },
+            };
+        }
+
         for filename in extract_filenames(patch) {
             if let Err(error) = validate_mutation_path(
                 &workspace,
@@ -136,6 +192,21 @@ impl Tool for ApplyPatchTool {
                     },
                 }
             }
+        }
+    }
+}
+
+fn operation_paths(operation: &PatchOperation) -> Vec<&str> {
+    match operation {
+        PatchOperation::AddFile { path, .. }
+        | PatchOperation::DeleteFile { path }
+        | PatchOperation::AppendFile { path, .. } => vec![path],
+        PatchOperation::UpdateFile { path, move_to, .. } => {
+            let mut paths = vec![path.as_str()];
+            if let Some(destination) = move_to {
+                paths.push(destination.as_str());
+            }
+            paths
         }
     }
 }
@@ -747,6 +818,66 @@ mod tests {
         let input = json!({ "patch": "" });
         let result = tool.execute(input, &ctx).await;
         assert!(result.is_error);
+    }
+
+    #[tokio::test]
+    async fn structured_text_patch_is_applied_without_unified_diff_fallback() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        };
+        let patch = "*** Begin Patch\nAdd File: nested/new.txt\n>>>\nhello\n>>>\n*** End Patch";
+
+        let result = ApplyPatchTool
+            .execute(json!({ "patch": patch }), &ctx)
+            .await;
+
+        assert!(!result.is_error, "Expected success: {}", result.content);
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("nested/new.txt"))
+                .await
+                .unwrap(),
+            "hello"
+        );
+    }
+
+    #[tokio::test]
+    async fn structured_json_patch_is_applied() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        };
+
+        let result = ApplyPatchTool
+            .execute(
+                json!({
+                    "patch_json": {
+                        "operations": [{
+                            "type": "add",
+                            "path": "json.txt",
+                            "content": "from json"
+                        }]
+                    }
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(!result.is_error, "Expected success: {}", result.content);
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("json.txt"))
+                .await
+                .unwrap(),
+            "from json"
+        );
     }
 
     #[test]

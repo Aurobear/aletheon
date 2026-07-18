@@ -375,8 +375,8 @@ fn parse_hunk_range(s: &str) -> Result<(u64, u64), String> {
 
 /// Parse a structured patch from JSON format.
 pub fn parse_structured_patch_json(input: &str) -> Result<StructuredPatch, String> {
-    let raw: serde_json::Value = serde_json::from_str(input)
-        .map_err(|e| format!("invalid JSON: {}", e))?;
+    let raw: serde_json::Value =
+        serde_json::from_str(input).map_err(|e| format!("invalid JSON: {}", e))?;
 
     let ops_array = raw
         .get("operations")
@@ -400,12 +400,9 @@ pub fn parse_structured_patch_json(input: &str) -> Result<StructuredPatch, Strin
 
         let operation = match op_type {
             "add" => {
-                let content = op
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        format!("add operation at index {} missing 'content' field", idx)
-                    })?;
+                let content = op.get("content").and_then(|v| v.as_str()).ok_or_else(|| {
+                    format!("add operation at index {} missing 'content' field", idx)
+                })?;
                 PatchOperation::AddFile {
                     path: path.to_string(),
                     content: content.to_string(),
@@ -431,12 +428,9 @@ pub fn parse_structured_patch_json(input: &str) -> Result<StructuredPatch, Strin
                 }
             }
             "append" => {
-                let content = op
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        format!("append operation at index {} missing 'content' field", idx)
-                    })?;
+                let content = op.get("content").and_then(|v| v.as_str()).ok_or_else(|| {
+                    format!("append operation at index {} missing 'content' field", idx)
+                })?;
                 PatchOperation::AppendFile {
                     path: path.to_string(),
                     content: content.to_string(),
@@ -458,57 +452,33 @@ pub fn parse_structured_patch_json(input: &str) -> Result<StructuredPatch, Strin
 
 /// Parse hunks from a JSON operation object.
 fn parse_json_hunks(op: &serde_json::Value, idx: usize) -> Result<Vec<PatchHunk>, String> {
-    let hunks_array = op.get("hunks").and_then(|v| v.as_array()).ok_or_else(|| {
-        format!(
-            "update operation at index {} missing 'hunks' array",
-            idx
-        )
-    })?;
+    let hunks_array = op
+        .get("hunks")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| format!("update operation at index {} missing 'hunks' array", idx))?;
 
     let mut hunks: Vec<PatchHunk> = Vec::new();
     for (h_idx, h) in hunks_array.iter().enumerate() {
         let old_start = h
             .get("old_start")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| {
-                format!(
-                    "hunk at index {}.{} missing 'old_start' field",
-                    idx, h_idx
-                )
-            })?;
+            .ok_or_else(|| format!("hunk at index {}.{} missing 'old_start' field", idx, h_idx))?;
         let old_count = h
             .get("old_count")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| {
-                format!(
-                    "hunk at index {}.{} missing 'old_count' field",
-                    idx, h_idx
-                )
-            })?;
+            .ok_or_else(|| format!("hunk at index {}.{} missing 'old_count' field", idx, h_idx))?;
         let new_start = h
             .get("new_start")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| {
-                format!(
-                    "hunk at index {}.{} missing 'new_start' field",
-                    idx, h_idx
-                )
-            })?;
+            .ok_or_else(|| format!("hunk at index {}.{} missing 'new_start' field", idx, h_idx))?;
         let new_count = h
             .get("new_count")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| {
-                format!(
-                    "hunk at index {}.{} missing 'new_count' field",
-                    idx, h_idx
-                )
-            })?;
+            .ok_or_else(|| format!("hunk at index {}.{} missing 'new_count' field", idx, h_idx))?;
         let content = h
             .get("content")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                format!("hunk at index {}.{} missing 'content' field", idx, h_idx)
-            })?;
+            .ok_or_else(|| format!("hunk at index {}.{} missing 'content' field", idx, h_idx))?;
 
         hunks.push(PatchHunk {
             old_start,
@@ -551,8 +521,8 @@ pub fn execute_structured_patch(
                 result.failed.push(FailedOperation {
                     op_type: op_type_name(op),
                     path: op_path(op).to_string(),
-                    error,
-                    hunks_applied_before_failure: None,
+                    error: error.message,
+                    hunks_applied_before_failure: error.hunks_applied,
                 });
             }
         }
@@ -561,19 +531,35 @@ pub fn execute_structured_patch(
     result
 }
 
+struct OperationFailure {
+    message: String,
+    hunks_applied: Option<usize>,
+}
+
+impl From<String> for OperationFailure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            hunks_applied: None,
+        }
+    }
+}
+
 /// Apply a single operation to the filesystem.
 fn apply_operation(
     op: &PatchOperation,
     workspace_root: &Path,
-) -> Result<FileChangeSummary, String> {
+) -> Result<FileChangeSummary, OperationFailure> {
     match op {
         PatchOperation::AddFile { path, content } => {
             let full_path = resolve_path(workspace_root, path)?;
+            if full_path.exists() {
+                return Err(format!("cannot add '{}': target already exists", path).into());
+            }
             create_parent_dirs(&full_path)?;
             let bytes_before: u64 = 0;
-            fs::write(&full_path, content).map_err(|e| {
-                format!("failed to write '{}': {}", path, e)
-            })?;
+            fs::write(&full_path, content)
+                .map_err(|e| format!("failed to write '{}': {}", path, e))?;
             let bytes_after = content.len() as u64;
             Ok(FileChangeSummary {
                 path: path.clone(),
@@ -585,19 +571,14 @@ fn apply_operation(
         }
         PatchOperation::DeleteFile { path } => {
             let full_path = resolve_path(workspace_root, path)?;
-            let metadata = fs::metadata(&full_path).map_err(|_| {
-                format!("cannot delete '{}': file not found", path)
-            })?;
+            let metadata = fs::metadata(&full_path)
+                .map_err(|_| format!("cannot delete '{}': file not found", path))?;
             if !metadata.is_file() {
-                return Err(format!(
-                    "cannot delete '{}': not a regular file",
-                    path
-                ));
+                return Err(format!("cannot delete '{}': not a regular file", path).into());
             }
             let bytes_before = metadata.len();
-            fs::remove_file(&full_path).map_err(|e| {
-                format!("failed to delete '{}': {}", path, e)
-            })?;
+            fs::remove_file(&full_path)
+                .map_err(|e| format!("failed to delete '{}': {}", path, e))?;
             Ok(FileChangeSummary {
                 path: path.clone(),
                 change_type: "deleted".to_string(),
@@ -608,16 +589,13 @@ fn apply_operation(
         }
         PatchOperation::AppendFile { path, content } => {
             let full_path = resolve_path(workspace_root, path)?;
-            let existing =
-                fs::read_to_string(&full_path).map_err(|_| {
-                    format!("cannot append to '{}': file not found", path)
-                })?;
+            let existing = fs::read_to_string(&full_path)
+                .map_err(|_| format!("cannot append to '{}': file not found", path))?;
             let bytes_before = existing.len() as u64;
             let mut new_content = existing;
             new_content.push_str(content);
-            fs::write(&full_path, &new_content).map_err(|e| {
-                format!("failed to append to '{}': {}", path, e)
-            })?;
+            fs::write(&full_path, &new_content)
+                .map_err(|e| format!("failed to append to '{}': {}", path, e))?;
             let bytes_after = new_content.len() as u64;
             Ok(FileChangeSummary {
                 path: path.clone(),
@@ -633,20 +611,22 @@ fn apply_operation(
             hunks,
         } => {
             let full_path = resolve_path(workspace_root, path)?;
-            let existing =
-                fs::read_to_string(&full_path).map_err(|_| {
-                    format!("cannot update '{}': file not found", path)
-                })?;
+            let existing = fs::read_to_string(&full_path)
+                .map_err(|_| format!("cannot update '{}': file not found", path))?;
             let bytes_before = existing.len() as u64;
-            let modified = apply_patch_hunks(&existing, hunks)?;
+            let modified = apply_patch_hunks(&existing, hunks).map_err(|(message, applied)| {
+                OperationFailure {
+                    message,
+                    hunks_applied: Some(applied),
+                }
+            })?;
             let hunks_applied = hunks.len();
 
             if let Some(dest) = move_to {
                 let dest_path = resolve_path(workspace_root, dest)?;
                 create_parent_dirs(&dest_path)?;
-                fs::write(&dest_path, &modified).map_err(|e| {
-                    format!("failed to write moved file '{}': {}", dest, e)
-                })?;
+                fs::write(&dest_path, &modified)
+                    .map_err(|e| format!("failed to write moved file '{}': {}", dest, e))?;
                 fs::remove_file(&full_path).map_err(|e| {
                     format!(
                         "failed to remove original file '{}' after move: {}",
@@ -662,9 +642,8 @@ fn apply_operation(
                     bytes_after,
                 })
             } else {
-                fs::write(&full_path, &modified).map_err(|e| {
-                    format!("failed to write '{}': {}", path, e)
-                })?;
+                fs::write(&full_path, &modified)
+                    .map_err(|e| format!("failed to write '{}': {}", path, e))?;
                 let bytes_after = modified.len() as u64;
                 Ok(FileChangeSummary {
                     path: path.clone(),
@@ -679,12 +658,13 @@ fn apply_operation(
 }
 
 /// Apply hunks to file content using exact matching.
-fn apply_patch_hunks(content: &str, hunks: &[PatchHunk]) -> Result<String, String> {
+fn apply_patch_hunks(content: &str, hunks: &[PatchHunk]) -> Result<String, (String, usize)> {
     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
     let mut offset: isize = 0;
 
-    for hunk in hunks {
-        let match_start = find_hunk_position(&lines, hunk, offset)?;
+    for (hunk_index, hunk) in hunks.iter().enumerate() {
+        let match_start =
+            find_hunk_position(&lines, hunk, offset).map_err(|error| (error, hunk_index))?;
         let parsed: Vec<HunkLine> = parse_hunk_lines(&hunk.content);
         let mut new_lines: Vec<String> = Vec::new();
         let mut pos = match_start;
@@ -693,32 +673,38 @@ fn apply_patch_hunks(content: &str, hunks: &[PatchHunk]) -> Result<String, Strin
         for hl in &parsed {
             match hl {
                 HunkLine::Context(expected) => {
-                    if pos >= lines.len() || lines[pos] != *expected {
-                        return Err(format!(
-                            "context mismatch at line {} in hunk @@ -{},{} +{},{} @@: expected {:?}, got {:?}",
-                            pos + 1,
-                            hunk.old_start,
-                            hunk.old_count,
-                            hunk.new_start,
-                            hunk.new_count,
-                            expected,
-                            lines.get(pos)
+                    if pos >= lines.len() || !lines_match(&lines[pos], expected) {
+                        return Err((
+                            format!(
+                                "context mismatch at line {} in hunk @@ -{},{} +{},{} @@: expected {:?}, got {:?}",
+                                pos + 1,
+                                hunk.old_start,
+                                hunk.old_count,
+                                hunk.new_start,
+                                hunk.new_count,
+                                expected,
+                                lines.get(pos)
+                            ),
+                            hunk_index,
                         ));
                     }
                     new_lines.push(lines[pos].clone());
                     pos += 1;
                 }
                 HunkLine::Remove(expected) => {
-                    if pos >= lines.len() || lines[pos] != *expected {
-                        return Err(format!(
-                            "remove mismatch at line {} in hunk @@ -{},{} +{},{} @@: expected {:?}, got {:?}",
-                            pos + 1,
-                            hunk.old_start,
-                            hunk.old_count,
-                            hunk.new_start,
-                            hunk.new_count,
-                            expected,
-                            lines.get(pos)
+                    if pos >= lines.len() || !lines_match(&lines[pos], expected) {
+                        return Err((
+                            format!(
+                                "remove mismatch at line {} in hunk @@ -{},{} +{},{} @@: expected {:?}, got {:?}",
+                                pos + 1,
+                                hunk.old_start,
+                                hunk.old_count,
+                                hunk.new_start,
+                                hunk.new_count,
+                                expected,
+                                lines.get(pos)
+                            ),
+                            hunk_index,
                         ));
                     }
                     pos += 1;
@@ -776,11 +762,7 @@ fn parse_hunk_lines(content: &str) -> Vec<HunkLine> {
 }
 
 /// Find the position in the file where a hunk should be applied.
-fn find_hunk_position(
-    lines: &[String],
-    hunk: &PatchHunk,
-    offset: isize,
-) -> Result<usize, String> {
+fn find_hunk_position(lines: &[String], hunk: &PatchHunk, offset: isize) -> Result<usize, String> {
     let target = ((hunk.old_start as isize) - 1 + offset).max(0) as usize;
 
     let parsed = parse_hunk_lines(&hunk.content);
@@ -804,10 +786,30 @@ fn find_hunk_position(
         }
     }
 
+    // Fall back to a bounded full-file search when model line numbers are stale.
+    // Require a complete normalized match to avoid choosing an ambiguous partial
+    // context and modifying the wrong region.
+    if let Some(position) = seek_sequence(lines, &parsed, 10_000) {
+        return Ok(position);
+    }
+
     Err(format!(
         "could not find matching location for hunk @@ -{},{} +{},{} @@",
         hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count
     ))
+}
+
+fn seek_sequence(lines: &[String], parsed: &[HunkLine], max_search_window: usize) -> Option<usize> {
+    let consumed_lines = parsed
+        .iter()
+        .filter(|line| matches!(line, HunkLine::Context(_) | HunkLine::Remove(_)))
+        .count();
+    if consumed_lines == 0 || consumed_lines > lines.len() {
+        return None;
+    }
+
+    let last_start = lines.len().saturating_sub(consumed_lines);
+    (0..=last_start.min(max_search_window)).find(|start| matches_hunk_at(lines, parsed, *start))
 }
 
 /// Check if a hunk's context/remove lines match at a given position.
@@ -816,7 +818,7 @@ fn matches_hunk_at(lines: &[String], parsed: &[HunkLine], start: usize) -> bool 
     for hl in parsed {
         match hl {
             HunkLine::Context(expected) | HunkLine::Remove(expected) => {
-                if pos >= lines.len() || lines[pos] != *expected {
+                if pos >= lines.len() || !lines_match(&lines[pos], expected) {
                     return false;
                 }
                 pos += 1;
@@ -827,6 +829,24 @@ fn matches_hunk_at(lines: &[String], parsed: &[HunkLine], start: usize) -> bool 
         }
     }
     true
+}
+
+/// Normalize common model-produced Unicode punctuation and trailing whitespace.
+fn normalize_line(line: &str) -> String {
+    line.chars()
+        .map(|character| match character {
+            '\u{2013}' | '\u{2014}' | '\u{2015}' => '-',
+            '\u{2018}' | '\u{2019}' => '\'',
+            '\u{201c}' | '\u{201d}' => '"',
+            other => other,
+        })
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+}
+
+fn lines_match(actual: &str, expected: &str) -> bool {
+    normalize_line(actual) == normalize_line(expected)
 }
 
 // ---------------------------------------------------------------------------
@@ -1085,8 +1105,14 @@ Delete File: src/old.rs
 
         let patch = parse_structured_patch(input).unwrap();
         assert_eq!(patch.operations.len(), 2);
-        assert!(matches!(patch.operations[0], PatchOperation::AddFile { .. }));
-        assert!(matches!(patch.operations[1], PatchOperation::DeleteFile { .. }));
+        assert!(matches!(
+            patch.operations[0],
+            PatchOperation::AddFile { .. }
+        ));
+        assert!(matches!(
+            patch.operations[1],
+            PatchOperation::DeleteFile { .. }
+        ));
     }
 
     #[test]
@@ -1153,10 +1179,22 @@ Content:
 
         let patch = parse_structured_patch_json(input).unwrap();
         assert_eq!(patch.operations.len(), 4);
-        assert!(matches!(patch.operations[0], PatchOperation::AddFile { .. }));
-        assert!(matches!(patch.operations[1], PatchOperation::UpdateFile { .. }));
-        assert!(matches!(patch.operations[2], PatchOperation::DeleteFile { .. }));
-        assert!(matches!(patch.operations[3], PatchOperation::AppendFile { .. }));
+        assert!(matches!(
+            patch.operations[0],
+            PatchOperation::AddFile { .. }
+        ));
+        assert!(matches!(
+            patch.operations[1],
+            PatchOperation::UpdateFile { .. }
+        ));
+        assert!(matches!(
+            patch.operations[2],
+            PatchOperation::DeleteFile { .. }
+        ));
+        assert!(matches!(
+            patch.operations[3],
+            PatchOperation::AppendFile { .. }
+        ));
     }
 
     #[test]
@@ -1349,6 +1387,23 @@ Content:
     }
 
     #[test]
+    fn test_execute_add_file_rejects_existing_target() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("existing.txt");
+        fs::write(&path, "original").unwrap();
+        let patch = StructuredPatch {
+            operations: vec![PatchOperation::AddFile {
+                path: "existing.txt".to_string(),
+                content: "replacement".to_string(),
+            }],
+        };
+
+        let result = execute_structured_patch(&patch, tmp.path());
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(fs::read_to_string(path).unwrap(), "original");
+    }
+
+    #[test]
     fn test_execute_delete_file() {
         let tmp = TempDir::new().unwrap();
         let file_path = tmp.path().join("doomed.txt");
@@ -1509,6 +1564,94 @@ Content:
 
         let modified = fs::read_to_string(tmp.path().join("shifted.txt")).unwrap();
         assert_eq!(modified, "\n\nline one\nline TWO\nline three\n");
+    }
+
+    #[test]
+    fn test_execute_hunk_seek_sequence_beyond_nearby_window() {
+        let tmp = TempDir::new().unwrap();
+        let prefix = (0..15).map(|i| format!("prefix {i}\n")).collect::<String>();
+        fs::write(
+            tmp.path().join("shifted.txt"),
+            format!("{prefix}line one\nline two\nline three\n"),
+        )
+        .unwrap();
+        let patch = StructuredPatch {
+            operations: vec![PatchOperation::UpdateFile {
+                path: "shifted.txt".to_string(),
+                move_to: None,
+                hunks: vec![PatchHunk {
+                    old_start: 1,
+                    old_count: 3,
+                    new_start: 1,
+                    new_count: 3,
+                    content: " line one\n-line two\n+line TWO\n line three".to_string(),
+                }],
+            }],
+        };
+
+        let result = execute_structured_patch(&patch, tmp.path());
+        assert!(result.failed.is_empty(), "failures: {:?}", result.failed);
+        let modified = fs::read_to_string(tmp.path().join("shifted.txt")).unwrap();
+        assert!(modified.ends_with("line one\nline TWO\nline three\n"));
+    }
+
+    #[test]
+    fn test_execute_hunk_normalizes_unicode_punctuation_and_trailing_space() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("unicode.txt");
+        fs::write(&path, "say “hello” — now   \n").unwrap();
+        let patch = StructuredPatch {
+            operations: vec![PatchOperation::UpdateFile {
+                path: "unicode.txt".to_string(),
+                move_to: None,
+                hunks: vec![PatchHunk {
+                    old_start: 1,
+                    old_count: 1,
+                    new_start: 1,
+                    new_count: 1,
+                    content: "-say \"hello\" - now\n+updated".to_string(),
+                }],
+            }],
+        };
+
+        let result = execute_structured_patch(&patch, tmp.path());
+        assert!(result.failed.is_empty(), "failures: {:?}", result.failed);
+        assert_eq!(fs::read_to_string(path).unwrap(), "updated\n");
+    }
+
+    #[test]
+    fn test_failed_later_hunk_reports_progress_without_writing_partial_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("atomic.txt");
+        let original = "one\ntwo\nthree\n";
+        fs::write(&path, original).unwrap();
+        let patch = StructuredPatch {
+            operations: vec![PatchOperation::UpdateFile {
+                path: "atomic.txt".to_string(),
+                move_to: None,
+                hunks: vec![
+                    PatchHunk {
+                        old_start: 1,
+                        old_count: 1,
+                        new_start: 1,
+                        new_count: 1,
+                        content: "-one\n+ONE".to_string(),
+                    },
+                    PatchHunk {
+                        old_start: 3,
+                        old_count: 1,
+                        new_start: 3,
+                        new_count: 1,
+                        content: "-missing\n+THREE".to_string(),
+                    },
+                ],
+            }],
+        };
+
+        let result = execute_structured_patch(&patch, tmp.path());
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.failed[0].hunks_applied_before_failure, Some(1));
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
     }
 
     // -----------------------------------------------------------------------
