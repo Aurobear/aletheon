@@ -831,7 +831,7 @@ impl MemoryService for DefaultMemoryService {
         let lexical_backend = LexicalSnapshotBackend {
             items: lexical.items,
         };
-        let (items, degraded) = crate::hybrid_recall(
+        let (items, degraded) = crate::recall::pipeline::hybrid_recall_with_metrics(
             &prefilter,
             params,
             crate::HybridRecallBackends {
@@ -840,6 +840,7 @@ impl MemoryService for DefaultMemoryService {
                 embedding_endpoint_trusted: self.embedding_endpoint_trusted,
             },
             &req,
+            Some(&self.metrics),
         )
         .await;
         let mut degraded_sources = lexical.degraded_sources;

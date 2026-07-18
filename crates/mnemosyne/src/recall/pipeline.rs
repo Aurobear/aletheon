@@ -216,6 +216,20 @@ pub async fn hybrid_recall(
     backends: HybridRecallBackends<'_>,
     request: &RecallRequest,
 ) -> (Vec<RecallItem>, Vec<DegradedSource>) {
+    hybrid_recall_with_metrics(pre, params, backends, request, None).await
+}
+
+/// Production variant that records candidates rejected by the governed merge
+/// boundary. Backends are required to apply the predicate before retrieval;
+/// this counter makes any defense-in-depth rejection observable rather than
+/// silently discarding a backend policy violation.
+pub(crate) async fn hybrid_recall_with_metrics(
+    pre: &RecallPreFilter,
+    params: &RecallSearchParams,
+    backends: HybridRecallBackends<'_>,
+    request: &RecallRequest,
+    metrics: Option<&crate::observability::MemoryMetrics>,
+) -> (Vec<RecallItem>, Vec<DegradedSource>) {
     let predicate = pre.to_scope_predicate();
     let top_k = params.top_k.min(request.max_items).max(1);
     let mut ranked = Vec::new();
@@ -250,7 +264,14 @@ pub async fn hybrid_recall(
     }
 
     // Stable total ordering makes identical input/index snapshots repeatable.
+    let candidates_before_governance = ranked.len();
     ranked.retain(|candidate| predicate.allows(&candidate.item));
+    let excluded = candidates_before_governance.saturating_sub(ranked.len());
+    if excluded != 0 {
+        if let Some(metrics) = metrics {
+            metrics.recall_prefilter_excluded(excluded);
+        }
+    }
     ranked.sort_by(|left, right| {
         right
             .score
@@ -531,6 +552,52 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["allowed"]
         );
+    }
+
+    #[tokio::test]
+    async fn governed_boundary_counts_backend_candidates_excluded_by_prefilter() {
+        let vector = Backend {
+            calls: AtomicUsize::new(0),
+            outcome: Ok(SearchOutcome {
+                items: vec![
+                    RankedRecallItem {
+                        item: item("allowed", MemoryScope::Task("trusted-task".into())),
+                        score: 0.4,
+                    },
+                    RankedRecallItem {
+                        item: item("wrong-scope", MemoryScope::Task("other".into())),
+                        score: 1.0,
+                    },
+                    RankedRecallItem {
+                        item: item("wrong-scope-2", MemoryScope::Principal("other".into())),
+                        score: 0.9,
+                    },
+                ],
+                index_stale: false,
+            }),
+        };
+        let metrics = crate::observability::MemoryMetrics::default();
+        let params = RecallSearchParams {
+            fts_enabled: false,
+            vector_enabled: true,
+            ..RecallSearchParams::default()
+        };
+
+        let (items, _) = hybrid_recall_with_metrics(
+            &pre(),
+            &params,
+            HybridRecallBackends {
+                fts: None,
+                vector: Some(&vector),
+                embedding_endpoint_trusted: true,
+            },
+            &RecallRequest::bounded("session", "query"),
+            Some(&metrics),
+        )
+        .await;
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(metrics.snapshot().recall_prefilter_excluded_total, 2);
     }
 
     #[tokio::test]
