@@ -100,6 +100,7 @@ pub fn is_turn_terminal(event: &ClientEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     fn cursor(sequence: u64) -> EventCursor {
         EventCursor {
@@ -152,6 +153,48 @@ mod tests {
         assert_eq!(update["sessionUpdate"], "error");
         assert_eq!(update["message"], "boom");
         assert!(is_turn_terminal(&event));
+    }
+
+    #[test]
+    fn approval_maps_to_permission_with_authoritative_call_correlation() {
+        let subject = fabric::ApprovalSubject {
+            category: fabric::ApprovalCategory::ApplyCode,
+            goal_id: fabric::GoalId(42),
+            attempt_id: None,
+            job_id: None,
+            attributes: BTreeMap::new(),
+            allowed_scope: Vec::new(),
+            apply_target: None,
+        };
+        let approval_id = fabric::ApprovalId(uuid::Uuid::from_u128(77));
+        let event = ClientEvent::Approval(ApprovalEvent {
+            cursor: cursor(8),
+            approval: fabric::ApprovalSnapshot {
+                id: approval_id,
+                goal_id: subject.goal_id,
+                attempt_id: None,
+                job_id: None,
+                owner_id: fabric::PrincipalId("owner".into()),
+                category: subject.category,
+                risk: fabric::ApprovalRisk::High,
+                subject_hash: subject.subject_hash().unwrap(),
+                subject,
+                summary: "apply verified patch".into(),
+                artifacts: Vec::new(),
+                created_at_ms: 1,
+                expires_at_ms: 100,
+                status: fabric::ApprovalStatus::Pending,
+                version: 1,
+                resolution: None,
+            },
+        });
+
+        let update = map_client_event_to_acp(&event).unwrap();
+        assert_eq!(update["sessionUpdate"], "request_permission");
+        assert_eq!(update["requestId"], approval_id.to_string());
+        assert_eq!(update["callId"], approval_id.to_string());
+        assert_eq!(update["goalId"], "42");
+        assert_eq!(update["cursor"]["sequence"], 8);
     }
 
     #[test]
