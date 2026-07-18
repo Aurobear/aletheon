@@ -28,6 +28,7 @@ pub mod lifecycle;
 pub mod llm_types;
 pub mod local_authority;
 pub mod message;
+pub mod network_policy;
 pub mod objective;
 pub mod paths;
 pub mod permission;
