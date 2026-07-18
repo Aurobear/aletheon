@@ -24,14 +24,14 @@ use aletheon_kernel::KernelRuntime;
 use executive::r#impl::events::SqliteEventSpine;
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
 use executive::service::turn_coordinator::TurnCoordinator;
-use fabric::{Clock, EventSpine, SessionAppendStore};
+use fabric::{Clock, SessionAppendStore};
 
 /// A fully constructed test Aletheon, ready for test execution.
 pub struct TestAletheon {
     pub kernel: Arc<KernelRuntime>,
     pub clock: Arc<TestClock>,
     pub store: Arc<dyn SessionAppendStore>,
-    pub event_spine: Arc<dyn EventSpine>,
+    pub event_spine: Arc<SqliteEventSpine>,
     pub coordinator: TurnCoordinator,
 }
 
@@ -94,7 +94,7 @@ mod tests {
     use super::*;
     use executive::service::turn_policy::TurnPolicy;
     use fabric::{
-        ItemPayload, OperationKind, OperationState, SpawnSpec, TurnMetrics, TurnResult, TurnStop,
+        ItemPayload, SpawnSpec, TurnMetrics, TurnResult, TurnStop,
     };
 
     fn request(session: &str, process_id: fabric::ProcessId) -> fabric::TurnRequest {

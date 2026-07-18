@@ -6,18 +6,15 @@ mod support {
 
 use std::sync::Arc;
 
-use aletheon_kernel::KernelRuntime;
-use executive::r#impl::events::SqliteEventSpine;
-use executive::r#impl::session::canonical_store::CanonicalSessionStore;
-use executive::service::turn_coordinator::{TurnCoordinator, TurnExecution};
-use executive::service::turn_policy::*;
+use executive::service::turn_coordinator::TurnExecution;
+use executive::service::turn_policy::TurnPolicy;
 use fabric::{
-    ItemPayload, OperationKind, OperationState, SessionAppendStore, SessionId, TurnMetrics,
+    ItemPayload, OperationKind, OperationState, SessionId, TurnMetrics,
     TurnRequest, TurnResult, TurnStop,
 };
 use support::test_aletheon_builder::TestAletheonBuilder;
 
-use crate::turn_request_support;
+mod turn_request_support;
 
 fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
     TurnRequest {
@@ -29,8 +26,6 @@ fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
         deadline: None,
     }
 }
-
-mod turn_request_support;
 
 //
 // Session creation
@@ -327,10 +322,13 @@ async fn concurrent_turns_different_sessions_dont_interfere() {
         .await
         .unwrap();
 
+    let coordinator = &test.coordinator;
+    let policy_a = TurnPolicy::daemon();
+    let policy_b = TurnPolicy::daemon();
     let (r1, r2) = tokio::join!(
-        test.coordinator.submit_with(
+        coordinator.submit_with(
             request("concurrent-a", process.id),
-            &TurnPolicy::daemon(),
+            &policy_a,
             |_request, _cancel| async {
                 Ok(TurnExecution {
                     result: TurnResult {
@@ -347,9 +345,9 @@ async fn concurrent_turns_different_sessions_dont_interfere() {
                 })
             },
         ),
-        test.coordinator.submit_with(
+        coordinator.submit_with(
             request("concurrent-b", process.id),
-            &TurnPolicy::daemon(),
+            &policy_b,
             |_request, _cancel| async {
                 Ok(TurnExecution {
                     result: TurnResult {
@@ -470,10 +468,10 @@ async fn event_spine_sequence_monotonic_across_turns() {
     // SessionCreated (1) + 4 items = 5 events
     assert!(events.len() >= 4);
 
-    // Verify sequences are strictly increasing
+    // Verify event sequences are strictly increasing.
     let sequences: Vec<u64> = events.iter().map(|e| e.position.sequence.0).collect();
     for window in sequences.windows(2) {
-        assert!(window[0] < window[1], "sequence must be monotonic");
+        assert!(window[0] < window[1], "event sequence must be monotonic");
     }
 }
 

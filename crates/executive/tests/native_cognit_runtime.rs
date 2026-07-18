@@ -225,6 +225,7 @@ fn runtime(llm: Arc<ScriptedLlm>, capability: Arc<RecordingCapability>) -> Nativ
         clock,
         conscious_actions: None,
         conscious_candidates: None,
+        grok_hardening: Default::default(),
     })
 }
 
@@ -517,6 +518,7 @@ async fn provider_failure_and_iteration_exhaustion_are_bounded_runtime_errors() 
         clock,
         conscious_actions: None,
         conscious_candidates: None,
+        grok_hardening: Default::default(),
     });
     let error = runtime
         .launch(

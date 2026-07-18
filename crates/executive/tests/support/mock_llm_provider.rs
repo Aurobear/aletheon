@@ -17,11 +17,13 @@ use futures::stream;
 
 /// One turn from the mock model's perspective — a list of responses delivered in order.
 /// When a response list is exhausted the provider moves to the next sequence.
+#[derive(Clone)]
 pub struct MockTurnSequence {
     pub responses: Vec<MockTurnResponse>,
 }
 
 /// A single model response the mock provider can deliver.
+#[derive(Clone)]
 pub enum MockTurnResponse {
     /// A single complete() response.
     Complete {
@@ -132,7 +134,7 @@ impl MockLlmProvider {
         );
     }
 
-    fn next_response(&self) -> &MockTurnResponse {
+    fn next_response(&self) -> MockTurnResponse {
         let seq_idx = self.sequence_index.load(Ordering::SeqCst);
         let resp_idx = self.response_index.fetch_add(1, Ordering::SeqCst);
 
@@ -144,7 +146,7 @@ impl MockLlmProvider {
             )
         });
 
-        sequence.responses.get(resp_idx).unwrap_or_else(|| {
+        sequence.responses.get(resp_idx).cloned().unwrap_or_else(|| {
             panic!(
                 "MockLlmProvider: sequence {seq_idx} exhausted at response {resp_idx}. \
                  Expected more responses in this turn sequence."
@@ -172,9 +174,9 @@ impl LlmProvider for MockLlmProvider {
                 stop_reason,
                 usage,
             } => Ok(LlmResponse {
-                content: content.clone(),
-                stop_reason: *stop_reason,
-                usage: usage.clone(),
+                content,
+                stop_reason,
+                usage,
                 cache_hit_tokens: 0,
                 cache_miss_tokens: 0,
             }),
@@ -190,7 +192,7 @@ impl LlmProvider for MockLlmProvider {
                     match chunk {
                         StreamChunk::TextDelta { text } => text_buf.push_str(&text),
                         StreamChunk::ThinkingDelta { text } => thinking_buf.push_str(&text),
-                        StreamChunk::Done { stop_reason: sr } => stop_reason = *sr,
+                        StreamChunk::Done { stop_reason: sr } => stop_reason = sr,
                         StreamChunk::Usage {
                             input_tokens,
                             output_tokens,
