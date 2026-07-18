@@ -247,7 +247,9 @@ async fn ac_r2_1_higher_field_urgency_raises_attention_for_same_intent() {
     ))))
     .await;
     let high = review_priority(make_config(Some(StubMode::Broadcast(
-        CareActionKind::Negate,
+        // Keep the care action fixed so this assertion proves the urgency
+        // direction rather than merely comparing two action weights.
+        CareActionKind::Direct,
         0.90,
     ))))
     .await;
@@ -292,4 +294,44 @@ async fn verdict_still_allow_for_normal_action_with_field() {
     let ctx = test_ctx();
     let verdict = sf.review(&intent, &ctx).await.unwrap();
     assert!(matches!(verdict, Verdict::Allow));
+}
+
+#[tokio::test]
+async fn ac_r2_2_empty_projection_preserves_baseline_verdict_and_attention_exactly() {
+    async fn outcome(config: SelfFieldConfig) -> (Verdict, f64) {
+        let sf = dasein::core::SelfField::new(config);
+        let intent = make_intent("write_config", "write important config");
+        let verdict = sf.review(&intent, &test_ctx()).await.unwrap();
+        let priority = sf
+            .current_attention_focus()
+            .map(|focus| focus.priority)
+            .unwrap_or(0.0);
+        (verdict, priority)
+    }
+
+    let baseline = outcome(make_config(None)).await;
+    let empty = outcome(make_config(Some(StubMode::Empty))).await;
+    assert_eq!(
+        serde_json::to_value(&empty.0).unwrap(),
+        serde_json::to_value(&baseline.0).unwrap()
+    );
+    assert_eq!(empty.1.to_bits(), baseline.1.to_bits());
+}
+
+#[tokio::test]
+async fn r2_t4_valid_modulation_is_persisted_as_a_structured_trace() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut config = make_config(Some(StubMode::Broadcast(CareActionKind::Direct, 0.90)));
+    config.db_path = Some(directory.path().join("self-field.db"));
+    let sf = dasein::core::SelfField::new(config);
+    let intent = make_intent("write_config", "write important config");
+    sf.review(&intent, &test_ctx()).await.unwrap();
+
+    let traces = sf.care_modulation_traces("test-session").unwrap();
+    assert_eq!(traces.len(), 1);
+    let trace = &traces[0];
+    assert_eq!(trace.session_id, "test-session");
+    assert!(trace.effective > trace.baseline);
+    assert_eq!(trace.delta, trace.effective - trace.baseline);
+    assert!((trace.precision - 0.90).abs() < f32::EPSILON);
 }
