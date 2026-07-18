@@ -376,6 +376,10 @@ impl RequestHandler {
             });
         }
 
+        // One approval gate is shared by guarded tools and MCP elicitation.
+        let (approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
+        let approval_gate = Arc::new(approval_gate);
+
         // MCP servers. Keep the manager alive: gbrain recall/capture calls the
         // same authenticated connections after startup tool registration.
         let mut retained_mcp = None;
@@ -388,6 +392,7 @@ impl RequestHandler {
             if let Err(e) = mcp.connect_all().await {
                 tracing::warn!(error = %e, "MCP connect_all failed; continuing without MCP tools");
             }
+            mcp.set_elicitation_approval_gate(approval_gate.clone());
             let mcp_count = mcp.connected_count();
             if mcp_count > 0 {
                 info!(servers = mcp_count, "MCP servers connected");
@@ -420,9 +425,8 @@ impl RequestHandler {
         let sandbox = create_default_executor(sandbox_pref, clock.clone());
         let audit_path = data_dir.join("audit.jsonl");
         let audit_logger = AuditLogger::new(audit_path)?;
-        let (approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
         let mut runner = ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
-            .with_approval_gate(Arc::new(approval_gate));
+            .with_approval_gate(approval_gate);
         if grok_hardening.sandbox_profiles {
             runner = runner.with_sandbox_profiles(sandbox_profiles);
         }
@@ -590,6 +594,7 @@ impl RequestHandler {
                 episodic_memory.clone(),
                 clock.clone(),
             )
+            .with_memory_hybrid(grok_hardening.memory_hybrid)
             .with_consolidation_repository(consolidation_repository)
             .with_retention_repository(retention_repository.clone()),
         );
