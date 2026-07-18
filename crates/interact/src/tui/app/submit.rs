@@ -286,7 +286,8 @@ pub async fn submit_message(app: &mut App, text: String) {
             }
             Some(CommandType::Builtin(BuiltinCommand::Profile)) => {
                 // send a raw JSON-RPC to list profiles
-                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "agent.profile.list", "id": 1});
+                let msg =
+                    serde_json::json!({"jsonrpc": "2.0", "method": "agent.profile.list", "id": 1});
                 let payload = serde_json::to_string(&msg).unwrap_or_default();
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
@@ -304,8 +305,10 @@ pub async fn submit_message(app: &mut App, text: String) {
                 let framed = format!("{}\n", payload);
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
-                app.chat
-                    .add_text(ChatRole::System, format!("Switching agent profile to: {}", name));
+                app.chat.add_text(
+                    ChatRole::System,
+                    format!("Switching agent profile to: {}", name),
+                );
                 return;
             }
             Some(CommandType::Builtin(_)) => return,

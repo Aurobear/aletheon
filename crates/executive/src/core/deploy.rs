@@ -78,7 +78,7 @@ impl DeploymentInfo {
 /// Simple semver-like compatibility check: major.minor must match.
 fn semver_compatible(a: &str, b: &str) -> bool {
     let parse = |v: &str| -> Option<(u64, u64)> {
-        let mut parts = v.split(|c: char| c == '.' || c == '-');
+        let mut parts = v.split(['.', '-']);
         let major = parts.next()?.parse().ok()?;
         let minor = parts.next()?.parse().ok()?;
         Some((major, minor))

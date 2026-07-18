@@ -248,9 +248,7 @@ pub trait AdminUseCases: Send + Sync {
     async fn tools(&self) -> Result<Vec<fabric::ToolDefinition>, AdminServiceError>;
     async fn hooks(&self) -> Result<Vec<HookDescriptor>, AdminServiceError>;
     async fn sub_agents(&self) -> Result<Vec<SubAgentSummary>, AdminServiceError>;
-    async fn list_agent_profiles(
-        &self,
-    ) -> Result<Vec<AgentProfileDescriptor>, AdminServiceError>;
+    async fn list_agent_profiles(&self) -> Result<Vec<AgentProfileDescriptor>, AdminServiceError>;
     async fn switch_agent_profile(
         &self,
         profile_name: String,
@@ -480,9 +478,7 @@ impl AdminUseCases for AdminService {
             .collect())
     }
 
-    async fn list_agent_profiles(
-        &self,
-    ) -> Result<Vec<AgentProfileDescriptor>, AdminServiceError> {
+    async fn list_agent_profiles(&self) -> Result<Vec<AgentProfileDescriptor>, AdminServiceError> {
         let registry = self
             .resources
             .agent_profiles
@@ -491,9 +487,9 @@ impl AdminUseCases for AdminService {
         let names = registry.names();
         let mut descriptors = Vec::with_capacity(names.len());
         for name in &names {
-            let resolved = registry.resolve_by_name(name).map_err(|error| {
-                AdminServiceError::Operation(error.to_string())
-            })?;
+            let resolved = registry
+                .resolve_by_name(name)
+                .map_err(|error| AdminServiceError::Operation(error.to_string()))?;
             descriptors.push(AgentProfileDescriptor {
                 name: name.clone(),
                 risk_tier: format!("{:?}", resolved.profile.risk_tier),

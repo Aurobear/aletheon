@@ -120,11 +120,7 @@ impl AgentProfileRegistry {
 
     /// All registered profile names.
     pub fn names(&self) -> Vec<String> {
-        self.profiles
-            .read()
-            .keys()
-            .map(|id| id.0.clone())
-            .collect()
+        self.profiles.read().keys().map(|id| id.0.clone()).collect()
     }
 }
 

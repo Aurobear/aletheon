@@ -331,8 +331,7 @@ impl SchemaId {
         "aletheon.event.workspace_checkpoint_began/v1";
     pub const EVENT_WORKSPACE_CHECKPOINT_FINALIZED_V1: &'static str =
         "aletheon.event.workspace_checkpoint_finalized/v1";
-    pub const EVENT_WORKSPACE_REWOUND_V1: &'static str =
-        "aletheon.event.workspace_rewound/v1";
+    pub const EVENT_WORKSPACE_REWOUND_V1: &'static str = "aletheon.event.workspace_rewound/v1";
 
     pub fn supported_cross_process() -> &'static [&'static str] {
         &[

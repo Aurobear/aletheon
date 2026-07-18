@@ -72,13 +72,13 @@ pub(super) fn load_agent_profiles(
             max_iterations,
             max_input_tokens: config.context_window_tokens as u64,
             max_output_tokens: 16_384,
-            max_tool_calls: overrides
-                .and_then(|ov| ov.max_tool_calls)
-                .unwrap_or(if config.agent_loop.max_tool_calls == 0 {
+            max_tool_calls: overrides.and_then(|ov| ov.max_tool_calls).unwrap_or(
+                if config.agent_loop.max_tool_calls == 0 {
                     128
                 } else {
                     config.agent_loop.max_tool_calls as u32
-                }),
+                },
+            ),
             max_elapsed_ms: 10 * 60 * 1_000,
             profile_name: role.name.clone(),
             risk_tier,

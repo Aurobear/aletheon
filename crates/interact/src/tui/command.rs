@@ -91,7 +91,9 @@ pub fn parse_command(input: &str) -> Option<CommandType> {
             if args.is_empty() {
                 Some(CommandType::Builtin(BuiltinCommand::Profile))
             } else {
-                Some(CommandType::Builtin(BuiltinCommand::ProfileSet { name: args.to_string() }))
+                Some(CommandType::Builtin(BuiltinCommand::ProfileSet {
+                    name: args.to_string(),
+                }))
             }
         }
         _ => Some(CommandType::Skill {

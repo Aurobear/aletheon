@@ -46,21 +46,16 @@ pub enum AgentApprovalPolicy {
 
 /// Parent-child profile restriction: the child's capabilities must not exceed
 /// the parent's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ParentRestriction {
     /// Child must use the same profile as the parent.
     Same,
     /// Child may use the same-or-safer profile (risk tier ≤ parent's).
+    #[default]
     SameOrSafer,
     /// No restriction on child profile.
     None,
-}
-
-impl Default for ParentRestriction {
-    fn default() -> Self {
-        Self::SameOrSafer
-    }
 }
 
 /// Durable task lineage owned by AgentControl. Callers may describe a task,
@@ -179,9 +174,7 @@ impl AgentProfile {
             ));
         }
         if self.tool_timeout_ms == 0 {
-            return Err(AgentControlError::invalid(
-                "tool timeout must be nonzero",
-            ));
+            return Err(AgentControlError::invalid("tool timeout must be nonzero"));
         }
         Ok(())
     }
