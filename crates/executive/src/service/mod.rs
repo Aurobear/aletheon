@@ -38,6 +38,7 @@ pub mod turn_service;
 pub mod turn_services;
 pub mod verification;
 pub mod workspace_trust;
+pub mod workspace_checkpoint;
 
 pub use admin_service::{AdminService, AdminUseCases};
 pub use approval_service::{ApprovalService, ApprovalUseCases};
