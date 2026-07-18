@@ -136,7 +136,8 @@ impl AcpAdapter {
                     principal.connection_id.clone(),
                     created.thread_id,
                 );
-                self.metrics.sessions_active = self.metrics.sessions_active.saturating_add(1);
+                self.metrics.sessions_active =
+                    u64::try_from(self.correlation.len()).unwrap_or(u64::MAX);
                 Ok(response)
             }
             AcpRequest::Prompt { session_id, text } => {
@@ -293,6 +294,8 @@ mod tests {
 
     struct FakeEvents(VecDeque<AcpSessionEvent>);
 
+    struct GovernedDenyBackend;
+
     #[async_trait]
     impl AcpEventSource for FakeEvents {
         async fn next_event(&mut self) -> Result<Option<AcpSessionEvent>, AcpError> {
@@ -338,6 +341,53 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(format!("cancel:{session_id}:{}", thread_id.0));
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl AcpBackend for GovernedDenyBackend {
+        async fn create_session(
+            &self,
+            _principal: &PrincipalContext,
+            _cwd: &Path,
+        ) -> Result<CreatedAcpSession, AcpError> {
+            Ok(CreatedAcpSession {
+                session_id: "governed-session".into(),
+                thread_id: ThreadId("governed-thread".into()),
+            })
+        }
+
+        async fn submit_prompt(
+            &self,
+            principal: &PrincipalContext,
+            _session_id: &str,
+            _thread_id: &ThreadId,
+            text: &str,
+        ) -> Result<(), AcpError> {
+            // This port represents the authoritative Executive admission path.
+            // Assert that ACP forwards host authority unchanged, then return
+            // each governed denial instead of accepting or locally executing.
+            assert_eq!(principal.approval_policy, ApprovalPolicy::OnRequest);
+            assert_eq!(
+                principal.permission_profile,
+                PermissionProfileId::workspace_write()
+            );
+            match text {
+                "workspace escape" => Err(AcpError::Backend("workspace denied".into())),
+                "unapproved mutation" => Err(AcpError::Backend("approval denied".into())),
+                "sandbox escape" => Err(AcpError::Backend("sandbox denied".into())),
+                "over budget" => Err(AcpError::Backend("budget denied".into())),
+                _ => panic!("unexpected governance probe"),
+            }
+        }
+
+        async fn cancel_turn(
+            &self,
+            _principal: &PrincipalContext,
+            _session_id: &str,
+            _thread_id: &ThreadId,
+        ) -> Result<(), AcpError> {
             Ok(())
         }
     }
@@ -453,6 +503,50 @@ mod tests {
             AcpResponse::Error { .. }
         ));
         assert!(backend.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn gateway_preserves_all_authoritative_governance_denials() {
+        let root = tempfile::tempdir().unwrap();
+        let connection = connection(root.path());
+        let mut adapter = AcpAdapter::default();
+        assert!(matches!(
+            adapter
+                .dispatch(
+                    &connection,
+                    &GovernedDenyBackend,
+                    AcpRequest::NewSession {
+                        cwd: root.path().to_path_buf(),
+                    },
+                )
+                .await,
+            AcpResponse::SessionCreated { .. }
+        ));
+
+        for (prompt, expected) in [
+            ("workspace escape", "workspace denied"),
+            ("unapproved mutation", "approval denied"),
+            ("sandbox escape", "sandbox denied"),
+            ("over budget", "budget denied"),
+        ] {
+            let response = adapter
+                .dispatch(
+                    &connection,
+                    &GovernedDenyBackend,
+                    AcpRequest::Prompt {
+                        session_id: "governed-session".into(),
+                        text: prompt.into(),
+                    },
+                )
+                .await;
+            assert_eq!(
+                response,
+                AcpResponse::Error {
+                    message: expected.into(),
+                }
+            );
+        }
+        assert_eq!(adapter.metrics().prompt_total, 0);
     }
 
     #[tokio::test]

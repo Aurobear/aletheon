@@ -240,9 +240,15 @@ mod tests {
                 retryable: false,
                 usage: Default::default(),
             };
+            let mut tui = crate::tui::state::AppState::default();
+            assert!(crate::tui::reducer::reduce_terminal(&mut tui, &event));
             let update = map_client_event_to_acp(&event).unwrap();
             assert_eq!(update["sessionUpdate"], "turn_end");
             assert_eq!(update["stopReason"], expected);
+            assert_eq!(
+                format!("{:?}", tui.last_terminal_status.unwrap()).to_ascii_lowercase(),
+                update["stopReason"]
+            );
             assert!(is_turn_terminal(&event));
         }
     }

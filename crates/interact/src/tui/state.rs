@@ -5,7 +5,7 @@
 
 use fabric::protocol::client::EventCursor;
 use fabric::ui_event::{AwarenessLevel, CollaborationMode};
-use fabric::{AgentSnapshot, ApprovalSnapshot, MonoTime};
+use fabric::{AgentSnapshot, ApprovalSnapshot, MonoTime, TurnTerminalStatus};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -134,6 +134,10 @@ pub struct AppState {
     pub approvals: BTreeMap<String, ApprovalSnapshot>,
     pub agents: BTreeMap<String, AgentSnapshot>,
     pub last_error: Option<String>,
+    /// Semantic terminal projected from the canonical versioned turn stream.
+    /// ACP and TUI derive this from the same `ClientEvent`, rather than from
+    /// transport-specific success heuristics.
+    pub last_terminal_status: Option<TurnTerminalStatus>,
 }
 
 impl Default for AppState {
@@ -155,6 +159,7 @@ impl Default for AppState {
             approvals: BTreeMap::new(),
             agents: BTreeMap::new(),
             last_error: None,
+            last_terminal_status: None,
         }
     }
 }

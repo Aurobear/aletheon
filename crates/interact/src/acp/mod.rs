@@ -201,6 +201,43 @@ impl AcpAdapter {
     }
 }
 
+impl fabric::Observable for AcpAdapter {
+    fn status(&self) -> fabric::SubsystemStatus {
+        fabric::SubsystemStatus {
+            name: "acp-adapter".into(),
+            running: true,
+            status_line: format!("{} active session(s)", self.metrics.sessions_active),
+            details: self.metrics().named().into_iter().collect(),
+        }
+    }
+
+    fn metrics(&self) -> std::collections::HashMap<String, String> {
+        self.metrics().named().into_iter().collect()
+    }
+}
+
+impl AcpMetrics {
+    /// Fixed-cardinality metric export. No session, principal, method, or
+    /// workspace value is admitted as a label.
+    pub fn named(&self) -> [(String, String); 4] {
+        [
+            (
+                "acp_sessions_active".into(),
+                self.sessions_active.to_string(),
+            ),
+            ("acp_prompt_total".into(), self.prompt_total.to_string()),
+            (
+                "acp_reconnect_total".into(),
+                self.reconnect_total.to_string(),
+            ),
+            (
+                "acp_map_unmapped_event_total".into(),
+                self.map_unmapped_event_total.to_string(),
+            ),
+        ]
+    }
+}
+
 /// Construct authority exclusively from host-authenticated connection facts.
 /// No ACP-supplied session identifier participates in principal construction.
 pub fn establish_principal(
@@ -266,6 +303,7 @@ impl std::error::Error for AcpError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fabric::Observable;
 
     #[test]
     fn initialization_uses_fabric_negotiation_and_advertises_only_v1_subset() {
@@ -286,6 +324,18 @@ mod tests {
             adapter.initialize(&[99]),
             AcpResponse::Error { .. }
         ));
+    }
+
+    #[test]
+    fn observable_exports_only_the_four_bounded_named_metrics() {
+        let adapter = AcpAdapter::default();
+        let metrics = Observable::metrics(&adapter);
+        assert_eq!(metrics.len(), 4);
+        assert_eq!(metrics["acp_sessions_active"], "0");
+        assert_eq!(metrics["acp_prompt_total"], "0");
+        assert_eq!(metrics["acp_reconnect_total"], "0");
+        assert_eq!(metrics["acp_map_unmapped_event_total"], "0");
+        assert_eq!(Observable::status(&adapter).details, metrics);
     }
 
     #[test]

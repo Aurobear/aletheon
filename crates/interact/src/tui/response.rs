@@ -380,6 +380,15 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
     let Ok(event) = message.into_v1() else {
         return false;
     };
+    if matches!(
+        &event,
+        ProtocolEvent::TurnCompleted { .. } | ProtocolEvent::TurnStopped { .. }
+    ) {
+        return super::reducer::reduce_terminal(&mut app.app_state, &event);
+    }
+    if matches!(&event, ProtocolEvent::Failed { .. }) {
+        let _ = super::reducer::reduce_terminal(&mut app.app_state, &event);
+    }
     let action = match event {
         ProtocolEvent::InitializeResponse(_) => return true,
         ProtocolEvent::Snapshot(value) => UiAction::Snapshot(value),
@@ -388,9 +397,8 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
         ProtocolEvent::Agent(value) => UiAction::Agent(value),
         ProtocolEvent::Reconnected(value) => UiAction::Reconnected(value),
         ProtocolEvent::Failed { cursor, message } => UiAction::Failed(UiError { cursor, message }),
-        ProtocolEvent::TurnStarted { .. }
-        | ProtocolEvent::TurnCompleted { .. }
-        | ProtocolEvent::TurnStopped { .. } => return true,
+        ProtocolEvent::TurnStarted { .. } => return true,
+        ProtocolEvent::TurnCompleted { .. } | ProtocolEvent::TurnStopped { .. } => unreachable!(),
     };
     let _effects = reduce(&mut app.app_state, action);
     true
