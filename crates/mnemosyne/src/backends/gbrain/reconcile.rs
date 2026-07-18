@@ -113,7 +113,7 @@ impl<'a> GbrainReconciliation<'a> {
             operation.kind(),
             RECONCILIATION_SCHEMA_VERSION,
             &page,
-            record.metadata.sensitivity.clone(),
+            record.metadata.sensitivity,
             now_ms,
         )
     }

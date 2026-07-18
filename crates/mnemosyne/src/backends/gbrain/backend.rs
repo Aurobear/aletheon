@@ -182,12 +182,9 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
         else {
             return Ok(EnqueueOutcome::ExcludedSensitive);
         };
-        let outcome = self.spool.enqueue(
-            &metadata.record_id,
-            &page,
-            metadata.sensitivity.clone(),
-            now_ms,
-        )?;
+        let outcome =
+            self.spool
+                .enqueue(&metadata.record_id, &page, metadata.sensitivity, now_ms)?;
         let depth = self.spool.queue_depth().unwrap_or_default();
         self.transport.set_queue_depth(depth);
         self.metrics.set_gbrain_queue_depth(depth);
