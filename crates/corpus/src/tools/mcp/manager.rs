@@ -6,7 +6,9 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use super::client::McpTool;
-use super::client::{ElicitationHandler, McpConnectionManager, McpResource, ResourceContent};
+use super::client::{
+    ElicitationHandler, McpConnectionManager, McpResource, McpResourceTemplate, ResourceContent,
+};
 use super::config::McpConfig;
 use crate::tools::Tool;
 
@@ -67,6 +69,20 @@ impl McpManager {
     /// Read a resource from a named server by URI.
     pub async fn read_resource(&self, server_name: &str, uri: &str) -> Result<ResourceContent> {
         self.inner.read_resource(server_name, uri).await
+    }
+
+    pub async fn list_resource_templates(
+        &self,
+        server_name: &str,
+    ) -> Result<Vec<McpResourceTemplate>> {
+        self.inner.list_resource_templates(server_name).await
+    }
+
+    pub fn set_elicitation_approval_gate(
+        &self,
+        gate: Arc<dyn crate::security::approval::ApprovalGate>,
+    ) {
+        self.inner.set_elicitation_approval_gate(gate);
     }
 
     /// Number of servers that were successfully connected.

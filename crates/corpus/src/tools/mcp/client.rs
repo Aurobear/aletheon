@@ -65,6 +65,17 @@ pub struct McpResource {
     pub mime_type: Option<String>,
 }
 
+/// URI template advertised by an MCP server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpResourceTemplate {
+    pub uri_template: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+}
+
 /// MCP client for a single server.
 pub struct McpClient {
     pub server_name: String,
@@ -400,6 +411,35 @@ impl McpClient {
             .request(id, "resources/list", serde_json::json!({}))
             .await?;
         Ok(Self::parse_resources(&result))
+    }
+
+    pub async fn list_resource_templates(&mut self) -> Result<Vec<McpResourceTemplate>> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let result = self
+            .transport
+            .request(id, "resources/templates/list", serde_json::json!({}))
+            .await?;
+        Ok(result
+            .get("resourceTemplates")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|value| {
+                Some(McpResourceTemplate {
+                    uri_template: value.get("uriTemplate")?.as_str()?.to_string(),
+                    name: value.get("name")?.as_str()?.to_string(),
+                    description: value
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    mime_type: value
+                        .get("mimeType")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                })
+            })
+            .collect())
     }
 
     /// Read a specific resource by URI.
@@ -872,6 +912,32 @@ impl McpConnectionManager {
             .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
         let mut client = client_arc.lock().await;
         client.read_resource(uri).await
+    }
+
+    pub async fn list_resource_templates(
+        &self,
+        server_name: &str,
+    ) -> Result<Vec<McpResourceTemplate>> {
+        let client_arc = self
+            .clients
+            .get(server_name)
+            .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
+        client_arc.lock().await.list_resource_templates().await
+    }
+
+    pub fn set_elicitation_approval_gate(
+        &self,
+        gate: Arc<dyn crate::security::approval::ApprovalGate>,
+    ) {
+        for (server_name, client_arc) in &self.clients {
+            let Ok(mut client) = client_arc.try_lock() else {
+                continue;
+            };
+            client.elicitation_handler = Some(Arc::new(McpElicitationHandler::new(
+                gate.clone(),
+                server_name.clone(),
+            )));
+        }
     }
 
     pub fn set_elicitation_handler(&self, handler: Option<Arc<dyn ElicitationHandler>>) {

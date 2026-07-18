@@ -741,6 +741,7 @@ dependencies = [
  "atspi",
  "base64",
  "chrono",
+ "cognit",
  "dashmap",
  "dirs",
  "fabric",
@@ -1116,6 +1117,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

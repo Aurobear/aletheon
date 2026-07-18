@@ -733,37 +733,109 @@ impl Default for SandboxConfig {
     }
 }
 
-/// MCP (Model Context Protocol) server configuration.
+/// Canonical MCP (Model Context Protocol) server configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "McpServerConfigWire")]
 pub struct McpServerConfig {
     pub name: String,
-    /// "stdio", "http", or "sse"
-    #[serde(default = "default_mcp_transport")]
-    pub transport: String,
-    /// For stdio transport: command to run
-    #[serde(default)]
-    pub command: Option<String>,
-    /// For http/sse transport: URL to connect to
-    #[serde(default)]
-    pub url: Option<String>,
-    /// Environment variable containing the bearer token (never the token itself).
+    pub transport: McpTransportConfig,
+    pub trust: McpTrustLevel,
+    pub enabled: bool,
     #[serde(default)]
     pub bearer_token_env: Option<String>,
+    #[serde(default)]
+    pub request_timeout_ms: Option<u64>,
 }
 
-fn default_mcp_transport() -> String {
-    "stdio".to_string()
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum McpTransportConfig {
+    Stdio { command: String, args: Vec<String> },
+    StreamableHttp { url: String },
+    Sse { url: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum McpTrustLevel {
+    LocalTrusted,
+    RemoteTrusted,
+    Untrusted,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+enum McpTransportWire {
+    Canonical(McpTransportConfig),
+    Legacy(String),
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct McpServerConfigWire {
+    name: String,
+    #[serde(default = "default_mcp_transport_wire")]
+    transport: McpTransportWire,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default = "default_mcp_trust")]
+    trust: McpTrustLevel,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default)]
+    bearer_token_env: Option<String>,
+    #[serde(default)]
+    request_timeout_ms: Option<u64>,
+}
+
+fn default_mcp_transport_wire() -> McpTransportWire {
+    McpTransportWire::Legacy("stdio".to_string())
+}
+fn default_mcp_trust() -> McpTrustLevel {
+    McpTrustLevel::LocalTrusted
+}
+impl From<McpServerConfigWire> for McpServerConfig {
+    fn from(wire: McpServerConfigWire) -> Self {
+        let transport = match wire.transport {
+            McpTransportWire::Canonical(value) => value,
+            McpTransportWire::Legacy(value) if value == "http" => {
+                McpTransportConfig::StreamableHttp {
+                    url: wire.url.unwrap_or_default(),
+                }
+            }
+            McpTransportWire::Legacy(value) if value == "sse" => McpTransportConfig::Sse {
+                url: wire.url.unwrap_or_default(),
+            },
+            McpTransportWire::Legacy(_) => McpTransportConfig::Stdio {
+                command: wire.command.unwrap_or_default(),
+                args: wire.args,
+            },
+        };
+        Self {
+            name: wire.name,
+            transport,
+            trust: wire.trust,
+            enabled: wire.enabled,
+            bearer_token_env: wire.bearer_token_env,
+            request_timeout_ms: wire.request_timeout_ms,
+        }
+    }
 }
 
 impl Default for McpServerConfig {
     fn default() -> Self {
         Self {
             name: String::new(),
-            transport: default_mcp_transport(),
-            command: None,
-            url: None,
+            transport: McpTransportConfig::Stdio {
+                command: String::new(),
+                args: Vec::new(),
+            },
+            trust: McpTrustLevel::LocalTrusted,
+            enabled: true,
             bearer_token_env: None,
+            request_timeout_ms: None,
         }
     }
 }

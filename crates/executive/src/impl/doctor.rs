@@ -113,10 +113,16 @@ impl DoctorReport {
             .iter()
             .map(|mcp| McpServerStatus {
                 name: mcp.name.clone(),
-                command: mcp
-                    .command
-                    .clone()
-                    .unwrap_or_else(|| mcp.url.clone().unwrap_or_else(|| mcp.transport.clone())),
+                command: match &mcp.transport {
+                    cognit::config::McpTransportConfig::Stdio { command, args } => {
+                        std::iter::once(command.as_str())
+                            .chain(args.iter().map(String::as_str))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    }
+                    cognit::config::McpTransportConfig::StreamableHttp { url }
+                    | cognit::config::McpTransportConfig::Sse { url } => url.clone(),
+                },
                 status: "unknown (standalone doctor)".to_string(),
                 error: None,
             })

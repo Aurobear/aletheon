@@ -945,11 +945,17 @@
     },
     "McpServerConfig": {
       "additionalProperties": false,
-      "description": "MCP (Model Context Protocol) server configuration.",
+      "description": "Canonical MCP (Model Context Protocol) server configuration.",
       "properties": {
+        "args": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "bearer_token_env": {
           "default": null,
-          "description": "Environment variable containing the bearer token (never the token itself).",
           "type": [
             "string",
             "null"
@@ -957,23 +963,36 @@
         },
         "command": {
           "default": null,
-          "description": "For stdio transport: command to run",
           "type": [
             "string",
             "null"
           ]
         },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
         "name": {
           "type": "string"
         },
+        "request_timeout_ms": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "transport": {
-          "default": "stdio",
-          "description": "\"stdio\", \"http\", or \"sse\"",
-          "type": "string"
+          "$ref": "#/$defs/McpTransportWire"
+        },
+        "trust": {
+          "$ref": "#/$defs/McpTrustLevel",
+          "default": "LocalTrusted"
         },
         "url": {
           "default": null,
-          "description": "For http/sse transport: URL to connect to",
           "type": [
             "string",
             "null"
@@ -984,6 +1003,95 @@
         "name"
       ],
       "type": "object"
+    },
+    "McpTransportConfig": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Stdio": {
+              "properties": {
+                "args": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "command": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "command",
+                "args"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Stdio"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "StreamableHttp": {
+              "properties": {
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "StreamableHttp"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Sse": {
+              "properties": {
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Sse"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "McpTransportWire": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/McpTransportConfig"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "McpTrustLevel": {
+      "enum": [
+        "LocalTrusted",
+        "RemoteTrusted",
+        "Untrusted"
+      ],
+      "type": "string"
     },
     "MemoryConfig": {
       "additionalProperties": false,
