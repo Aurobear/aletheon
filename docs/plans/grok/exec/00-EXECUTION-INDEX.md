@@ -70,10 +70,11 @@
 | `69c163a3` | **Testing infrastructure 兼容收尾**：mock response 生命周期、runtime fixture 新配置、并发 policy 生命周期、直接 event-spine 单调性验证 | executive tests | native runtime 9 + coordinator 22 全走 |
 | `ba1f05cb` | **G1 T12–T16**：Executive trust resolver/ports、principal+workspace 内存 upsert、已知 repo 执行配置的有界只读稳定 digest 发现 | executive | workspace_trust 4 全走 |
 | `458f37ab` | **G1 T17**：principal+workspace receipt 持久 JSON store，串行原子替换；缺失/损坏状态 fail-closed | executive | workspace_trust 6 全走（含 reopen/corruption） |
+| `cf12ba0e` | **G1 T18**：启用态 trust decision 经 canonical bus 发布版本化事件，含 principal/workspace/scope/granting client | executive | scoped decision event 1 全走 |
 
 **状态**：S1 端到端完成。`grok_hardening.sandbox_profiles = true` + 配置中声明 profiles → `resolve_profile` → `SandboxConfig.policy` → bubblewrap 施加 deny + network；关=逐字节旧行为。C1+S1 两条从契约贯通到激活。
 
-**进行中**：G1 已完成 fabric T1–T11 与 Executive T12–T17；待 T18–T21（事件、装配与端到端验收）。S1 T14（事件）与 G3–G8 其余 consumer 收尾仍按 §4 序列推进。
+**进行中**：G1 已完成 fabric T1–T11 与 Executive T12–T18；待 T19–T21（装配、端到端验收与收尾）。S1 T14（事件）与 G3–G8 其余 consumer 收尾仍按 §4 序列推进。
 
 ## 2. 合并映射：Grok fabric × DeepSeek OUTSTANDING
 
