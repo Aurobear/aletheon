@@ -16,6 +16,7 @@ use super::risk_classifier::RiskClassifier;
 use crate::sandbox::executor::create_default_executor;
 use crate::sandbox::{SandboxConfig, SandboxExecutor, SandboxPreference};
 use crate::security::strategy::{resolve_strategy, ToolExecutionStrategy};
+use crate::security::structured_sandbox::StructuredToolSandbox;
 use fabric::execpolicy::{Decision as ExecDecision, Policy as ExecPolicy};
 use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use fabric::{
@@ -49,6 +50,8 @@ pub enum ToolError {
     ExecutionFailed(String),
     OutputRejected(String),
     AuditFailed(String),
+    StructuredSandboxUnavailable { tool: String },
+    StructuredSandboxUnsupported { tool: String },
 }
 
 impl std::fmt::Display for ToolError {
@@ -62,6 +65,14 @@ impl std::fmt::Display for ToolError {
             Self::ExecutionFailed(msg) => write!(f, "Execution failed: {}", msg),
             Self::OutputRejected(msg) => write!(f, "Output rejected: {}", msg),
             Self::AuditFailed(msg) => write!(f, "Audit persistence failed: {}", msg),
+            Self::StructuredSandboxUnavailable { tool } => write!(
+                f,
+                "Structured sandbox transport unavailable for '{tool}' (fail-closed)"
+            ),
+            Self::StructuredSandboxUnsupported { tool } => write!(
+                f,
+                "Structured sandbox transport does not support '{tool}' (fail-closed)"
+            ),
         }
     }
 }
@@ -96,6 +107,9 @@ pub struct ToolRunnerWithGuard {
     sandbox_profiles: Option<SandboxProfiles>,
     /// Canonical event spine used for S1 profile and violation observability.
     event_bus: Option<Arc<fabric::CanonicalEventBus>>,
+    /// Isolated transport for structured mutations. Required when profile
+    /// routing resolves such a tool to `Sandboxed`.
+    structured_sandbox: Option<Arc<dyn StructuredToolSandbox>>,
 }
 
 impl ToolRunnerWithGuard {
@@ -114,6 +128,7 @@ impl ToolRunnerWithGuard {
             clock,
             sandbox_profiles: None,
             event_bus: None,
+            structured_sandbox: None,
         }
     }
 
@@ -164,6 +179,11 @@ impl ToolRunnerWithGuard {
 
     pub fn with_event_bus(mut self, event_bus: Arc<fabric::CanonicalEventBus>) -> Self {
         self.event_bus = Some(event_bus);
+        self
+    }
+
+    pub fn with_structured_sandbox(mut self, sandbox: Arc<dyn StructuredToolSandbox>) -> Self {
+        self.structured_sandbox = Some(sandbox);
         self
     }
 
@@ -478,28 +498,13 @@ impl ToolRunnerWithGuard {
                 ToolExecutionStrategy::InProcess
             }
         } else {
-            let resolved = resolve_strategy(tool_name, tool.permission_level());
-            // A structured Tool cannot be represented by an empty shell command.
-            // Until run_with_tool/exec-server can transport structured calls,
-            // execute its real implementation with its existing canonical path
-            // confinement rather than silently replacing the operation with a
-            // successful no-op. Only bash_exec currently has a command-shaped
-            // transport understood by SandboxExecutor.
-            if matches!(resolved, ToolExecutionStrategy::Sandboxed) && tool_name != "bash_exec" {
-                tracing::warn!(
-                    tool = tool_name,
-                    "structured sandbox transport unavailable; preserving real tool execution"
-                );
-                ToolExecutionStrategy::InProcess
-            } else {
-                resolved
-            }
+            resolve_strategy(tool_name, tool.permission_level())
         };
 
         let result = match strategy {
             ToolExecutionStrategy::Sandboxed | ToolExecutionStrategy::ExecServerRequired => {
-                // Only command-shaped tools reach this branch. Structured
-                // tools must never be converted into an empty shell command.
+                // Command tools use SandboxExecutor; structured tools use the
+                // injected filesystem-capable transport below.
                 let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
 
                 let workspace = ctx
@@ -616,26 +621,51 @@ impl ToolRunnerWithGuard {
                     .await;
                 }
 
-                // D1-T11: the trusted sandbox-profile gate also enables shell
-                // escape detection. Legacy execution (profiles absent) remains
-                // byte-for-byte unchanged, while hardened execution blocks
-                // high-severity bypass patterns before any process is started.
-                if sandbox_config.policy.is_some() {
-                    let detector = ShellEscalationDetector::new(EscapePolicy::Block);
-                    match detector.evaluate(cmd) {
-                        Ok(detections) => {
-                            for detection in detections {
-                                warn!(
-                                    command = cmd,
-                                    pattern = detection.pattern,
-                                    severity = ?detection.severity,
-                                    "shell escalation pattern observed"
-                                );
-                            }
+                // `bash_exec` is the only command-shaped built-in in the
+                // strategy table. Every other sandboxed tool carries a
+                // structured JSON contract and must cross the isolated port;
+                // treating a missing `command` field as `""` would otherwise
+                // turn a mutation/build request into a successful no-op.
+                if tool_name != "bash_exec" {
+                    let transport = self.structured_sandbox.as_ref().ok_or_else(|| {
+                        ToolError::StructuredSandboxUnavailable {
+                            tool: tool_name.to_owned(),
                         }
-                        Err(detection) => {
-                            SANDBOX_FS_VIOLATION_TOTAL.fetch_add(1, Ordering::Relaxed);
-                            self.publish_sandbox_event(
+                    })?;
+                    if !transport.supports_tool(tool_name) {
+                        return Err(ToolError::StructuredSandboxUnsupported {
+                            tool: tool_name.to_owned(),
+                        });
+                    }
+                    transport
+                        .execute(tool_name, input.clone(), ctx, &sandbox_config)
+                        .await
+                        .map_err(|error| {
+                            ToolError::ExecutionFailed(format!(
+                                "structured sandbox execution failed for '{tool_name}': {error}"
+                            ))
+                        })?
+                } else {
+                    // D1-T11: the trusted sandbox-profile gate also enables shell
+                    // escape detection. Legacy execution (profiles absent) remains
+                    // byte-for-byte unchanged, while hardened execution blocks
+                    // high-severity bypass patterns before any process is started.
+                    if sandbox_config.policy.is_some() {
+                        let detector = ShellEscalationDetector::new(EscapePolicy::Block);
+                        match detector.evaluate(cmd) {
+                            Ok(detections) => {
+                                for detection in detections {
+                                    warn!(
+                                        command = cmd,
+                                        pattern = detection.pattern,
+                                        severity = ?detection.severity,
+                                        "shell escalation pattern observed"
+                                    );
+                                }
+                            }
+                            Err(detection) => {
+                                SANDBOX_FS_VIOLATION_TOTAL.fetch_add(1, Ordering::Relaxed);
+                                self.publish_sandbox_event(
                                 fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
                                 serde_json::json!({
                                     "event": "sandbox.violation",
@@ -649,36 +679,36 @@ impl ToolRunnerWithGuard {
                                 }),
                             )
                             .await;
-                            return Err(ToolError::PolicyDenied {
-                                reason: format!(
-                                    "shell escalation pattern '{}' blocked: {}",
-                                    detection.pattern, detection.description
-                                ),
-                            });
+                                return Err(ToolError::PolicyDenied {
+                                    reason: format!(
+                                        "shell escalation pattern '{}' blocked: {}",
+                                        detection.pattern, detection.description
+                                    ),
+                                });
+                            }
                         }
                     }
-                }
 
-                let sandbox_result = match sink.as_deref_mut() {
-                    Some(sink) => {
-                        self.sandbox
-                            .run_streaming(cmd, &sandbox_config, Duration::from_secs(30), sink)
-                            .await
-                    }
-                    None => {
-                        self.sandbox
-                            .run(cmd, &sandbox_config, Duration::from_secs(30))
-                            .await
-                    }
-                };
-                // Only backend/enforcement errors become violation events. A
-                // command can forge stderr text, so ordinary non-zero child
-                // exits must never be promoted to authoritative violations.
-                let violation = sandbox_result.as_ref().err().map(ToString::to_string);
-                if sandbox_config.policy.is_some() {
-                    if let Some(reason) = violation {
-                        SANDBOX_FS_VIOLATION_TOTAL.fetch_add(1, Ordering::Relaxed);
-                        self.publish_sandbox_event(
+                    let sandbox_result = match sink.as_deref_mut() {
+                        Some(sink) => {
+                            self.sandbox
+                                .run_streaming(cmd, &sandbox_config, Duration::from_secs(30), sink)
+                                .await
+                        }
+                        None => {
+                            self.sandbox
+                                .run(cmd, &sandbox_config, Duration::from_secs(30))
+                                .await
+                        }
+                    };
+                    // Only backend/enforcement errors become violation events. A
+                    // command can forge stderr text, so ordinary non-zero child
+                    // exits must never be promoted to authoritative violations.
+                    let violation = sandbox_result.as_ref().err().map(ToString::to_string);
+                    if sandbox_config.policy.is_some() {
+                        if let Some(reason) = violation {
+                            SANDBOX_FS_VIOLATION_TOTAL.fetch_add(1, Ordering::Relaxed);
+                            self.publish_sandbox_event(
                             fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
                             serde_json::json!({
                                 "event": "sandbox.violation",
@@ -690,27 +720,31 @@ impl ToolRunnerWithGuard {
                             }),
                         )
                         .await;
+                        }
                     }
-                }
-                match sandbox_result {
-                    Ok(sandbox_result) => ToolResult {
-                        content: format!("{}\n{}", sandbox_result.stdout, sandbox_result.stderr)
+                    match sandbox_result {
+                        Ok(sandbox_result) => ToolResult {
+                            content: format!(
+                                "{}\n{}",
+                                sandbox_result.stdout, sandbox_result.stderr
+                            )
                             .trim()
                             .to_string(),
-                        is_error: sandbox_result.exit_code != 0,
-                        metadata: ToolResultMeta {
-                            execution_time_ms: sandbox_result.elapsed_ms,
-                            truncated: false,
+                            is_error: sandbox_result.exit_code != 0,
+                            metadata: ToolResultMeta {
+                                execution_time_ms: sandbox_result.elapsed_ms,
+                                truncated: false,
+                            },
                         },
-                    },
-                    Err(e) => ToolResult {
-                        content: format!("Sandbox execution failed: {}", e),
-                        is_error: true,
-                        metadata: ToolResultMeta {
-                            execution_time_ms: 0,
-                            truncated: false,
+                        Err(e) => ToolResult {
+                            content: format!("Sandbox execution failed: {}", e),
+                            is_error: true,
+                            metadata: ToolResultMeta {
+                                execution_time_ms: 0,
+                                truncated: false,
+                            },
                         },
-                    },
+                    }
                 }
             }
             ToolExecutionStrategy::InProcess | ToolExecutionStrategy::NetworkProxied { .. } => {
@@ -874,6 +908,7 @@ mod tests {
     struct DummyL2Tool;
 
     struct StructuredL1Tool {
+        name: &'static str,
         calls: Arc<AtomicUsize>,
     }
 
@@ -928,7 +963,7 @@ mod tests {
     #[async_trait]
     impl Tool for StructuredL1Tool {
         fn name(&self) -> &str {
-            "file_write"
+            self.name
         }
         fn description(&self) -> &str {
             "structured read operation"
@@ -949,7 +984,39 @@ mod tests {
         }
         fn boxed_clone(&self) -> Box<dyn Tool> {
             Box::new(Self {
+                name: self.name,
                 calls: Arc::clone(&self.calls),
+            })
+        }
+    }
+
+    struct MockStructuredSandbox {
+        calls: Arc<AtomicUsize>,
+        expected_tool: &'static str,
+    }
+
+    #[async_trait]
+    impl StructuredToolSandbox for MockStructuredSandbox {
+        async fn execute(
+            &self,
+            tool_name: &str,
+            input: serde_json::Value,
+            _context: &ToolContext,
+            sandbox: &SandboxConfig,
+        ) -> Result<ToolResult, String> {
+            assert_eq!(tool_name, self.expected_tool);
+            assert_eq!(input["content"], "written");
+            let policy = sandbox.policy.as_ref().expect("resolved policy required");
+            assert_eq!(policy.name, "workspace");
+            assert!(policy
+                .read_write_roots
+                .iter()
+                .any(|root| root == sandbox.workspace.cwd()));
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ToolResult {
+                content: "sandbox wrote artifact".into(),
+                is_error: false,
+                metadata: ToolResultMeta::default(),
             })
         }
     }
@@ -1023,48 +1090,150 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn structured_l1_tool_executes_once_without_empty_sandbox_command() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let tool = StructuredL1Tool {
-            calls: Arc::clone(&calls),
-        };
-        let mut runner = make_runner(Arc::new(AutoApproveGate));
+    async fn structured_mutations_preserve_legacy_execution_when_profiles_are_disabled() {
+        for name in ["file_write", "apply_patch"] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let tool = StructuredL1Tool {
+                name,
+                calls: Arc::clone(&calls),
+            };
+            let mut runner = make_runner(Arc::new(AutoApproveGate));
 
-        let result = runner
-            .execute_tool(
-                &tool,
-                serde_json::json!({"path": "artifact.txt"}),
-                &make_ctx(),
-                "structured-turn",
-            )
-            .await
-            .unwrap();
+            let result = runner
+                .execute_tool(
+                    &tool,
+                    serde_json::json!({"path": "artifact.txt"}),
+                    &make_ctx(),
+                    "structured-turn",
+                )
+                .await
+                .unwrap();
 
-        assert_eq!(result.content, "wrote artifact");
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+            assert_eq!(result.content, "wrote artifact");
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
     }
 
     #[tokio::test]
-    async fn structured_mutation_executes_real_tool_when_profiles_are_enabled() {
-        let calls = Arc::new(AtomicUsize::new(0));
+    async fn structured_mutations_fail_closed_without_transport_when_profiles_are_enabled() {
+        for name in ["file_write", "apply_patch"] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let tool = StructuredL1Tool {
+                name,
+                calls: Arc::clone(&calls),
+            };
+            let mut runner = make_runner(Arc::new(AutoApproveGate))
+                .with_sandbox_profiles(fabric::SandboxProfiles::default());
+
+            let error = runner
+                .execute_tool(
+                    &tool,
+                    serde_json::json!({"path": "artifact.txt", "content": "written"}),
+                    &make_ctx(),
+                    "profile-structured-turn",
+                )
+                .await
+                .unwrap_err();
+
+            assert!(matches!(
+                error,
+                ToolError::StructuredSandboxUnavailable { ref tool } if tool == name
+            ));
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_structured_sandbox_strategy_fails_closed_without_empty_command() {
+        let in_process_calls = Arc::new(AtomicUsize::new(0));
+        let transport_calls = Arc::new(AtomicUsize::new(0));
         let tool = StructuredL1Tool {
-            calls: Arc::clone(&calls),
+            name: "ebpf_compile",
+            calls: Arc::clone(&in_process_calls),
         };
         let mut runner = make_runner(Arc::new(AutoApproveGate))
-            .with_sandbox_profiles(fabric::SandboxProfiles::default());
+            .with_sandbox_profiles(fabric::SandboxProfiles::default())
+            .with_structured_sandbox(Arc::new(MockStructuredSandbox {
+                calls: Arc::clone(&transport_calls),
+                expected_tool: "file_write",
+            }));
 
-        let result = runner
+        let error = runner
+            .execute_tool(
+                &tool,
+                serde_json::json!({"source_path": "program.c"}),
+                &make_ctx(),
+                "unsupported-structured-transport-turn",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ToolError::StructuredSandboxUnsupported { ref tool } if tool == "ebpf_compile"
+        ));
+        assert_eq!(in_process_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(transport_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn unknown_configured_default_profile_fails_closed() {
+        let in_process_calls = Arc::new(AtomicUsize::new(0));
+        let tool = StructuredL1Tool {
+            name: "file_write",
+            calls: Arc::clone(&in_process_calls),
+        };
+        let profiles = fabric::SandboxProfiles {
+            default_profile: "missing-trusted-profile".into(),
+            ..fabric::SandboxProfiles::default()
+        };
+        let mut runner = make_runner(Arc::new(AutoApproveGate)).with_sandbox_profiles(profiles);
+
+        let error = runner
             .execute_tool(
                 &tool,
                 serde_json::json!({"path": "artifact.txt", "content": "written"}),
                 &make_ctx(),
-                "profile-structured-turn",
+                "unknown-profile-turn",
             )
             .await
-            .unwrap();
+            .unwrap_err();
 
-        assert_eq!(result.content, "wrote artifact");
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(error, ToolError::PolicyDenied { ref reason }
+            if reason.contains("missing-trusted-profile") && reason.contains("fail-closed")));
+        assert_eq!(in_process_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn structured_mutations_use_sandbox_transport_when_profiles_are_enabled() {
+        for name in ["file_write", "apply_patch"] {
+            let in_process_calls = Arc::new(AtomicUsize::new(0));
+            let transport_calls = Arc::new(AtomicUsize::new(0));
+            let tool = StructuredL1Tool {
+                name,
+                calls: Arc::clone(&in_process_calls),
+            };
+            let mut runner = make_runner(Arc::new(AutoApproveGate))
+                .with_sandbox_profiles(fabric::SandboxProfiles::default())
+                .with_structured_sandbox(Arc::new(MockStructuredSandbox {
+                    calls: Arc::clone(&transport_calls),
+                    expected_tool: name,
+                }));
+
+            let result = runner
+                .execute_tool(
+                    &tool,
+                    serde_json::json!({"path": "artifact.txt", "content": "written"}),
+                    &make_ctx(),
+                    "profile-structured-transport-turn",
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(result.content, "sandbox wrote artifact");
+            assert_eq!(in_process_calls.load(Ordering::SeqCst), 0);
+            assert_eq!(transport_calls.load(Ordering::SeqCst), 1);
+        }
     }
 
     #[tokio::test]
