@@ -28,14 +28,15 @@ pub mod post_turn;
 pub mod pre_turn;
 pub mod session_service;
 pub mod thread_authority;
-pub mod turn_coordinator;
 pub mod tool_stream_bridge;
+pub mod turn_coordinator;
 pub mod turn_pipeline;
 pub mod turn_policy;
 pub mod turn_recovery;
 pub mod turn_service;
 pub mod turn_services;
 pub mod verification;
+pub mod workspace_trust;
 
 pub use admin_service::{AdminService, AdminUseCases};
 pub use approval_service::{ApprovalService, ApprovalUseCases};
