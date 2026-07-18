@@ -233,7 +233,14 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
             })
         ));
 
-    let action_loop = registry.resolve(space.clone(), owner, owner).await.unwrap();
+    // Exercise action/outcome recurrence in a fresh field. The observation
+    // field intentionally retains competing processor candidates, so it is
+    // not a deterministic action-selection fixture.
+    let action_space = AgoraSpaceId("session:production-conscious-action".into());
+    let action_loop = registry
+        .resolve(action_space.clone(), owner, owner)
+        .await
+        .unwrap();
     let call = CapabilityCall {
         operation_id: fabric::OperationId(Uuid::from_u128(11)),
         process_id: owner,
@@ -244,7 +251,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
     };
     let decision = action_loop.select_action(&call).await.unwrap();
     let GovernedActionDecision::Proceed { selected, .. } = decision else {
-        panic!("legacy empty field must proceed")
+        panic!("production action must proceed: {decision:?}")
     };
     let outcome: SelectedActionOutcomeReceipt = action_loop
         .observe_outcome(
@@ -266,7 +273,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
         .unwrap();
 
     assert!(outcome.broadcast_epoch.0 > selected.broadcast_epoch.0);
-    let latest = registry.latest_context(&space).await.unwrap();
+    let latest = registry.latest_context(&action_space).await.unwrap();
     assert_eq!(
         latest.receipt.broadcast_epoch,
         Some(outcome.broadcast_epoch)
@@ -286,7 +293,11 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
         .await
         .unwrap()
         .id;
-    let child_loop = registry.resolve(space.clone(), child, owner).await.unwrap();
+    let child_space = AgoraSpaceId("session:production-conscious-child".into());
+    let child_loop = registry
+        .resolve(child_space.clone(), child, owner)
+        .await
+        .unwrap();
     let child_call = CapabilityCall {
         operation_id: fabric::OperationId(Uuid::from_u128(20)),
         process_id: child,
@@ -321,7 +332,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
         )
         .await
         .unwrap();
-    let child_context = registry.latest_context(&space).await.unwrap();
+    let child_context = registry.latest_context(&child_space).await.unwrap();
     assert_eq!(
         child_context.receipt.broadcast_epoch,
         Some(child_outcome.broadcast_epoch)
@@ -337,14 +348,16 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
                 if frame.attribution == WorkspaceAttribution::ChildAgent { process: child }
         )));
 
-    let replay = registry.store().replay(&space).unwrap();
-    assert_eq!(replay.len(), 6);
-    for entry in replay {
-        assert!(registry
-            .store()
-            .integration(&space, entry.broadcast.epoch)
-            .unwrap()
-            .is_some());
+    for (replay_space, expected) in [(&space, 2), (&action_space, 2), (&child_space, 2)] {
+        let replay = registry.store().replay(replay_space).unwrap();
+        assert_eq!(replay.len(), expected);
+        for entry in replay {
+            assert!(registry
+                .store()
+                .integration(replay_space, entry.broadcast.epoch)
+                .unwrap()
+                .is_some());
+        }
     }
 }
 
