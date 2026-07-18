@@ -27,7 +27,7 @@ pub struct GrokHardeningConfig {
     /// G6 — subagent resource settlement state machine.
     pub subagent_settlement: bool,
     /// G7 — endpoint-scoped memory-search credentials.
-    pub memory_search: bool,
+    pub memory_hybrid: bool,
     /// G8 — ACP session-update adapter.
     pub acp_adapter: bool,
     /// S1 — layered sandbox profile enforcement.
@@ -47,7 +47,7 @@ impl GrokHardeningConfig {
             workspace_checkpoint,
             lifecycle_contributors,
             subagent_settlement,
-            memory_search,
+            memory_hybrid,
             acp_adapter,
             sandbox_profiles,
             compaction_v2,
@@ -58,7 +58,7 @@ impl GrokHardeningConfig {
             || *workspace_checkpoint
             || *lifecycle_contributors
             || *subagent_settlement
-            || *memory_search
+            || *memory_hybrid
             || *acp_adapter
             || *sandbox_profiles
             || *compaction_v2

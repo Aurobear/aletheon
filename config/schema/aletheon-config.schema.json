@@ -698,7 +698,7 @@
           "description": "G5 — typed lifecycle contributor / hook effects.",
           "type": "boolean"
         },
-        "memory_search": {
+        "memory_hybrid": {
           "default": false,
           "description": "G7 — endpoint-scoped memory-search credentials.",
           "type": "boolean"
@@ -1654,7 +1654,7 @@
         "compaction_v2": false,
         "folder_trust": false,
         "lifecycle_contributors": false,
-        "memory_search": false,
+        "memory_hybrid": false,
         "prompt_queue": false,
         "sandbox_profiles": false,
         "streaming_tools": false,
