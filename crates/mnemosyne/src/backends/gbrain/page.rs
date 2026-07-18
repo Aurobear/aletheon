@@ -222,6 +222,8 @@ impl GbrainPage {
             temporal_state,
             authority: crate::model::MemoryAuthority::AletheonExternal,
             scope: crate::model::MemoryScope::Global,
+            score: 0.0,
+            evidence: None,
         })
     }
 }

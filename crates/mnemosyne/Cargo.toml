@@ -39,3 +39,5 @@ default = []
 cognitive-memory = []
 vector-lance = []
 vector-qdrant = []
+# Off by default: LLM-powered synthesis (synthesize() pulls in model deps).
+llm-synthesis = []

@@ -8,6 +8,7 @@
 use std::cmp::Ordering;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     MemoryAuthority, MemoryScope, MemorySensitivity, RecallItem, RecallRequest, ScopeAncestry,
@@ -101,6 +102,9 @@ pub struct RecallSearchParams {
     pub vector_enabled: bool,
     pub top_k: usize,
     pub use_mmr: bool,
+    /// Optional mode bundle override. When `Some`, the bundle's knobs
+    /// take precedence over the individual fields above.
+    pub mode: Option<RecallMode>,
 }
 
 impl Default for RecallSearchParams {
@@ -110,8 +114,123 @@ impl Default for RecallSearchParams {
             vector_enabled: false,
             top_k: 20,
             use_mmr: false,
+            mode: None,
         }
     }
+}
+
+impl RecallSearchParams {
+    /// Resolve the effective `RecallModeBundle` for these params.
+    /// When `mode` is set the named bundle is returned; otherwise a
+    /// conservative-flavored default is constructed from the individual knobs.
+    pub fn resolve(&self) -> RecallModeBundle {
+        match self.mode {
+            Some(RecallMode::Conservative) => RecallModeBundle::conservative(),
+            Some(RecallMode::Balanced) => RecallModeBundle::balanced(),
+            Some(RecallMode::TokenMax) => RecallModeBundle::token_max(),
+            None => RecallModeBundle {
+                mode: RecallMode::Conservative,
+                fts_enabled: self.fts_enabled,
+                vector_enabled: self.vector_enabled,
+                top_k: self.top_k,
+                use_mmr: self.use_mmr,
+                expansion_enabled: false,
+                autocut_enabled: false,
+                autocut_jump: 0.3,
+                adaptive_return_enabled: false,
+                adaptive_entity_max: 3,
+                adaptive_other_max: 5,
+            },
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wave 1: Recall Mode Bundles (GBrain "Search Cathedral" absorption)
+// ---------------------------------------------------------------------------
+
+/// Named recall strategy (from GBrain mode.ts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecallMode {
+    Conservative,
+    Balanced,
+    TokenMax,
+}
+
+/// Frozen configuration for one recall mode.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecallModeBundle {
+    pub mode: RecallMode,
+    pub fts_enabled: bool,
+    pub vector_enabled: bool,
+    pub top_k: usize,
+    pub use_mmr: bool,
+    pub expansion_enabled: bool,
+    pub autocut_enabled: bool,
+    pub autocut_jump: f32,
+    pub adaptive_return_enabled: bool,
+    pub adaptive_entity_max: usize,
+    pub adaptive_other_max: usize,
+}
+
+impl RecallModeBundle {
+    pub fn conservative() -> Self {
+        Self {
+            mode: RecallMode::Conservative,
+            fts_enabled: true,
+            vector_enabled: false,
+            top_k: 10,
+            use_mmr: false,
+            expansion_enabled: false,
+            autocut_enabled: false,
+            autocut_jump: 0.3,
+            adaptive_return_enabled: false,
+            adaptive_entity_max: 3,
+            adaptive_other_max: 5,
+        }
+    }
+
+    pub fn balanced() -> Self {
+        Self {
+            mode: RecallMode::Balanced,
+            fts_enabled: true,
+            vector_enabled: false,
+            top_k: 25,
+            use_mmr: true,
+            expansion_enabled: false,
+            autocut_enabled: true,
+            autocut_jump: 0.3,
+            adaptive_return_enabled: true,
+            adaptive_entity_max: 5,
+            adaptive_other_max: 10,
+        }
+    }
+
+    pub fn token_max() -> Self {
+        Self {
+            mode: RecallMode::TokenMax,
+            fts_enabled: true,
+            vector_enabled: true,
+            top_k: 50,
+            use_mmr: true,
+            expansion_enabled: true,
+            autocut_enabled: true,
+            autocut_jump: 0.2,
+            adaptive_return_enabled: false,
+            adaptive_entity_max: 10,
+            adaptive_other_max: 20,
+        }
+    }
+}
+
+/// Lightweight query-intent hint used by adaptive return logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryIntent {
+    Entity,
+    Temporal,
+    Event,
+    General,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,12 +349,13 @@ pub(crate) async fn hybrid_recall_with_metrics(
     request: &RecallRequest,
     metrics: Option<&crate::observability::MemoryMetrics>,
 ) -> (Vec<RecallItem>, Vec<DegradedSource>) {
+    let bundle = params.resolve();
     let predicate = pre.to_scope_predicate();
-    let top_k = params.top_k.min(request.max_items).max(1);
+    let top_k = bundle.top_k.min(request.max_items).max(1);
     let mut ranked = Vec::new();
     let mut degraded = Vec::new();
 
-    if params.fts_enabled {
+    if bundle.fts_enabled {
         match backends.fts {
             Some(fts) => match fts.search(request, &predicate, top_k).await {
                 Ok(outcome) => ranked.extend(outcome.items),
@@ -245,7 +365,7 @@ pub(crate) async fn hybrid_recall_with_metrics(
         }
     }
 
-    if params.vector_enabled {
+    if bundle.vector_enabled {
         if backends.vector.is_none() {
             degraded.push(DegradedSource::NoEmbeddingConfig);
         } else if !backends.embedding_endpoint_trusted {
@@ -286,18 +406,45 @@ pub(crate) async fn hybrid_recall_with_metrics(
     });
     ranked.dedup_by(|left, right| left.item.metadata.record_id == right.item.metadata.record_id);
 
-    if params.use_mmr {
+    if bundle.use_mmr {
         ranked = deterministic_mmr(ranked, top_k);
     }
 
+    // Post-processing: autocut if enabled
+    if bundle.autocut_enabled && !ranked.is_empty() {
+        let (cut, decision) = crate::recall::autocut::apply_autocut(
+            ranked,
+            |item| item.score,
+            bundle.autocut_jump,
+            1,
+            |_item| false,
+        );
+        ranked = cut;
+        if decision.applied {
+            if let Some(metrics) = metrics {
+                metrics.recall_omitted(
+                    crate::RecallOmittedReason::ItemLimit,
+                    decision.total.saturating_sub(decision.kept),
+                );
+            }
+        }
+    }
+
+    // Post-processing: stamp evidence on each item (computed from score)
     let mut used_bytes = 0usize;
     let items = ranked
         .into_iter()
         .filter_map(|candidate| {
             let bytes = candidate.item.content.len();
+            let score = candidate.score;
+            let evidence = crate::recall::evidence::stamp_evidence(score);
             (used_bytes.saturating_add(bytes) <= request.max_content_bytes).then(|| {
                 used_bytes += bytes;
-                candidate.item
+                RecallItem {
+                    score,
+                    evidence,
+                    ..candidate.item
+                }
             })
         })
         .take(top_k)
@@ -425,6 +572,8 @@ mod tests {
             temporal_state: crate::TemporalState::Current,
             authority: MemoryAuthority::RawExperience,
             scope,
+            score: 0.0,
+            evidence: None,
         }
     }
 
@@ -687,6 +836,7 @@ mod tests {
                     vector_enabled: true,
                     top_k,
                     use_mmr,
+                    mode: None,
                 };
                 let request = RecallRequest::bounded("session", "property query");
                 tokio::runtime::Builder::new_current_thread()

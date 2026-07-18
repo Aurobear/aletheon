@@ -125,6 +125,8 @@ fn item(record_id: &str, source_id: &str, content: &str, observed: i64) -> Recal
         temporal_state: TemporalState::Current,
         authority: mnemosyne::MemoryAuthority::AletheonExternal,
         scope: mnemosyne::MemoryScope::Session("s".into()),
+        score: 0.0,
+        evidence: None,
     }
 }
 

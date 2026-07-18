@@ -12,6 +12,7 @@ pub mod consolidation;
 pub mod credential;
 pub mod fact_service;
 pub mod r#impl;
+pub mod knowledge_graph;
 pub mod model;
 pub mod observability;
 pub mod ops;
@@ -58,8 +59,24 @@ pub use retention::{
 };
 pub use service::{
     DefaultMemoryService, ExperienceEvent, ForgetAuthority, ForgetPolicy, ForgetReceipt,
-    ForgetSelector, MemoryService, RecallItem, RecallRequest, RecallSet,
+    ForgetSelector, MemoryService, RecallItem, RecallRequest, RecallSet, SynthesisCitation,
+    SynthesisContextBlock, SynthesisGap, SynthesisRequest, SynthesisResult,
 };
+
+// Wave 1: Recall pipeline enhancements
+pub use recall::autocut::{apply_autocut, AutocutDecision};
+pub use recall::evidence::{stamp_evidence, CreateSafety, EvidenceLevel};
+pub use recall::pipeline::{QueryIntent, RecallMode, RecallModeBundle};
+
+// Wave 2: Zero-LLM knowledge graph
+pub use knowledge_graph::{
+    extract_entities_from_content, infer_relations, Entity, EntityId, EntityType, KnowledgeGraph,
+    Relation, RelationType,
+};
+
+// Wave 3: Synthesis model trait (feature-gated)
+#[cfg(feature = "llm-synthesis")]
+pub use service::SynthesisModel;
 
 // Always-available exports
 pub use backends::EpisodicMemory;

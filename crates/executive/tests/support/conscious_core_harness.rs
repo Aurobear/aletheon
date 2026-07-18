@@ -105,6 +105,8 @@ impl mnemosyne::MemoryService for FileBackedMemory {
                 temporal_state: mnemosyne::TemporalState::Current,
                 authority: mnemosyne::MemoryAuthority::ExternalReference,
                 scope: MemoryScope::Session("acceptance-session".into()),
+                score: 0.0,
+                evidence: None,
             }],
             degraded_sources: vec!["network-disabled-by-harness".into()],
         })
@@ -816,7 +818,8 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
             store.clone(),
             dasein.clone(),
             fabric::ProcessId(Uuid::from_u128(804)),
-            kernel,
+            kernel.clone(),
+            Arc::new(agora::AgoraRegistry::new(kernel.clock())),
             executive::service::conscious_core_coordinator::ConsciousCoreConfig::default(),
         )?;
     coordinator.register_processor(

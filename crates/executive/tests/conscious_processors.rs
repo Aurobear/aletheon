@@ -38,6 +38,8 @@ impl MemoryService for Memory {
                 temporal_state: TemporalState::Current,
                 authority: MemoryAuthority::ExternalReference,
                 scope: MemoryScope::Session("test".into()),
+                score: 0.0,
+                evidence: None,
             }],
             degraded_sources: vec![],
         })

@@ -115,6 +115,8 @@ mod tests {
             temporal_state: TemporalState::Current,
             authority: MemoryAuthority::RawExperience,
             scope: MemoryScope::Global,
+            score: 0.0,
+            evidence: None,
         }
     }
 

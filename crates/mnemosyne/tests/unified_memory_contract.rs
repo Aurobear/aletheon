@@ -169,6 +169,7 @@ fn request(query: &str, max_items: usize, max_content_bytes: usize) -> RecallReq
         max_content_bytes,
         current_at: Some(DateTime::<Utc>::UNIX_EPOCH),
         include_historical: false,
+        mode: None,
     }
 }
 
