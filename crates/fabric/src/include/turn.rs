@@ -115,6 +115,13 @@ pub trait TurnServices: Send + Sync {
         Ok(CapabilityBatchPlan::identity(&calls))
     }
 
+    /// Drain mid-turn user interjections at a Cognit-declared safe point.
+    /// Implementations return independent messages in FIFO order. The default
+    /// preserves legacy behavior for services without G3 queue wiring.
+    async fn drain_interjections(&self) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
     fn llm_provider(&self) -> Option<&dyn LlmProvider> {
         None
     }

@@ -406,6 +406,7 @@ impl CognitiveSession for LinearCognitiveSession {
                     (result.output, result.is_error)
                 }
             },
+            || services.drain_interjections(),
             &sink,
         );
         let (output, metrics) = tokio::select! {

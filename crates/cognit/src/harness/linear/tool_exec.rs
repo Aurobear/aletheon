@@ -13,17 +13,20 @@ use tracing::{debug, warn};
 impl ReActLoop {
     /// Streaming variant of `run()`. Uses `llm.complete_stream()` instead of
     /// `llm.complete()` and emits granular events through `event_sink`.
-    pub async fn run_streaming<L, F, Fut>(
+    pub async fn run_streaming<L, F, Fut, D, DFut>(
         &mut self,
         llm: &L,
         tool_defs: &[ToolDefinition],
         execute_tool: F,
+        drain_interjections: D,
         event_sink: &impl EventSink,
     ) -> anyhow::Result<(String, TurnMetrics)>
     where
         L: LlmProvider,
         F: Fn(&str, &str, &serde_json::Value) -> Fut,
         Fut: Future<Output = (String, bool)>,
+        D: Fn() -> DFut,
+        DFut: Future<Output = anyhow::Result<Vec<String>>>,
     {
         use futures::StreamExt;
 
@@ -171,6 +174,15 @@ impl ReActLoop {
             // We must check tool_calls first — only exit if there are no tools to run.
             if tool_calls.is_empty() {
                 let final_text = text_parts.join("\n");
+                let interjections = drain_interjections().await?;
+                if !interjections.is_empty() {
+                    if !final_text.is_empty() {
+                        self.messages.push(Message::assistant(&final_text));
+                    }
+                    self.messages
+                        .extend(interjections.into_iter().map(Message::user));
+                    continue;
+                }
                 // Emit awareness: uncertainty from response + final response signal
                 self.emit_thinking_complete("thinking", &final_text);
                 self.emit_final_response("final_response");
@@ -517,6 +529,12 @@ impl ReActLoop {
                     }
                 }
             }
+
+            // G3 safe point: all tool results have been absorbed and no tool
+            // side effect or settlement is in flight. Keep each interjection
+            // as an independent synthetic user message in FIFO order.
+            self.messages
+                .extend(drain_interjections().await?.into_iter().map(Message::user));
 
             // Check if reflection recommended stopping
             if self.reflection_engine.should_stop() {
