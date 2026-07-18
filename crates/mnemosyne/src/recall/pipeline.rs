@@ -359,6 +359,7 @@ const fn sensitivity_ord(sensitivity: MemorySensitivity) -> u8 {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use proptest::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     struct Backend {
@@ -575,6 +576,74 @@ mod tests {
             .collect()
         }
         assert_eq!(run().await, run().await);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn merge_and_rank_are_repeatable_for_bounded_index_snapshots(
+            snapshot in prop::collection::vec(
+                (0_u16..1_000, -1_000_i16..1_000, "[a-z]{1,8}( [a-z]{1,8}){0,3}"),
+                0..20,
+            ),
+            use_mmr in any::<bool>(),
+            top_k in 1_usize..20,
+        ) {
+            fn candidates(snapshot: &[(u16, i16, String)]) -> Vec<RankedRecallItem> {
+                snapshot
+                    .iter()
+                    .map(|(id, score, content)| {
+                        let mut recall = item(
+                            &format!("record-{id}"),
+                            MemoryScope::Task("trusted-task".into()),
+                        );
+                        recall.content = content.clone();
+                        RankedRecallItem {
+                            item: recall,
+                            score: f32::from(*score) / 100.0,
+                        }
+                    })
+                    .collect()
+            }
+
+            let run = || {
+                let vector = Backend {
+                    calls: AtomicUsize::new(0),
+                    outcome: Ok(SearchOutcome {
+                        items: candidates(&snapshot),
+                        index_stale: false,
+                    }),
+                };
+                let params = RecallSearchParams {
+                    fts_enabled: false,
+                    vector_enabled: true,
+                    top_k,
+                    use_mmr,
+                };
+                let request = RecallRequest::bounded("session", "property query");
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(hybrid_recall(
+                        &pre(),
+                        &params,
+                        HybridRecallBackends {
+                            fts: None,
+                            vector: Some(&vector),
+                            embedding_endpoint_trusted: true,
+                        },
+                        &request,
+                    ))
+                    .0
+                    .into_iter()
+                    .map(|item| (item.metadata.record_id, item.content))
+                    .collect::<Vec<_>>()
+            };
+
+            prop_assert_eq!(run(), run());
+        }
     }
 
     #[tokio::test]

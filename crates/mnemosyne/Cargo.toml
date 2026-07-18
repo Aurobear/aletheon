@@ -30,6 +30,7 @@ reqwest = { workspace = true }
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
+proptest = "1.11.0"
 
 [features]
 # Off by default: the cognitive MemoryRouter + semantic/procedural/self backends

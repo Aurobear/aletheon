@@ -2161,6 +2161,7 @@ dependencies = [
  "dirs",
  "fabric",
  "parking_lot",
+ "proptest",
  "regex",
  "reqwest",
  "rusqlite",
