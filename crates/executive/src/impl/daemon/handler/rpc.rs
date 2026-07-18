@@ -111,7 +111,7 @@ impl RequestHandler {
 
             // ── Turn lifecycle (PR-3) ─────────────────────────────────
             "turn.wait" => self.handle_turn_wait(&id, &request).await,
-            "turn.cancel" => self.handle_turn_cancel(&id, &request).await,
+            "turn.cancel" => self.handle_turn_cancel(connection, &id, &request).await,
             "turn.exit" => self.handle_turn_exit(&id, &request).await,
             "workspace.rewind" if self.grok_hardening.workspace_checkpoint => {
                 self.handle_workspace_rewind(connection, &id, &request)

@@ -506,6 +506,7 @@ pub trait TurnUseCases: Send + Sync {
         &self,
         principal_id: PrincipalId,
         thread_id: String,
+        turn_id: fabric::TurnId,
         operation_id: OperationId,
     ) -> anyhow::Result<()>;
     async fn exit(&self, id: ProcessId) -> anyhow::Result<()>;
@@ -576,11 +577,12 @@ impl TurnUseCases for ProductionTurnUseCases {
         &self,
         principal_id: PrincipalId,
         thread_id: String,
+        turn_id: fabric::TurnId,
         operation_id: OperationId,
     ) -> anyhow::Result<()> {
         let tid = ThreadId(thread_id);
         self.orchestrator
-            .cancel_turn_by_key(&principal_id, &tid, operation_id)
+            .cancel_turn_by_key(&principal_id, &tid, turn_id, operation_id)
             .await
     }
     async fn exit(&self, id: ProcessId) -> anyhow::Result<()> {

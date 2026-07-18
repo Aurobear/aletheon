@@ -227,6 +227,7 @@ impl TurnCoordinator {
         &self,
         principal_id: &PrincipalId,
         thread_id: &ThreadId,
+        turn_id: TurnId,
         operation_id: fabric::OperationId,
     ) -> Result<(), anyhow::Error> {
         let key = ActiveTurnKey {
@@ -241,6 +242,12 @@ impl TurnCoordinator {
             anyhow::bail!(
                 "operation_id mismatch: expected {:?}, got {operation_id:?}",
                 turn.operation_id
+            );
+        }
+        if turn.turn_id != turn_id {
+            anyhow::bail!(
+                "turn_id mismatch: expected {:?}, got {turn_id:?}",
+                turn.turn_id
             );
         }
         // G3 prompt_queue identity validation when flag is enabled.

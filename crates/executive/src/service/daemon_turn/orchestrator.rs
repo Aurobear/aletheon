@@ -4,7 +4,7 @@ use crate::core::config::GrokHardeningConfig;
 use crate::service::turn_coordinator::TurnCoordinator;
 use crate::service::TurnPipeline;
 use aletheon_kernel::KernelRuntime;
-use fabric::{OperationId, PrincipalId, ProcessId, ProcessSignal, ThreadId};
+use fabric::{OperationId, PrincipalId, ProcessId, ProcessSignal, ThreadId, TurnId};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -89,10 +89,11 @@ impl DaemonTurnOrchestrator {
         &self,
         principal_id: &PrincipalId,
         thread_id: &ThreadId,
+        turn_id: TurnId,
         operation_id: OperationId,
     ) -> anyhow::Result<()> {
         self.coordinator
-            .cancel_operation_by_key(principal_id, thread_id, operation_id)
+            .cancel_operation_by_key(principal_id, thread_id, turn_id, operation_id)
             .await
     }
 

@@ -96,7 +96,37 @@ async fn concurrent_principals_keep_distinct_thread_authority() {
     let active = active.lock().await;
     assert!(active.contains_key(&alice_key));
     assert!(active.contains_key(&bob_key));
+    let alice_active = active.get(&alice_key).unwrap().clone();
     drop(active);
+
+    assert!(coordinator
+        .cancel_operation_by_key(
+            &alice.principal_id,
+            &alice.thread_id,
+            fabric::TurnId::new(),
+            alice_active.operation_id,
+        )
+        .await
+        .is_err());
+    assert!(coordinator
+        .cancel_operation_by_key(
+            &bob.principal_id,
+            &alice.thread_id,
+            alice_active.turn_id,
+            alice_active.operation_id,
+        )
+        .await
+        .is_err());
+    coordinator
+        .cancel_operation_by_key(
+            &alice.principal_id,
+            &alice.thread_id,
+            alice_active.turn_id,
+            alice_active.operation_id,
+        )
+        .await
+        .unwrap();
+    assert!(alice_active.cancel.is_cancelled());
 
     release.add_permits(2);
     alice_task.await.unwrap().unwrap();

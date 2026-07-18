@@ -156,6 +156,7 @@ impl RequestHandler {
     /// and propagates cancellation through the kernel operation tree.
     pub(super) async fn handle_turn_cancel(
         &self,
+        connection: &super::super::super::server::ConnectionContext,
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
@@ -181,14 +182,30 @@ impl RequestHandler {
         let thread_id = request["params"]["thread_id"].as_str().unwrap_or("");
         let turn_id = request["params"]["turn_id"].as_str().unwrap_or("");
 
-        let result = if self.grok_hardening.prompt_queue && !thread_id.is_empty() {
-            // G3 identity-aware cancel: parse principal from connection context
-            // and use thread_id + operation_id for lookup.
+        let result = if self.grok_hardening.prompt_queue {
+            if thread_id.is_empty() || turn_id.is_empty() {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32602, "message": "Missing thread_id or turn_id parameter" }
+                });
+            }
+            let turn_id = match uuid::Uuid::parse_str(turn_id) {
+                Ok(value) => fabric::TurnId(value),
+                Err(error) => {
+                    return json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32602, "message": format!("Invalid turn_id UUID: {error}") }
+                    });
+                }
+            };
             self.ports
                 .turn
                 .cancel_by_key(
-                    fabric::PrincipalId("local".into()),
+                    connection.principal_id.clone(),
                     thread_id.to_string(),
+                    turn_id,
                     operation_id,
                 )
                 .await
