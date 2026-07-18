@@ -147,6 +147,28 @@ pub trait WorkspaceSnapshotIo: Send + Sync {
     ) -> Result<()>;
 }
 
+#[async_trait]
+pub trait RewindSafetyGuard: Send + Sync {
+    async fn permits_single_agent_rewind(&self) -> bool;
+}
+
+#[derive(Default)]
+struct AllowSingleAgentRewind;
+
+#[async_trait]
+impl RewindSafetyGuard for AllowSingleAgentRewind {
+    async fn permits_single_agent_rewind(&self) -> bool {
+        true
+    }
+}
+
+#[async_trait]
+impl RewindSafetyGuard for crate::service::agent_control::LiveAgentRuns {
+    async fn permits_single_agent_rewind(&self) -> bool {
+        self.all().await.is_empty()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CaptureResult {
     pub files: Vec<CheckpointFileEntry>,
@@ -210,6 +232,7 @@ pub struct WorkspaceCheckpointService {
     store: Arc<dyn CheckpointStore>,
     leases: Arc<dyn LeaseManager>,
     io: Arc<dyn WorkspaceSnapshotIo>,
+    safety_guard: Arc<dyn RewindSafetyGuard>,
     event_bus: Option<Arc<CanonicalEventBus>>,
     event_spine: Option<Arc<dyn EventSpine>>,
     feature_enabled: bool,
@@ -243,6 +266,7 @@ impl WorkspaceCheckpointService {
             store,
             leases,
             io,
+            safety_guard: Arc::new(AllowSingleAgentRewind),
             event_bus: None,
             event_spine: None,
             feature_enabled,
@@ -260,6 +284,11 @@ impl WorkspaceCheckpointService {
     ) -> Self {
         self.event_bus = event_bus;
         self.event_spine = event_spine;
+        self
+    }
+
+    pub fn with_safety_guard(mut self, guard: Arc<dyn RewindSafetyGuard>) -> Self {
+        self.safety_guard = guard;
         self
     }
 
@@ -366,6 +395,11 @@ impl WorkspaceCheckpointService {
         if !self.feature_enabled {
             return RestoreOutcome::FsRestoreFailed {
                 detail: "workspace checkpoint feature is disabled".into(),
+            };
+        }
+        if !self.safety_guard.permits_single_agent_rewind().await {
+            return RestoreOutcome::FsRestoreFailed {
+                detail: "workspace rewind rejected while a child agent is active".into(),
             };
         }
         let loaded = match self.store.load(session, prompt_index).await {
@@ -685,6 +719,15 @@ mod tests {
     struct BlockingIo {
         entered: Arc<Notify>,
         resume: Arc<Notify>,
+    }
+
+    struct DenyRewind;
+
+    #[async_trait]
+    impl RewindSafetyGuard for DenyRewind {
+        async fn permits_single_agent_rewind(&self) -> bool {
+            false
+        }
     }
 
     #[async_trait]
@@ -1018,5 +1061,42 @@ mod tests {
         ));
         resume.notify_one();
         assert_eq!(first.await.unwrap(), RestoreOutcome::Completed);
+    }
+
+    #[tokio::test]
+    async fn active_child_guard_rejects_rewind_before_workspace_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("file"), "before").unwrap();
+        let service = WorkspaceCheckpointService::new(
+            Arc::new(InMemoryCheckpointStore::default()),
+            Arc::new(TestLeases::default()),
+            true,
+        )
+        .with_safety_guard(Arc::new(DenyRewind));
+        let id = service
+            .begin_turn(context(directory.path(), 1))
+            .await
+            .unwrap()
+            .unwrap();
+        service.finalize_turn(id, true).await.unwrap();
+        std::fs::write(directory.path().join("file"), "after").unwrap();
+
+        let outcome = service
+            .rewind_to(
+                &PrincipalId("principal".into()),
+                "session",
+                1,
+                &identity(directory.path()),
+                0,
+            )
+            .await;
+        assert!(matches!(
+            outcome,
+            RestoreOutcome::FsRestoreFailed { detail } if detail.contains("child agent")
+        ));
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("file")).unwrap(),
+            "after"
+        );
     }
 }
