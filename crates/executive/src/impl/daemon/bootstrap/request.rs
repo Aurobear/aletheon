@@ -87,6 +87,7 @@ impl RequestHandler {
         let data_dir_for_telegram = data_dir.clone();
         std::fs::create_dir_all(&data_dir)
             .with_context(|| format!("creating data dir: {}", data_dir.display()))?;
+        crate::service::durable_write::configure_writer_health(&data_dir);
         let session_store = SessionStore::new(&data_dir)?;
         session_store.create_session(&session_id)?;
 

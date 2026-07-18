@@ -15,7 +15,9 @@ use fabric::{
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use super::durable_write::{write_failed, TurnWriteTracker, WritePhase, WriteResult};
+use super::durable_write::{
+    record_writer_success, write_failed, TurnWriteTracker, WritePhase, WriteResult,
+};
 use super::turn_policy::TurnPolicy;
 
 pub struct TurnExecution {
@@ -427,7 +429,10 @@ impl TurnCoordinator {
                         status: SessionStatus::Active,
                     })
                     .await
-                    .map(|_| WriteResult::Succeeded)
+                    .map(|_| {
+                        record_writer_success();
+                        WriteResult::Succeeded
+                    })
                     .unwrap_or_else(|e| write_failed(&e, WritePhase::SessionCreate))
             } else {
                 WriteResult::Succeeded
@@ -593,7 +598,10 @@ impl TurnCoordinator {
             payload,
         };
         let result = match self.store.append(session, current, item).await {
-            Ok(_) => WriteResult::Succeeded,
+            Ok(_) => {
+                record_writer_success();
+                WriteResult::Succeeded
+            }
             Err(e) => write_failed(&e, phase),
         };
         if let Some(ref mut t) = tracker {

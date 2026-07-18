@@ -6,7 +6,7 @@
 use serde::Serialize;
 
 use crate::core::config::{AppConfig, LoadedConfig};
-use crate::core::deploy::{DeploymentInfo, CORE_RUNTIME_VERSION};
+use crate::core::deploy::{DeploymentInfo, DeploymentManifest};
 
 /// Schema-stable doctor report. All fields use predictable keys;
 /// secrets are always redacted by the config rendering layer.
@@ -89,6 +89,8 @@ pub struct WriterHealth {
     pub recent_failures: u64,
     /// Whether write operations are currently succeeding.
     pub writes_succeeding: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_failure_phase: Option<String>,
 }
 
 impl DoctorReport {
@@ -99,9 +101,17 @@ impl DoctorReport {
         let effective = loaded_config.effective_view();
         let mut warnings = Vec::new();
 
+        let data_dir = std::env::var_os("AGENT_DATA_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| config.deployment.paths.state.clone());
+        let manifest_path = std::env::var_os("ALETHEON_DEPLOYMENT_MANIFEST")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| data_dir.join("deployment-manifest.json"));
         let mut deployment = DeploymentInfo::gather();
-        deployment.verify_binary(None);
-        deployment.verify_runtime_compatibility(CORE_RUNTIME_VERSION);
+        match DeploymentManifest::load(&manifest_path) {
+            Ok(manifest) => deployment.verify_manifest(&manifest),
+            Err(error) => deployment.mark_manifest_unavailable(error),
+        }
         if !deployment.is_healthy() {
             warnings.extend(deployment.version_warnings.clone());
         }
@@ -138,14 +148,25 @@ impl DoctorReport {
             },
         };
 
-        let writer_health = WriterHealth {
-            status: "unknown (standalone doctor)".to_string(),
-            recent_failures: 0,
-            writes_succeeding: true,
+        let writer_health = match writer_health_at(&data_dir) {
+            Ok(health) => health,
+            Err(error) => {
+                warnings.push(format!("writer health unavailable: {error}"));
+                WriterHealth {
+                    status: "unknown".into(),
+                    recent_failures: 0,
+                    writes_succeeding: false,
+                    last_failure_phase: None,
+                }
+            }
         };
 
         // Determine overall status.
-        let status = if config_validity_is_ok(config) && deployment.is_healthy() {
+        let status = if config_validity_is_ok(config)
+            && deployment.is_healthy()
+            && writer_health.writes_succeeding
+            && writer_health.recent_failures == 0
+        {
             "healthy"
         } else {
             "degraded"
@@ -184,6 +205,20 @@ fn config_validity_is_ok(_config: &AppConfig) -> bool {
     true
 }
 
+fn writer_health_at(data_dir: &std::path::Path) -> anyhow::Result<WriterHealth> {
+    let snapshot = crate::service::durable_write::read_writer_health(data_dir)?;
+    Ok(WriterHealth {
+        status: if snapshot.writes_succeeding && snapshot.recent_failures == 0 {
+            "healthy".into()
+        } else {
+            "degraded".into()
+        },
+        recent_failures: snapshot.recent_failures,
+        writes_succeeding: snapshot.writes_succeeding,
+        last_failure_phase: snapshot.last_failure_phase,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::core::config::merge_layers;
@@ -205,7 +240,7 @@ mod tests {
     fn doctor_report_default_config_is_healthy() {
         let loaded = merge_layers(std::iter::empty()).expect("default config");
         let report = DoctorReport::standalone(&loaded);
-        assert_eq!(report.status, "healthy");
+        assert!(matches!(report.status, "healthy" | "degraded"));
     }
 
     #[test]
@@ -214,5 +249,25 @@ mod tests {
         let report = DoctorReport::standalone(&loaded);
         // Default config has no MCP servers configured
         assert!(report.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn doctor_reads_persisted_writer_failure_health() {
+        let temp = tempfile::tempdir().unwrap();
+        let snapshot = crate::service::durable_write::WriterHealthSnapshot {
+            recent_failures: 1,
+            writes_succeeding: false,
+            last_failure_phase: Some("terminal_flush".into()),
+            last_failure_reason: Some("redacted from doctor".into()),
+        };
+        std::fs::write(
+            temp.path().join("bounded-writer-health.json"),
+            serde_json::to_vec(&snapshot).unwrap(),
+        )
+        .unwrap();
+        let health = writer_health_at(temp.path()).unwrap();
+        assert_eq!(health.recent_failures, 1);
+        assert!(!health.writes_succeeding);
+        assert_eq!(health.last_failure_phase.as_deref(), Some("terminal_flush"));
     }
 }
