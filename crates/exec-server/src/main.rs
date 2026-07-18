@@ -66,6 +66,7 @@ fn main() -> io::Result<()> {
 
         // Require an exact-secret handshake as the first successful message.
         // A rejected attempt never authenticates the connection.
+        let handshake_attempted = !handshake_done && request.method == "handshake";
         let response = if !handshake_done {
             if request.method != "handshake" {
                 let resp = protocol::Response::err(
@@ -92,6 +93,11 @@ fn main() -> io::Result<()> {
         };
 
         if write_response(&mut stdout, &response).is_err() {
+            break;
+        }
+        // Authentication is single-shot. A rejected secret/handshake payload
+        // closes the transport instead of allowing online guessing.
+        if handshake_attempted && !handshake_done {
             break;
         }
 

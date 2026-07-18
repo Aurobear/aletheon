@@ -29,6 +29,8 @@ struct ManagedProcess {
     stderr: Option<BufReader<ChildStderr>>,
     stdout_buf: Vec<u8>,
     stderr_buf: Vec<u8>,
+    stdout_captured_bytes: u64,
+    stderr_captured_bytes: u64,
     stdout_eof: bool,
     stderr_eof: bool,
     exited: bool,
@@ -70,7 +72,7 @@ impl ProcessManager {
 
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
-        cmd.stdin(std::process::Stdio::null());
+        cmd.stdin(std::process::Stdio::piped());
         cmd.kill_on_drop(true);
 
         let mut child = cmd.spawn().map_err(|e| RpcError {
@@ -97,6 +99,8 @@ impl ProcessManager {
                 stderr,
                 stdout_buf: Vec::new(),
                 stderr_buf: Vec::new(),
+                stdout_captured_bytes: 0,
+                stderr_captured_bytes: 0,
                 stdout_eof: false,
                 stderr_eof: false,
                 exited: false,
@@ -132,10 +136,12 @@ impl ProcessManager {
                     Ok(Ok(n)) => {
                         let remaining = proc
                             .max_output_bytes
-                            .saturating_sub(proc.stdout_buf.len() as u64);
+                            .saturating_sub(proc.stdout_captured_bytes);
                         let take = (n as u64).min(remaining) as usize;
                         if take > 0 {
                             proc.stdout_buf.extend_from_slice(&buf[..take]);
+                            proc.stdout_captured_bytes =
+                                proc.stdout_captured_bytes.saturating_add(take as u64);
                         }
                         got_data = true;
                     }
@@ -186,10 +192,12 @@ impl ProcessManager {
                     Ok(Ok(n)) => {
                         let remaining = proc
                             .max_output_bytes
-                            .saturating_sub(proc.stderr_buf.len() as u64);
+                            .saturating_sub(proc.stderr_captured_bytes);
                         let take = (n as u64).min(remaining) as usize;
                         if take > 0 {
                             proc.stderr_buf.extend_from_slice(&buf[..take]);
+                            proc.stderr_captured_bytes =
+                                proc.stderr_captured_bytes.saturating_add(take as u64);
                         }
                         got_data = true;
                     }
@@ -465,5 +473,45 @@ mod tests {
         );
 
         assert_eq!(manager.cleanup_owner("connection-b").await, 1);
+    }
+
+    #[tokio::test]
+    async fn stdin_write_reaches_child_and_stream_limit_is_cumulative() {
+        let manager = ProcessManager::new();
+        let request = StartProcessRequest {
+            command: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                "read line; printf '%s-abcdef' \"$line\"; printf 'stderr-abcdef' >&2".into(),
+            ],
+            env: HashMap::new(),
+            working_dir: None,
+            timeout_secs: None,
+            max_output_bytes: Some(5),
+        };
+        let handle = manager.spawn("connection-a", &request).await.unwrap();
+        manager
+            .write_stdin(&handle.handle_id, "input\n")
+            .await
+            .unwrap();
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        for _ in 0..20 {
+            for chunk in manager.read(&handle.handle_id).await.unwrap() {
+                match chunk.stream.as_str() {
+                    "stdout" => stdout.push_str(&chunk.data),
+                    "stderr" => stderr.push_str(&chunk.data),
+                    _ => unreachable!(),
+                }
+            }
+            if stdout.len() == 5 && stderr.len() == 5 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(stdout, "input");
+        assert_eq!(stderr, "stder");
+        manager.cleanup_owner("connection-a").await;
     }
 }
