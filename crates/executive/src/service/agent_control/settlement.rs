@@ -5,6 +5,7 @@
 //! subsystems, while this module provides ordering, policy, and replay safety.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -252,8 +253,21 @@ pub struct FailClosedSettlementResourcePort {
 pub struct ManagedSettlementResourcePort {
     live: LiveAgentRun,
     parent_authority_covers: bool,
-    parent_budget_accepts: bool,
+    parent_budget_accepts: ParentBudgetAcceptance,
     parent_cancellation: Option<tokio_util::sync::CancellationToken>,
+}
+
+#[derive(Clone, Default)]
+struct ParentBudgetAcceptance(Arc<AtomicBool>);
+
+impl ParentBudgetAcceptance {
+    fn publish(&self, accepted: bool) {
+        self.0.store(accepted, Ordering::Release);
+    }
+
+    fn read(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
 }
 
 impl ManagedSettlementResourcePort {
@@ -266,9 +280,19 @@ impl ManagedSettlementResourcePort {
         Self {
             live,
             parent_authority_covers,
-            parent_budget_accepts,
+            parent_budget_accepts: {
+                let gate = ParentBudgetAcceptance::default();
+                gate.publish(parent_budget_accepts);
+                gate
+            },
             parent_cancellation,
         }
+    }
+
+    /// Publish the authoritative transfer outcome only after quiescing has
+    /// closed admission and fixed the resource set.
+    pub fn set_parent_budget_accepts(&self, accepted: bool) {
+        self.parent_budget_accepts.publish(accepted);
     }
 }
 
@@ -282,7 +306,7 @@ impl SettlementResourcePort for ManagedSettlementResourcePort {
         ReparentContext {
             parent_authority_covers: self.parent_authority_covers
                 && self.live.has_managed_resource(&resource.resource_id),
-            parent_budget_accepts: self.parent_budget_accepts,
+            parent_budget_accepts: self.parent_budget_accepts.read(),
             notification_route_transferable: !parent_owner.trim().is_empty(),
         }
     }
@@ -787,6 +811,14 @@ fn persistence(error: impl std::fmt::Display) -> AgentControlError {
 mod tests {
     use super::*;
     use parking_lot::Mutex as ParkingMutex;
+
+    #[test]
+    fn parent_budget_acceptance_is_closed_until_transfer_is_published() {
+        let gate = ParentBudgetAcceptance::default();
+        assert!(!gate.read());
+        gate.publish(true);
+        assert!(gate.read());
+    }
 
     #[derive(Default)]
     struct FakeAdmission {

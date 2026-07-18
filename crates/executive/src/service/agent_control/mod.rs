@@ -1333,19 +1333,6 @@ async fn run_agent(
                     .reparent_authority()
                     .accepts_budget(live_run.reparent_authority())
             });
-            let budget_transfer_receipt = match (parent_agent, settlement_usage.as_ref()) {
-                (Some(parent), Some(usage)) if parent_authority_covers && wants_reparent => {
-                    match admission.transfer_remaining_to(parent, usage).await {
-                        Ok(receipt) => Some(receipt),
-                        Err(error) => {
-                            tracing::warn!(agent = ?agent, %error, "parent budget rejected remaining child reservation");
-                            None
-                        }
-                    }
-                }
-                _ => None,
-            };
-            let parent_budget_accepts = budget_transfer_receipt.is_some();
             let parent_cancellation = parent_run.map(|run| run.cancellation.clone());
             let evidence = Arc::new(SpineSettlementEvidenceSink::new(
                 event_spine,
@@ -1353,19 +1340,39 @@ async fn run_agent(
                 agent.0.to_string(),
                 operation,
             ));
+            let managed_resources = Arc::new(ManagedSettlementResourcePort::new(
+                live_run.clone(),
+                parent_authority_covers,
+                false,
+                parent_cancellation,
+            ));
             let engine = SettlementEngine::new(
                 settlement_receipts,
-                Arc::new(ManagedSettlementResourcePort::new(
-                    live_run.clone(),
-                    parent_authority_covers,
-                    parent_budget_accepts,
-                    parent_cancellation,
-                )),
+                managed_resources.clone(),
                 Arc::new(RepositorySettlementLeasePort::new(repository.clone())),
                 evidence,
             );
             match engine.quiesce(&live_run).await {
                 Ok(resources) => {
+                    // Closing admission and fixing the resource snapshot must
+                    // precede the irreversible budget ownership transfer. A
+                    // crash before this point therefore leaves the reservation
+                    // wholly child-owned and recoverable.
+                    let budget_transfer_receipt = match (parent_agent, settlement_usage.as_ref()) {
+                        (Some(parent), Some(usage))
+                            if parent_authority_covers && wants_reparent =>
+                        {
+                            match admission.transfer_remaining_to(parent, usage).await {
+                                Ok(receipt) => Some(receipt),
+                                Err(error) => {
+                                    tracing::warn!(agent = ?agent, %error, "parent budget rejected remaining child reservation");
+                                    None
+                                }
+                            }
+                        }
+                        _ => None,
+                    };
+                    managed_resources.set_parent_budget_accepts(budget_transfer_receipt.is_some());
                     let mut terminal =
                         terminal_with_memory_flush(terminal, memory_events.take_error());
                     if budget_transfer_receipt.is_none() {
