@@ -118,6 +118,23 @@ pub trait SandboxBackend: Send + Sync {
         config: &SandboxConfig,
         timeout: Duration,
     ) -> Result<SandboxResult>;
+
+    /// Streaming execution hook. Backends may override to emit output while
+    /// the child is running; legacy backends preserve execution semantics and
+    /// emit captured lines after completion.
+    async fn execute_streaming(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        timeout: Duration,
+        sink: &crate::ToolEventSink,
+    ) -> Result<SandboxResult> {
+        let result = self.execute(cmd, config, timeout).await?;
+        for line in result.stdout.lines().chain(result.stderr.lines()) {
+            let _ = sink.progress(crate::ToolProgress::Text(line.to_owned()));
+        }
+        Ok(result)
+    }
 }
 
 /// User-facing preference for sandbox isolation level.
@@ -245,6 +262,47 @@ impl SandboxExecutor {
         }
 
         backend.execute(cmd, config, timeout).await
+    }
+
+    /// Execute with incremental progress while preserving the same backend
+    /// selection and network-isolation checks as `run`.
+    pub async fn run_streaming(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        timeout: Duration,
+        sink: &crate::ToolEventSink,
+    ) -> Result<SandboxResult> {
+        let backend = self
+            .select_backend()
+            .ok_or_else(|| anyhow::anyhow!("No suitable sandbox backend available"))?;
+        if self.preference == SandboxPreference::Require && backend.name() == "noop" {
+            return Err(anyhow::anyhow!(
+                "Sandbox required but NoopBackend was selected (fail-closed)"
+            ));
+        }
+        if self.preference == SandboxPreference::BestEffort
+            && backend.isolation_level() == IsolationLevel::None
+        {
+            tracing::warn!("Sandbox degraded to no isolation (BestEffort mode)");
+        }
+        if let Some(policy) = &config.policy {
+            if policy.restrict_network && !backend.capabilities().network_isolation {
+                if self.preference == SandboxPreference::Require {
+                    return Err(anyhow::anyhow!(
+                        "Sandbox profile '{}' requires network isolation but backend '{}' cannot provide it (fail-closed)",
+                        policy.name,
+                        backend.name()
+                    ));
+                }
+                tracing::warn!(
+                    profile = %policy.name,
+                    backend = %backend.name(),
+                    "Sandbox profile requests network restriction but backend lacks network isolation; continuing degraded"
+                );
+            }
+        }
+        backend.execute_streaming(cmd, config, timeout, sink).await
     }
 
     /// List all registered backends with their availability status.

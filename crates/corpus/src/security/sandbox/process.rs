@@ -92,4 +92,87 @@ impl SandboxBackend for ProcessBackend {
             }),
         }
     }
+
+    async fn execute_streaming(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        timeout: Duration,
+        sink: &fabric::ToolEventSink,
+    ) -> Result<SandboxResult> {
+        let mut command = tokio::process::Command::new("bash");
+        command
+            .arg("-c")
+            .arg(cmd)
+            .current_dir(config.working_dir())
+            .envs(&config.environment);
+        super::streaming::execute_command_streaming(
+            command,
+            timeout,
+            "process",
+            IsolationLevel::Process,
+            self.clock.clone(),
+            sink,
+        )
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aletheon_kernel::chronos::SystemClock;
+
+    #[tokio::test]
+    async fn emits_stdout_lines_before_process_terminal() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                temp.path().canonicalize().unwrap(),
+                vec![],
+            )
+            .unwrap(),
+            environment: Default::default(),
+            policy: None,
+        };
+        let (sink, mut rx) = fabric::tool_event_channel();
+        let task = tokio::spawn(async move {
+            let backend = ProcessBackend {
+                clock: Arc::new(SystemClock::new()),
+            };
+            backend
+                .execute_streaming(
+                    "printf 'first\\n'; sleep 0.2; printf 'second\\n'",
+                    &config,
+                    Duration::from_secs(2),
+                    &sink,
+                )
+                .await
+                .unwrap()
+        });
+
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_millis(100), rx.recv())
+                .await
+                .unwrap(),
+            Some(fabric::ToolExecutionEvent::Progress(
+                fabric::ToolProgress::Text(line)
+            )) if line == "first"
+        ));
+        assert!(
+            !task.is_finished(),
+            "first line must arrive during execution"
+        );
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), rx.recv())
+                .await
+                .unwrap(),
+            Some(fabric::ToolExecutionEvent::Progress(
+                fabric::ToolProgress::Text(line)
+            )) if line == "second"
+        ));
+        let result = task.await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("first\nsecond"));
+    }
 }

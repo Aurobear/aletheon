@@ -321,6 +321,28 @@ impl SandboxBackend for BubblewrapBackend {
             }),
         }
     }
+
+    async fn execute_streaming(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        timeout: Duration,
+        sink: &fabric::ToolEventSink,
+    ) -> Result<SandboxResult> {
+        let mut command = tokio::process::Command::new(&self.bwrap_path);
+        command
+            .args(self.build_args(cmd, config))
+            .current_dir(config.working_dir());
+        super::streaming::execute_command_streaming(
+            command,
+            timeout,
+            "bubblewrap",
+            IsolationLevel::Namespace,
+            self.clock.clone(),
+            sink,
+        )
+        .await
+    }
 }
 
 #[cfg(test)]

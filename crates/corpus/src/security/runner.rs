@@ -497,11 +497,19 @@ impl ToolRunnerWithGuard {
                 //   if let Err(detection) = detector.evaluate(cmd) { … }
                 // When the flag is off, no detection runs (equivalent to current).
 
-                match self
-                    .sandbox
-                    .run(cmd, &sandbox_config, Duration::from_secs(30))
-                    .await
-                {
+                let sandbox_result = match sink.as_deref_mut() {
+                    Some(sink) => {
+                        self.sandbox
+                            .run_streaming(cmd, &sandbox_config, Duration::from_secs(30), sink)
+                            .await
+                    }
+                    None => {
+                        self.sandbox
+                            .run(cmd, &sandbox_config, Duration::from_secs(30))
+                            .await
+                    }
+                };
+                match sandbox_result {
                     Ok(sandbox_result) => ToolResult {
                         content: format!("{}\n{}", sandbox_result.stdout, sandbox_result.stderr)
                             .trim()
@@ -886,6 +894,38 @@ mod tests {
             rx.recv().await,
             Some(fabric::ToolExecutionEvent::Terminal(Ok(_)))
         ));
+    }
+
+    #[tokio::test]
+    async fn bash_sandbox_streams_multiple_lines_and_one_terminal() {
+        let mut runner = make_runner(Arc::new(AutoApproveGate));
+        let (mut sink, mut rx) = fabric::tool_event_channel();
+        let report = runner
+            .execute_tool_streaming_report(
+                &DummyL2Tool,
+                serde_json::json!({
+                    "command": "printf 'alpha\\n'; sleep 0.05; printf 'beta\\n'"
+                }),
+                &make_ctx(),
+                "bash-streaming-turn",
+                &mut sink,
+            )
+            .await;
+
+        assert!(report.result.is_ok());
+        let mut progress = Vec::new();
+        let mut terminals = 0;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                fabric::ToolExecutionEvent::Progress(fabric::ToolProgress::Text(line)) => {
+                    progress.push(line);
+                }
+                fabric::ToolExecutionEvent::Terminal(_) => terminals += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(progress, ["alpha", "beta"]);
+        assert_eq!(terminals, 1);
     }
 
     #[tokio::test]

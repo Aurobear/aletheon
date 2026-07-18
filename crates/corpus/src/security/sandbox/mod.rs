@@ -11,6 +11,7 @@ pub mod noop;
 pub mod policy;
 pub mod process;
 pub mod profile;
+pub(crate) mod streaming;
 
 // Re-export key types for convenience (inlined from backend.rs)
 pub use bubblewrap::BubblewrapBackend;
