@@ -23,7 +23,7 @@ pub struct ProcessManager {
 
 struct ManagedProcess {
     child: Child,
-    handle_id: String,
+    owner: String,
     start_time: Instant,
     stdout: Option<BufReader<ChildStdout>>,
     stderr: Option<BufReader<ChildStderr>>,
@@ -42,7 +42,11 @@ impl ProcessManager {
         }
     }
 
-    pub async fn spawn(&self, req: &StartProcessRequest) -> Result<ProcessHandle, RpcError> {
+    pub async fn spawn(
+        &self,
+        owner: &str,
+        req: &StartProcessRequest,
+    ) -> Result<ProcessHandle, RpcError> {
         let mut procs = self.processes.lock().await;
 
         if procs.len() >= MAX_HANDLES {
@@ -87,7 +91,7 @@ impl ProcessManager {
             handle_id.clone(),
             ManagedProcess {
                 child,
-                handle_id: handle_id.clone(),
+                owner: owner.to_owned(),
                 start_time: Instant::now(),
                 stdout,
                 stderr,
@@ -290,52 +294,63 @@ impl ProcessManager {
     }
 
     pub async fn terminate(&self, handle_id: &str) -> Result<(), RpcError> {
-        let pid = {
+        let proc = {
             let mut procs = self.processes.lock().await;
-            let proc = procs.get_mut(handle_id).ok_or_else(|| RpcError {
+            procs.remove(handle_id).ok_or_else(|| RpcError {
                 code: PROCESS_NOT_FOUND,
                 message: format!("Process handle not found: {}", handle_id),
                 data: None,
-            })?;
-
-            let pid = proc.child.id().unwrap_or(0);
-
-            #[cfg(unix)]
-            unsafe {
-                if pid > 0 {
-                    libc::kill(pid as i32, libc::SIGTERM);
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = proc.child.start_kill();
-            }
-
-            pid
+            })?
         };
-
-        if pid > 0 {
-            tokio::time::sleep(Duration::from_millis(TERMINATE_GRACE_MS)).await;
-
-            let mut procs = self.processes.lock().await;
-            if let Some(proc) = procs.get_mut(handle_id) {
-                if !proc.exited {
-                    #[cfg(unix)]
-                    unsafe {
-                        libc::kill(pid as i32, libc::SIGKILL);
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        let _ = proc.child.kill().await;
-                    }
-                }
-            }
-        }
-
-        let mut procs = self.processes.lock().await;
-        procs.remove(handle_id);
-
+        terminate_and_reap(proc).await;
         Ok(())
+    }
+
+    /// Terminate and reap every foreground process owned by a disconnected
+    /// transport connection. Other connections' processes are left intact.
+    pub async fn cleanup_owner(&self, owner: &str) -> usize {
+        let owned = {
+            let mut procs = self.processes.lock().await;
+            let handles: Vec<_> = procs
+                .iter()
+                .filter(|(_, process)| process.owner == owner)
+                .map(|(handle, _)| handle.clone())
+                .collect();
+            handles
+                .into_iter()
+                .filter_map(|handle| procs.remove(&handle))
+                .collect::<Vec<_>>()
+        };
+        let count = owned.len();
+        let mut tasks = tokio::task::JoinSet::new();
+        for process in owned {
+            tasks.spawn(terminate_and_reap(process));
+        }
+        while tasks.join_next().await.is_some() {}
+        count
+    }
+
+    #[cfg(test)]
+    async fn contains(&self, handle_id: &str) -> bool {
+        self.processes.lock().await.contains_key(handle_id)
+    }
+
+    #[cfg(test)]
+    async fn owner_of(&self, handle_id: &str) -> Option<String> {
+        self.processes
+            .lock()
+            .await
+            .get(handle_id)
+            .map(|process| process.owner.clone())
+    }
+
+    #[cfg(test)]
+    async fn pid_of(&self, handle_id: &str) -> Option<u32> {
+        self.processes
+            .lock()
+            .await
+            .get(handle_id)
+            .and_then(|process| process.child.id())
     }
 
     /// Reap all exited processes and remove them from the registry.
@@ -355,9 +370,100 @@ impl ProcessManager {
 
     /// Kill all managed processes on shutdown.
     pub async fn shutdown(&self) {
-        let mut procs = self.processes.lock().await;
-        for (_id, mut proc) in procs.drain() {
-            let _ = proc.child.start_kill();
+        let processes = {
+            let mut procs = self.processes.lock().await;
+            procs
+                .drain()
+                .map(|(_, process)| process)
+                .collect::<Vec<_>>()
+        };
+        let mut tasks = tokio::task::JoinSet::new();
+        for process in processes {
+            tasks.spawn(terminate_and_reap(process));
         }
+        while tasks.join_next().await.is_some() {}
+    }
+}
+
+async fn terminate_and_reap(mut process: ManagedProcess) {
+    let pid = process.child.id().unwrap_or(0);
+    #[cfg(unix)]
+    unsafe {
+        if pid > 0 {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = process.child.start_kill();
+
+    if tokio::time::timeout(
+        Duration::from_millis(TERMINATE_GRACE_MS),
+        process.child.wait(),
+    )
+    .await
+    .is_err()
+    {
+        let _ = process.child.start_kill();
+        let _ = process.child.wait().await;
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    fn sleeping_process() -> StartProcessRequest {
+        StartProcessRequest {
+            command: "/bin/sh".into(),
+            args: vec!["-c".into(), "exec sleep 30".into()],
+            env: HashMap::new(),
+            working_dir: None,
+            timeout_secs: None,
+            max_output_bytes: None,
+        }
+    }
+
+    fn process_is_gone(pid: u32) -> bool {
+        let result = unsafe { libc::kill(pid as i32, 0) };
+        result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+
+    #[tokio::test]
+    async fn spawned_process_records_connection_owner() {
+        let manager = ProcessManager::new();
+        let handle = manager
+            .spawn("connection-a", &sleeping_process())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            manager.owner_of(&handle.handle_id).await.as_deref(),
+            Some("connection-a")
+        );
+        manager.cleanup_owner("connection-a").await;
+    }
+
+    #[tokio::test]
+    async fn disconnect_cleanup_only_terminates_and_reaps_owned_children() {
+        let manager = ProcessManager::new();
+        let owned = manager
+            .spawn("connection-a", &sleeping_process())
+            .await
+            .unwrap();
+        let other = manager
+            .spawn("connection-b", &sleeping_process())
+            .await
+            .unwrap();
+        let owned_pid = manager.pid_of(&owned.handle_id).await.unwrap();
+
+        assert_eq!(manager.cleanup_owner("connection-a").await, 1);
+        assert!(!manager.contains(&owned.handle_id).await);
+        assert!(manager.contains(&other.handle_id).await);
+        assert!(
+            process_is_gone(owned_pid),
+            "owned child must be waited and reaped"
+        );
+
+        assert_eq!(manager.cleanup_owner("connection-b").await, 1);
     }
 }

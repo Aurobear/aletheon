@@ -20,7 +20,10 @@ fn main() -> io::Result<()> {
     let workspace_roots = filesystem::WorkspaceRoots::from_env()?;
     let stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
-    let mut process_mgr = process::ProcessManager::new();
+    let process_mgr = process::ProcessManager::new();
+    // This stdio transport is one authenticated connection. Every child it
+    // launches is tagged with this identity so EOF/error cleanup is scoped.
+    let connection_owner = format!("stdio:{}", std::process::id());
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -37,8 +40,7 @@ fn main() -> io::Result<()> {
                     protocol::PARSE_ERROR,
                     format!("I/O error reading input: {}", e),
                 );
-                writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
-                stdout.flush()?;
+                let _ = write_response(&mut stdout, &resp);
                 break;
             }
         };
@@ -55,8 +57,9 @@ fn main() -> io::Result<()> {
                     protocol::PARSE_ERROR,
                     format!("Parse error: {}", e),
                 );
-                writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
-                stdout.flush()?;
+                if write_response(&mut stdout, &resp).is_err() {
+                    break;
+                }
                 continue;
             }
         };
@@ -70,35 +73,27 @@ fn main() -> io::Result<()> {
                     protocol::INVALID_REQUEST,
                     "Handshake required as first message".to_string(),
                 );
-                writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
-                stdout.flush()?;
+                if write_response(&mut stdout, &resp).is_err() {
+                    break;
+                }
                 continue;
             }
             let response = handle_handshake(&request, &expected_secret);
             handshake_done = matches!(&response.result, protocol::ResponseResult::Ok { .. });
             response
         } else {
-            dispatch(&request, &mut process_mgr, &rt, &workspace_roots)
+            dispatch(
+                &request,
+                &process_mgr,
+                &rt,
+                &workspace_roots,
+                &connection_owner,
+            )
         };
 
-        writeln!(
-            stdout,
-            "{}",
-            match serde_json::to_string(&response) {
-                Ok(json) => json,
-                Err(e) => {
-                    let fallback = protocol::Response::err(
-                        request.id.clone(),
-                        protocol::INTERNAL_ERROR,
-                        format!("Failed to serialize response: {}", e),
-                    );
-                    serde_json::to_string(&fallback).unwrap_or_else(|_| {
-                    r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Internal error"}}"#.to_string()
-                })
-                }
-            }
-        )?;
-        stdout.flush()?;
+        if write_response(&mut stdout, &response).is_err() {
+            break;
+        }
 
         // Shutdown command exits the loop
         if request.method == "shutdown" {
@@ -106,10 +101,19 @@ fn main() -> io::Result<()> {
         }
     }
 
-    // Kill remaining processes on exit
+    // EOF, input failure, or shutdown closes this authenticated connection.
+    // Deterministically terminate and reap only its foreground children.
+    rt.block_on(process_mgr.cleanup_owner(&connection_owner));
     rt.block_on(process_mgr.shutdown());
 
     Ok(())
+}
+
+fn write_response(writer: &mut impl Write, response: &protocol::Response) -> io::Result<()> {
+    let json = serde_json::to_string(response)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    writeln!(writer, "{json}")?;
+    writer.flush()
 }
 
 fn dispatch(
@@ -117,10 +121,11 @@ fn dispatch(
     pm: &process::ProcessManager,
     rt: &tokio::runtime::Runtime,
     workspace_roots: &filesystem::WorkspaceRoots,
+    connection_owner: &str,
 ) -> protocol::Response {
     match req.method.as_str() {
         "ping" => protocol::Response::ok(req.id.clone(), serde_json::json!({"status": "ok"})),
-        "process/start" => handle_process_start(req, pm, rt),
+        "process/start" => handle_process_start(req, pm, rt, connection_owner),
         "process/read" => handle_process_read(req, pm, rt),
         "process/write" => handle_process_write(req, pm, rt),
         "process/signal" => handle_process_signal(req, pm, rt),
@@ -222,6 +227,7 @@ fn handle_process_start(
     req: &protocol::Request,
     pm: &process::ProcessManager,
     rt: &tokio::runtime::Runtime,
+    connection_owner: &str,
 ) -> protocol::Response {
     let start_req: protocol::StartProcessRequest = match serde_json::from_value(req.params.clone())
     {
@@ -235,7 +241,7 @@ fn handle_process_start(
         }
     };
 
-    match rt.block_on(pm.spawn(&start_req)) {
+    match rt.block_on(pm.spawn(connection_owner, &start_req)) {
         Ok(handle) => protocol::Response::ok(
             req.id.clone(),
             serde_json::to_value(handle).unwrap_or_default(),
