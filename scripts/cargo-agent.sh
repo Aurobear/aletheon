@@ -29,6 +29,15 @@ exec flock -w "${ALETHEON_CARGO_LOCK_TIMEOUT_SEC:-1800}" -o "$lock_file" \
     max_kib=$((ALETHEON_CARGO_TARGET_MAX_GIB * 1024 * 1024))
     if (( size_kib > max_kib )); then
       echo "Aletheon Cargo target exceeds ${ALETHEON_CARGO_TARGET_MAX_GIB} GiB; cleaning $CARGO_TARGET_DIR" >&2
+      # Cargo refuses to clean a target directory whose cache tag is missing,
+      # even when Cargo itself populated that directory. Restore the standard
+      # tag so bounded-cache cleanup cannot turn a successful build into a
+      # permanent failure loop.
+      printf "%s\n" \
+        "Signature: 8a477f597d28d172789f06886806bc55" \
+        "# This file is a cache directory tag created by cargo." \
+        "# For information about cache directory tags see https://bford.info/cachedir/" \
+        > "$CARGO_TARGET_DIR/CACHEDIR.TAG"
       cargo clean --target-dir "$CARGO_TARGET_DIR"
     fi
     exec cargo "$@"
