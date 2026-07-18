@@ -26,6 +26,13 @@ pub enum IntentKind {
     Chat,
     GoalCommand,
     Unsupported,
+    /// Event-sourced Gmail ingest (`GoogleEvent::MailReceived`). Never
+    /// produced by [`classify_intent`](super::intent::classify_intent) —
+    /// this key exists only so Gmail ingest can be registered and looked up
+    /// through the same [`IntentKind`] namespace as chat capabilities,
+    /// without going through duplex [`super::dispatcher::ChannelDispatcher::process`].
+    /// See [`EventCapabilityHandler`] / [`EventCapabilityRegistry`].
+    GmailIngest,
 }
 
 impl From<&Intent> for IntentKind {
@@ -101,6 +108,54 @@ impl CapabilityRegistry {
         };
         let effects = handler.handle(ctx, inbound, intent).await?;
         Ok(Some(effects))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Event-capability seam (non-duplex; e.g. Gmail ingest)
+// ---------------------------------------------------------------------------
+
+/// A capability triggered by an inbound *event* rather than a classified
+/// chat [`Intent`] — e.g. Gmail's `GoogleEvent::MailReceived` ingest.
+///
+/// Deliberately separate from [`CapabilityHandler`]: event capabilities are
+/// invoked directly by their event source (see `google/event_dispatcher.rs`),
+/// never through [`CapabilityRegistry::dispatch`] or
+/// `ChannelDispatcher::process` (no inbox dedup, no `complete_inbound`, no
+/// `transport.send`). Implementations keep their own stores, idempotency,
+/// and security checks entirely — this seam only makes them a first-class,
+/// registry-addressable capability instead of a hardcoded sink field.
+#[async_trait]
+pub trait EventCapabilityHandler: Send + Sync {
+    fn intent_kind(&self) -> IntentKind;
+
+    async fn handle(
+        &self,
+        event: &fabric::ExternalEventEnvelope,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<Vec<OutboundEffect>>;
+}
+
+/// Registry of [`EventCapabilityHandler`]s keyed by [`IntentKind`]. Held
+/// alongside (not instead of) [`CapabilityRegistry`]: event capabilities are
+/// looked up by their event source, not by `dispatch()`.
+#[derive(Default)]
+pub struct EventCapabilityRegistry {
+    handlers: BTreeMap<IntentKind, std::sync::Arc<dyn EventCapabilityHandler>>,
+}
+
+impl EventCapabilityRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(&mut self, handler: std::sync::Arc<dyn EventCapabilityHandler>) {
+        self.handlers.insert(handler.intent_kind(), handler);
+    }
+
+    /// Look up the handler registered for `kind`, if any.
+    pub fn get(&self, kind: IntentKind) -> Option<std::sync::Arc<dyn EventCapabilityHandler>> {
+        self.handlers.get(&kind).cloned()
     }
 }
 

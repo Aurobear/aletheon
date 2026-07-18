@@ -431,7 +431,11 @@ impl RequestHandler {
                 notifications,
             );
             if let Some(ingress) = gmail_ingress {
-                event_router = event_router.with_mail_ingress(ingress);
+                event_router = event_router.with_mail_ingress(Arc::new(
+                    crate::r#impl::channel::handlers::gmail_ingest::GmailIngestHandler::new(
+                        ingress,
+                    ),
+                ));
             }
             let sink = Arc::new(event_router);
             let dispatcher = crate::r#impl::google::GoogleEventDispatcher::new(
