@@ -58,6 +58,24 @@ use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
+fn bootstrap_workspace_trust_resolver(
+    data_dir: &std::path::Path,
+    folder_trust_enabled: bool,
+    event_bus: Option<Arc<CanonicalEventBus>>,
+) -> Arc<crate::service::workspace_trust::WorkspaceTrustResolver> {
+    let mut resolver = crate::service::workspace_trust::WorkspaceTrustResolver::new(
+        Arc::new(crate::service::workspace_trust::FileTrustStore::new(
+            data_dir.join("workspace-trust-receipts.json"),
+        )),
+        Arc::new(crate::service::workspace_trust::KnownConfigDiscoverer::default()),
+        folder_trust_enabled,
+    );
+    if let Some(bus) = event_bus {
+        resolver = resolver.with_event_bus(bus);
+    }
+    Arc::new(resolver)
+}
+
 struct DurableSocketApprovalGate {
     socket: Arc<SocketApprovalGate>,
     repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
@@ -1589,16 +1607,8 @@ impl RequestHandler {
             session_gateway,
             transport_ports,
         ));
-        let mut workspace_trust = crate::service::workspace_trust::WorkspaceTrustResolver::new(
-            Arc::new(crate::service::workspace_trust::FileTrustStore::new(
-                data_dir.join("workspace-trust-receipts.json"),
-            )),
-            Arc::new(crate::service::workspace_trust::KnownConfigDiscoverer::default()),
-            grok_hardening.folder_trust,
-        );
-        if let Some(bus) = event_bus {
-            workspace_trust = workspace_trust.with_event_bus(bus);
-        }
+        let workspace_trust =
+            bootstrap_workspace_trust_resolver(&data_dir, grok_hardening.folder_trust, event_bus);
         let composition = super::DaemonComposition {
             request: handler_ports,
             active_connections,
@@ -1608,7 +1618,7 @@ impl RequestHandler {
                 ),
             ),
             grok_hardening,
-            workspace_trust: Arc::new(workspace_trust),
+            workspace_trust,
         };
         let handler = composition.into_handler();
 
@@ -1709,6 +1719,105 @@ impl RequestHandler {
 mod tests {
     use super::*;
     use fabric::dasein::{OutcomeStatus, SelfVersion};
+
+    #[tokio::test]
+    async fn daemon_bootstrap_keeps_untrusted_repo_files_usable_without_loading_executable_config()
+    {
+        use fabric::workspace_trust::{ClientMode, ExecutableConfigSource, WorkspaceTrustDecision};
+
+        let root = tempfile::tempdir().unwrap();
+        let repository = root.path().join("untrusted-repository");
+        let data_dir = root.path().join("daemon-state");
+        std::fs::create_dir_all(repository.join(".git")).unwrap();
+        std::fs::write(
+            repository.join(".git/config"),
+            "[remote \"origin\"]\nurl = https://example.test/untrusted.git\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(repository.join(".grok/hooks")).unwrap();
+        std::fs::create_dir_all(repository.join("agents")).unwrap();
+        let sentinel = repository.join("executable-config-ran");
+        let hook = repository.join(".grok/hooks/pre-turn");
+        std::fs::write(
+            &hook,
+            format!("#!/bin/sh\nprintf ran > '{}'\n", sentinel.display()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(
+            repository.join(".grok/mcp.json"),
+            format!(
+                r#"{{"command":"/bin/sh","args":["-c","touch {}"]}}"#,
+                sentinel.display()
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            repository.join("agents/sentinel.toml"),
+            format!("command = \"touch {}\"\n", sentinel.display()),
+        )
+        .unwrap();
+        std::fs::write(
+            repository.join(".envrc"),
+            format!("touch '{}'\n", sentinel.display()),
+        )
+        .unwrap();
+
+        let canonical = std::fs::canonicalize(&repository).unwrap();
+        assert_ne!(canonical, std::path::Path::new("/"));
+        let workspace = fabric::WorkspacePolicy::from_resolved_roots(canonical.clone(), vec![])
+            .expect("a non-root repository is a valid daemon workspace");
+        let resolver = bootstrap_workspace_trust_resolver(&data_dir, true, None);
+        let decision = resolver
+            .evaluate(
+                fabric::PrincipalId("headless-daemon".into()),
+                crate::service::workspace_trust::workspace_identity(workspace.cwd()),
+                ClientMode::Headless,
+                crate::service::workspace_trust::is_broad_unrecordable_root(workspace.cwd()),
+                1,
+            )
+            .await;
+        let WorkspaceTrustDecision::Restricted { blocked } = &decision else {
+            panic!("headless bootstrap must restrict an unrecorded repository: {decision:?}");
+        };
+        for source in [
+            ExecutableConfigSource::RepoHooks,
+            ExecutableConfigSource::RepoMcpServer,
+            ExecutableConfigSource::EnvrcLoader,
+            ExecutableConfigSource::RepoAgentCommand,
+        ] {
+            assert!(
+                blocked.contains(&source),
+                "missing blocked source {source:?}"
+            );
+        }
+
+        // Production loaders consume only granted categories. This stub is a
+        // sentinel for every executable loader boundary and must remain idle.
+        let mut loader_calls = Vec::new();
+        for source in ExecutableConfigSource::all() {
+            if crate::service::workspace_trust::source_is_granted(&decision, source) {
+                loader_calls.push(source);
+                std::fs::write(&sentinel, "ran").unwrap();
+            }
+        }
+        assert!(loader_calls.is_empty());
+        assert!(!sentinel.exists());
+
+        // Folder trust gates executable configuration, not ordinary workspace
+        // authority: normal reads and writes remain available after bootstrap.
+        let ordinary = workspace.cwd().join("ordinary.txt");
+        std::fs::write(&ordinary, "ordinary workspace data").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(ordinary).unwrap(),
+            "ordinary workspace data"
+        );
+        assert!(!sentinel.exists());
+    }
 
     #[tokio::test]
     async fn daemon_self_field_bootstrap_replays_before_new_transitions() {
