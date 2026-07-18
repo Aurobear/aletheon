@@ -124,7 +124,7 @@ pub fn map_client_event_to_acp(ev: &fabric::protocol::client::ClientEvent) -> Op
 |---|---|---|
 | 新增 | `crates/interact/src/acp/mod.rs` | ACP 适配器 + 请求/响应类型 |
 | 新增 | `crates/interact/src/acp/event_map.rs` | ClientEvent → ACP session update 纯映射 |
-| 新增 | `crates/interact/src/acp/transport.rs` | ACP stdio/socket 传输（stdio 为 IDE 常用） |
+| 新增 | `crates/interact/src/acp/transport.rs` | ACP stdio 传输（IDE 子进程模式）；不新增第二条 socket ACP 入口 |
 | 修改 | `crates/interact/src/tui/cli.rs:27-83` | 新增 `--acp` 入口模式 |
 | 修改 | (可能) `Cargo.toml` | 引入 `agent-client-protocol` crate（许可证审查后） |
 | 修改 | feature flag | `grok_hardening.acp_adapter` 默认关 |
@@ -138,7 +138,7 @@ pub fn map_client_event_to_acp(ev: &fabric::protocol::client::ClientEvent) -> Op
 
 **阶段 B：correlation + principal**
 - T4. `AcpCorrelation`：ACP session id ↔ (ConnectionId, ThreadId) 映射，有界。单测。
-- T5. principal 建立：ACP connection 经 `check_peer_cred` → `PrincipalId::local_uid` → `PrincipalContext::new`。客户端给的 session id **不**作 authority。单测。
+- T5. principal 建立：stdio ACP 使用内核认证的当前进程 `euid/egid` → `PrincipalId::local_uid` → `PrincipalContext::new`；不得接受 env、请求字段或客户端 session id 作为 authority。Unix-socket JSON-RPC 入口继续使用 `check_peer_cred`，但本期不新增第二条 socket ACP 入口。单测。
 
 **阶段 C：请求分发（第一版子集）**
 - T6. Initialize：`negotiate_protocol_version` + 返回 agent capabilities。单测。
@@ -158,6 +158,7 @@ pub fn map_client_event_to_acp(ev: &fabric::protocol::client::ClientEvent) -> Op
 ## 7. 兼容与迁移
 
 - **flag 关闭**：无 ACP 入口，现有 Unix socket JSON-RPC 客户端完全不受影响。
+- **用户裁定（2026-07-18）**：保留 stdio ACP。stdio 没有 peer socket，身份只取内核进程 `euid/egid`；不为满足字面 `check_peer_cred` 另建 Unix-socket ACP。
 - **边缘隔离**：ACP 类型只存在于 `crates/interact/src/acp/`；Executive 及以下只见 `PrincipalContext`/`TurnRequest`/`ClientEvent`。
 - **分阶段**：第一版四方法；load/reconnect、permission round-trip、client FS/terminal、mode/model 逐阶段接入（各自子任务）。
 - **依赖 G2/G3**：prompt 的丰富进度依赖 G2 streaming；prompt 排队/插话依赖 G3。第一版可先用现有单输入直提交。
