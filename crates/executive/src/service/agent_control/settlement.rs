@@ -5,8 +5,9 @@
 //! subsystems, while this module provides ordering, policy, and replay safety.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use fabric::{
@@ -255,6 +256,7 @@ pub struct ManagedSettlementResourcePort {
     parent_authority_covers: bool,
     parent_budget_accepts: ParentBudgetAcceptance,
     parent_cancellation: Option<tokio_util::sync::CancellationToken>,
+    parent_mailbox_target: Option<fabric::EnvelopeV2Target>,
 }
 
 #[derive(Clone, Default)]
@@ -276,6 +278,7 @@ impl ManagedSettlementResourcePort {
         parent_authority_covers: bool,
         parent_budget_accepts: bool,
         parent_cancellation: Option<tokio_util::sync::CancellationToken>,
+        parent_mailbox_target: Option<fabric::EnvelopeV2Target>,
     ) -> Self {
         Self {
             live,
@@ -286,6 +289,7 @@ impl ManagedSettlementResourcePort {
                 gate
             },
             parent_cancellation,
+            parent_mailbox_target,
         }
     }
 
@@ -301,13 +305,15 @@ impl SettlementResourcePort for ManagedSettlementResourcePort {
     fn reparent_context(
         &self,
         resource: &BackgroundResourceDecl,
-        parent_owner: &str,
+        _parent_owner: &str,
     ) -> ReparentContext {
         ReparentContext {
             parent_authority_covers: self.parent_authority_covers
                 && self.live.has_managed_resource(&resource.resource_id),
             parent_budget_accepts: self.parent_budget_accepts.read(),
-            notification_route_transferable: !parent_owner.trim().is_empty(),
+            notification_route_transferable: resource.class
+                != AgentResourceClass::NotificationRoute
+                || self.parent_mailbox_target.is_some(),
         }
     }
 
@@ -358,6 +364,7 @@ impl SettlementResourcePort for ManagedSettlementResourcePort {
                 new_owner,
                 action_key,
                 self.parent_cancellation.as_ref(),
+                self.parent_mailbox_target.as_ref(),
             )
             .await
     }
@@ -543,6 +550,72 @@ pub struct SettlementEngine {
     /// Serializes a logical settlement in this daemon generation. External
     /// ports still receive stable action keys for crash-safe replay.
     key_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    metrics: Arc<SettlementMetrics>,
+}
+
+#[derive(Debug, Default)]
+pub struct SettlementMetrics {
+    duration_ms: AtomicU64,
+    reparent_background_total: AtomicU64,
+    reparent_notification_total: AtomicU64,
+    reparent_denied_total: AtomicU64,
+    idempotent_replay_total: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SettlementMetricSnapshot {
+    pub settlement_duration_ms: u64,
+    pub reparent_background_command_total: u64,
+    pub reparent_notification_route_total: u64,
+    pub reparent_denied_total: u64,
+    pub settlement_idempotent_replay_total: u64,
+}
+
+impl SettlementMetricSnapshot {
+    /// Fixed-cardinality export: agent IDs and free-form denial reasons never
+    /// become labels.
+    pub fn named(self) -> [(String, String); 5] {
+        [
+            (
+                "settlement_duration_ms".into(),
+                self.settlement_duration_ms.to_string(),
+            ),
+            (
+                "reparent_total.background_command".into(),
+                self.reparent_background_command_total.to_string(),
+            ),
+            (
+                "reparent_total.notification_route".into(),
+                self.reparent_notification_route_total.to_string(),
+            ),
+            (
+                "reparent_denied_total".into(),
+                self.reparent_denied_total.to_string(),
+            ),
+            (
+                "settlement_idempotent_replay_total".into(),
+                self.settlement_idempotent_replay_total.to_string(),
+            ),
+        ]
+    }
+}
+
+impl SettlementMetrics {
+    pub fn snapshot(&self) -> SettlementMetricSnapshot {
+        SettlementMetricSnapshot {
+            settlement_duration_ms: self.duration_ms.load(Ordering::Relaxed),
+            reparent_background_command_total: self
+                .reparent_background_total
+                .load(Ordering::Relaxed),
+            reparent_notification_route_total: self
+                .reparent_notification_total
+                .load(Ordering::Relaxed),
+            reparent_denied_total: self.reparent_denied_total.load(Ordering::Relaxed),
+            settlement_idempotent_replay_total: self
+                .idempotent_replay_total
+                .load(Ordering::Relaxed),
+        }
+    }
 }
 
 impl SettlementEngine {
@@ -552,12 +625,29 @@ impl SettlementEngine {
         leases: Arc<dyn SettlementLeasePort>,
         evidence: Arc<dyn SettlementEvidenceSink>,
     ) -> Self {
+        Self::with_metrics(
+            receipts,
+            resources,
+            leases,
+            evidence,
+            Arc::new(SettlementMetrics::default()),
+        )
+    }
+
+    pub fn with_metrics(
+        receipts: Arc<dyn SettlementReceiptStore>,
+        resources: Arc<dyn SettlementResourcePort>,
+        leases: Arc<dyn SettlementLeasePort>,
+        evidence: Arc<dyn SettlementEvidenceSink>,
+        metrics: Arc<SettlementMetrics>,
+    ) -> Self {
         Self {
             receipts,
             resources,
             leases,
             evidence,
             key_locks: Mutex::new(HashMap::new()),
+            metrics,
         }
     }
 
@@ -578,6 +668,7 @@ impl SettlementEngine {
         request: SettlementRequest,
         resources: Vec<BackgroundResourceDecl>,
     ) -> Result<SettlementReceipt, AgentControlError> {
+        let started = Instant::now();
         request.validate()?;
         let key =
             settlement_idempotency_key(&request.agent_id, &request.attempt_id, &request.generation);
@@ -591,11 +682,18 @@ impl SettlementEngine {
         let _guard = key_lock.lock().await;
 
         if let Some(receipt) = self.receipts.get(&key).await? {
+            self.metrics
+                .idempotent_replay_total
+                .fetch_add(1, Ordering::Relaxed);
             self.evidence
                 .record(SettlementEvidence::IdempotentReplay {
                     idempotency_key: key,
                 })
                 .await?;
+            self.metrics.duration_ms.store(
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                Ordering::Relaxed,
+            );
             return Ok(receipt);
         }
 
@@ -664,6 +762,19 @@ impl SettlementEngine {
                                     .record(SettlementEvidence::Reparented(receipt.clone()))
                                     .await?;
                                 reparented.push(receipt);
+                                match resource.class {
+                                    AgentResourceClass::BackgroundCommand => {
+                                        self.metrics
+                                            .reparent_background_total
+                                            .fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    AgentResourceClass::NotificationRoute => {
+                                        self.metrics
+                                            .reparent_notification_total
+                                            .fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    _ => {}
+                                }
                                 continue;
                             }
                             Err(error) => failures.push(format!(
@@ -678,6 +789,9 @@ impl SettlementEngine {
                         resource,
                         request.parent_owner.as_deref(),
                     );
+                    self.metrics
+                        .reparent_denied_total
+                        .fetch_add(1, Ordering::Relaxed);
                     if let Err(error) = self
                         .resources
                         .terminate(resource, &reason, &action_key)
@@ -755,6 +869,10 @@ impl SettlementEngine {
         self.evidence
             .record(SettlementEvidence::Phase(SettlementPhase::Terminal))
             .await?;
+        self.metrics.duration_ms.store(
+            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
         Ok(receipt)
     }
 }
@@ -1032,6 +1150,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn metrics_are_fixed_cardinality_and_count_reparent_denial_and_replay() {
+        let resources = Arc::new(FakeResources::allowing());
+        let metrics = Arc::new(SettlementMetrics::default());
+        let engine = SettlementEngine::with_metrics(
+            Arc::new(InMemorySettlementReceiptStore::default()),
+            resources.clone(),
+            Arc::new(FakeLeases::default()),
+            Arc::new(FakeEvidence::default()),
+            metrics.clone(),
+        );
+        let allowed = vec![resource(
+            "background",
+            AgentResourceClass::BackgroundCommand,
+            true,
+        )];
+        engine.settle(request(), allowed.clone()).await.unwrap();
+        engine.settle(request(), allowed).await.unwrap();
+
+        *resources.context.lock() = None;
+        let mut denied_request = request();
+        denied_request.attempt_id = "denied-attempt".into();
+        engine
+            .settle(
+                denied_request,
+                vec![resource(
+                    "notify",
+                    AgentResourceClass::NotificationRoute,
+                    true,
+                )],
+            )
+            .await
+            .unwrap();
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.reparent_background_command_total, 1);
+        assert_eq!(snapshot.reparent_notification_route_total, 0);
+        assert_eq!(snapshot.reparent_denied_total, 1);
+        assert_eq!(snapshot.settlement_idempotent_replay_total, 1);
+        let names = snapshot.named().map(|(name, _)| name);
+        assert_eq!(names.len(), 5);
+        assert_eq!(
+            names,
+            [
+                "settlement_duration_ms",
+                "reparent_total.background_command",
+                "reparent_total.notification_route",
+                "reparent_denied_total",
+                "settlement_idempotent_replay_total",
+            ]
+            .map(String::from)
+        );
+    }
+
+    #[tokio::test]
     async fn undeclared_survivor_is_killed_and_never_reparented() {
         let harness = harness(FakeResources::allowing());
         let receipt = harness
@@ -1142,6 +1314,170 @@ mod tests {
             recovery_disposition(AgentRecoveryDecision::Interrupt),
             RecoveryResourceDisposition::TerminateAndReclaim
         );
+    }
+
+    #[tokio::test]
+    async fn resume_recovery_disposition_retains_resources_without_settlement() {
+        let harness = harness(FakeResources::allowing());
+        let resources = vec![resource(
+            "background",
+            AgentResourceClass::BackgroundCommand,
+            true,
+        )];
+        if recovery_disposition(AgentRecoveryDecision::Resume)
+            != RecoveryResourceDisposition::RetainForResume
+        {
+            harness.engine.settle(request(), resources).await.unwrap();
+        }
+        assert!(harness.resources.reparented.lock().is_empty());
+        assert!(harness.resources.terminated.lock().is_empty());
+        assert!(harness.leases.calls.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn crash_recovery_settlement_reopens_idempotently_and_owner_checks_leases() {
+        use super::super::{
+            agent_workspace_id, AgentResourceLease, AgentResourceLeaseKind, AgentRunRecord,
+            AgentRunRepository, SqliteAgentRunRepository,
+        };
+        use fabric::{
+            AgentBudget, AgentContextFork, AgentHandle, AgentProfileId, AgentRunStatus,
+            AgentSnapshot, AgentSpawnRequest, OperationId, ProcessId, RuntimeId,
+            RuntimeResumability,
+        };
+
+        let path = std::env::temp_dir().join(format!(
+            "aletheon-settlement-reopen-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let agent = fabric::AgentId::new();
+        let matching = AgentResourceLease {
+            lease_key: "execution:matching".into(),
+            agent_id: agent,
+            kind: AgentResourceLeaseKind::Execution,
+            owner: "process:child".into(),
+            expires_at_ms: 100,
+            worktree_root: None,
+            worktree_path: None,
+            expected_head: None,
+        };
+        let wrong_owner = AgentResourceLease {
+            lease_key: "execution:wrong-owner".into(),
+            owner: "process:other".into(),
+            ..matching.clone()
+        };
+        let repository = Arc::new(SqliteAgentRunRepository::open(&path).unwrap());
+        let process_id = ProcessId::new();
+        let request = AgentSpawnRequest {
+            root_agent_id: agent,
+            parent_agent_id: None,
+            parent_process_id: None,
+            profile_id: AgentProfileId("worker".into()),
+            runtime_id: RuntimeId("test".into()),
+            trusted_workspace: None,
+            task: "settlement recovery fixture".into(),
+            context: AgentContextFork::None,
+            broadcast_refs: vec![],
+            allowed_tools: vec![],
+            background_decls: vec![],
+            budget: AgentBudget {
+                max_input_tokens: 1,
+                max_output_tokens: 1,
+                max_tool_calls: 1,
+                max_elapsed_ms: 1,
+                max_cost_usd: None,
+                max_depth: 1,
+            },
+        };
+        repository
+            .create(&AgentRunRecord {
+                snapshot: AgentSnapshot {
+                    handle: AgentHandle {
+                        agent_id: agent,
+                        root_agent_id: agent,
+                        parent_agent_id: None,
+                        process_id,
+                        operation_id: OperationId::new(),
+                        runtime_id: request.runtime_id.clone(),
+                        profile_id: request.profile_id.clone(),
+                    },
+                    status: AgentRunStatus::Queued,
+                    result: None,
+                    created_at_ms: 0,
+                    started_at_ms: None,
+                    ended_at_ms: None,
+                    last_error: None,
+                },
+                request_hash: SqliteAgentRunRepository::request_hash(&request).unwrap(),
+                workspace_id: agent_workspace_id(agent),
+                root_process_id: process_id,
+                broadcast_refs: vec![],
+                request,
+                version: 0,
+                retain_until_ms: 1_000,
+                resumability: RuntimeResumability::Never,
+                recovery: None,
+            })
+            .await
+            .unwrap();
+        repository.put_resource_lease(&matching).await.unwrap();
+        repository.put_resource_lease(&wrong_owner).await.unwrap();
+        let recovery_request = SettlementRequest {
+            agent_id: agent.0.to_string(),
+            attempt_id: "restart-attempt".into(),
+            generation: "restart-generation".into(),
+            old_owner: "process:child".into(),
+            parent_owner: None,
+            terminal: SettlementTerminal::Failed {
+                reason: "restart".into(),
+            },
+            lease_keys: vec![matching.lease_key.clone(), wrong_owner.lease_key.clone()],
+            settled_at_ms: 200,
+        };
+        let engine = SettlementEngine::new(
+            Arc::new(SqliteSettlementReceiptStore::open(&path).unwrap()),
+            Arc::new(FailClosedSettlementResourcePort::new(
+                tokio_util::sync::CancellationToken::new(),
+            )),
+            Arc::new(RepositorySettlementLeasePort::new(repository.clone())),
+            Arc::new(NoopSettlementEvidenceSink),
+        );
+        let first = engine
+            .settle(recovery_request.clone(), Vec::new())
+            .await
+            .unwrap();
+        assert_eq!(first.released_leases, vec![matching.lease_key.clone()]);
+        let remaining = repository
+            .list_agent_resource_leases(agent, 10)
+            .await
+            .unwrap();
+        assert_eq!(remaining, vec![wrong_owner.clone()]);
+        drop(engine);
+        drop(repository);
+
+        let reopened_repository = Arc::new(SqliteAgentRunRepository::open(&path).unwrap());
+        let reopened = SettlementEngine::new(
+            Arc::new(SqliteSettlementReceiptStore::open(&path).unwrap()),
+            Arc::new(FailClosedSettlementResourcePort::new(
+                tokio_util::sync::CancellationToken::new(),
+            )),
+            Arc::new(RepositorySettlementLeasePort::new(
+                reopened_repository.clone(),
+            )),
+            Arc::new(NoopSettlementEvidenceSink),
+        );
+        let replay = reopened.settle(recovery_request, Vec::new()).await.unwrap();
+        assert_eq!(replay, first);
+        assert_eq!(
+            reopened_repository
+                .list_agent_resource_leases(agent, 10)
+                .await
+                .unwrap(),
+            vec![wrong_owner]
+        );
+        drop(reopened);
+        drop(reopened_repository);
+        let _ = std::fs::remove_file(path);
     }
 
     #[tokio::test]

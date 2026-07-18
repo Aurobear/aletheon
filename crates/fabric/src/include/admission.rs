@@ -99,6 +99,15 @@ pub trait BudgetController: Send + Sync {
 
     /// Count the reservations currently held open (for lifecycle inspection).
     async fn active_reservation_count(&self) -> usize;
+
+    /// Durable lookup used by crash recovery; includes closed reservations so
+    /// a transfer receipt can be replayed after restart.
+    async fn reservation_for_owner(&self, owner: &str) -> Option<BudgetReservationId>;
+
+    /// Return the immutable transfer receipt when the child reservation was
+    /// already transferred before a crash.
+    async fn transfer_for_child(&self, child: BudgetReservationId)
+        -> Option<BudgetTransferReceipt>;
 }
 
 /// Time-limited exclusive lease manager for named resources (e.g. "gpu",

@@ -793,7 +793,16 @@ impl RequestHandler {
             .await;
         });
 
-        let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock(clock.clone()));
+        let durable_budget = Arc::new(
+            aletheon_kernel::admission::DurableBudgetController::open_durable(
+                data_dir.join("budget-controller-v1.json"),
+            )
+            .context("opening durable budget controller")?,
+        );
+        let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock_and_budget(
+            clock.clone(),
+            durable_budget,
+        ));
         let fact_use_cases: Arc<dyn mnemosyne::FactUseCases> =
             Arc::new(mnemosyne::DefaultFactUseCases::new(fact_store.clone()));
         let goal_use_cases: Arc<dyn crate::service::GoalUseCases> =
@@ -1089,6 +1098,7 @@ impl RequestHandler {
                 ),
                 agent_runtimes,
             )
+            .with_budget_controller(kernel.budget_controller())
             .with_event_spine(canonical_event_spine.clone())
             .with_event_projections(event_projections.clone())
             .with_lifecycle_hooks(Arc::new(
@@ -1247,10 +1257,13 @@ impl RequestHandler {
             .with_safety_guard(agent_live_runs)
             .with_events(event_bus.clone(), Some(canonical_event_spine.clone())),
         );
-        let session_service = Arc::new(crate::service::session_service::SessionService::new(
-            coordinator.store(),
-            coordinator.active_index(),
-        ));
+        let session_service = Arc::new(
+            crate::service::session_service::SessionService::with_protocol_journal(
+                coordinator.store(),
+                coordinator.active_index(),
+                data_dir.join("protocol-events-v1.db"),
+            )?,
+        );
         if let Some(replay) = session_service
             .try_resume(&fabric::SessionId(session_id.clone()))
             .await?

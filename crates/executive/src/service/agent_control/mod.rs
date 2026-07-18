@@ -13,7 +13,8 @@ use fabric::{
     AgentId, AgentListRequest, AgentMessageDeliveryState, AgentMessagePayload, AgentRunStatus,
     AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentWaitRequest, AgoraVersion,
     CancelReason, Clock, ContextBinding, EventSpine, ExitReason, NamespaceId, OperationExitReason,
-    OperationKind, OperationRequest, ProcessId, ProcessSignal, SpawnSpec, Timer,
+    OperationKind, OperationRequest, ProcessId, ProcessSignal, SettlementTerminal, SpawnSpec,
+    Timer,
 };
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
@@ -63,8 +64,9 @@ pub use settlement::{
     FailClosedSettlementResourcePort, InMemorySettlementReceiptStore,
     ManagedSettlementResourcePort, NoopSettlementEvidenceSink, RecoveryResourceDisposition,
     RepositorySettlementLeasePort, SettlementEngine, SettlementEvidence, SettlementEvidenceSink,
-    SettlementLeasePort, SettlementReceiptStore, SettlementRequest, SettlementResourcePort,
-    SpineSettlementEvidenceSink, SqliteSettlementReceiptStore,
+    SettlementLeasePort, SettlementMetricSnapshot, SettlementMetrics, SettlementReceiptStore,
+    SettlementRequest, SettlementResourcePort, SpineSettlementEvidenceSink,
+    SqliteSettlementReceiptStore,
 };
 pub use sqlite_repository::SqliteAgentRunRepository;
 
@@ -123,6 +125,8 @@ pub struct AgentControlService {
     subagent_settlement: bool,
     settlement_generation: String,
     settlement_receipts: Arc<dyn SettlementReceiptStore>,
+    settlement_metrics: Arc<SettlementMetrics>,
+    budget_controller: Option<Arc<dyn fabric::BudgetController>>,
     lifecycle_hooks: Arc<dyn AgentLifecycleHookSink>,
 }
 
@@ -186,6 +190,8 @@ impl AgentControlService {
             subagent_settlement: false,
             settlement_generation: "disabled".into(),
             settlement_receipts: Arc::new(InMemorySettlementReceiptStore::default()),
+            settlement_metrics: Arc::new(SettlementMetrics::default()),
+            budget_controller: None,
             lifecycle_hooks: Arc::new(NoopAgentLifecycleHookSink),
         }
     }
@@ -235,12 +241,21 @@ impl AgentControlService {
         self
     }
 
+    pub fn with_budget_controller(mut self, budget: Arc<dyn fabric::BudgetController>) -> Self {
+        self.budget_controller = Some(budget);
+        self
+    }
+
     pub fn live_runs(&self) -> Arc<LiveAgentRuns> {
         self.live.clone()
     }
 
     pub fn admission_metrics(&self) -> AgentAdmissionMetrics {
         self.admission.metrics()
+    }
+
+    pub fn settlement_metrics(&self) -> SettlementMetricSnapshot {
+        self.settlement_metrics.snapshot()
     }
 
     /// Reconcile every bounded open durable row before bootstrap publishes
@@ -282,18 +297,23 @@ impl AgentControlService {
                 fabric::RuntimeResumability::Checkpointed { reference }
                     if !reference.trim().is_empty()
             );
-            match coordinator
-                .recover_one(
-                    &run,
-                    AgentRecoveryObservation {
-                        process_live,
-                        operation_terminal,
-                        checkpoint_available,
-                    },
-                )
-                .await
-            {
-                Ok(fabric::AgentRecoveryDecision::Interrupt) => report.interrupted += 1,
+            let observation = AgentRecoveryObservation {
+                process_live,
+                operation_terminal,
+                checkpoint_available,
+            };
+            match coordinator.recover_one(&run, observation).await {
+                Ok(fabric::AgentRecoveryDecision::Interrupt) => {
+                    if self.subagent_settlement {
+                        self.recover_settlement_resources(
+                            &run,
+                            fabric::AgentRecoveryDecision::Interrupt,
+                            daemon_generation,
+                        )
+                        .await?;
+                    }
+                    report.interrupted += 1;
+                }
                 Ok(fabric::AgentRecoveryDecision::Resume) => {
                     let checkpoint_reference = match &run.resumability {
                         fabric::RuntimeResumability::Checkpointed { reference } => {
@@ -320,7 +340,17 @@ impl AgentControlService {
                         _ => report.recovery_failed += 1,
                     }
                 }
-                Ok(fabric::AgentRecoveryDecision::Finalize) => report.finalized += 1,
+                Ok(fabric::AgentRecoveryDecision::Finalize) => {
+                    if self.subagent_settlement {
+                        self.recover_settlement_resources(
+                            &run,
+                            fabric::AgentRecoveryDecision::Finalize,
+                            daemon_generation,
+                        )
+                        .await?;
+                    }
+                    report.finalized += 1;
+                }
                 _ => report.recovery_failed += 1,
             }
         }
@@ -337,6 +367,76 @@ impl AgentControlService {
             })
             .count();
         Ok(report)
+    }
+
+    async fn recover_settlement_resources(
+        &self,
+        run: &AgentRunRecord,
+        decision: fabric::AgentRecoveryDecision,
+        daemon_generation: &str,
+    ) -> Result<(), AgentControlError> {
+        match recovery_disposition(decision) {
+            RecoveryResourceDisposition::RetainForResume => return Ok(()),
+            RecoveryResourceDisposition::ReplaySettlement
+            | RecoveryResourceDisposition::TerminateAndReclaim => {}
+        }
+        if let Some(budget) = &self.budget_controller {
+            let owner = format!("agent:{}", run.agent_id().0);
+            if let Some(reservation) = budget.reservation_for_owner(&owner).await {
+                // A durable transfer is authoritative and must never be
+                // reversed by settlement recovery. Otherwise reclaiming the
+                // live child reservation is owner-scoped and idempotent.
+                if budget.transfer_for_child(reservation).await.is_none() {
+                    match budget.revoke_reservation(reservation).await {
+                        Ok(()) | Err(fabric::AdmissionError::AlreadySettled) => {}
+                        Err(error) => {
+                            return Err(AgentControlError::invalid(format!(
+                                "budget recovery failed: {error}"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        let leases = self
+            .repository
+            .list_agent_resource_leases(run.agent_id(), MAX_STARTUP_RECOVERY_ROWS)
+            .await?;
+        let old_owner = leases
+            .first()
+            .map(|lease| lease.owner.clone())
+            .unwrap_or_else(|| format!("process:{}", run.snapshot.handle.process_id.0));
+        let terminal = match decision {
+            fabric::AgentRecoveryDecision::Finalize => SettlementTerminal::Completed,
+            _ => SettlementTerminal::Failed {
+                reason: "daemon restart reclaimed child resources".into(),
+            },
+        };
+        let engine = SettlementEngine::with_metrics(
+            self.settlement_receipts.clone(),
+            Arc::new(FailClosedSettlementResourcePort::new(
+                tokio_util::sync::CancellationToken::new(),
+            )),
+            Arc::new(RepositorySettlementLeasePort::new(self.repository.clone())),
+            Arc::new(NoopSettlementEvidenceSink),
+            self.settlement_metrics.clone(),
+        );
+        engine
+            .settle(
+                SettlementRequest {
+                    agent_id: run.agent_id().0.to_string(),
+                    attempt_id: run.snapshot.handle.operation_id.0.to_string(),
+                    generation: daemon_generation.to_string(),
+                    old_owner,
+                    parent_owner: None,
+                    terminal,
+                    lease_keys: leases.into_iter().map(|lease| lease.lease_key).collect(),
+                    settled_at_ms: self.clock.wall_now().0,
+                },
+                run.request.background_decls.clone(),
+            )
+            .await?;
+        Ok(())
     }
 
     /// Install an explicit parent policy for one directional sibling route.
@@ -856,6 +956,7 @@ impl AgentControlPort for AgentControlService {
         )?;
         let mut background_cancellations = std::collections::HashMap::new();
         let mut background_registrations = std::collections::HashMap::new();
+        let mut background_notification_targets = std::collections::HashMap::new();
         for declaration in &request.background_decls {
             let token = live_run
                 .resource_cancellation(&declaration.resource_id)
@@ -876,6 +977,9 @@ impl AgentControlPort for AgentControlService {
                     )
                 })?;
             background_registrations.insert(declaration.resource_id.clone(), registration);
+            if let Some(target) = live_run.notification_target(&declaration.resource_id) {
+                background_notification_targets.insert(declaration.resource_id.clone(), target);
+            }
         }
         let inserted = self.live.insert(agent_id, live_run).await;
         if !inserted {
@@ -910,6 +1014,7 @@ impl AgentControlPort for AgentControlService {
         let settlement_enabled = self.subagent_settlement;
         let settlement_generation = self.settlement_generation.clone();
         let settlement_receipts = self.settlement_receipts.clone();
+        let settlement_metrics = self.settlement_metrics.clone();
         let lifecycle_hooks = self.lifecycle_hooks.clone();
         let runtime_input = AgentRuntimeInput {
             workspace: request.trusted_workspace.clone(),
@@ -924,6 +1029,7 @@ impl AgentControlPort for AgentControlService {
             cancellation,
             background_cancellations,
             background_registrations,
+            background_notification_targets,
         };
         let events: Arc<dyn AgentEventSink> = Arc::new(SpineAgentEventSink::new(
             events,
@@ -953,6 +1059,7 @@ impl AgentControlPort for AgentControlService {
                 settlement_enabled,
                 settlement_generation,
                 settlement_receipts,
+                settlement_metrics,
                 event_spine,
                 memory_events,
                 lifecycle_hooks,
@@ -1161,6 +1268,7 @@ async fn run_agent(
     settlement_enabled: bool,
     settlement_generation: String,
     settlement_receipts: Arc<dyn SettlementReceiptStore>,
+    settlement_metrics: Arc<SettlementMetrics>,
     event_spine: Arc<dyn EventSpine>,
     memory_events: Arc<MemoryRecordingAgentEventSink>,
     lifecycle_hooks: Arc<dyn AgentLifecycleHookSink>,
@@ -1374,7 +1482,8 @@ async fn run_agent(
                     .reparent_authority()
                     .accepts_budget(live_run.reparent_authority())
             });
-            let parent_cancellation = parent_run.map(|run| run.cancellation.clone());
+            let parent_cancellation = parent_run.as_ref().map(|run| run.cancellation.clone());
+            let parent_mailbox_target = parent_run.as_ref().map(|run| run.mailbox_target.clone());
             let evidence = Arc::new(SpineSettlementEvidenceSink::new(
                 event_spine,
                 root_agent.0.to_string(),
@@ -1386,12 +1495,14 @@ async fn run_agent(
                 parent_authority_covers,
                 false,
                 parent_cancellation,
+                parent_mailbox_target,
             ));
-            let engine = SettlementEngine::new(
+            let engine = SettlementEngine::with_metrics(
                 settlement_receipts,
                 managed_resources.clone(),
                 Arc::new(RepositorySettlementLeasePort::new(repository.clone())),
                 evidence,
+                settlement_metrics,
             );
             match engine.quiesce(&live_run).await {
                 Ok(resources) => {

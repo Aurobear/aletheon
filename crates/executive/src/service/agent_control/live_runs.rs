@@ -77,6 +77,7 @@ impl ReparentAuthority {
 
 struct ManagedResourceState {
     registration: BackgroundResourceRegistration,
+    notification_target: Option<Arc<RwLock<Target>>>,
     owner: Mutex<String>,
     completed_actions: Mutex<std::collections::HashSet<String>>,
 }
@@ -121,6 +122,9 @@ impl LiveAgentRun {
                     resource_id.clone(),
                     ManagedResourceState {
                         registration: BackgroundResourceRegistration::new(resource_token),
+                        notification_target: (declaration.class
+                            == fabric::AgentResourceClass::NotificationRoute)
+                            .then(|| Arc::new(RwLock::new(mailbox_target.clone()))),
                         owner: Mutex::new(initial_owner.clone()),
                         completed_actions: Mutex::new(std::collections::HashSet::new()),
                     },
@@ -184,6 +188,15 @@ impl LiveAgentRun {
             .map(|state| state.registration.clone())
     }
 
+    /// Shared host-owned route authority handed to a notification producer.
+    /// Settlement mutates this exact cell when ownership moves to a parent.
+    pub fn notification_target(&self, resource_id: &str) -> Option<Arc<RwLock<Target>>> {
+        self.managed_resources
+            .get(resource_id)?
+            .notification_target
+            .clone()
+    }
+
     pub async fn terminate_managed_resource(&self, resource_id: &str, action_key: &str) -> bool {
         let Some(state) = self.managed_resources.get(resource_id) else {
             return false;
@@ -202,6 +215,7 @@ impl LiveAgentRun {
         new_owner: &str,
         action_key: &str,
         parent_cancellation: Option<&CancellationToken>,
+        parent_mailbox_target: Option<&Target>,
     ) -> Result<(), AgentControlError> {
         let state = self
             .managed_resources
@@ -215,7 +229,18 @@ impl LiveAgentRun {
         if owner.as_str() != old_owner && owner.as_str() != new_owner {
             return Err(invalid("managed settlement resource owner mismatch"));
         }
+        let notification_target = match &state.notification_target {
+            Some(route) => Some((
+                route,
+                parent_mailbox_target
+                    .ok_or_else(|| invalid("notification route has no parent mailbox authority"))?,
+            )),
+            None => None,
+        };
         *owner = new_owner.to_string();
+        if let Some((route, target)) = notification_target {
+            *route.write().await = target.clone();
+        }
         if let Some(parent_cancellation) = parent_cancellation {
             // Keep the exact token already handed to the command producer.
             // Replacing it would leave a running producer attached to the old
@@ -333,6 +358,7 @@ mod tests {
             "agent:parent",
             "reparent-1",
             Some(&parent),
+            None,
         )
         .await
         .unwrap();
@@ -353,6 +379,29 @@ mod tests {
                 .await
         );
         assert!(reparented.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn notification_route_reparent_switches_actual_producer_target() {
+        let live = run(vec![BackgroundResourceDecl {
+            resource_id: "notify".into(),
+            class: AgentResourceClass::NotificationRoute,
+            survive_child: true,
+        }]);
+        let route = live.notification_target("notify").unwrap();
+        assert_eq!(*route.read().await, Target::from("agent:test"));
+        let parent_target = Target::from("agent:parent");
+        live.reparent_managed_resource(
+            "notify",
+            &format!("process:{}", live.snapshots.borrow().handle.process_id.0),
+            "agent:parent",
+            "reparent-notify",
+            None,
+            Some(&parent_target),
+        )
+        .await
+        .unwrap();
+        assert_eq!(*route.read().await, parent_target);
     }
 
     #[tokio::test]

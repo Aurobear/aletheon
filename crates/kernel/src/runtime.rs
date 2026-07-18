@@ -110,6 +110,28 @@ impl KernelRuntime {
         Self::with_clock_and_faults(clock, Arc::new(NoLifecycleFaults))
     }
 
+    pub fn with_clock_and_budget(
+        clock: Arc<dyn Clock>,
+        budget: Arc<InMemoryBudgetController>,
+    ) -> Self {
+        let leases = Arc::new(InMemoryResourceLeaseManager::new());
+        let production = Arc::new(
+            ProductionAdmissionController::new(clock.clone())
+                .with_budget(budget.clone())
+                .with_leases(leases.clone())
+                .with_sandbox_available(false),
+        );
+        let admission: Arc<dyn AdmissionController> = production.clone();
+        Self::with_components(
+            clock,
+            admission,
+            Some(production),
+            budget,
+            leases,
+            Arc::new(NoLifecycleFaults),
+        )
+    }
+
     pub fn with_clock_and_faults(
         clock: Arc<dyn Clock>,
         lifecycle_faults: Arc<dyn LifecycleFaultInjector>,

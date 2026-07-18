@@ -212,7 +212,7 @@ impl AgentAdmissionPort for BoundedAgentAdmission {
     ) -> Result<Box<dyn AgentAdmissionLease>, AgentControlError> {
         self.validate_policy(&request)?;
         let root = request.spawn.root_agent_id;
-        let (waiter_id, ticket) = {
+        let (waiter_id, _ticket) = {
             let mut state = self.state.lock();
             let root_state = state.roots.entry(root).or_default();
             if root_state.resident >= self.config.max_agents_per_root {
@@ -338,7 +338,7 @@ impl AgentAdmissionPort for BoundedAgentAdmission {
             .reserve_child(
                 root_scope,
                 BudgetScopeKind::Process,
-                format!("agent-ticket:{}:{ticket}", root.0),
+                format!("agent:{}", request.agent_id.0),
                 BudgetRequest {
                     max_tokens: Some(requested_tokens),
                     max_cost_micro: cost_micro(request.spawn.budget.max_cost_usd)?,

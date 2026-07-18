@@ -155,6 +155,15 @@ impl SettlementEngine {
 4. notification route 能切 parent 或 durable mailbox。
 5. 产出不可变 `ReparentReceipt`。
 
+### 4.4 已裁决冲突（2026-07-18）
+
+| 冲突 | 裁决 | 失败策略 |
+|---|---|---|
+| budget transfer 与 settlement receipt 的 crash window | reservation/transfer 必须由 durable BudgetController 以单一幂等 transfer identity 落盘；transfer receipt durable 后才允许发布 reparent authority，settlement replay 读取同一 receipt，不重复扣减或返还 | durable transfer receipt 不可确认时禁止 reparent，资源 kill |
+| `kill/detach` 的默认边界 | host-reviewed disposition 仅默认允许 `Kill` / 满足 §4.3 的 `Reparent`；`Detach` 需要显式 host authorization，child/model 请求不构成授权 | 未授权 `Detach` 返回拒绝并 kill，不降级为隐式 detach |
+
+上述裁决覆盖原 §4.3 “否则 kill/detach” 的歧义：`detach` 不是普通 fallback。
+
 ## 5. 文件变更计划
 
 | 动作 | 文件 | 理由 |

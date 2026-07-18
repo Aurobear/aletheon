@@ -205,9 +205,10 @@ pub use types::agent_control::{
     AgentWaitRequest, ParentRestriction, RiskTier, RuntimeResumability, AGENT_MESSAGE_SCHEMA_V1,
 };
 pub use types::agent_settlement::{
-    can_reparent, settlement_idempotency_key, AgentResourceClass, BackgroundDisposition,
-    BackgroundResourceDecl, ReparentContext, ReparentReceipt, SettlementPhase, SettlementReceipt,
-    SettlementTerminal, MAX_BACKGROUND_RESOURCES,
+    authorize_background_disposition, can_reparent, settlement_idempotency_key, AgentResourceClass,
+    BackgroundDisposition, BackgroundResourceDecl, HostDispositionAuthorization, ReparentContext,
+    ReparentReceipt, SettlementPhase, SettlementReceipt, SettlementTerminal,
+    MAX_BACKGROUND_RESOURCES,
 };
 pub use types::approval::{
     ApprovalArtifactRef, ApprovalCategory, ApprovalContractError, ApprovalId, ApprovalResolution,

@@ -206,6 +206,11 @@ pub struct AgentRuntimeInput {
     /// This binds a real cancellation-aware future to settlement; it does not
     /// expose command text or declaration mutation to the model runtime.
     pub background_registrations: HashMap<String, BackgroundResourceRegistration>,
+    /// Mutable host-owned notification destinations. A producer reads the
+    /// current target for each emission; settlement may atomically switch it
+    /// from the child mailbox to its parent mailbox.
+    pub background_notification_targets:
+        HashMap<String, Arc<tokio::sync::RwLock<fabric::EnvelopeV2Target>>>,
 }
 
 impl AgentRuntimeInput {
@@ -230,6 +235,14 @@ impl AgentRuntimeInput {
                 runtime_error("background producer has no reviewed resource declaration")
             })?;
         registration.bind(producer)
+    }
+
+    pub async fn background_notification_target(
+        &self,
+        resource_id: &str,
+    ) -> Option<fabric::EnvelopeV2Target> {
+        let target = self.background_notification_targets.get(resource_id)?;
+        Some(target.read().await.clone())
     }
 }
 

@@ -31,6 +31,28 @@ pub enum BackgroundDisposition {
     Detach,
 }
 
+/// Host-reviewed authorization for exceptional detached supervision. Model or
+/// child output is never sufficient to grant this authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct HostDispositionAuthorization {
+    pub detach_authorized: bool,
+}
+
+/// Resolve a requested background disposition at the trusted host boundary.
+/// Kill and Reparent are ordinary host-owned outcomes. Detach fails closed
+/// unless the host explicitly authorized it.
+pub fn authorize_background_disposition(
+    requested: BackgroundDisposition,
+    authorization: HostDispositionAuthorization,
+) -> Result<BackgroundDisposition, String> {
+    match requested {
+        BackgroundDisposition::Detach if !authorization.detach_authorized => {
+            Err("detach requires explicit host authorization".into())
+        }
+        disposition => Ok(disposition),
+    }
+}
+
 /// Settlement state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SettlementPhase {
@@ -188,6 +210,31 @@ mod tests {
         // A non-route resource is unaffected by the transferable flag.
         let cmd = decl(AgentResourceClass::BackgroundCommand, true);
         assert!(can_reparent(&cmd, &ctx).is_ok());
+    }
+
+    #[test]
+    fn detach_requires_explicit_host_authorization() {
+        assert!(authorize_background_disposition(
+            BackgroundDisposition::Detach,
+            HostDispositionAuthorization::default(),
+        )
+        .is_err());
+        assert_eq!(
+            authorize_background_disposition(
+                BackgroundDisposition::Detach,
+                HostDispositionAuthorization {
+                    detach_authorized: true,
+                },
+            ),
+            Ok(BackgroundDisposition::Detach)
+        );
+        assert_eq!(
+            authorize_background_disposition(
+                BackgroundDisposition::Kill,
+                HostDispositionAuthorization::default(),
+            ),
+            Ok(BackgroundDisposition::Kill)
+        );
     }
 
     #[test]
