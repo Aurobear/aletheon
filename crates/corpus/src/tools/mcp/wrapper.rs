@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use super::client::{McpClient, McpResource, McpTool};
 use super::config::McpTrustLevel;
 use crate::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use fabric::tool::ConcurrencyClass;
 
 /// Wraps an MCP-discovered tool as a local `Tool` implementation.
 pub struct McpToolWrapper {
@@ -20,6 +21,8 @@ pub struct McpToolWrapper {
     /// Per-server permission level overrides (server_name → PermissionLevel).
     /// If the tool's server has an entry, it overrides the trust→permission mapping.
     pub overrides: HashMap<String, PermissionLevel>,
+    /// Whether the MCP server supports parallel tool calls.
+    pub supports_parallel: bool,
 }
 
 #[async_trait]
@@ -49,6 +52,14 @@ impl Tool for McpToolWrapper {
         }
     }
 
+    fn concurrency_class(&self) -> ConcurrencyClass {
+        if self.supports_parallel {
+            ConcurrencyClass::ReadOnly
+        } else {
+            ConcurrencyClass::SideEffect
+        }
+    }
+
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(McpToolWrapper {
             normalized_name: self.normalized_name.clone(),
@@ -57,6 +68,7 @@ impl Tool for McpToolWrapper {
             trust_level: self.trust_level,
             server_name: self.server_name.clone(),
             overrides: self.overrides.clone(),
+            supports_parallel: self.supports_parallel,
         })
     }
 

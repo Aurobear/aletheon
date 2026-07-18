@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
@@ -10,6 +11,31 @@ use super::auth::BearerTokenAuth;
 use super::config::{McpConfig, McpTransportConfig, McpTrustLevel};
 use super::transport::{McpNotification, McpTransport};
 use super::wrapper::{McpResourceProvider, McpToolWrapper};
+
+// ---------------------------------------------------------------------------
+// Elicitation handler trait
+// ---------------------------------------------------------------------------
+
+/// Handler for MCP elicitation requests received from servers.
+///
+/// When an MCP server sends an `elicitation/create` request (JSON-RPC
+/// server-to-client), the client invokes this handler to obtain the
+/// user's approval decision. Implementations may forward to external
+/// approval systems (e.g. `SocketApprovalGate`) or use inline policies.
+///
+/// # Fail-safe
+///
+/// If the handler is absent, the client auto-denies the elicitation.
+#[async_trait]
+pub trait ElicitationHandler: Send + Sync {
+    /// Handle an elicitation request and return the user's decision.
+    ///
+    /// `message` — the user-facing prompt from the server.
+    /// `mode` — the elicitation mode (e.g. `"once"`, `"always"`).
+    ///
+    /// Returns `true` if the user approved, `false` if denied.
+    async fn handle_elicitation(&self, message: &str, mode: &str) -> Result<bool, String>;
+}
 
 /// Tool discovered from an MCP server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +75,11 @@ pub struct McpClient {
     pub resources: Vec<McpResource>,
     /// Channel sender for notifications received from the server.
     pub notification_tx: mpsc::Sender<McpNotification>,
+    /// Whether the server supports parallel tool calls.
+    pub supports_parallel_tool_calls: bool,
+    /// Handler for elicitation requests received from the server.
+    /// If `None` (default), elicitation requests are auto-denied.
+    pub elicitation_handler: Option<Arc<dyn ElicitationHandler>>,
 }
 
 impl McpClient {
@@ -63,7 +94,7 @@ impl McpClient {
         let mut transport = McpTransport::stdio(command, args).await?;
 
         // Initialize handshake
-        let _init_result = transport
+        let init_result = transport
             .request(
                 1,
                 "initialize",
@@ -74,6 +105,13 @@ impl McpClient {
                 }),
             )
             .await?;
+
+        let supports_parallel_tool_calls = init_result
+            .get("capabilities")
+            .and_then(|c| c.get("tools"))
+            .and_then(|t| t.get("supports_parallel_tool_calls"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         tracing::info!(server = %server_name, "MCP server initialized");
 
@@ -100,6 +138,8 @@ impl McpClient {
             tools,
             resources,
             notification_tx,
+            supports_parallel_tool_calls,
+            elicitation_handler: None,
         })
     }
 
@@ -114,7 +154,7 @@ impl McpClient {
         let mut transport = McpTransport::streamable_http(url, auth);
 
         // Initialize handshake
-        let _init_result = transport
+        let init_result = transport
             .request(
                 1,
                 "initialize",
@@ -125,6 +165,13 @@ impl McpClient {
                 }),
             )
             .await?;
+
+        let supports_parallel_tool_calls = init_result
+            .get("capabilities")
+            .and_then(|c| c.get("tools"))
+            .and_then(|t| t.get("supports_parallel_tool_calls"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         tracing::info!(server = %server_name, "MCP HTTP server initialized");
 
@@ -148,6 +195,8 @@ impl McpClient {
             tools,
             resources,
             notification_tx,
+            supports_parallel_tool_calls,
+            elicitation_handler: None,
         })
     }
 
@@ -162,7 +211,7 @@ impl McpClient {
         let mut transport = McpTransport::sse(url, auth).await?;
 
         // Initialize handshake
-        let _init_result = transport
+        let init_result = transport
             .request(
                 1,
                 "initialize",
@@ -173,6 +222,13 @@ impl McpClient {
                 }),
             )
             .await?;
+
+        let supports_parallel_tool_calls = init_result
+            .get("capabilities")
+            .and_then(|c| c.get("tools"))
+            .and_then(|t| t.get("supports_parallel_tool_calls"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         tracing::info!(server = %server_name, "MCP SSE server initialized");
 
@@ -196,7 +252,14 @@ impl McpClient {
             tools,
             resources,
             notification_tx,
+            supports_parallel_tool_calls,
+            elicitation_handler: None,
         })
+    }
+
+    /// Getter for supports_parallel_tool_calls.
+    pub fn supports_parallel_tool_calls(&self) -> bool {
+        self.supports_parallel_tool_calls
     }
 
     fn parse_tools(result: &Value) -> Vec<McpTool> {
@@ -416,6 +479,108 @@ impl McpClient {
             }
         }
     }
+
+    /// Handle an MCP `elicitation/create` request from the server.
+    ///
+    /// The server sends this request when it needs user approval for an
+    /// action. The client delegates to the configured [`ElicitationHandler`]
+    /// if one is set; otherwise the elicitation is auto-denied (fail-safe).
+    ///
+    /// Returns an `elicitation/create` JSON-RPC response containing the
+    /// user's decision: `"allow"` or `"deny"`.
+    pub async fn handle_elicitation(&self, params: &Value) -> Result<Value> {
+        let message = params
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("MCP server requires your approval");
+        let mode = params
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("once");
+
+        let approved = match &self.elicitation_handler {
+            Some(handler) => {
+                match handler.handle_elicitation(message, mode).await {
+                    Ok(allowed) => allowed,
+                    Err(e) => {
+                        tracing::warn!(
+                            server = %self.server_name,
+                            error = %e,
+                            "Elicitation handler returned an error; defaulting to deny"
+                        );
+                        false
+                    }
+                }
+            }
+            None => {
+                tracing::debug!(
+                    server = %self.server_name,
+                    message = %message,
+                    mode = %mode,
+                    "No elicitation handler configured; auto-denying elicitation request"
+                );
+                false
+            }
+        };
+
+        Ok(serde_json::json!({
+            "action": if approved { "allow" } else { "deny" }
+        }))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// McpElicitationHandler — bridges `ElicitationHandler` to `ApprovalGate`
+// ---------------------------------------------------------------------------
+
+/// An [`ElicitationHandler`] implementation that forwards elicitation
+/// requests to the approval system (e.g. [`SocketApprovalGate`]).
+///
+/// Constructs an [`ApprovalRequest`] from the elicitation message and mode,
+/// then delegates to the wrapped [`ApprovalGate`].
+pub struct McpElicitationHandler {
+    gate: Arc<dyn crate::security::approval::ApprovalGate>,
+    server_name: String,
+}
+
+impl McpElicitationHandler {
+    /// Create a new handler that forwards elicitation decisions to `gate`.
+    pub fn new(
+        gate: Arc<dyn crate::security::approval::ApprovalGate>,
+        server_name: String,
+    ) -> Self {
+        Self { gate, server_name }
+    }
+}
+
+#[async_trait]
+impl ElicitationHandler for McpElicitationHandler {
+    async fn handle_elicitation(&self, message: &str, mode: &str) -> Result<bool, String> {
+        use crate::security::approval::{ApprovalDecision, ApprovalRequest};
+
+        let req = ApprovalRequest {
+            owner: fabric::ApprovalOwner::new(
+                fabric::PrincipalId("mcp".into()),
+                fabric::ThreadId("mcp".into()),
+            ),
+            connection_id: fabric::ConnectionId::new(),
+            turn_id: fabric::TurnId::new(),
+            call_id: format!("elicitation::{}", self.server_name),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots("/".into(), vec![])
+                .unwrap_or_else(|_| {
+                    fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap()
+                }),
+            tool: format!("mcp::{}", self.server_name),
+            action_summary: message.to_string(),
+            risk_level: "medium".to_string(),
+            detail: Some(format!("mode={}", mode)),
+        };
+
+        match self.gate.request(&req).await {
+            ApprovalDecision::Approve | ApprovalDecision::ApproveForSession => Ok(true),
+            ApprovalDecision::Deny => Ok(false),
+        }
+    }
 }
 
 /// Manages connections to multiple MCP servers.
@@ -556,6 +721,7 @@ impl McpConnectionManager {
                     trust_level: client.trust_level,
                     server_name: server_name.clone(),
                     overrides: self.config.permission_overrides.clone(),
+                    supports_parallel: client.supports_parallel_tool_calls,
                 });
             }
         }

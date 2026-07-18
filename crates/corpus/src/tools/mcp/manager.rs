@@ -87,6 +87,7 @@ impl McpManager {
 mod tests {
     use super::super::config::{McpServerConfig, McpTransportConfig, McpTrustLevel};
     use super::*;
+    use fabric::tool::ConcurrencyClass;
     use http_body_util::{BodyExt, Full};
     use hyper::body::{Bytes, Incoming};
     use hyper::server::conn::http1;
@@ -107,6 +108,8 @@ mod tests {
         return_401: bool,
         /// Captured authorization headers.
         auth_headers: Vec<Option<String>>,
+        /// Custom initialize response (defaults to standard one if None).
+        initialize_response: Option<serde_json::Value>,
     }
 
     impl MockMcpState {
@@ -144,12 +147,27 @@ mod tests {
                 }),
                 return_401: false,
                 auth_headers: Vec::new(),
+                initialize_response: None,
             }
         }
 
         fn with_401() -> Self {
             let mut state = Self::with_token("test-token");
             state.return_401 = true;
+            state
+        }
+
+        fn with_parallel_tool_calls() -> Self {
+            let mut state = Self::with_token("parallel-token");
+            state.initialize_response = Some(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {
+                        "supports_parallel_tool_calls": true
+                    }
+                },
+                "serverInfo": {"name": "parallel-mock", "version": "1.0.0"}
+            }));
             state
         }
 
@@ -169,13 +187,14 @@ mod tests {
             }
 
             // Check return_401 and expected token synchronously
-            let (return_401, expected_token, tools_list, search_resp) = {
+            let (return_401, expected_token, tools_list, search_resp, initialize_resp) = {
                 let s = state.lock().unwrap();
                 (
                     s.return_401,
                     s.expected_token.clone(),
                     s.tools_list_response.clone(),
                     s.search_response.clone(),
+                    s.initialize_response.clone(),
                 )
             };
 
@@ -224,11 +243,11 @@ mod tests {
             let id = req_json.get("id").cloned().unwrap_or(Value::Null);
 
             let result = match method {
-                "initialize" => json!({
+                "initialize" => initialize_resp.unwrap_or_else(|| json!({
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "test-mock", "version": "1.0.0"}
-                }),
+                })),
                 "tools/list" => tools_list,
                 "tools/call" => search_resp,
                 "resources/list" => json!({
@@ -739,5 +758,45 @@ mod tests {
         );
 
         std::env::remove_var("TEST_RESOURCE_EXEC_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn parallel_tool_calls_server_sets_concurrency_class_readonly() {
+        std::env::set_var("TEST_PARALLEL_TOKEN", "parallel-token");
+
+        let state = Arc::new(Mutex::new(MockMcpState::with_parallel_tool_calls()));
+        let addr = spawn_mock_server(state).await;
+
+        let config = McpConfig {
+            servers: vec![McpServerConfig {
+                name: "parallel-server".into(),
+                transport: McpTransportConfig::StreamableHttp {
+                    url: format!("http://{}/mcp", addr),
+                },
+                trust: McpTrustLevel::RemoteTrusted,
+                enabled: true,
+                bearer_token_env: Some("TEST_PARALLEL_TOKEN".into()),
+            }],
+            ..McpConfig::default()
+        };
+
+        let mut mgr = McpManager::new(config);
+        mgr.connect_all().await.unwrap();
+        assert_eq!(mgr.connected_count(), 1);
+
+        let wrappers = mgr.tool_wrappers();
+        assert!(!wrappers.is_empty(), "Should have discovered tools");
+
+        for tool in &wrappers {
+            let cc = tool.concurrency_class();
+            assert_eq!(
+                cc,
+                ConcurrencyClass::ReadOnly,
+                "Tool from parallel-capable server should have ReadOnly concurrency class, got {:?}",
+                cc
+            );
+        }
+
+        std::env::remove_var("TEST_PARALLEL_TOKEN");
     }
 }
