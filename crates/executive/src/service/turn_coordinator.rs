@@ -2,20 +2,20 @@
 
 use std::{collections::HashMap, future::Future, sync::Arc};
 
+use crate::core::config::{BackpressureConfig, GrokHardeningConfig};
 use aletheon_kernel::KernelRuntime;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
+use fabric::types::prompt_queue::{PromptEnvelope, PromptKind, PromptState, evaluate_cancel};
 use fabric::{
     CancelReason, EventSpine, ItemId, ItemPayload, ItemRecord, MonoDeadline, OperationKind,
-    OperationManager, OperationRequest, PrincipalId, SessionAppendStore, SessionId, SessionRecord,
-    SessionStatus, ThreadId, TurnId, TurnMetrics, TurnRequest, TurnResult, TurnStop,
-    SESSION_SCHEMA_VERSION,
+    OperationManager, OperationRequest, PrincipalId, SESSION_SCHEMA_VERSION, SessionAppendStore,
+    SessionId, SessionRecord, SessionStatus, ThreadId, TurnId, TurnMetrics, TurnRequest,
+    TurnResult, TurnStop,
 };
-use fabric::types::prompt_queue::{evaluate_cancel, PromptEnvelope, PromptKind, PromptState};
-use crate::core::config::{BackpressureConfig, GrokHardeningConfig};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use super::durable_write::{write_failed, TurnWriteTracker, WritePhase, WriteResult};
+use super::durable_write::{TurnWriteTracker, WritePhase, WriteResult, write_failed};
 use super::turn_policy::TurnPolicy;
 
 pub struct TurnExecution {
@@ -220,9 +220,9 @@ impl TurnCoordinator {
             thread_id: thread_id.clone(),
         };
         let active = self.active.lock().await;
-        let turn = active
-            .get(&key)
-            .ok_or_else(|| anyhow::anyhow!("no active turn for principal {principal_id:?} thread {thread_id:?}"))?;
+        let turn = active.get(&key).ok_or_else(|| {
+            anyhow::anyhow!("no active turn for principal {principal_id:?} thread {thread_id:?}")
+        })?;
         if turn.operation_id != operation_id {
             anyhow::bail!(
                 "operation_id mismatch: expected {:?}, got {operation_id:?}",
@@ -231,7 +231,7 @@ impl TurnCoordinator {
         }
         // G3 prompt_queue identity validation when flag is enabled.
         if self.grok_hardening.prompt_queue {
-            self.validate_cancel_authority(principal_id, thread_id, &turn)?;
+            self.validate_cancel_authority(principal_id, thread_id, turn)?;
         }
         turn.cancel.cancel();
         Ok(())
@@ -267,7 +267,9 @@ impl TurnCoordinator {
             }
             fabric::types::prompt_queue::QueueOpResult::Conflict { .. } => {
                 // Version-0 synthetic can't conflict; treat as rejection.
-                anyhow::bail!("cancel rejected by prompt_queue authority: version conflict on synthetic envelope")
+                anyhow::bail!(
+                    "cancel rejected by prompt_queue authority: version conflict on synthetic envelope"
+                )
             }
         }
     }
@@ -300,14 +302,14 @@ impl TurnCoordinator {
         self.kernel.start_operation(operation.id).await?;
         request.operation_id = operation.id;
         request.context.turn_id = Some(TurnId::new());
-        let turn_id = request.context.turn_id.unwrap_or_else(|| TurnId::new());
+        let turn_id = request.context.turn_id.unwrap_or_default();
         let cancel = CancellationToken::new();
         let active_key = ActiveTurnKey::from_request(&request);
         self.active.lock().await.insert(
             active_key.clone(),
             ActiveTurn {
                 operation_id: operation.id,
-                turn_id: turn_id,
+                turn_id,
                 cancel: cancel.clone(),
             },
         );
@@ -468,8 +470,15 @@ impl TurnCoordinator {
                         ItemPayload::ToolResult { .. } => WritePhase::ToolResult,
                         _ => WritePhase::ContextFragment,
                     };
-                    self.append_tracked(&session_id, turn_id, &mut sequence, payload, phase, &mut write_tracker)
-                        .await?;
+                    self.append_tracked(
+                        &session_id,
+                        turn_id,
+                        &mut sequence,
+                        payload,
+                        phase,
+                        &mut write_tracker,
+                    )
+                    .await?;
                 }
                 let terminal = if result.stop == TurnStop::Completed {
                     ItemPayload::AssistantMessage {
@@ -589,28 +598,6 @@ impl TurnCoordinator {
             .await?
             .last()
             .map_or(1, |item| item.sequence + 1))
-    }
-
-    async fn append(
-        &self,
-        session: &SessionId,
-        turn_id: TurnId,
-        sequence: &mut u64,
-        payload: ItemPayload,
-    ) -> Result<()> {
-        let current = *sequence;
-        let item = ItemRecord {
-            schema_version: SESSION_SCHEMA_VERSION,
-            id: ItemId::new(),
-            session_id: session.clone(),
-            turn_id,
-            sequence: current,
-            created_at_ms: self.now_ms(),
-            payload,
-        };
-        self.store.append(session, current, item).await?;
-        *sequence += 1;
-        Ok(())
     }
 
     fn now_ms(&self) -> u64 {

@@ -58,8 +58,10 @@ pub async fn scan_incomplete_turns(
         return Ok(TurnRecoveryReport::default());
     }
 
-    let mut report = TurnRecoveryReport::default();
-    report.sessions_scanned = session_ids.len();
+    let mut report = TurnRecoveryReport {
+        sessions_scanned: session_ids.len(),
+        ..TurnRecoveryReport::default()
+    };
 
     for session_id in session_ids {
         let items = match store.load_items(session_id, None).await {
@@ -128,7 +130,7 @@ fn classify_incomplete_turns(items: &[ItemRecord]) -> Vec<IncompleteTurn> {
 
         if has_user_message && !has_terminal {
             incomplete.push(IncompleteTurn {
-                turn_id: turn_id.clone(),
+                turn_id,
                 classification: if has_tool_call {
                     RecoveryClassification::Failed
                 } else {
@@ -226,7 +228,10 @@ mod tests {
         let items = vec![user_msg(t1, 1)];
         let incomplete = classify_incomplete_turns(&items);
         assert_eq!(incomplete.len(), 1);
-        assert_eq!(incomplete[0].classification, RecoveryClassification::Interrupted);
+        assert_eq!(
+            incomplete[0].classification,
+            RecoveryClassification::Interrupted
+        );
     }
 
     #[test]

@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use super::{LoadedConfig, merge_layers};
+use super::LoadedConfig;
+#[cfg(test)]
+use super::merge_layers;
 
 /// Stable, schema-aware output for `aletheon config effective`.
 /// Secrets are always redacted via `provenance::redact_json`.
@@ -67,7 +69,7 @@ impl LoadedConfig {
         // The provenance map IS the layer list — each leaf maps to its source.
         // Produce a synthetic layer summary from unique sources in order.
         let mut layer_map: BTreeMap<String, LayerInfo> = BTreeMap::new();
-        for (path, source) in self.provenance.iter() {
+        for (_path, source) in self.provenance.iter() {
             let key = format!("{:?}:{}", source.kind, source.locator);
             layer_map
                 .entry(key)
@@ -80,14 +82,7 @@ impl LoadedConfig {
                 });
         }
         // Preserve config-source-kind ordering (Default < System < User < Project < Environment < Cli)
-        let kind_order = [
-            "default",
-            "system",
-            "user",
-            "project",
-            "environment",
-            "cli",
-        ];
+        let kind_order = ["default", "system", "user", "project", "environment", "cli"];
         let mut ordered_layers: Vec<LayerInfo> = Vec::new();
         for kind in &kind_order {
             for info in layer_map.values() {
@@ -140,8 +135,10 @@ mod tests {
         assert!(view.leaf_count > 0);
         // Check that api_key fields are redacted
         let config_str = view.config.to_string();
-        assert!(!config_str.contains("\"api_key\": \"")
-            || config_str.contains("\"api_key\": \"<redacted>\""));
+        assert!(
+            !config_str.contains("\"api_key\": \"")
+                || config_str.contains("\"api_key\": \"<redacted>\"")
+        );
     }
 
     #[test]

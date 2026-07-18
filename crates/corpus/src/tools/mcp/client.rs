@@ -125,7 +125,8 @@ impl McpClient {
         tracing::info!(server = %server_name, count = tools.len(), "MCP tools discovered");
 
         // Discover resources
-        let resources = Self::discover_resources(&mut transport, &server_name, 3).await
+        let resources = Self::discover_resources(&mut transport, &server_name, 3)
+            .await
             .unwrap_or_default();
 
         Ok(Self {
@@ -183,7 +184,8 @@ impl McpClient {
         tracing::info!(server = %server_name, count = tools.len(), "MCP HTTP tools discovered");
 
         // Discover resources
-        let resources = Self::discover_resources(&mut transport, &server_name, 3).await
+        let resources = Self::discover_resources(&mut transport, &server_name, 3)
+            .await
             .unwrap_or_default();
 
         Ok(Self {
@@ -241,7 +243,8 @@ impl McpClient {
         tracing::info!(server = %server_name, count = tools.len(), "MCP SSE tools discovered");
 
         // Discover resources
-        let resources = Self::discover_resources(&mut transport, &server_name, 3).await
+        let resources = Self::discover_resources(&mut transport, &server_name, 3)
+            .await
             .unwrap_or_default();
 
         Ok(Self {
@@ -399,11 +402,7 @@ impl McpClient {
         self.next_id += 1;
         let result = self
             .transport
-            .request(
-                id,
-                "resources/read",
-                serde_json::json!({"uri": uri}),
-            )
+            .request(id, "resources/read", serde_json::json!({"uri": uri}))
             .await?;
 
         // MCP resources/read returns the content array
@@ -411,13 +410,16 @@ impl McpClient {
             contents
                 .iter()
                 .filter_map(|c| {
-                    let mime_type = c.get("mimeType").and_then(|v| v.as_str()).unwrap_or("text/plain");
+                    let mime_type = c
+                        .get("mimeType")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("text/plain");
                     if let Some(t) = c.get("text").and_then(|v| v.as_str()) {
                         Some(t.to_string())
-                    } else if let Some(_b) = c.get("blob").and_then(|v| v.as_str()) {
-                        Some(format!("[base64 blob: mimeType={}]", mime_type))
                     } else {
-                        None
+                        c.get("blob")
+                            .and_then(|v| v.as_str())
+                            .map(|_| format!("[base64 blob: mimeType={}]", mime_type))
                     }
                 })
                 .collect::<Vec<_>>()
@@ -486,19 +488,17 @@ impl McpClient {
             .unwrap_or("once");
 
         let approved = match &self.elicitation_handler {
-            Some(handler) => {
-                match handler.handle_elicitation(message, mode).await {
-                    Ok(allowed) => allowed,
-                    Err(e) => {
-                        tracing::warn!(
-                            server = %self.server_name,
-                            error = %e,
-                            "Elicitation handler returned an error; defaulting to deny"
-                        );
-                        false
-                    }
+            Some(handler) => match handler.handle_elicitation(message, mode).await {
+                Ok(allowed) => allowed,
+                Err(e) => {
+                    tracing::warn!(
+                        server = %self.server_name,
+                        error = %e,
+                        "Elicitation handler returned an error; defaulting to deny"
+                    );
+                    false
                 }
-            }
+            },
             None => {
                 tracing::debug!(
                     server = %self.server_name,
@@ -793,10 +793,7 @@ impl McpConnectionManager {
         providers
     }
 
-    pub async fn list_resources(
-        &self,
-        server_name: &str,
-    ) -> Result<Vec<McpResource>> {
+    pub async fn list_resources(&self, server_name: &str) -> Result<Vec<McpResource>> {
         let client_arc = self
             .clients
             .get(server_name)
@@ -827,11 +824,7 @@ impl McpConnectionManager {
         }
     }
 
-    pub async fn handle_elicitation(
-        &self,
-        server_name: &str,
-        params: &Value,
-    ) -> Result<Value> {
+    pub async fn handle_elicitation(&self, server_name: &str, params: &Value) -> Result<Value> {
         let client_arc = self
             .clients
             .get(server_name)

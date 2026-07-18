@@ -7,12 +7,12 @@
 //!
 //! Gated behind `grok_hardening.compaction_v2`.
 
-use std::sync::Arc;
-
 use anyhow::Result;
 use fabric::{
-    types::lifecycle::{validate_effects, LifecycleEffect, LifecyclePhase, MAX_CONTEXT_FRAGMENT_BYTES},
-    ItemPayload, SessionAppendStore, SessionId, TurnId, SESSION_SCHEMA_VERSION,
+    ItemPayload, SESSION_SCHEMA_VERSION, SessionAppendStore, SessionId, TurnId,
+    types::lifecycle::{
+        LifecycleEffect, LifecyclePhase, MAX_CONTEXT_FRAGMENT_BYTES, validate_effects,
+    },
 };
 
 /// Persist one or more context fragments emitted as lifecycle effects.
@@ -69,9 +69,7 @@ pub async fn inject_context_fragments(
                 .append(session_id, *sequence, item)
                 .await
                 .map_err(|error| {
-                    anyhow::anyhow!(
-                        "context fragment append failed for source={source}: {error:#}"
-                    )
+                    anyhow::anyhow!("context fragment append failed for source={source}: {error:#}")
                 })?;
             *sequence += 1;
             persisted += 1;

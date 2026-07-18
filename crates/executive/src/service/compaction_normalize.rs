@@ -14,10 +14,7 @@
 
 use std::collections::HashSet;
 
-use fabric::{
-    is_degenerate_summary, safe_tail_cut,
-    ItemPayload,
-};
+use fabric::{ItemPayload, is_degenerate_summary};
 use serde::Serialize;
 
 /// Result of normalizing a batch of turn items.
@@ -103,8 +100,12 @@ impl CompactionLineage {
         ItemPayload::SystemNotice {
             content: format!(
                 "[compaction lineage run={} strategy={} tokens_before={} tokens_after={} evicted={}] {}",
-                self.compaction_run, self.strategy, self.tokens_before,
-                self.tokens_after, self.evicted_count, lineage_json,
+                self.compaction_run,
+                self.strategy,
+                self.tokens_before,
+                self.tokens_after,
+                self.evicted_count,
+                lineage_json,
             ),
         }
     }

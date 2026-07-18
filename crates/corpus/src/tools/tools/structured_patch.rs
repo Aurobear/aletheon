@@ -352,7 +352,7 @@ fn parse_hunk_header(line: &str) -> Result<(u64, u64, u64, u64, Vec<String>), St
 /// Parse a hunk range like "-10,7" or "+10,8".
 fn parse_hunk_range(s: &str) -> Result<(u64, u64), String> {
     // Strip leading '-' or '+'
-    let s = s.trim_start_matches(|c| c == '-' || c == '+');
+    let s = s.trim_start_matches(['-', '+']);
     if let Some((start_str, count_str)) = s.split_once(',') {
         let start: u64 = start_str
             .parse()
