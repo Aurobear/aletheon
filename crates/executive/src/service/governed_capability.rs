@@ -244,6 +244,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                     is_error: true,
                     usage: UsageReport::default(),
                     audit_id: None,
+                    patch_delta: None,
                 };
             }
         };
@@ -267,6 +268,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                                     is_error: true,
                                     usage: UsageReport::default(),
                                     audit_id: None,
+                                    patch_delta: None,
                                 };
                             }
                             tracing::warn!(
@@ -294,6 +296,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                             is_error: true,
                             usage: UsageReport::default(),
                             audit_id: None,
+                            patch_delta: None,
                         };
                     }
                     if let Err(error) = action_loop
@@ -309,6 +312,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                                 is_error: true,
                                 usage: UsageReport::default(),
                                 audit_id: None,
+                                patch_delta: None,
                             };
                         }
                         tracing::warn!(
@@ -332,6 +336,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                             is_error: true,
                             usage: UsageReport::default(),
                             audit_id: None,
+                            patch_delta: None,
                         };
                     }
                     None
@@ -343,6 +348,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                         is_error: true,
                         usage: UsageReport::default(),
                         audit_id: None,
+                        patch_delta: None,
                     };
                 }
             }
@@ -394,6 +400,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                     is_error: true,
                     usage: result.usage,
                     audit_id: result.audit_id,
+                    patch_delta: None,
                 };
             }
         }
@@ -462,6 +469,7 @@ pub struct RegistryAuthorityProvider {
     working_dir: PathBuf,
     sandbox: SandboxRequirement,
     cancel: CancellationToken,
+    turn_event_sender: Option<fabric::ipc::TurnEventSender>,
 }
 
 impl RegistryAuthorityProvider {
@@ -490,11 +498,17 @@ impl RegistryAuthorityProvider {
             working_dir,
             sandbox,
             cancel,
+            turn_event_sender: None,
         }
     }
 
     pub fn with_agent_context(mut self, agent: Option<fabric::AgentToolContext>) -> Self {
         self.agent = agent;
+        self
+    }
+
+    pub fn with_turn_event_sender(mut self, sender: Option<fabric::ipc::TurnEventSender>) -> Self {
+        self.turn_event_sender = sender;
         self
     }
 }
@@ -525,6 +539,7 @@ impl TurnAuthorityProvider for RegistryAuthorityProvider {
             },
             control: InvocationControl {
                 cancel: self.cancel.clone(),
+                turn_event_sender: self.turn_event_sender.clone(),
             },
         })
     }

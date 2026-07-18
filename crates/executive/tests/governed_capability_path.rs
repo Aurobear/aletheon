@@ -70,6 +70,7 @@ impl CapabilityInvoker for StreamingInner {
             is_error: false,
             usage: UsageReport::default(),
             audit_id: Some(fabric::AuditEventId::new()),
+            patch_delta: None,
         }
     }
 
@@ -86,6 +87,7 @@ impl CapabilityInvoker for StreamingInner {
             is_error: false,
             usage: UsageReport::default(),
             audit_id: Some(fabric::AuditEventId::new()),
+            patch_delta: None,
         };
         sink.terminal(Ok(ToolResult {
             content: result.output.clone(),
@@ -108,6 +110,7 @@ impl CapabilityInvoker for RecordingInner {
             is_error: false,
             usage: UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 }

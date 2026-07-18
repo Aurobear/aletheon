@@ -55,6 +55,7 @@ impl Tool for CoreMemoryAppendTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
             Err(e) => ToolResult {
@@ -63,6 +64,7 @@ impl Tool for CoreMemoryAppendTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -117,6 +119,7 @@ impl Tool for CoreMemoryReplaceTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
             Err(e) => ToolResult {
@@ -125,6 +128,7 @@ impl Tool for CoreMemoryReplaceTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -288,6 +292,7 @@ impl Tool for MemorySearchTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             }
         } else {
@@ -298,6 +303,7 @@ impl Tool for MemorySearchTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated,
+                    patch_delta: None,
                 },
             }
         }

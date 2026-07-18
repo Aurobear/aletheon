@@ -531,6 +531,181 @@ pub fn execute_structured_patch(
     result
 }
 
+/// Applies structured patch operations sequentially and emits bounded progress
+/// through the canonical turn event stream.
+pub struct StreamingPatchApplier {
+    sender: fabric::ipc::TurnEventSender,
+}
+
+impl StreamingPatchApplier {
+    pub fn new(sender: fabric::ipc::TurnEventSender) -> Self {
+        Self { sender }
+    }
+
+    /// Apply operations one at a time. Progress delivery is observational: a
+    /// closed or saturated client stream never changes filesystem semantics or
+    /// the authoritative structured result.
+    pub async fn apply(
+        &self,
+        operations: &[PatchOperation],
+        workspace_root: &Path,
+    ) -> StructuredPatchResult {
+        self.emit(fabric::ipc::TurnEventV1::PatchProgress {
+            status: "started".into(),
+            path: None,
+            operation: None,
+            error: None,
+            applied_count: None,
+            failed_count: None,
+        });
+
+        let mut result = StructuredPatchResult {
+            applied: Vec::new(),
+            failed: Vec::new(),
+            files_changed: Vec::new(),
+        };
+        for operation in operations {
+            let path = op_path(operation).to_owned();
+            let operation_name = progress_operation_name(operation).to_owned();
+            match apply_operation(operation, workspace_root) {
+                Ok(summary) => {
+                    result.applied.push(summary_applied(operation));
+                    result.files_changed.push(summary);
+                    self.emit(fabric::ipc::TurnEventV1::PatchProgress {
+                        status: "file_changed".into(),
+                        path: Some(path),
+                        operation: Some(operation_name),
+                        error: None,
+                        applied_count: None,
+                        failed_count: None,
+                    });
+                }
+                Err(failure) => {
+                    let error = failure.message;
+                    result.failed.push(FailedOperation {
+                        op_type: op_type_name(operation),
+                        path: path.clone(),
+                        error: error.clone(),
+                        hunks_applied_before_failure: failure.hunks_applied,
+                    });
+                    self.emit(fabric::ipc::TurnEventV1::PatchProgress {
+                        status: "file_failed".into(),
+                        path: Some(path),
+                        operation: Some(operation_name),
+                        error: Some(error),
+                        applied_count: None,
+                        failed_count: None,
+                    });
+                }
+            }
+        }
+        self.emit(fabric::ipc::TurnEventV1::PatchProgress {
+            status: "completed".into(),
+            path: None,
+            operation: None,
+            error: None,
+            applied_count: Some(result.applied.len()),
+            failed_count: Some(result.failed.len()),
+        });
+        result
+    }
+
+    fn emit(&self, event: fabric::ipc::TurnEventV1) {
+        if let Err(error) = self.sender.send(&event) {
+            tracing::warn!(?error, "structured patch progress event was not delivered");
+        }
+    }
+}
+
+fn progress_operation_name(operation: &PatchOperation) -> &'static str {
+    match operation {
+        PatchOperation::AddFile { .. } => "add",
+        PatchOperation::DeleteFile { .. } => "delete",
+        PatchOperation::UpdateFile {
+            move_to: Some(_), ..
+        } => "move",
+        PatchOperation::UpdateFile { .. } => "update",
+        PatchOperation::AppendFile { .. } => "append",
+    }
+}
+
+const MAX_STREAMING_PATCH_ARGUMENT_BYTES: usize = 128 * 1024;
+
+/// Incrementally consumes model-produced patch arguments without ever applying
+/// an incomplete document. Invalid or oversized input permanently closes the
+/// consumer so later diffs cannot turn a rejected prefix into an accepted one.
+pub struct ArgumentDiffConsumer {
+    sender: fabric::ipc::TurnEventSender,
+    buffer: String,
+    closed: bool,
+}
+
+impl ArgumentDiffConsumer {
+    pub fn new(sender: fabric::ipc::TurnEventSender) -> Self {
+        Self {
+            sender,
+            buffer: String::new(),
+            closed: false,
+        }
+    }
+
+    pub fn push(&mut self, diff: &str) -> Result<Option<StructuredPatch>, String> {
+        if self.closed {
+            return Err("patch argument consumer is closed".into());
+        }
+        if self.buffer.len().saturating_add(diff.len()) > MAX_STREAMING_PATCH_ARGUMENT_BYTES {
+            self.closed = true;
+            self.buffer.clear();
+            return Err("streaming patch argument exceeds 128 KiB limit".into());
+        }
+        self.buffer.push_str(diff);
+        self.emit_receiving()?;
+
+        if self.buffer.trim_start().starts_with("*** Begin Patch") {
+            if !self.buffer.contains("*** End Patch") {
+                return Ok(None);
+            }
+            return self.finish(parse_structured_patch(&self.buffer));
+        }
+
+        match serde_json::from_str::<serde_json::Value>(&self.buffer) {
+            Ok(_) => self.finish(parse_structured_patch_json(&self.buffer)),
+            Err(error) if error.is_eof() => Ok(None),
+            Err(error) => {
+                self.closed = true;
+                self.buffer.clear();
+                Err(format!("invalid streaming patch JSON: {error}"))
+            }
+        }
+    }
+
+    fn finish(
+        &mut self,
+        result: Result<StructuredPatch, String>,
+    ) -> Result<Option<StructuredPatch>, String> {
+        self.closed = true;
+        self.buffer.clear();
+        result.map(Some)
+    }
+
+    fn emit_receiving(&mut self) -> Result<(), String> {
+        self.sender
+            .send(&fabric::ipc::TurnEventV1::PatchProgress {
+                status: "receiving".into(),
+                path: None,
+                operation: None,
+                error: None,
+                applied_count: None,
+                failed_count: None,
+            })
+            .map_err(|error| {
+                self.closed = true;
+                self.buffer.clear();
+                format!("patch argument progress delivery failed: {error:?}")
+            })
+    }
+}
+
 struct OperationFailure {
     message: String,
     hunks_applied: Option<usize>,
@@ -1775,5 +1950,128 @@ Unknown Op: test.txt
         let result = parse_structured_patch_json(input);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("rename"));
+    }
+
+    #[tokio::test]
+    async fn streaming_applier_emits_started_changed_and_completed() {
+        let temp = TempDir::new().unwrap();
+        let (mut events, sender) =
+            fabric::ipc::TurnEventStream::new(fabric::ipc::StreamConfig::turn_events(8));
+        let applier = StreamingPatchApplier::new(sender);
+        let result = applier
+            .apply(
+                &[PatchOperation::AddFile {
+                    path: "new.txt".into(),
+                    content: "hello".into(),
+                }],
+                temp.path(),
+            )
+            .await;
+
+        assert_eq!(result.applied.len(), 1);
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::PatchProgress { status, .. } if status == "started"
+        ));
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::PatchProgress {
+                status,
+                path: Some(path),
+                operation: Some(operation),
+                ..
+            } if status == "file_changed" && path == "new.txt" && operation == "add"
+        ));
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::PatchProgress {
+                status,
+                applied_count: Some(1),
+                failed_count: Some(0),
+                ..
+            } if status == "completed"
+        ));
+    }
+
+    #[tokio::test]
+    async fn streaming_applier_emits_failed_operation_before_terminal() {
+        let temp = TempDir::new().unwrap();
+        let (mut events, sender) =
+            fabric::ipc::TurnEventStream::new(fabric::ipc::StreamConfig::turn_events(8));
+        let applier = StreamingPatchApplier::new(sender);
+        let result = applier
+            .apply(
+                &[PatchOperation::DeleteFile {
+                    path: "missing.txt".into(),
+                }],
+                temp.path(),
+            )
+            .await;
+
+        assert_eq!(result.failed.len(), 1);
+        let _started = events.recv().await.unwrap();
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::PatchProgress {
+                status,
+                path: Some(path),
+                operation: Some(operation),
+                error: Some(error),
+                ..
+            } if status == "file_failed"
+                && path == "missing.txt"
+                && operation == "delete"
+                && error.contains("file not found")
+        ));
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::PatchProgress {
+                status,
+                applied_count: Some(0),
+                failed_count: Some(1),
+                ..
+            } if status == "completed"
+        ));
+    }
+
+    #[tokio::test]
+    async fn argument_diff_consumer_accepts_partial_json_and_emits_receiving() {
+        let (mut events, sender) =
+            fabric::ipc::TurnEventStream::new(fabric::ipc::StreamConfig::turn_events(4));
+        let mut consumer = ArgumentDiffConsumer::new(sender);
+        assert!(consumer
+            .push(r#"{"operations":[{"type":"add","path":"x","#)
+            .unwrap()
+            .is_none());
+        let patch = consumer.push(r#""content":"y"}]}"#).unwrap().unwrap();
+        assert_eq!(patch.operations.len(), 1);
+        for _ in 0..2 {
+            assert!(matches!(
+                events.recv().await.unwrap(),
+                fabric::ipc::TurnEventV1::PatchProgress { status, .. } if status == "receiving"
+            ));
+        }
+        assert!(consumer.push("").is_err(), "completed consumer must close");
+    }
+
+    #[tokio::test]
+    async fn argument_diff_consumer_accepts_partial_text_and_fails_closed() {
+        let (_events, sender) =
+            fabric::ipc::TurnEventStream::new(fabric::ipc::StreamConfig::turn_events(4));
+        let mut consumer = ArgumentDiffConsumer::new(sender);
+        assert!(consumer
+            .push("*** Begin Patch\nAdd File: x\nContent:\n>>>\ny\n>>>")
+            .unwrap()
+            .is_none());
+        assert!(consumer.push("\n*** End Patch").unwrap().is_some());
+        assert!(consumer.push("\n").is_err());
+
+        let (_events, sender) =
+            fabric::ipc::TurnEventStream::new(fabric::ipc::StreamConfig::turn_events(2));
+        let mut oversized = ArgumentDiffConsumer::new(sender);
+        assert!(oversized
+            .push(&"x".repeat(MAX_STREAMING_PATCH_ARGUMENT_BYTES + 1))
+            .is_err());
+        assert!(oversized.push("{}").is_err());
     }
 }

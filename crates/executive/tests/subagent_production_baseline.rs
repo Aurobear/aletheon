@@ -116,6 +116,7 @@ fn context() -> ToolContext {
         working_dir: std::env::temp_dir(),
         session_id: "root-session".into(),
         clock: Arc::new(aletheon_kernel::chronos::TestClock::default()) as Arc<dyn Clock>,
+        turn_event_sender: None,
     }
 }
 

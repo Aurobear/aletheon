@@ -62,6 +62,7 @@ pub trait ToolExecutor: Send + Sync {
             metadata: fabric::ToolResultMeta {
                 execution_time_ms: result.usage.wall_time_ms,
                 truncated: false,
+                patch_delta: result.patch_delta.clone(),
             },
         }))
         .await;
@@ -139,6 +140,7 @@ where
                     is_error: true,
                     usage: UsageReport::default(),
                     audit_id: None,
+                    patch_delta: None,
                 };
             }
         };
@@ -163,6 +165,7 @@ where
                     ..Default::default()
                 },
                 audit_id: Some(AuditEventId::new()),
+                patch_delta: None,
             };
         }
 
@@ -190,6 +193,7 @@ where
                     is_error: true,
                     usage: UsageReport { permit_id: permit.id, ..Default::default() },
                     audit_id: Some(AuditEventId::new()),
+                    patch_delta: None,
                 };
             }
         };
@@ -201,6 +205,7 @@ where
                     metadata: fabric::ToolResultMeta {
                         execution_time_ms: result.usage.wall_time_ms,
                         truncated: false,
+                        patch_delta: result.patch_delta.clone(),
                     },
                 }))
                 .await;
@@ -221,6 +226,7 @@ where
                 is_error: true,
                 usage: result.usage,
                 audit_id: result.audit_id,
+                patch_delta: result.patch_delta,
             };
         }
 
@@ -255,6 +261,7 @@ impl ToolExecutor for StubToolExecutor {
                 ..Default::default()
             },
             audit_id: Some(AuditEventId::new()),
+            patch_delta: None,
         }
     }
 }

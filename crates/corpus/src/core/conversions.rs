@@ -34,6 +34,7 @@ pub fn context_to_tool_context(ctx: &Context, clock: Arc<dyn fabric::Clock>) -> 
         working_dir: ctx.working_dir.clone(),
         session_id: ctx.session_id.clone(),
         clock,
+        turn_event_sender: None,
     }
 }
 
@@ -87,6 +88,7 @@ mod tests {
             metadata: ToolResultMeta {
                 execution_time_ms: 100,
                 truncated: false,
+                patch_delta: None,
             },
         };
         let ar = tool_result_to_action_result(&result);

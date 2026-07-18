@@ -376,6 +376,7 @@ mod tests {
             metadata: fabric::tool::ToolResultMeta {
                 execution_time_ms: 50,
                 truncated: false,
+                patch_delta: None,
             },
         };
         let event = ToolResultEvent::from(&tr);
@@ -391,6 +392,7 @@ mod tests {
             metadata: fabric::tool::ToolResultMeta {
                 execution_time_ms: 10,
                 truncated: false,
+                patch_delta: None,
             },
         };
         let event = ToolResultEvent::from(&tr);

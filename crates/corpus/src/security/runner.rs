@@ -861,6 +861,7 @@ impl ToolRunnerWithGuard {
                             metadata: ToolResultMeta {
                                 execution_time_ms: sandbox_result.elapsed_ms,
                                 truncated: false,
+                                patch_delta: None,
                             },
                         },
                         Err(e) => ToolResult {
@@ -869,6 +870,7 @@ impl ToolRunnerWithGuard {
                             metadata: ToolResultMeta {
                                 execution_time_ms: 0,
                                 truncated: false,
+                                patch_delta: None,
                             },
                         },
                     }
@@ -914,6 +916,7 @@ impl ToolRunnerWithGuard {
                         metadata: ToolResultMeta {
                             execution_time_ms: TOOL_TIMEOUT_SECS * 1000,
                             truncated: false,
+                            patch_delta: None,
                         },
                     },
                 }
@@ -1292,6 +1295,7 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test-session".into(),
             clock: test_clock(),
+            turn_event_sender: None,
         }
     }
 

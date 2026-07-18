@@ -231,6 +231,7 @@ impl ToolExecutor for ErrorToolExecutor {
                 ..Default::default()
             },
             audit_id: Some(fabric::AuditEventId::new()),
+            patch_delta: None,
         }
     }
 }

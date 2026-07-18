@@ -113,6 +113,7 @@ impl<T: DaseinOps + 'static> Tool for SelfObserveTool<T> {
             metadata: ToolResultMeta {
                 execution_time_ms: _ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
+                patch_delta: None,
             },
         }
     }
@@ -227,6 +228,7 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({"query": "mood"}), &ctx).await;
         assert!(result.content.contains("Gelassenheit"));
@@ -242,6 +244,7 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({"query": "full"}), &ctx).await;
         assert!(result.content.contains("DaseinContext"));
@@ -257,6 +260,7 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({"query": "bogus"}), &ctx).await;
         assert!(result.content.contains("Unknown query"));
@@ -271,6 +275,7 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(result.content.contains("DaseinContext"));

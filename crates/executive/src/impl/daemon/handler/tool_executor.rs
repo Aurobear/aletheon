@@ -327,6 +327,7 @@ impl TurnToolExecutor {
                 ..Default::default()
             },
             audit_id: Some(AuditEventId::new()),
+            patch_delta: None,
         }
     }
 }
@@ -381,6 +382,7 @@ impl ProductionCapabilityService {
             context.process_id,
         ));
         let authority_working_dir = context.workspace.cwd().to_path_buf();
+        let turn_event_sender = context.turn_event_sender.clone();
         let authority = Arc::new(
             RegistryAuthorityProvider::new(
                 prepared.risk_by_tool,
@@ -394,7 +396,8 @@ impl ProductionCapabilityService {
                 context.sandbox,
                 context.cancel,
             )
-            .with_agent_context(context.agent),
+            .with_agent_context(context.agent)
+            .with_turn_event_sender(turn_event_sender),
         );
         CapabilityRuntimeFactory::build(resources.kernel.admission(), executor, authority)
             .invoke(call)
@@ -408,6 +411,7 @@ impl ProductionCapabilityService {
             is_error: true,
             usage: UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 }

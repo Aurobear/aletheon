@@ -142,6 +142,7 @@ impl Tool for ScriptTool {
                                 metadata: ToolResultMeta {
                                     execution_time_ms: elapsed,
                                     truncated: false,
+                                    patch_delta: None,
                                 },
                             };
                         }
@@ -153,6 +154,7 @@ impl Tool for ScriptTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: elapsed,
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 } else {
@@ -168,6 +170,7 @@ impl Tool for ScriptTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: elapsed,
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 }
@@ -180,6 +183,7 @@ impl Tool for ScriptTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: elapsed,
                         truncated: false,
+                        patch_delta: None,
                     },
                 }
             }
@@ -265,6 +269,7 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(result.is_error);
@@ -294,6 +299,7 @@ mod tests {
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(!result.is_error);
@@ -323,6 +329,7 @@ mod tests {
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(result.is_error);
@@ -355,6 +362,7 @@ mod tests {
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(!result.is_error);

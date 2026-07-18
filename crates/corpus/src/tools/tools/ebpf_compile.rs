@@ -69,6 +69,7 @@ impl Tool for EbpfCompileTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -82,6 +83,7 @@ impl Tool for EbpfCompileTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             };
         }
@@ -108,6 +110,7 @@ impl Tool for EbpfCompileTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -118,6 +121,7 @@ impl Tool for EbpfCompileTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -165,6 +169,7 @@ impl Tool for EbpfCompileTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 } else {
@@ -175,6 +180,7 @@ impl Tool for EbpfCompileTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 }
@@ -185,6 +191,7 @@ impl Tool for EbpfCompileTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -245,6 +252,7 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool
             .execute(json!({"source_path": "/nonexistent.c"}), &ctx)

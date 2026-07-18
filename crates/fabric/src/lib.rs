@@ -293,7 +293,8 @@ pub use types::space::{
 };
 pub use types::time::{wall_to_datetime, MonoDeadline, MonoTime, WallTime};
 pub use types::tool::{
-    AgentToolContext, ApprovalOwner, PendingApprovalKey, PermissionLevel as ToolPermissionLevel,
+    AgentToolContext, ApprovalOwner, PatchDelta, PatchDeltaApplied, PatchDeltaFailed,
+    PatchDeltaFileChange, PendingApprovalKey, PermissionLevel as ToolPermissionLevel,
     ThreadGrantKey, Tool, ToolApprovalAuthority, ToolContext, ToolResult, ToolResultMeta,
 };
 pub use types::tool_stream::{

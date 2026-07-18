@@ -211,6 +211,18 @@ pub enum TurnEventV1 {
         /// text chunk, structured JSON, or resource uri.
         payload: serde_json::Value,
     },
+    /// Structured patch application progress. These events report operational
+    /// progress only; the authoritative terminal remains the tool result.
+    PatchProgress {
+        /// "started" | "file_changed" | "file_failed" | "completed"
+        status: String,
+        path: Option<String>,
+        /// "add" | "update" | "delete" | "append" | "move"
+        operation: Option<String>,
+        error: Option<String>,
+        applied_count: Option<usize>,
+        failed_count: Option<usize>,
+    },
 
     // -- Bookkeeping --
     Usage {
@@ -302,7 +314,7 @@ pub enum TurnEventV1 {
 ///
 /// Serializes `TurnEventV1` into an `EnvelopeV2` and pushes it into the
 /// underlying mpsc channel.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TurnEventSender {
     tx: mpsc::Sender<crate::ipc::envelope_v2::EnvelopeV2>,
 }
@@ -411,6 +423,36 @@ mod tests {
                 && call_id == "call-1"
                 && kind == "structured"
                 && payload == serde_json::json!({"pct": 50})
+        ));
+    }
+
+    #[tokio::test]
+    async fn patch_progress_roundtrips_through_canonical_turn_stream() {
+        let (mut stream, sender) = TurnEventStream::new(StreamConfig::turn_events(2));
+        sender
+            .send(&TurnEventV1::PatchProgress {
+                status: "file_failed".into(),
+                path: Some("src/lib.rs".into()),
+                operation: Some("update".into()),
+                error: Some("hunk did not match".into()),
+                applied_count: None,
+                failed_count: None,
+            })
+            .unwrap();
+
+        assert!(matches!(
+            stream.recv().await.unwrap(),
+            TurnEventV1::PatchProgress {
+                status,
+                path: Some(path),
+                operation: Some(operation),
+                error: Some(error),
+                applied_count: None,
+                failed_count: None,
+            } if status == "file_failed"
+                && path == "src/lib.rs"
+                && operation == "update"
+                && error == "hunk did not match"
         ));
     }
 }

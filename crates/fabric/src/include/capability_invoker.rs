@@ -37,6 +37,7 @@ pub trait CapabilityInvoker: Send + Sync {
             metadata: ToolResultMeta {
                 execution_time_ms: result.usage.wall_time_ms,
                 truncated: false,
+                patch_delta: result.patch_delta.clone(),
             },
         }))
         .await;

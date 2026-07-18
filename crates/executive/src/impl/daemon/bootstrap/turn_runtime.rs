@@ -455,7 +455,8 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
                 context.sandbox,
                 context.cancel,
             )
-            .with_agent_context(context.agent),
+            .with_agent_context(context.agent)
+            .with_turn_event_sender(stream_sender.clone()),
         );
         let action_loop = context.action_loop;
         let notification_observer: crate::service::tool_stream_bridge::ToolNotificationObserver = {

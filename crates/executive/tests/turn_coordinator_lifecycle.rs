@@ -225,6 +225,7 @@ impl fabric::TurnServices for EmptyServices {
             is_error: true,
             usage: Default::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 }

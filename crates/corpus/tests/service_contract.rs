@@ -79,6 +79,7 @@ impl ToolExecutor for RecordingExecutor {
                 ..Default::default()
             },
             audit_id: None,
+            patch_delta: None,
         }
     }
 }

@@ -65,6 +65,7 @@ impl Tool for SystemStatusTool {
             metadata: ToolResultMeta {
                 execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
+                patch_delta: None,
             },
         }
     }

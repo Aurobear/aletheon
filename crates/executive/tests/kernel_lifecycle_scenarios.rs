@@ -34,6 +34,7 @@ impl ToolExecutor for ResultExecutor {
                 ..Default::default()
             },
             audit_id: Some(fabric::AuditEventId::new()),
+            patch_delta: None,
         }
     }
 }
@@ -121,7 +122,10 @@ impl Scenario {
                 session_id: "scenario".into(),
                 working_dir: std::env::temp_dir(),
             },
-            control: InvocationControl { cancel },
+            control: InvocationControl {
+                cancel,
+                turn_event_sender: None,
+            },
         }
     }
 

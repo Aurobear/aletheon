@@ -97,6 +97,7 @@ impl Tool for BashExecTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: elapsed,
                         truncated,
+                        patch_delta: None,
                     },
                 }
             }
@@ -106,6 +107,7 @@ impl Tool for BashExecTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
             Err(_) => ToolResult {
@@ -114,6 +116,7 @@ impl Tool for BashExecTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -172,6 +175,7 @@ impl Tool for BashExecTool {
                         truncated: processed.was_truncated()
                             || captured.stdout_truncated
                             || captured.stderr_truncated,
+                        patch_delta: None,
                     },
                 }
             }
@@ -181,6 +185,7 @@ impl Tool for BashExecTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: 0,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         };
@@ -203,6 +208,7 @@ mod streaming_tests {
             working_dir: std::env::temp_dir(),
             session_id: "bash-stream-test".into(),
             clock: Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            turn_event_sender: None,
         };
         BashExecTool
             .execute_streaming(

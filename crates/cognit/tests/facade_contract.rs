@@ -103,6 +103,7 @@ impl TurnServices for Services {
             is_error: true,
             usage: fabric::UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 

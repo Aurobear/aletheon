@@ -253,6 +253,14 @@ pub enum ClientEvent {
         kind: String,
         payload: serde_json::Value,
     },
+    PatchProgress {
+        status: String,
+        path: Option<String>,
+        operation: Option<String>,
+        error: Option<String>,
+        applied_count: Option<usize>,
+        failed_count: Option<usize>,
+    },
 
     // ── Bookkeeping ──
     Usage {

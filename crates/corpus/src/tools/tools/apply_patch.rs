@@ -6,6 +6,7 @@ use tokio::process::Command;
 use super::mutation_path::validate_mutation_path;
 use super::structured_patch::{
     execute_structured_patch, parse_structured_patch, parse_structured_patch_json, PatchOperation,
+    StreamingPatchApplier,
 };
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
@@ -67,6 +68,7 @@ impl Tool for ApplyPatchTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             };
         }
@@ -128,7 +130,14 @@ impl Tool for ApplyPatchTool {
                 }
             }
 
-            let result = execute_structured_patch(&structured, &base_path);
+            let result = match &ctx.turn_event_sender {
+                Some(sender) => {
+                    StreamingPatchApplier::new(sender.clone())
+                        .apply(&structured.operations, &base_path)
+                        .await
+                }
+                None => execute_structured_patch(&structured, &base_path),
+            };
             let is_error = !result.failed.is_empty();
             return ToolResult {
                 content: serde_json::to_string_pretty(&result)
@@ -137,6 +146,7 @@ impl Tool for ApplyPatchTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: Some(patch_delta(&result)),
                 },
             };
         }
@@ -165,6 +175,7 @@ impl Tool for ApplyPatchTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 }
             }
@@ -177,6 +188,7 @@ impl Tool for ApplyPatchTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     },
                     Err(native_err) => ToolResult {
@@ -188,6 +200,7 @@ impl Tool for ApplyPatchTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     },
                 }
@@ -218,7 +231,45 @@ fn tool_error(message: String, start: fabric::MonoTime, ctx: &ToolContext) -> To
         metadata: ToolResultMeta {
             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
             truncated: false,
+            patch_delta: None,
         },
+    }
+}
+
+fn patch_delta(result: &super::structured_patch::StructuredPatchResult) -> fabric::PatchDelta {
+    fabric::PatchDelta {
+        applied: result
+            .applied
+            .iter()
+            .map(|operation| fabric::PatchDeltaApplied {
+                operation: operation.op_type.clone(),
+                path: operation.path.clone(),
+                hunks_applied: operation.hunks_applied,
+                bytes_written: operation.bytes_written,
+                moved_to: operation.moved_to.clone(),
+            })
+            .collect(),
+        failed: result
+            .failed
+            .iter()
+            .map(|operation| fabric::PatchDeltaFailed {
+                operation: operation.op_type.clone(),
+                path: operation.path.clone(),
+                error: operation.error.clone(),
+                hunks_applied_before_failure: operation.hunks_applied_before_failure,
+            })
+            .collect(),
+        files_changed: result
+            .files_changed
+            .iter()
+            .map(|change| fabric::PatchDeltaFileChange {
+                path: change.path.clone(),
+                change_type: change.change_type.clone(),
+                hunks_applied: change.hunks_applied,
+                bytes_before: change.bytes_before,
+                bytes_after: change.bytes_after,
+            })
+            .collect(),
     }
 }
 
@@ -715,6 +766,7 @@ mod tests {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
 
         let patch = "--- /dev/null\n+++ b/new_file.txt\n@@ -0,0 +1,3 @@\n+line one\n+line two\n+line three\n";
@@ -744,6 +796,7 @@ mod tests {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
 
         let patch = "--- a/existing.txt\n+++ b/existing.txt\n@@ -1,3 +1,3 @@\n line one\n-line two\n+line TWO\n line three\n";
@@ -769,6 +822,7 @@ mod tests {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
 
         let patch = "--- a/doomed.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-delete me\n";
@@ -779,6 +833,40 @@ mod tests {
 
         assert!(!result.is_error, "Expected success: {}", result.content);
         assert!(!file_path.exists(), "File should have been deleted");
+    }
+
+    #[tokio::test]
+    async fn structured_apply_returns_typed_patch_delta_metadata() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+        let result = ApplyPatchTool
+            .execute(
+                json!({
+                    "patch_json": {
+                        "operations": [{
+                            "type": "add",
+                            "path": "delta.txt",
+                            "content": "tracked"
+                        }]
+                    }
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(!result.is_error, "{}", result.content);
+        let delta = result.metadata.patch_delta.expect("structured delta");
+        assert_eq!(delta.applied.len(), 1);
+        assert_eq!(delta.applied[0].operation, "add");
+        assert_eq!(delta.applied[0].path, "delta.txt");
+        assert_eq!(delta.files_changed[0].change_type, "created");
     }
 
     #[test]
@@ -813,6 +901,7 @@ mod tests {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let tool = ApplyPatchTool;
         let input = json!({ "patch": "" });
@@ -829,6 +918,7 @@ mod tests {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let patch = "*** Begin Patch\nAdd File: nested/new.txt\n>>>\nhello\n>>>\n*** End Patch";
 
@@ -854,6 +944,7 @@ mod tests {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
 
         let result = ApplyPatchTool
@@ -915,5 +1006,47 @@ mod tests {
         }];
         let result = apply_hunks(original, &hunks).unwrap();
         assert_eq!(result, "line one\nline two\nline three\n");
+    }
+
+    #[tokio::test]
+    async fn tool_path_uses_streaming_applier_when_sender_is_trusted() {
+        let tmp = TempDir::new().unwrap();
+        let (mut events, sender) =
+            fabric::ipc::TurnEventStream::new(fabric::ipc::StreamConfig::turn_events(8));
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "streaming-tool".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: Some(sender),
+        };
+
+        let result = ApplyPatchTool
+            .execute(
+                json!({
+                    "patch_json": {"operations": [{
+                        "type": "add", "path": "streamed.txt", "content": "done"
+                    }]}
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(!result.is_error);
+        assert!(result.metadata.patch_delta.is_some());
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::PatchProgress { status, .. } if status == "started"
+        ));
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::PatchProgress { status, path: Some(path), .. }
+                if status == "file_changed" && path == "streamed.txt"
+        ));
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::PatchProgress { status, .. } if status == "completed"
+        ));
     }
 }

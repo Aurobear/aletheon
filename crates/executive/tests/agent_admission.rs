@@ -303,6 +303,7 @@ async fn shared_root_rollout_releases_capacity_for_a_later_sibling() {
     let first_request = spawn(root, Some(root), "worker");
     let second_request = spawn(root, Some(root), "worker");
     let context = |spawn| AgentAdmissionRequest {
+        agent_id: AgentId::new(),
         spawn,
         depth: 1,
         parent_profile: None,
@@ -321,6 +322,7 @@ async fn lease_transitions_settle_once_and_expose_content_free_metrics() {
     let request = spawn(AgentId::new(), None, "worker");
     let mut lease = admission
         .reserve(AgentAdmissionRequest {
+            agent_id: AgentId::new(),
             spawn: &request,
             depth: 0,
             parent_profile: None,
@@ -369,6 +371,7 @@ async fn policy_rejects_depth_internal_delegation_and_storage_before_resources()
     let request = spawn(root, Some(root), "worker");
     assert!(admission
         .reserve(AgentAdmissionRequest {
+            agent_id: AgentId::new(),
             spawn: &request,
             depth: 3,
             parent_profile: None,
@@ -379,6 +382,7 @@ async fn policy_rejects_depth_internal_delegation_and_storage_before_resources()
     let memory = AgentProfileId("mnemosyne-consolidator".into());
     assert!(admission
         .reserve(AgentAdmissionRequest {
+            agent_id: AgentId::new(),
             spawn: &request,
             depth: 1,
             parent_profile: Some(&memory),
@@ -388,6 +392,7 @@ async fn policy_rejects_depth_internal_delegation_and_storage_before_resources()
         .is_err());
     assert!(admission
         .reserve(AgentAdmissionRequest {
+            agent_id: AgentId::new(),
             spawn: &request,
             depth: 1,
             parent_profile: None,

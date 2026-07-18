@@ -75,6 +75,11 @@ impl Tool for CountingTool {
             metadata: ToolResultMeta {
                 execution_time_ms: 7,
                 truncated: false,
+                patch_delta: Some(fabric::PatchDelta {
+                    applied: vec![],
+                    failed: vec![],
+                    files_changed: vec![],
+                }),
             },
         }
     }
@@ -115,6 +120,7 @@ fn request(operation_id: OperationId, process_id: ProcessId) -> CapabilityReques
         },
         control: InvocationControl {
             cancel: CancellationToken::new(),
+            turn_event_sender: None,
         },
     }
 }
@@ -190,6 +196,7 @@ async fn guarded_tool_executes_once_with_durable_audit_identity() {
     assert_eq!(result.usage.permit_id, permit.id);
     assert_eq!(result.usage.wall_time_ms, 7);
     assert_eq!(result.usage.output_bytes, 7);
+    assert_eq!(result.patch_delta, Some(fabric::PatchDelta::default()));
     let audit_id = result.audit_id.expect("audit id");
     let line = std::fs::read_to_string(temp.path().join("audit.jsonl")).unwrap();
     let record: serde_json::Value = serde_json::from_str(line.lines().next().unwrap()).unwrap();
@@ -229,6 +236,7 @@ async fn output_rejection_does_not_repeat_side_effect() {
         working_dir: temp.path().into(),
         session_id: "s".into(),
         clock,
+        turn_event_sender: None,
     };
     let report = runner
         .execute_tool_report(&tool, serde_json::json!({}), &ctx, "t")
@@ -258,6 +266,7 @@ async fn unwritable_audit_path_fails_execution() {
         working_dir: temp.path().into(),
         session_id: "s".into(),
         clock,
+        turn_event_sender: None,
     };
     let report = runner
         .execute_tool_report(&tool, serde_json::json!({}), &ctx, "t")

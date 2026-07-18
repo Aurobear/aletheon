@@ -298,6 +298,7 @@ fn result_to_tool<T: serde::Serialize>(
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(started),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
             Err(_) => error_result(GoogleApiError::MalformedResponse, started, ctx),
@@ -313,6 +314,7 @@ fn error_result(error: GoogleApiError, started: u64, ctx: &ToolContext) -> ToolR
         metadata: ToolResultMeta {
             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(started),
             truncated: false,
+            patch_delta: None,
         },
     }
 }

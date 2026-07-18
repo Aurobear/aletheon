@@ -112,6 +112,7 @@ impl CorpusToolExecutor {
                 ..Default::default()
             },
             audit_id: Some(audit_id),
+            patch_delta: None,
         }
     }
 
@@ -171,6 +172,7 @@ impl ToolExecutor for CorpusToolExecutor {
             working_dir: request.authority.working_dir.clone(),
             session_id: request.authority.session_id.clone(),
             clock: self.clock.clone(),
+            turn_event_sender: request.control.turn_event_sender.clone(),
         };
         let started = self.clock.mono_now();
         let report = self
@@ -205,6 +207,7 @@ impl ToolExecutor for CorpusToolExecutor {
                         ..Default::default()
                     },
                     audit_id: Some(report.audit_id),
+                    patch_delta: result.metadata.patch_delta,
                 }
             }
             Err(error) => Self::error_result(request, permit, error.to_string(), report.audit_id),
@@ -247,6 +250,7 @@ impl ToolExecutor for CorpusToolExecutor {
             working_dir: request.authority.working_dir.clone(),
             session_id: request.authority.session_id.clone(),
             clock: self.clock.clone(),
+            turn_event_sender: request.control.turn_event_sender.clone(),
         };
         let started = self.clock.mono_now();
         let report = self
@@ -281,6 +285,7 @@ impl ToolExecutor for CorpusToolExecutor {
                         ..Default::default()
                     },
                     audit_id: Some(report.audit_id),
+                    patch_delta: result.metadata.patch_delta,
                 }
             }
             Err(error) => Self::error_result(request, permit, error.to_string(), report.audit_id),

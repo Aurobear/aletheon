@@ -626,6 +626,7 @@ impl corpus::security::StructuredToolSandbox for ExecServerSandboxBackend {
                 metadata: fabric::ToolResultMeta {
                     execution_time_ms: result.elapsed_ms,
                     truncated: false,
+                    patch_delta: None,
                 },
             });
         }
@@ -681,6 +682,7 @@ impl corpus::security::StructuredToolSandbox for ExecServerSandboxBackend {
                 metadata: fabric::ToolResultMeta {
                     execution_time_ms: context.clock.mono_now().0.saturating_sub(started.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             });
         }
@@ -741,6 +743,7 @@ impl corpus::security::StructuredToolSandbox for ExecServerSandboxBackend {
             metadata: fabric::ToolResultMeta {
                 execution_time_ms: context.clock.mono_now().0.saturating_sub(started.0),
                 truncated: false,
+                patch_delta: None,
             },
         })
     }

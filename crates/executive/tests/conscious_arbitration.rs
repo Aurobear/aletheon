@@ -63,6 +63,7 @@ impl CapabilityInvoker for CountingInner {
             is_error: false,
             usage: UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 }

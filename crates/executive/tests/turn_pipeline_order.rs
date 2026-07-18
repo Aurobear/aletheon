@@ -128,6 +128,7 @@ impl TurnServices for PipelineServices {
             is_error: false,
             usage: fabric::UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 

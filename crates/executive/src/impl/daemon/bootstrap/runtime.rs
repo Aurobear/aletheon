@@ -286,6 +286,7 @@ mod goal_runtime_tests {
                 is_error: true,
                 usage: fabric::UsageReport::default(),
                 audit_id: None,
+                patch_delta: None,
             }
         }
     }

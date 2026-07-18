@@ -347,6 +347,7 @@ mod tests {
                 is_error: false,
                 usage: fabric::UsageReport::default(),
                 audit_id: Some(fabric::AuditEventId::new()),
+                patch_delta: None,
             }
         }
     }

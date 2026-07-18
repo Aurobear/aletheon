@@ -63,6 +63,7 @@ impl Tool for GrepTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -94,6 +95,7 @@ impl Tool for GrepTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: r.truncated,
+                    patch_delta: None,
                 },
             },
             None => ToolResult {
@@ -102,6 +104,7 @@ impl Tool for GrepTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -254,6 +257,7 @@ mod tests {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
                     clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
@@ -292,6 +296,7 @@ mod tests {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
                     clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
@@ -315,6 +320,7 @@ mod tests {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
                     clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;

@@ -138,6 +138,27 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 .unwrap_or_else(|| payload.to_string());
             app.chat.update_exec_progress(&call_id, &progress);
         }
+        ClientEvent::PatchProgress {
+            status,
+            path,
+            operation,
+            error,
+            applied_count,
+            failed_count,
+        } => {
+            let target = path.as_deref().unwrap_or("patch");
+            let operation = operation.as_deref().unwrap_or("apply");
+            let detail = error.unwrap_or_else(|| match (applied_count, failed_count) {
+                (Some(applied), Some(failed)) => format!("{applied} applied, {failed} failed"),
+                _ => String::new(),
+            });
+            app.chat.add_text(
+                ChatRole::System,
+                format!("Patch {status}: {operation} {target} {detail}")
+                    .trim_end()
+                    .to_owned(),
+            );
+        }
         ClientEvent::Usage {
             tokens_in,
             tokens_out,
@@ -771,6 +792,42 @@ mod tests {
         assert!(!app.status.waiting);
         assert!(!app.app_state.streaming);
         assert!(!app.turn_active);
+    }
+
+    #[tokio::test]
+    async fn patch_progress_is_materialized_immediately_in_chat() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let caps = TermCaps {
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        };
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            caps,
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+        );
+        let event = fabric::ui_event::ClientEvent::PatchProgress {
+            status: "file_changed".into(),
+            path: Some("src/lib.rs".into()),
+            operation: Some("update".into()),
+            error: None,
+            applied_count: None,
+            failed_count: None,
+        };
+
+        handle_event(&mut app, &serde_json::to_value(event).unwrap());
+
+        assert!(app.chat.entries.iter().any(|entry| {
+            matches!(entry, ChatEntry::Text(message)
+                if message.content.contains("Patch file_changed")
+                    && message.content.contains("src/lib.rs"))
+        }));
     }
 
     #[tokio::test]

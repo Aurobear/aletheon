@@ -66,6 +66,7 @@ impl Tool for FileSearchTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -114,6 +115,7 @@ impl Tool for FileSearchTool {
             metadata: ToolResultMeta {
                 execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
+                patch_delta: None,
             },
         }
     }
@@ -159,6 +161,7 @@ async fn try_ripgrep(
             metadata: ToolResultMeta {
                 execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
+                patch_delta: None,
             },
         });
     }
@@ -179,6 +182,7 @@ async fn try_ripgrep(
         metadata: ToolResultMeta {
             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
             truncated,
+            patch_delta: None,
         },
     })
 }
@@ -217,6 +221,7 @@ async fn try_grep(
             metadata: ToolResultMeta {
                 execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
+                patch_delta: None,
             },
         });
     }
@@ -237,6 +242,7 @@ async fn try_grep(
         metadata: ToolResultMeta {
             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
             truncated,
+            patch_delta: None,
         },
     })
 }
@@ -292,6 +298,7 @@ async fn try_find_grep(
             metadata: ToolResultMeta {
                 execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
+                patch_delta: None,
             },
         });
     }
@@ -312,6 +319,7 @@ async fn try_find_grep(
         metadata: ToolResultMeta {
             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
             truncated,
+            patch_delta: None,
         },
     })
 }
@@ -348,6 +356,7 @@ mod tests {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
                     clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
@@ -385,6 +394,7 @@ mod tests {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
                     clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
@@ -412,6 +422,7 @@ mod tests {
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
                     clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;

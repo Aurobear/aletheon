@@ -38,6 +38,9 @@ pub struct ToolContext {
     pub working_dir: std::path::PathBuf,
     pub session_id: String,
     pub clock: Arc<dyn crate::Clock>,
+    /// Optional canonical turn stream supplied by the trusted Executive path.
+    /// Tool/model input cannot create or replace this sender.
+    pub turn_event_sender: Option<crate::ipc::TurnEventSender>,
 }
 
 impl ToolContext {
@@ -105,10 +108,50 @@ pub struct ToolResult {
     pub metadata: ToolResultMeta,
 }
 
+/// Neutral, protocol-stable description of a structured patch result. Fabric
+/// owns the transport contract while Corpus remains free to own patch parsing
+/// and filesystem application.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchDelta {
+    pub applied: Vec<PatchDeltaApplied>,
+    pub failed: Vec<PatchDeltaFailed>,
+    pub files_changed: Vec<PatchDeltaFileChange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchDeltaApplied {
+    pub operation: String,
+    pub path: String,
+    pub hunks_applied: Option<usize>,
+    pub bytes_written: Option<u64>,
+    pub moved_to: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchDeltaFailed {
+    pub operation: String,
+    pub path: String,
+    pub error: String,
+    pub hunks_applied_before_failure: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchDeltaFileChange {
+    pub path: String,
+    pub change_type: String,
+    pub hunks_applied: usize,
+    pub bytes_before: u64,
+    pub bytes_after: u64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolResultMeta {
     pub execution_time_ms: u64,
     pub truncated: bool,
+    /// Structured filesystem delta produced by an `apply_patch` invocation.
+    /// Fabric owns this neutral DTO so it does not depend on Corpus patch types.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_delta: Option<PatchDelta>,
 }
 
 /// Visibility tier for tools.
@@ -337,6 +380,7 @@ mod tests {
                     working_dir: std::env::temp_dir(),
                     session_id: "test".into(),
                     clock: Arc::new(FixedClock),
+                    turn_event_sender: None,
                 },
                 &mut sink,
             )

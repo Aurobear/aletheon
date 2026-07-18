@@ -138,6 +138,7 @@ impl TurnServices for ScriptedTurnServices {
             is_error: false,
             usage: fabric::UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 
@@ -208,6 +209,7 @@ impl TurnServices for StreamingServices {
             is_error: true,
             usage: Default::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 
@@ -290,6 +292,7 @@ impl TurnServices for InterjectingServices {
             is_error: false,
             usage: Default::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 

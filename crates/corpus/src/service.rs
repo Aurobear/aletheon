@@ -143,6 +143,7 @@ pub trait CorpusService: Send + Sync {
             metadata: fabric::ToolResultMeta {
                 execution_time_ms: result.usage.wall_time_ms,
                 truncated: false,
+                patch_delta: None,
             },
         }))
         .await;
@@ -412,6 +413,7 @@ impl ToolExecutor for ActivatedCorpusExecutor {
                     is_error: true,
                     usage: Default::default(),
                     audit_id: None,
+                    patch_delta: None,
                 };
             }
         };
@@ -429,6 +431,7 @@ impl ToolExecutor for ActivatedCorpusExecutor {
                 is_error: true,
                 usage: Default::default(),
                 audit_id: None,
+                patch_delta: None,
             })
     }
 
@@ -447,6 +450,7 @@ impl ToolExecutor for ActivatedCorpusExecutor {
                     is_error: true,
                     usage: Default::default(),
                     audit_id: None,
+                    patch_delta: None,
                 };
             }
         };
@@ -467,6 +471,7 @@ impl ToolExecutor for ActivatedCorpusExecutor {
                 is_error: true,
                 usage: Default::default(),
                 audit_id: None,
+                patch_delta: None,
             })
     }
 }

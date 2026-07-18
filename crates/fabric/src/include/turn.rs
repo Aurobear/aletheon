@@ -70,12 +70,14 @@ pub struct CapabilityAuthority {
 #[derive(Debug, Clone)]
 pub struct InvocationControl {
     pub cancel: CancellationToken,
+    pub turn_event_sender: Option<crate::ipc::TurnEventSender>,
 }
 
 impl Default for InvocationControl {
     fn default() -> Self {
         Self {
             cancel: CancellationToken::new(),
+            turn_event_sender: None,
         }
     }
 }
@@ -94,6 +96,8 @@ pub struct CapabilityResult {
     pub is_error: bool,
     pub usage: UsageReport,
     pub audit_id: Option<AuditEventId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_delta: Option<crate::PatchDelta>,
 }
 
 #[async_trait]
@@ -166,6 +170,7 @@ impl TurnServices for StubTurnServices {
             is_error: true,
             usage: UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 }
