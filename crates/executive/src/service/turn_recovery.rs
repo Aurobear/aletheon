@@ -128,7 +128,7 @@ fn classify_incomplete_turns(items: &[ItemRecord]) -> Vec<IncompleteTurn> {
 
         if has_user_message && !has_terminal {
             incomplete.push(IncompleteTurn {
-                turn_id: *turn_id,
+                turn_id: turn_id.clone(),
                 classification: if has_tool_call {
                     RecoveryClassification::Failed
                 } else {

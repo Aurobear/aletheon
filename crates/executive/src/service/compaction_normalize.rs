@@ -36,11 +36,11 @@ pub struct NormalizedItems {
 /// This guarantees the model never receives a ToolResult without its
 /// paired ToolUse when replaying canonical history.
 pub fn normalize_tool_pairs(items: Vec<ItemPayload>) -> NormalizedItems {
-    let tool_call_ids: HashSet<&str> = items
+    let tool_call_ids: HashSet<String> = items
         .iter()
         .filter_map(|item| {
             if let ItemPayload::ToolCall { call_id, .. } = item {
-                Some(call_id.as_str())
+                Some(call_id.clone())
             } else {
                 None
             }
@@ -59,7 +59,7 @@ pub fn normalize_tool_pairs(items: Vec<ItemPayload>) -> NormalizedItems {
                 audit_id,
             } = &item
             {
-                if !tool_call_ids.contains(call_id.as_str()) {
+                if !tool_call_ids.contains(call_id) {
                     orphan_results += 1;
                     return ItemPayload::SystemNotice {
                         content: format!(

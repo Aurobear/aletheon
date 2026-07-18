@@ -11,7 +11,7 @@ use fabric::{
     SESSION_SCHEMA_VERSION,
 };
 use fabric::types::prompt_queue::{evaluate_cancel, PromptEnvelope, PromptKind, PromptState};
-use crate::core::config::GrokHardeningConfig;
+use crate::core::config::{BackpressureConfig, GrokHardeningConfig};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -315,7 +315,20 @@ impl TurnCoordinator {
         let outcome = self
             .run_started_turn(&request, cancel.clone(), runner)
             .await;
-        self.active.lock().await.remove(&active_key);
+
+        // M4-T1: when compaction_v2 is enabled, only remove from active
+        // index if terminal flush succeeded. Failure leaves entry intact
+        // for M4-T2 recovery scan and M5 doctor.
+        let durable = self.grok_hardening.compaction_v2 && outcome.is_err();
+        if !durable {
+            self.active.lock().await.remove(&active_key);
+        } else {
+            tracing::warn!(
+                session = %request.context.thread_id.0,
+                "turn terminal flush failed; active index entry retained for recovery scan"
+            );
+        }
+
         match outcome {
             Ok(completed) => {
                 let terminal = match completed.result.stop {
@@ -370,29 +383,51 @@ impl TurnCoordinator {
         Fut: Future<Output = Result<TurnExecution>>,
     {
         let session_id = SessionId(request.context.thread_id.0.clone());
-        if self.store.load_session(&session_id).await?.is_none() {
-            self.store
-                .create(SessionRecord {
-                    schema_version: SESSION_SCHEMA_VERSION,
-                    id: session_id.clone(),
-                    parent: None,
-                    created_at_ms: self.now_ms(),
-                    status: SessionStatus::Active,
-                })
-                .await?;
+
+        // M4-T1: track each durable write so failed terminal flush is
+        // observable and leaves the active index entry intact.
+        let mut write_tracker = if self.grok_hardening.compaction_v2 {
+            Some(TurnWriteTracker::new())
+        } else {
+            None
+        };
+
+        // Track session create.
+        {
+            let result = if self.store.load_session(&session_id).await?.is_none() {
+                self.store
+                    .create(SessionRecord {
+                        schema_version: SESSION_SCHEMA_VERSION,
+                        id: session_id.clone(),
+                        parent: None,
+                        created_at_ms: self.now_ms(),
+                        status: SessionStatus::Active,
+                    })
+                    .await
+                    .map(|_| WriteResult::Succeeded)
+                    .unwrap_or_else(|e| write_failed(&e, WritePhase::SessionCreate))
+            } else {
+                WriteResult::Succeeded
+            };
+            if let Some(ref mut tracker) = write_tracker {
+                tracker.record(result);
+            }
         }
+
         let turn_id = request
             .context
             .turn_id
             .ok_or_else(|| anyhow!("turn context is missing its authoritative turn id"))?;
         let mut sequence = self.next_sequence(&session_id).await?;
-        self.append(
+        self.append_tracked(
             &session_id,
             turn_id,
             &mut sequence,
             ItemPayload::UserMessage {
                 content: request.input.clone(),
             },
+            WritePhase::UserMessage,
+            &mut write_tracker,
         )
         .await?;
 
@@ -407,7 +442,7 @@ impl TurnCoordinator {
                 } = execution;
                 if let Some(receipt) = context_projection {
                     receipt.validate()?;
-                    self.append(
+                    self.append_tracked(
                         &session_id,
                         turn_id,
                         &mut sequence,
@@ -422,11 +457,18 @@ impl TurnCoordinator {
                                 .map(|id| id.0.to_string())
                                 .collect(),
                         },
+                        WritePhase::ContextProjection,
+                        &mut write_tracker,
                     )
                     .await?;
                 }
                 for payload in items {
-                    self.append(&session_id, turn_id, &mut sequence, payload)
+                    let phase = match &payload {
+                        ItemPayload::ToolCall { .. } => WritePhase::ToolCall,
+                        ItemPayload::ToolResult { .. } => WritePhase::ToolResult,
+                        _ => WritePhase::ContextFragment,
+                    };
+                    self.append_tracked(&session_id, turn_id, &mut sequence, payload, phase, &mut write_tracker)
                         .await?;
                 }
                 let terminal = if result.stop == TurnStop::Completed {
@@ -438,26 +480,106 @@ impl TurnCoordinator {
                         content: format!("turn stopped: {:?}", result.stop),
                     }
                 };
-                self.append(&session_id, turn_id, &mut sequence, terminal)
-                    .await?;
+                self.append_tracked(
+                    &session_id,
+                    turn_id,
+                    &mut sequence,
+                    terminal,
+                    WritePhase::TerminalFlush,
+                    &mut write_tracker,
+                )
+                .await?;
+
+                // M4-T1: verify all writes succeeded.
+                if let Some(ref tracker) = write_tracker {
+                    if !tracker.all_succeeded() {
+                        for result in &tracker.clone().into_results() {
+                            if let WriteResult::Failed { reason, phase } = result {
+                                tracing::error!(
+                                    phase = %phase,
+                                    reason = %reason,
+                                    session = %session_id.0,
+                                    "durable write failed during turn execution"
+                                );
+                            }
+                        }
+                        anyhow::bail!(
+                            "durable write failed during turn {}: not all writes succeeded",
+                            turn_id.0
+                        );
+                    }
+                }
+
                 Ok(CompletedExecution { result, projection })
             }
             Err(error) => {
-                self.append(
+                self.append_tracked(
                     &session_id,
                     turn_id,
                     &mut sequence,
                     ItemPayload::SystemNotice {
                         content: format!("turn failed: {error}"),
                     },
+                    WritePhase::TerminalFlush,
+                    &mut write_tracker,
                 )
                 .await
                 .map_err(|append| {
                     anyhow!("turn failed: {error}; failure notice append failed: {append}")
                 })?;
+
+                // Error path: check write durability.
+                if let Some(ref tracker) = write_tracker {
+                    if !tracker.all_succeeded() {
+                        tracing::error!(
+                            session = %session_id.0,
+                            "durable writes failed during error-path terminal flush"
+                        );
+                    }
+                }
                 Err(error)
             }
         }
+    }
+
+    /// Append an item and record the write result in the tracker (M4-T1).
+    async fn append_tracked(
+        &self,
+        session: &SessionId,
+        turn_id: TurnId,
+        sequence: &mut u64,
+        payload: ItemPayload,
+        phase: WritePhase,
+        tracker: &mut Option<TurnWriteTracker>,
+    ) -> Result<()> {
+        let current = *sequence;
+        let item = ItemRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: ItemId::new(),
+            session_id: session.clone(),
+            turn_id,
+            sequence: current,
+            created_at_ms: self.now_ms(),
+            payload,
+        };
+        let result = match self.store.append(session, current, item).await {
+            Ok(_) => WriteResult::Succeeded,
+            Err(e) => write_failed(&e, phase),
+        };
+        if let Some(ref mut t) = tracker {
+            t.record(result.clone());
+        }
+        if result.is_failed() {
+            anyhow::bail!(
+                "append failed for phase {phase}: {}",
+                match &result {
+                    WriteResult::Failed { reason, .. } => reason,
+                    _ => unreachable!(),
+                }
+            );
+        }
+        *sequence += 1;
+        Ok(())
     }
 
     async fn next_sequence(&self, session: &SessionId) -> Result<u64> {

@@ -50,7 +50,8 @@ pub async fn inject_context_fragments(
             let bounded = truncate_at_char_boundary(content, MAX_CONTEXT_FRAGMENT_BYTES);
             let payload = ItemPayload::SystemNotice {
                 content: format!(
-                    "[context-fragment source={source} turn={turn_id} phase={phase:?}]\n{bounded}"
+                    "[context-fragment source={source} turn={} phase={phase:?}]\n{bounded}",
+                    turn_id.0,
                 ),
             };
             let item = fabric::ItemRecord {

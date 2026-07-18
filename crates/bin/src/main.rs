@@ -4,6 +4,8 @@
 //!   (none)       TUI client (auto-starts daemon if not running)
 //!   daemon       Start daemon (auto-detects systemd/container/foreground)
 //!   exec         Non-interactive execution
+//!   config       Inspect effective configuration or layers
+//!   doctor       Run diagnostics and print a health report
 //!   -m `msg`      Send single message to daemon
 //!   version      Print version + git commit
 
@@ -109,6 +111,45 @@ enum Commands {
     Version,
     /// Restore terminal modes after an interrupted TUI session
     RestoreTerminal,
+    /// Inspect effective configuration (merged layers)
+    Config {
+        #[command(subcommand)]
+        sub: ConfigSub,
+    },
+    /// Run diagnostics and print a health report
+    Doctor {
+        /// Output as JSON schema-stable report
+        #[arg(long)]
+        json: bool,
+        /// Path to a specific config file to validate
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Project directory for layered config discovery
+        #[arg(short = 'd', long)]
+        project_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigSub {
+    /// Print the fully merged effective configuration (secrets redacted)
+    Effective {
+        /// Path to a specific config file
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Project directory for layered config discovery
+        #[arg(short = 'd', long)]
+        project_dir: Option<PathBuf>,
+    },
+    /// Show each config layer source and its overrides
+    Layers {
+        /// Path to a specific config file
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Project directory for layered config discovery
+        #[arg(short = 'd', long)]
+        project_dir: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -186,6 +227,21 @@ async fn main() -> Result<()> {
             println!("aletheon {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        (Some(Commands::Config { sub }), _) => {
+            init_tracing("aletheon::config");
+            handle_config(sub).await
+        }
+        (
+            Some(Commands::Doctor {
+                json,
+                config,
+                project_dir,
+            }),
+            _,
+        ) => {
+            init_tracing("aletheon::doctor");
+            handle_doctor(*json, config.as_deref(), project_dir.as_deref()).await
+        }
         (Some(Commands::RestoreTerminal), _) => {
             interact::tui::restore_terminal();
             println!("Terminal restored to normal state.");
@@ -220,6 +276,100 @@ async fn main() -> Result<()> {
             .await
         }
     }
+}
+
+// ── Config & Doctor handlers ────────────────────────────────────────────────
+
+async fn handle_config(sub: &ConfigSub) -> Result<()> {
+    use executive::core::config;
+    match sub {
+        ConfigSub::Effective { config, project_dir } => {
+            let loaded = if let Some(path) = config {
+                let txt = std::fs::read_to_string(path)?;
+                let layer = config::ConfigLayer::from_toml(
+                    config::ConfigSource::new(
+                        config::ConfigSourceKind::Cli,
+                        path.display().to_string(),
+                    ),
+                    &txt,
+                )?;
+                config::merge_layers([layer])?
+            } else {
+                config::diagnostics::load_config_diagnostics(project_dir.as_deref())?
+            };
+            let view = loaded.effective_view();
+            println!("{}", serde_json::to_string_pretty(&view.config)?);
+        }
+        ConfigSub::Layers { config, project_dir } => {
+            let loaded = if let Some(path) = config {
+                let txt = std::fs::read_to_string(path)?;
+                let layer = config::ConfigLayer::from_toml(
+                    config::ConfigSource::new(
+                        config::ConfigSourceKind::Cli,
+                        path.display().to_string(),
+                    ),
+                    &txt,
+                )?;
+                config::merge_layers([layer])?
+            } else {
+                config::diagnostics::load_config_diagnostics(project_dir.as_deref())?
+            };
+            let view = loaded.layers_view();
+            println!("{}", serde_json::to_string_pretty(&view)?);
+        }
+    }
+    Ok(())
+}
+
+async fn handle_doctor(
+    json: bool,
+    config_path: Option<&PathBuf>,
+    project_dir: Option<&PathBuf>,
+) -> Result<()> {
+    use executive::core::config;
+    use executive::r#impl::doctor::DoctorReport;
+    let loaded = if let Some(path) = config_path {
+        let txt = std::fs::read_to_string(path)?;
+        let layer = config::ConfigLayer::from_toml(
+            config::ConfigSource::new(
+                config::ConfigSourceKind::Cli,
+                path.display().to_string(),
+            ),
+            &txt,
+        )?;
+        config::merge_layers([layer])?
+    } else {
+        config::diagnostics::load_config_diagnostics(project_dir)?
+    };
+    let report = DoctorReport::standalone(&loaded);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("aletheon doctor — v{}", report.daemon_version);
+        println!("  status:    {}", report.status);
+        println!(
+            "  config:    {} ({} leaves)",
+            report.config.validity, report.config.leaf_count
+        );
+        println!(
+            "  deploy:    sha={} (core_compat={})",
+            report.deployment.installed_sha,
+            report
+                .deployment
+                .runtime_versions_compatible
+                .map_or("unknown".to_string(), |c| c.to_string())
+        );
+        println!(
+            "  MCP:       {} servers configured",
+            report.mcp_servers.len()
+        );
+        println!("  sandbox:   {}", report.sandbox.status);
+        println!("  writer:    {}", report.writer_health.status);
+        for warning in &report.warnings {
+            println!("  WARNING:   {warning}");
+        }
+    }
+    Ok(())
 }
 
 // ── Tracing ─────────────────────────────────────────────────────────────────
