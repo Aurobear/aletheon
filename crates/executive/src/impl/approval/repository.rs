@@ -114,6 +114,66 @@ impl ApprovalRepository {
         })
     }
 
+    /// Persist a non-Goal approval request (for example MCP elicitation) in
+    /// the shared approval database before it is exposed to an operator.
+    pub fn record_external_request(
+        &self,
+        correlation_id: &str,
+        source: &str,
+        summary: &str,
+        requested_at_ms: i64,
+    ) -> Result<(), ApprovalRepositoryError> {
+        self.db.execute(
+            "INSERT INTO external_approval_audit
+                (correlation_id, source, summary, requested_at_ms, resolved_at_ms, decision)
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL)
+             ON CONFLICT(correlation_id) DO UPDATE SET
+                source=excluded.source,
+                summary=excluded.summary,
+                requested_at_ms=excluded.requested_at_ms,
+                resolved_at_ms=NULL,
+                decision=NULL",
+            params![correlation_id, source, summary, requested_at_ms],
+        )?;
+        Ok(())
+    }
+
+    /// Complete a previously persisted external approval request.
+    pub fn record_external_resolution(
+        &self,
+        correlation_id: &str,
+        decision: &str,
+        resolved_at_ms: i64,
+    ) -> Result<(), ApprovalRepositoryError> {
+        let changed = self.db.execute(
+            "UPDATE external_approval_audit
+             SET resolved_at_ms=?2, decision=?3
+             WHERE correlation_id=?1 AND decision IS NULL",
+            params![correlation_id, resolved_at_ms, decision],
+        )?;
+        if changed == 0 {
+            return Err(ApprovalRepositoryError::ExternalNotFound(
+                correlation_id.to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn external_resolution(
+        &self,
+        correlation_id: &str,
+    ) -> Result<Option<String>, ApprovalRepositoryError> {
+        self.db
+            .query_row(
+                "SELECT decision FROM external_approval_audit WHERE correlation_id=?1",
+                params![correlation_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     pub fn with_channel_policy(mut self, policy: ApprovalChannelPolicy) -> Self {
         self.channel_policy = policy;
         self
@@ -838,6 +898,7 @@ fn resolution_matches(
 #[derive(Debug)]
 pub enum ApprovalRepositoryError {
     NotFound(ApprovalId),
+    ExternalNotFound(String),
     GoalNotFound(GoalId),
     WrongOwner,
     ChannelDenied,
@@ -943,6 +1004,25 @@ mod tests {
         assert_eq!(first.id, second.id);
         let reopened = ApprovalRepository::open(f._file.path()).unwrap();
         assert_eq!(reopened.get(first.id).unwrap().unwrap(), first);
+    }
+
+    #[test]
+    fn external_approval_audit_is_durable_across_restart() {
+        let f = Fixture::new();
+        f.repo
+            .record_external_request("elicitation::server::1", "mcp::server", "Choose", 100)
+            .unwrap();
+        f.repo
+            .record_external_resolution("elicitation::server::1", "approve", 125)
+            .unwrap();
+
+        let reopened = ApprovalRepository::open(f._file.path()).unwrap();
+        assert_eq!(
+            reopened
+                .external_resolution("elicitation::server::1")
+                .unwrap(),
+            Some("approve".into())
+        );
     }
     #[test]
     fn approve_reject_replay_owner_channel_and_stale_versions() {

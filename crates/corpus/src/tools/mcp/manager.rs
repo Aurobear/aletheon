@@ -58,11 +58,19 @@ impl McpManager {
 
     /// Return discovered resources as boxed [`Tool`] trait objects.
     pub fn resource_wrappers(&self) -> Vec<Box<dyn Tool>> {
-        self.inner
+        let mut wrappers: Vec<Box<dyn Tool>> = self
+            .inner
             .get_all_resource_providers()
             .into_iter()
             .map(|p| p.boxed_clone())
-            .collect()
+            .collect();
+        wrappers.extend(
+            self.inner
+                .get_resource_read_tools()
+                .into_iter()
+                .map(|tool| tool.boxed_clone()),
+        );
+        wrappers
     }
 
     /// List resources from a named server.
@@ -422,6 +430,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: None,
                 health_check_interval_sec: 0,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };
@@ -465,6 +476,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: None,
                 health_check_interval_sec: 0,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };
@@ -517,6 +531,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: None,
                 health_check_interval_sec: 0,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };
@@ -551,6 +568,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: None,
                 health_check_interval_sec: 0,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };
@@ -597,6 +617,9 @@ mod tests {
             oauth: None,
             request_timeout_ms: None,
             health_check_interval_sec: 0,
+            allowlist: Vec::new(),
+            denylist: Vec::new(),
+            permission_overrides: std::collections::HashMap::new(),
         };
 
         let json_str = serde_json::to_string(&config).unwrap();
@@ -640,6 +663,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: None,
                 health_check_interval_sec: 0,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };
@@ -674,6 +700,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: None,
                 health_check_interval_sec: 0,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };
@@ -688,12 +717,13 @@ mod tests {
             !resource_tools.is_empty(),
             "Should have discovered resources"
         );
-        assert_eq!(resource_tools.len(), 2);
+        assert_eq!(resource_tools.len(), 3);
 
         // Check naming convention: mcp.{server_name}.resource.{resource_name}
         let names: Vec<&str> = resource_tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"mcp.gbrain.resource.docs_readme"));
         assert!(names.contains(&"mcp.gbrain.resource.app_config"));
+        assert!(names.contains(&"gbrain__mcp_resource_read"));
 
         // Resources should be permission L0 (read-only)
         for tool in &resource_tools {
@@ -726,6 +756,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: None,
                 health_check_interval_sec: 0,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };
@@ -761,6 +794,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: None,
                 health_check_interval_sec: 0,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };
@@ -795,6 +831,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: None,
                 health_check_interval_sec: 0,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };
@@ -851,6 +890,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: None,
                 health_check_interval_sec: 0,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };
@@ -892,6 +934,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: None,
                 health_check_interval_sec: 0,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };
@@ -932,6 +977,9 @@ mod tests {
                 oauth: None,
                 request_timeout_ms: Some(100),
                 health_check_interval_sec: 1,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
         };

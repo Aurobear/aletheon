@@ -13,7 +13,7 @@ use super::auth::{
 };
 use super::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use super::transport::{McpNotification, McpTransport};
-use super::wrapper::{McpResourceProvider, McpToolWrapper};
+use super::wrapper::{McpResourceProvider, McpResourceReadTool, McpToolWrapper};
 
 // ---------------------------------------------------------------------------
 // Elicitation handler trait
@@ -828,7 +828,11 @@ impl ElicitationHandler for McpElicitationHandler {
             ),
             connection_id: fabric::ConnectionId::new(),
             turn_id: fabric::TurnId::new(),
-            call_id: format!("elicitation::{}", self.server_name),
+            call_id: format!(
+                "elicitation::{}::{}",
+                self.server_name,
+                uuid::Uuid::new_v4()
+            ),
             workspace: fabric::WorkspacePolicy::from_resolved_roots("/".into(), vec![])
                 .unwrap_or_else(|_| {
                     fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap()
@@ -1179,9 +1183,11 @@ impl McpConnectionManager {
                     }
                 };
 
-                if !self.should_register_tool(&normalized_name) {
+                if !self.should_register_tool(server_name, &tool.name, &normalized_name) {
                     continue;
                 }
+
+                let overrides = self.permission_overrides(server_name);
 
                 wrappers.push(McpToolWrapper {
                     normalized_name,
@@ -1189,7 +1195,7 @@ impl McpConnectionManager {
                     client: client_arc.clone(),
                     trust_level: client.trust_level,
                     server_name: server_name.clone(),
-                    overrides: self.config.permission_overrides.clone(),
+                    overrides,
                     supports_parallel: client.supports_parallel_tool_calls,
                 });
             }
@@ -1197,13 +1203,28 @@ impl McpConnectionManager {
         wrappers
     }
 
-    fn should_register_tool(&self, tool_name: &str) -> bool {
-        if self
+    fn should_register_tool(
+        &self,
+        server_name: &str,
+        advertised_name: &str,
+        registered_name: &str,
+    ) -> bool {
+        let server = self
             .config
-            .tool_denylist
+            .servers
             .iter()
-            .any(|d| tool_name == d || tool_name.starts_with(d))
-        {
+            .find(|server| server.name == server_name);
+        let matches = |entry: &str| advertised_name == entry || registered_name == entry;
+        if server.is_some_and(|server| server.denylist.iter().any(|entry| matches(entry))) {
+            return false;
+        }
+        if let Some(server) = server {
+            if !server.allowlist.is_empty() && !server.allowlist.iter().any(|entry| matches(entry))
+            {
+                return false;
+            }
+        }
+        if self.config.tool_denylist.iter().any(|entry| matches(entry)) {
             return false;
         }
         if !self.config.tool_allowlist.is_empty() {
@@ -1211,9 +1232,33 @@ impl McpConnectionManager {
                 .config
                 .tool_allowlist
                 .iter()
-                .any(|a| tool_name == a || tool_name.starts_with(a));
+                .any(|entry| matches(entry));
         }
         true
+    }
+
+    fn permission_overrides(
+        &self,
+        server_name: &str,
+    ) -> std::collections::HashMap<String, crate::tools::PermissionLevel> {
+        let mut overrides = self.config.permission_overrides.clone();
+        if let Some(server) = self
+            .config
+            .servers
+            .iter()
+            .find(|server| server.name == server_name)
+        {
+            overrides.extend(server.permission_overrides.iter().map(|(name, level)| {
+                let level = match level {
+                    cognit::config::McpPermissionLevel::L0 => crate::tools::PermissionLevel::L0,
+                    cognit::config::McpPermissionLevel::L1 => crate::tools::PermissionLevel::L1,
+                    cognit::config::McpPermissionLevel::L2 => crate::tools::PermissionLevel::L2,
+                    cognit::config::McpPermissionLevel::L3 => crate::tools::PermissionLevel::L3,
+                };
+                (name.clone(), level)
+            }));
+        }
+        overrides
     }
 
     pub fn get_client(&self, server_name: &str) -> Option<Arc<Mutex<McpClient>>> {
@@ -1281,11 +1326,32 @@ impl McpConnectionManager {
                     mcp_resource: resource.clone(),
                     client: client_arc.clone(),
                     server_name: server_name.clone(),
-                    overrides: self.config.permission_overrides.clone(),
+                    overrides: self.permission_overrides(server_name),
                 });
             }
         }
         providers
+    }
+
+    pub fn get_resource_read_tools(&self) -> Vec<McpResourceReadTool> {
+        let clients = self.clients.read().expect("MCP clients lock poisoned");
+        clients
+            .iter()
+            .filter_map(|(server_name, client)| {
+                let normalized_name = if self.config.tool_name_prefix {
+                    format!("{}__mcp_resource_read", server_name)
+                } else {
+                    "mcp_resource_read".to_string()
+                };
+                self.should_register_tool(server_name, "mcp_resource_read", &normalized_name)
+                    .then(|| McpResourceReadTool {
+                        normalized_name,
+                        client: client.clone(),
+                        server_name: server_name.clone(),
+                        overrides: self.permission_overrides(server_name),
+                    })
+            })
+            .collect()
     }
 
     pub async fn list_resources(&self, server_name: &str) -> Result<Vec<McpResource>> {

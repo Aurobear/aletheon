@@ -11,6 +11,7 @@ use crate::r#impl::daemon::handler::RequestHandler;
 use crate::session::store::SessionStore;
 use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
+use async_trait::async_trait;
 use cognit::core::reflector::Reflector;
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
@@ -56,6 +57,67 @@ use super::super::debug_handler::DebugHandler;
 use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
+
+struct DurableSocketApprovalGate {
+    socket: Arc<SocketApprovalGate>,
+    repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
+    clock: Arc<dyn Clock>,
+}
+
+#[async_trait]
+impl corpus::security::approval::ApprovalGate for DurableSocketApprovalGate {
+    async fn request(
+        &self,
+        request: &corpus::security::approval::ApprovalRequest,
+    ) -> corpus::security::approval::ApprovalDecision {
+        let requested_at_ms = self.clock.wall_now().0;
+        if self
+            .repository
+            .lock()
+            .ok()
+            .and_then(|repository| {
+                repository
+                    .record_external_request(
+                        &request.call_id,
+                        &request.tool,
+                        &request.action_summary,
+                        requested_at_ms,
+                    )
+                    .ok()
+            })
+            .is_none()
+        {
+            return corpus::security::approval::ApprovalDecision::Deny;
+        }
+
+        let decision = self.socket.request(request).await;
+        let decision_wire = match decision {
+            corpus::security::approval::ApprovalDecision::Approve => "approve",
+            corpus::security::approval::ApprovalDecision::Deny => "deny",
+            corpus::security::approval::ApprovalDecision::ApproveForSession => {
+                "approve_for_session"
+            }
+        };
+        if self
+            .repository
+            .lock()
+            .ok()
+            .and_then(|repository| {
+                repository
+                    .record_external_resolution(
+                        &request.call_id,
+                        decision_wire,
+                        self.clock.wall_now().0,
+                    )
+                    .ok()
+            })
+            .is_none()
+        {
+            return corpus::security::approval::ApprovalDecision::Deny;
+        }
+        decision
+    }
+}
 
 use super::request_ports::{
     initialize_self_field, retention_admin_port, RequestFacadePorts, TurnRuntimeFacadePorts,
@@ -379,8 +441,13 @@ impl RequestHandler {
         }
 
         // One approval gate is shared by guarded tools and MCP elicitation.
-        let (approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
-        let approval_gate = Arc::new(approval_gate);
+        let (socket_approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
+        let approval_gate: Arc<dyn corpus::security::approval::ApprovalGate> =
+            Arc::new(DurableSocketApprovalGate {
+                socket: Arc::new(socket_approval_gate),
+                repository: approval_repository.clone(),
+                clock: clock.clone(),
+            });
 
         // MCP servers. Keep the manager alive: gbrain recall/capture calls the
         // same authenticated connections after startup tool registration.

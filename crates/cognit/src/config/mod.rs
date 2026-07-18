@@ -751,6 +751,25 @@ pub struct McpServerConfig {
     pub request_timeout_ms: Option<u64>,
     #[serde(default = "default_mcp_health_check_interval_sec")]
     pub health_check_interval_sec: u64,
+    /// Tool names exposed by this server. Empty means all discovered tools.
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+    /// Tool names never exposed by this server. Deny entries take precedence.
+    #[serde(default)]
+    pub denylist: Vec<String>,
+    /// Per-tool permission levels, keyed by the server-advertised tool name or
+    /// its final registered name.
+    #[serde(default)]
+    pub permission_overrides: std::collections::HashMap<String, McpPermissionLevel>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpPermissionLevel {
+    L0,
+    L1,
+    L2,
+    L3,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -835,6 +854,12 @@ struct McpServerConfigWire {
     request_timeout_ms: Option<u64>,
     #[serde(default = "default_mcp_health_check_interval_sec")]
     health_check_interval_sec: u64,
+    #[serde(default, alias = "allowlist")]
+    tool_allowlist: Vec<String>,
+    #[serde(default, alias = "denylist")]
+    tool_denylist: Vec<String>,
+    #[serde(default)]
+    permission_overrides: std::collections::HashMap<String, McpPermissionLevel>,
 }
 
 fn default_mcp_transport_wire() -> McpTransportWire {
@@ -869,6 +894,9 @@ impl From<McpServerConfigWire> for McpServerConfig {
             oauth: wire.oauth,
             request_timeout_ms: wire.request_timeout_ms,
             health_check_interval_sec: wire.health_check_interval_sec,
+            allowlist: wire.tool_allowlist,
+            denylist: wire.tool_denylist,
+            permission_overrides: wire.permission_overrides,
         }
     }
 }
@@ -887,6 +915,9 @@ impl Default for McpServerConfig {
             oauth: None,
             request_timeout_ms: None,
             health_check_interval_sec: default_mcp_health_check_interval_sec(),
+            allowlist: Vec::new(),
+            denylist: Vec::new(),
+            permission_overrides: std::collections::HashMap::new(),
         }
     }
 }
@@ -1469,6 +1500,30 @@ issuer = "https://issuer.example.test"
 client_secret = "must-not-be-inline"
 "#;
         assert!(toml::from_str::<McpServerConfig>(unknown).is_err());
+    }
+
+    #[test]
+    fn mcp_server_exposes_production_tool_policy() {
+        let configured: McpServerConfig = toml::from_str(
+            r#"
+name = "external"
+transport = "http"
+url = "https://mcp.example.test/rpc"
+allowlist = ["search", "mcp_resource_read"]
+denylist = ["search.delete"]
+
+[permission_overrides]
+search = "l0"
+"external__mcp_resource_read" = "l1"
+"#,
+        )
+        .unwrap();
+        assert_eq!(configured.allowlist, ["search", "mcp_resource_read"]);
+        assert_eq!(configured.denylist, ["search.delete"]);
+        assert_eq!(
+            configured.permission_overrides.get("search"),
+            Some(&McpPermissionLevel::L0)
+        );
     }
 
     #[test]

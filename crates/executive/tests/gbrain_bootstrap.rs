@@ -515,6 +515,9 @@ async fn connected_manager(state: HttpState) -> McpManager {
             oauth: None,
             request_timeout_ms: None,
             health_check_interval_sec: 0,
+            allowlist: Vec::new(),
+            denylist: Vec::new(),
+            permission_overrides: std::collections::HashMap::new(),
         }],
         ..Default::default()
     });

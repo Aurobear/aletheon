@@ -1019,6 +1019,15 @@
       ],
       "type": "object"
     },
+    "McpPermissionLevel": {
+      "enum": [
+        "l0",
+        "l1",
+        "l2",
+        "l3"
+      ],
+      "type": "string"
+    },
     "McpServerConfig": {
       "additionalProperties": false,
       "description": "Canonical MCP (Model Context Protocol) server configuration.",
@@ -1068,6 +1077,13 @@
           ],
           "default": null
         },
+        "permission_overrides": {
+          "additionalProperties": {
+            "$ref": "#/$defs/McpPermissionLevel"
+          },
+          "default": {},
+          "type": "object"
+        },
         "request_timeout_ms": {
           "default": null,
           "format": "uint64",
@@ -1076,6 +1092,20 @@
             "integer",
             "null"
           ]
+        },
+        "tool_allowlist": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tool_denylist": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "transport": {
           "$ref": "#/$defs/McpTransportWire"

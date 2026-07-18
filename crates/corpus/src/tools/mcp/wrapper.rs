@@ -52,7 +52,12 @@ impl Tool for McpToolWrapper {
 
     fn permission_level(&self) -> PermissionLevel {
         if let Some(override_level) =
-            permission_override(&self.overrides, &self.normalized_name, &self.server_name)
+            self.overrides
+                .get(&self.mcp_tool.name)
+                .copied()
+                .or_else(|| {
+                    permission_override(&self.overrides, &self.normalized_name, &self.server_name)
+                })
         {
             return override_level;
         }
@@ -127,6 +132,91 @@ pub struct McpResourceProvider {
     pub overrides: HashMap<String, PermissionLevel>,
 }
 
+/// Generic read-only MCP resource tool. Unlike the wrappers created for
+/// statically advertised resources, this also supports resource-template URIs.
+pub struct McpResourceReadTool {
+    pub normalized_name: String,
+    pub client: Arc<Mutex<McpClient>>,
+    pub server_name: String,
+    pub overrides: HashMap<String, PermissionLevel>,
+}
+
+#[async_trait]
+impl Tool for McpResourceReadTool {
+    fn name(&self) -> &str {
+        &self.normalized_name
+    }
+
+    fn description(&self) -> &str {
+        "Read an MCP resource by URI from this server"
+    }
+
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {"uri": {"type": "string"}},
+            "required": ["uri"],
+            "additionalProperties": false
+        })
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        self.overrides
+            .get("mcp_resource_read")
+            .copied()
+            .or_else(|| {
+                permission_override(&self.overrides, &self.normalized_name, &self.server_name)
+            })
+            .unwrap_or(PermissionLevel::L0)
+    }
+
+    fn concurrency_class(&self) -> ConcurrencyClass {
+        ConcurrencyClass::ReadOnly
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(Self {
+            normalized_name: self.normalized_name.clone(),
+            client: self.client.clone(),
+            server_name: self.server_name.clone(),
+            overrides: self.overrides.clone(),
+        })
+    }
+
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let Some(uri) = input.get("uri").and_then(Value::as_str) else {
+            return ToolResult {
+                content: "mcp_resource_read requires a string uri".into(),
+                is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                },
+            };
+        };
+        let mut client = self.client.lock().await;
+        match client.read_resource(uri).await {
+            Ok(content) => ToolResult {
+                content: content.text,
+                is_error: false,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                },
+            },
+            Err(error) => ToolResult {
+                content: format!("Error reading MCP resource: {error}"),
+                is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                },
+            },
+        }
+    }
+}
+
 #[async_trait]
 impl Tool for McpResourceProvider {
     fn name(&self) -> &str {
@@ -145,8 +235,13 @@ impl Tool for McpResourceProvider {
     }
 
     fn permission_level(&self) -> PermissionLevel {
-        if let Some(override_level) =
-            permission_override(&self.overrides, &self.normalized_name, &self.server_name)
+        if let Some(override_level) = self
+            .overrides
+            .get(&self.mcp_resource.name)
+            .copied()
+            .or_else(|| {
+                permission_override(&self.overrides, &self.normalized_name, &self.server_name)
+            })
         {
             return override_level;
         }

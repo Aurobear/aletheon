@@ -532,7 +532,7 @@ impl McpTransport {
     /// Execute an HTTP POST with retry for transient failures.
     ///
     /// Retries up to 2 times (3 total attempts) with exponential backoff:
-    /// 1s, 2s, 4s between attempts.
+    /// 100ms then 200ms between attempts, bounded by the per-server timeout.
     async fn http_request_with_retry(
         client: &reqwest::Client,
         url: &str,
@@ -542,17 +542,27 @@ impl McpTransport {
     ) -> Result<Value> {
         const MAX_RETRIES: u32 = 2;
         let timeout_dur = std::time::Duration::from_millis(request_timeout_ms);
-        let mut delay_ms: u64 = 1000; // 1s initial backoff
+        let deadline = tokio::time::Instant::now() + timeout_dur;
+        let mut delay_ms: u64 = 100;
         let mut last_error: Option<anyhow::Error> = None;
 
         for attempt in 0..=MAX_RETRIES {
             if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-                delay_ms = delay_ms.saturating_mul(2); // 1s, 2s, 4s
+                let delay = std::time::Duration::from_millis(delay_ms);
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if delay >= remaining {
+                    break;
+                }
+                tokio::time::sleep(delay).await;
+                delay_ms = delay_ms.saturating_mul(2);
             }
 
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
             let result =
-                tokio::time::timeout(timeout_dur, Self::http_post(client, url, auth, body)).await;
+                tokio::time::timeout(remaining, Self::http_post(client, url, auth, body)).await;
 
             match result {
                 Ok(Ok(value)) => return Ok(value),
@@ -589,18 +599,28 @@ impl McpTransport {
     ) -> Result<Value> {
         const MAX_RETRIES: u32 = 2;
         let timeout_dur = std::time::Duration::from_millis(request_timeout_ms);
-        let mut delay_ms: u64 = 1000;
+        let deadline = tokio::time::Instant::now() + timeout_dur;
+        let mut delay_ms: u64 = 100;
         let mut last_error: Option<anyhow::Error> = None;
 
         for attempt in 0..=MAX_RETRIES {
             if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                let delay = std::time::Duration::from_millis(delay_ms);
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if delay >= remaining {
+                    break;
+                }
+                tokio::time::sleep(delay).await;
                 delay_ms = delay_ms.saturating_mul(2);
             }
 
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
             // POST the request
             let post_result = tokio::time::timeout(
-                timeout_dur,
+                remaining,
                 Self::http_post_no_response(client, url, auth, body),
             )
             .await;
@@ -608,7 +628,8 @@ impl McpTransport {
             match post_result {
                 Ok(Ok(())) => {
                     // POST succeeded — read from the SSE event stream
-                    let event_result = tokio::time::timeout(timeout_dur, event_rx.recv()).await;
+                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    let event_result = tokio::time::timeout(remaining, event_rx.recv()).await;
                     match event_result {
                         Ok(Some(event_str)) => {
                             return Self::parse_response(&event_str);
