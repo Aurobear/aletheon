@@ -232,6 +232,15 @@ mod tests {
         assert!(sink.terminal_sent());
     }
 
+    #[cfg(debug_assertions)]
+    #[tokio::test]
+    #[should_panic(expected = "second terminal is a protocol violation")]
+    async fn second_terminal_is_a_debug_protocol_violation() {
+        let (mut sink, _rx) = tool_event_channel();
+        sink.terminal(Ok(ok_result())).await;
+        sink.terminal(Ok(ok_result())).await;
+    }
+
     #[tokio::test]
     async fn progress_dropped_when_channel_full() {
         let (sink, _rx) = tool_event_channel();

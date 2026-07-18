@@ -372,3 +372,34 @@ impl TurnEventStream {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn tool_progress_roundtrips_through_canonical_turn_stream() {
+        let (mut stream, sender) = TurnEventStream::new(StreamConfig::turn_events(4));
+        sender
+            .send(&TurnEventV1::ToolProgress {
+                name: "bash_exec".into(),
+                call_id: "call-1".into(),
+                kind: "structured".into(),
+                payload: serde_json::json!({"pct": 50}),
+            })
+            .unwrap();
+
+        assert!(matches!(
+            stream.recv().await.unwrap(),
+            TurnEventV1::ToolProgress {
+                name,
+                call_id,
+                kind,
+                payload,
+            } if name == "bash_exec"
+                && call_id == "call-1"
+                && kind == "structured"
+                && payload == serde_json::json!({"pct": 50})
+        ));
+    }
+}
