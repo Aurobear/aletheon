@@ -203,7 +203,9 @@ impl RequestHandler {
     /// Keep local conversation history scoped to its canonical workspace.
     /// Without this, a TUI launched in one checkout inherits tool paths from
     /// the last TUI that happened to use the daemon's global default session.
-    async fn select_workspace_session(
+    /// Select the authoritative workspace-scoped Session/Thread for protocol
+    /// composition roots (Unix JSON-RPC, ACP, and future edge adapters).
+    pub async fn select_workspace_session(
         &self,
         working_dir: &Path,
     ) -> anyhow::Result<fabric::ThreadId> {

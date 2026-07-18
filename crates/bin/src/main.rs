@@ -16,11 +16,19 @@ use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
+#[cfg(feature = "acp")]
+mod acp;
+
 #[derive(Parser)]
 #[command(name = "aletheon", about = "AI agent with sandbox, multi-agent, IPC")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Run the feature-gated ACP stdio gateway.
+    #[cfg(feature = "acp")]
+    #[arg(long)]
+    acp: bool,
 
     /// Send a single message to the daemon
     #[arg(short = 'm', long = "message", value_name = "MSG")]
@@ -155,6 +163,15 @@ enum ConfigSub {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    #[cfg(feature = "acp")]
+    if cli.acp {
+        anyhow::ensure!(
+            cli.command.is_none() && cli.message.is_none(),
+            "--acp cannot be combined with a subcommand or --message"
+        );
+        init_tracing("aletheon::acp");
+        return acp::run(cli.workspace.executive_launch()).await;
+    }
     if matches!(&cli.command, Some(Commands::Core { .. }))
         && (cli.workspace.cwd.is_some() || !cli.workspace.add_dirs.is_empty())
     {
@@ -399,4 +416,15 @@ fn init_tracing(target: &str) {
         .with(env_filter)
         .with(stderr_layer)
         .init();
+}
+
+#[cfg(all(test, feature = "acp"))]
+mod acp_cli_tests {
+    use super::*;
+
+    #[test]
+    fn acp_flag_is_exposed_only_in_acp_feature_build() {
+        let cli = Cli::try_parse_from(["aletheon", "--acp"]).unwrap();
+        assert!(cli.acp);
+    }
 }

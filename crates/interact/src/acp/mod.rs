@@ -136,15 +136,25 @@ impl Default for AcpCorrelation {
 }
 
 /// Protocol-only adapter state. It contains no session or turn domain state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AcpMetrics {
+    pub sessions_active: u64,
+    pub prompt_total: u64,
+    pub reconnect_total: u64,
+    pub map_unmapped_event_total: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct AcpAdapter {
     correlation: AcpCorrelation,
+    metrics: AcpMetrics,
 }
 
 impl AcpAdapter {
     pub fn with_correlation_limit(limit: usize) -> Result<Self, AcpError> {
         Ok(Self {
             correlation: AcpCorrelation::new(limit)?,
+            metrics: AcpMetrics::default(),
         })
     }
 
@@ -184,6 +194,10 @@ impl AcpAdapter {
         connection_id: &ConnectionId,
     ) -> Result<&AcpSessionBinding, AcpError> {
         self.correlation.resolve(session_id, connection_id)
+    }
+
+    pub fn metrics(&self) -> &AcpMetrics {
+        &self.metrics
     }
 }
 

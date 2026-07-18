@@ -122,11 +122,13 @@ impl AcpAdapter {
             AcpRequest::NewSession { cwd } => {
                 let cwd = canonical_authorized_workspace(principal, &cwd)?;
                 let created = backend.create_session(principal, &cwd).await?;
-                Ok(self.bind_created_session(
+                let response = self.bind_created_session(
                     created.session_id,
                     principal.connection_id.clone(),
                     created.thread_id,
-                ))
+                );
+                self.metrics.sessions_active = self.metrics.sessions_active.saturating_add(1);
+                Ok(response)
             }
             AcpRequest::Prompt { session_id, text } => {
                 if text.trim().is_empty() {
@@ -138,6 +140,7 @@ impl AcpAdapter {
                 backend
                     .submit_prompt(principal, &session_id, &binding.thread_id, &text)
                     .await?;
+                self.metrics.prompt_total = self.metrics.prompt_total.saturating_add(1);
                 Ok(AcpResponse::Accepted)
             }
             AcpRequest::Cancel { session_id } => {
@@ -153,17 +156,23 @@ impl AcpAdapter {
     }
 
     fn map_authorized_event(
-        &self,
+        &mut self,
         connection: &AuthenticatedAcpConnection,
         event: AcpSessionEvent,
     ) -> Result<Option<AcpServerFrame>, AcpError> {
         self.resolve_session(&event.session_id, &connection.principal().connection_id)?;
-        Ok(
-            map_client_event_to_acp(&event.event).map(|update| AcpServerFrame::SessionUpdate {
-                session_id: event.session_id,
-                update,
-            }),
-        )
+        if matches!(&event.event, ClientEvent::Reconnected(_)) {
+            self.metrics.reconnect_total = self.metrics.reconnect_total.saturating_add(1);
+        }
+        let mapped = map_client_event_to_acp(&event.event);
+        if mapped.is_none() {
+            self.metrics.map_unmapped_event_total =
+                self.metrics.map_unmapped_event_total.saturating_add(1);
+        }
+        Ok(mapped.map(|update| AcpServerFrame::SessionUpdate {
+            session_id: event.session_id,
+            update,
+        }))
     }
 }
 
@@ -204,7 +213,17 @@ where
     loop {
         tokio::select! {
             frame = transport.read_frame::<AcpClientFrame>() => {
-                let Some(frame) = frame? else { return Ok(()); };
+                let frame = match frame {
+                    Ok(Some(frame)) => frame,
+                    Ok(None) => {
+                        adapter.metrics.sessions_active = 0;
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        tracing::warn!(event="acp.request.rejected", reason=%error, "unknown or invalid ACP request");
+                        return Err(error);
+                    }
+                };
                 let response = adapter.dispatch(connection, backend, frame.request).await;
                 transport.write_frame(&AcpServerFrame::Response {
                     request_id: frame.request_id,
@@ -365,6 +384,8 @@ mod tests {
                 "cancel:session-1:thread-1"
             ]
         );
+        assert_eq!(adapter.metrics().sessions_active, 1);
+        assert_eq!(adapter.metrics().prompt_total, 1);
     }
 
     #[tokio::test]
