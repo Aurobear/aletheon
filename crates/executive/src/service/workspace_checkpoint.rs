@@ -932,6 +932,29 @@ mod tests {
             .is_none());
     }
 
+    #[tokio::test]
+    async fn every_turn_result_leaves_a_terminal_checkpoint() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(InMemoryCheckpointStore::default());
+        let service =
+            WorkspaceCheckpointService::new(store.clone(), Arc::new(TestLeases::default()), true);
+
+        for (prompt_index, succeeded, expected) in [
+            (1, true, CheckpointFinalizeState::Finalized),
+            (2, false, CheckpointFinalizeState::Aborted),
+        ] {
+            let id = service
+                .begin_turn(context(directory.path(), prompt_index))
+                .await
+                .unwrap()
+                .unwrap();
+            service.finalize_turn(id, succeeded).await.unwrap();
+            let (checkpoint, _) = store.load_by_id(id).await.unwrap().unwrap();
+            assert_eq!(checkpoint.finalize_state, expected);
+            assert_ne!(checkpoint.finalize_state, CheckpointFinalizeState::Open);
+        }
+    }
+
     #[test]
     fn bounded_capture_is_deterministic_and_reports_truncation() {
         let directory = tempfile::tempdir().unwrap();
