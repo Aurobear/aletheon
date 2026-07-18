@@ -506,14 +506,12 @@ pub async fn discover_oauth_metadata(base_url: &str) -> Result<OAuthMetadata> {
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!(
-            "OAuth discovery returned HTTP {status} from {url}: {body}"
-        );
+        anyhow::bail!("OAuth discovery returned HTTP {status} from {url}: {body}");
     }
 
-    resp.json::<OAuthMetadata>()
-        .await
-        .with_context(|| format!("OAuth discovery response from {url} is not valid RFC 8414 metadata"))
+    resp.json::<OAuthMetadata>().await.with_context(|| {
+        format!("OAuth discovery response from {url} is not valid RFC 8414 metadata")
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1024,10 +1022,10 @@ mod tests {
 
     #[tokio::test]
     async fn discover_oauth_metadata_parses_valid_rfc8414_response() {
+        use http_body_util::Full;
         use hyper::body::Bytes;
         use hyper::server::conn::http1;
         use hyper::service::service_fn;
-        use http_body_util::Full;
         use hyper_util::rt::TokioIo;
 
         let addr: std::net::SocketAddr = ([127, 0, 0, 1], 0).into();
@@ -1042,29 +1040,31 @@ mod tests {
                     Err(_) => return,
                 };
                 let io = TokioIo::new(stream);
-                let svc = service_fn(
-                    |_req: hyper::Request<hyper::body::Incoming>| async move {
-                        let body = serde_json::json!({
-                            "issuer": "https://auth.example.com",
-                            "authorization_endpoint": "https://auth.example.com/authorize",
-                            "token_endpoint": "https://auth.example.com/token",
-                            "token_endpoint_auth_methods_supported": [
-                                "client_secret_basic",
-                                "client_secret_post"
-                            ],
-                            "scopes_supported": ["openid", "profile", "email"]
-                        })
-                        .to_string();
-                        Ok::<_, std::convert::Infallible>(
-                            hyper::Response::builder()
-                                .status(200)
-                                .header("content-type", "application/json")
-                                .body(Full::new(Bytes::from(body)))
-                                .unwrap(),
-                        )
-                    },
-                );
-                if http1::Builder::new().serve_connection(io, svc).await.is_err() {
+                let svc = service_fn(|_req: hyper::Request<hyper::body::Incoming>| async move {
+                    let body = serde_json::json!({
+                        "issuer": "https://auth.example.com",
+                        "authorization_endpoint": "https://auth.example.com/authorize",
+                        "token_endpoint": "https://auth.example.com/token",
+                        "token_endpoint_auth_methods_supported": [
+                            "client_secret_basic",
+                            "client_secret_post"
+                        ],
+                        "scopes_supported": ["openid", "profile", "email"]
+                    })
+                    .to_string();
+                    Ok::<_, std::convert::Infallible>(
+                        hyper::Response::builder()
+                            .status(200)
+                            .header("content-type", "application/json")
+                            .body(Full::new(Bytes::from(body)))
+                            .unwrap(),
+                    )
+                });
+                if http1::Builder::new()
+                    .serve_connection(io, svc)
+                    .await
+                    .is_err()
+                {
                     return;
                 }
             }
@@ -1076,10 +1076,7 @@ mod tests {
             metadata.authorization_endpoint,
             "https://auth.example.com/authorize"
         );
-        assert_eq!(
-            metadata.token_endpoint,
-            "https://auth.example.com/token"
-        );
+        assert_eq!(metadata.token_endpoint, "https://auth.example.com/token");
         assert_eq!(
             metadata.token_endpoint_auth_methods_supported,
             vec!["client_secret_basic", "client_secret_post"]
@@ -1094,10 +1091,10 @@ mod tests {
 
     #[tokio::test]
     async fn discover_oauth_metadata_404_returns_error_not_panic() {
+        use http_body_util::Full;
         use hyper::body::Bytes;
         use hyper::server::conn::http1;
         use hyper::service::service_fn;
-        use http_body_util::Full;
         use hyper_util::rt::TokioIo;
 
         let addr: std::net::SocketAddr = ([127, 0, 0, 1], 0).into();
@@ -1112,17 +1109,19 @@ mod tests {
                     Err(_) => return,
                 };
                 let io = TokioIo::new(stream);
-                let svc = service_fn(
-                    |_req: hyper::Request<hyper::body::Incoming>| async move {
-                        Ok::<_, std::convert::Infallible>(
-                            hyper::Response::builder()
-                                .status(404)
-                                .body(Full::new(Bytes::from("not found")))
-                                .unwrap(),
-                        )
-                    },
-                );
-                if http1::Builder::new().serve_connection(io, svc).await.is_err() {
+                let svc = service_fn(|_req: hyper::Request<hyper::body::Incoming>| async move {
+                    Ok::<_, std::convert::Infallible>(
+                        hyper::Response::builder()
+                            .status(404)
+                            .body(Full::new(Bytes::from("not found")))
+                            .unwrap(),
+                    )
+                });
+                if http1::Builder::new()
+                    .serve_connection(io, svc)
+                    .await
+                    .is_err()
+                {
                     return;
                 }
             }

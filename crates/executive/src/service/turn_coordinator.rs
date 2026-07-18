@@ -4,18 +4,18 @@ use std::{collections::HashMap, future::Future, sync::Arc};
 
 use crate::core::config::{BackpressureConfig, GrokHardeningConfig};
 use aletheon_kernel::KernelRuntime;
-use anyhow::{Result, anyhow};
-use fabric::types::prompt_queue::{PromptEnvelope, PromptKind, PromptState, evaluate_cancel};
+use anyhow::{anyhow, Result};
+use fabric::types::prompt_queue::{evaluate_cancel, PromptEnvelope, PromptKind, PromptState};
 use fabric::{
     CancelReason, EventSpine, ItemId, ItemPayload, ItemRecord, MonoDeadline, OperationKind,
-    OperationManager, OperationRequest, PrincipalId, SESSION_SCHEMA_VERSION, SessionAppendStore,
-    SessionId, SessionRecord, SessionStatus, ThreadId, TurnId, TurnMetrics, TurnRequest,
-    TurnResult, TurnStop,
+    OperationManager, OperationRequest, PrincipalId, SessionAppendStore, SessionId, SessionRecord,
+    SessionStatus, ThreadId, TurnId, TurnMetrics, TurnRequest, TurnResult, TurnStop,
+    SESSION_SCHEMA_VERSION,
 };
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use super::durable_write::{TurnWriteTracker, WritePhase, WriteResult, write_failed};
+use super::durable_write::{write_failed, TurnWriteTracker, WritePhase, WriteResult};
 use super::turn_policy::TurnPolicy;
 
 pub struct TurnExecution {

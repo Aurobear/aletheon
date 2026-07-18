@@ -1,7 +1,7 @@
 //! Authenticated local principal and workspace authority contracts.
 
-use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     io,

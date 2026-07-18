@@ -4,7 +4,7 @@
 use fabric::ipc::stream::{TurnEventSender, TurnEventV1};
 use fabric::types::tool::ToolResult;
 use fabric::types::tool_stream::{
-    ToolEventSink, ToolExecutionError, ToolExecutionEvent, ToolProgress, tool_event_channel,
+    tool_event_channel, ToolEventSink, ToolExecutionError, ToolExecutionEvent, ToolProgress,
 };
 use tokio_util::sync::CancellationToken;
 

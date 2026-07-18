@@ -283,7 +283,10 @@ async fn main() -> Result<()> {
 async fn handle_config(sub: &ConfigSub) -> Result<()> {
     use executive::core::config;
     match sub {
-        ConfigSub::Effective { config, project_dir } => {
+        ConfigSub::Effective {
+            config,
+            project_dir,
+        } => {
             let loaded = if let Some(path) = config {
                 let txt = std::fs::read_to_string(path)?;
                 let layer = config::ConfigLayer::from_toml(
@@ -300,7 +303,10 @@ async fn handle_config(sub: &ConfigSub) -> Result<()> {
             let view = loaded.effective_view();
             println!("{}", serde_json::to_string_pretty(&view.config)?);
         }
-        ConfigSub::Layers { config, project_dir } => {
+        ConfigSub::Layers {
+            config,
+            project_dir,
+        } => {
             let loaded = if let Some(path) = config {
                 let txt = std::fs::read_to_string(path)?;
                 let layer = config::ConfigLayer::from_toml(
@@ -331,10 +337,7 @@ async fn handle_doctor(
     let loaded = if let Some(path) = config_path {
         let txt = std::fs::read_to_string(path)?;
         let layer = config::ConfigLayer::from_toml(
-            config::ConfigSource::new(
-                config::ConfigSourceKind::Cli,
-                path.display().to_string(),
-            ),
+            config::ConfigSource::new(config::ConfigSourceKind::Cli, path.display().to_string()),
             &txt,
         )?;
         config::merge_layers([layer])?

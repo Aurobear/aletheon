@@ -694,12 +694,10 @@ mod tests {
             .unwrap_err();
         assert_eq!(failure.class, FailureClass::ProviderTransient);
         assert!(failure.retryable);
-        assert!(
-            runtime
-                .run("task", CancellationToken::new())
-                .await
-                .unwrap_err()
-                .contains("LLM error")
-        );
+        assert!(runtime
+            .run("task", CancellationToken::new())
+            .await
+            .unwrap_err()
+            .contains("LLM error"));
     }
 }

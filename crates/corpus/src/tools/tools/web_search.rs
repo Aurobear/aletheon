@@ -311,7 +311,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
 
         // Set a valid-looking URL that might not exist but won't be policy-blocked
-        std::env::set_var("SEARCH_API_URL", "https://some-random-search-api-12345.example/search");
+        std::env::set_var(
+            "SEARCH_API_URL",
+            "https://some-random-search-api-12345.example/search",
+        );
         std::env::set_var("SEARCH_API_KEY", "dummy-key");
 
         let result = tool

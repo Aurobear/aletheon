@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 
-use fabric::{ItemPayload, is_degenerate_summary};
+use fabric::{is_degenerate_summary, ItemPayload};
 use serde::Serialize;
 
 /// Result of normalizing a batch of turn items.

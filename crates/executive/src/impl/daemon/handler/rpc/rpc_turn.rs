@@ -99,11 +99,14 @@ impl RequestHandler {
         let result = if self.grok_hardening.prompt_queue && !thread_id.is_empty() {
             // G3 identity-aware cancel: parse principal from connection context
             // and use thread_id + operation_id for lookup.
-            self.ports.turn.cancel_by_key(
-                fabric::PrincipalId("local".into()),
-                thread_id.to_string(),
-                operation_id,
-            ).await
+            self.ports
+                .turn
+                .cancel_by_key(
+                    fabric::PrincipalId("local".into()),
+                    thread_id.to_string(),
+                    operation_id,
+                )
+                .await
         } else {
             // Legacy cancel: operation_id only.
             self.ports.turn.cancel(operation_id).await

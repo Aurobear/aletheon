@@ -11,7 +11,8 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use fabric::{
-    ContentBlock, LlmProvider, LlmResponse, LlmStream, Message, StopReason, StreamChunk, ToolDefinition, Usage,
+    ContentBlock, LlmProvider, LlmResponse, LlmStream, Message, StopReason, StreamChunk,
+    ToolDefinition, Usage,
 };
 use futures::stream;
 
@@ -32,13 +33,9 @@ pub enum MockTurnResponse {
         usage: Usage,
     },
     /// A streamed response: chunks delivered sequentially.
-    Stream {
-        chunks: Vec<StreamChunk>,
-    },
+    Stream { chunks: Vec<StreamChunk> },
     /// Simulate a provider error (rate limit, overload, auth failure).
-    Error {
-        message: String,
-    },
+    Error { message: String },
     /// Simulate a timeout — the provider never resolves.
     /// Tests should use `tokio::time::timeout` to bound this.
     Timeout,
@@ -146,12 +143,16 @@ impl MockLlmProvider {
             )
         });
 
-        sequence.responses.get(resp_idx).cloned().unwrap_or_else(|| {
-            panic!(
-                "MockLlmProvider: sequence {seq_idx} exhausted at response {resp_idx}. \
+        sequence
+            .responses
+            .get(resp_idx)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "MockLlmProvider: sequence {seq_idx} exhausted at response {resp_idx}. \
                  Expected more responses in this turn sequence."
-            )
-        })
+                )
+            })
     }
 }
 
@@ -266,9 +267,7 @@ impl LlmProvider for MockLlmProvider {
                 for block in content {
                     match block {
                         ContentBlock::Text { text } => {
-                            chunks.push(Ok(StreamChunk::TextDelta {
-                                text: text.clone(),
-                            }));
+                            chunks.push(Ok(StreamChunk::TextDelta { text: text.clone() }));
                         }
                         ContentBlock::ToolUse { id, name, input } => {
                             chunks.push(Ok(StreamChunk::ToolUseStart {
@@ -322,7 +321,10 @@ mod tests {
     #[tokio::test]
     async fn single_text_response_returns_preconfigured_text() {
         let provider = MockLlmProvider::single_text_response("hello world");
-        let resp = provider.complete(&[Message::user("test")], &[]).await.unwrap();
+        let resp = provider
+            .complete(&[Message::user("test")], &[])
+            .await
+            .unwrap();
         assert_eq!(resp.stop_reason, StopReason::EndTurn);
         assert!(resp
             .content
@@ -364,7 +366,10 @@ mod tests {
     #[tokio::test]
     async fn error_response_returns_error() {
         let provider = MockLlmProvider::always_error("rate limited");
-        let err = provider.complete(&[Message::user("hi")], &[]).await.unwrap_err();
+        let err = provider
+            .complete(&[Message::user("hi")], &[])
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("rate limited"));
     }
 

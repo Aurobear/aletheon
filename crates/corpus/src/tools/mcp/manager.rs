@@ -5,8 +5,8 @@ use anyhow::Result;
 use serde_json::Value;
 use std::sync::Arc;
 
-use super::client::{ElicitationHandler, McpConnectionManager, McpResource, ResourceContent};
 use super::client::McpTool;
+use super::client::{ElicitationHandler, McpConnectionManager, McpResource, ResourceContent};
 use super::config::McpConfig;
 use crate::tools::Tool;
 
@@ -94,11 +94,7 @@ impl McpManager {
     ///
     /// Delegates to the client's elicitation handler; auto-denies if no
     /// handler is configured.
-    pub async fn handle_elicitation(
-        &self,
-        server_name: &str,
-        params: &Value,
-    ) -> Result<Value> {
+    pub async fn handle_elicitation(&self, server_name: &str, params: &Value) -> Result<Value> {
         self.inner.handle_elicitation(server_name, params).await
     }
 }
@@ -263,11 +259,13 @@ mod tests {
             let id = req_json.get("id").cloned().unwrap_or(Value::Null);
 
             let result = match method {
-                "initialize" => initialize_resp.unwrap_or_else(|| json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "test-mock", "version": "1.0.0"}
-                })),
+                "initialize" => initialize_resp.unwrap_or_else(|| {
+                    json!({
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "test-mock", "version": "1.0.0"}
+                    })
+                }),
                 "tools/list" => tools_list,
                 "tools/call" => search_resp,
                 "resources/list" => json!({
@@ -299,7 +297,7 @@ mod tests {
                             "text": format!("Content of {}", uri)
                         }]
                     })
-                },
+                }
                 _ => json!({}),
             };
 
@@ -565,7 +563,7 @@ mod tests {
             trust: McpTrustLevel::RemoteTrusted,
             enabled: true,
             bearer_token_env: Some("GBRAIN_READ_TOKEN".into()),
-                request_timeout_ms: None,
+            request_timeout_ms: None,
         };
 
         let json_str = serde_json::to_string(&config).unwrap();
@@ -649,7 +647,10 @@ mod tests {
 
         // Resource wrappers should be available
         let resource_tools = mgr.resource_wrappers();
-        assert!(!resource_tools.is_empty(), "Should have discovered resources");
+        assert!(
+            !resource_tools.is_empty(),
+            "Should have discovered resources"
+        );
         assert_eq!(resource_tools.len(), 2);
 
         // Check naming convention: mcp.{server_name}.resource.{resource_name}
@@ -693,9 +694,7 @@ mod tests {
         let mut mgr = McpManager::new(config);
         mgr.connect_all().await.unwrap();
 
-        let result = mgr
-            .read_resource("gbrain", "file:///docs/readme.md")
-            .await;
+        let result = mgr.read_resource("gbrain", "file:///docs/readme.md").await;
         assert!(result.is_ok(), "read_resource failed: {:?}", result);
         let content = result.unwrap();
         assert!(content.text.contains("Content of file:///docs/readme.md"));

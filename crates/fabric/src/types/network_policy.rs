@@ -39,25 +39,23 @@ impl NetworkPolicy {
 
         // 1. Check deny_hosts (highest priority).
         if !self.deny_hosts.is_empty() && self.matches_any(&host, &self.deny_hosts) {
-            return Err(format!(
-                "host '{host}' is in deny_hosts"
-            ));
+            return Err(format!("host '{host}' is in deny_hosts"));
         }
 
         // 2. Check allow_hosts.
         if !self.allow_hosts.is_empty() && !self.matches_any(&host, &self.allow_hosts) {
-            return Err(format!(
-                "host '{host}' is not in allow_hosts"
-            ));
+            return Err(format!("host '{host}' is not in allow_hosts"));
         }
 
         // 3. Check allow_protocols (scheme).
         if !self.allow_protocols.is_empty() {
             let scheme_lower = scheme.to_lowercase();
-            if !self.allow_protocols.iter().any(|p| p.to_lowercase() == scheme_lower) {
-                return Err(format!(
-                    "protocol '{scheme}' is not in allow_protocols"
-                ));
+            if !self
+                .allow_protocols
+                .iter()
+                .any(|p| p.to_lowercase() == scheme_lower)
+            {
+                return Err(format!("protocol '{scheme}' is not in allow_protocols"));
             }
         }
 
@@ -65,9 +63,7 @@ impl NetworkPolicy {
         if !self.allow_ports.is_empty() {
             let url_port = port.unwrap_or_else(|| Self::default_port_for_scheme(&scheme));
             if !self.port_matches(url_port, &self.allow_ports) {
-                return Err(format!(
-                    "port {url_port} is not in allow_ports"
-                ));
+                return Err(format!("port {url_port} is not in allow_ports"));
             }
         }
 
@@ -199,10 +195,9 @@ impl NetworkPolicy {
         if parts.len() != 4 {
             return false;
         }
-        parts.iter().all(|p| {
-            p.parse::<u8>().is_ok()
-                && (!p.starts_with('0') || p.len() == 1)
-        })
+        parts
+            .iter()
+            .all(|p| p.parse::<u8>().is_ok() && (!p.starts_with('0') || p.len() == 1))
     }
 }
 

@@ -1,8 +1,8 @@
 use std::io::{self, BufRead, Write};
 
-mod protocol;
-mod process;
 mod filesystem;
+mod process;
+mod protocol;
 
 fn main() -> io::Result<()> {
     let stdin = io::stdin().lock();
@@ -65,19 +65,23 @@ fn main() -> io::Result<()> {
 
         let response = dispatch(&request, &mut process_mgr, &rt);
 
-        writeln!(stdout, "{}", match serde_json::to_string(&response) {
-            Ok(json) => json,
-            Err(e) => {
-                let fallback = protocol::Response::err(
-                    request.id.clone(),
-                    protocol::INTERNAL_ERROR,
-                    format!("Failed to serialize response: {}", e),
-                );
-                serde_json::to_string(&fallback).unwrap_or_else(|_| {
+        writeln!(
+            stdout,
+            "{}",
+            match serde_json::to_string(&response) {
+                Ok(json) => json,
+                Err(e) => {
+                    let fallback = protocol::Response::err(
+                        request.id.clone(),
+                        protocol::INTERNAL_ERROR,
+                        format!("Failed to serialize response: {}", e),
+                    );
+                    serde_json::to_string(&fallback).unwrap_or_else(|_| {
                     r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Internal error"}}"#.to_string()
                 })
+                }
             }
-        })?;
+        )?;
         stdout.flush()?;
 
         // Shutdown command exits the loop
@@ -109,16 +113,18 @@ fn dispatch(
             serde_json::json!({"status": "shutting_down"}),
         ),
         // Try filesystem methods
-        method if method.starts_with("fs/") => {
-            filesystem::handle_fs(method, &req.params).map(|mut r| {
+        method if method.starts_with("fs/") => filesystem::handle_fs(method, &req.params)
+            .map(|mut r| {
                 r.id = req.id.clone();
                 r
-            }).unwrap_or_else(|| protocol::Response::err(
-                req.id.clone(),
-                protocol::METHOD_NOT_FOUND,
-                format!("Method not found: {}", req.method),
-            ))
-        }
+            })
+            .unwrap_or_else(|| {
+                protocol::Response::err(
+                    req.id.clone(),
+                    protocol::METHOD_NOT_FOUND,
+                    format!("Method not found: {}", req.method),
+                )
+            }),
         _ => protocol::Response::err(
             req.id.clone(),
             protocol::METHOD_NOT_FOUND,
@@ -155,7 +161,10 @@ fn handle_handshake(req: &protocol::Request) -> protocol::Response {
         server_pid,
     };
 
-    protocol::Response::ok(req.id.clone(), serde_json::to_value(hs_resp).unwrap_or_default())
+    protocol::Response::ok(
+        req.id.clone(),
+        serde_json::to_value(hs_resp).unwrap_or_default(),
+    )
 }
 
 fn handle_process_start(
@@ -163,7 +172,8 @@ fn handle_process_start(
     pm: &process::ProcessManager,
     rt: &tokio::runtime::Runtime,
 ) -> protocol::Response {
-    let start_req: protocol::StartProcessRequest = match serde_json::from_value(req.params.clone()) {
+    let start_req: protocol::StartProcessRequest = match serde_json::from_value(req.params.clone())
+    {
         Ok(s) => s,
         Err(e) => {
             return protocol::Response::err(
@@ -236,10 +246,7 @@ fn handle_process_write(
     };
 
     match rt.block_on(pm.write_stdin(&handle_id, &data)) {
-        Ok(()) => protocol::Response::ok(
-            req.id.clone(),
-            serde_json::json!({"status": "ok"}),
-        ),
+        Ok(()) => protocol::Response::ok(req.id.clone(), serde_json::json!({"status": "ok"})),
         Err(rpc_err) => protocol::Response::err(req.id.clone(), rpc_err.code, rpc_err.message),
     }
 }
@@ -272,10 +279,7 @@ fn handle_process_signal(
     };
 
     match rt.block_on(pm.signal(&handle_id, sig)) {
-        Ok(()) => protocol::Response::ok(
-            req.id.clone(),
-            serde_json::json!({"status": "ok"}),
-        ),
+        Ok(()) => protocol::Response::ok(req.id.clone(), serde_json::json!({"status": "ok"})),
         Err(rpc_err) => protocol::Response::err(req.id.clone(), rpc_err.code, rpc_err.message),
     }
 }
@@ -297,10 +301,9 @@ fn handle_process_terminate(
     };
 
     match rt.block_on(pm.terminate(&handle_id)) {
-        Ok(()) => protocol::Response::ok(
-            req.id.clone(),
-            serde_json::json!({"status": "terminated"}),
-        ),
+        Ok(()) => {
+            protocol::Response::ok(req.id.clone(), serde_json::json!({"status": "terminated"}))
+        }
         Err(rpc_err) => protocol::Response::err(req.id.clone(), rpc_err.code, rpc_err.message),
     }
 }

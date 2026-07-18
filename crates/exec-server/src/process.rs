@@ -48,10 +48,7 @@ impl ProcessManager {
         if procs.len() >= MAX_HANDLES {
             return Err(RpcError {
                 code: SPAWN_FAILED,
-                message: format!(
-                    "Maximum concurrent handles reached ({})",
-                    MAX_HANDLES
-                ),
+                message: format!("Maximum concurrent handles reached ({})", MAX_HANDLES),
                 data: None,
             });
         }
@@ -103,21 +100,16 @@ impl ProcessManager {
             },
         );
 
-        Ok(ProcessHandle {
-            pid,
-            handle_id,
-        })
+        Ok(ProcessHandle { pid, handle_id })
     }
 
     pub async fn read(&self, handle_id: &str) -> Result<Vec<ReadChunk>, RpcError> {
         let mut procs = self.processes.lock().await;
-        let proc = procs
-            .get_mut(handle_id)
-            .ok_or_else(|| RpcError {
-                code: PROCESS_NOT_FOUND,
-                message: format!("Process handle not found: {}", handle_id),
-                data: None,
-            })?;
+        let proc = procs.get_mut(handle_id).ok_or_else(|| RpcError {
+            code: PROCESS_NOT_FOUND,
+            message: format!("Process handle not found: {}", handle_id),
+            data: None,
+        })?;
 
         let mut chunks = Vec::new();
 
@@ -129,14 +121,14 @@ impl ProcessManager {
             if let Some(ref mut reader) = proc.stdout {
                 let mut buf = [0u8; 8192];
                 let read_fut = reader.read(&mut buf);
-                match tokio::time::timeout(Duration::from_millis(READ_TIMEOUT_MS), read_fut).await
-                {
+                match tokio::time::timeout(Duration::from_millis(READ_TIMEOUT_MS), read_fut).await {
                     Ok(Ok(0)) => {
                         eof = true;
                     }
                     Ok(Ok(n)) => {
-                        let remaining =
-                            proc.max_output_bytes.saturating_sub(proc.stdout_buf.len() as u64);
+                        let remaining = proc
+                            .max_output_bytes
+                            .saturating_sub(proc.stdout_buf.len() as u64);
                         let take = (n as u64).min(remaining) as usize;
                         if take > 0 {
                             proc.stdout_buf.extend_from_slice(&buf[..take]);
@@ -183,14 +175,14 @@ impl ProcessManager {
             if let Some(ref mut reader) = proc.stderr {
                 let mut buf = [0u8; 8192];
                 let read_fut = reader.read(&mut buf);
-                match tokio::time::timeout(Duration::from_millis(READ_TIMEOUT_MS), read_fut).await
-                {
+                match tokio::time::timeout(Duration::from_millis(READ_TIMEOUT_MS), read_fut).await {
                     Ok(Ok(0)) => {
                         eof = true;
                     }
                     Ok(Ok(n)) => {
-                        let remaining =
-                            proc.max_output_bytes.saturating_sub(proc.stderr_buf.len() as u64);
+                        let remaining = proc
+                            .max_output_bytes
+                            .saturating_sub(proc.stderr_buf.len() as u64);
                         let take = (n as u64).min(remaining) as usize;
                         if take > 0 {
                             proc.stderr_buf.extend_from_slice(&buf[..take]);
@@ -243,13 +235,11 @@ impl ProcessManager {
         use tokio::io::AsyncWriteExt;
 
         let mut procs = self.processes.lock().await;
-        let proc = procs
-            .get_mut(handle_id)
-            .ok_or_else(|| RpcError {
-                code: PROCESS_NOT_FOUND,
-                message: format!("Process handle not found: {}", handle_id),
-                data: None,
-            })?;
+        let proc = procs.get_mut(handle_id).ok_or_else(|| RpcError {
+            code: PROCESS_NOT_FOUND,
+            message: format!("Process handle not found: {}", handle_id),
+            data: None,
+        })?;
 
         if let Some(ref mut stdin) = proc.child.stdin {
             stdin
@@ -267,13 +257,11 @@ impl ProcessManager {
 
     pub async fn signal(&self, handle_id: &str, sig: i32) -> Result<(), RpcError> {
         let mut procs = self.processes.lock().await;
-        let proc = procs
-            .get_mut(handle_id)
-            .ok_or_else(|| RpcError {
-                code: PROCESS_NOT_FOUND,
-                message: format!("Process handle not found: {}", handle_id),
-                data: None,
-            })?;
+        let proc = procs.get_mut(handle_id).ok_or_else(|| RpcError {
+            code: PROCESS_NOT_FOUND,
+            message: format!("Process handle not found: {}", handle_id),
+            data: None,
+        })?;
 
         let pid = proc.child.id().unwrap_or(0);
 
@@ -304,13 +292,11 @@ impl ProcessManager {
     pub async fn terminate(&self, handle_id: &str) -> Result<(), RpcError> {
         let pid = {
             let mut procs = self.processes.lock().await;
-            let proc = procs
-                .get_mut(handle_id)
-                .ok_or_else(|| RpcError {
-                    code: PROCESS_NOT_FOUND,
-                    message: format!("Process handle not found: {}", handle_id),
-                    data: None,
-                })?;
+            let proc = procs.get_mut(handle_id).ok_or_else(|| RpcError {
+                code: PROCESS_NOT_FOUND,
+                message: format!("Process handle not found: {}", handle_id),
+                data: None,
+            })?;
 
             let pid = proc.child.id().unwrap_or(0);
 

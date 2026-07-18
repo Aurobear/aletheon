@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use async_trait::async_trait;
 use executive::service::governed_capability::{
     AuthorizedInvocation, GovernedCapabilityInvoker, RegistryAuthorityProvider,

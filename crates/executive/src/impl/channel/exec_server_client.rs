@@ -4,8 +4,8 @@
 //! via JSON-RPC over stdin/stdout. Gate: grok_hardening.streaming_tools
 //! (future wiring).
 
-use std::time::Duration;
 use anyhow::Result;
+use std::time::Duration;
 use tokio::process::Child;
 
 /// Configuration for spawning and communicating with the exec-server process.
@@ -38,7 +38,11 @@ impl ExecServerClient {
     }
 
     /// Send a JSON-RPC request and await the response.
-    pub async fn request(&mut self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+    pub async fn request(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         let _ = (method, params);
         todo!("D1-T9: ExecServerClient request")
     }

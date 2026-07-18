@@ -11,8 +11,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use fabric::ipc::bus::kernel_bus::CanonicalEventBus;
 use fabric::workspace_trust::{
-    ClientMode, DiscoveredConfigDigest, ExecutableConfigSource, TrustEvaluationInput, TrustReceipt,
-    WorkspaceIdentity, WorkspaceTrustDecision, decide,
+    decide, ClientMode, DiscoveredConfigDigest, ExecutableConfigSource, TrustEvaluationInput,
+    TrustReceipt, WorkspaceIdentity, WorkspaceTrustDecision,
 };
 use fabric::{PrincipalId, SchemaId};
 use sha2::{Digest, Sha256};
@@ -464,12 +464,10 @@ mod tests {
         std::fs::write(&path, b"not-json").unwrap();
         let store = FileTrustStore::new(path);
 
-        assert!(
-            store
-                .get(&PrincipalId("alice".into()), &identity(temp.path()))
-                .await
-                .is_none()
-        );
+        assert!(store
+            .get(&PrincipalId("alice".into()), &identity(temp.path()))
+            .await
+            .is_none());
     }
 
     #[tokio::test]

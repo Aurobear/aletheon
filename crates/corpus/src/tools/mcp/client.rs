@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 
 use super::auth::BearerTokenAuth;
 use super::config::{McpConfig, McpTransportConfig, McpTrustLevel};

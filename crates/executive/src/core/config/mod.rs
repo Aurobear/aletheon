@@ -21,7 +21,7 @@ pub use backpressure::BackpressureConfig;
 pub use cognit::config::{
     AgentAdmissionConfig, BackupMode, CognitConfig, DeploymentBackupConfig, DeploymentConfig,
     DeploymentHealthConfig, DeploymentIntegrationsConfig, DeploymentMode, DeploymentPathsConfig,
-    DeploymentQuotaConfig, DeploymentSecretFilesConfig, McpMemoryConfig, GoalRuntimeConfig,
+    DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig, McpMemoryConfig,
     PiRuntimeConfig, RoleRuntimeConfig,
 };
 pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};

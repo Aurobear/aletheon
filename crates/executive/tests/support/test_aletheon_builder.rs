@@ -67,9 +67,8 @@ impl TestAletheonBuilder {
         let kernel = Arc::new(KernelRuntime::with_clock(clock.clone() as Arc<dyn Clock>));
         let store: Arc<dyn SessionAppendStore> =
             Arc::new(CanonicalSessionStore::open(":memory:").expect("in-memory session store"));
-        let event_spine = Arc::new(
-            SqliteEventSpine::open(":memory:").expect("in-memory event spine"),
-        );
+        let event_spine =
+            Arc::new(SqliteEventSpine::open(":memory:").expect("in-memory event spine"));
         let coordinator =
             TurnCoordinator::with_event_spine(kernel.clone(), store.clone(), event_spine.clone());
 
@@ -93,9 +92,7 @@ impl Default for TestAletheonBuilder {
 mod tests {
     use super::*;
     use executive::service::turn_policy::TurnPolicy;
-    use fabric::{
-        ItemPayload, SpawnSpec, TurnMetrics, TurnResult, TurnStop,
-    };
+    use fabric::{ItemPayload, SpawnSpec, TurnMetrics, TurnResult, TurnStop};
 
     fn request(session: &str, process_id: fabric::ProcessId) -> fabric::TurnRequest {
         fabric::TurnRequest {
@@ -117,7 +114,10 @@ mod tests {
 
         // Store is functional
         let store_snapshot = test.store.clone();
-        assert!(store_snapshot.load_items(&fabric::SessionId("nonexistent".into()), None).await.is_ok());
+        assert!(store_snapshot
+            .load_items(&fabric::SessionId("nonexistent".into()), None)
+            .await
+            .is_ok());
 
         // Coordinator is functional
         assert_eq!(test.coordinator.active_turn_count().await, 0);

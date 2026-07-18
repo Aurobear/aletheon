@@ -5,9 +5,9 @@ use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 use async_trait::async_trait;
 use fabric::hook::{HookContext, HookResult};
 use fabric::{AdmissionController, Clock, ContentBlock, LlmProvider, Message, Role};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 
-use crate::r#impl::daemon::handler::tool_executor::{TurnToolExecutor, prepare_corpus};
+use crate::r#impl::daemon::handler::tool_executor::{prepare_corpus, TurnToolExecutor};
 use crate::r#impl::daemon::model_router::ModelRouter;
 use crate::service::governed_capability::{
     CapabilityExecutionContext, CapabilityRuntimeFactory, RegistryAuthorityProvider,

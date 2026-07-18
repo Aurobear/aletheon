@@ -5,7 +5,7 @@ use tokio::process::Command;
 
 use super::mutation_path::validate_mutation_path;
 use super::structured_patch::{
-    PatchOperation, execute_structured_patch, parse_structured_patch, parse_structured_patch_json,
+    execute_structured_patch, parse_structured_patch, parse_structured_patch_json, PatchOperation,
 };
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 

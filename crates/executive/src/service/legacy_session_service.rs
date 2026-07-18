@@ -161,7 +161,6 @@ impl LegacySessionService {
             .map_err(operation_error)
     }
 
-
     async fn create_with_messages(
         &self,
         messages: &[Message],

@@ -64,8 +64,7 @@ mod tests {
 
     #[test]
     fn parses_from_toml() {
-        let cfg: BackpressureConfig =
-            toml::from_str("max_concurrent_turns = 5\n").unwrap();
+        let cfg: BackpressureConfig = toml::from_str("max_concurrent_turns = 5\n").unwrap();
         assert_eq!(cfg.max_concurrent_turns, Some(5));
     }
 

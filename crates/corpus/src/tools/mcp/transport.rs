@@ -185,11 +185,7 @@ pub fn is_auth_error(err: &anyhow::Error) -> bool {
 
 impl McpTransport {
     /// Create a stdio transport by spawning a subprocess.
-    pub async fn stdio(
-        command: &str,
-        args: &[String],
-        request_timeout_ms: u64,
-    ) -> Result<Self> {
+    pub async fn stdio(command: &str, args: &[String], request_timeout_ms: u64) -> Result<Self> {
         let mut child = Command::new(command)
             .args(args)
             .stdin(std::process::Stdio::piped())
@@ -351,23 +347,21 @@ impl McpTransport {
                 stdin_tx,
                 stdout_rx,
                 ..
-            } => {
-                tokio::time::timeout(timeout_dur, async {
-                    stdin_tx
-                        .send(serde_json::to_string(&request)?)
-                        .await
-                        .map_err(|_| anyhow::anyhow!("Transport stdin closed"))?;
-                    let response_str = stdout_rx
-                        .recv()
-                        .await
-                        .ok_or_else(|| anyhow::anyhow!("Transport closed"))?;
-                    Self::parse_response(&response_str)
-                })
-                .await
-                .map_err(|_elapsed| {
-                    anyhow::anyhow!("MCP stdio request timed out after {}ms", timeout_ms)
-                })?
-            }
+            } => tokio::time::timeout(timeout_dur, async {
+                stdin_tx
+                    .send(serde_json::to_string(&request)?)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("Transport stdin closed"))?;
+                let response_str = stdout_rx
+                    .recv()
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("Transport closed"))?;
+                Self::parse_response(&response_str)
+            })
+            .await
+            .map_err(|_elapsed| {
+                anyhow::anyhow!("MCP stdio request timed out after {}ms", timeout_ms)
+            })?,
 
             Self::StreamableHttp {
                 client,
@@ -387,10 +381,8 @@ impl McpTransport {
                 ..
             } => {
                 let url = base_url.trim_end_matches('/').to_string();
-                Self::sse_request_with_retry(
-                    client, &url, auth, &request, event_rx, timeout_ms,
-                )
-                .await
+                Self::sse_request_with_retry(client, &url, auth, &request, event_rx, timeout_ms)
+                    .await
             }
         }
     }
@@ -455,10 +447,7 @@ impl McpTransport {
     fn is_retryable(err: &anyhow::Error) -> bool {
         let msg = format!("{:?}", err);
         // 5xx server errors are retryable
-        if msg.contains("500")
-            || msg.contains("502")
-            || msg.contains("503")
-            || msg.contains("504")
+        if msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504")
         {
             return true;
         }
@@ -506,11 +495,8 @@ impl McpTransport {
                 delay_ms = delay_ms.saturating_mul(2); // 1s, 2s, 4s
             }
 
-            let result = tokio::time::timeout(
-                timeout_dur,
-                Self::http_post(client, url, auth, body),
-            )
-            .await;
+            let result =
+                tokio::time::timeout(timeout_dur, Self::http_post(client, url, auth, body)).await;
 
             match result {
                 Ok(Ok(value)) => return Ok(value),
@@ -566,8 +552,7 @@ impl McpTransport {
             match post_result {
                 Ok(Ok(())) => {
                     // POST succeeded — read from the SSE event stream
-                    let event_result =
-                        tokio::time::timeout(timeout_dur, event_rx.recv()).await;
+                    let event_result = tokio::time::timeout(timeout_dur, event_rx.recv()).await;
                     match event_result {
                         Ok(Some(event_str)) => {
                             return Self::parse_response(&event_str);
@@ -725,8 +710,7 @@ pub async fn connect_with_fallback(
     request_timeout_ms: u64,
 ) -> Result<McpTransport> {
     // Try StreamableHttp first by sending a probe POST.
-    let transport =
-        McpTransport::streamable_http(base_url, auth.clone(), request_timeout_ms);
+    let transport = McpTransport::streamable_http(base_url, auth.clone(), request_timeout_ms);
     if let McpTransport::StreamableHttp { ref client, .. } = transport {
         let probe = serde_json::json!({
             "jsonrpc": "2.0",
@@ -1013,6 +997,9 @@ mod tests {
 
     #[test]
     fn test_default_timeout_is_30_seconds() {
-        assert_eq!(crate::tools::mcp::config::default_request_timeout_ms(), 30_000);
+        assert_eq!(
+            crate::tools::mcp::config::default_request_timeout_ms(),
+            30_000
+        );
     }
 }

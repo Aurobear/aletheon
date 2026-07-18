@@ -28,7 +28,9 @@ impl RequestHandler {
     ) -> serde_json::Value {
         let session_id = match request["params"].get("session_id").and_then(|v| v.as_str()) {
             Some(s) if !s.is_empty() => s,
-            _ => return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Missing session_id parameter"}}),
+            _ => {
+                return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Missing session_id parameter"}})
+            }
         };
         let turn = match self.ports.sessions.current(session_id).await {
             Ok(snapshot) => snapshot.turn_count,

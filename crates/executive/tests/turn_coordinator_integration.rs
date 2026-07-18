@@ -9,8 +9,8 @@ use std::sync::Arc;
 use executive::service::turn_coordinator::TurnExecution;
 use executive::service::turn_policy::TurnPolicy;
 use fabric::{
-    ItemPayload, OperationKind, OperationState, SessionId, TurnMetrics,
-    TurnRequest, TurnResult, TurnStop,
+    ItemPayload, OperationKind, OperationState, SessionId, TurnMetrics, TurnRequest, TurnResult,
+    TurnStop,
 };
 use support::test_aletheon_builder::TestAletheonBuilder;
 
@@ -44,22 +44,20 @@ async fn create_session_on_first_turn() {
         .submit_with(
             request("new-session", process.id),
             &TurnPolicy::daemon(),
-            |_request, _cancel| {
-                async move {
-                    Ok(TurnExecution {
-                        result: TurnResult {
-                            output: "ok".into(),
-                            stop: TurnStop::Completed,
-                            metrics: TurnMetrics {
-                                completed_normally: true,
-                                ..Default::default()
-                            },
+            |_request, _cancel| async move {
+                Ok(TurnExecution {
+                    result: TurnResult {
+                        output: "ok".into(),
+                        stop: TurnStop::Completed,
+                        metrics: TurnMetrics {
+                            completed_normally: true,
+                            ..Default::default()
                         },
-                        items: vec![],
-                        projection: None,
-                        context_projection: None,
-                    })
-                }
+                    },
+                    items: vec![],
+                    projection: None,
+                    context_projection: None,
+                })
             },
         )
         .await
@@ -92,35 +90,33 @@ async fn append_items_in_sequence_order() {
         .submit_with(
             request("seq-test", process.id),
             &TurnPolicy::daemon(),
-            |_request, _cancel| {
-                async move {
-                    Ok(TurnExecution {
-                        result: TurnResult {
-                            output: "answer".into(),
-                            stop: TurnStop::Completed,
-                            metrics: TurnMetrics {
-                                completed_normally: true,
-                                ..Default::default()
-                            },
+            |_request, _cancel| async move {
+                Ok(TurnExecution {
+                    result: TurnResult {
+                        output: "answer".into(),
+                        stop: TurnStop::Completed,
+                        metrics: TurnMetrics {
+                            completed_normally: true,
+                            ..Default::default()
                         },
-                        items: vec![
-                            ItemPayload::ToolCall {
-                                call_id: "c1".into(),
-                                name: "tool-a".into(),
-                                input: serde_json::json!({}),
-                            },
-                            ItemPayload::ToolResult {
-                                call_id: "c1".into(),
-                                content: "ok".into(),
-                                is_error: false,
-                                permit_id: None,
-                                audit_id: None,
-                            },
-                        ],
-                        projection: None,
-                        context_projection: None,
-                    })
-                }
+                    },
+                    items: vec![
+                        ItemPayload::ToolCall {
+                            call_id: "c1".into(),
+                            name: "tool-a".into(),
+                            input: serde_json::json!({}),
+                        },
+                        ItemPayload::ToolResult {
+                            call_id: "c1".into(),
+                            content: "ok".into(),
+                            is_error: false,
+                            permit_id: None,
+                            audit_id: None,
+                        },
+                    ],
+                    projection: None,
+                    context_projection: None,
+                })
             },
         )
         .await
@@ -204,10 +200,7 @@ async fn settle_operation_on_success() {
         .await
         .unwrap();
     let last = items.last().unwrap();
-    assert!(matches!(
-        last.payload,
-        ItemPayload::AssistantMessage { .. }
-    ));
+    assert!(matches!(last.payload, ItemPayload::AssistantMessage { .. }));
 }
 
 #[tokio::test]
@@ -492,28 +485,26 @@ async fn context_projection_stored_as_item() {
         .submit_with(
             request("ctx-proj", process.id),
             &TurnPolicy::daemon(),
-            |_request, _cancel| {
-                async move {
-                    Ok(TurnExecution {
-                        result: TurnResult {
-                            output: "ok".into(),
-                            stop: TurnStop::Completed,
-                            metrics: TurnMetrics {
-                                completed_normally: true,
-                                ..Default::default()
-                            },
+            |_request, _cancel| async move {
+                Ok(TurnExecution {
+                    result: TurnResult {
+                        output: "ok".into(),
+                        stop: TurnStop::Completed,
+                        metrics: TurnMetrics {
+                            completed_normally: true,
+                            ..Default::default()
                         },
-                        items: vec![],
-                        projection: None,
-                        context_projection: Some(fabric::ContextProjectionReceipt {
-                            space: fabric::AgoraSpaceId("test-space".into()),
-                            broadcast_epoch: Some(fabric::BroadcastEpoch(1)),
-                            workspace_version: Some(2),
-                            dasein_version: fabric::dasein::SelfVersion(3),
-                            content_ids: vec![fabric::ContentId(uuid::Uuid::from_u128(1))],
-                        }),
-                    })
-                }
+                    },
+                    items: vec![],
+                    projection: None,
+                    context_projection: Some(fabric::ContextProjectionReceipt {
+                        space: fabric::AgoraSpaceId("test-space".into()),
+                        broadcast_epoch: Some(fabric::BroadcastEpoch(1)),
+                        workspace_version: Some(2),
+                        dasein_version: fabric::dasein::SelfVersion(3),
+                        content_ids: vec![fabric::ContentId(uuid::Uuid::from_u128(1))],
+                    }),
+                })
             },
         )
         .await
@@ -527,7 +518,10 @@ async fn context_projection_stored_as_item() {
     let ctx_item = items
         .iter()
         .find(|i| matches!(i.payload, ItemPayload::ContextProjection { .. }));
-    assert!(ctx_item.is_some(), "ContextProjection item should be stored");
+    assert!(
+        ctx_item.is_some(),
+        "ContextProjection item should be stored"
+    );
     if let ItemPayload::ContextProjection {
         space,
         broadcast_epoch,

@@ -94,7 +94,10 @@ impl RequestHandler {
             .to_string();
 
         if self.grok_hardening.prompt_queue && !thread_id.is_empty() {
-            self.ports.turn.cancel_current_with_thread(thread_id.clone()).await;
+            self.ports
+                .turn
+                .cancel_current_with_thread(thread_id.clone())
+                .await;
         } else {
             match self.ports.admin.interrupt(reason).await {
                 Ok(()) => {

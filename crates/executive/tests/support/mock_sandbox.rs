@@ -8,9 +8,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use fabric::{
-    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult,
-};
+use fabric::{IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxConfig, SandboxResult};
 
 /// A pre-configured result for a single tool invocation.
 pub struct MockToolResult {
@@ -119,10 +117,13 @@ impl SandboxBackend for MockSandbox {
         _timeout: Duration,
     ) -> anyhow::Result<SandboxResult> {
         // Record the execution for assertion.
-        self.execution_log.lock().unwrap().push(MockExecutionRecord {
-            cmd: cmd.to_string(),
-            config_workspace_cwd: config.working_dir().display().to_string(),
-        });
+        self.execution_log
+            .lock()
+            .unwrap()
+            .push(MockExecutionRecord {
+                cmd: cmd.to_string(),
+                config_workspace_cwd: config.working_dir().display().to_string(),
+            });
 
         // Match tool name from the command. The sandbox receives a shell command string;
         // we look for known tool names as substrings. Tests should use distinct tool names.

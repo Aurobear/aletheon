@@ -9,10 +9,10 @@
 
 use anyhow::Result;
 use fabric::{
-    ItemPayload, SESSION_SCHEMA_VERSION, SessionAppendStore, SessionId, TurnId,
     types::lifecycle::{
-        LifecycleEffect, LifecyclePhase, MAX_CONTEXT_FRAGMENT_BYTES, validate_effects,
+        validate_effects, LifecycleEffect, LifecyclePhase, MAX_CONTEXT_FRAGMENT_BYTES,
     },
+    ItemPayload, SessionAppendStore, SessionId, TurnId, SESSION_SCHEMA_VERSION,
 };
 
 /// Persist one or more context fragments emitted as lifecycle effects.
