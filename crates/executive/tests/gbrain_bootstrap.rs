@@ -513,6 +513,7 @@ async fn connected_manager(state: HttpState) -> McpManager {
             enabled: true,
             bearer_token_env: None,
             request_timeout_ms: None,
+            health_check_interval_sec: 0,
         }],
         ..Default::default()
     });

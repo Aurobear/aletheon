@@ -149,18 +149,22 @@ fn insert_with_numeric_suffix(base: &str, seen: &mut std::collections::HashSet<S
 pub enum McpNotification {
     /// `notifications/tools/list_changed` — the server's tool list changed.
     ToolsListChanged,
+    /// Server-to-client approval request.
+    ElicitationCreate { id: u64, params: Value },
     /// Unknown notification method.
     Unknown(String),
 }
 
 impl McpNotification {
-    /// Parse a JSON-RPC notification (a message with `method` but no `id`).
+    /// Parse a supported inbound notification or server-to-client request.
     pub fn parse(msg: &Value) -> Option<Self> {
-        // Notifications have no "id" field.
-        if msg.get("id").is_some() {
-            return None;
-        }
         let method = msg.get("method")?.as_str()?;
+        if let Some(id) = msg.get("id").and_then(Value::as_u64) {
+            return (method == "elicitation/create").then(|| Self::ElicitationCreate {
+                id,
+                params: msg.get("params").cloned().unwrap_or(Value::Null),
+            });
+        }
         match method {
             "notifications/tools/list_changed" => Some(Self::ToolsListChanged),
             other => Some(Self::Unknown(other.to_string())),
@@ -445,6 +449,32 @@ impl McpTransport {
             } => {
                 let url = base_url.trim_end_matches('/').to_string();
                 Self::http_post_no_response(client, &url, auth, &notification).await
+            }
+        }
+    }
+
+    /// Respond to a server-to-client JSON-RPC request.
+    pub async fn send_response(&mut self, id: u64, result: Value) -> Result<()> {
+        let response = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result });
+        match self {
+            Self::Stdio { stdin_tx, .. } => stdin_tx
+                .send(serde_json::to_string(&response)?)
+                .await
+                .map_err(|_| anyhow::anyhow!("Transport stdin closed")),
+            Self::StreamableHttp {
+                client,
+                base_url,
+                auth,
+                ..
+            }
+            | Self::Sse {
+                client,
+                base_url,
+                auth,
+                ..
+            } => {
+                Self::http_post_no_response(client, base_url.trim_end_matches('/'), auth, &response)
+                    .await
             }
         }
     }
@@ -866,6 +896,21 @@ mod tests {
         });
         let notif = McpNotification::parse(&msg);
         assert_eq!(notif, Some(McpNotification::ToolsListChanged));
+    }
+
+    #[test]
+    fn test_parse_unsolicited_elicitation_request() {
+        let params = serde_json::json!({"message": "Approve?", "mode": "once"});
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 41,
+            "method": "elicitation/create",
+            "params": params
+        });
+        assert_eq!(
+            McpNotification::parse(&msg),
+            Some(McpNotification::ElicitationCreate { id: 41, params })
+        );
     }
 
     #[test]

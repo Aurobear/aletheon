@@ -413,6 +413,7 @@ mod tests {
                 enabled: true,
                 bearer_token_env: Some("TEST_HTTP_TOKEN".into()),
                 request_timeout_ms: None,
+                health_check_interval_sec: 0,
             }],
             ..McpConfig::default()
         };
@@ -454,6 +455,7 @@ mod tests {
                 enabled: true,
                 bearer_token_env: Some("TEST_CALL_TOKEN".into()),
                 request_timeout_ms: None,
+                health_check_interval_sec: 0,
             }],
             ..McpConfig::default()
         };
@@ -504,6 +506,7 @@ mod tests {
                 enabled: true,
                 bearer_token_env: Some("TEST_TOOL_ERROR_TOKEN".into()),
                 request_timeout_ms: None,
+                health_check_interval_sec: 0,
             }],
             ..McpConfig::default()
         };
@@ -536,6 +539,7 @@ mod tests {
                 enabled: true,
                 bearer_token_env: Some("TEST_401_TOKEN".into()),
                 request_timeout_ms: None,
+                health_check_interval_sec: 0,
             }],
             ..McpConfig::default()
         };
@@ -580,6 +584,7 @@ mod tests {
             enabled: true,
             bearer_token_env: Some("GBRAIN_READ_TOKEN".into()),
             request_timeout_ms: None,
+            health_check_interval_sec: 0,
         };
 
         let json_str = serde_json::to_string(&config).unwrap();
@@ -621,6 +626,7 @@ mod tests {
                 enabled: false,
                 bearer_token_env: Some("TEST_DISABLED_TOKEN".into()),
                 request_timeout_ms: None,
+                health_check_interval_sec: 0,
             }],
             ..McpConfig::default()
         };
@@ -653,6 +659,7 @@ mod tests {
                 enabled: true,
                 bearer_token_env: Some("TEST_RESOURCE_TOKEN".into()),
                 request_timeout_ms: None,
+                health_check_interval_sec: 0,
             }],
             ..McpConfig::default()
         };
@@ -703,6 +710,7 @@ mod tests {
                 enabled: true,
                 bearer_token_env: Some("TEST_READ_RESOURCE_TOKEN".into()),
                 request_timeout_ms: None,
+                health_check_interval_sec: 0,
             }],
             ..McpConfig::default()
         };
@@ -736,6 +744,7 @@ mod tests {
                 enabled: true,
                 bearer_token_env: Some("TEST_LIST_RESOURCES_TOKEN".into()),
                 request_timeout_ms: None,
+                health_check_interval_sec: 0,
             }],
             ..McpConfig::default()
         };
@@ -768,6 +777,7 @@ mod tests {
                 enabled: true,
                 bearer_token_env: Some("TEST_RESOURCE_EXEC_TOKEN".into()),
                 request_timeout_ms: None,
+                health_check_interval_sec: 0,
             }],
             ..McpConfig::default()
         };
@@ -822,6 +832,7 @@ mod tests {
                 enabled: true,
                 bearer_token_env: Some("TEST_PARALLEL_TOKEN".into()),
                 request_timeout_ms: None,
+                health_check_interval_sec: 0,
             }],
             ..McpConfig::default()
         };

@@ -745,6 +745,8 @@ pub struct McpServerConfig {
     pub bearer_token_env: Option<String>,
     #[serde(default)]
     pub request_timeout_ms: Option<u64>,
+    #[serde(default = "default_mcp_health_check_interval_sec")]
+    pub health_check_interval_sec: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -788,6 +790,8 @@ struct McpServerConfigWire {
     bearer_token_env: Option<String>,
     #[serde(default)]
     request_timeout_ms: Option<u64>,
+    #[serde(default = "default_mcp_health_check_interval_sec")]
+    health_check_interval_sec: u64,
 }
 
 fn default_mcp_transport_wire() -> McpTransportWire {
@@ -820,6 +824,7 @@ impl From<McpServerConfigWire> for McpServerConfig {
             enabled: wire.enabled,
             bearer_token_env: wire.bearer_token_env,
             request_timeout_ms: wire.request_timeout_ms,
+            health_check_interval_sec: wire.health_check_interval_sec,
         }
     }
 }
@@ -836,8 +841,13 @@ impl Default for McpServerConfig {
             enabled: true,
             bearer_token_env: None,
             request_timeout_ms: None,
+            health_check_interval_sec: default_mcp_health_check_interval_sec(),
         }
     }
+}
+
+fn default_mcp_health_check_interval_sec() -> u64 {
+    30
 }
 
 /// Plugin directories.

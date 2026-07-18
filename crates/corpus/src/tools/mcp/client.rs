@@ -8,7 +8,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, Mutex};
 
 use super::auth::BearerTokenAuth;
-use super::config::{McpConfig, McpTransportConfig, McpTrustLevel};
+use super::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use super::transport::{McpNotification, McpTransport};
 use super::wrapper::{McpResourceProvider, McpToolWrapper};
 
@@ -35,6 +35,69 @@ pub trait ElicitationHandler: Send + Sync {
     ///
     /// Returns `true` if the user approved, `false` if denied.
     async fn handle_elicitation(&self, message: &str, mode: &str) -> Result<bool, String>;
+}
+
+async fn connect_mcp_server(server: &McpServerConfig, global_timeout_ms: u64) -> Result<McpClient> {
+    let timeout_ms = server.request_timeout_ms.unwrap_or(global_timeout_ms);
+    let auth = server
+        .bearer_token_env
+        .as_ref()
+        .and_then(|env_var| match &server.transport {
+            McpTransportConfig::StreamableHttp { url } => {
+                Some(BearerTokenAuth::with_endpoint_scoping(
+                    env_var.clone(),
+                    mnemosyne::credential::EmbeddingCredentialGrant::new(
+                        format!("mcp:{}", server.name),
+                        url,
+                        server.name.clone(),
+                        u64::MAX,
+                        0,
+                        "environment-backed-mcp-token",
+                    ),
+                    Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                ))
+            }
+            McpTransportConfig::Sse { url } => {
+                let principal = format!("mcp:{}", server.name);
+                Some(
+                    BearerTokenAuth::with_endpoint_scoping(
+                        env_var.clone(),
+                        mnemosyne::credential::EmbeddingCredentialGrant::new(
+                            principal.clone(),
+                            url,
+                            server.name.clone(),
+                            u64::MAX,
+                            0,
+                            "environment-backed-mcp-token",
+                        ),
+                        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                    )
+                    .allow_endpoint(
+                        mnemosyne::credential::EmbeddingCredentialGrant::new(
+                            principal,
+                            &format!("{}/sse", url.trim_end_matches('/')),
+                            server.name.clone(),
+                            u64::MAX,
+                            0,
+                            "environment-backed-mcp-token",
+                        ),
+                    ),
+                )
+            }
+            McpTransportConfig::Stdio { .. } => None,
+        });
+    match &server.transport {
+        McpTransportConfig::Stdio { command, args } => {
+            McpClient::connect_stdio(server.name.clone(), command, args, server.trust, timeout_ms)
+                .await
+        }
+        McpTransportConfig::StreamableHttp { url } => {
+            McpClient::connect_http(server.name.clone(), url, auth, server.trust, timeout_ms).await
+        }
+        McpTransportConfig::Sse { url } => {
+            McpClient::connect_sse(server.name.clone(), url, auth, server.trust, timeout_ms).await
+        }
+    }
 }
 
 /// Tool discovered from an MCP server.
@@ -495,7 +558,19 @@ impl McpClient {
         mut rx: mpsc::Receiver<McpNotification>,
     ) {
         while let Some(notification) = rx.recv().await {
-            if matches!(notification, McpNotification::ToolsListChanged) {
+            if let McpNotification::ElicitationCreate { id, params } = notification {
+                let mut client = client.lock().await;
+                let result = client
+                    .handle_elicitation(&params)
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(server = %client.server_name, %error, "MCP elicitation failed closed");
+                        serde_json::json!({"action": "deny"})
+                    });
+                if let Err(error) = client.transport.send_response(id, result).await {
+                    tracing::warn!(server = %client.server_name, %error, "failed to send MCP elicitation response");
+                }
+            } else if matches!(notification, McpNotification::ToolsListChanged) {
                 let mut client = client.lock().await;
                 let id = client.next_id;
                 client.next_id += 1;
@@ -628,12 +703,56 @@ impl McpConnectionManager {
         }
     }
 
-    fn install_client(&mut self, server_name: String, mut client: McpClient) {
+    fn install_client(
+        &mut self,
+        server_config: McpServerConfig,
+        global_timeout_ms: u64,
+        mut client: McpClient,
+    ) {
         let notification_rx = client.notification_rx.take();
         let client = Arc::new(Mutex::new(client));
-        self.clients.insert(server_name, client.clone());
+        self.clients
+            .insert(server_config.name.clone(), client.clone());
         if let Some(rx) = notification_rx {
-            tokio::spawn(McpClient::watch_tool_changes(client, rx));
+            tokio::spawn(McpClient::watch_tool_changes(client.clone(), rx));
+        }
+        if server_config.health_check_interval_sec > 0 {
+            tokio::spawn(async move {
+                let interval =
+                    std::time::Duration::from_secs(server_config.health_check_interval_sec.max(1));
+                loop {
+                    tokio::time::sleep(interval).await;
+                    let (healthy, elicitation_handler) = {
+                        let mut current = client.lock().await;
+                        let handler = current.elicitation_handler.clone();
+                        let id = current.next_id;
+                        current.next_id += 1;
+                        let healthy = current
+                            .transport
+                            .request(id, "ping", serde_json::json!({}))
+                            .await
+                            .is_ok();
+                        (healthy, handler)
+                    };
+                    if healthy {
+                        continue;
+                    }
+                    match connect_mcp_server(&server_config, global_timeout_ms).await {
+                        Ok(mut replacement) => {
+                            replacement.elicitation_handler = elicitation_handler;
+                            let notification_rx = replacement.notification_rx.take();
+                            *client.lock().await = replacement;
+                            if let Some(rx) = notification_rx {
+                                tokio::spawn(McpClient::watch_tool_changes(client.clone(), rx));
+                            }
+                            tracing::info!(server = %server_config.name, "reconnected unhealthy MCP server");
+                        }
+                        Err(error) => {
+                            tracing::warn!(server = %server_config.name, %error, "MCP reconnect attempt failed")
+                        }
+                    }
+                }
+            });
         }
     }
 
@@ -710,7 +829,7 @@ impl McpConnectionManager {
                     .await
                     {
                         Ok(client) => {
-                            self.install_client(server_config.name.clone(), client);
+                            self.install_client(server_config.clone(), global_timeout_ms, client);
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -732,7 +851,7 @@ impl McpConnectionManager {
                     .await
                     {
                         Ok(client) => {
-                            self.install_client(server_config.name.clone(), client);
+                            self.install_client(server_config.clone(), global_timeout_ms, client);
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -754,7 +873,7 @@ impl McpConnectionManager {
                     .await
                     {
                         Ok(client) => {
-                            self.install_client(server_config.name.clone(), client);
+                            self.install_client(server_config.clone(), global_timeout_ms, client);
                         }
                         Err(e) => {
                             tracing::warn!(
