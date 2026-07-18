@@ -285,8 +285,9 @@ pub use types::tool::{
     ThreadGrantKey, Tool, ToolApprovalAuthority, ToolContext, ToolResult, ToolResultMeta,
 };
 pub use types::tool_stream::{
-    tool_event_channel, ToolEventSink, ToolExecutionError, ToolExecutionEvent, ToolNotification,
-    ToolNotificationKind, ToolProgress, TOOL_PROGRESS_CHANNEL_CAP,
+    tool_event_channel, tool_event_channel_for_call, BoundToolEventReceiver, ToolEventSink,
+    ToolExecutionError, ToolExecutionEvent, ToolNotification, ToolNotificationKind, ToolProgress,
+    TOOL_PROGRESS_CHANNEL_CAP,
 };
 pub use types::turn::{
     TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop, TurnTerminalStatus,

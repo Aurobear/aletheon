@@ -98,8 +98,22 @@ pub const TOOL_PROGRESS_CHANNEL_CAP: usize = 32;
 /// the runtime synthesizes a `NoTerminal` error.
 pub struct ToolEventSink {
     tx: mpsc::Sender<ToolExecutionEvent>,
+    call_id: Option<String>,
     terminal_sent: bool,
     terminal_result: Option<Result<ToolResult, ToolExecutionError>>,
+}
+
+/// Host-bound receiver for a governed call. Keeping the binding beside the
+/// receiver lets the bridge detect accidental cross-call routing.
+pub struct BoundToolEventReceiver {
+    call_id: String,
+    rx: mpsc::Receiver<ToolExecutionEvent>,
+}
+
+impl BoundToolEventReceiver {
+    pub fn into_parts(self) -> (String, mpsc::Receiver<ToolExecutionEvent>) {
+        (self.call_id, self.rx)
+    }
 }
 
 impl ToolEventSink {
@@ -107,6 +121,10 @@ impl ToolEventSink {
     /// already sent) — never blocks tool completion.
     pub fn progress(&self, p: ToolProgress) -> bool {
         if self.terminal_sent {
+            tracing::warn!(
+                call_id = self.call_id.as_deref().unwrap_or("unknown"),
+                "tool progress emitted after terminal; event rejected"
+            );
             return false;
         }
         self.tx.try_send(ToolExecutionEvent::Progress(p)).is_ok()
@@ -115,6 +133,10 @@ impl ToolEventSink {
     /// Emit a notification. Same drop-on-full semantics as progress.
     pub fn notify(&self, n: ToolNotification) -> bool {
         if self.terminal_sent {
+            tracing::warn!(
+                call_id = self.call_id.as_deref().unwrap_or("unknown"),
+                "tool notification emitted after terminal; event rejected"
+            );
             return false;
         }
         self.tx
@@ -127,7 +149,10 @@ impl ToolEventSink {
     /// never dropped.
     pub async fn terminal(&mut self, result: Result<ToolResult, ToolExecutionError>) {
         if self.terminal_sent {
-            tracing::warn!("second tool terminal ignored as a protocol violation");
+            tracing::warn!(
+                call_id = self.call_id.as_deref().unwrap_or("unknown"),
+                "second tool terminal ignored as a protocol violation"
+            );
         }
         debug_assert!(
             !self.terminal_sent,
@@ -159,10 +184,32 @@ pub fn tool_event_channel() -> (ToolEventSink, mpsc::Receiver<ToolExecutionEvent
     (
         ToolEventSink {
             tx,
+            call_id: None,
             terminal_sent: false,
             terminal_result: None,
         },
         rx,
+    )
+}
+
+/// Create a bounded tool event channel associated with a governed call.
+///
+/// Stream events deliberately do not carry a producer-supplied call id: the
+/// host binds the channel to one call here, preventing call-id spoofing or
+/// mismatch by construction. The id is retained for protocol-violation logs.
+pub fn tool_event_channel_for_call(
+    call_id: impl Into<String>,
+) -> (ToolEventSink, BoundToolEventReceiver) {
+    let call_id = call_id.into();
+    let (tx, rx) = mpsc::channel(TOOL_PROGRESS_CHANNEL_CAP);
+    (
+        ToolEventSink {
+            tx,
+            call_id: Some(call_id.clone()),
+            terminal_sent: false,
+            terminal_result: None,
+        },
+        BoundToolEventReceiver { call_id, rx },
     )
 }
 

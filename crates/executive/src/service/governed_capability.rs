@@ -348,10 +348,10 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
             let tool_name = request.call.name.clone();
             let call_id = request.call.call_id.clone();
             let cancel = request.control.cancel.clone();
-            let (mut sink, event_rx) = fabric::tool_event_channel();
+            let (mut sink, event_rx) = fabric::tool_event_channel_for_call(call_id.clone());
             let inner = self.inner.clone();
             let invoke = async move { inner.invoke_streaming(request, &mut sink).await };
-            let bridge = crate::service::tool_stream_bridge::bridge_tool_stream(
+            let bridge = crate::service::tool_stream_bridge::bridge_bound_tool_stream(
                 event_rx,
                 turn_events.clone(),
                 tool_name,

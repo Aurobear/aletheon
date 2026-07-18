@@ -7,7 +7,8 @@ use std::sync::{LazyLock, Mutex};
 use fabric::ipc::stream::{TurnEventSender, TurnEventV1};
 use fabric::types::tool::ToolResult;
 use fabric::types::tool_stream::{
-    tool_event_channel, ToolEventSink, ToolExecutionError, ToolExecutionEvent, ToolProgress,
+    tool_event_channel, BoundToolEventReceiver, ToolEventSink, ToolExecutionError,
+    ToolExecutionEvent, ToolProgress,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -232,11 +233,40 @@ pub async fn bridge_tool_stream(
     }
 }
 
+/// Bridge a host-bound stream and reject accidental routing under another call
+/// identifier. Producers cannot choose this id; it is minted at channel setup.
+pub async fn bridge_bound_tool_stream(
+    event_rx: BoundToolEventReceiver,
+    turn_events: TurnEventSender,
+    tool_name: String,
+    call_id: String,
+    cancel: CancellationToken,
+) -> ToolStreamOutcome {
+    let (bound_call_id, event_rx) = event_rx.into_parts();
+    if bound_call_id != call_id {
+        tracing::warn!(
+            call_id,
+            bound_call_id,
+            "tool stream call_id mismatch; failing closed"
+        );
+        return ToolStreamOutcome {
+            terminal: Err(ToolExecutionError::Protocol(
+                "tool stream call_id mismatch".into(),
+            )),
+            progress_emitted: 0,
+            progress_dropped: 0,
+        };
+    }
+    bridge_tool_stream(event_rx, turn_events, tool_name, call_id, cancel).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use fabric::ipc::stream::{OverflowPolicy, StreamConfig, TurnEventStream};
     use fabric::types::tool::{ToolResult, ToolResultMeta};
+    use fabric::types::tool_stream::{ToolNotification, ToolNotificationKind};
+    use proptest::prelude::*;
 
     fn turn_stream(capacity: usize) -> (TurnEventStream, TurnEventSender) {
         TurnEventStream::new(StreamConfig {
@@ -388,5 +418,87 @@ mod tests {
         .await;
         assert!(outcome.terminal.is_ok());
         assert_eq!(outcome.progress_emitted, 2);
+    }
+
+    #[tokio::test]
+    async fn bound_stream_call_id_mismatch_fails_closed() {
+        let (mut sink, rx) = fabric::tool_event_channel_for_call("call-a");
+        sink.terminal(Ok(result())).await;
+        let (_stream, sender) = turn_stream(1);
+
+        let outcome = bridge_bound_tool_stream(
+            rx,
+            sender,
+            "tool".into(),
+            "call-b".into(),
+            CancellationToken::new(),
+        )
+        .await;
+
+        assert!(matches!(
+            outcome.terminal,
+            Err(ToolExecutionError::Protocol(message)) if message.contains("call_id mismatch")
+        ));
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_valid_event_sequences_keep_the_terminal_unique_and_last(
+            prefix in prop::collection::vec(any::<bool>(), 0..24),
+            terminal_is_ok in any::<bool>(),
+        ) {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .expect("test runtime");
+            runtime.block_on(async move {
+                let (mut sink, rx) = tool_event_channel();
+                for (index, notification) in prefix.into_iter().enumerate() {
+                    if notification {
+                        let _ = sink.notify(ToolNotification {
+                            kind: ToolNotificationKind::UiStatus,
+                            message: format!("status-{index}"),
+                        });
+                    } else {
+                        let _ = sink.progress(ToolProgress::Structured(
+                            serde_json::json!({"index": index}),
+                        ));
+                    }
+                }
+                let terminal = if terminal_is_ok {
+                    Ok(result())
+                } else {
+                    Err(ToolExecutionError::Failed("generated failure".into()))
+                };
+                sink.terminal(terminal).await;
+                drop(sink);
+
+                let (mut stream, sender) = turn_stream(32);
+                let outcome = bridge_tool_stream(
+                    rx,
+                    sender,
+                    "property-tool".into(),
+                    "property-call".into(),
+                    CancellationToken::new(),
+                )
+                .await;
+
+                if terminal_is_ok {
+                    prop_assert!(matches!(outcome.terminal, Ok(result) if result.content == "done"));
+                } else {
+                    prop_assert!(matches!(
+                        outcome.terminal,
+                        Err(ToolExecutionError::Failed(message)) if message == "generated failure"
+                    ));
+                }
+                while let Some(event) = stream.try_recv() {
+                    prop_assert!(
+                        matches!(event, Ok(TurnEventV1::ToolProgress { .. })),
+                        "bridge emitted a non-progress turn event"
+                    );
+                }
+                Ok(())
+            })?;
+        }
     }
 }
