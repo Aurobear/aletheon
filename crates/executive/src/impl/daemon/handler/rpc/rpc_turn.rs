@@ -7,32 +7,65 @@ use super::RequestHandler;
 use serde_json::json;
 use tracing::{info, warn};
 
+fn parse_workspace_rewind_request(params: &serde_json::Value) -> Result<(&str, u64), &'static str> {
+    if params.get("working_dir").is_some()
+        || params.get("workspace_roots").is_some()
+        || params.get("checkpoint").is_some()
+        || params.get("checkpoint_blob").is_some()
+        || params.get("checkpoint_path").is_some()
+    {
+        return Err("workspace paths and checkpoint data are host-controlled");
+    }
+    let session_id = params
+        .get("session_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or("session_id and prompt_index are required")?;
+    let prompt_index = params
+        .get("prompt_index")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("session_id and prompt_index are required")?;
+    Ok((session_id, prompt_index))
+}
+
 impl RequestHandler {
     /// Explicit user-triggered FS rewind. The caller supplies only the logical
-    /// session/turn index plus the normal host-resolved workspace selector; no
-    /// checkpoint path or blob is accepted from RPC input.
+    /// session/turn index. Workspace identity is resolved from immutable
+    /// host-bound thread authority; no path or checkpoint data is accepted.
     pub(super) async fn handle_workspace_rewind(
         &self,
         connection: &super::super::super::server::ConnectionContext,
         id: &serde_json::Value,
         request: &serde_json::Value,
     ) -> serde_json::Value {
-        let session_id = request["params"]["session_id"].as_str().unwrap_or_default();
-        let prompt_index = request["params"]["prompt_index"].as_u64();
-        if session_id.is_empty() || prompt_index.is_none() {
-            return json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32602, "message": "session_id and prompt_index are required" }
-            });
-        }
-        let workspace = match super::super::resolve_requested_workspace(&request["params"]) {
-            Ok(workspace) => workspace,
+        let (session_id, prompt_index) = match parse_workspace_rewind_request(&request["params"]) {
+            Ok(parsed) => parsed,
             Err(error) => {
                 return json!({
                     "jsonrpc": "2.0",
                     "id": id,
-                    "error": { "code": -32602, "message": error }
+                        "error": { "code": -32602, "message": error }
+                });
+            }
+        };
+        let authority_key = crate::service::thread_authority::ThreadAuthorityKey::new(
+            connection.principal_id.clone(),
+            fabric::ThreadId(session_id.to_owned()),
+        );
+        let workspace = match self.thread_authority.get(&authority_key) {
+            Ok(Some(settings)) => settings.workspace,
+            Ok(None) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32044, "message": "no host-bound workspace authority for session" }
+                });
+            }
+            Err(error) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32603, "message": error.to_string() }
                 });
             }
         };
@@ -42,7 +75,7 @@ impl RequestHandler {
             .rewind_workspace(
                 connection.principal_id.clone(),
                 session_id.to_owned(),
-                prompt_index.unwrap_or_default(),
+                prompt_index,
                 fabric::types::workspace_checkpoint::WorkspaceIdentity {
                     canonical_path: workspace.cwd().to_path_buf(),
                     repo_fingerprint: None,
@@ -233,6 +266,32 @@ impl RequestHandler {
                     "error": { "code": -32042, "message": format!("exit failed: {e}") }
                 })
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod workspace_rewind_tests {
+    use super::parse_workspace_rewind_request;
+
+    #[test]
+    fn rewind_accepts_only_logical_session_and_turn() {
+        assert_eq!(
+            parse_workspace_rewind_request(
+                &serde_json::json!({"session_id": "session-a", "prompt_index": 7})
+            ),
+            Ok(("session-a", 7))
+        );
+        for forbidden in [
+            "working_dir",
+            "workspace_roots",
+            "checkpoint",
+            "checkpoint_blob",
+            "checkpoint_path",
+        ] {
+            let mut params = serde_json::json!({"session_id": "session-a", "prompt_index": 7});
+            params[forbidden] = serde_json::json!("attacker-controlled");
+            assert!(parse_workspace_rewind_request(&params).is_err());
         }
     }
 }

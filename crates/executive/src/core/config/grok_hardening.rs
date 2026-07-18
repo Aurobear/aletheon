@@ -21,7 +21,7 @@ pub struct GrokHardeningConfig {
     /// G3 — prompt queue / interjection with optimistic concurrency.
     pub prompt_queue: bool,
     /// G4 — workspace checkpoint / rewind.
-    pub checkpoint_rewind: bool,
+    pub workspace_checkpoint: bool,
     /// G5 — typed lifecycle contributor / hook effects.
     pub lifecycle_hooks: bool,
     /// G6 — subagent resource settlement state machine.
@@ -44,7 +44,7 @@ impl GrokHardeningConfig {
             folder_trust,
             streaming_tools,
             prompt_queue,
-            checkpoint_rewind,
+            workspace_checkpoint,
             lifecycle_hooks,
             subagent_settlement,
             memory_search,
@@ -55,7 +55,7 @@ impl GrokHardeningConfig {
         *folder_trust
             || *streaming_tools
             || *prompt_queue
-            || *checkpoint_rewind
+            || *workspace_checkpoint
             || *lifecycle_hooks
             || *subagent_settlement
             || *memory_search

@@ -125,6 +125,34 @@ impl ThreadAuthorityStore {
         records.insert(key.clone(), settings.clone());
         Ok(())
     }
+
+    /// Resolve host-bound settings for an existing thread.
+    ///
+    /// Callers must not reconstruct authority-bearing workspace settings from
+    /// request input. Persistent stores lazily reload the immutable record so
+    /// authority remains available after a daemon restart.
+    pub fn get(
+        &self,
+        key: &ThreadAuthorityKey,
+    ) -> Result<Option<ThreadSettings>, ThreadAuthorityError> {
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|_| ThreadAuthorityError::Poisoned)?;
+        if let Some(settings) = records.get(key) {
+            return Ok(Some(settings.clone()));
+        }
+        let Some(root) = &self.root else {
+            return Ok(None);
+        };
+        let path = root.join(key.file_name());
+        if !path.exists() {
+            return Ok(None);
+        }
+        let settings = read_settings(&path)?;
+        records.insert(key.clone(), settings.clone());
+        Ok(Some(settings))
+    }
 }
 
 fn read_settings(path: &Path) -> Result<ThreadSettings, ThreadAuthorityError> {
@@ -193,5 +221,31 @@ mod tests {
             store.bind_or_verify(&key, &settings("/etc")),
             Err(ThreadAuthorityError::Conflict { .. })
         ));
+    }
+
+    #[test]
+    fn persistent_authority_can_be_resolved_after_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let key =
+            ThreadAuthorityKey::new(PrincipalId::local_uid(1001), ThreadId("thread-a".into()));
+        let context = fabric::PrincipalContext::new(
+            PrincipalId::local_uid(1001),
+            fabric::LocalOsPrincipal {
+                uid: 1001,
+                gid: 1001,
+            },
+            fabric::ConnectionId::new(),
+            ThreadId("thread-a".into()),
+            WorkspacePolicy::from_resolved_roots(root.path().to_path_buf(), vec![]).unwrap(),
+            PermissionProfileId::workspace_write(),
+            ApprovalPolicy::OnRequest,
+        );
+        let expected = ThreadSettings::from_context(&context, None);
+        ThreadAuthorityStore::persistent(root.path().join("authority"))
+            .bind_or_verify(&key, &expected)
+            .unwrap();
+
+        let reopened = ThreadAuthorityStore::persistent(root.path().join("authority"));
+        assert_eq!(reopened.get(&key).unwrap(), Some(expected));
     }
 }

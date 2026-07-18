@@ -79,6 +79,26 @@
       },
       "type": "object"
     },
+    "AgentApprovalPolicy": {
+      "description": "Per-profile approval policy for agent tool execution.",
+      "oneOf": [
+        {
+          "const": "auto_deny",
+          "description": "Deny without prompting — for restricted profiles.",
+          "type": "string"
+        },
+        {
+          "const": "prompt_user",
+          "description": "Prompt the user for confirmation.",
+          "type": "string"
+        },
+        {
+          "const": "auto_approve",
+          "description": "Approve without prompting — for fully trusted profiles.",
+          "type": "string"
+        }
+      ]
+    },
     "AgentConfig": {
       "additionalProperties": false,
       "description": "Agent-level settings.",
@@ -150,6 +170,43 @@
         "system_prompt": {
           "default": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation.",
           "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "AgentProfilesConfig": {
+      "additionalProperties": false,
+      "description": "Agent profile configuration with optional per-profile overrides.",
+      "properties": {
+        "default": {
+          "default": "",
+          "description": "Default profile name for new sessions (e.g. \"code-agent\").",
+          "type": "string"
+        },
+        "overrides": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ProfileOverride"
+          },
+          "default": {},
+          "description": "Per-profile overrides applied during profile construction.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "BackpressureConfig": {
+      "additionalProperties": false,
+      "description": "Backpressure limits for turn admission.\n\nDefault (`max_concurrent_turns = None`): unlimited, backward compatible.\nSet `max_concurrent_turns = Some(N)` to reject new turns with a 503-like\nerror when N turns are already in-flight.",
+      "properties": {
+        "max_concurrent_turns": {
+          "default": null,
+          "description": "Maximum number of concurrent turns allowed across all connections.\n`None` means unlimited (default).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -583,9 +640,139 @@
       },
       "type": "object"
     },
-    "GbrainMemoryConfig": {
+    "GoalRuntimeConfig": {
       "additionalProperties": false,
-      "description": "Optional GBrain supplemental memory over the configured HTTP MCP server.",
+      "description": "Provider/model routing for durable Goal worker attempts.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Enables autonomous Goal attempts. Both worker and reviewer are required.",
+          "type": "boolean"
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoleRuntimeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "worker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoleRuntimeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "GrokHardeningConfig": {
+      "additionalProperties": false,
+      "description": "Toggles for the staged Grok-hardening mechanisms. Fail-closed on typos\n(`deny_unknown_fields`) so a misspelled flag never silently reads as off.",
+      "properties": {
+        "acp_adapter": {
+          "default": false,
+          "description": "G8 — ACP session-update adapter.",
+          "type": "boolean"
+        },
+        "compaction_v2": {
+          "default": false,
+          "description": "C1 — compaction guardrails + strategy selection (maybe_compact_v2).",
+          "type": "boolean"
+        },
+        "folder_trust": {
+          "default": false,
+          "description": "G1 — folder trust gating of repo-executable config loading.",
+          "type": "boolean"
+        },
+        "lifecycle_hooks": {
+          "default": false,
+          "description": "G5 — typed lifecycle contributor / hook effects.",
+          "type": "boolean"
+        },
+        "memory_search": {
+          "default": false,
+          "description": "G7 — endpoint-scoped memory-search credentials.",
+          "type": "boolean"
+        },
+        "prompt_queue": {
+          "default": false,
+          "description": "G3 — prompt queue / interjection with optimistic concurrency.",
+          "type": "boolean"
+        },
+        "sandbox_profiles": {
+          "default": false,
+          "description": "S1 — layered sandbox profile enforcement.",
+          "type": "boolean"
+        },
+        "streaming_tools": {
+          "default": false,
+          "description": "G2 — streaming tool-execution progress events.",
+          "type": "boolean"
+        },
+        "subagent_settlement": {
+          "default": false,
+          "description": "G6 — subagent resource settlement state machine.",
+          "type": "boolean"
+        },
+        "workspace_checkpoint": {
+          "default": false,
+          "description": "G4 — workspace checkpoint / rewind.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "HooksConfig": {
+      "additionalProperties": false,
+      "description": "Hook script configuration.\n\nEach field is a list of script paths to execute at the specified lifecycle point.\nPaths may use `~` for home directory expansion.",
+      "properties": {
+        "on_session_end": {
+          "default": [],
+          "description": "Scripts to run on session end (receives session_id + cwd as JSON on stdin).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "post_tool": {
+          "default": [],
+          "description": "Scripts to run after each tool call (receives tool name + result as JSON on stdin).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pre_tool": {
+          "default": [],
+          "description": "Scripts to run before each tool call (can block execution).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pre_turn": {
+          "default": [],
+          "description": "Scripts to run before each turn (receives user prompt as JSON on stdin).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "McpMemoryConfig": {
+      "additionalProperties": false,
+      "description": "Optional GBrain supplemental memory over the configured HTTP MCP server.\nRenamed to `McpMemoryConfig` for generic MCP-based memory integration.",
       "properties": {
         "delivery_batch_size": {
           "default": 20,
@@ -692,136 +879,6 @@
       },
       "type": "object"
     },
-    "GoalRuntimeConfig": {
-      "additionalProperties": false,
-      "description": "Provider/model routing for durable Goal worker attempts.",
-      "properties": {
-        "enabled": {
-          "default": false,
-          "description": "Enables autonomous Goal attempts. Both worker and reviewer are required.",
-          "type": "boolean"
-        },
-        "reviewer": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RoleRuntimeConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "worker": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RoleRuntimeConfig"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        }
-      },
-      "type": "object"
-    },
-    "GrokHardeningConfig": {
-      "additionalProperties": false,
-      "description": "Toggles for the staged Grok-hardening mechanisms. Fail-closed on typos\n(`deny_unknown_fields`) so a misspelled flag never silently reads as off.",
-      "properties": {
-        "acp_adapter": {
-          "default": false,
-          "description": "G8 — ACP session-update adapter.",
-          "type": "boolean"
-        },
-        "checkpoint_rewind": {
-          "default": false,
-          "description": "G4 — workspace checkpoint / rewind.",
-          "type": "boolean"
-        },
-        "compaction_v2": {
-          "default": false,
-          "description": "C1 — compaction guardrails + strategy selection (maybe_compact_v2).",
-          "type": "boolean"
-        },
-        "folder_trust": {
-          "default": false,
-          "description": "G1 — folder trust gating of repo-executable config loading.",
-          "type": "boolean"
-        },
-        "lifecycle_hooks": {
-          "default": false,
-          "description": "G5 — typed lifecycle contributor / hook effects.",
-          "type": "boolean"
-        },
-        "memory_search": {
-          "default": false,
-          "description": "G7 — endpoint-scoped memory-search credentials.",
-          "type": "boolean"
-        },
-        "prompt_queue": {
-          "default": false,
-          "description": "G3 — prompt queue / interjection with optimistic concurrency.",
-          "type": "boolean"
-        },
-        "sandbox_profiles": {
-          "default": false,
-          "description": "S1 — layered sandbox profile enforcement.",
-          "type": "boolean"
-        },
-        "streaming_tools": {
-          "default": false,
-          "description": "G2 — streaming tool-execution progress events.",
-          "type": "boolean"
-        },
-        "subagent_settlement": {
-          "default": false,
-          "description": "G6 — subagent resource settlement state machine.",
-          "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
-    "HooksConfig": {
-      "additionalProperties": false,
-      "description": "Hook script configuration.\n\nEach field is a list of script paths to execute at the specified lifecycle point.\nPaths may use `~` for home directory expansion.",
-      "properties": {
-        "on_session_end": {
-          "default": [],
-          "description": "Scripts to run on session end (receives session_id + cwd as JSON on stdin).",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "post_tool": {
-          "default": [],
-          "description": "Scripts to run after each tool call (receives tool name + result as JSON on stdin).",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "pre_tool": {
-          "default": [],
-          "description": "Scripts to run before each tool call (can block execution).",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "pre_turn": {
-          "default": [],
-          "description": "Scripts to run before each turn (receives user prompt as JSON on stdin).",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
     "McpServerConfig": {
       "additionalProperties": false,
       "description": "MCP (Model Context Protocol) server configuration.",
@@ -878,7 +935,7 @@
           "type": "string"
         },
         "gbrain": {
-          "$ref": "#/$defs/GbrainMemoryConfig",
+          "$ref": "#/$defs/McpMemoryConfig",
           "default": {
             "delivery_batch_size": 20,
             "enabled": false,
@@ -1077,6 +1134,51 @@
       },
       "type": "object"
     },
+    "ProfileOverride": {
+      "additionalProperties": false,
+      "description": "Per-profile override values. All fields are optional; only the provided\nvalues replace the profile's declared defaults.",
+      "properties": {
+        "approval_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentApprovalPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_iterations": {
+          "default": null,
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_tool_calls": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "tool_timeout_ms": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "ProviderConfig": {
       "additionalProperties": false,
       "description": "Per-provider configuration.",
@@ -1237,6 +1339,67 @@
       },
       "type": "object"
     },
+    "SandboxProfileConfig": {
+      "description": "A named sandbox profile config (from trusted daemon config, never repo).",
+      "properties": {
+        "deny": {
+          "default": [],
+          "description": "Deny entries: exact paths or globs (`**/*.pem`). Read + write denied.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "extends": {
+          "default": null,
+          "description": "Built-in base to inherit (\"workspace\" | \"read-only\" | \"strict\").\nCustom profiles cannot extend other custom profiles.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "read_only": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "read_write": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "restrict_network": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SandboxProfiles": {
+      "description": "Layered sandbox profiles. Global loads first; project merges additively.",
+      "properties": {
+        "default_profile": {
+          "default": "workspace",
+          "description": "Which profile to apply by default (used when `grok_hardening.sandbox_profiles`\nis on). Must be a known profile name or built-in (\"workspace\", \"strict\",\n\"read-only\", \"off\"). \"workspace\" = safe default (read all, write workspace\nroots + credential deny).",
+          "type": "string"
+        },
+        "profiles": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SandboxProfileConfig"
+          },
+          "default": {},
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "TelegramConfig": {
       "additionalProperties": false,
       "description": "Telegram bot configuration for owner-only control channel.\n\nThe config stores the environment-variable NAME, never the token value itself.\nThe runtime reads the token from that env var at startup.",
@@ -1315,6 +1478,20 @@
         },
         "system_prompt": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation."
       }
+    },
+    "agent_profiles": {
+      "$ref": "#/$defs/AgentProfilesConfig",
+      "default": {
+        "default": "",
+        "overrides": {}
+      }
+    },
+    "backpressure": {
+      "$ref": "#/$defs/BackpressureConfig",
+      "default": {
+        "max_concurrent_turns": null
+      },
+      "description": "D2-M5-T2: overload/backpressure limits (default unlimited)."
     },
     "daemon": {
       "$ref": "#/$defs/DaemonConfig",
@@ -1410,7 +1587,6 @@
       "$ref": "#/$defs/GrokHardeningConfig",
       "default": {
         "acp_adapter": false,
-        "checkpoint_rewind": false,
         "compaction_v2": false,
         "folder_trust": false,
         "lifecycle_hooks": false,
@@ -1418,7 +1594,8 @@
         "prompt_queue": false,
         "sandbox_profiles": false,
         "streaming_tools": false,
-        "subagent_settlement": false
+        "subagent_settlement": false,
+        "workspace_checkpoint": false
       }
     },
     "hooks": {
@@ -1534,6 +1711,14 @@
         "bubblewrap_path": null,
         "preference": "auto"
       }
+    },
+    "sandbox_profiles": {
+      "$ref": "#/$defs/SandboxProfiles",
+      "default": {
+        "default_profile": "workspace",
+        "profiles": {}
+      },
+      "description": "S1 sandbox profiles (from trusted daemon config, never from repo)."
     },
     "telegram": {
       "$ref": "#/$defs/TelegramConfig",

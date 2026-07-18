@@ -1054,7 +1054,7 @@ impl RequestHandler {
                     )?,
                 ),
                 kernel.lease_manager(),
-                grok_hardening.checkpoint_rewind,
+                grok_hardening.workspace_checkpoint,
             )
             .with_safety_guard(agent_live_runs)
             .with_events(event_bus.clone(), Some(canonical_event_spine.clone())),
