@@ -92,6 +92,22 @@ pub struct HooksConfig {
     /// Scripts to run before each tool call (can block execution).
     #[serde(default)]
     pub pre_tool: Vec<String>,
+    #[serde(default)]
+    pub post_tool_failure: Vec<String>,
+    #[serde(default)]
+    pub permission_denied: Vec<String>,
+    #[serde(default)]
+    pub user_prompt_submit: Vec<String>,
+    #[serde(default)]
+    pub notification: Vec<String>,
+    #[serde(default)]
+    pub subagent_start: Vec<String>,
+    #[serde(default)]
+    pub subagent_stop: Vec<String>,
+    #[serde(default)]
+    pub pre_compact: Vec<String>,
+    #[serde(default)]
+    pub post_compact: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

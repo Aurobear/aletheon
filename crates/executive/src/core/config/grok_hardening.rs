@@ -23,7 +23,7 @@ pub struct GrokHardeningConfig {
     /// G4 — workspace checkpoint / rewind.
     pub workspace_checkpoint: bool,
     /// G5 — typed lifecycle contributor / hook effects.
-    pub lifecycle_hooks: bool,
+    pub lifecycle_contributors: bool,
     /// G6 — subagent resource settlement state machine.
     pub subagent_settlement: bool,
     /// G7 — endpoint-scoped memory-search credentials.
@@ -45,7 +45,7 @@ impl GrokHardeningConfig {
             streaming_tools,
             prompt_queue,
             workspace_checkpoint,
-            lifecycle_hooks,
+            lifecycle_contributors,
             subagent_settlement,
             memory_search,
             acp_adapter,
@@ -56,7 +56,7 @@ impl GrokHardeningConfig {
             || *streaming_tools
             || *prompt_queue
             || *workspace_checkpoint
-            || *lifecycle_hooks
+            || *lifecycle_contributors
             || *subagent_settlement
             || *memory_search
             || *acp_adapter

@@ -693,7 +693,7 @@
           "description": "G1 — folder trust gating of repo-executable config loading.",
           "type": "boolean"
         },
-        "lifecycle_hooks": {
+        "lifecycle_contributors": {
           "default": false,
           "description": "G5 — typed lifecycle contributor / hook effects.",
           "type": "boolean"
@@ -735,6 +735,13 @@
       "additionalProperties": false,
       "description": "Hook script configuration.\n\nEach field is a list of script paths to execute at the specified lifecycle point.\nPaths may use `~` for home directory expansion.",
       "properties": {
+        "notification": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "on_session_end": {
           "default": [],
           "description": "Scripts to run on session end (receives session_id + cwd as JSON on stdin).",
@@ -751,9 +758,37 @@
           },
           "type": "array"
         },
+        "permission_denied": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "post_compact": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "post_tool": {
           "default": [],
           "description": "Scripts to run after each tool call (receives tool name + result as JSON on stdin).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "post_tool_failure": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pre_compact": {
+          "default": [],
           "items": {
             "type": "string"
           },
@@ -770,6 +805,27 @@
         "pre_turn": {
           "default": [],
           "description": "Scripts to run before each turn (receives user prompt as JSON on stdin).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subagent_start": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subagent_stop": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "user_prompt_submit": {
+          "default": [],
           "items": {
             "type": "string"
           },
@@ -1597,7 +1653,7 @@
         "acp_adapter": false,
         "compaction_v2": false,
         "folder_trust": false,
-        "lifecycle_hooks": false,
+        "lifecycle_contributors": false,
         "memory_search": false,
         "prompt_queue": false,
         "sandbox_profiles": false,
@@ -1609,11 +1665,19 @@
     "hooks": {
       "$ref": "#/$defs/HooksConfig",
       "default": {
+        "notification": [],
         "on_session_end": [],
         "on_session_start": [],
+        "permission_denied": [],
+        "post_compact": [],
         "post_tool": [],
+        "post_tool_failure": [],
+        "pre_compact": [],
         "pre_tool": [],
-        "pre_turn": []
+        "pre_turn": [],
+        "subagent_start": [],
+        "subagent_stop": [],
+        "user_prompt_submit": []
       }
     },
     "mcp_servers": {

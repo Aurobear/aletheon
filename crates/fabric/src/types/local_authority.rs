@@ -286,6 +286,9 @@ pub struct PrincipalContext {
     pub workspace: WorkspacePolicy,
     pub permission_profile: PermissionProfileId,
     pub approval_policy: ApprovalPolicy,
+    /// Host-minted G1 decision for repository command hooks.
+    #[serde(default)]
+    pub repo_hooks_trusted: bool,
 }
 
 impl PrincipalContext {
@@ -307,6 +310,7 @@ impl PrincipalContext {
             workspace,
             permission_profile,
             approval_policy,
+            repo_hooks_trusted: false,
         }
     }
 }

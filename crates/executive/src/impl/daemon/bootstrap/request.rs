@@ -496,7 +496,7 @@ impl RequestHandler {
         }
 
         // Hooks
-        let mut hook_registry = HookRegistry::new(clock.clone());
+        let mut hook_registry = HookRegistry::new(clock.clone()).with_event_bus(event_bus.clone());
         audit_hook::register_audit_hook(&mut hook_registry);
         let hooks_dir = aletheon_dir.join("hooks");
         let hook_loader = corpus::hook::loader::HookLoader::new(hooks_dir);
@@ -896,6 +896,13 @@ impl RequestHandler {
                 crate::r#impl::events::DefaultEventProjectionSet::in_memory()
             }),
         );
+        let agent_daemon_generation = format!("daemon:{}", uuid::Uuid::new_v4());
+        let settlement_receipts = Arc::new(
+            crate::service::agent_control::SqliteSettlementReceiptStore::open(
+                agent_state_root.join("agent_settlement.db"),
+            )
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+        );
         let agent_control_service = Arc::new(
             crate::service::agent_control::AgentControlService::new(
                 kernel.clone(),
@@ -915,10 +922,15 @@ impl RequestHandler {
             .with_memory_vault(Arc::new(
                 mnemosyne::AgentMemoryVault::open(agent_state_root.join("agent_memory.db"))
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-            )),
+            ))
+            .with_subagent_settlement(
+                grok_hardening.subagent_settlement,
+                agent_daemon_generation.clone(),
+                settlement_receipts,
+            ),
         );
         let agent_recovery = agent_control_service
-            .reconcile_startup(&format!("daemon:{}", uuid::Uuid::new_v4()))
+            .reconcile_startup(&agent_daemon_generation)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if !agent_recovery.ready() {
@@ -1120,6 +1132,8 @@ impl RequestHandler {
                 performance: debug_perf.clone(),
             },
         ));
+        let lifecycle_registry =
+            Arc::new(crate::service::lifecycle_contributors::LifecycleRegistry::default());
         let pipeline = Arc::new(crate::service::TurnPipeline::new(
             crate::service::turn_pipeline::TurnPipelineResources {
                 session_gateway: session_gateway.clone(),
@@ -1138,6 +1152,9 @@ impl RequestHandler {
                 session_input,
                 prompt_queue_enabled: grok_hardening.prompt_queue,
                 workspace_checkpoint,
+                lifecycle: lifecycle_registry.clone(),
+                lifecycle_enabled: grok_hardening.lifecycle_contributors,
+                event_bus: event_bus.clone(),
             },
         ));
         let turn_orchestrator = Arc::new(crate::service::DaemonTurnOrchestrator::new(
@@ -1314,6 +1331,8 @@ impl RequestHandler {
                 domains.corpus(),
                 security_group.session_approvals.clone(),
                 turn_token.clone(),
+                lifecycle_registry,
+                grok_hardening.lifecycle_contributors,
             ),
         );
         let health_use_cases: Arc<dyn crate::service::request_use_cases::HealthUseCases> = Arc::new(

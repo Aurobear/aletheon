@@ -376,6 +376,8 @@ pub struct ProductionSessionLifecycle {
     corpus: Arc<dyn corpus::CorpusService>,
     approvals: crate::service::admin_service::ScopedApprovalCache,
     cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+    lifecycle: Arc<crate::service::lifecycle_contributors::LifecycleRegistry>,
+    lifecycle_enabled: bool,
 }
 
 impl ProductionSessionLifecycle {
@@ -383,11 +385,39 @@ impl ProductionSessionLifecycle {
         corpus: Arc<dyn corpus::CorpusService>,
         approvals: crate::service::admin_service::ScopedApprovalCache,
         cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+        lifecycle: Arc<crate::service::lifecycle_contributors::LifecycleRegistry>,
+        lifecycle_enabled: bool,
     ) -> Self {
         Self {
             corpus,
             approvals,
             cancel_token,
+            lifecycle,
+            lifecycle_enabled,
+        }
+    }
+
+    async fn dispatch(
+        &self,
+        phase: crate::service::lifecycle_contributors::LifecyclePhase,
+        session_id: &str,
+    ) {
+        if let Err(error) = self
+            .lifecycle
+            .dispatch_if_enabled(
+                self.lifecycle_enabled,
+                crate::service::lifecycle_contributors::LifecycleInput {
+                    phase,
+                    principal_id: fabric::PrincipalId(fabric::LOCAL_OWNER_PRINCIPAL.into()),
+                    thread_id: fabric::ThreadId(session_id.into()),
+                    turn_id: None,
+                    session_id: session_id.into(),
+                    detail: serde_json::Value::Null,
+                },
+            )
+            .await
+        {
+            tracing::error!(%error, ?phase, "Critical session lifecycle contributor failed closed");
         }
     }
 }
@@ -399,6 +429,11 @@ impl SessionLifecycleUseCases for ProductionSessionLifecycle {
     }
 
     async fn finish(&self, session_id: String, turn_count: usize) {
+        self.dispatch(
+            crate::service::lifecycle_contributors::LifecyclePhase::BeforeSessionEnd,
+            &session_id,
+        )
+        .await;
         let context = HookContext {
             point: HookPoint::OnSessionEnd,
             session_id: session_id.clone(),
@@ -407,32 +442,53 @@ impl SessionLifecycleUseCases for ProductionSessionLifecycle {
             tool_input: None,
             tool_result: None,
             message: None,
-            metadata: HashMap::from([(
-                "cwd".into(),
-                std::env::current_dir()
+            metadata: {
+                let cwd = std::env::current_dir()
                     .unwrap_or_default()
                     .display()
-                    .to_string(),
-            )]),
+                    .to_string();
+                HashMap::from([("cwd".into(), cwd.clone()), ("workspace_root".into(), cwd)])
+            },
         };
         self.corpus.execute_hook(&context).await;
+        self.dispatch(
+            crate::service::lifecycle_contributors::LifecyclePhase::AfterSessionEnd,
+            &session_id,
+        )
+        .await;
     }
 
     async fn start(&self, session_id: String, clear_approvals: bool) {
+        self.dispatch(
+            crate::service::lifecycle_contributors::LifecyclePhase::BeforeSessionStart,
+            &session_id,
+        )
+        .await;
         if clear_approvals {
             self.approvals.clear().await;
         }
         let context = HookContext {
             point: HookPoint::OnSessionStart,
-            session_id,
+            session_id: session_id.clone(),
             turn_count: 0,
             tool_name: None,
             tool_input: None,
             tool_result: None,
             message: None,
-            metadata: HashMap::new(),
+            metadata: {
+                let cwd = std::env::current_dir()
+                    .unwrap_or_default()
+                    .display()
+                    .to_string();
+                HashMap::from([("cwd".into(), cwd.clone()), ("workspace_root".into(), cwd)])
+            },
         };
         self.corpus.execute_hook(&context).await;
+        self.dispatch(
+            crate::service::lifecycle_contributors::LifecyclePhase::AfterSessionStart,
+            &session_id,
+        )
+        .await;
     }
 }
 

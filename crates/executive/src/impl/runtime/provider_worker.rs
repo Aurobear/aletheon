@@ -269,6 +269,7 @@ impl ProviderWorkerRuntime {
                                 sandbox: SandboxRequirement::NotRequired,
                                 cancel: cancel.clone(),
                                 turn_count: 0,
+                                repo_hooks_trusted: false,
                                 action_loop: None,
                                 streaming_tools: false,
                                 turn_event_sender: None,

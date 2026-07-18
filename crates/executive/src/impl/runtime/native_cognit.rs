@@ -224,6 +224,7 @@ impl NativeCognitRuntime {
                 sandbox: SandboxRequirement::NotRequired,
                 cancel: input.cancellation.clone(),
                 turn_count: 0,
+                repo_hooks_trusted: principal_context.repo_hooks_trusted,
                 action_loop,
                 streaming_tools: false,
                 turn_event_sender: None,

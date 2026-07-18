@@ -35,6 +35,7 @@ pub struct CapabilityExecutionContext {
     pub sandbox: SandboxRequirement,
     pub cancel: CancellationToken,
     pub turn_count: usize,
+    pub repo_hooks_trusted: bool,
     pub action_loop: Option<Arc<dyn GovernedActionLoop>>,
     /// G2 additive progress path. Both fields are required to activate it.
     pub streaming_tools: bool,

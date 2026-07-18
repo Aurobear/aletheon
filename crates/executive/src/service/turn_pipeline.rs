@@ -16,6 +16,7 @@ use fabric::include::agora::{
     AgoraOperation, AgoraProposal, AgoraService, AgoraViewRequest, WorkspaceCommitPermit,
 };
 use fabric::ipc::{StreamConfig, TurnEventStream, TurnEventV1};
+use fabric::CanonicalEventBus;
 use fabric::{
     AgoraSpaceId, AgoraVersion, CapabilityCall, Clock, ContentBlock, ContextBinding, Intent,
     IntentSource, OperationId, PrincipalId, ProcessId, Role, SandboxRequirement, SessionId,
@@ -60,6 +61,9 @@ pub struct TurnPipeline {
     pub(crate) prompt_queue_enabled: bool,
     pub(crate) workspace_checkpoint:
         Arc<crate::service::workspace_checkpoint::WorkspaceCheckpointService>,
+    pub(crate) lifecycle: Arc<crate::service::lifecycle_contributors::LifecycleRegistry>,
+    pub(crate) lifecycle_enabled: bool,
+    pub(crate) event_bus: Option<Arc<CanonicalEventBus>>,
 }
 
 pub(crate) struct TurnPipelineResources {
@@ -82,6 +86,9 @@ pub(crate) struct TurnPipelineResources {
     pub(crate) prompt_queue_enabled: bool,
     pub(crate) workspace_checkpoint:
         Arc<crate::service::workspace_checkpoint::WorkspaceCheckpointService>,
+    pub(crate) lifecycle: Arc<crate::service::lifecycle_contributors::LifecycleRegistry>,
+    pub(crate) lifecycle_enabled: bool,
+    pub(crate) event_bus: Option<Arc<CanonicalEventBus>>,
 }
 
 impl TurnPipeline {
@@ -103,7 +110,51 @@ impl TurnPipeline {
             session_input: resources.session_input,
             prompt_queue_enabled: resources.prompt_queue_enabled,
             workspace_checkpoint: resources.workspace_checkpoint,
+            lifecycle: resources.lifecycle,
+            lifecycle_enabled: resources.lifecycle_enabled,
+            event_bus: resources.event_bus,
         }
+    }
+
+    async fn dispatch_lifecycle(
+        &self,
+        input: crate::service::lifecycle_contributors::LifecycleInput,
+        cancel: &CancellationToken,
+    ) -> anyhow::Result<crate::service::lifecycle_contributors::LifecycleDispatch> {
+        use crate::service::lifecycle_contributors::LifecycleEffect;
+
+        let target = format!("thread:{}", input.thread_id.0);
+        let dispatch = self
+            .lifecycle
+            .dispatch_if_enabled(self.lifecycle_enabled, input)
+            .await?;
+        for effect in &dispatch.effects {
+            match effect {
+                LifecycleEffect::EmitEvent { schema, payload } => {
+                    if let Some(bus) = &self.event_bus {
+                        let _ = bus
+                            .publish_event(
+                                fabric::SchemaId::from(schema.as_str()),
+                                &target,
+                                payload.clone(),
+                            )
+                            .await;
+                    }
+                }
+                LifecycleEffect::RequestCancellation { .. } => cancel.cancel(),
+                _ => {}
+            }
+            if let Some(bus) = &self.event_bus {
+                let _ = bus
+                    .publish_event(
+                        fabric::SchemaId::from("aletheon.event.lifecycle_effect_applied/v1"),
+                        &target,
+                        serde_json::json!({"effect": format!("{effect:?}")}),
+                    )
+                    .await;
+            }
+        }
+        Ok(dispatch)
     }
 
     /// Run the full Pre/Cognit/Post turn pipeline.
@@ -148,7 +199,26 @@ impl TurnPipeline {
             )
             .await?;
 
+        let lifecycle_principal = principal.clone();
+        let lifecycle_thread = turn_request.context.thread_id.clone();
+        let lifecycle_turn = turn_request.context.turn_id;
+        let lifecycle_session = session_id.clone();
+
         let turn_result: anyhow::Result<serde_json::Value> = async {
+
+        let lifecycle_start = self
+            .dispatch_lifecycle(
+                crate::service::lifecycle_contributors::LifecycleInput {
+                    phase: crate::service::lifecycle_contributors::LifecyclePhase::BeforeTurnInput,
+                    principal_id: lifecycle_principal.clone(),
+                    thread_id: lifecycle_thread.clone(),
+                    turn_id: lifecycle_turn,
+                    session_id: lifecycle_session.clone(),
+                    detail: serde_json::json!({"message": message}),
+                },
+                &scope_token,
+            )
+            .await?;
 
         // -- SelfField review --
         let intent = Intent {
@@ -208,9 +278,41 @@ impl TurnPipeline {
         // -- Context source preparation --
         self.runtime_ports.storm.reset().await;
         let mut effective_message = String::new();
+        for effect in lifecycle_start.effects {
+            if let crate::service::lifecycle_contributors::LifecycleEffect::AddContextFragment {
+                source,
+                content,
+            } = effect
+            {
+                effective_message.push_str(&format!("[lifecycle:{source}]\n{content}\n"));
+            }
+        }
 
         // -- PreTurn hooks (including configured scripts owned by Corpus) --
         {
+            let authority_metadata = HashMap::from([
+                (
+                    "workspace_root".into(),
+                    turn_request.context.workspace.cwd().display().to_string(),
+                ),
+                (
+                    "repo_hooks_trusted".into(),
+                    turn_request.context.repo_hooks_trusted.to_string(),
+                ),
+            ]);
+            self.runtime_ports
+                .hooks
+                .execute(HookContext {
+                    point: HookPoint::UserPromptSubmit,
+                    session_id: session_id.clone(),
+                    turn_count: current_turn_count,
+                    tool_name: None,
+                    tool_input: None,
+                    tool_result: None,
+                    message: Some(message.clone()),
+                    metadata: authority_metadata.clone(),
+                })
+                .await;
             let ctx = HookContext {
                 point: HookPoint::PreTurn,
                 session_id: session_id.clone(),
@@ -219,7 +321,7 @@ impl TurnPipeline {
                 tool_input: None,
                 tool_result: None,
                 message: Some(message.clone()),
-                metadata: HashMap::new(),
+                metadata: authority_metadata,
             };
             match self.runtime_ports.hooks.execute(ctx).await {
                 HookResult::Block { reason } => {
@@ -349,6 +451,27 @@ impl TurnPipeline {
         // progress and cognitive events share the same per-turn spine.
         let (mut turn_stream, turn_sender) = TurnEventStream::new(StreamConfig::turn_events(64));
         let config = self.runtime_ports.config.config().await;
+        let before_tools = self
+            .dispatch_lifecycle(
+                crate::service::lifecycle_contributors::LifecycleInput {
+                    phase: crate::service::lifecycle_contributors::LifecyclePhase::BeforeToolBatch,
+                    principal_id: lifecycle_principal.clone(),
+                    thread_id: lifecycle_thread.clone(),
+                    turn_id: lifecycle_turn,
+                    session_id: lifecycle_session.clone(),
+                    detail: serde_json::json!({"tool_count": 0}),
+                },
+                &scope_token,
+            )
+            .await?;
+        if let Some(reason) = before_tools.effects.iter().find_map(|effect| match effect {
+            crate::service::lifecycle_contributors::LifecycleEffect::RejectInput { reason } => {
+                Some(reason)
+            }
+            _ => None,
+        }) {
+            anyhow::bail!("lifecycle contributor rejected tool batch: {reason}");
+        }
         let prepared =
             self.runtime_ports
                 .capabilities
@@ -360,7 +483,7 @@ impl TurnPipeline {
                     }),
                     process_id: main_pid,
                     operation_id,
-                    principal,
+                    principal: principal.clone(),
                     connection_id: turn_request.context.connection_id.clone(),
                     thread_id: turn_request.context.thread_id.clone(),
                     turn_id: turn_request.context.turn_id.ok_or_else(|| {
@@ -372,6 +495,7 @@ impl TurnPipeline {
                     sandbox: sandbox_requirement,
                     cancel: scope_token.clone(),
                     turn_count,
+                    repo_hooks_trusted: turn_request.context.repo_hooks_trusted,
                     action_loop,
                     streaming_tools: config.streaming_tools,
                     turn_event_sender: Some(turn_sender.clone()),
@@ -414,7 +538,7 @@ impl TurnPipeline {
                 event_sink,
                 request_messages,
                 dasein_context,
-                cancel_token: scope_token,
+                cancel_token: scope_token.clone(),
                 sessions: self.cognitive_sessions.clone(),
                 batch_planner,
                 session_input: self.session_input.clone(),
@@ -501,6 +625,26 @@ impl TurnPipeline {
                                     target: "agora",
                                     "DomainPorts.agora missing; skipping shared evidence commit"
                                 );
+                            }
+                            if let Err(error) = self.dispatch_lifecycle(
+                                crate::service::lifecycle_contributors::LifecycleInput {
+                                    phase: crate::service::lifecycle_contributors::LifecyclePhase::AfterToolTerminal,
+                                    principal_id: lifecycle_principal.clone(),
+                                    thread_id: lifecycle_thread.clone(),
+                                    turn_id: lifecycle_turn,
+                                    session_id: lifecycle_session.clone(),
+                                    detail: serde_json::json!({
+                                        "call_id": call_id,
+                                        "tool_name": name,
+                                        "is_error": is_error,
+                                    }),
+                                },
+                                &scope_token,
+                            ).await {
+                                scope_token.cancel();
+                                react_task.abort();
+                                let _ = (&mut react_task).await;
+                                return Err(error);
                             }
                         }
                         TurnEventV1::Usage { tokens_in, tokens_out, .. } => {
@@ -693,6 +837,19 @@ impl TurnPipeline {
             }
         }
 
+        self.dispatch_lifecycle(
+            crate::service::lifecycle_contributors::LifecycleInput {
+                phase: crate::service::lifecycle_contributors::LifecyclePhase::AfterTurnTerminal,
+                principal_id: lifecycle_principal.clone(),
+                thread_id: lifecycle_thread.clone(),
+                turn_id: lifecycle_turn,
+                session_id: lifecycle_session.clone(),
+                detail: serde_json::json!({"succeeded": turn_succeeded}),
+            },
+            &scope_token,
+        )
+        .await?;
+
         Ok(json!({"jsonrpc": "2.0", "id": id, "result": {
             "response": text, "turn": turn, "succeeded": turn_succeeded,
                 "metrics": {
@@ -711,6 +868,22 @@ impl TurnPipeline {
         }}))
         }
         .await;
+
+        if turn_result.is_err() {
+            let _ = self
+                .dispatch_lifecycle(
+                    crate::service::lifecycle_contributors::LifecycleInput {
+                        phase: crate::service::lifecycle_contributors::LifecyclePhase::OnAbort,
+                        principal_id: lifecycle_principal,
+                        thread_id: lifecycle_thread,
+                        turn_id: lifecycle_turn,
+                        session_id: lifecycle_session,
+                        detail: serde_json::json!({"reason": "turn pipeline error"}),
+                    },
+                    &scope_token,
+                )
+                .await;
+        }
 
         if let Some(checkpoint_id) = checkpoint_id {
             let succeeded = turn_result

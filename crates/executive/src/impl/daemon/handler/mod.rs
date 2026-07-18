@@ -152,7 +152,7 @@ impl RequestHandler {
                 })
             }
         };
-        let context = fabric::PrincipalContext::new(
+        let mut context = fabric::PrincipalContext::new(
             connection.principal_id.clone(),
             connection.os_principal,
             connection.connection_id.clone(),
@@ -184,6 +184,10 @@ impl RequestHandler {
                     .as_secs(),
             )
             .await;
+        context.repo_hooks_trusted = crate::service::workspace_trust::source_is_granted(
+            &trust_decision,
+            fabric::workspace_trust::ExecutableConfigSource::RepoHooks,
+        );
         tracing::debug!(
             principal = %context.principal_id.0,
             workspace = %context.workspace.cwd().display(),

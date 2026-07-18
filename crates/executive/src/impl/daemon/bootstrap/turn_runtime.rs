@@ -31,6 +31,26 @@ pub(super) fn register_configured_hooks(
         (fabric::hook::HookPoint::PreTool, &config.pre_tool),
         (fabric::hook::HookPoint::PostTool, &config.post_tool),
         (
+            fabric::hook::HookPoint::PostToolFailure,
+            &config.post_tool_failure,
+        ),
+        (
+            fabric::hook::HookPoint::PermissionDenied,
+            &config.permission_denied,
+        ),
+        (
+            fabric::hook::HookPoint::UserPromptSubmit,
+            &config.user_prompt_submit,
+        ),
+        (fabric::hook::HookPoint::Notification, &config.notification),
+        (
+            fabric::hook::HookPoint::SubagentStart,
+            &config.subagent_start,
+        ),
+        (fabric::hook::HookPoint::SubagentStop, &config.subagent_stop),
+        (fabric::hook::HookPoint::PreCompact, &config.pre_compact),
+        (fabric::hook::HookPoint::PostCompact, &config.post_compact),
+        (
             fabric::hook::HookPoint::OnSessionEnd,
             &config.on_session_end,
         ),
@@ -370,6 +390,7 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
             prepared.executor,
             context.session_id.clone(),
             context.turn_count,
+            context.repo_hooks_trusted,
             context.working_dir.clone(),
             context.operation_id,
             context.process_id,
@@ -431,6 +452,8 @@ mod tests {
             pre_tool: vec!["pre-tool".into()],
             post_tool: vec!["post-tool".into()],
             on_session_end: vec!["session-end".into()],
+            post_tool_failure: vec!["tool-failure".into()],
+            ..Default::default()
         };
 
         register_configured_hooks(&mut registry, &config);
@@ -439,6 +462,7 @@ mod tests {
         assert_eq!(registry.count(&fabric::hook::HookPoint::OnSessionStart), 1);
         assert_eq!(registry.count(&fabric::hook::HookPoint::PreTool), 1);
         assert_eq!(registry.count(&fabric::hook::HookPoint::PostTool), 1);
+        assert_eq!(registry.count(&fabric::hook::HookPoint::PostToolFailure), 1);
         assert_eq!(registry.count(&fabric::hook::HookPoint::OnSessionEnd), 1);
     }
 }

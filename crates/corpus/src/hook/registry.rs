@@ -37,6 +37,7 @@ pub struct RegisteredHook {
 pub struct HookRegistry {
     hooks: HashMap<HookPoint, Vec<RegisteredHook>>,
     clock: Arc<dyn Clock>,
+    event_bus: Option<Arc<fabric::CanonicalEventBus>>,
 }
 
 impl HookRegistry {
@@ -44,7 +45,13 @@ impl HookRegistry {
         Self {
             hooks: HashMap::new(),
             clock,
+            event_bus: None,
         }
+    }
+
+    pub fn with_event_bus(mut self, event_bus: Option<Arc<fabric::CanonicalEventBus>>) -> Self {
+        self.event_bus = event_bus;
+        self
     }
 
     /// Register a hook. Hooks are kept sorted by priority.
@@ -80,6 +87,18 @@ impl HookRegistry {
     /// - All `Inject` results are merged.
     /// - `Continue` is returned if no hooks modify behavior.
     pub async fn execute(&self, ctx: &HookContext) -> HookResult {
+        if let Some(bus) = &self.event_bus {
+            let _ = bus
+                .publish_event(
+                    fabric::SchemaId::from("aletheon.event.hook_triggered/v1"),
+                    format!("session:{}", ctx.session_id),
+                    serde_json::json!({
+                        "hook_event_name": ctx.point.event_name(),
+                        "turn_count": ctx.turn_count,
+                    }),
+                )
+                .await;
+        }
         let hooks = match self.hooks.get(&ctx.point) {
             Some(h) => h,
             None => return HookResult::Continue,
@@ -91,8 +110,19 @@ impl HookRegistry {
             let result = self.execute_single(hook, ctx).await;
             match result {
                 HookResult::Continue => {}
-                HookResult::ModifyInput(v) => return HookResult::ModifyInput(v),
-                HookResult::Block { reason } => return HookResult::Block { reason },
+                HookResult::ModifyInput(v) if ctx.point.is_blocking() => {
+                    return HookResult::ModifyInput(v)
+                }
+                HookResult::Block { reason } if ctx.point.is_blocking() => {
+                    return HookResult::Block { reason }
+                }
+                HookResult::ModifyInput(_) | HookResult::Block { .. } => {
+                    warn!(
+                        hook = %hook.name,
+                        point = ctx.point.event_name(),
+                        "Ignoring blocking hook result at non-blocking lifecycle point"
+                    );
+                }
                 HookResult::Inject(s) => injections.push(s),
             }
         }
@@ -127,6 +157,19 @@ impl HookRegistry {
                 point = ctx.point.event_name(),
                 "Skipping untrusted repository hook"
             );
+            if let Some(bus) = &self.event_bus {
+                let _ = bus
+                    .publish_event(
+                        fabric::SchemaId::from("aletheon.event.hook_restricted/v1"),
+                        format!("session:{}", ctx.session_id),
+                        serde_json::json!({
+                            "hook": hook.name,
+                            "hook_event_name": ctx.point.event_name(),
+                            "reason": "untrusted_repository_hook",
+                        }),
+                    )
+                    .await;
+            }
             return HookResult::Continue;
         }
 
@@ -401,6 +444,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restricted_repository_hook_emits_canonical_receipt() {
+        let directory = TempDir::new().unwrap();
+        let script = directory.path().join("hook.sh");
+        std::fs::write(&script, "#!/bin/sh\necho should-not-run").unwrap();
+        let bus = Arc::new(fabric::CanonicalEventBus::new(8));
+        let mut receipts =
+            bus.subscribe_channel(fabric::SchemaId::from("aletheon.event.hook_restricted/v1"));
+        let mut registry = HookRegistry::default().with_event_bus(Some(bus));
+        registry.register(RegisteredHook {
+            name: "repo-hook".into(),
+            source: "skill:repo".into(),
+            script_path: Some(script),
+            point: HookPoint::PreTool,
+            priority: 0,
+        });
+        let context = HookContext {
+            point: HookPoint::PreTool,
+            session_id: "session-a".into(),
+            turn_count: 0,
+            tool_name: None,
+            tool_input: None,
+            tool_result: None,
+            message: None,
+            metadata: HashMap::from([(
+                "workspace_root".into(),
+                directory.path().display().to_string(),
+            )]),
+        };
+
+        assert!(matches!(
+            registry.execute(&context).await,
+            HookResult::Continue
+        ));
+        let receipt = receipts.recv().await.unwrap();
+        assert_eq!(receipt.source.0, "session:session-a");
+        assert_eq!(receipt.payload["reason"], "untrusted_repository_hook");
+    }
+
+    #[tokio::test]
     async fn execute_no_hooks_returns_continue() {
         let reg = HookRegistry::default();
         let ctx = HookContext {
@@ -532,6 +614,44 @@ mod tests {
             HookResult::ModifyInput(v) => assert_eq!(v["key"], "value"),
             _ => panic!("Expected ModifyInput"),
         }
+    }
+
+    #[tokio::test]
+    async fn block_is_ignored_outside_pre_tool() {
+        let dir = TempDir::new().unwrap();
+        let script = dir.path().join("block.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/bash\necho '{\"action\":\"block\",\"reason\":\"late\"}'",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let mut registry = HookRegistry::default();
+        registry.register(RegisteredHook {
+            name: "late-block".into(),
+            source: "config".into(),
+            script_path: Some(script),
+            point: HookPoint::PostTurn,
+            priority: 0,
+        });
+        let context = HookContext {
+            point: HookPoint::PostTurn,
+            session_id: "session".into(),
+            turn_count: 1,
+            tool_name: None,
+            tool_input: None,
+            tool_result: None,
+            message: None,
+            metadata: HashMap::new(),
+        };
+        assert!(matches!(
+            registry.execute(&context).await,
+            HookResult::Continue
+        ));
     }
 
     #[test]

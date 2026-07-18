@@ -189,6 +189,18 @@ impl LifecycleRegistry {
         }
         Ok(dispatch)
     }
+
+    /// Feature-gated dispatch boundary used by every production integration.
+    pub async fn dispatch_if_enabled(
+        &self,
+        enabled: bool,
+        input: LifecycleInput,
+    ) -> Result<LifecycleDispatch, LifecycleDispatchError> {
+        if !enabled {
+            return Ok(LifecycleDispatch::default());
+        }
+        self.dispatch(input).await
+    }
 }
 
 fn normalize_effect(phase: LifecyclePhase, effect: LifecycleEffect) -> Option<LifecycleEffect> {
@@ -448,5 +460,23 @@ mod tests {
                 assert!(dispatch.outcomes[0].failed);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn disabled_dispatch_is_a_strict_noop() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = LifecycleRegistry::default();
+        registry
+            .register(
+                LifecyclePhase::BeforeTurnInput,
+                contributor("must-not-run", 0, calls.clone()),
+            )
+            .unwrap();
+        let dispatch = registry
+            .dispatch_if_enabled(false, input(LifecyclePhase::BeforeTurnInput))
+            .await
+            .unwrap();
+        assert_eq!(dispatch, LifecycleDispatch::default());
+        assert!(calls.lock().unwrap().is_empty());
     }
 }

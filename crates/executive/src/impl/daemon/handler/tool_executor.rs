@@ -68,6 +68,7 @@ pub(crate) struct TurnToolExecutor {
     working_dir: PathBuf,
     session_id: String,
     turn_count: usize,
+    repo_hooks_trusted: bool,
     /// Kernel operation id for this turn (used by admission controller).
     operation_id: OperationId,
     /// Kernel process id for the main agent (used by admission controller).
@@ -81,6 +82,7 @@ impl TurnToolExecutor {
         inner: Arc<dyn ToolExecutor>,
         session_id: String,
         turn_count: usize,
+        repo_hooks_trusted: bool,
         working_dir: PathBuf,
         operation_id: OperationId,
         process_id: ProcessId,
@@ -96,6 +98,7 @@ impl TurnToolExecutor {
             working_dir,
             session_id,
             turn_count,
+            repo_hooks_trusted,
             operation_id,
             process_id,
         }
@@ -152,6 +155,7 @@ impl TurnToolExecutor {
         let working_dir = self.working_dir.clone();
         let session_id = self.session_id.clone();
         let turn_count = self.turn_count;
+        let repo_hooks_trusted = self.repo_hooks_trusted;
 
         // --- PreTool hook ---
         {
@@ -163,9 +167,24 @@ impl TurnToolExecutor {
                 tool_input: Some(input.clone()),
                 tool_result: None,
                 message: None,
-                metadata: HashMap::new(),
+                metadata: HashMap::from([
+                    ("workspace_root".into(), working_dir.display().to_string()),
+                    ("repo_hooks_trusted".into(), repo_hooks_trusted.to_string()),
+                ]),
             };
             if let HookResult::Block { reason } = corpus.execute_hook(&ctx).await {
+                corpus
+                    .execute_hook(&HookContext {
+                        point: HookPoint::PermissionDenied,
+                        session_id: session_id.clone(),
+                        turn_count,
+                        tool_name: Some(name.clone()),
+                        tool_input: Some(input.clone()),
+                        tool_result: None,
+                        message: Some(reason.clone()),
+                        metadata: ctx.metadata.clone(),
+                    })
+                    .await;
                 return self.error_result(request, permit, format!("Blocked by hook: {reason}"));
             }
         }
@@ -180,7 +199,10 @@ impl TurnToolExecutor {
                 tool_input: Some(input.clone()),
                 tool_result: None,
                 message: None,
-                metadata: HashMap::new(),
+                metadata: HashMap::from([
+                    ("workspace_root".into(), working_dir.display().to_string()),
+                    ("repo_hooks_trusted".into(), repo_hooks_trusted.to_string()),
+                ]),
             };
             corpus.execute_hook(&ctx).await;
         }
@@ -260,7 +282,11 @@ impl TurnToolExecutor {
         // --- PostTool hook ---
         {
             let ctx = HookContext {
-                point: HookPoint::PostTool,
+                point: if is_error {
+                    HookPoint::PostToolFailure
+                } else {
+                    HookPoint::PostTool
+                },
                 session_id,
                 turn_count,
                 tool_name: Some(name.clone()),
@@ -271,7 +297,10 @@ impl TurnToolExecutor {
                     execution_time_ms: 0,
                 }),
                 message: None,
-                metadata: HashMap::new(),
+                metadata: HashMap::from([
+                    ("workspace_root".into(), working_dir.display().to_string()),
+                    ("repo_hooks_trusted".into(), repo_hooks_trusted.to_string()),
+                ]),
             };
             corpus.execute_hook(&ctx).await;
         }
@@ -346,6 +375,7 @@ impl ProductionCapabilityService {
             prepared.executor,
             context.session_id.clone(),
             context.turn_count,
+            context.repo_hooks_trusted,
             context.workspace.cwd().to_path_buf(),
             context.operation_id,
             context.process_id,
@@ -521,6 +551,7 @@ impl CapabilityService for ProductionCapabilityService {
             sandbox: fabric::SandboxRequirement::NotRequired,
             cancel,
             turn_count: 0,
+            repo_hooks_trusted: false,
             action_loop: None,
             streaming_tools: false,
             turn_event_sender: None,
