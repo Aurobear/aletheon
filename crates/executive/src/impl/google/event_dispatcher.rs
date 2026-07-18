@@ -134,26 +134,6 @@ pub trait GoogleMemoryProposalSink: Send + Sync {
     ) -> Result<(), String>;
 }
 
-#[async_trait]
-pub trait GoogleMailIngressSink: Send + Sync {
-    async fn ingest_mail(
-        &self,
-        event: &ExternalEventEnvelope,
-        cancel: &CancellationToken,
-    ) -> Result<(), String>;
-}
-
-#[async_trait]
-impl GoogleMailIngressSink for crate::r#impl::channel::gmail::GmailGoalEventIngress {
-    async fn ingest_mail(
-        &self,
-        event: &ExternalEventEnvelope,
-        cancel: &CancellationToken,
-    ) -> Result<(), String> {
-        self.ingest(event, cancel).await.map(|_| ())
-    }
-}
-
 pub trait GoogleNotificationSink: Send + Sync {
     fn enqueue(
         &self,
@@ -208,7 +188,7 @@ pub struct GoogleEventRouter {
     notifications: Arc<dyn GoogleNotificationSink>,
     /// Event capabilities keyed by [`IntentKind`] (currently only
     /// [`IntentKind::GmailIngest`]) — the channel-registry seam that
-    /// replaces the hardcoded [`GoogleMailIngressSink`] branch. Gmail's own
+    /// replaced the former hardcoded mail-ingress branch. Gmail's own
     /// stores/idempotency/security remain entirely inside the registered
     /// handler; this router only decides *whether* to invoke it.
     event_capabilities: EventCapabilityRegistry,

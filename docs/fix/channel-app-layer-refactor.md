@@ -1,6 +1,6 @@
 # Channel 子系统解耦重构 + 应用层定位
 
-> **Status:** In progress — Phase 0–2 完成并提交（分支 `auro/refactor/channel-gateway`）
+> **Status:** In progress — Phase 0–3 + 部分 Phase 5 完成并提交（分支 `auro/refactor/channel-gateway`）
 > **Author:** 架构调研 2026-07-18
 
 ## 实施进度（2026-07-18）
@@ -10,20 +10,23 @@
 | 0 | `ef7d010e` | 抽 `intent.rs`（`Intent`/`classify_intent`）+ `notify.rs`，纯逻辑零行为变化 | ✅ 测试绿 |
 | 1 | `f4b9bf5a` | `CapabilityRegistry`/`CapabilityHandler`/`OutboundEffect`/`ApprovalResolver` 取代 god-object；`ChannelRouter`→`ChannelDispatcher`；5 个 `Option<Arc<dyn>>` 字段清零；`ActivateGoal` fork→resolver 注册表 | ✅ 41/41 |
 | 2 | `c35c1d95` | 中立层 google-free（dispatcher/telegram 仅剩文档注释）；`handlers/google_read.rs` + `ChatPreprocessor` 钩子；删 `enqueue_google_notification`，通知统一走 `DurableGoogleNotificationSink` | ✅ 33+40 绿 |
+| 3 | `00ab6e1a` | Gmail 成为注册的 `EventCapabilityHandler`（`IntentKind::GmailIngest` + `EventCapabilityRegistry`）；`handlers/gmail_ingest.rs` 包 `GmailGoalEventIngress::ingest`；Gmail 领域内部 7 文件零改动，安全/幂等/reconciliation 全保 | ✅ gmail 套件绿 |
+| 5(部分) | 本次 | 删除 Phase 3 后变死的 `GoogleMailIngressSink` trait+impl+导出 | ✅ 绿 |
 
-**核心诉求「耦合太严重」已解决**：中立 dispatcher/transport 不再有任何 provider 领域分支。
+**核心诉求「耦合太严重」已解决**：中立 dispatcher/transport 不再有任何 provider 领域分支；Gmail 与 Telegram 统一在「一切能力皆注册 handler」的模型下（Gmail 走非双工事件路径，语义未变）。
 
-### Phase 4 阻塞点（需决策）—— approval 端口抽象
-物理搬迁到 `crates/gateway`（只依赖 `fabric`）被以下跨 crate 依赖卡住，均在 `executive::impl`：
-- `approval::{ApprovalRepository, ApprovalCreate, ApprovalDecision, ApprovalResolutionContext, ApplyCoordinator}`——dispatcher 用 `record_delivery_pending/sent/failed`、`resolve`、`list_pending`；gmail 用 `create`。
-- `goal::{ObjectiveStore, AttemptCoordinationOutcome, RetryDecision}`。
-- `gmail::GmailGoalDraftCoordinator`。
+### Phase 4（物理搬迁到 `crates/gateway`）—— 未做，需专门低冲突窗口
 
-要搬迁必须先把这些抽象成 **`fabric` 端口 trait + `executive` 实现**。其中 approval 抽象**会改动核心审批子系统契约，爆炸半径超出 channel 模块**——按「材料级范围扩张需再确认」，此步单列决策，不擅自展开。
+**阻塞点 1：跨 crate 依赖需先抽象成端口。** 中立引擎用了 `executive::impl` 的具体类型：
+- `approval::{ApprovalRepository, ApprovalCreate, ApprovalDecision, ApprovalResolutionContext, ApplyCoordinator}`——dispatcher 用 `record_delivery_*`/`resolve`/`list_pending`/`load`；gmail 用 `create`。**approval 抽象会改动核心审批子系统契约，爆炸半径超出 channel 模块。**
+- `goal::{ObjectiveStore, AttemptCoordinationOutcome, RetryDecision}`；`gmail::GmailGoalDraftCoordinator`。
 
-### 待办
-- **Phase 4**：先落 approval/goal 端口抽象（决策后），再建 `crates/gateway` 物理搬迁 + 配置泛化。与在跑的 MCP/multi-user 撞 `request.rs`/`config`，排最后 rebase。
-- **Phase 3（Gmail 统一）**：独立 PR。需保全 `(account_id,message_id)` 幂等、report reconciliation（`report.rs:197-327`）、sender deny-by-default。
+**阻塞点 2：7 处反向引用会成环。** executive 里从 channel 模块**外部**引用 `r#impl::channel` 的有 7 处：`host/mod.rs`、`google/event_dispatcher.rs`、`goal/worker.rs`、`external/mod.rs`、`daemon/bootstrap/{channels,google,request}.rs`。channel 搬进 `gateway` 后，若 `gateway`→`executive`，这 7 处 `executive`→`gateway` 即成环。破环需将这些点做**依赖注入**、并把 daemon 组合根（poll-loop spawn）上移到 `bin`——cycle-sensitive 大工程，且全撞在跑任务正改的文件上（`request.rs`/`google`/`goal`）。
+
+**结论**：Phase 4 应在 MCP/multi-user 那摊落地后，于专门窗口按「① fabric 端口抽象 → ② 反转 7 处依赖 + 组合根上移 bin → ③ 建 gateway 物理搬迁 → ④ 配置泛化」推进。前 3 阶段已独立交付核心解耦价值，不阻塞。
+
+### 备注修正
+- `channel/exec_server_client.rs` **不是死代码**——`host/mod.rs:154,167` 实际调用 `ExecServerClient::spawn`（虽内部 `todo!()` 桩）。原计划「删死桩」作废，**保留**。
 
 ---
 
