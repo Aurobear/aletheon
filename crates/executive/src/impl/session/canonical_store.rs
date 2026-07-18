@@ -473,4 +473,135 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, Role::System);
     }
+
+    #[derive(Clone, Copy)]
+    enum CrashBoundary {
+        Streaming,
+        Tool,
+        Compaction,
+        TerminalPersist,
+    }
+
+    async fn persist_until_crash(path: &Path, boundary: CrashBoundary, session: &str) {
+        let store = CanonicalSessionStore::open(path).unwrap();
+        let session_id = SessionId(session.into());
+        store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 0,
+                status: fabric::SessionStatus::Active,
+            })
+            .await
+            .unwrap();
+        let turn_id = fabric::TurnId::new();
+        let mut payloads = vec![ItemPayload::UserMessage {
+            content: "started".into(),
+        }];
+        match boundary {
+            CrashBoundary::Streaming => {}
+            CrashBoundary::Tool => payloads.push(ItemPayload::ToolCall {
+                call_id: "call-1".into(),
+                name: "bash".into(),
+                input: serde_json::json!({"command":"true"}),
+            }),
+            CrashBoundary::Compaction => payloads.push(ItemPayload::ContextProjection {
+                space: "workspace".into(),
+                broadcast_epoch: Some(7),
+                workspace_version: Some(3),
+                dasein_version: 4,
+                content_ids: vec!["fragment-1".into()],
+            }),
+            // The writer received a result but crashed before its terminal
+            // append. Keep the deliberately orphaned result durable so reopen
+            // also proves the model projection cannot expose it as a tool result.
+            CrashBoundary::TerminalPersist => payloads.push(ItemPayload::ToolResult {
+                call_id: "missing-call".into(),
+                content: "must-not-be-exposed".into(),
+                is_error: false,
+                permit_id: None,
+                audit_id: None,
+            }),
+        }
+        for (index, payload) in payloads.into_iter().enumerate() {
+            let sequence = index as u64 + 1;
+            store
+                .append(
+                    &session_id,
+                    sequence,
+                    ItemRecord {
+                        schema_version: SESSION_SCHEMA_VERSION,
+                        id: ItemId::new(),
+                        session_id: session_id.clone(),
+                        turn_id,
+                        sequence,
+                        created_at_ms: sequence,
+                        payload,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        // Dropping the only connection is the deterministic crash boundary.
+    }
+
+    #[tokio::test]
+    async fn reopen_recovers_each_m4_crash_boundary_without_false_terminal() {
+        for (index, boundary) in [
+            CrashBoundary::Streaming,
+            CrashBoundary::Tool,
+            CrashBoundary::Compaction,
+            CrashBoundary::TerminalPersist,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("sessions.db");
+            let session = format!("crash-{index}");
+            persist_until_crash(&path, boundary, &session).await;
+
+            let reopened = CanonicalSessionStore::open(&path).unwrap();
+            let mut hardening = crate::core::config::GrokHardeningConfig::default();
+            hardening.compaction_v2 = true;
+            let report =
+                crate::service::turn_recovery::scan_incomplete_turns(&reopened, &hardening)
+                    .await
+                    .unwrap();
+            assert_eq!(report.incomplete_turns.len(), 1);
+            let expected = if matches!(boundary, CrashBoundary::Tool) {
+                RecoveryClassification::Failed
+            } else {
+                RecoveryClassification::Interrupted
+            };
+            assert_eq!(report.incomplete_turns[0].classification, expected);
+            assert_ne!(
+                reopened
+                    .load_session(&SessionId(session.clone()))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                fabric::SessionStatus::Active
+            );
+
+            let items = reopened
+                .load_items(&SessionId(session), None)
+                .await
+                .unwrap();
+            assert!(!items.iter().any(|item| matches!(
+                item.payload,
+                ItemPayload::AssistantMessage { .. } | ItemPayload::SystemNotice { .. }
+            )));
+            if matches!(boundary, CrashBoundary::TerminalPersist) {
+                let projected = project_messages(&items).unwrap();
+                assert!(!projected.iter().any(|message| {
+                    message.content.iter().any(|block| {
+                        matches!(block, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "missing-call")
+                    })
+                }));
+            }
+        }
+    }
 }

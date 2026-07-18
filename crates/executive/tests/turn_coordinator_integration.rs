@@ -6,13 +6,65 @@ mod support {
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use executive::service::turn_coordinator::TurnExecution;
 use executive::service::turn_policy::TurnPolicy;
 use fabric::{
-    ItemPayload, OperationKind, OperationState, SessionId, TurnMetrics, TurnRequest, TurnResult,
-    TurnStop,
+    ItemPayload, OperationKind, OperationState, SessionAppendStore, SessionId, TurnMetrics,
+    TurnRequest, TurnResult, TurnStop,
 };
 use support::test_aletheon_builder::TestAletheonBuilder;
+
+struct TerminalFailingStore {
+    inner: executive::r#impl::session::canonical_store::CanonicalSessionStore,
+}
+
+#[async_trait]
+impl fabric::SessionAppendStore for TerminalFailingStore {
+    async fn create(&self, session: fabric::SessionRecord) -> anyhow::Result<()> {
+        self.inner.create(session).await
+    }
+
+    async fn append(
+        &self,
+        session: &SessionId,
+        expected_sequence: u64,
+        item: fabric::ItemRecord,
+    ) -> anyhow::Result<fabric::AppendOutcome> {
+        if matches!(
+            &item.payload,
+            ItemPayload::AssistantMessage { .. } | ItemPayload::SystemNotice { .. }
+        ) {
+            anyhow::bail!("injected terminal-persist crash")
+        }
+        self.inner.append(session, expected_sequence, item).await
+    }
+
+    async fn fork(
+        &self,
+        parent: &SessionId,
+        through_sequence: u64,
+        child: fabric::SessionRecord,
+    ) -> anyhow::Result<()> {
+        self.inner.fork(parent, through_sequence, child).await
+    }
+
+    async fn load_session(
+        &self,
+        session: &SessionId,
+    ) -> anyhow::Result<Option<fabric::SessionRecord>> {
+        self.inner.load_session(session).await
+    }
+
+    async fn load_items(
+        &self,
+        session: &SessionId,
+        after: Option<u64>,
+    ) -> anyhow::Result<Vec<fabric::ItemRecord>> {
+        self.inner.load_items(session, after).await
+    }
+}
 
 mod turn_request_support;
 
@@ -71,6 +123,64 @@ async fn create_session_on_first_turn() {
         .unwrap()
         .expect("session should exist");
     assert_eq!(session.status, fabric::SessionStatus::Active);
+}
+
+#[tokio::test]
+async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_boundary() {
+    let clock = Arc::new(aletheon_kernel::chronos::TestClock::default());
+    let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock(
+        clock as Arc<dyn fabric::Clock>,
+    ));
+    let store: Arc<dyn SessionAppendStore> = Arc::new(TerminalFailingStore {
+        inner: executive::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
+            .unwrap(),
+    });
+    let spine = Arc::new(executive::r#impl::events::SqliteEventSpine::open(":memory:").unwrap());
+    let mut hardening = executive::core::config::GrokHardeningConfig::default();
+    hardening.compaction_v2 = true;
+    let coordinator =
+        executive::service::turn_coordinator::TurnCoordinator::with_event_spine_and_grok(
+            kernel.clone(),
+            store.clone(),
+            spine,
+            hardening,
+        );
+    let process = kernel
+        .spawn_process(fabric::SpawnSpec::default())
+        .await
+        .unwrap();
+
+    let outcome = coordinator
+        .submit_with(
+            request("terminal-crash", process.id),
+            &TurnPolicy::daemon(),
+            |_request, _cancel| async move {
+                Ok(TurnExecution {
+                    result: TurnResult {
+                        output: "must-not-succeed".into(),
+                        stop: TurnStop::Completed,
+                        metrics: TurnMetrics {
+                            completed_normally: true,
+                            ..Default::default()
+                        },
+                    },
+                    items: vec![],
+                    projection: None,
+                    context_projection: None,
+                })
+            },
+        )
+        .await;
+
+    let error = outcome.expect_err("terminal persistence failure must reject success");
+    assert!(error.to_string().contains("terminal durable write failed"));
+    assert_eq!(coordinator.active_turn_count().await, 1);
+    let items = store
+        .load_items(&SessionId("terminal-crash".into()), None)
+        .await
+        .unwrap();
+    assert_eq!(items.len(), 1);
+    assert!(matches!(items[0].payload, ItemPayload::UserMessage { .. }));
 }
 
 //
