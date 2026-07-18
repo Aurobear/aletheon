@@ -678,11 +678,6 @@
       "additionalProperties": false,
       "description": "Toggles for the staged Grok-hardening mechanisms. Fail-closed on typos\n(`deny_unknown_fields`) so a misspelled flag never silently reads as off.",
       "properties": {
-        "exec_server": {
-          "default": false,
-          "description": "D1 — isolated exec-server backend activation.",
-          "type": "boolean"
-        },
         "acp_adapter": {
           "default": false,
           "description": "G8 — ACP session-update adapter.",
@@ -691,6 +686,11 @@
         "compaction_v2": {
           "default": false,
           "description": "C1 — compaction guardrails + strategy selection (maybe_compact_v2).",
+          "type": "boolean"
+        },
+        "exec_server": {
+          "default": false,
+          "description": "D1 — isolated exec-server backend activation.",
           "type": "boolean"
         },
         "folder_trust": {
@@ -948,6 +948,77 @@
       },
       "type": "object"
     },
+    "McpOAuthClientAuthMethod": {
+      "enum": [
+        "none",
+        "client_secret_basic",
+        "client_secret_post"
+      ],
+      "type": "string"
+    },
+    "McpOAuthConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "authorization_endpoint": {
+          "default": null,
+          "description": "Explicit fallback endpoints for providers without discovery.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "client_id_env": {
+          "description": "Environment variable containing the OAuth client id.",
+          "type": "string"
+        },
+        "client_secret_env": {
+          "default": null,
+          "description": "Environment variable containing the client secret, when confidential\nclient authentication is selected. Raw secrets are never configured.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "issuer": {
+          "default": null,
+          "description": "RFC 8414 issuer/base URL. Discovery is authoritative when supplied.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "redirect_uri": {
+          "type": "string"
+        },
+        "scopes": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "token_endpoint": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token_endpoint_auth_method": {
+          "$ref": "#/$defs/McpOAuthClientAuthMethod",
+          "default": "none"
+        }
+      },
+      "required": [
+        "client_id_env",
+        "redirect_uri"
+      ],
+      "type": "object"
+    },
     "McpServerConfig": {
       "additionalProperties": false,
       "description": "Canonical MCP (Model Context Protocol) server configuration.",
@@ -985,6 +1056,17 @@
         },
         "name": {
           "type": "string"
+        },
+        "oauth": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/McpOAuthConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "request_timeout_ms": {
           "default": null,
@@ -1186,6 +1268,61 @@
             "string",
             "null"
           ]
+        }
+      },
+      "type": "object"
+    },
+    "NetworkDefaultAction": {
+      "enum": [
+        "allow",
+        "deny"
+      ],
+      "type": "string"
+    },
+    "NetworkPolicy": {
+      "additionalProperties": false,
+      "description": "Policy controlling which outbound network connections are permitted.\n\nThe production default is deny. Configuration must explicitly select\n`allow` (optionally constrained by allow lists) before network is usable.",
+      "properties": {
+        "allow_dns": {
+          "default": false,
+          "description": "Whether DNS resolution is permitted. When `false`, hostname-based URLs\nare rejected; only IP-based URLs are allowed.",
+          "type": "boolean"
+        },
+        "allow_hosts": {
+          "default": [],
+          "description": "If non-empty, only these hosts (or suffix patterns) are allowed.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allow_ports": {
+          "default": [],
+          "description": "Allowed ports: exact (e.g. `\"443\"`) or ranges (e.g. `\"8080-8090\"`).\nEmpty = no restriction.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allow_protocols": {
+          "default": [],
+          "description": "Allowed URL schemes (e.g. `[\"https\", \"http\"]`). Empty = no restriction.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "default_action": {
+          "$ref": "#/$defs/NetworkDefaultAction",
+          "default": "deny"
+        },
+        "deny_hosts": {
+          "default": [],
+          "description": "Explicitly denied hosts or suffix patterns (highest priority).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -1769,9 +1906,9 @@
     "grok_hardening": {
       "$ref": "#/$defs/GrokHardeningConfig",
       "default": {
-        "exec_server": false,
         "acp_adapter": false,
         "compaction_v2": false,
+        "exec_server": false,
         "folder_trust": false,
         "lifecycle_contributors": false,
         "memory_hybrid": false,
@@ -1854,6 +1991,18 @@
         "multimodal": null,
         "reasoning": null
       }
+    },
+    "network_policy": {
+      "$ref": "#/$defs/NetworkPolicy",
+      "default": {
+        "allow_dns": false,
+        "allow_hosts": [],
+        "allow_ports": [],
+        "allow_protocols": [],
+        "default_action": "deny",
+        "deny_hosts": []
+      },
+      "description": "Host-owned outbound network authority for built-in tools."
     },
     "perception": {
       "$ref": "#/$defs/PerceptionConfig",

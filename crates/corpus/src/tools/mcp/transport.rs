@@ -6,8 +6,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
+#[cfg(test)]
 use super::auth::BearerTokenAuth;
-use super::auth::McpAuth;
+use super::auth::McpHttpAuth;
 
 const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
 
@@ -32,13 +33,13 @@ pub enum McpTransport {
     StreamableHttp {
         client: reqwest::Client,
         base_url: String,
-        auth: Option<BearerTokenAuth>,
+        auth: Option<McpHttpAuth>,
         request_timeout_ms: u64,
     },
     Sse {
         client: reqwest::Client,
         base_url: String,
-        auth: Option<BearerTokenAuth>,
+        auth: Option<McpHttpAuth>,
         event_rx: mpsc::Receiver<String>,
         _event_handle: tokio::task::JoinHandle<()>,
         request_timeout_ms: u64,
@@ -262,7 +263,7 @@ impl McpTransport {
     /// `MCP_BEARER_TOKEN` (or `None` if unset).
     pub fn streamable_http(
         base_url: impl Into<String>,
-        auth: Option<BearerTokenAuth>,
+        auth: Option<McpHttpAuth>,
         request_timeout_ms: u64,
     ) -> Self {
         Self::StreamableHttp {
@@ -282,7 +283,7 @@ impl McpTransport {
     /// reads events. Requests are sent as HTTP POST to `<base_url>`.
     pub async fn sse(
         base_url: impl Into<String>,
-        auth: Option<BearerTokenAuth>,
+        auth: Option<McpHttpAuth>,
         request_timeout_ms: u64,
         notification_tx: mpsc::Sender<McpNotification>,
     ) -> Result<Self> {
@@ -535,7 +536,7 @@ impl McpTransport {
     async fn http_request_with_retry(
         client: &reqwest::Client,
         url: &str,
-        auth: &Option<BearerTokenAuth>,
+        auth: &Option<McpHttpAuth>,
         body: &Value,
         request_timeout_ms: u64,
     ) -> Result<Value> {
@@ -581,7 +582,7 @@ impl McpTransport {
     async fn sse_request_with_retry(
         client: &reqwest::Client,
         url: &str,
-        auth: &Option<BearerTokenAuth>,
+        auth: &Option<McpHttpAuth>,
         body: &Value,
         event_rx: &mut mpsc::Receiver<String>,
         request_timeout_ms: u64,
@@ -653,7 +654,7 @@ impl McpTransport {
     async fn http_post(
         client: &reqwest::Client,
         url: &str,
-        auth: &Option<BearerTokenAuth>,
+        auth: &Option<McpHttpAuth>,
         body: &Value,
     ) -> Result<Value> {
         let mut req = client
@@ -663,8 +664,7 @@ impl McpTransport {
             .json(body);
 
         if let Some(a) = auth {
-            let headers = a.get_headers(Some(url));
-            if let Some(hv) = headers.get("Authorization") {
+            if let Some(hv) = a.header_value_for(Some(url)) {
                 req = req.header("Authorization", hv);
             }
         }
@@ -728,7 +728,7 @@ impl McpTransport {
     async fn http_post_no_response(
         client: &reqwest::Client,
         url: &str,
-        auth: &Option<BearerTokenAuth>,
+        auth: &Option<McpHttpAuth>,
         body: &Value,
     ) -> Result<()> {
         let mut req = client
@@ -737,8 +737,7 @@ impl McpTransport {
             .json(body);
 
         if let Some(a) = auth {
-            let headers = a.get_headers(Some(url));
-            if let Some(hv) = headers.get("Authorization") {
+            if let Some(hv) = a.header_value_for(Some(url)) {
                 req = req.header("Authorization", hv);
             }
         }
@@ -761,7 +760,7 @@ impl McpTransport {
 /// immediately without fallback.
 pub async fn connect_with_fallback(
     base_url: &str,
-    auth: Option<BearerTokenAuth>,
+    auth: Option<McpHttpAuth>,
     request_timeout_ms: u64,
 ) -> Result<McpTransport> {
     // Try StreamableHttp first by sending a probe POST.
@@ -960,7 +959,7 @@ mod tests {
     fn test_streamable_http_config_construction() {
         let auth = BearerTokenAuth::new("TEST_TRANSPORT_TOKEN");
         let transport =
-            McpTransport::streamable_http("http://localhost:8080/mcp", Some(auth), 30_000);
+            McpTransport::streamable_http("http://localhost:8080/mcp", Some(auth.into()), 30_000);
         match &transport {
             McpTransport::StreamableHttp { base_url, .. } => {
                 assert_eq!(base_url, "http://localhost:8080/mcp");

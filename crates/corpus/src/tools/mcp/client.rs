@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, Mutex};
 
-use super::auth::BearerTokenAuth;
+use super::auth::{
+    discover_oauth_metadata, BearerTokenAuth, McpHttpAuth, McpOAuthProvider, OAuthClientAuthMethod,
+    OAuthEndpoints, TokenStore,
+};
 use super::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use super::transport::{McpNotification, McpTransport};
 use super::wrapper::{McpResourceProvider, McpToolWrapper};
@@ -39,7 +42,7 @@ pub trait ElicitationHandler: Send + Sync {
 
 async fn connect_mcp_server(server: &McpServerConfig, global_timeout_ms: u64) -> Result<McpClient> {
     let timeout_ms = server.request_timeout_ms.unwrap_or(global_timeout_ms);
-    let auth = server
+    let bearer_auth = server
         .bearer_token_env
         .as_ref()
         .and_then(|env_var| match &server.transport {
@@ -85,7 +88,19 @@ async fn connect_mcp_server(server: &McpServerConfig, global_timeout_ms: u64) ->
                 )
             }
             McpTransportConfig::Stdio { .. } => None,
-        });
+        })
+        .map(McpHttpAuth::from);
+    // Static bearer credentials deliberately win over OAuth. OAuth is only
+    // activated by `oauth.enabled = true` and only for HTTP transports.
+    let auth = match bearer_auth {
+        Some(auth) => Some(auth),
+        None => match &server.transport {
+            McpTransportConfig::StreamableHttp { url } | McpTransportConfig::Sse { url } => {
+                configured_oauth(server, url).await?
+            }
+            McpTransportConfig::Stdio { .. } => None,
+        },
+    };
     match &server.transport {
         McpTransportConfig::Stdio { command, args } => {
             McpClient::connect_stdio(server.name.clone(), command, args, server.trust, timeout_ms)
@@ -98,6 +113,119 @@ async fn connect_mcp_server(server: &McpServerConfig, global_timeout_ms: u64) ->
             McpClient::connect_sse(server.name.clone(), url, auth, server.trust, timeout_ms).await
         }
     }
+}
+
+#[cfg(test)]
+fn selected_http_auth_kind(server: &McpServerConfig) -> &'static str {
+    let is_http = matches!(
+        server.transport,
+        McpTransportConfig::StreamableHttp { .. } | McpTransportConfig::Sse { .. }
+    );
+    if is_http && server.bearer_token_env.is_some() {
+        "bearer"
+    } else if is_http && server.oauth.as_ref().is_some_and(|oauth| oauth.enabled) {
+        "oauth"
+    } else {
+        "none"
+    }
+}
+
+async fn configured_oauth(
+    server: &McpServerConfig,
+    resource_url: &str,
+) -> Result<Option<McpHttpAuth>> {
+    let Some(config) = server.oauth.as_ref().filter(|config| config.enabled) else {
+        return Ok(None);
+    };
+    validate_oauth_redirect_uri(&config.redirect_uri)?;
+    let client_id = std::env::var(&config.client_id_env).with_context(|| {
+        format!(
+            "OAuth client id environment variable {} is unavailable",
+            config.client_id_env
+        )
+    })?;
+    let client_secret = config
+        .client_secret_env
+        .as_deref()
+        .map(|name| {
+            std::env::var(name).with_context(|| {
+                format!("OAuth client secret environment variable {name} is unavailable")
+            })
+        })
+        .transpose()?;
+
+    let discovered = match config.issuer.as_deref() {
+        Some(issuer) => Some(discover_oauth_metadata(issuer).await?),
+        None => None,
+    };
+    let auth_url = discovered
+        .as_ref()
+        .map(|value| value.authorization_endpoint.clone())
+        .or_else(|| config.authorization_endpoint.clone())
+        .context("OAuth requires issuer discovery or authorization_endpoint")?;
+    let token_url = discovered
+        .as_ref()
+        .map(|value| value.token_endpoint.clone())
+        .or_else(|| config.token_endpoint.clone())
+        .context("OAuth requires issuer discovery or token_endpoint")?;
+    let method = match config.token_endpoint_auth_method {
+        cognit::config::McpOAuthClientAuthMethod::None => OAuthClientAuthMethod::None,
+        cognit::config::McpOAuthClientAuthMethod::ClientSecretBasic => {
+            OAuthClientAuthMethod::ClientSecretBasic
+        }
+        cognit::config::McpOAuthClientAuthMethod::ClientSecretPost => {
+            OAuthClientAuthMethod::ClientSecretPost
+        }
+    };
+    if let Some(metadata) = &discovered {
+        let method_name = match method {
+            OAuthClientAuthMethod::None => "none",
+            OAuthClientAuthMethod::ClientSecretBasic => "client_secret_basic",
+            OAuthClientAuthMethod::ClientSecretPost => "client_secret_post",
+        };
+        anyhow::ensure!(
+            metadata.token_endpoint_auth_methods_supported.is_empty()
+                || metadata
+                    .token_endpoint_auth_methods_supported
+                    .iter()
+                    .any(|candidate| candidate == method_name),
+            "OAuth discovery does not support configured token endpoint auth method"
+        );
+    }
+    let mut provider = McpOAuthProvider::new(
+        client_id,
+        OAuthEndpoints {
+            auth_url,
+            token_url,
+            redirect_uri: config.redirect_uri.clone(),
+        },
+        config.scopes.clone(),
+        server.name.clone(),
+        TokenStore::open_mcp_server(&server.name)?,
+        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+    )
+    .with_endpoint_scoping(resource_url);
+    if let Some(secret) = client_secret {
+        provider = provider.with_client_secret(secret);
+    }
+    provider = provider.with_client_auth_method(method)?;
+    Ok(Some(McpHttpAuth::OAuth(Arc::new(parking_lot::Mutex::new(
+        provider,
+    )))))
+}
+
+fn validate_oauth_redirect_uri(redirect_uri: &str) -> Result<()> {
+    let url = reqwest::Url::parse(redirect_uri).context("invalid OAuth redirect_uri")?;
+    anyhow::ensure!(
+        url.username().is_empty() && url.password().is_none() && url.fragment().is_none(),
+        "OAuth redirect_uri must not contain credentials or a fragment"
+    );
+    let loopback = matches!(url.host_str(), Some("127.0.0.1" | "[::1]" | "localhost"));
+    anyhow::ensure!(
+        url.scheme() == "https" || (url.scheme() == "http" && loopback),
+        "OAuth redirect_uri must use HTTPS or an HTTP loopback address"
+    );
+    Ok(())
 }
 
 /// Tool discovered from an MCP server.
@@ -230,7 +358,7 @@ impl McpClient {
     pub async fn connect_http(
         server_name: String,
         url: &str,
-        auth: Option<BearerTokenAuth>,
+        auth: Option<McpHttpAuth>,
         trust_level: McpTrustLevel,
         request_timeout_ms: u64,
     ) -> Result<Self> {
@@ -296,7 +424,7 @@ impl McpClient {
     pub async fn connect_sse(
         server_name: String,
         url: &str,
-        auth: Option<BearerTokenAuth>,
+        auth: Option<McpHttpAuth>,
         trust_level: McpTrustLevel,
         request_timeout_ms: u64,
     ) -> Result<Self> {
@@ -827,14 +955,31 @@ impl McpConnectionManager {
                 continue;
             }
 
-            let auth: Option<BearerTokenAuth> =
-                server_config.bearer_token_env.as_ref().and_then(|env_var| {
-                    match &server_config.transport {
-                        McpTransportConfig::StreamableHttp { url } => {
-                            Some(BearerTokenAuth::with_endpoint_scoping(
+            let bearer_auth: Option<McpHttpAuth> = server_config
+                .bearer_token_env
+                .as_ref()
+                .and_then(|env_var| match &server_config.transport {
+                    McpTransportConfig::StreamableHttp { url } => {
+                        Some(BearerTokenAuth::with_endpoint_scoping(
+                            env_var.clone(),
+                            mnemosyne::credential::EmbeddingCredentialGrant::new(
+                                format!("mcp:{}", server_config.name),
+                                url,
+                                server_config.name.clone(),
+                                u64::MAX,
+                                0,
+                                "environment-backed-mcp-token",
+                            ),
+                            Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                        ))
+                    }
+                    McpTransportConfig::Sse { url } => {
+                        let principal = format!("mcp:{}", server_config.name);
+                        Some(
+                            BearerTokenAuth::with_endpoint_scoping(
                                 env_var.clone(),
                                 mnemosyne::credential::EmbeddingCredentialGrant::new(
-                                    format!("mcp:{}", server_config.name),
+                                    principal.clone(),
                                     url,
                                     server_config.name.clone(),
                                     u64::MAX,
@@ -842,38 +987,32 @@ impl McpConnectionManager {
                                     "environment-backed-mcp-token",
                                 ),
                                 Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-                            ))
-                        }
-                        McpTransportConfig::Sse { url } => {
-                            let principal = format!("mcp:{}", server_config.name);
-                            Some(
-                                BearerTokenAuth::with_endpoint_scoping(
-                                    env_var.clone(),
-                                    mnemosyne::credential::EmbeddingCredentialGrant::new(
-                                        principal.clone(),
-                                        url,
-                                        server_config.name.clone(),
-                                        u64::MAX,
-                                        0,
-                                        "environment-backed-mcp-token",
-                                    ),
-                                    Arc::new(aletheon_kernel::chronos::SystemClock::new()),
-                                )
-                                .allow_endpoint(
-                                    mnemosyne::credential::EmbeddingCredentialGrant::new(
-                                        principal,
-                                        &format!("{}/sse", url.trim_end_matches('/')),
-                                        server_config.name.clone(),
-                                        u64::MAX,
-                                        0,
-                                        "environment-backed-mcp-token",
-                                    ),
-                                ),
                             )
-                        }
-                        McpTransportConfig::Stdio { .. } => None,
+                            .allow_endpoint(
+                                mnemosyne::credential::EmbeddingCredentialGrant::new(
+                                    principal,
+                                    &format!("{}/sse", url.trim_end_matches('/')),
+                                    server_config.name.clone(),
+                                    u64::MAX,
+                                    0,
+                                    "environment-backed-mcp-token",
+                                ),
+                            ),
+                        )
                     }
-                });
+                    McpTransportConfig::Stdio { .. } => None,
+                })
+                .map(McpHttpAuth::from);
+            let auth = match bearer_auth {
+                Some(auth) => Some(auth),
+                None => match &server_config.transport {
+                    McpTransportConfig::StreamableHttp { url }
+                    | McpTransportConfig::Sse { url } => {
+                        configured_oauth(&server_config, url).await?
+                    }
+                    McpTransportConfig::Stdio { .. } => None,
+                },
+            };
 
             let timeout_ms = server_config
                 .request_timeout_ms
@@ -1232,5 +1371,64 @@ impl McpConnectionManager {
             .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
         let client = client_arc.lock().await;
         client.handle_elicitation(params).await
+    }
+}
+
+#[cfg(test)]
+mod oauth_selection_tests {
+    use super::*;
+    use cognit::config::{McpOAuthClientAuthMethod, McpOAuthConfig};
+
+    fn http_server() -> McpServerConfig {
+        McpServerConfig {
+            name: "acceptance".into(),
+            transport: McpTransportConfig::StreamableHttp {
+                url: "https://mcp.example.test/rpc".into(),
+            },
+            oauth: Some(McpOAuthConfig {
+                enabled: true,
+                client_id_env: "MCP_CLIENT_ID".into(),
+                client_secret_env: None,
+                redirect_uri: "http://127.0.0.1:8765/callback".into(),
+                scopes: vec!["tools:read".into()],
+                token_endpoint_auth_method: McpOAuthClientAuthMethod::None,
+                issuer: Some("https://issuer.example.test".into()),
+                authorization_endpoint: None,
+                token_endpoint: None,
+            }),
+            ..McpServerConfig::default()
+        }
+    }
+
+    #[test]
+    fn static_bearer_has_precedence_over_enabled_oauth() {
+        let mut server = http_server();
+        server.bearer_token_env = Some("MCP_STATIC_BEARER".into());
+        assert_eq!(selected_http_auth_kind(&server), "bearer");
+    }
+
+    #[test]
+    fn oauth_requires_explicit_enabled_opt_in_and_http_transport() {
+        let mut server = http_server();
+        assert_eq!(selected_http_auth_kind(&server), "oauth");
+
+        server.oauth.as_mut().unwrap().enabled = false;
+        assert_eq!(selected_http_auth_kind(&server), "none");
+
+        server.oauth.as_mut().unwrap().enabled = true;
+        server.transport = McpTransportConfig::Stdio {
+            command: "mcp-server".into(),
+            args: vec![],
+        };
+        assert_eq!(selected_http_auth_kind(&server), "none");
+    }
+
+    #[test]
+    fn oauth_redirect_rejects_insecure_remote_and_ambiguous_uris() {
+        assert!(validate_oauth_redirect_uri("http://example.test/callback").is_err());
+        assert!(validate_oauth_redirect_uri("https://user@example.test/callback").is_err());
+        assert!(validate_oauth_redirect_uri("https://example.test/callback#token").is_err());
+        assert!(validate_oauth_redirect_uri("http://127.0.0.1:8765/callback").is_ok());
+        assert!(validate_oauth_redirect_uri("https://app.example.test/callback").is_ok());
     }
 }

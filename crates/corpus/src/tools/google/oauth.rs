@@ -30,6 +30,15 @@ pub struct OAuthClientConfig {
     pub token_url: String,
     pub revocation_url: Option<String>,
     pub userinfo_url: Option<String>,
+    pub client_auth_method: OAuthClientAuthMethod,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OAuthClientAuthMethod {
+    #[default]
+    None,
+    ClientSecretBasic,
+    ClientSecretPost,
 }
 
 impl fmt::Debug for OAuthClientConfig {
@@ -45,6 +54,7 @@ impl fmt::Debug for OAuthClientConfig {
             .field("token_url", &self.token_url)
             .field("revocation_url", &self.revocation_url)
             .field("userinfo_url", &self.userinfo_url)
+            .field("client_auth_method", &self.client_auth_method)
             .finish()
     }
 }
@@ -107,13 +117,24 @@ impl AsyncOAuthClient {
             ("client_id", self.config.client_id.as_str()),
             ("code_verifier", verifier),
         ];
-        if let Some(secret) = self.config.client_secret.as_deref() {
+        if self.config.client_auth_method == OAuthClientAuthMethod::ClientSecretPost {
+            let secret = self
+                .config
+                .client_secret
+                .as_deref()
+                .context("client_secret_post requires an OAuth client secret")?;
             form.push(("client_secret", secret));
         }
-        let response = self
-            .client
-            .post(&self.config.token_url)
-            .form(&form)
+        let mut request = self.client.post(&self.config.token_url).form(&form);
+        if self.config.client_auth_method == OAuthClientAuthMethod::ClientSecretBasic {
+            let secret = self
+                .config
+                .client_secret
+                .as_deref()
+                .context("client_secret_basic requires an OAuth client secret")?;
+            request = request.basic_auth(&self.config.client_id, Some(secret));
+        }
+        let response = request
             .send()
             .await
             .map_err(|_| anyhow::anyhow!("OAuth token exchange transport failed"))?;
@@ -135,13 +156,24 @@ impl AsyncOAuthClient {
             ("refresh_token", refresh),
             ("client_id", self.config.client_id.as_str()),
         ];
-        if let Some(secret) = self.config.client_secret.as_deref() {
+        if self.config.client_auth_method == OAuthClientAuthMethod::ClientSecretPost {
+            let secret = self
+                .config
+                .client_secret
+                .as_deref()
+                .context("client_secret_post requires an OAuth client secret")?;
             form.push(("client_secret", secret));
         }
-        let response = self
-            .client
-            .post(&self.config.token_url)
-            .form(&form)
+        let mut request = self.client.post(&self.config.token_url).form(&form);
+        if self.config.client_auth_method == OAuthClientAuthMethod::ClientSecretBasic {
+            let secret = self
+                .config
+                .client_secret
+                .as_deref()
+                .context("client_secret_basic requires an OAuth client secret")?;
+            request = request.basic_auth(&self.config.client_id, Some(secret));
+        }
+        let response = request
             .send()
             .await
             .map_err(|_| anyhow::anyhow!("OAuth token refresh transport failed"))?;
@@ -336,6 +368,7 @@ impl GoogleOAuthProvider {
                 token_url: GOOGLE_TOKEN_URL.into(),
                 revocation_url: Some(GOOGLE_REVOCATION_URL.into()),
                 userinfo_url: Some(GOOGLE_USERINFO_URL.into()),
+                client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
             },
             scopes,
             tokens,
@@ -554,6 +587,7 @@ mod tests {
                 token_url: "https://accounts.example/token".into(),
                 revocation_url: Some("https://accounts.example/revoke".into()),
                 userinfo_url: Some("https://accounts.example/userinfo".into()),
+                client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
             },
             vec![ExternalScope::OpenId, ExternalScope::GmailReadonly],
             tokens,
@@ -685,6 +719,7 @@ mod tests {
             token_url: format!("{endpoint}/token"),
             revocation_url: Some(format!("{endpoint}/revoke")),
             userinfo_url: Some(format!("{endpoint}/userinfo")),
+            client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
         })
         .unwrap()
     }
@@ -734,6 +769,7 @@ mod tests {
                 token_url: format!("{endpoint}/token"),
                 revocation_url: Some(format!("{endpoint}/revoke")),
                 userinfo_url: Some(format!("{endpoint}/userinfo")),
+                client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
             },
             vec![ExternalScope::OpenId],
             TokenStore::new(dir.path().join("tokens.json")).unwrap(),
@@ -834,6 +870,7 @@ mod tests {
                 token_url: "http://127.0.0.1:1/token".into(),
                 revocation_url: None,
                 userinfo_url: None,
+                client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
             },
             vec![ExternalScope::OpenId],
             TokenStore::new(dir.path().join("tokens.json")).unwrap(),

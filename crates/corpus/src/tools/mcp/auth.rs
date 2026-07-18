@@ -218,6 +218,36 @@ impl fmt::Display for BearerTokenAuth {
     }
 }
 
+/// Cloneable HTTP authentication handle retained by MCP transports. OAuth
+/// state is shared so callbacks and refreshes update subsequent requests.
+#[derive(Clone)]
+pub enum McpHttpAuth {
+    Bearer(BearerTokenAuth),
+    OAuth(Arc<parking_lot::Mutex<McpOAuthProvider>>),
+}
+
+impl From<BearerTokenAuth> for McpHttpAuth {
+    fn from(value: BearerTokenAuth) -> Self {
+        Self::Bearer(value)
+    }
+}
+
+impl McpHttpAuth {
+    pub fn header_value_for(&self, target_url: Option<&str>) -> Option<String> {
+        match self {
+            Self::Bearer(auth) => auth.header_value_for(target_url),
+            Self::OAuth(auth) => auth.lock().get_headers(target_url).remove("Authorization"),
+        }
+    }
+
+    pub fn oauth_provider(&self) -> Option<Arc<parking_lot::Mutex<McpOAuthProvider>>> {
+        match self {
+            Self::OAuth(provider) => Some(provider.clone()),
+            Self::Bearer(_) => None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // OAuthState -- CSRF protection
 // ---------------------------------------------------------------------------
@@ -308,6 +338,7 @@ impl McpOAuthProvider {
             token_url: endpoints.token_url.clone(),
             revocation_url: None,
             userinfo_url: None,
+            client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
         })
         .expect("static MCP OAuth client configuration must build");
         Self {
@@ -350,9 +381,36 @@ impl McpOAuthProvider {
             token_url: self.endpoints.token_url.clone(),
             revocation_url: None,
             userinfo_url: None,
+            client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
         })
         .expect("static MCP OAuth client configuration must build");
         self
+    }
+
+    pub fn with_client_auth_method(mut self, method: OAuthClientAuthMethod) -> Result<Self> {
+        if method != OAuthClientAuthMethod::None && self.client_secret.is_none() {
+            anyhow::bail!("confidential OAuth client auth requires client_secret_env");
+        }
+        let client_auth_method = match method {
+            OAuthClientAuthMethod::None => crate::tools::google::oauth::OAuthClientAuthMethod::None,
+            OAuthClientAuthMethod::ClientSecretBasic => {
+                crate::tools::google::oauth::OAuthClientAuthMethod::ClientSecretBasic
+            }
+            OAuthClientAuthMethod::ClientSecretPost => {
+                crate::tools::google::oauth::OAuthClientAuthMethod::ClientSecretPost
+            }
+        };
+        self.oauth_client = AsyncOAuthClient::new(OAuthClientConfig {
+            client_id: self.client_id.clone(),
+            client_secret: self.client_secret.clone(),
+            redirect_uri: self.endpoints.redirect_uri.clone(),
+            auth_url: self.endpoints.auth_url.clone(),
+            token_url: self.endpoints.token_url.clone(),
+            revocation_url: None,
+            userinfo_url: None,
+            client_auth_method,
+        })?;
+        Ok(self)
     }
 
     /// Generate an authorization URL and a CSRF state value.
@@ -534,6 +592,10 @@ pub async fn discover_oauth_metadata(base_url: &str) -> Result<OAuthMetadata> {
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        // Discovery carries no credential and redirects are still rejected:
+        // accepting metadata from a different origin would silently widen
+        // which authorization server controls the configured MCP endpoint.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .context("failed to build OAuth discovery HTTP client")?;
 
@@ -549,9 +611,33 @@ pub async fn discover_oauth_metadata(base_url: &str) -> Result<OAuthMetadata> {
         anyhow::bail!("OAuth discovery returned HTTP {status} from {url}: {body}");
     }
 
-    resp.json::<OAuthMetadata>().await.with_context(|| {
+    let metadata = resp.json::<OAuthMetadata>().await.with_context(|| {
         format!("OAuth discovery response from {url} is not valid RFC 8414 metadata")
-    })
+    })?;
+    validate_oauth_metadata(base_url, &metadata)?;
+    Ok(metadata)
+}
+
+fn validate_oauth_metadata(base_url: &str, metadata: &OAuthMetadata) -> Result<()> {
+    let configured_issuer =
+        reqwest::Url::parse(base_url).context("invalid configured OAuth issuer")?;
+    let returned_issuer =
+        reqwest::Url::parse(&metadata.issuer).context("invalid issuer in OAuth metadata")?;
+    anyhow::ensure!(
+        configured_issuer.as_str().trim_end_matches('/')
+            == returned_issuer.as_str().trim_end_matches('/'),
+        "OAuth discovery issuer does not match configured issuer"
+    );
+    for endpoint in [&metadata.authorization_endpoint, &metadata.token_endpoint] {
+        let endpoint = reqwest::Url::parse(endpoint).context("invalid OAuth metadata endpoint")?;
+        anyhow::ensure!(
+            endpoint.scheme() == "https"
+                || endpoint.host_str() == Some("127.0.0.1")
+                || endpoint.host_str() == Some("localhost"),
+            "OAuth metadata endpoint must use HTTPS"
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1004,6 +1090,42 @@ mod tests {
         assert!(headers.is_empty());
     }
 
+    #[test]
+    fn confidential_client_auth_rejects_missing_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = McpOAuthProvider::new(
+            "cid",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.test/authorize".into(),
+                token_url: "https://auth.example.test/token".into(),
+                redirect_uri: "http://127.0.0.1/callback".into(),
+            },
+            vec![],
+            "srv",
+            TokenStore::new(dir.path().join("tokens.json")).unwrap(),
+            test_clock(),
+        );
+        assert!(provider
+            .with_client_auth_method(OAuthClientAuthMethod::ClientSecretBasic)
+            .is_err());
+    }
+
+    #[test]
+    fn oauth_metadata_rejects_issuer_mismatch_and_insecure_remote_endpoints() {
+        let valid = OAuthMetadata {
+            issuer: "https://issuer.example.test".into(),
+            authorization_endpoint: "https://issuer.example.test/authorize".into(),
+            token_endpoint: "https://issuer.example.test/token".into(),
+            token_endpoint_auth_methods_supported: vec![],
+            scopes_supported: vec![],
+        };
+        assert!(validate_oauth_metadata("https://other.example.test", &valid).is_err());
+
+        let mut insecure = valid.clone();
+        insecure.authorization_endpoint = "http://issuer.example.test/authorize".into();
+        assert!(validate_oauth_metadata("https://issuer.example.test", &insecure).is_err());
+    }
+
     // -- parse_token_response ----------------------------------------------
 
     #[test]
@@ -1081,6 +1203,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         let bound_addr = listener.local_addr().unwrap();
         let base_url = format!("http://{bound_addr}");
+        let advertised_issuer = base_url.clone();
 
         let server_task = tokio::spawn(async move {
             loop {
@@ -1089,25 +1212,29 @@ mod tests {
                     Err(_) => return,
                 };
                 let io = TokioIo::new(stream);
-                let svc = service_fn(|_req: hyper::Request<hyper::body::Incoming>| async move {
-                    let body = serde_json::json!({
-                        "issuer": "https://auth.example.com",
-                        "authorization_endpoint": "https://auth.example.com/authorize",
-                        "token_endpoint": "https://auth.example.com/token",
-                        "token_endpoint_auth_methods_supported": [
-                            "client_secret_basic",
-                            "client_secret_post"
-                        ],
-                        "scopes_supported": ["openid", "profile", "email"]
-                    })
-                    .to_string();
-                    Ok::<_, std::convert::Infallible>(
-                        hyper::Response::builder()
-                            .status(200)
-                            .header("content-type", "application/json")
-                            .body(Full::new(Bytes::from(body)))
-                            .unwrap(),
-                    )
+                let advertised_issuer = advertised_issuer.clone();
+                let svc = service_fn(move |_req: hyper::Request<hyper::body::Incoming>| {
+                    let advertised_issuer = advertised_issuer.clone();
+                    async move {
+                        let body = serde_json::json!({
+                            "issuer": advertised_issuer,
+                            "authorization_endpoint": format!("{advertised_issuer}/authorize"),
+                            "token_endpoint": format!("{advertised_issuer}/token"),
+                            "token_endpoint_auth_methods_supported": [
+                                "client_secret_basic",
+                                "client_secret_post"
+                            ],
+                            "scopes_supported": ["openid", "profile", "email"]
+                        })
+                        .to_string();
+                        Ok::<_, std::convert::Infallible>(
+                            hyper::Response::builder()
+                                .status(200)
+                                .header("content-type", "application/json")
+                                .body(Full::new(Bytes::from(body)))
+                                .unwrap(),
+                        )
+                    }
                 });
                 if http1::Builder::new()
                     .serve_connection(io, svc)
@@ -1120,12 +1247,12 @@ mod tests {
         });
 
         let metadata = discover_oauth_metadata(&base_url).await.unwrap();
-        assert_eq!(metadata.issuer, "https://auth.example.com");
+        assert_eq!(metadata.issuer, base_url);
         assert_eq!(
             metadata.authorization_endpoint,
-            "https://auth.example.com/authorize"
+            format!("{base_url}/authorize")
         );
-        assert_eq!(metadata.token_endpoint, "https://auth.example.com/token");
+        assert_eq!(metadata.token_endpoint, format!("{base_url}/token"));
         assert_eq!(
             metadata.token_endpoint_auth_methods_supported,
             vec!["client_secret_basic", "client_secret_post"]
@@ -1181,6 +1308,42 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("404"), "expected 404 in error: {err}");
         server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn discover_oauth_metadata_rejects_redirects() {
+        use http_body_util::Full;
+        use hyper::body::Bytes;
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        use hyper_util::rt::TokioIo;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let response_target =
+                "https://other.example.test/.well-known/oauth-authorization-server";
+            let service = service_fn(move |_request| async move {
+                Ok::<_, std::convert::Infallible>(
+                    hyper::Response::builder()
+                        .status(302)
+                        .header("location", response_target)
+                        .body(Full::new(Bytes::new()))
+                        .unwrap(),
+                )
+            });
+            let _ = http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await;
+        });
+
+        let error = discover_oauth_metadata(&base_url)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("302"), "unexpected redirect error: {error}");
+        task.await.unwrap();
     }
 
     #[tokio::test]

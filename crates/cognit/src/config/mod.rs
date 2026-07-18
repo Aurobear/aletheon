@@ -743,10 +743,51 @@ pub struct McpServerConfig {
     pub enabled: bool,
     #[serde(default)]
     pub bearer_token_env: Option<String>,
+    /// Explicit opt-in OAuth configuration. A configured bearer token takes
+    /// precedence when both are present.
+    #[serde(default)]
+    pub oauth: Option<McpOAuthConfig>,
     #[serde(default)]
     pub request_timeout_ms: Option<u64>,
     #[serde(default = "default_mcp_health_check_interval_sec")]
     pub health_check_interval_sec: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpOAuthConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Environment variable containing the OAuth client id.
+    pub client_id_env: String,
+    /// Environment variable containing the client secret, when confidential
+    /// client authentication is selected. Raw secrets are never configured.
+    #[serde(default)]
+    pub client_secret_env: Option<String>,
+    pub redirect_uri: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub token_endpoint_auth_method: McpOAuthClientAuthMethod,
+    /// RFC 8414 issuer/base URL. Discovery is authoritative when supplied.
+    #[serde(default)]
+    pub issuer: Option<String>,
+    /// Explicit fallback endpoints for providers without discovery.
+    #[serde(default)]
+    pub authorization_endpoint: Option<String>,
+    #[serde(default)]
+    pub token_endpoint: Option<String>,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum McpOAuthClientAuthMethod {
+    #[default]
+    None,
+    ClientSecretBasic,
+    ClientSecretPost,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -789,6 +830,8 @@ struct McpServerConfigWire {
     #[serde(default)]
     bearer_token_env: Option<String>,
     #[serde(default)]
+    oauth: Option<McpOAuthConfig>,
+    #[serde(default)]
     request_timeout_ms: Option<u64>,
     #[serde(default = "default_mcp_health_check_interval_sec")]
     health_check_interval_sec: u64,
@@ -823,6 +866,7 @@ impl From<McpServerConfigWire> for McpServerConfig {
             trust: wire.trust,
             enabled: wire.enabled,
             bearer_token_env: wire.bearer_token_env,
+            oauth: wire.oauth,
             request_timeout_ms: wire.request_timeout_ms,
             health_check_interval_sec: wire.health_check_interval_sec,
         }
@@ -840,6 +884,7 @@ impl Default for McpServerConfig {
             trust: McpTrustLevel::LocalTrusted,
             enabled: true,
             bearer_token_env: None,
+            oauth: None,
             request_timeout_ms: None,
             health_check_interval_sec: default_mcp_health_check_interval_sec(),
         }
@@ -1385,6 +1430,70 @@ max_results = 6
         assert_eq!(mem.gbrain.write_source, "aletheon");
         assert_eq!(mem.gbrain.request_timeout_ms, 2500);
         assert_eq!(mem.gbrain.server_name, "gbrain");
+    }
+
+    #[test]
+    fn mcp_oauth_schema_is_explicit_opt_in_and_rejects_unknown_fields() {
+        let configured: McpServerConfig = toml::from_str(
+            r#"
+name = "search"
+transport = "http"
+url = "https://mcp.example.test/rpc"
+
+[oauth]
+client_id_env = "MCP_CLIENT_ID"
+redirect_uri = "http://127.0.0.1:8765/callback"
+issuer = "https://issuer.example.test"
+"#,
+        )
+        .unwrap();
+        let oauth = configured.oauth.unwrap();
+        assert!(
+            !oauth.enabled,
+            "OAuth must remain off without enabled = true"
+        );
+        assert_eq!(
+            oauth.token_endpoint_auth_method,
+            McpOAuthClientAuthMethod::None
+        );
+
+        let unknown = r#"
+name = "search"
+transport = "http"
+url = "https://mcp.example.test/rpc"
+[oauth]
+enabled = true
+client_id_env = "MCP_CLIENT_ID"
+redirect_uri = "http://127.0.0.1:8765/callback"
+issuer = "https://issuer.example.test"
+client_secret = "must-not-be-inline"
+"#;
+        assert!(toml::from_str::<McpServerConfig>(unknown).is_err());
+    }
+
+    #[test]
+    fn mcp_oauth_schema_requires_env_reference_and_redirect() {
+        let missing_client_id = r#"
+name = "search"
+transport = "http"
+url = "https://mcp.example.test/rpc"
+[oauth]
+enabled = true
+redirect_uri = "http://127.0.0.1:8765/callback"
+"#;
+        assert!(toml::from_str::<McpServerConfig>(missing_client_id).is_err());
+
+        let invalid_method = r#"
+name = "search"
+transport = "http"
+url = "https://mcp.example.test/rpc"
+[oauth]
+enabled = true
+client_id_env = "MCP_CLIENT_ID"
+redirect_uri = "http://127.0.0.1:8765/callback"
+token_endpoint_auth_method = "private_key_jwt"
+"#;
+        assert!(toml::from_str::<McpServerConfig>(invalid_method).is_err());
     }
 
     #[test]
