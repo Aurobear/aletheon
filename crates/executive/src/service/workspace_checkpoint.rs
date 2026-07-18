@@ -54,6 +54,7 @@ pub trait CheckpointStore: Send + Sync {
         id: CheckpointId,
     ) -> Result<Option<(TurnCheckpoint, Vec<CheckpointFileEntry>)>>;
     async fn truncate_after(&self, session: &str, prompt_index: u64) -> Result<()>;
+    async fn stored_bytes(&self) -> Result<u64>;
 }
 
 #[derive(Default)]
@@ -124,6 +125,18 @@ impl CheckpointStore for InMemoryCheckpointStore {
                 record_session != session || *index <= prompt_index
             });
         Ok(())
+    }
+
+    async fn stored_bytes(&self) -> Result<u64> {
+        Ok(self
+            .records
+            .lock()
+            .await
+            .values()
+            .flat_map(|(_, files)| files)
+            .filter_map(|entry| entry.content.as_ref())
+            .map(|content| content.len() as u64)
+            .sum())
     }
 }
 
@@ -226,6 +239,7 @@ pub struct WorkspaceCheckpointMetrics {
     pub checkpoint_disk_bytes: u64,
     pub rewind_partial_total: u64,
     pub rewind_identity_mismatch_total: u64,
+    pub checkpoint_quota_rejected_total: u64,
 }
 
 pub struct WorkspaceCheckpointService {
@@ -236,10 +250,13 @@ pub struct WorkspaceCheckpointService {
     event_bus: Option<Arc<CanonicalEventBus>>,
     event_spine: Option<Arc<dyn EventSpine>>,
     feature_enabled: bool,
+    max_disk_bytes: u64,
+    quota_lock: Mutex<()>,
     files_captured: AtomicU64,
     checkpoint_bytes: AtomicU64,
     rewind_partial: AtomicU64,
     identity_mismatch: AtomicU64,
+    quota_rejected: AtomicU64,
 }
 
 impl WorkspaceCheckpointService {
@@ -270,11 +287,19 @@ impl WorkspaceCheckpointService {
             event_bus: None,
             event_spine: None,
             feature_enabled,
+            max_disk_bytes: u64::MAX,
+            quota_lock: Mutex::new(()),
             files_captured: AtomicU64::new(0),
             checkpoint_bytes: AtomicU64::new(0),
             rewind_partial: AtomicU64::new(0),
             identity_mismatch: AtomicU64::new(0),
+            quota_rejected: AtomicU64::new(0),
         }
+    }
+
+    pub fn with_disk_quota(mut self, max_disk_bytes: u64) -> Self {
+        self.max_disk_bytes = max_disk_bytes;
+        self
     }
 
     pub fn with_events(
@@ -296,7 +321,8 @@ impl WorkspaceCheckpointService {
         if !self.feature_enabled {
             return Ok(None);
         }
-        let capture = self
+        let _quota_guard = self.quota_lock.lock().await;
+        let mut capture = self
             .io
             .capture(
                 &context.workspace,
@@ -304,13 +330,34 @@ impl WorkspaceCheckpointService {
                 MAX_CHECKPOINT_FILES,
             )
             .await?;
+        let captured_bytes = capture
+            .files
+            .iter()
+            .filter_map(|entry| entry.content.as_ref())
+            .map(|content| content.len() as u64)
+            .sum::<u64>();
+        let stored_bytes = self.store.stored_bytes().await?;
+        let quota_exceeded = stored_bytes.saturating_add(captured_bytes) > self.max_disk_bytes;
+        if quota_exceeded {
+            self.quota_rejected.fetch_add(1, Ordering::Relaxed);
+            warn!(
+                session = %context.session_id,
+                stored_bytes,
+                captured_bytes,
+                max_disk_bytes = self.max_disk_bytes,
+                "workspace checkpoint disk quota exceeded; recording aborted checkpoint"
+            );
+            capture.files.clear();
+        }
         let checkpoint_id = CheckpointId::new();
-        let finalize_state = if capture.truncated {
+        let finalize_state = if capture.truncated || quota_exceeded {
             warn!(
                 session = %context.session_id,
                 prompt_index = context.prompt_index,
                 limit = MAX_CHECKPOINT_FILES,
-                "workspace checkpoint exceeded file limit and was aborted"
+                quota_exceeded,
+                capture_truncated = capture.truncated,
+                "workspace checkpoint capture was aborted by configured bounds"
             );
             CheckpointFinalizeState::Aborted
         } else {
@@ -334,17 +381,11 @@ impl WorkspaceCheckpointService {
             schema_version: CHECKPOINT_SCHEMA_VERSION,
             finalize_state,
         };
-        let captured_bytes = capture
-            .files
-            .iter()
-            .filter_map(|entry| entry.content.as_ref())
-            .map(|content| content.len() as u64)
-            .sum::<u64>();
         self.files_captured
             .fetch_add(capture.files.len() as u64, Ordering::Relaxed);
-        self.checkpoint_bytes
-            .fetch_add(captured_bytes, Ordering::Relaxed);
         self.store.begin(checkpoint.clone(), capture.files).await?;
+        self.checkpoint_bytes
+            .store(self.store.stored_bytes().await?, Ordering::Relaxed);
         self.publish_event(
             SchemaId::EVENT_WORKSPACE_CHECKPOINT_BEGAN_V1,
             &checkpoint,
@@ -457,7 +498,12 @@ impl WorkspaceCheckpointService {
                     detail: error.to_string(),
                 },
                 Ok(()) => match self.store.truncate_after(session, prompt_index).await {
-                    Ok(()) => RestoreOutcome::Completed,
+                    Ok(()) => {
+                        if let Ok(bytes) = self.store.stored_bytes().await {
+                            self.checkpoint_bytes.store(bytes, Ordering::Relaxed);
+                        }
+                        RestoreOutcome::Completed
+                    }
                     Err(error) => {
                         self.rewind_partial.fetch_add(1, Ordering::Relaxed);
                         RestoreOutcome::Partial {
@@ -489,6 +535,7 @@ impl WorkspaceCheckpointService {
             checkpoint_disk_bytes: self.checkpoint_bytes.load(Ordering::Relaxed),
             rewind_partial_total: self.rewind_partial.load(Ordering::Relaxed),
             rewind_identity_mismatch_total: self.identity_mismatch.load(Ordering::Relaxed),
+            checkpoint_quota_rejected_total: self.quota_rejected.load(Ordering::Relaxed),
         }
     }
 
@@ -809,6 +856,29 @@ mod tests {
             writable_roots: vec![path.to_path_buf()],
             created_at_ms: 1,
         }
+    }
+
+    #[tokio::test]
+    async fn disk_quota_records_terminal_aborted_checkpoint_without_blob_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("large"), "123456").unwrap();
+        let store = Arc::new(InMemoryCheckpointStore::default());
+        let service =
+            WorkspaceCheckpointService::new(store.clone(), Arc::new(TestLeases::default()), true)
+                .with_disk_quota(5);
+
+        let checkpoint_id = service
+            .begin_turn(context(directory.path(), 1))
+            .await
+            .unwrap()
+            .unwrap();
+        let (checkpoint, files) = store.load_by_id(checkpoint_id).await.unwrap().unwrap();
+        assert_eq!(checkpoint.finalize_state, CheckpointFinalizeState::Aborted);
+        assert!(files.is_empty());
+        assert_eq!(store.stored_bytes().await.unwrap(), 0);
+        let metrics = service.metrics();
+        assert_eq!(metrics.checkpoint_disk_bytes, 0);
+        assert_eq!(metrics.checkpoint_quota_rejected_total, 1);
     }
 
     #[tokio::test]

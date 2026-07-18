@@ -159,6 +159,27 @@ impl CheckpointStore for SqliteCheckpointStore {
         )?;
         Ok(())
     }
+
+    async fn stored_bytes(&self) -> Result<u64> {
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut statement = connection.prepare("SELECT files_json FROM workspace_checkpoints")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut total = 0_u64;
+        for row in rows {
+            let files: Vec<CheckpointFileEntry> = serde_json::from_str(&row?)?;
+            total = total.saturating_add(
+                files
+                    .iter()
+                    .filter_map(|entry| entry.content.as_ref())
+                    .map(|content| content.len() as u64)
+                    .sum::<u64>(),
+            );
+        }
+        Ok(total)
+    }
 }
 
 #[cfg(test)]

@@ -42,6 +42,10 @@ impl RequestHandler {
             // ── Health / status ───────────────────────────────────────
             "status" => self.handle_status(&id, &request).await,
             "health" => self.handle_health(&id, &request).await,
+            "conscious.diagnostics" => {
+                self.handle_conscious_diagnostics(connection, &id, &request)
+                    .await
+            }
 
             // ── Admin / meta ──────────────────────────────────────────
             "daemon.shutdown" => self.handle_daemon_shutdown(&id, &request).await,
@@ -57,6 +61,14 @@ impl RequestHandler {
                     .await
             }
             "approval.reject" => self.handle_approval_reject(connection, &id, &request).await,
+            "workspace.trust.evaluate" => {
+                self.handle_workspace_trust_evaluate(connection, &id, &request)
+                    .await
+            }
+            "workspace.trust.grant" => {
+                self.handle_workspace_trust_grant(connection, &id, &request)
+                    .await
+            }
             "interrupt" => self.handle_interrupt(&id, &request).await,
             "mode_switch" => self.handle_mode_switch(&id, &request).await,
             "model_list" => self.handle_model_list(&id, &request).await,

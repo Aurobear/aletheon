@@ -252,6 +252,7 @@ async fn run_with_plan(
             cancellation: CancellationToken::new(),
             compactor: None,
             batch_planner: Some(planner),
+            evicted_callback: None,
         },
     );
 

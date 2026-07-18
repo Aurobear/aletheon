@@ -266,6 +266,46 @@ impl WorkspaceTrustResolver {
     pub async fn record_grant(&self, receipt: TrustReceipt) {
         self.store.put(receipt).await;
     }
+
+    /// Record an authenticated interactive grant. The caller supplies only
+    /// the authenticated principal/client and requested categories; workspace
+    /// identity and the current digest are recomputed at this trust boundary.
+    pub async fn grant_current(
+        &self,
+        principal_id: PrincipalId,
+        workspace: WorkspaceIdentity,
+        granted: Vec<ExecutableConfigSource>,
+        granting_client: String,
+        now_unix: u64,
+    ) -> Result<TrustReceipt, String> {
+        if is_broad_unrecordable_root(&workspace.canonical_path) {
+            return Err("persistent trust cannot be granted for a broad workspace root".into());
+        }
+        let discovered = self.discoverer.discover(&workspace.canonical_path).await;
+        if granted
+            .iter()
+            .any(|source| !discovered.0.contains_key(source))
+        {
+            return Err(
+                "grant contains an executable configuration source not currently discovered".into(),
+            );
+        }
+        let existing = self.store.get(&principal_id, &workspace).await;
+        let receipt = TrustReceipt {
+            principal_id,
+            workspace,
+            digest: discovered,
+            granted,
+            created_at_unix: existing
+                .as_ref()
+                .map_or(now_unix, |receipt| receipt.created_at_unix),
+            updated_at_unix: now_unix,
+            expires_at_unix: None,
+            granting_client,
+        };
+        self.store.put(receipt.clone()).await;
+        Ok(receipt)
+    }
 }
 
 fn decision_event_fields(
@@ -741,16 +781,43 @@ mod tests {
                 .await,
             WorkspaceTrustDecision::PromptRequired { .. }
         ));
-        let digest = discoverer.discover(temp.path()).await;
         resolver
-            .record_grant(receipt(&principal, &workspace, digest, 10))
-            .await;
+            .grant_current(
+                principal.clone(),
+                workspace.clone(),
+                vec![ExecutableConfigSource::RepoHooks],
+                "authenticated:test-client".into(),
+                10,
+            )
+            .await
+            .unwrap();
         assert!(matches!(
             resolver
                 .evaluate(principal, workspace, ClientMode::Interactive, false, 11,)
                 .await,
             WorkspaceTrustDecision::Trusted { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn authenticated_grant_rejects_undiscovered_source() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join(".envrc"), "export SAFE=1").unwrap();
+        let resolver = WorkspaceTrustResolver::new(
+            Arc::new(InMemoryTrustStore::default()),
+            Arc::new(KnownConfigDiscoverer::default()),
+            true,
+        );
+        let result = resolver
+            .grant_current(
+                PrincipalId("alice".into()),
+                identity(temp.path()),
+                vec![ExecutableConfigSource::RepoMcpServer],
+                "authenticated:test-client".into(),
+                10,
+            )
+            .await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]

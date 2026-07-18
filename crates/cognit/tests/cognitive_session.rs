@@ -19,6 +19,7 @@ fn dependencies() -> CognitiveSessionDependencies {
         cancellation: CancellationToken::new(),
         compactor: None,
         batch_planner: None,
+        evicted_callback: None,
     }
 }
 

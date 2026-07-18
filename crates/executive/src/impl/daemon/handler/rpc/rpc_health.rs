@@ -6,6 +6,51 @@ use super::RequestHandler;
 use serde_json::json;
 
 impl RequestHandler {
+    pub(super) async fn handle_conscious_diagnostics(
+        &self,
+        connection: &super::super::super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let Some(session_id) = request["params"]
+            .get("session_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+        else {
+            return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602,"message":"session_id is required"}});
+        };
+        let authority = crate::service::thread_authority::ThreadAuthorityKey::new(
+            connection.principal_id.clone(),
+            fabric::ThreadId(session_id.to_owned()),
+        );
+        match self.thread_authority.get(&authority) {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32047,"message":"session is not visible to authenticated principal"}})
+            }
+            Err(error) => {
+                return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32603,"message":error.to_string()}})
+            }
+        }
+        let limit = request["params"]
+            .get("limit")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(50) as usize;
+        match self
+            .ports
+            .conscious_workspaces
+            .field_diagnostics(&fabric::AgoraSpaceId(session_id.to_owned()), limit)
+        {
+            Ok(Some(diagnostics)) => json!({"jsonrpc":"2.0", "id":id, "result":diagnostics}),
+            Ok(None) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32048,"message":"conscious field has not started for session"}})
+            }
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32603,"message":error.to_string()}})
+            }
+        }
+    }
+
     pub(super) async fn handle_status(
         &self,
         id: &serde_json::Value,

@@ -469,7 +469,8 @@ impl RequestHandler {
                         &runtime_config_snapshot,
                     ),
                     clock.clone(),
-                ),
+                )
+                .with_evicted_memory(recall_memory.clone()),
             );
 
         let mut runtime = AletheonExecutive::new(runtime_config);
@@ -1121,6 +1122,7 @@ impl RequestHandler {
                 kernel.lease_manager(),
                 grok_hardening.workspace_checkpoint,
             )
+            .with_disk_quota(config.deployment.quotas.sessions_bytes)
             .with_safety_guard(agent_live_runs)
             .with_events(event_bus.clone(), Some(canonical_event_spine.clone())),
         );
@@ -1201,7 +1203,7 @@ impl RequestHandler {
                 projection,
                 runtime: runtime_ports,
                 cognitive_sessions: domains.cognition(),
-                conscious_core: Some(conscious_registry),
+                conscious_core: Some(conscious_registry.clone()),
                 session_input: session_input.clone(),
                 prompt_queue_enabled: grok_hardening.prompt_queue,
                 workspace_checkpoint,
@@ -1470,6 +1472,7 @@ impl RequestHandler {
             workflow_use_cases,
             turn_use_cases,
             session_input,
+            conscious_registry,
             debug_use_cases,
             session_gateway,
             transport_ports,

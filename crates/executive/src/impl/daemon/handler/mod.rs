@@ -33,6 +33,78 @@ pub struct RequestHandler {
 }
 
 impl RequestHandler {
+    async fn handle_workspace_trust_evaluate(
+        &self,
+        connection: &super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let workspace = match resolve_requested_workspace(&request["params"]) {
+            Ok(workspace) => workspace,
+            Err(error) => return rpc_error(id, -32602, error),
+        };
+        let decision = self
+            .workspace_trust
+            .evaluate(
+                connection.principal_id.clone(),
+                crate::service::workspace_trust::workspace_identity(workspace.cwd()),
+                fabric::workspace_trust::ClientMode::Interactive,
+                crate::service::workspace_trust::is_broad_unrecordable_root(workspace.cwd()),
+                unix_now(),
+            )
+            .await;
+        let result = match decision {
+            fabric::workspace_trust::WorkspaceTrustDecision::Trusted { granted } => {
+                serde_json::json!({"decision":"trusted","sources":granted})
+            }
+            fabric::workspace_trust::WorkspaceTrustDecision::Restricted { blocked } => {
+                serde_json::json!({"decision":"restricted","sources":blocked})
+            }
+            fabric::workspace_trust::WorkspaceTrustDecision::PromptRequired { findings } => {
+                serde_json::json!({"decision":"prompt_required","sources":findings})
+            }
+        };
+        serde_json::json!({"jsonrpc":"2.0","id":id,"result":result})
+    }
+
+    async fn handle_workspace_trust_grant(
+        &self,
+        connection: &super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let workspace = match resolve_requested_workspace(&request["params"]) {
+            Ok(workspace) => workspace,
+            Err(error) => return rpc_error(id, -32602, error),
+        };
+        let granted = match serde_json::from_value::<
+            Vec<fabric::workspace_trust::ExecutableConfigSource>,
+        >(request["params"]["granted"].clone())
+        {
+            Ok(granted) => granted,
+            Err(error) => {
+                return rpc_error(id, -32602, format!("invalid granted sources: {error}"))
+            }
+        };
+        match self
+            .workspace_trust
+            .grant_current(
+                connection.principal_id.clone(),
+                crate::service::workspace_trust::workspace_identity(workspace.cwd()),
+                granted,
+                connection.connection_id.0.to_string(),
+                unix_now(),
+            )
+            .await
+        {
+            Ok(receipt) => serde_json::json!({"jsonrpc":"2.0","id":id,"result":{
+                "decision":"trusted", "granted":receipt.granted,
+                "updated_at_unix":receipt.updated_at_unix
+            }}),
+            Err(error) => rpc_error(id, -32040, error),
+        }
+    }
+
     /// Complete daemon-owned subsystem shutdown after transports stop accepting work.
     pub async fn shutdown_runtime(&self) -> anyhow::Result<()> {
         self.ports
@@ -228,6 +300,17 @@ impl RequestHandler {
         self.thread_authority
             .bind_or_verify(&key, &ThreadSettings::from_context(context, model_policy))
     }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn rpc_error(id: &serde_json::Value, code: i64, message: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message.into()}})
 }
 
 /// M0 bridge from the legacy workspace/session router to explicit turn authority.

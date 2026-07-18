@@ -38,7 +38,7 @@ use crate::core::identity::IdentityLayer;
 use crate::core::mutation::MutationLayer;
 use crate::core::narrative::NarrativeLayer;
 
-use crate::core::store::SelfFieldStore;
+use crate::core::store::{CareModulationTrace, SelfFieldStore};
 use crate::dasein::DaseinEventBridge;
 use crate::dasein::DaseinModule;
 use fabric::dasein::DaseinEvent;
@@ -123,6 +123,14 @@ pub struct SelfField {
 }
 
 impl SelfField {
+    /// Read durable R2 modulation traces for diagnostics and audit.
+    pub fn care_modulation_traces(&self, session_id: &str) -> Result<Vec<CareModulationTrace>> {
+        self.store
+            .as_ref()
+            .map(|store| store.care_modulations(session_id))
+            .unwrap_or_else(|| Ok(Vec::new()))
+    }
+
     pub fn new(config: SelfFieldConfig) -> Self {
         let clock: Arc<dyn fabric::Clock> = config
             .clock
@@ -418,6 +426,18 @@ impl SelfField {
         };
         let effective =
             (baseline + (1.0 - baseline) * 0.25 * f64::from(readout.precision)).clamp(0.0, 1.0);
+        if let Some(store) = &self.store {
+            if let Err(error) = store.append_care_modulation(&CareModulationTrace {
+                session_id: ctx.session_id.clone(),
+                baseline,
+                effective,
+                delta: effective - baseline,
+                precision: readout.precision,
+                observed_at_ms: self.clock.wall_now().0,
+            }) {
+                tracing::warn!(%error, session_id = %ctx.session_id, "failed to persist care modulation trace");
+            }
+        }
         tracing::info!(
             target: "aletheon.conscious",
             schema = "conscious.field.care_modulation.v1",

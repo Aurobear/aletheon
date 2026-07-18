@@ -26,6 +26,29 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+const MAX_DIAGNOSTIC_MODULATIONS: usize = 256;
+
+fn bound_recent_modulations(
+    mut events: Vec<fabric::ConsciousTraceEvent>,
+    requested_limit: usize,
+) -> (Vec<fabric::ConsciousTraceEvent>, usize) {
+    let total = events.len();
+    let limit = requested_limit.clamp(1, MAX_DIAGNOSTIC_MODULATIONS);
+    if events.len() > limit {
+        events.drain(..events.len() - limit);
+    }
+    (events, total)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConsciousFieldDiagnostics {
+    pub space: AgoraSpaceId,
+    pub indicators: fabric::FieldMetricIndicators,
+    pub modulations: Vec<fabric::ConsciousTraceEvent>,
+    pub total_modulations: usize,
+    pub truncated: bool,
+}
+
 use super::agent_control::AgentCandidateSubmissionPort;
 use super::conscious_action::ConsciousActionBridge;
 use super::conscious_core_coordinator::{
@@ -272,6 +295,27 @@ impl ConsciousWorkspaceRegistry {
 
     pub fn store(&self) -> Arc<SqliteBroadcastStore> {
         self.store.clone()
+    }
+
+    /// Read bounded, content-free field metrics plus durable modulation traces.
+    /// Diagnostics never creates a workspace or advances its recurrence cycle.
+    pub fn field_diagnostics(
+        &self,
+        space: &AgoraSpaceId,
+        requested_limit: usize,
+    ) -> anyhow::Result<Option<ConsciousFieldDiagnostics>> {
+        let Some(coordinator) = self.spaces.read().get(space).cloned() else {
+            return Ok(None);
+        };
+        let (modulations, total_modulations) =
+            bound_recent_modulations(coordinator.field_modulations()?, requested_limit);
+        Ok(Some(ConsciousFieldDiagnostics {
+            space: space.clone(),
+            indicators: coordinator.field_metric_indicators(),
+            truncated: total_modulations > modulations.len(),
+            total_modulations,
+            modulations,
+        }))
     }
 
     /// Run a later C01 competition over already-admitted candidates. Agent
@@ -720,4 +764,35 @@ fn broadcast_summary(broadcast: &WorkspaceBroadcast) -> String {
 
 fn truncate(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect()
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    fn event(index: usize) -> fabric::ConsciousTraceEvent {
+        fabric::ConsciousTraceEvent::Prediction {
+            prediction_id: index.to_string(),
+            surprised: false,
+            outcome_ref: "test".into(),
+        }
+    }
+
+    #[test]
+    fn diagnostics_keep_only_requested_most_recent_events() {
+        let (events, total) = bound_recent_modulations((0..5).map(event).collect(), 2);
+        assert_eq!(total, 5);
+        assert_eq!(events, vec![event(3), event(4)]);
+    }
+
+    #[test]
+    fn diagnostics_enforce_global_bound_and_nonzero_limit() {
+        let (events, _) = bound_recent_modulations(
+            (0..MAX_DIAGNOSTIC_MODULATIONS + 10).map(event).collect(),
+            usize::MAX,
+        );
+        assert_eq!(events.len(), MAX_DIAGNOSTIC_MODULATIONS);
+        let (events, _) = bound_recent_modulations(vec![event(0), event(1)], 0);
+        assert_eq!(events, vec![event(1)]);
+    }
 }
