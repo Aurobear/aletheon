@@ -305,6 +305,7 @@ impl ToolRunnerWithGuard {
     ) -> std::result::Result<ToolResult, ToolError> {
         let tool_name = tool.name();
         let start = self.clock.mono_now();
+        let mut sandbox_backend: Option<String> = None;
 
         // 1. Policy check
         let policy_verdict = self.check_policy(tool_name, &input);
@@ -747,6 +748,7 @@ impl ToolRunnerWithGuard {
                             tool: tool_name.to_owned(),
                         }
                     })?;
+                    sandbox_backend = Some(transport.backend_name().to_owned());
                     if execution_descriptor.is_none() && !transport.supports_tool(tool_name) {
                         return Err(ToolError::StructuredSandboxUnsupported {
                             tool: tool_name.to_owned(),
@@ -810,6 +812,10 @@ impl ToolRunnerWithGuard {
                         }
                     }
 
+                    sandbox_backend = self
+                        .sandbox
+                        .select_backend()
+                        .map(|backend| backend.name().to_owned());
                     let sandbox_result = match sink.as_deref_mut() {
                         Some(sink) => {
                             self.sandbox
@@ -929,7 +935,7 @@ impl ToolRunnerWithGuard {
 
         // 6. Audit log
         let verdict_str = format!("{:?}", loop_verdict);
-        self.log_audit(
+        self.log_audit_with_backend(
             audit_id,
             tool_name,
             &input,
@@ -938,6 +944,7 @@ impl ToolRunnerWithGuard {
             Some(&final_result),
             &start,
             &verdict_str,
+            sandbox_backend,
         )
         .await
         .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
@@ -986,6 +993,25 @@ impl ToolRunnerWithGuard {
         start: &fabric::MonoTime,
         verdict: &str,
     ) -> anyhow::Result<()> {
+        self.log_audit_with_backend(
+            audit_id, tool_name, input, level, turn_id, result, start, verdict, None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn log_audit_with_backend(
+        &self,
+        audit_id: fabric::AuditEventId,
+        tool_name: &str,
+        input: &serde_json::Value,
+        level: PermissionLevel,
+        turn_id: &str,
+        result: Option<&ToolResult>,
+        start: &fabric::MonoTime,
+        verdict: &str,
+        sandbox_backend: Option<String>,
+    ) -> anyhow::Result<()> {
         let category = self.risk_classifier.classify(tool_name);
         let record = AuditRecord {
             audit_id,
@@ -999,7 +1025,7 @@ impl ToolRunnerWithGuard {
             loop_verdict: verdict.to_string(),
             result_summary: result.map(|r| r.content.chars().take(200).collect()),
             is_error: result.map(|r| r.is_error).unwrap_or(false),
-            sandbox_backend: None,
+            sandbox_backend,
             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
         };
         self.audit_logger.log(record).await

@@ -158,6 +158,7 @@ impl ExecServerClient {
         working_dir: &std::path::Path,
         env: &std::collections::BTreeMap<String, String>,
         timeout: Duration,
+        policy: Option<&fabric::ResolvedSandboxPolicy>,
     ) -> Result<String> {
         let result = self
             .request(
@@ -167,6 +168,14 @@ impl ExecServerClient {
                     "args": args,
                     "working_dir": working_dir,
                     "env": env,
+                    "sandbox_policy": policy.map(|policy| serde_json::json!({
+                        "name": policy.name,
+                        "read_only_roots": policy.read_only_roots,
+                        "read_write_roots": policy.read_write_roots,
+                        "deny_exact": policy.deny_exact,
+                        "deny_globs": policy.deny_globs,
+                        "restrict_network": policy.restrict_network,
+                    })),
                     // The caller enforces the exact wall-clock deadline. Keep
                     // the server-side watchdog one second behind it so it is
                     // an orphan-safety backstop rather than racing the client
@@ -326,7 +335,7 @@ impl ExecServerSandboxBackend {
         sink: Option<&fabric::ToolEventSink>,
     ) -> Result<fabric::SandboxResult> {
         self.execute_process(
-            "bash",
+            "/bin/bash",
             &["-c".into(), cmd.into()],
             config,
             timeout,
@@ -352,7 +361,14 @@ impl ExecServerSandboxBackend {
         let mut environment = config.environment.clone();
         environment.extend(extra_env.clone());
         let handle = client
-            .process_start(command, args, config.working_dir(), &environment, timeout)
+            .process_start(
+                command,
+                args,
+                config.working_dir(),
+                &environment,
+                timeout,
+                config.policy.as_ref(),
+            )
             .await?;
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -540,6 +556,10 @@ fn trusted_tool_invocation(
 
 #[async_trait::async_trait]
 impl corpus::security::StructuredToolSandbox for ExecServerSandboxBackend {
+    fn backend_name(&self) -> &'static str {
+        "exec-server"
+    }
+
     fn supports_tool(&self, tool_name: &str) -> bool {
         matches!(
             tool_name,
@@ -739,12 +759,12 @@ impl fabric::SandboxBackend for ExecServerSandboxBackend {
     }
     fn capabilities(&self) -> fabric::SandboxCapabilities {
         fabric::SandboxCapabilities {
-            filesystem_isolation: false,
-            network_isolation: false,
+            filesystem_isolation: true,
+            network_isolation: true,
             resource_limits: false,
             seccomp_filter: false,
             limitations: vec![
-                "network isolation is delegated to the selected profile backend".into(),
+                "resolved policies require bubblewrap on the exec-server host".into(),
             ],
         }
     }

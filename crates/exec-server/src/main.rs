@@ -3,6 +3,7 @@ use std::io::{self, BufRead, Write};
 mod filesystem;
 mod process;
 mod protocol;
+mod sandbox;
 
 fn main() -> io::Result<()> {
     let expected_secret = std::env::var("ALETHEON_EXEC_SERVER_SECRET").map_err(|_| {

@@ -61,8 +61,43 @@ impl ProcessManager {
             });
         }
 
-        let mut cmd = Command::new(&req.command);
-        cmd.args(&req.args);
+        let working_dir = req.working_dir.as_deref().map(std::path::Path::new);
+        let materialized = match (&req.sandbox_policy, working_dir) {
+            (Some(policy), Some(working_dir)) => Some(
+                crate::sandbox::materialize(
+                    std::path::Path::new(&req.command),
+                    &req.args,
+                    &req.env,
+                    working_dir,
+                    policy,
+                )
+                .map_err(|message| RpcError {
+                    code: FS_ACCESS_DENIED,
+                    message: format!("Sandbox policy cannot be enforced: {message}"),
+                    data: None,
+                })?,
+            ),
+            (Some(_), None) => {
+                return Err(RpcError {
+                    code: FS_ACCESS_DENIED,
+                    message: "Sandbox policy requires a working directory".into(),
+                    data: None,
+                });
+            }
+            (None, _) => None,
+        };
+        let mut cmd = match materialized {
+            Some(ref wrapped) => {
+                let mut command = Command::new(&wrapped.program);
+                command.args(&wrapped.args);
+                command
+            }
+            None => {
+                let mut command = Command::new(&req.command);
+                command.args(&req.args);
+                command
+            }
+        };
 
         for (k, v) in &req.env {
             cmd.env(k, v);
@@ -462,6 +497,7 @@ mod tests {
             working_dir: None,
             timeout_secs: None,
             max_output_bytes: None,
+            sandbox_policy: None,
         }
     }
 
@@ -496,6 +532,27 @@ mod tests {
             Some("connection-a")
         );
         manager.cleanup_owner("connection-a").await;
+    }
+
+    #[tokio::test]
+    async fn process_start_rejects_an_unrepresentable_sandbox_policy() {
+        let manager = ProcessManager::new();
+        let mut request = sleeping_process();
+        request.working_dir = Some("/".into());
+        request.sandbox_policy = Some(ProcessSandboxPolicy {
+            name: "strict".into(),
+            read_only_roots: vec!["/".into()],
+            read_write_roots: vec![],
+            deny_exact: vec![],
+            deny_globs: vec!["**/*.pem".into()],
+            restrict_network: true,
+        });
+        let error = match manager.spawn("connection-a", &request).await {
+            Ok(_) => panic!("unrepresentable sandbox policy must fail closed"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, FS_ACCESS_DENIED);
+        assert!(error.message.contains("unexpanded deny globs"));
     }
 
     #[tokio::test]
@@ -535,6 +592,7 @@ mod tests {
             working_dir: None,
             timeout_secs: None,
             max_output_bytes: Some(5),
+            sandbox_policy: None,
         };
         let handle = manager.spawn("connection-a", &request).await.unwrap();
         manager
@@ -579,6 +637,7 @@ mod tests {
             working_dir: Some(temp.path().to_string_lossy().into_owned()),
             timeout_secs: None,
             max_output_bytes: None,
+            sandbox_policy: None,
         };
         let manager = ProcessManager::new();
         let parent = manager.spawn("connection-a", &request).await.unwrap();
@@ -633,6 +692,7 @@ mod tests {
             working_dir: None,
             timeout_secs: None,
             max_output_bytes: None,
+            sandbox_policy: None,
         };
         let handle = manager.spawn("connection-a", &request).await.unwrap();
         let exit_code = tokio::time::timeout(Duration::from_secs(1), async {

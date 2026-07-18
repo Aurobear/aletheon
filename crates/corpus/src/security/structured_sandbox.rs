@@ -9,6 +9,11 @@ use fabric::SandboxConfig;
 /// fallback when this port is required but unavailable.
 #[async_trait]
 pub trait StructuredToolSandbox: Send + Sync {
+    /// Canonical backend identity persisted in guarded execution audit records.
+    fn backend_name(&self) -> &'static str {
+        "structured-sandbox"
+    }
+
     /// Reports whether this transport implements the named tool's complete
     /// structured contract. The conservative default describes the standard
     /// filesystem mutation contract; transports must opt in explicitly as

@@ -1121,6 +1121,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "which 7.0.3",
 ]
 
 [[package]]

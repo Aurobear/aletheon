@@ -78,6 +78,25 @@ pub struct StartProcessRequest {
     pub timeout_secs: Option<u64>,
     #[serde(default)]
     pub max_output_bytes: Option<u64>,
+    /// Daemon-resolved policy. When present the server must materialize every
+    /// restriction or reject the start request; it must never degrade to a
+    /// bare child process.
+    #[serde(default)]
+    pub sandbox_policy: Option<ProcessSandboxPolicy>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProcessSandboxPolicy {
+    pub name: String,
+    #[serde(default)]
+    pub read_only_roots: Vec<std::path::PathBuf>,
+    #[serde(default)]
+    pub read_write_roots: Vec<std::path::PathBuf>,
+    #[serde(default)]
+    pub deny_exact: Vec<std::path::PathBuf>,
+    #[serde(default)]
+    pub deny_globs: Vec<String>,
+    pub restrict_network: bool,
 }
 
 /// Process handle returned on successful start.
