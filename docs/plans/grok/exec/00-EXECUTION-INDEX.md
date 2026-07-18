@@ -74,10 +74,16 @@
 | `b894d455` | **G1 T19–T20**：daemon chat 入口装配持久 resolver；headless 按 canonical workspace 评估，flag 关严格旁路；普通文件访问与 repo executable config 授权解耦 | executive | workspace_trust 8 全走 + executive check |
 | `4f1cf222` | **G1 T21**：清理 Executive 严格 Clippy 依赖链遗留 lint；格式化触及文件 | corpus + executive | `clippy -p executive --lib -- -D warnings` 通过；相关单测 110 全走 |
 | `bd97d4c5` | **G2 T7–T11**：有界 progress bridge，UTF-8 text 合并、洪水采样、terminal 精确透传、drop/cancel fail-closed | executive | tool_stream_bridge 5 全走 + strict clippy |
+| `a1fe8b0f` | **G2 T4–T5/T12**：补齐 legacy Tool/Invoker streaming adapter；flag 后 governed bridge 与 canonical turn sender 装配 | fabric + executive | adapter 1 + governed path 4 + bridge 5 |
+| `ee03f78e` | **G2 T13**：stream sink 贯通 Kernel admit/settle、Corpus activation/guard 与 Executive hook 包装；副作用只执行一次 | kernel + corpus + executive | guarded streaming override 1 + strict clippy |
+| `9cdce29f` | **G2 T15**：bubblewrap/process/noop 子进程运行期间逐行流式 stdout/stderr，保留完整 terminal capture | fabric + corpus | process timing 1 + bash multi-progress/one-terminal 1 |
+| `6bc1f27e` | **G2 T14/T16**：ToolProgress 投影到 TUI/CLI/ACP；未知附加 client event 安全忽略 | fabric + executive + interact | projection/compat/TUI/ACP 7 |
+| `b22db914` + `8d1d8b63` | **G2 observability/T8**：按 tool 记录 dropped/no-terminal；text 按 4 KiB 或 100 ms 先到者 flush | fabric + executive | bridge 6 + strict clippy |
+| `8218c1a1` | **G2 T17**：workspace canonical rustfmt 收口 | workspace | `fmt --all -- --check` 通过 |
 
 **状态**：G1、S1 端到端完成。`grok_hardening.sandbox_profiles = true` + 配置中声明 profiles → `resolve_profile` → `SandboxConfig.policy` → bubblewrap 施加 deny + network；关=逐字节旧行为。C1+S1 两条从契约贯通到激活。
 
-**进行中**：G1 T1–T21 已完成并通过定向验收；G2 已推进至 T11，待 T12–T18 生产接线；S1 T14（事件）与 G3–G8 consumer 收尾仍按 §4 序列推进。
+**进行中**：G1 已完成；G2 T1–T18 实现与定向验证已完成，尚待属性测试及协议违规日志收口；S1 T14（事件）与 G3–G8 consumer 收尾仍按 §4 序列推进。
 
 ## 2. 合并映射：Grok fabric × DeepSeek OUTSTANDING
 

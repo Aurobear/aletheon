@@ -1,6 +1,7 @@
 # G2 可执行 Spec：Streaming Tool Runtime
 
 > 对应研究文档 `../03-streaming-tool-runtime.md`。优先级 P0。
+> **状态（2026-07-18）**：T1–T18 的实现与定向验证已完成；§8 属性测试及 §9 全部协议违规日志仍待收口。
 > 实施前按 `README.md §5` 重新核对 §2 锚点。
 
 ## 1. 目标与非目标
@@ -13,24 +14,21 @@
 - 不引入 per-tool 动态 manifest（Grok 有，本期不做）。
 - 不做 backpressure 之外的流控优化。
 
-## 2. 当前代码锚点（已验证 @ commit bec15695，含未提交修改）
+## 2. 当前代码锚点（已复核 @ current branch）
 
-| 符号 | 位置 | 关键事实 |
+| 符号 | 位置 | 当前事实 |
 |---|---|---|
-| `Tool` trait | `crates/fabric/src/types/tool.rs:154-176` | `async fn execute(&self, input, ctx) -> ToolResult`；有 `permission_level`/`exposure`/`concurrency_class` |
-| `ToolResult` | `crates/fabric/src/types/tool.rs:100-112` | `{ content: String, is_error: bool, metadata: ToolResultMeta }` |
-| `ToolResultMeta` | 同上 | `{ execution_time_ms: u64, truncated: bool }` |
-| `FileSnap` | `crates/fabric/src/types/tool.rs:179-217` | `capture()/restore()`，单文件回滚 |
-| `TurnEventV1` | `crates/fabric/src/ipc/stream.rs:169-277` | 23 变体；含 `ToolCallStart`/`ToolCallComplete`/`ToolResult`（**无 progress 变体**） |
-| turn 事件 channel | `crates/executive/src/service/turn_pipeline.rs:357` | `mpsc::channel::<Event>(64)` |
-| `TurnEventStream` | `crates/executive/src/service/turn_pipeline.rs:362` | `StreamConfig::turn_events(64)`，overflow=**BlockProducer** |
-| `TurnCapabilityInvoker` | `crates/executive/src/service/governed_capability.rs:104-107` | `async fn invoke(&self, call: CapabilityCall) -> CapabilityResult` |
-| `GovernedCapabilityInvoker` | `crates/executive/src/service/governed_capability.rs:109-191` | settle + 产出 `CapabilityResult`（call_id/output/is_error/usage/audit_id） |
-| `InvocationControl` | `crates/fabric/src/include/turn.rs:70-81` | `{ cancel: CancellationToken }` |
-| 工具准备/调用 | `crates/executive/src/impl/daemon/handler/tool_executor.rs:374-423` | `prepare_corpus()` → `PreparedCorpus` |
-| 调用管线 | `crates/executive/src/service/turn_runtime_ports.rs:521-565` | `ProductionGovernedCapabilities::prepare()` |
+| `Tool::execute_streaming` | `crates/fabric/src/types/tool.rs:155-175` | 旧工具继承 terminal-only adapter；无需修改即可进入 G2 路径 |
+| `ToolEventSink` | `crates/fabric/src/types/tool_stream.rs` | progress/notification 有界 try-send；terminal 唯一且保留供 governed executor 校验 |
+| `TurnEventV1::ToolProgress` | `crates/fabric/src/ipc/stream.rs:171-216` | canonical turn spine 的附加 progress 事件 |
+| `GovernedCapabilityInvoker` | `crates/executive/src/service/governed_capability.rs:176-375` | flag 开走 streaming bridge；settled `CapabilityResult` 仍是 usage/audit 权威终态 |
+| `bridge_tool_stream` | `crates/executive/src/service/tool_stream_bridge.rs:173+` | 4 KiB/100 ms 合并、64 event 上限、drop/cancel fail-closed、按 tool 计数 |
+| guarded executor | `crates/corpus/src/security/runner.rs:223-244` | policy/approval/loop/output/audit 同一路径调用 `execute_streaming`，不重复副作用 |
+| sandbox streaming | `crates/fabric/src/types/sandbox.rs:269+` + `crates/corpus/src/security/sandbox/streaming.rs` | bash stdout/stderr 在子进程运行期间逐行发 progress；完整结果仍被捕获 |
+| client projection | `crates/executive/src/service/turn_pipeline.rs:755-765` | progress 投影为 `ClientEvent::ToolProgress`，TUI/CLI/ACP 可观察 |
+| feature flag | `crates/executive/src/core/config/grok_hardening.rs:20` | `streaming_tools` 默认 false；关闭态保留 legacy invoke/execute 路径 |
 
-**关键约束**：现在每次工具调用产出**一个** `TurnEventV1::ToolResult`（`stream.rs` 附近 196-202）。streaming 缺口在"工具执行内部 → turn event spine"这一段，客户端传输层已具备。
+**关键约束**：progress 不写入模型输出或 canonical ToolResult；唯一权威终态仍由 admit → execute → settle 产生，bridge 只负责可观测性与缺失 terminal 的 fail-closed 检测。
 
 ## 3. 权威归属决策（doc10 §6 八问）
 
@@ -203,6 +201,8 @@ ToolProgress {
 
 ## 6. 任务分解（TDD，2-5 分钟粒度）
 
+**实现证据**：T1–T18 的提交与定向测试映射见 `00-EXECUTION-INDEX.md §1.4`；最终关闭仍以 §8–§9 为准。
+
 **阶段 A：Fabric 契约（无行为变更）**
 - T1. 新建 `tool_stream.rs`，写 `ToolExecutionEvent`/`ToolProgress`/`ToolNotification`/`ToolExecutionError` 类型。`cargo check -p fabric`。
 - T2. 写 `ToolEventSink`/`tool_event_channel`。单测：progress 满 channel 返回 false，terminal 后 progress 返回 false。
@@ -238,7 +238,8 @@ ToolProgress {
 - **旧工具**：不实现 `execute_streaming`，走默认包装 → terminal-only stream，行为不变。
 - **flag 关闭**：`invoke` 走原 `execute()` 直返 `CapabilityResult`，完全等价当前路径（A/B 回归）。
 - **迁移顺序**：Fabric 契约 → 桥接 → Executive（flag 后）→ bash 工具 → 逐步迁移长时工具（web fetch、长 MCP 调用）。
-- **客户端**：新变体附加式；老客户端忽略 `ToolProgress` 不受影响（T14 验证）。
+- **客户端**：新变体附加式；`ClientEvent::decode_if_known` 对未知事件返回 `None`，老客户端事件循环不中断（T14 验证）。
+- **灰度**：默认保持关闭；先在监控环境按 daemon 开启并观察 `tool_progress_dropped_total`/`tool_no_terminal_total`，两项无异常后再扩大启用范围；发现缺 terminal 或持续 overflow 时关闭 flag 即回到 legacy 路径。
 
 ## 8. 测试计划（映射研究文档 §7 验收方向）
 
