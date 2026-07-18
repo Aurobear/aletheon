@@ -97,6 +97,10 @@ impl SessionManager {
         self.messages.iter().map(Message::estimate_tokens).sum()
     }
 
+    pub fn compaction_needed(&self) -> bool {
+        self.compressor.should_compact(&self.messages)
+    }
+
     pub async fn compact_if_needed(&mut self, llm: &dyn LlmProvider) -> Result<bool> {
         self.run_compaction(llm, false).await
     }

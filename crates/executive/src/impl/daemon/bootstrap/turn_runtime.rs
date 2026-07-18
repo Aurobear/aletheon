@@ -117,6 +117,7 @@ pub(super) fn compose_turn_runtime(resources: TurnRuntimeResources) -> TurnRunti
         capabilities: Arc::new(ProductionGovernedCapabilities {
             resources: resources.capabilities,
             admission: resources.admission,
+            hooks: hooks.clone(),
         }),
         sessions: Arc::new(ProductionTurnSessions {
             registry: resources.sessions,
@@ -284,8 +285,8 @@ impl TurnSessionStatePort for ProductionTurnSessions {
         tool_results: &[(String, String, bool)],
         output: &str,
     ) -> anyhow::Result<usize> {
-        let (_, manager) = self.manager().await?;
-        let mut manager = manager.lock().await;
+        let (session_id, manager_handle) = self.manager().await?;
+        let mut manager = manager_handle.lock().await;
         if succeeded {
             if !tool_calls.is_empty() {
                 manager
@@ -316,7 +317,50 @@ impl TurnSessionStatePort for ProductionTurnSessions {
                     .await;
             }
             manager.push_assistant(output).await;
-            manager.compact_if_needed(&*self.llm).await?;
+            let turn_count = manager.turn_count();
+            let tokens_before = manager.estimate_tokens();
+            if !manager.compaction_needed() {
+                return Ok(turn_count);
+            }
+            drop(manager);
+            self.hooks
+                .execute(HookContext {
+                    point: fabric::hook::HookPoint::PreCompact,
+                    session_id: session_id.clone(),
+                    turn_count,
+                    tool_name: None,
+                    tool_input: None,
+                    tool_result: None,
+                    message: None,
+                    metadata: HashMap::from([
+                        ("mode".into(), "automatic".into()),
+                        ("tokens_before".into(), tokens_before.to_string()),
+                    ]),
+                })
+                .await;
+            let mut manager = manager_handle.lock().await;
+            if manager.compact_if_needed(&*self.llm).await? {
+                let tokens_after = manager.estimate_tokens();
+                drop(manager);
+                self.hooks
+                    .execute(HookContext {
+                        point: fabric::hook::HookPoint::PostCompact,
+                        session_id,
+                        turn_count,
+                        tool_name: None,
+                        tool_input: None,
+                        tool_result: None,
+                        message: None,
+                        metadata: HashMap::from([
+                            ("mode".into(), "automatic".into()),
+                            ("tokens_before".into(), tokens_before.to_string()),
+                            ("tokens_after".into(), tokens_after.to_string()),
+                        ]),
+                    })
+                    .await;
+                return Ok(turn_count);
+            }
+            return Ok(manager.turn_count());
         }
         Ok(manager.turn_count())
     }
@@ -366,6 +410,7 @@ impl TurnApprovalPort for ProductionTurnApprovals {
 struct ProductionGovernedCapabilities {
     resources: crate::r#impl::daemon::handler::tool_executor::CapabilityResources,
     admission: Arc<dyn AdmissionController>,
+    hooks: Arc<dyn TurnHookPort>,
 }
 
 #[async_trait]
@@ -395,6 +440,8 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
             context.operation_id,
             context.process_id,
         ));
+        let notification_session_id = context.session_id.clone();
+        let notification_turn_count = context.turn_count;
         let authority = Arc::new(
             RegistryAuthorityProvider::new(
                 prepared.risk_by_tool,
@@ -411,6 +458,33 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
             .with_agent_context(context.agent),
         );
         let action_loop = context.action_loop;
+        let notification_observer: crate::service::tool_stream_bridge::ToolNotificationObserver = {
+            let hooks = self.hooks.clone();
+            let session_id = notification_session_id;
+            let turn_count = notification_turn_count;
+            Arc::new(move |notification| {
+                let hooks = hooks.clone();
+                let session_id = session_id.clone();
+                Box::pin(async move {
+                    hooks
+                        .execute(HookContext {
+                            point: fabric::hook::HookPoint::Notification,
+                            session_id,
+                            turn_count,
+                            tool_name: None,
+                            tool_input: None,
+                            tool_result: None,
+                            message: None,
+                            metadata: HashMap::from([(
+                                "notification".into(),
+                                serde_json::to_string(&notification)
+                                    .unwrap_or_else(|_| "null".into()),
+                            )]),
+                        })
+                        .await;
+                })
+            })
+        };
         let invoker = match stream_sender {
             Some(sender) => CapabilityRuntimeFactory::build_streaming(
                 self.admission.clone(),
@@ -418,6 +492,7 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
                 authority,
                 action_loop,
                 sender,
+                Some(notification_observer),
             ),
             None => match action_loop {
                 Some(action_loop) => CapabilityRuntimeFactory::build_with_action_loop(

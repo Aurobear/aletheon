@@ -12,6 +12,14 @@ use fabric::types::tool_stream::{
 };
 use tokio_util::sync::CancellationToken;
 
+pub type ToolNotificationObserver = std::sync::Arc<
+    dyn Fn(
+            fabric::ToolNotification,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Maximum coalesced text payload emitted at once.
 pub const TOOL_PROGRESS_TEXT_BYTES: usize = 4 * 1024;
 pub const TOOL_PROGRESS_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
@@ -177,11 +185,22 @@ fn floor_char_boundary(value: &str, requested: usize) -> usize {
 /// unique terminal for settlement. Channel close synthesizes `NoTerminal`;
 /// cancellation synthesizes `Cancelled` and prevents a later success terminal.
 pub async fn bridge_tool_stream(
+    event_rx: tokio::sync::mpsc::Receiver<ToolExecutionEvent>,
+    turn_events: TurnEventSender,
+    tool_name: String,
+    call_id: String,
+    cancel: CancellationToken,
+) -> ToolStreamOutcome {
+    bridge_tool_stream_observed(event_rx, turn_events, tool_name, call_id, cancel, None).await
+}
+
+async fn bridge_tool_stream_observed(
     mut event_rx: tokio::sync::mpsc::Receiver<ToolExecutionEvent>,
     turn_events: TurnEventSender,
     tool_name: String,
     call_id: String,
     cancel: CancellationToken,
+    notification_observer: Option<ToolNotificationObserver>,
 ) -> ToolStreamOutcome {
     let mut accumulator = ProgressAccumulator::new();
     let mut flush_deadline = None;
@@ -212,8 +231,11 @@ pub async fn bridge_tool_stream(
                         flush_deadline = None;
                     }
                 }
-                Some(ToolExecutionEvent::Notification(_)) => {
+                Some(ToolExecutionEvent::Notification(notification)) => {
                     // Notifications remain UI-only and are not model or terminal data.
+                    if let Some(observer) = &notification_observer {
+                        observer(notification).await;
+                    }
                 }
                 Some(ToolExecutionEvent::Terminal(result)) => break result,
                 None => break Err(ToolExecutionError::NoTerminal),
@@ -242,6 +264,17 @@ pub async fn bridge_bound_tool_stream(
     call_id: String,
     cancel: CancellationToken,
 ) -> ToolStreamOutcome {
+    bridge_bound_tool_stream_observed(event_rx, turn_events, tool_name, call_id, cancel, None).await
+}
+
+pub async fn bridge_bound_tool_stream_observed(
+    event_rx: BoundToolEventReceiver,
+    turn_events: TurnEventSender,
+    tool_name: String,
+    call_id: String,
+    cancel: CancellationToken,
+    notification_observer: Option<ToolNotificationObserver>,
+) -> ToolStreamOutcome {
     let (bound_call_id, event_rx) = event_rx.into_parts();
     if bound_call_id != call_id {
         tracing::warn!(
@@ -257,7 +290,15 @@ pub async fn bridge_bound_tool_stream(
             progress_dropped: 0,
         };
     }
-    bridge_tool_stream(event_rx, turn_events, tool_name, call_id, cancel).await
+    bridge_tool_stream_observed(
+        event_rx,
+        turn_events,
+        tool_name,
+        call_id,
+        cancel,
+        notification_observer,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -418,6 +459,38 @@ mod tests {
         .await;
         assert!(outcome.terminal.is_ok());
         assert_eq!(outcome.progress_emitted, 2);
+    }
+
+    #[tokio::test]
+    async fn governed_notification_reaches_lifecycle_observer_once() {
+        let (mut sink, rx) = fabric::tool_event_channel_for_call("call-notify");
+        assert!(sink.notify(ToolNotification {
+            kind: ToolNotificationKind::UiStatus,
+            message: "working".into(),
+        }));
+        sink.terminal(Ok(result())).await;
+        let (_stream, sender) = turn_stream(1);
+        let observed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observer: ToolNotificationObserver = {
+            let observed = observed.clone();
+            std::sync::Arc::new(move |_| {
+                let observed = observed.clone();
+                Box::pin(async move {
+                    observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                })
+            })
+        };
+        let outcome = bridge_bound_tool_stream_observed(
+            rx,
+            sender,
+            "tool".into(),
+            "call-notify".into(),
+            CancellationToken::new(),
+            Some(observer),
+        )
+        .await;
+        assert!(outcome.terminal.is_ok());
+        assert_eq!(observed.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

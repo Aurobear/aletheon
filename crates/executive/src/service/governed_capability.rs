@@ -180,6 +180,7 @@ pub struct GovernedCapabilityInvoker {
     action_loop: Option<Arc<dyn GovernedActionLoop>>,
     arbitration_mode: ConsciousArbitrationMode,
     stream_events: Option<fabric::ipc::TurnEventSender>,
+    notification_observer: Option<crate::service::tool_stream_bridge::ToolNotificationObserver>,
 }
 
 impl GovernedCapabilityInvoker {
@@ -193,6 +194,7 @@ impl GovernedCapabilityInvoker {
             action_loop: None,
             arbitration_mode: ConsciousArbitrationMode::Observe,
             stream_events: None,
+            notification_observer: None,
         }
     }
 
@@ -210,6 +212,14 @@ impl GovernedCapabilityInvoker {
 
     pub fn with_tool_stream(mut self, sender: fabric::ipc::TurnEventSender) -> Self {
         self.stream_events = Some(sender);
+        self
+    }
+
+    pub fn with_notification_observer(
+        mut self,
+        observer: crate::service::tool_stream_bridge::ToolNotificationObserver,
+    ) -> Self {
+        self.notification_observer = Some(observer);
         self
     }
 }
@@ -352,12 +362,13 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
             let (mut sink, event_rx) = fabric::tool_event_channel_for_call(call_id.clone());
             let inner = self.inner.clone();
             let invoke = async move { inner.invoke_streaming(request, &mut sink).await };
-            let bridge = crate::service::tool_stream_bridge::bridge_bound_tool_stream(
+            let bridge = crate::service::tool_stream_bridge::bridge_bound_tool_stream_observed(
                 event_rx,
                 turn_events.clone(),
                 tool_name,
                 call_id,
                 cancel,
+                self.notification_observer.clone(),
             );
             let (mut result, outcome) = tokio::join!(invoke, bridge);
             if let Err(error) = outcome.terminal {
@@ -421,11 +432,15 @@ impl CapabilityRuntimeFactory {
         authority: Arc<dyn TurnAuthorityProvider>,
         action_loop: Option<Arc<dyn GovernedActionLoop>>,
         sender: fabric::ipc::TurnEventSender,
+        notification_observer: Option<crate::service::tool_stream_bridge::ToolNotificationObserver>,
     ) -> Arc<dyn TurnCapabilityInvoker> {
         let kernel: Arc<dyn CapabilityInvoker> =
             Arc::new(DefaultCapabilityInvoker::new(admission, executor));
         let mut governed =
             GovernedCapabilityInvoker::new(kernel, authority).with_tool_stream(sender);
+        if let Some(observer) = notification_observer {
+            governed = governed.with_notification_observer(observer);
+        }
         if let Some(action_loop) = action_loop {
             governed = governed.with_action_loop(action_loop);
         }

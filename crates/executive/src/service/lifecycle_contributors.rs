@@ -1,13 +1,60 @@
 //! Ordered, data-only lifecycle extensions owned by Executive.
 
 use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
 use async_trait::async_trait;
 
 pub const MAX_EFFECTS_PER_DISPATCH: usize = 32;
 pub const MAX_CONTEXT_FRAGMENT_BYTES: usize = 8 * 1024;
+const MAX_CONTRIBUTOR_METRIC_SERIES: usize = 256;
+const MAX_CONTRIBUTOR_ID_BYTES: usize = 128;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ContributorMetricSnapshot {
+    pub dispatch_total: u64,
+    pub failed_total: u64,
+    pub critical_failclosed_total: u64,
+    pub latency_micros_total: u64,
+}
+
+static CONTRIBUTOR_METRICS: LazyLock<Mutex<BTreeMap<String, ContributorMetricSnapshot>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+pub fn contributor_metrics(id: &str) -> ContributorMetricSnapshot {
+    CONTRIBUTOR_METRICS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&bounded_contributor_id(id))
+        .copied()
+        .unwrap_or_default()
+}
+
+fn bounded_contributor_id(id: &str) -> String {
+    let mut end = id.len().min(MAX_CONTRIBUTOR_ID_BYTES);
+    while !id.is_char_boundary(end) {
+        end -= 1;
+    }
+    id[..end].to_owned()
+}
+
+fn record_contributor_metric(id: &str, elapsed_micros: u64, failed: bool, critical: bool) {
+    let id = bounded_contributor_id(id);
+    let mut metrics = CONTRIBUTOR_METRICS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !metrics.contains_key(&id) && metrics.len() == MAX_CONTRIBUTOR_METRIC_SERIES {
+        return;
+    }
+    let metric = metrics.entry(id).or_default();
+    metric.dispatch_total = metric.dispatch_total.saturating_add(1);
+    metric.failed_total = metric.failed_total.saturating_add(u64::from(failed));
+    metric.critical_failclosed_total = metric
+        .critical_failclosed_total
+        .saturating_add(u64::from(critical));
+    metric.latency_micros_total = metric.latency_micros_total.saturating_add(elapsed_micros);
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum LifecyclePhase {
@@ -143,13 +190,12 @@ impl LifecycleRegistry {
             let started = Instant::now();
             match contributor.on_lifecycle(&input).await {
                 Ok(effects) => {
+                    let elapsed_micros =
+                        started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
+                    record_contributor_metric(contributor.id(), elapsed_micros, false, false);
                     dispatch.outcomes.push(ContributorOutcome {
                         id: contributor.id().to_owned(),
-                        elapsed_micros: started
-                            .elapsed()
-                            .as_micros()
-                            .try_into()
-                            .unwrap_or(u64::MAX),
+                        elapsed_micros,
                         failed: false,
                     });
                     for effect in effects {
@@ -163,12 +209,18 @@ impl LifecycleRegistry {
                     }
                 }
                 Err(error) if contributor.is_critical() => {
+                    let elapsed_micros =
+                        started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
+                    record_contributor_metric(contributor.id(), elapsed_micros, true, true);
                     return Err(LifecycleDispatchError::Critical {
                         id: contributor.id().to_owned(),
                         detail: error.to_string(),
                     });
                 }
                 Err(error) => {
+                    let elapsed_micros =
+                        started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
+                    record_contributor_metric(contributor.id(), elapsed_micros, true, false);
                     tracing::warn!(
                         contributor = contributor.id(),
                         phase = ?input.phase,
@@ -177,11 +229,7 @@ impl LifecycleRegistry {
                     );
                     dispatch.outcomes.push(ContributorOutcome {
                         id: contributor.id().to_owned(),
-                        elapsed_micros: started
-                            .elapsed()
-                            .as_micros()
-                            .try_into()
-                            .unwrap_or(u64::MAX),
+                        elapsed_micros,
                         failed: true,
                     });
                 }
@@ -438,7 +486,7 @@ mod tests {
                 .register(
                     LifecyclePhase::BeforeTurnInput,
                     Arc::new(TestContributor {
-                        id: "failure".into(),
+                        id: format!("failure-{critical}"),
                         priority: 0,
                         critical,
                         fail: true,
@@ -450,6 +498,10 @@ mod tests {
             let result = registry
                 .dispatch(input(LifecyclePhase::BeforeTurnInput))
                 .await;
+            let metric = contributor_metrics(&format!("failure-{critical}"));
+            assert_eq!(metric.dispatch_total, 1);
+            assert_eq!(metric.failed_total, 1);
+            assert_eq!(metric.critical_failclosed_total, u64::from(critical));
             if critical {
                 assert!(matches!(
                     result,

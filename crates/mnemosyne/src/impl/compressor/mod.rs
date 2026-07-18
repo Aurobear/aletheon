@@ -65,6 +65,18 @@ impl AdvancedCompressor {
         self.previous_summary.as_deref()
     }
 
+    /// Read-only prediction used by lifecycle observers. It applies the same
+    /// threshold and boundary guard as `maybe_compact` without mutating state.
+    pub fn should_compact(&self, messages: &[Message]) -> bool {
+        let total_tokens: usize = messages.iter().map(Message::estimate_tokens).sum();
+        let threshold = (self.context_window_tokens as f64 * 0.8) as usize;
+        if total_tokens < threshold {
+            return false;
+        }
+        let cut = safe_tail_cut(messages, find_tail_cut(messages, &self.tail_config));
+        cut > 0 && cut < messages.len()
+    }
+
     async fn compact_impl<L: LlmProvider + ?Sized>(
         &mut self,
         messages: &mut Vec<Message>,

@@ -7,8 +7,9 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
+use std::time::Instant;
 
 use fabric::Clock;
 use fabric::Timer;
@@ -17,6 +18,56 @@ use tracing::warn;
 use fabric::hook::{HookContext, HookPoint, HookResult};
 
 const MAX_HOOK_ENVELOPE_BYTES: usize = 128 * 1024;
+const MAX_HOOK_METRIC_SERIES: usize = 256;
+const MAX_HOOK_METRIC_NAME_BYTES: usize = 128;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HookMetricSnapshot {
+    pub executions_total: u64,
+    pub failed_total: u64,
+    pub restricted_total: u64,
+    pub latency_micros_total: u64,
+}
+
+static HOOK_METRICS: LazyLock<Mutex<HashMap<String, HookMetricSnapshot>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Process-local, bounded metrics keyed by the host-registered hook name.
+pub fn hook_metrics(name: &str) -> HookMetricSnapshot {
+    HOOK_METRICS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&bounded_metric_name(name))
+        .copied()
+        .unwrap_or_default()
+}
+
+fn bounded_metric_name(name: &str) -> String {
+    let mut end = name.len().min(MAX_HOOK_METRIC_NAME_BYTES);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    name[..end].to_owned()
+}
+
+fn record_hook_metric(name: &str, elapsed: Duration, failed: bool, restricted: bool) {
+    let name = bounded_metric_name(name);
+    let mut metrics = HOOK_METRICS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !metrics.contains_key(&name) && metrics.len() == MAX_HOOK_METRIC_SERIES {
+        return;
+    }
+    let metric = metrics.entry(name).or_default();
+    metric.executions_total = metric.executions_total.saturating_add(1);
+    metric.failed_total = metric.failed_total.saturating_add(u64::from(failed));
+    metric.restricted_total = metric
+        .restricted_total
+        .saturating_add(u64::from(restricted));
+    metric.latency_micros_total = metric
+        .latency_micros_total
+        .saturating_add(elapsed.as_micros().try_into().unwrap_or(u64::MAX));
+}
 
 /// A registered hook.
 #[derive(Debug, Clone)]
@@ -146,9 +197,13 @@ impl HookRegistry {
 
     /// Execute a single hook.
     async fn execute_single(&self, hook: &RegisteredHook, ctx: &HookContext) -> HookResult {
+        let started = Instant::now();
         let script = match hook.script_path {
             Some(ref s) => s,
-            None => return HookResult::Continue,
+            None => {
+                record_hook_metric(&hook.name, started.elapsed(), false, false);
+                return HookResult::Continue;
+            }
         };
 
         if is_restricted_repo_hook(hook, script, ctx) {
@@ -170,6 +225,7 @@ impl HookRegistry {
                     )
                     .await;
             }
+            record_hook_metric(&hook.name, started.elapsed(), false, true);
             return HookResult::Continue;
         }
 
@@ -185,6 +241,7 @@ impl HookRegistry {
             Ok(c) => c,
             Err(e) => {
                 warn!(hook = %hook.name, error = %e, "Hook spawn failed");
+                record_hook_metric(&hook.name, started.elapsed(), true, false);
                 return HookResult::Continue;
             }
         };
@@ -210,14 +267,23 @@ impl HookRegistry {
             });
 
         match deadline.await {
-            Ok(Ok((_status, stdout))) => parse_hook_output(&stdout),
+            Ok(Ok((status, stdout))) => {
+                let failed = !status.success();
+                if failed {
+                    warn!(hook = %hook.name, ?status, "Hook exited unsuccessfully");
+                }
+                record_hook_metric(&hook.name, started.elapsed(), failed, false);
+                parse_hook_output(&stdout)
+            }
             Ok(Err(e)) => {
                 warn!(hook = %hook.name, error = %e, "Hook execution failed");
+                record_hook_metric(&hook.name, started.elapsed(), true, false);
                 HookResult::Continue
             }
             Err(_) => {
                 warn!(hook = %hook.name, "Hook execution timed out after 30s");
                 child.kill().await.ok();
+                record_hook_metric(&hook.name, started.elapsed(), true, false);
                 HookResult::Continue
             }
         }
@@ -652,6 +718,44 @@ mod tests {
             registry.execute(&context).await,
             HookResult::Continue
         ));
+    }
+
+    #[tokio::test]
+    async fn named_hook_metrics_record_latency_and_failure() {
+        let dir = TempDir::new().unwrap();
+        let script = dir.path().join("fail.sh");
+        std::fs::write(&script, "#!/bin/bash\nexit 7").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let name = "metrics:known-failure";
+        let before = hook_metrics(name);
+        let mut registry = HookRegistry::default();
+        registry.register(RegisteredHook {
+            name: name.into(),
+            source: "config".into(),
+            script_path: Some(script),
+            point: HookPoint::PostTurn,
+            priority: 0,
+        });
+        registry
+            .execute(&HookContext {
+                point: HookPoint::PostTurn,
+                session_id: "metrics-session".into(),
+                turn_count: 1,
+                tool_name: None,
+                tool_input: None,
+                tool_result: None,
+                message: None,
+                metadata: HashMap::new(),
+            })
+            .await;
+        let after = hook_metrics(name);
+        assert_eq!(after.executions_total, before.executions_total + 1);
+        assert_eq!(after.failed_total, before.failed_total + 1);
+        assert!(after.latency_micros_total >= before.latency_micros_total);
     }
 
     #[test]
