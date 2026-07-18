@@ -578,20 +578,71 @@ impl TurnPipeline {
         let tool_defs = prepared.definitions;
         let capability = prepared.invoker;
 
+        let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
+            crate::service::turn_diff_tracker::TurnDiffTracker::default(),
+        ));
+        let diff_session_input = self.session_input.clone();
+        let diff_principal = lifecycle_principal.clone();
+        let diff_thread = lifecycle_thread.clone();
+        let diff_connection = turn_request.context.connection_id.clone();
         let execute_tool = move |tool_id: &str, name: &str, input: &serde_json::Value| {
             let capability = capability.clone();
+            let tracker = turn_diff_tracker.clone();
+            let session_input = diff_session_input.clone();
+            let principal = diff_principal.clone();
+            let thread = diff_thread.clone();
+            let connection = diff_connection.clone();
             let (tid, n, inp) = (tool_id.to_string(), name.to_string(), input.clone());
             async move {
                 let result = capability
                     .invoke(CapabilityCall {
                         operation_id,
                         process_id: main_pid,
-                        name: n,
-                        input: inp,
-                        call_id: tid,
+                        name: n.clone(),
+                        input: inp.clone(),
+                        call_id: tid.clone(),
                         deadline: None,
                     })
                     .await;
+                if !result.is_error {
+                    let mut tracker = tracker.lock().await;
+                    let changed = if n == "apply_patch" {
+                        serde_json::from_str::<
+                            corpus::tools::tools::structured_patch::StructuredPatchResult,
+                        >(&result.output)
+                        .map(|delta| {
+                            tracker.record_patch(&delta);
+                        })
+                        .is_ok()
+                    } else if n == "file_write" {
+                        inp.get("path")
+                            .and_then(serde_json::Value::as_str)
+                            .zip(inp.get("content").and_then(serde_json::Value::as_str))
+                            .map(|(path, content)| {
+                                tracker.record_file_write(path, content.len() as u64);
+                            })
+                            .is_some()
+                    } else {
+                        false
+                    };
+                    let injection = changed.then(|| tracker.to_context_injection());
+                    drop(tracker);
+                    if let Some(injection) = injection.filter(|value| !value.is_empty()) {
+                        if let Err(error) = session_input
+                            .enqueue(
+                                principal,
+                                connection,
+                                thread,
+                                fabric::PromptKind::Interjection,
+                                injection,
+                                format!("turn-diff:{tid}"),
+                            )
+                            .await
+                        {
+                            tracing::warn!(%error, call_id = %tid, "failed to inject turn file delta");
+                        }
+                    }
+                }
                 (result.output, result.is_error)
             }
         };
@@ -1078,6 +1129,21 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
             kind: kind.clone(),
             payload: payload.clone(),
         }),
+        TurnEventV1::PatchProgress {
+            status,
+            path,
+            operation,
+            error,
+            applied_count,
+            failed_count,
+        } => Some(ClientEvent::PatchProgress {
+            status: status.clone(),
+            path: path.clone(),
+            operation: operation.clone(),
+            error: error.clone(),
+            applied_count: *applied_count,
+            failed_count: *failed_count,
+        }),
         TurnEventV1::Usage {
             tokens_in,
             tokens_out,
@@ -1184,6 +1250,7 @@ mod terminal_event_tests {
             working_dir: temp.path().to_path_buf(),
             session_id: "g2-client-stream".into(),
             clock,
+            turn_event_sender: None,
         };
         let (mut sink, event_rx) = fabric::tool_event_channel();
 

@@ -127,6 +127,7 @@ where
             is_error,
             usage: fabric::UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 
@@ -157,3 +158,125 @@ where
 }
 
 pub type DaemonCognitiveEvent = CognitiveStreamEvent;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use corpus::tools::tools::structured_patch::{FileChangeSummary, StructuredPatchResult};
+    use fabric::{
+        ConnectionId, ContentBlock, LlmResponse, LlmStream, PrincipalId, PromptKind, Role,
+        StopReason, ThreadId, Usage,
+    };
+    use std::sync::Mutex;
+
+    struct RecordingLlm(Mutex<Vec<Vec<Message>>>);
+
+    #[async_trait]
+    impl LlmProvider for RecordingLlm {
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            self.0.lock().unwrap().push(messages.to_vec());
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "done".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+
+        async fn complete_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            unreachable!()
+        }
+
+        fn name(&self) -> &str {
+            "recording"
+        }
+
+        fn max_context_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    #[tokio::test]
+    async fn next_model_call_receives_turn_diff_after_first_tool_batch() {
+        let principal = PrincipalId("p3-principal".into());
+        let thread = ThreadId("p3-thread".into());
+        let session_input =
+            Arc::new(crate::service::session_input::SessionInputCoordinator::in_memory());
+        let mut tracker = crate::service::turn_diff_tracker::TurnDiffTracker::default();
+        tracker.record_patch(&StructuredPatchResult {
+            applied: vec![],
+            failed: vec![],
+            files_changed: vec![FileChangeSummary {
+                path: "src/main.rs".into(),
+                change_type: "modified".into(),
+                hunks_applied: 1,
+                bytes_before: 10,
+                bytes_after: 20,
+            }],
+        });
+        session_input
+            .enqueue(
+                principal.clone(),
+                ConnectionId::new(),
+                thread.clone(),
+                PromptKind::Interjection,
+                tracker.to_context_injection(),
+                "turn-diff:first-tool-batch".into(),
+            )
+            .await
+            .unwrap();
+
+        let llm = Arc::new(RecordingLlm(Mutex::new(Vec::new())));
+        let services = DaemonTurnServices {
+            llm: llm.clone(),
+            tool_defs: vec![],
+            execute_tool: |_id: &str, _name: &str, _input: &serde_json::Value| async {
+                (String::new(), false)
+            },
+            request_messages: vec![Message::user("initial request")],
+            dasein_context: Arc::new(|| None),
+            session_input,
+            prompt_queue_enabled: true,
+            principal_id: principal,
+            thread_id: thread,
+            receipt_prefix: "p3-turn".into(),
+        };
+
+        let mut next_call_messages = services.request_messages.clone();
+        next_call_messages.extend(
+            services
+                .drain_interjections()
+                .await
+                .unwrap()
+                .into_iter()
+                .map(Message::user),
+        );
+        services
+            .llm_provider()
+            .unwrap()
+            .complete(&next_call_messages, &[])
+            .await
+            .unwrap();
+
+        let received = llm.0.lock().unwrap();
+        assert_eq!(received.len(), 1);
+        assert!(received[0].iter().any(|message| {
+            message.role == Role::User
+                && message.content.iter().any(|block| {
+                    matches!(block, ContentBlock::Text { text } if text.contains("## Files changed this turn"))
+                })
+        }));
+    }
+}
