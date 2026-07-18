@@ -1,32 +1,36 @@
 # Channel 子系统解耦重构 + 应用层定位
 
-> **Status:** In progress — Phase 0–3 + 部分 Phase 5 完成并提交（分支 `auro/refactor/channel-gateway`）
+> **Status:** Done（核心+归位）— Phase 0–4② + 部分 Phase 5 完成并提交（分支 `auro/refactor/channel-gateway`）；config 泛化标为可选后续
 > **Author:** 架构调研 2026-07-18
 
 ## 实施进度（2026-07-18）
 
 | Phase | Commit | 内容 | 状态 |
 |---|---|---|---|
-| 0 | `ef7d010e` | 抽 `intent.rs`（`Intent`/`classify_intent`）+ `notify.rs`，纯逻辑零行为变化 | ✅ 测试绿 |
+| 0 | `ef7d010e` | 抽 `intent.rs`（`Intent`/`classify_intent`）+ `notify.rs`，纯逻辑零行为变化 | ✅ |
 | 1 | `f4b9bf5a` | `CapabilityRegistry`/`CapabilityHandler`/`OutboundEffect`/`ApprovalResolver` 取代 god-object；`ChannelRouter`→`ChannelDispatcher`；5 个 `Option<Arc<dyn>>` 字段清零；`ActivateGoal` fork→resolver 注册表 | ✅ 41/41 |
-| 2 | `c35c1d95` | 中立层 google-free（dispatcher/telegram 仅剩文档注释）；`handlers/google_read.rs` + `ChatPreprocessor` 钩子；删 `enqueue_google_notification`，通知统一走 `DurableGoogleNotificationSink` | ✅ 33+40 绿 |
-| 3 | `00ab6e1a` | Gmail 成为注册的 `EventCapabilityHandler`（`IntentKind::GmailIngest` + `EventCapabilityRegistry`）；`handlers/gmail_ingest.rs` 包 `GmailGoalEventIngress::ingest`；Gmail 领域内部 7 文件零改动，安全/幂等/reconciliation 全保 | ✅ gmail 套件绿 |
-| 5(部分) | 本次 | 删除 Phase 3 后变死的 `GoogleMailIngressSink` trait+impl+导出 | ✅ 绿 |
+| 2 | `c35c1d95` | 中立层 google-free（dispatcher/telegram 仅剩文档注释）；`handlers/google_read.rs` + `ChatPreprocessor` 钩子；删 `enqueue_google_notification` | ✅ |
+| 3 | `00ab6e1a` | Gmail 成为注册的 `EventCapabilityHandler`（`IntentKind::GmailIngest` + `EventCapabilityRegistry`）；Gmail 领域内部 7 文件零改动，安全/幂等/reconciliation 全保 | ✅ |
+| 5(部分) | `9eb30b16` | 删除 Phase 3 后变死的 `GoogleMailIngressSink` | ✅ |
+| 4① | `82898d64` | `ChannelApprovalPort`（fabric 原生词汇）+ `ApprovalRepositoryPort` 实现；dispatcher/approval handler 脱离具体 `ApprovalRepository`；**核心审批契约零改动** | ✅ |
+| 4② | `8131b9de` | **建 `crates/gateway`**，中立引擎物理搬出 executive；方向 `executive→gateway→fabric` 单向无环 | ✅ gateway 38 + executive 9 套件绿 |
 
-**核心诉求「耦合太严重」已解决**：中立 dispatcher/transport 不再有任何 provider 领域分支；Gmail 与 Telegram 统一在「一切能力皆注册 handler」的模型下（Gmail 走非双工事件路径，语义未变）。
+**两大诉求均已兑现**：
+1. **「耦合太严重」已解决**——中立 dispatcher/transport 无任何 provider 领域分支；god-object → 注册表；Gmail 与 Telegram 统一在「能力皆注册 handler」模型（Gmail 走非双工事件路径，语义未变）。
+2. **「应用层归位」已完成**——渠道引擎物理落到 `crates/gateway`（只依赖 `fabric`），`interact` 保留纯人机 UI。
 
-### Phase 4（物理搬迁到 `crates/gateway`）—— 未做，需专门低冲突窗口
+### crate 归属最终形态（实际采用）
+`executive → gateway → fabric` 单向依赖：
+- **`crates/gateway`**（新，只依赖 fabric）：`dispatcher/effect/intent/notify/ports/registry/store` + `telegram/` transport + `handlers/{chat,goal,greeting,approval,google_read}` + transport/executor 端口 trait。
+- **`executive`**（依赖 gateway，实现其 trait）：`daemon_adapter`（`DaemonChannel*Executor`/`ApprovalRepositoryPort`）、`gmail/` 子树、`handlers/gmail_ingest`（`GmailIngestHandler`）、bootstrap 组合。7 处原 `r#impl::channel` 引用改为 `gateway::` 导入（同向，无需反转）。
+- `GoalProgress::from_outcome` 泄漏解法：转换移到 `executive::impl::goal::goal_progress_from_outcome`，中立 `GoalProgress` 结构留 gateway。
 
-**阻塞点 1：跨 crate 依赖需先抽象成端口。** 中立引擎用了 `executive::impl` 的具体类型：
-- `approval::{ApprovalRepository, ApprovalCreate, ApprovalDecision, ApprovalResolutionContext, ApplyCoordinator}`——dispatcher 用 `record_delivery_*`/`resolve`/`list_pending`/`load`；gmail 用 `create`。**approval 抽象会改动核心审批子系统契约，爆炸半径超出 channel 模块。**
-- `goal::{ObjectiveStore, AttemptCoordinationOutcome, RetryDecision}`；`gmail::GmailGoalDraftCoordinator`。
+> 说明：曾担心的「7 处依赖反转 + 组合根上移 bin」在 `executive→gateway` 方向下**不需要**（只有 `gateway→executive` 边缘方向才需要）。当前方向使 gateway 成为被 executive 依赖的渠道引擎 crate；若日后要让 gateway 成为 executive 之上的纯边缘层，再做那次反转即可，非必需。
 
-**阻塞点 2：7 处反向引用会成环。** executive 里从 channel 模块**外部**引用 `r#impl::channel` 的有 7 处：`host/mod.rs`、`google/event_dispatcher.rs`、`goal/worker.rs`、`external/mod.rs`、`daemon/bootstrap/{channels,google,request}.rs`。channel 搬进 `gateway` 后，若 `gateway`→`executive`，这 7 处 `executive`→`gateway` 即成环。破环需将这些点做**依赖注入**、并把 daemon 组合根（poll-loop spawn）上移到 `bin`——cycle-sensitive 大工程，且全撞在跑任务正改的文件上（`request.rs`/`google`/`goal`）。
-
-**结论**：Phase 4 应在 MCP/multi-user 那摊落地后，于专门窗口按「① fabric 端口抽象 → ② 反转 7 处依赖 + 组合根上移 bin → ③ 建 gateway 物理搬迁 → ④ 配置泛化」推进。前 3 阶段已独立交付核心解耦价值，不阻塞。
-
-### 备注修正
-- `channel/exec_server_client.rs` **不是死代码**——`host/mod.rs:154,167` 实际调用 `ExecServerClient::spawn`（虽内部 `todo!()` 桩）。原计划「删死桩」作废，**保留**。
+### 剩余（可选后续，非解耦必需）
+- **Phase 4 config 泛化**（`ChannelsConfig` 包 `TelegramConfig`）：**推测性多渠道扩展**，当前仅一个双工 transport，无第二 entry 可放；且触碰在跑任务正改的 `cognit/config/mod.rs`。为零当前收益不做，待真正加第二渠道时再上。
+- **Phase 5 剩余**：`docs/arch/agent-google/03`、`deepseek/07` 架构描述更新（本次已更新本 fix 文档）。
+- `channel/exec_server_client.rs` **保留**（非死代码——`host/mod.rs:154,167` 调用 `ExecServerClient::spawn`；原「删死桩」作废）。
 
 ---
 
