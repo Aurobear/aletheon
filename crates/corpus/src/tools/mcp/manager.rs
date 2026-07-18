@@ -3,8 +3,9 @@
 
 use anyhow::Result;
 use serde_json::Value;
+use std::sync::Arc;
 
-use super::client::{McpConnectionManager, McpResource, ResourceContent};
+use super::client::{ElicitationHandler, McpConnectionManager, McpResource, ResourceContent};
 use super::client::McpTool;
 use super::config::McpConfig;
 use crate::tools::Tool;
@@ -80,6 +81,25 @@ impl McpManager {
     /// Return the advertised tool descriptors for contract validation.
     pub fn server_tools(&self, server_name: &str) -> Option<Vec<McpTool>> {
         self.inner.server_tools(server_name)
+    }
+
+    /// Set the elicitation handler on all connected clients.
+    ///
+    /// If `None`, elicitation requests will be auto-denied.
+    pub fn set_elicitation_handler(&self, handler: Option<Arc<dyn ElicitationHandler>>) {
+        self.inner.set_elicitation_handler(handler);
+    }
+
+    /// Handle an elicitation request from a specific server.
+    ///
+    /// Delegates to the client's elicitation handler; auto-denies if no
+    /// handler is configured.
+    pub async fn handle_elicitation(
+        &self,
+        server_name: &str,
+        params: &Value,
+    ) -> Result<Value> {
+        self.inner.handle_elicitation(server_name, params).await
     }
 }
 

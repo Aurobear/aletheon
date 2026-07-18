@@ -846,4 +846,34 @@ impl McpConnectionManager {
         let mut client = client_arc.lock().await;
         client.read_resource(uri).await
     }
+
+    /// Set the elicitation handler on all connected clients.
+    ///
+    /// The handler is shared across all clients; if `None`, elicitation
+    /// requests will be auto-denied.
+    pub fn set_elicitation_handler(&self, handler: Option<Arc<dyn ElicitationHandler>>) {
+        for client_arc in self.clients.values() {
+            let Ok(mut client) = client_arc.try_lock() else {
+                continue;
+            };
+            client.elicitation_handler = handler.clone();
+        }
+    }
+
+    /// Handle an elicitation request from a specific server.
+    ///
+    /// Delegates to [`McpClient::handle_elicitation`].
+    /// Returns an error if the server is not connected.
+    pub async fn handle_elicitation(
+        &self,
+        server_name: &str,
+        params: &Value,
+    ) -> Result<Value> {
+        let client_arc = self
+            .clients
+            .get(server_name)
+            .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
+        let client = client_arc.lock().await;
+        client.handle_elicitation(params).await
+    }
 }
