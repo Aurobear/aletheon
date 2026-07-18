@@ -27,5 +27,7 @@ chrono = { version = "0.4", features = ["serde"] }
 ctrlc = "3"
 
 [dev-dependencies]
+executive = { path = "../executive" }
 tempfile = "3"
+tokio-util = { workspace = true }
 uuid = { version = "1", features = ["v4"] }

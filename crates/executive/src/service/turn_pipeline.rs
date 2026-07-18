@@ -957,7 +957,10 @@ impl TerminalEventBuffer {
 }
 
 /// Convert a `TurnEventV1` into a `ClientEvent` for TUI forwarding.
-fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
+/// Project the canonical daemon turn stream into the legacy TUI wire event.
+/// Public so transport/consumer integration tests exercise the production
+/// projection rather than duplicating its field mapping.
+pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
     match event {
         TurnEventV1::TurnStarted { iteration } => Some(ClientEvent::TurnStarted {
             iteration: *iteration,
