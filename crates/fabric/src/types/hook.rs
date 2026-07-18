@@ -27,6 +27,51 @@ pub enum HookPoint {
     OnMemoryStore,
     /// Fired when a memory entry is recalled.
     OnMemoryRecall,
+    /// Fired after a tool terminates unsuccessfully.
+    PostToolFailure,
+    /// Fired when an authority check denies a requested action.
+    PermissionDenied,
+    /// Fired when a user prompt is admitted.
+    UserPromptSubmit,
+    /// Fired for a user-visible runtime notification.
+    Notification,
+    /// Fired when a child agent starts.
+    SubagentStart,
+    /// Fired when a child agent reaches terminal state.
+    SubagentStop,
+    /// Fired immediately before context compaction.
+    PreCompact,
+    /// Fired after context compaction completes.
+    PostCompact,
+}
+
+impl HookPoint {
+    /// Only pre-tool hooks may synchronously deny or rewrite execution.
+    pub const fn is_blocking(self) -> bool {
+        matches!(self, Self::PreTool)
+    }
+
+    /// Stable wire name used in command-hook envelopes and telemetry.
+    pub const fn event_name(self) -> &'static str {
+        match self {
+            Self::OnSessionStart => "session_start",
+            Self::OnSessionEnd => "session_end",
+            Self::PreTurn => "pre_turn",
+            Self::PostTurn => "post_turn",
+            Self::PreTool => "pre_tool",
+            Self::PostTool => "post_tool",
+            Self::OnMemoryStore => "memory_store",
+            Self::OnMemoryRecall => "memory_recall",
+            Self::PostToolFailure => "post_tool_failure",
+            Self::PermissionDenied => "permission_denied",
+            Self::UserPromptSubmit => "user_prompt_submit",
+            Self::Notification => "notification",
+            Self::SubagentStart => "subagent_start",
+            Self::SubagentStop => "subagent_stop",
+            Self::PreCompact => "pre_compact",
+            Self::PostCompact => "post_compact",
+        }
+    }
 }
 
 /// Context passed to hook execution.
@@ -87,6 +132,14 @@ mod tests {
             let back: HookPoint = serde_json::from_str(&json).unwrap();
             assert_eq!(point, back);
         }
+    }
+
+    #[test]
+    fn only_pre_tool_is_blocking_and_names_are_stable() {
+        assert!(HookPoint::PreTool.is_blocking());
+        assert!(!HookPoint::PermissionDenied.is_blocking());
+        assert_eq!(HookPoint::PostToolFailure.event_name(), "post_tool_failure");
+        assert_eq!(HookPoint::SubagentStart.event_name(), "subagent_start");
     }
 
     #[test]

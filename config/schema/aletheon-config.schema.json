@@ -743,6 +743,14 @@
           },
           "type": "array"
         },
+        "on_session_start": {
+          "default": [],
+          "description": "Scripts to run when a session starts.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "post_tool": {
           "default": [],
           "description": "Scripts to run after each tool call (receives tool name + result as JSON on stdin).",
@@ -1602,6 +1610,7 @@
       "$ref": "#/$defs/HooksConfig",
       "default": {
         "on_session_end": [],
+        "on_session_start": [],
         "post_tool": [],
         "pre_tool": [],
         "pre_turn": []

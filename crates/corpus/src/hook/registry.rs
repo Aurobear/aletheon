@@ -16,6 +16,8 @@ use tracing::warn;
 
 use fabric::hook::{HookContext, HookPoint, HookResult};
 
+const MAX_HOOK_ENVELOPE_BYTES: usize = 128 * 1024;
+
 /// A registered hook.
 #[derive(Debug, Clone)]
 pub struct RegisteredHook {
@@ -34,7 +36,6 @@ pub struct RegisteredHook {
 /// Registry of lifecycle hooks.
 pub struct HookRegistry {
     hooks: HashMap<HookPoint, Vec<RegisteredHook>>,
-    #[allow(dead_code)]
     clock: Arc<dyn Clock>,
 }
 
@@ -120,7 +121,16 @@ impl HookRegistry {
             None => return HookResult::Continue,
         };
 
-        let ctx_json = serde_json::to_string(ctx).unwrap_or_default();
+        if is_restricted_repo_hook(hook, script, ctx) {
+            warn!(
+                hook = %hook.name,
+                point = ctx.point.event_name(),
+                "Skipping untrusted repository hook"
+            );
+            return HookResult::Continue;
+        }
+
+        let ctx_json = hook_envelope_json(ctx, self.clock.wall_now().0);
 
         let child = tokio::process::Command::new(script)
             .stdin(std::process::Stdio::piped())
@@ -169,6 +179,78 @@ impl HookRegistry {
             }
         }
     }
+}
+
+fn is_restricted_repo_hook(
+    hook: &RegisteredHook,
+    script: &std::path::Path,
+    ctx: &HookContext,
+) -> bool {
+    if hook.source == "config" {
+        return false;
+    }
+    let Some(workspace_root) = ctx.metadata.get("workspace_root") else {
+        return false;
+    };
+    let workspace_root = std::fs::canonicalize(workspace_root)
+        .unwrap_or_else(|_| std::path::PathBuf::from(workspace_root));
+    let script = std::fs::canonicalize(script).unwrap_or_else(|_| script.to_path_buf());
+    script.starts_with(workspace_root)
+        && ctx.metadata.get("repo_hooks_trusted").map(String::as_str) != Some("true")
+}
+
+fn hook_envelope_json(ctx: &HookContext, timestamp_ms: i64) -> String {
+    let workspace_root = ctx.metadata.get("workspace_root").cloned();
+    let full = serde_json::json!({
+        "hook_event_name": ctx.point.event_name(),
+        "timestamp_ms": timestamp_ms,
+        "session_id": ctx.session_id,
+        "turn_count": ctx.turn_count,
+        "workspace_root": workspace_root,
+        "tool_name": ctx.tool_name,
+        "tool_input": ctx.tool_input,
+        "tool_result": ctx.tool_result,
+        "message": ctx.message,
+        "metadata": ctx.metadata,
+        "payload_truncated": false,
+    });
+    let encoded = serde_json::to_string(&full).unwrap_or_default();
+    if encoded.len() <= MAX_HOOK_ENVELOPE_BYTES {
+        return encoded;
+    }
+
+    // Keep the authority/scope fields intact and carry a UTF-8-safe bounded
+    // rendering of the original detail. Re-serialize while shrinking because
+    // JSON escaping can make the encoded representation larger than the text.
+    let mut keep = MAX_HOOK_ENVELOPE_BYTES / 2;
+    loop {
+        let detail = truncate_utf8(&encoded, keep);
+        let bounded = serde_json::json!({
+            "hook_event_name": ctx.point.event_name(),
+            "timestamp_ms": timestamp_ms,
+            "session_id": ctx.session_id,
+            "turn_count": ctx.turn_count,
+            "workspace_root": workspace_root,
+            "payload_truncated": true,
+            "truncated_detail": detail,
+        });
+        let bounded = serde_json::to_string(&bounded).unwrap_or_default();
+        if bounded.len() <= MAX_HOOK_ENVELOPE_BYTES || keep == 0 {
+            return bounded;
+        }
+        keep /= 2;
+    }
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
 }
 
 impl Default for HookRegistry {
@@ -254,6 +336,68 @@ mod tests {
         assert_eq!(hooks[0].name, "high");
         assert_eq!(hooks[1].name, "mid");
         assert_eq!(hooks[2].name, "low");
+    }
+
+    #[test]
+    fn command_envelope_is_stable_and_utf8_bounded() {
+        let mut metadata = HashMap::new();
+        metadata.insert("workspace_root".into(), "/tmp/project".into());
+        let context = HookContext {
+            point: HookPoint::PostToolFailure,
+            session_id: "session-a".into(),
+            turn_count: 4,
+            tool_name: Some("bash_exec".into()),
+            tool_input: Some(serde_json::json!({"command": "x".repeat(200_000)})),
+            tool_result: None,
+            message: Some("界".repeat(100_000)),
+            metadata,
+        };
+
+        let encoded = hook_envelope_json(&context, 1234);
+        assert!(encoded.len() <= MAX_HOOK_ENVELOPE_BYTES);
+        let envelope: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(envelope["hook_event_name"], "post_tool_failure");
+        assert_eq!(envelope["timestamp_ms"], 1234);
+        assert_eq!(envelope["workspace_root"], "/tmp/project");
+        assert_eq!(envelope["payload_truncated"], true);
+    }
+
+    #[test]
+    fn repository_hook_requires_explicit_host_trust_but_config_is_exempt() {
+        let directory = TempDir::new().unwrap();
+        let script = directory.path().join("hook.sh");
+        std::fs::write(&script, "#!/bin/sh").unwrap();
+        let mut metadata = HashMap::from([(
+            "workspace_root".to_string(),
+            directory.path().display().to_string(),
+        )]);
+        let context = HookContext {
+            point: HookPoint::PreTool,
+            session_id: "session-a".into(),
+            turn_count: 0,
+            tool_name: None,
+            tool_input: None,
+            tool_result: None,
+            message: None,
+            metadata: metadata.clone(),
+        };
+        let mut hook = RegisteredHook {
+            name: "repo-hook".into(),
+            source: "skill:repo".into(),
+            script_path: Some(script.clone()),
+            point: HookPoint::PreTool,
+            priority: 0,
+        };
+        assert!(is_restricted_repo_hook(&hook, &script, &context));
+
+        metadata.insert("repo_hooks_trusted".into(), "true".into());
+        let trusted = HookContext {
+            metadata,
+            ..context
+        };
+        assert!(!is_restricted_repo_hook(&hook, &script, &trusted));
+        hook.source = "config".into();
+        assert!(!is_restricted_repo_hook(&hook, &script, &trusted));
     }
 
     #[tokio::test]
@@ -412,7 +556,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let script = dir.path().join("hanging.sh");
         // Script sleeps for 3600s -- far beyond the 30s timeout.
-        std::fs::write(&script, "#!/bin/bash\nsleep 3600").unwrap();
+        std::fs::write(&script, "#!/bin/bash\nexec sleep 3600").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

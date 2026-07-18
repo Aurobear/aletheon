@@ -23,6 +23,10 @@ pub(super) fn register_configured_hooks(
     config: &crate::core::config::HooksConfig,
 ) {
     for (point, scripts) in [
+        (
+            fabric::hook::HookPoint::OnSessionStart,
+            &config.on_session_start,
+        ),
         (fabric::hook::HookPoint::PreTurn, &config.pre_turn),
         (fabric::hook::HookPoint::PreTool, &config.pre_tool),
         (fabric::hook::HookPoint::PostTool, &config.post_tool),
@@ -422,6 +426,7 @@ mod tests {
         let mut registry =
             corpus::HookRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
         let config = crate::core::config::HooksConfig {
+            on_session_start: vec!["session-start".into()],
             pre_turn: vec!["pre-turn".into()],
             pre_tool: vec!["pre-tool".into()],
             post_tool: vec!["post-tool".into()],
@@ -431,6 +436,7 @@ mod tests {
         register_configured_hooks(&mut registry, &config);
 
         assert_eq!(registry.count(&fabric::hook::HookPoint::PreTurn), 1);
+        assert_eq!(registry.count(&fabric::hook::HookPoint::OnSessionStart), 1);
         assert_eq!(registry.count(&fabric::hook::HookPoint::PreTool), 1);
         assert_eq!(registry.count(&fabric::hook::HookPoint::PostTool), 1);
         assert_eq!(registry.count(&fabric::hook::HookPoint::OnSessionEnd), 1);

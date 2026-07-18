@@ -77,6 +77,9 @@ impl Default for ExecutiveConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HooksConfig {
+    /// Scripts to run when a session starts.
+    #[serde(default)]
+    pub on_session_start: Vec<String>,
     /// Scripts to run before each turn (receives user prompt as JSON on stdin).
     #[serde(default)]
     pub pre_turn: Vec<String>,
