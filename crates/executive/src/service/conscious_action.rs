@@ -139,9 +139,16 @@ impl GovernedActionLoop for ConsciousActionBridge {
             .latest_context(self.coordinator.space())
             .await
         {
-            Ok(projection) => ConsciousFieldReadout::from_projection(&projection)
-                .ok()
-                .flatten(),
+            Ok(projection) => match ConsciousFieldReadout::from_projection(&projection) {
+                Ok(readout) => readout,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "conscious action field projection invalid; using legacy proposal"
+                    );
+                    None
+                }
+            },
             Err(error) => {
                 tracing::warn!(error = %error, "conscious action field read failed; using legacy proposal");
                 None

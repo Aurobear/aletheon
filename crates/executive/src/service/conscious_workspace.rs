@@ -135,6 +135,60 @@ impl ConsciousWorkspaceBatchPlanner {
             })
             .unwrap_or(readout.precision)
     }
+
+    fn metric_ref(&self, epoch: fabric::BroadcastEpoch) -> String {
+        self.coordinator
+            .field_metric_snapshots()
+            .into_iter()
+            .rev()
+            .find(|snapshot| snapshot.broadcast_epoch == epoch.0)
+            .map(|snapshot| snapshot.trace_event_id)
+            .filter(|reference| !reference.trim().is_empty())
+            .unwrap_or_else(|| format!("broadcast:{}:{}", self.coordinator.space().0, epoch.0))
+    }
+
+    fn record_reorders(
+        &self,
+        calls: &[CapabilityCall],
+        plan: &CapabilityBatchPlan,
+        epoch: fabric::BroadcastEpoch,
+    ) -> anyhow::Result<()> {
+        let metric_ref = self.metric_ref(epoch);
+        for decision in plan
+            .decisions
+            .iter()
+            .filter(|decision| decision.decision == FieldDecisionKind::Reorder)
+        {
+            let call = calls
+                .iter()
+                .find(|call| call.call_id == decision.call_id)
+                .context("reorder decision references an unknown capability call")?;
+            let event = reorder_trace_event(self.mode, call, decision, epoch, &metric_ref);
+            self.coordinator.record_field_modulation(&event)?;
+        }
+        Ok(())
+    }
+}
+
+fn reorder_trace_event(
+    mode: ConsciousArbitrationMode,
+    call: &CapabilityCall,
+    decision: &CapabilityBatchDecision,
+    epoch: fabric::BroadcastEpoch,
+    metric_ref: &str,
+) -> fabric::ConsciousTraceEvent {
+    fabric::ConsciousTraceEvent::FieldModulation {
+        mode,
+        decision: FieldDecisionKind::Reorder,
+        reason: FieldDecisionReason::Selected,
+        operation_id: call.operation_id.0.to_string(),
+        call_id: call.call_id.clone(),
+        broadcast_epoch: Some(epoch.0),
+        baseline: None,
+        effective: Some(f64::from(decision.priority)),
+        delta: None,
+        metric_ref: metric_ref.to_owned(),
+    }
 }
 
 #[async_trait]
@@ -195,6 +249,21 @@ impl cognit::harness::BatchPlanner for ConsciousWorkspaceBatchPlanner {
             decisions,
         };
         plan.validate_against(&calls)?;
+        if let Err(error) = self.record_reorders(&calls, &plan, readout.epoch) {
+            match self.mode {
+                ConsciousArbitrationMode::Observe => tracing::warn!(
+                    %error,
+                    "conscious batch reorder trace unavailable; preserving observable execution"
+                ),
+                ConsciousArbitrationMode::Enforce => {
+                    tracing::warn!(
+                        %error,
+                        "conscious batch reorder trace unavailable; suppressing untraced reorder"
+                    );
+                    return Ok(self.identity(&calls));
+                }
+            }
+        }
         Ok(plan)
     }
 }
@@ -769,6 +838,7 @@ fn truncate(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod diagnostic_tests {
     use super::*;
+    use uuid::Uuid;
 
     fn event(index: usize) -> fabric::ConsciousTraceEvent {
         fabric::ConsciousTraceEvent::Prediction {
@@ -794,5 +864,53 @@ mod diagnostic_tests {
         assert_eq!(events.len(), MAX_DIAGNOSTIC_MODULATIONS);
         let (events, _) = bound_recent_modulations(vec![event(0), event(1)], 0);
         assert_eq!(events, vec![event(1)]);
+    }
+
+    #[test]
+    fn batch_reorder_builds_complete_causal_modulation_trace() {
+        let call = CapabilityCall {
+            operation_id: fabric::OperationId(Uuid::from_u128(41)),
+            process_id: ProcessId(Uuid::from_u128(42)),
+            name: "file_read".into(),
+            input: serde_json::json!({"path":"README.md"}),
+            call_id: "call-reordered".into(),
+            deadline: None,
+        };
+        let decision = CapabilityBatchDecision {
+            call_id: call.call_id.clone(),
+            decision: FieldDecisionKind::Reorder,
+            reason: FieldDecisionReason::Selected,
+            priority: 0.75,
+            broadcast_epoch: Some(fabric::BroadcastEpoch(9)),
+        };
+        let trace = reorder_trace_event(
+            ConsciousArbitrationMode::Observe,
+            &call,
+            &decision,
+            fabric::BroadcastEpoch(9),
+            "metric:9",
+        );
+        let fabric::ConsciousTraceEvent::FieldModulation {
+            mode,
+            decision,
+            reason,
+            operation_id,
+            call_id,
+            broadcast_epoch,
+            effective,
+            metric_ref,
+            ..
+        } = trace
+        else {
+            panic!("expected field modulation trace")
+        };
+        assert_eq!(mode, ConsciousArbitrationMode::Observe);
+        assert_eq!(decision, FieldDecisionKind::Reorder);
+        assert_eq!(reason, FieldDecisionReason::Selected);
+        assert_eq!(operation_id, call.operation_id.0.to_string());
+        assert_eq!(call_id, call.call_id);
+        assert_eq!(broadcast_epoch, Some(9));
+        assert_eq!(effective, Some(0.75));
+        assert_eq!(metric_ref, "metric:9");
     }
 }

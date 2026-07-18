@@ -374,40 +374,63 @@ fn stable_priority_order_keeps_original_tie_order() {
 fn ac_f_3_modulation_trace_round_trips_all_causal_fields() {
     let store = agora::SqliteBroadcastStore::open_in_memory().unwrap();
     let space = fabric::AgoraSpaceId("acceptance-field-trace".into());
-    let event = fabric::ConsciousTraceEvent::FieldModulation {
-        mode: ConsciousArbitrationMode::Enforce,
-        decision: FieldDecisionKind::Defer,
-        reason: FieldDecisionReason::Negated,
-        operation_id: "operation-ac-f-3".into(),
-        call_id: "call-ac-f-3".into(),
-        broadcast_epoch: Some(17),
-        baseline: Some(0.4),
-        effective: Some(0.8),
-        delta: Some(0.4),
-        metric_ref: "metric-ac-f-3".into(),
-    };
-    store.save_field_modulation(&space, &event).unwrap();
+    let expected = [
+        (
+            ConsciousArbitrationMode::Observe,
+            FieldDecisionKind::Reorder,
+            FieldDecisionReason::Selected,
+        ),
+        (
+            ConsciousArbitrationMode::Observe,
+            FieldDecisionKind::WouldDefer,
+            FieldDecisionReason::LostCompetition,
+        ),
+        (
+            ConsciousArbitrationMode::Enforce,
+            FieldDecisionKind::Defer,
+            FieldDecisionReason::Negated,
+        ),
+    ];
+    for (index, (mode, decision, reason)) in expected.iter().copied().enumerate() {
+        store
+            .save_field_modulation(
+                &space,
+                &fabric::ConsciousTraceEvent::FieldModulation {
+                    mode,
+                    decision,
+                    reason,
+                    operation_id: format!("operation-ac-f-3-{index}"),
+                    call_id: format!("call-ac-f-3-{index}"),
+                    broadcast_epoch: Some(17 + index as u64),
+                    baseline: Some(0.4),
+                    effective: Some(0.8),
+                    delta: Some(0.4),
+                    metric_ref: format!("metric-ac-f-3-{index}"),
+                },
+            )
+            .unwrap();
+    }
     let encoded = serde_json::to_vec(&store.field_modulations(&space).unwrap()).unwrap();
     let decoded: Vec<fabric::ConsciousTraceEvent> = serde_json::from_slice(&encoded).unwrap();
-
-    let fabric::ConsciousTraceEvent::FieldModulation {
-        mode,
-        decision,
-        reason,
-        operation_id,
-        call_id,
-        broadcast_epoch,
-        metric_ref,
-        ..
-    } = &decoded[0]
-    else {
-        panic!("expected field modulation trace")
-    };
-    assert_eq!(*mode, ConsciousArbitrationMode::Enforce);
-    assert_eq!(*decision, FieldDecisionKind::Defer);
-    assert_eq!(*reason, FieldDecisionReason::Negated);
-    assert_eq!(operation_id, "operation-ac-f-3");
-    assert_eq!(call_id, "call-ac-f-3");
-    assert_eq!(*broadcast_epoch, Some(17));
-    assert_eq!(metric_ref, "metric-ac-f-3");
+    assert_eq!(decoded.len(), expected.len());
+    for (index, event) in decoded.iter().enumerate() {
+        let fabric::ConsciousTraceEvent::FieldModulation {
+            mode,
+            decision,
+            reason,
+            operation_id,
+            call_id,
+            broadcast_epoch,
+            metric_ref,
+            ..
+        } = event
+        else {
+            panic!("expected field modulation trace")
+        };
+        assert_eq!((*mode, *decision, *reason), expected[index]);
+        assert_eq!(operation_id, &format!("operation-ac-f-3-{index}"));
+        assert_eq!(call_id, &format!("call-ac-f-3-{index}"));
+        assert_eq!(*broadcast_epoch, Some(17 + index as u64));
+        assert_eq!(metric_ref, &format!("metric-ac-f-3-{index}"));
+    }
 }

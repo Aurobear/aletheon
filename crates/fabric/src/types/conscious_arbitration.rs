@@ -188,7 +188,8 @@ impl ConsciousFieldReadout {
             })
             .fold(0.0_f32, f32::max);
 
-        // Find the care action from the broadcast
+        // Select the most conservative care action deterministically. A later
+        // Negate must never be hidden by an earlier Direct in the coalition.
         let care_action: Option<CareActionKind> = broadcast
             .selected
             .iter()
@@ -199,19 +200,16 @@ impl ConsciousFieldReadout {
                 }) => Some(action.clone()),
                 _ => None,
             })
-            .next();
+            .max_by(|left, right| {
+                Self::care_action_weight(left.clone())
+                    .total_cmp(&Self::care_action_weight(right.clone()))
+            });
 
-        // Max salience across all selected candidates
-        let salience = broadcast
-            .selected
-            .iter()
-            .max_by(|a, b| {
-                let sa = a.salience.urgency.max(a.salience.self_relevance);
-                let sb = b.salience.urgency.max(b.salience.self_relevance);
-                sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .map(|w| w.salience)
-            .unwrap_or_else(|| SalienceVector {
+        // Each dimension is the bounded maximum across the selected
+        // coalition. Copying one candidate's whole vector would discard strong
+        // signals carried by a different winner.
+        let salience = broadcast.selected.iter().fold(
+            SalienceVector {
                 urgency: 0.0,
                 goal_relevance: 0.0,
                 self_relevance: 0.0,
@@ -220,7 +218,24 @@ impl ConsciousFieldReadout {
                 prediction_error: 0.0,
                 affect_intensity: 0.0,
                 social_relevance: 0.0,
-            });
+            },
+            |maxima, candidate| SalienceVector {
+                urgency: maxima.urgency.max(candidate.salience.urgency),
+                goal_relevance: maxima.goal_relevance.max(candidate.salience.goal_relevance),
+                self_relevance: maxima.self_relevance.max(candidate.salience.self_relevance),
+                novelty: maxima.novelty.max(candidate.salience.novelty),
+                confidence: maxima.confidence.max(candidate.salience.confidence),
+                prediction_error: maxima
+                    .prediction_error
+                    .max(candidate.salience.prediction_error),
+                affect_intensity: maxima
+                    .affect_intensity
+                    .max(candidate.salience.affect_intensity),
+                social_relevance: maxima
+                    .social_relevance
+                    .max(candidate.salience.social_relevance),
+            },
+        );
 
         let p = u.max(s).max(a).clamp(0.0, 1.0);
 
@@ -295,6 +310,10 @@ impl CapabilityBatchPlan {
     pub fn validate_against(&self, calls: &[crate::CapabilityCall]) -> anyhow::Result<()> {
         let mut expected: Vec<String> = calls.iter().map(|c| c.call_id.clone()).collect();
         expected.sort();
+        anyhow::ensure!(
+            expected.windows(2).all(|pair| pair[0] != pair[1]),
+            "input batch contains duplicate call IDs"
+        );
 
         let mut actual = self.ordered_call_ids.clone();
         actual.sort();
@@ -306,16 +325,22 @@ impl CapabilityBatchPlan {
             actual,
         );
 
-        // Every decision must reference a known call_id.
-        let call_ids: std::collections::HashSet<&str> =
-            calls.iter().map(|c| c.call_id.as_str()).collect();
-        for d in &self.decisions {
-            anyhow::ensure!(
-                call_ids.contains(d.call_id.as_str()),
-                "batch decision references unknown call_id '{}'",
-                d.call_id,
-            );
-        }
+        // Decisions are also an exact permutation: precisely one bounded
+        // decision for every unique input call, with no duplicate or omission.
+        let mut expected_decisions: Vec<&str> = calls.iter().map(|c| c.call_id.as_str()).collect();
+        expected_decisions.sort_unstable();
+        let mut actual_decisions: Vec<&str> = self
+            .decisions
+            .iter()
+            .map(|decision| decision.call_id.as_str())
+            .collect();
+        actual_decisions.sort_unstable();
+        anyhow::ensure!(
+            expected_decisions == actual_decisions,
+            "batch decisions are not exactly one per call: expected {:?}, got {:?}",
+            expected_decisions,
+            actual_decisions,
+        );
 
         // Every decision's priority must be finite.
         for d in &self.decisions {
@@ -365,8 +390,11 @@ impl CapabilityBatchPlan {
 mod tests {
     use super::*;
     use crate::dasein::{SelfVersion, Stimmung};
-    use crate::ContextProjectionReceipt;
-    use crate::StructuredSelfView;
+    use crate::{
+        ContextProjectionReceipt, SelectionExplanation, SelectionResult, StructuredSelfView,
+        VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
+        WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
+    };
 
     // ---- helpers ----
 
@@ -404,6 +432,87 @@ mod tests {
         }
     }
 
+    fn selected_candidate(
+        id: u128,
+        content: WorkspaceContent,
+        salience: SalienceVector,
+    ) -> WorkspaceCandidate {
+        let source = crate::ProcessId(uuid::Uuid::from_u128(90));
+        WorkspaceCandidate {
+            schema_version: WORKSPACE_SCHEMA_V1,
+            id: crate::ContentId(uuid::Uuid::from_u128(id)),
+            space: AgoraSpaceId("test-space".into()),
+            source,
+            turn: None,
+            content,
+            confidence: 1.0,
+            salience,
+            provenance: WorkspaceProvenance {
+                producer: source,
+                operation: None,
+                source_refs: vec![format!("fixture:{id}")],
+                observed_at: crate::WallTime(1),
+            },
+            visibility: VisibilityScope::Session,
+            dependencies: vec![],
+            created_at: crate::MonoTime(1),
+            expires_at: None,
+        }
+    }
+
+    fn projection_with_selected(selected: Vec<WorkspaceCandidate>) -> ConsciousContextProjection {
+        let selected_ids = selected
+            .iter()
+            .map(|candidate| candidate.id)
+            .collect::<Vec<_>>();
+        let broadcast = WorkspaceBroadcast::from_selection(
+            BroadcastEpoch(7),
+            SelectionResult {
+                selected,
+                explanation: SelectionExplanation {
+                    policy_version: 1,
+                    evaluated: vec![],
+                    selected_ids: selected_ids.clone(),
+                    rejected_below_ignition: vec![],
+                },
+            },
+            SelfVersion(1),
+            1,
+        )
+        .unwrap();
+        ConsciousContextProjection {
+            latest_broadcast: Some(broadcast),
+            self_view: StructuredSelfView {
+                version: SelfVersion(1),
+                mood: Stimmung::Gelassenheit,
+                concerns: vec![],
+                care_concerns: vec![],
+                projection: None,
+                protentions: vec![],
+            },
+            receipt: ContextProjectionReceipt {
+                space: AgoraSpaceId("test-space".into()),
+                broadcast_epoch: Some(BroadcastEpoch(7)),
+                workspace_version: Some(1),
+                dasein_version: SelfVersion(1),
+                content_ids: selected_ids,
+            },
+        }
+    }
+
+    fn zero_salience() -> SalienceVector {
+        SalienceVector {
+            urgency: 0.0,
+            goal_relevance: 0.0,
+            self_relevance: 0.0,
+            novelty: 0.0,
+            confidence: 0.0,
+            prediction_error: 0.0,
+            affect_intensity: 0.0,
+            social_relevance: 0.0,
+        }
+    }
+
     // ---- readout tests ----
 
     #[test]
@@ -426,6 +535,85 @@ mod tests {
             "invalid projection should be Err, got {:?}",
             result
         );
+    }
+
+    #[test]
+    fn readout_aggregates_each_selected_salience_dimension() {
+        let low_urgency = selected_candidate(
+            1,
+            WorkspaceContent::CareConcern(crate::CareConcernFrame {
+                purpose: "goal".into(),
+                urgency: 0.2,
+            }),
+            SalienceVector {
+                urgency: 0.2,
+                goal_relevance: 0.9,
+                self_relevance: 0.1,
+                novelty: 0.8,
+                confidence: 0.3,
+                prediction_error: 0.7,
+                affect_intensity: 0.4,
+                social_relevance: 0.6,
+            },
+        );
+        let high_urgency = selected_candidate(
+            2,
+            WorkspaceContent::CareConcern(crate::CareConcernFrame {
+                purpose: "urgent".into(),
+                urgency: 0.9,
+            }),
+            SalienceVector {
+                urgency: 0.9,
+                goal_relevance: 0.2,
+                self_relevance: 0.95,
+                novelty: 0.1,
+                confidence: 0.85,
+                prediction_error: 0.2,
+                affect_intensity: 0.75,
+                social_relevance: 0.1,
+            },
+        );
+        let readout = ConsciousFieldReadout::from_projection(&projection_with_selected(vec![
+            low_urgency,
+            high_urgency,
+        ]))
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            readout.salience.values(),
+            [0.9, 0.9, 0.95, 0.8, 0.85, 0.7, 0.75, 0.6]
+        );
+    }
+
+    #[test]
+    fn strongest_selected_care_action_wins_regardless_of_order() {
+        let direct = selected_candidate(
+            3,
+            WorkspaceContent::Concern(crate::dasein::SelfSignal::CareDecision {
+                action: CareActionKind::Direct,
+                rationale: "first".into(),
+            }),
+            zero_salience(),
+        );
+        let negate = selected_candidate(
+            4,
+            WorkspaceContent::Concern(crate::dasein::SelfSignal::CareDecision {
+                action: CareActionKind::Negate,
+                rationale: "later".into(),
+            }),
+            zero_salience(),
+        );
+        for selected in [
+            vec![direct.clone(), negate.clone()],
+            vec![negate.clone(), direct.clone()],
+        ] {
+            let readout =
+                ConsciousFieldReadout::from_projection(&projection_with_selected(selected))
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(readout.care_action, Some(CareActionKind::Negate));
+            assert_eq!(readout.precision, 1.0);
+        }
     }
 
     // ---- batch plan tests ----
@@ -504,6 +692,38 @@ mod tests {
                 broadcast_epoch: None,
             }],
         };
+        assert!(plan.validate_against(&calls).is_err());
+    }
+
+    #[test]
+    fn batch_plan_requires_exactly_one_decision_per_call() {
+        let calls = vec![fixture_call("a"), fixture_call("b")];
+        let decision = |call_id: &str| CapabilityBatchDecision {
+            call_id: call_id.into(),
+            decision: FieldDecisionKind::Proceed,
+            reason: FieldDecisionReason::Selected,
+            priority: 0.5,
+            broadcast_epoch: Some(BroadcastEpoch(1)),
+        };
+        let missing = CapabilityBatchPlan {
+            mode: ConsciousArbitrationMode::Enforce,
+            ordered_call_ids: vec!["a".into(), "b".into()],
+            decisions: vec![decision("a")],
+        };
+        assert!(missing.validate_against(&calls).is_err());
+
+        let duplicate = CapabilityBatchPlan {
+            mode: ConsciousArbitrationMode::Enforce,
+            ordered_call_ids: vec!["a".into(), "b".into()],
+            decisions: vec![decision("a"), decision("a")],
+        };
+        assert!(duplicate.validate_against(&calls).is_err());
+    }
+
+    #[test]
+    fn batch_plan_rejects_duplicate_input_call_ids() {
+        let calls = vec![fixture_call("same"), fixture_call("same")];
+        let plan = CapabilityBatchPlan::identity(&calls);
         assert!(plan.validate_against(&calls).is_err());
     }
 

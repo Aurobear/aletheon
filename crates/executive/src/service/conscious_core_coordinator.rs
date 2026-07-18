@@ -420,10 +420,27 @@ impl ConsciousCoreCoordinator {
             .latest_broadcast
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("completed projection has no broadcast"))?;
-        let protention_salience = broadcast
+        let protention = broadcast
             .selected
             .iter()
             .filter(|candidate| matches!(&candidate.content, WorkspaceContent::Prediction(_)))
+            .max_by(|left, right| {
+                left.salience
+                    .confidence
+                    .partial_cmp(&right.salience.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        let protention_salience = protention
+            .map(|candidate| salience_values(candidate.salience))
+            .unwrap_or([0.0; 8]);
+        let protention_horizon_ms = protention.and_then(|candidate| match &candidate.content {
+            WorkspaceContent::Prediction(prediction) => Some(prediction.horizon_ms),
+            _ => None,
+        });
+        let action_salience = broadcast
+            .selected
+            .iter()
+            .filter(|candidate| matches!(&candidate.content, WorkspaceContent::ActionProposal(_)))
             .max_by(|left, right| {
                 left.salience
                     .confidence
@@ -440,6 +457,11 @@ impl ConsciousCoreCoordinator {
             concern_urgency: f64::from(readout.concern_urgency),
             update_delta: 0.0,
             protention_salience,
+            protention_horizon_ms,
+            action_salience,
+            temporally_decayed_update: 0.0,
+            temporality_decay_weight: None,
+            prior_protention_action_alignment: None,
             trace_event_id: format!(
                 "broadcast:{}:{}:{broadcast_checksum}",
                 self.space.0, broadcast.epoch.0
