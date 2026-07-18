@@ -65,6 +65,9 @@
 | `b95e2ff8` | **S1 T11** `SandboxExecutor::run` 网络一致性：`restrict_network` × backend 缺 `network_isolation`——Require 时 fail-closed（同 noop 守卫姿态），否则告警降级不静默放网；None 跳过（等价旧行为） | fabric | 4 新 |
 | `26936382` | **S1 T12a** `SandboxProfiles.default_profile` + `JsonSchema` 派生；`AppConfig.sandbox_profiles` 从 daemon 可信 config 加载 | fabric + executive | fabric 25 全走 + executive check 干净 |
 | `b2b065dd` | **S1 T13** `ToolRunnerWithGuard.with_sandbox_profiles` builder，bash_exec 执行前 `resolve_profile` 填 `policy`；daemon+user 两路接线 `sandbox_profiles`；None=旧行为 | corpus + executive | corpus 10 全走 + executive check 干净 |
+| `ac7fe197` | **Structured editing P1.1–P1.4**：结构化 patch 类型、文本/JSON parser、路径校验与四类文件操作执行器 | corpus | structured_patch 初始单测 |
+| `59e3d83b` | **Structured editing Phase 1 收尾**：`apply_patch` 双格式接入、Unicode/尾空白归一化、±3 后有界全文匹配、Add 防覆盖、hunk 失败进度 | corpus | apply_patch 11 + structured_patch 40 全走 |
+| `69c163a3` | **Testing infrastructure 兼容收尾**：mock response 生命周期、runtime fixture 新配置、并发 policy 生命周期、直接 event-spine 单调性验证 | executive tests | native runtime 9 + coordinator 22 全走 |
 
 **状态**：S1 端到端完成。`grok_hardening.sandbox_profiles = true` + 配置中声明 profiles → `resolve_profile` → `SandboxConfig.policy` → bubblewrap 施加 deny + network；关=逐字节旧行为。C1+S1 两条从契约贯通到激活。
 
@@ -96,7 +99,7 @@
 
 ### 阶段 P0 —— 独立、高价值、低风险，可立即并行
 
-1. **structured-code-editing Phase 1**（P1.1–P1.13）
+1. **structured-code-editing Phase 1**（P1.1–P1.13）— **DONE**（`ac7fe197` + `59e3d83b`）
    源：`../../deepseek/2026-07-17-structured-code-editing-plan.md`。
    自包含于 `crates/corpus`，无跨 crate 依赖，与 grok 无重叠。新增 `corpus/src/tools/tools/structured_patch.rs`。**可直接执行。**
 
