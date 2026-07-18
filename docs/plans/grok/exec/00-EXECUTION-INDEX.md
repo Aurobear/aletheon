@@ -81,10 +81,11 @@
 | `b22db914` + `8d1d8b63` | **G2 observability/T8**：按 tool 记录 dropped/no-terminal；text 按 4 KiB 或 100 ms 先到者 flush | fabric + executive | bridge 6 + strict clippy |
 | `8218c1a1` | **G2 T17**：workspace canonical rustfmt 收口 | workspace | `fmt --all -- --check` 通过 |
 | `ff1ce39a` + `6056f614` | **G2 T3/T6/§8–§9**：terminal/serde 契约、proptest 随机序列、call-bound 路由与协议违规诊断 | fabric + executive | Fabric stream 9 + bridge 8 + strict clippy + fmt |
+| `104a3639` + `c939b02b` | **S1 T13–T15/§8–§9**：canonical applied/violation 事件、解析/展开 fail-closed、生产 glob 装配、指标与 child 不放宽 | fabric + corpus + executive | S1 focused 6 + strict clippy + fmt |
 
 **状态**：G1、S1 端到端完成。`grok_hardening.sandbox_profiles = true` + 配置中声明 profiles → `resolve_profile` → `SandboxConfig.policy` → bubblewrap 施加 deny + network；关=逐字节旧行为。C1+S1 两条从契约贯通到激活。
 
-**进行中**：G1、G2 已完成并通过定向验收；S1 T14（事件）与 G3–G8 consumer 收尾仍按 §4 序列推进。
+**进行中**：G1、G2、S1 已完成并通过定向验收；G3–G8 consumer 收尾仍按 §4 序列推进。
 
 ## 2. 合并映射：Grok fabric × DeepSeek OUTSTANDING
 

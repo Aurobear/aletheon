@@ -1,6 +1,7 @@
 # S1 可执行 Spec：Sandbox Profile 层
 
 > 对应研究文档 `../11-sandbox-enforcement.md`。优先级 P2。
+> **状态（2026-07-18）**：T1–T15 与 §8–§9 验收项已完成，并通过定向测试、严格 Clippy 与 workspace rustfmt gate。
 > 实施前按 `README.md §5` 重新核对 §2 锚点。
 
 ## 1. 目标与非目标
@@ -13,23 +14,20 @@
 - 不做 Grok 的 `/data` devbox 约定（Aletheon 无此惯例）。
 - profile 配置**不**来自不可信 repo 的 `.grok/`；只来自 daemon 可信配置（与 G1 Folder Trust 区分：G1 门控 repo 配置加载，S1 约束进程能力）。
 
-## 2. 当前代码锚点（已验证 @ commit bec15695）
+## 2. 当前代码锚点（已复核 @ current branch）
 
-| 符号 | 位置 | 关键事实 |
+| 符号 | 位置 | 当前事实 |
 |---|---|---|
-| `SandboxBackend` trait | `crates/fabric/src/types/sandbox.rs:80-112` | `execute(cmd, config, timeout)`、`wrap_argv`、`capabilities()`、`isolation_level()` |
-| `IsolationLevel` | 同上 `:11-21` | None/Process/Namespace/Container |
-| `SandboxConfig` | 同上 `:24-37` | `{ workspace: WorkspacePolicy, environment: BTreeMap }`——**当前无 deny/network 字段** |
-| `SandboxCapabilities` | 同上 `:40-52` | filesystem_isolation/network_isolation/resource_limits/seccomp_filter |
-| `SandboxExecutor` | 同上 `:145-227` | 按 `SandboxPreference` 选 backend；Require→noop 时 fail-closed（`:205-209`） |
-| `SandboxPreference` | 同上 `:115-138` | Auto/Require/Forbid/BestEffort |
-| `SandboxRequirement` | `crates/fabric/src/types/admission.rs:77-84` | NotRequired/Required/RequiredThenPromote |
-| `SandboxDecision` | 同上 `:88-94` | NotApplicable/Required/Passed/Failed/Unavailable |
-| `CapabilityExecutionContext.sandbox` | `crates/executive/src/service/governed_capability.rs:33` | 已注入 `SandboxRequirement` |
-| `WorkspacePolicy` | `crates/fabric/src/types/local_authority.rs:71-76` | cwd/writable_roots/protected_paths |
-| `ProtectedPathPolicy` | 同上 `:125-153` | credential_paths 只读 |
+| profile contracts + resolver | `crates/fabric/src/types/sandbox.rs:317-581` | 可信 profile、反 hollowing、内建/自定义解析与 credential 恒 deny |
+| bounded glob expansion | `crates/fabric/src/types/sandbox_glob.rs:29-133` | entries/depth/matches 三上限，溢出返回 `GlobOverflow` |
+| `SandboxConfig.policy` | `crates/fabric/src/types/sandbox.rs:25-46` | flag 关为 `None`；开启时携带每次执行解析后的 policy |
+| backend enforcement | `crates/corpus/src/security/sandbox/bubblewrap.rs:110-135,215-235` | read/write mount、deny exact mask 与 network namespace 生效 |
+| production assembly | `crates/corpus/src/security/runner.rs:492-660` | 解析并展开 glob；错误 fail-closed；applied/violation 进入 canonical event spine |
+| daemon injection | `crates/executive/src/impl/daemon/bootstrap/request.rs:418-432` | flag 后注入可信 profiles，并注入 canonical event bus |
+| observability | `crates/corpus/src/security/runner.rs:25-39` | `sandbox_fs_violation_total` 与 `sandbox_glob_overflow_total` 有界计数 |
+| event schemas | `crates/fabric/src/ipc/envelope_v2.rs:322-324` | versioned profile-applied 与 violation schemas |
 
-**核心缺口**：`SandboxConfig` 只携带 workspace + env，没有 profile 解析出的 deny 路径与网络策略；backend 拿不到"禁止读 `**/.env`"这类信息。
+**关键约束**：profile 解析、glob 展开或 backend enforcement 失败均不会卸掉 profile 后继续；配置路径 fail-closed。child Agent 没有独立 profile 覆盖入口，沿用 daemon-bound profile，因此不能比 parent 放宽。
 
 ## 3. 权威归属决策（doc10 §6 八问）
 
