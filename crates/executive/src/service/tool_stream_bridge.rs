@@ -1,14 +1,19 @@
 //! Tool stream bridge — connects G2 ToolEventSink producers to
-//! TurnEventV1::ToolProgress consumers.
-//!
-//! Each tool execution creates a ToolEventSink that the tool writes
-//! Progress events to. The bridge reads from the mpsc::Receiver and
-//! emits TurnEventV1::ToolProgress into the turn event stream.
+//! `TurnEventV1::ToolProgress` consumers without bypassing terminal governance.
 
-use fabric::ipc::stream::TurnEventSender;
-use fabric::types::tool_stream::{ToolEventSink, ToolExecutionEvent, tool_event_channel};
+use fabric::ipc::stream::{TurnEventSender, TurnEventV1};
+use fabric::types::tool::ToolResult;
+use fabric::types::tool_stream::{
+    ToolEventSink, ToolExecutionError, ToolExecutionEvent, ToolProgress, tool_event_channel,
+};
+use tokio_util::sync::CancellationToken;
 
-/// The tool-side handle given to tool implementations.
+/// Maximum coalesced text payload emitted at once.
+pub const TOOL_PROGRESS_TEXT_BYTES: usize = 4 * 1024;
+/// Per-call protection against flooding the downstream turn stream.
+pub const TOOL_PROGRESS_EVENT_LIMIT: usize = 64;
+
+/// The tool-side handle given to streaming tool implementations.
 pub struct ToolStreamHandle {
     pub sink: ToolEventSink,
     pub event_rx: tokio::sync::mpsc::Receiver<ToolExecutionEvent>,
@@ -27,80 +32,266 @@ impl Default for ToolStreamHandle {
     }
 }
 
-/// Bridge task: forwards ToolExecutionEvent → TurnEventV1::ToolProgress.
-///
-/// Consumes the receiver and emits progress events into the turn stream
-/// until the terminal event is reached.
-///
-/// Activation is gated behind `grok_hardening.streaming_tools`.
-/// When the flag is off the receiver is simply dropped.
+/// Non-authoritative bridge result. The terminal value must still pass through
+/// the existing Executive settle/audit path before it becomes a ToolResult.
+#[derive(Debug)]
+pub struct ToolStreamOutcome {
+    pub terminal: Result<ToolResult, ToolExecutionError>,
+    pub progress_emitted: usize,
+    pub progress_dropped: usize,
+}
+
+struct ProgressAccumulator {
+    text: String,
+    emitted: usize,
+    dropped: usize,
+}
+
+impl ProgressAccumulator {
+    fn new() -> Self {
+        Self {
+            text: String::new(),
+            emitted: 0,
+            dropped: 0,
+        }
+    }
+
+    fn accept(
+        &mut self,
+        progress: ToolProgress,
+        turn_events: &TurnEventSender,
+        tool_name: &str,
+        call_id: &str,
+    ) {
+        match progress {
+            ToolProgress::Text(chunk) => {
+                self.text.push_str(&chunk);
+                while self.text.len() >= TOOL_PROGRESS_TEXT_BYTES {
+                    let split = floor_char_boundary(&self.text, TOOL_PROGRESS_TEXT_BYTES);
+                    let remainder = self.text.split_off(split);
+                    let payload = std::mem::replace(&mut self.text, remainder);
+                    self.emit(
+                        "text",
+                        serde_json::Value::String(payload),
+                        turn_events,
+                        tool_name,
+                        call_id,
+                    );
+                }
+            }
+            other => {
+                self.flush_text(turn_events, tool_name, call_id);
+                self.emit(
+                    other.kind(),
+                    other.to_payload(),
+                    turn_events,
+                    tool_name,
+                    call_id,
+                );
+            }
+        }
+    }
+
+    fn flush_text(&mut self, turn_events: &TurnEventSender, tool_name: &str, call_id: &str) {
+        if self.text.is_empty() {
+            return;
+        }
+        let payload = serde_json::Value::String(std::mem::take(&mut self.text));
+        self.emit("text", payload, turn_events, tool_name, call_id);
+    }
+
+    fn emit(
+        &mut self,
+        kind: &str,
+        payload: serde_json::Value,
+        turn_events: &TurnEventSender,
+        tool_name: &str,
+        call_id: &str,
+    ) {
+        if self.emitted >= TOOL_PROGRESS_EVENT_LIMIT {
+            self.dropped += 1;
+            return;
+        }
+        let event = TurnEventV1::ToolProgress {
+            name: tool_name.to_owned(),
+            call_id: call_id.to_owned(),
+            kind: kind.to_owned(),
+            payload,
+        };
+        match turn_events.send(&event) {
+            Ok(()) => self.emitted += 1,
+            Err(_) => self.dropped += 1,
+        }
+    }
+}
+
+fn floor_char_boundary(value: &str, requested: usize) -> usize {
+    let mut split = requested.min(value.len());
+    while !value.is_char_boundary(split) {
+        split -= 1;
+    }
+    split
+}
+
+/// Drain one governed tool stream, forwarding only progress and returning the
+/// unique terminal for settlement. Channel close synthesizes `NoTerminal`;
+/// cancellation synthesizes `Cancelled` and prevents a later success terminal.
 pub async fn bridge_tool_stream(
-    event_rx: tokio::sync::mpsc::Receiver<ToolExecutionEvent>,
+    mut event_rx: tokio::sync::mpsc::Receiver<ToolExecutionEvent>,
     turn_events: TurnEventSender,
     tool_name: String,
     call_id: String,
-) {
-    // TODO(D1-T10): Implement full bridging — drain the receiver and emit
-    // TurnEventV1::ToolProgress { name, call_id, kind, payload } for each
-    // Progress event. Stop on Terminal (which routes through the normal
-    // settle/audit path, not through this bridge).
-    //
-    // For now, drain the receiver without emitting so producers aren't
-    // backpressured. The bridge will be wired once exec-server / tool
-    // streaming producers are implemented (D1 Phase 2 completion).
-
-    drop(event_rx);
-    let _ = (tool_name, call_id, turn_events);
+    cancel: CancellationToken,
+) -> ToolStreamOutcome {
+    let mut accumulator = ProgressAccumulator::new();
+    let terminal = loop {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                break Err(ToolExecutionError::Cancelled("turn cancelled".into()));
+            }
+            event = event_rx.recv() => match event {
+                Some(ToolExecutionEvent::Progress(progress)) => {
+                    accumulator.accept(progress, &turn_events, &tool_name, &call_id);
+                }
+                Some(ToolExecutionEvent::Notification(_)) => {
+                    // Notifications remain UI-only and are not model or terminal data.
+                }
+                Some(ToolExecutionEvent::Terminal(result)) => break result,
+                None => break Err(ToolExecutionError::NoTerminal),
+            }
+        }
+    };
+    accumulator.flush_text(&turn_events, &tool_name, &call_id);
+    ToolStreamOutcome {
+        terminal,
+        progress_emitted: accumulator.emitted,
+        progress_dropped: accumulator.dropped,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fabric::ipc::stream::{StreamConfig, OverflowPolicy};
+    use fabric::ipc::stream::{OverflowPolicy, StreamConfig, TurnEventStream};
+    use fabric::types::tool::{ToolResult, ToolResultMeta};
 
-    #[test]
-    fn handle_default_constructs() {
-        let handle = ToolStreamHandle::default();
-        assert!(!handle.sink.terminal_sent());
-    }
-
-    #[test]
-    fn progress_kind_and_payload_roundtrip() {
-        use fabric::types::tool_stream::ToolProgress;
-
-        let tp = ToolProgress::Text("hello".into());
-        assert_eq!(tp.kind(), "text");
-        assert_eq!(tp.to_payload(), serde_json::Value::String("hello".into()));
-
-        let tp = ToolProgress::Structured(serde_json::json!({"pct": 50}));
-        assert_eq!(tp.kind(), "structured");
-        assert_eq!(tp.to_payload(), serde_json::json!({"pct": 50}));
-    }
-
-    #[tokio::test]
-    async fn bridge_drains_without_emitting() {
-        let (sink, rx) = tool_event_channel();
-        sink.progress(fabric::types::tool_stream::ToolProgress::Text("chunk".into()));
-        drop(sink); // close sender so rx completes
-
-        // Create a dummy turn event stream — we only need the sender half
-        let config = StreamConfig {
-            capacity: 8,
+    fn turn_stream(capacity: usize) -> (TurnEventStream, TurnEventSender) {
+        TurnEventStream::new(StreamConfig {
+            capacity,
             overflow: OverflowPolicy::BlockProducer,
-        };
-        let (_stream, sender) =
-            fabric::ipc::stream::TurnEventStream::new(config);
+        })
+    }
 
-        // Bridge drains; no panics, no deadlocks
-        bridge_tool_stream(rx, sender, "test_tool".into(), "call-1".into()).await;
+    fn result() -> ToolResult {
+        ToolResult {
+            content: "done".into(),
+            is_error: false,
+            metadata: ToolResultMeta::default(),
+        }
     }
 
     #[tokio::test]
-    async fn bridge_handle_smoke() {
-        let handle = ToolStreamHandle::new();
-        // Tool-side progress should work
-        assert!(handle.sink.progress(
-            fabric::types::tool_stream::ToolProgress::Text("progress".into())
+    async fn coalesces_progress_and_preserves_terminal() {
+        let (mut sink, rx) = tool_event_channel();
+        for _ in 0..10 {
+            assert!(sink.progress(ToolProgress::Text("chunk".into())));
+        }
+        sink.terminal(Ok(result())).await;
+        drop(sink);
+        let (mut stream, sender) = turn_stream(8);
+
+        let outcome = bridge_tool_stream(
+            rx,
+            sender,
+            "bash".into(),
+            "call-1".into(),
+            CancellationToken::new(),
+        )
+        .await;
+
+        assert!(outcome.terminal.is_ok());
+        assert_eq!(outcome.progress_emitted, 1);
+        assert!(matches!(
+            stream.try_recv(),
+            Some(Ok(TurnEventV1::ToolProgress { .. }))
         ));
+    }
+
+    #[tokio::test]
+    async fn progress_flood_is_bounded_and_terminal_survives() {
+        let (mut sink, rx) = tool_event_channel();
+        let producer = tokio::spawn(async move {
+            for index in 0..1_000 {
+                let _ = sink.progress(ToolProgress::Structured(serde_json::json!({"i": index})));
+                tokio::task::yield_now().await;
+            }
+            sink.terminal(Ok(result())).await;
+        });
+        let (_stream, sender) = turn_stream(128);
+        let outcome = bridge_tool_stream(
+            rx,
+            sender,
+            "search".into(),
+            "call-2".into(),
+            CancellationToken::new(),
+        )
+        .await;
+        producer.await.unwrap();
+
+        assert!(outcome.terminal.is_ok());
+        assert!(outcome.progress_emitted <= TOOL_PROGRESS_EVENT_LIMIT);
+        assert!(outcome.progress_dropped > 0);
+    }
+
+    #[tokio::test]
+    async fn producer_drop_synthesizes_no_terminal() {
+        let (sink, rx) = tool_event_channel();
+        drop(sink);
+        let (_stream, sender) = turn_stream(1);
+        let outcome = bridge_tool_stream(
+            rx,
+            sender,
+            "tool".into(),
+            "call-3".into(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(matches!(
+            outcome.terminal,
+            Err(ToolExecutionError::NoTerminal)
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancellation_wins_over_later_success_terminal() {
+        let (mut sink, rx) = tool_event_channel();
+        let (_stream, sender) = turn_stream(1);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        sink.terminal(Ok(result())).await;
+        let outcome = bridge_tool_stream(rx, sender, "tool".into(), "call-4".into(), cancel).await;
+        assert!(matches!(
+            outcome.terminal,
+            Err(ToolExecutionError::Cancelled(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn utf8_text_chunks_split_only_on_character_boundaries() {
+        let (mut sink, rx) = tool_event_channel();
+        assert!(sink.progress(ToolProgress::Text("界".repeat(2_000))));
+        sink.terminal(Ok(result())).await;
+        let (_stream, sender) = turn_stream(8);
+        let outcome = bridge_tool_stream(
+            rx,
+            sender,
+            "tool".into(),
+            "call-5".into(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(outcome.terminal.is_ok());
+        assert_eq!(outcome.progress_emitted, 2);
     }
 }
