@@ -50,6 +50,7 @@ pub const FS_ACCESS_DENIED: i32 = -32002;
 pub const BUFFER_OVERFLOW: i32 = -32003;
 pub const TIMEOUT: i32 = -32004;
 pub const UNAUTHORIZED: i32 = -32005;
+pub const FS_HANDLE_NOT_FOUND: i32 = -32006;
 
 /// Handshake request from daemon.
 #[derive(Debug, Deserialize)]

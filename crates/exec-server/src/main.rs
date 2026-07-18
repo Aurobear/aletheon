@@ -18,6 +18,7 @@ fn main() -> io::Result<()> {
         ));
     }
     let workspace_roots = filesystem::WorkspaceRoots::from_env()?;
+    let file_manager = filesystem::FileManager::default();
     let stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
     let process_mgr = process::ProcessManager::new();
@@ -88,6 +89,7 @@ fn main() -> io::Result<()> {
                 &process_mgr,
                 &rt,
                 &workspace_roots,
+                &file_manager,
                 &connection_owner,
             )
         };
@@ -127,6 +129,7 @@ fn dispatch(
     pm: &process::ProcessManager,
     rt: &tokio::runtime::Runtime,
     workspace_roots: &filesystem::WorkspaceRoots,
+    file_manager: &filesystem::FileManager,
     connection_owner: &str,
 ) -> protocol::Response {
     match req.method.as_str() {
@@ -143,7 +146,7 @@ fn dispatch(
         ),
         // Try filesystem methods
         method if method.starts_with("fs/") => {
-            filesystem::handle_fs(method, &req.params, workspace_roots)
+            filesystem::handle_fs(method, &req.params, workspace_roots, file_manager)
                 .map(|mut r| {
                     r.id = req.id.clone();
                     r
