@@ -7,25 +7,25 @@
 //! directly by the dispatcher (step 4 of `process()`), moved here verbatim
 //! from the god-object router's `execute_approval_action`.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use fabric::{ApprovalCategory, ApprovalId, PrincipalId};
 
-use crate::r#impl::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
+use crate::r#impl::channel::ports::{ChannelApprovalDecision, ChannelApprovalPort};
 use crate::r#impl::channel::registry::ApprovalResolverRegistry;
 
 pub struct ApprovalExecutor {
-    approval_repository: Arc<Mutex<ApprovalRepository>>,
+    approval_port: Arc<dyn ChannelApprovalPort>,
     resolvers: Arc<ApprovalResolverRegistry>,
 }
 
 impl ApprovalExecutor {
     pub fn new(
-        approval_repository: Arc<Mutex<ApprovalRepository>>,
+        approval_port: Arc<dyn ChannelApprovalPort>,
         resolvers: Arc<ApprovalResolverRegistry>,
     ) -> Self {
         Self {
-            approval_repository,
+            approval_port,
             resolvers,
         }
     }
@@ -36,19 +36,16 @@ impl ApprovalExecutor {
         action_data: &str,
         now_ms: i64,
     ) -> anyhow::Result<String> {
-        let repository = &self.approval_repository;
+        let port = &self.approval_port;
         let (id, action) = action_data
             .split_once(':')
             .ok_or_else(|| anyhow::anyhow!("invalid approval action"))?;
         let id = ApprovalId(uuid::Uuid::parse_str(id)?);
-        let context = ApprovalResolutionContext {
-            principal_id: PrincipalId(principal.to_owned()),
-            channel: "telegram".into(),
-        };
+        let principal_id = PrincipalId(principal.to_owned());
+        let channel = "telegram".to_string();
         let result = match action {
             "view_diff" => {
-                let repository = repository.lock().unwrap();
-                let approval = repository
+                let approval = port
                     .get(id)?
                     .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
                 let artifact = approval
@@ -63,31 +60,31 @@ impl ApprovalExecutor {
                 ));
             }
             "apply" | "confirm" => {
-                let repository = repository.lock().unwrap();
-                let current = repository
+                let current = port
                     .get(id)?
                     .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
-                let resolved = repository.resolve(
+                let resolved = port.resolve(
                     id,
                     current.version,
-                    &context,
-                    ApprovalDecision::Approve,
+                    principal_id,
+                    channel,
+                    ChannelApprovalDecision::Approve,
                     now_ms,
                 )?;
                 (resolved, "approved")
             }
             "revision" | "edit" | "reject" => {
-                let repository = repository.lock().unwrap();
-                let current = repository
+                let current = port
                     .get(id)?
                     .ok_or_else(|| anyhow::anyhow!("approval not found"))?;
                 let reason = matches!(action, "revision" | "edit")
                     .then(|| "owner requested revision".to_string());
-                let resolved = repository.resolve(
+                let resolved = port.resolve(
                     id,
                     current.version,
-                    &context,
-                    ApprovalDecision::Reject { reason },
+                    principal_id,
+                    channel,
+                    ChannelApprovalDecision::Reject { reason },
                     now_ms,
                 )?;
                 (resolved, "rejected")

@@ -5,14 +5,13 @@
 //! that classifies inbound messages and hands them to a
 //! [`CapabilityRegistry`] of typed handlers (`handlers/`).
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use fabric::channel::{
     ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage,
 };
 use fabric::{ApprovalCategory, ApprovalSnapshot, ApprovalStatus, AttemptId, GoalId, GoalSnapshot};
 
-use crate::r#impl::approval::ApprovalRepository;
 use crate::r#impl::goal::{AttemptCoordinationOutcome, RetryDecision};
 
 use super::effect::OutboundEffect;
@@ -22,6 +21,7 @@ use super::handlers::goal::GoalHandler;
 use super::handlers::greeting::GreetingHandler;
 use super::intent::{classify_intent, Intent};
 use super::notify::render_approval_notification;
+use super::ports::ChannelApprovalPort;
 use super::registry::{ApprovalResolver, ApprovalResolverRegistry, CapabilityHandler, CapabilityRegistry, HandlerContext};
 use super::store::{ChannelStore, InsertOutcome};
 
@@ -191,7 +191,7 @@ impl GoalProgress {
 pub struct ChannelDispatcher {
     store: ChannelStore,
     registry: CapabilityRegistry,
-    approval_repository: Option<Arc<Mutex<ApprovalRepository>>>,
+    approval_port: Option<Arc<dyn ChannelApprovalPort>>,
     approval_resolvers: Arc<ApprovalResolverRegistry>,
 }
 
@@ -213,7 +213,7 @@ impl ChannelDispatcher {
         Self {
             store,
             registry,
-            approval_repository: None,
+            approval_port: None,
             approval_resolvers: Arc::new(ApprovalResolverRegistry::new()),
         }
     }
@@ -232,8 +232,8 @@ impl ChannelDispatcher {
         self.with_capability(Arc::new(GoalHandler::new(executor, resolvers)))
     }
 
-    pub fn with_approval_repository(mut self, repository: Arc<Mutex<ApprovalRepository>>) -> Self {
-        self.approval_repository = Some(repository);
+    pub fn with_approval_port(mut self, port: Arc<dyn ChannelApprovalPort>) -> Self {
+        self.approval_port = Some(port);
         self
     }
 
@@ -267,15 +267,15 @@ impl ChannelDispatcher {
         if approval.status != ApprovalStatus::Pending {
             anyhow::bail!("only pending approvals can be delivered");
         }
-        let repository = self
-            .approval_repository
+        let port = self
+            .approval_port
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("approval repository is not configured"))?;
         let outbound = render_approval_notification(conversation_id, approval);
         let enqueued = self
             .store
             .enqueue_outbound(transport.channel_id(), &outbound)?;
-        repository.lock().unwrap().record_delivery_pending(
+        port.record_delivery_pending(
             approval.id,
             transport.channel_id(),
             &outbound.conversation_id.0,
@@ -289,17 +289,13 @@ impl ChannelDispatcher {
             Ok(provider_id) => {
                 self.store
                     .mark_outbound_sent(&outbound.correlation_id, &provider_id)?;
-                repository.lock().unwrap().record_delivery_sent(
-                    &outbound.correlation_id,
-                    &provider_id,
-                    now_ms,
-                )?;
+                port.record_delivery_sent(&outbound.correlation_id, &provider_id, now_ms)?;
                 Ok(true)
             }
             Err(error) => {
                 self.store
                     .mark_outbound_failed(&outbound.correlation_id, &error.to_string())?;
-                repository.lock().unwrap().record_delivery_failed(
+                port.record_delivery_failed(
                     &outbound.correlation_id,
                     &error.to_string(),
                     now_ms,
@@ -358,11 +354,11 @@ impl ChannelDispatcher {
         action_data: &str,
         now_ms: i64,
     ) -> anyhow::Result<String> {
-        let repository = self
-            .approval_repository
+        let port = self
+            .approval_port
             .clone()
             .ok_or_else(|| anyhow::anyhow!("durable approvals are not configured"))?;
-        ApprovalExecutor::new(repository, self.approval_resolvers.clone())
+        ApprovalExecutor::new(port, self.approval_resolvers.clone())
             .execute_approval_action(principal, action_data, now_ms)
             .await
     }
@@ -655,8 +651,8 @@ impl ChannelDispatcher {
                         rusqlite::params![outbound.correlation_id],
                     )?;
                     if outbound.correlation_id.starts_with("approval:") {
-                        if let Some(repository) = &self.approval_repository {
-                            repository.lock().unwrap().record_delivery_sent(
+                        if let Some(port) = &self.approval_port {
+                            port.record_delivery_sent(
                                 &outbound.correlation_id,
                                 &provider_id,
                                 chrono::Utc::now().timestamp_millis(),
@@ -671,8 +667,8 @@ impl ChannelDispatcher {
                         rusqlite::params![e.to_string(), outbound.correlation_id],
                     )?;
                     if outbound.correlation_id.starts_with("approval:") {
-                        if let Some(repository) = &self.approval_repository {
-                            repository.lock().unwrap().record_delivery_failed(
+                        if let Some(port) = &self.approval_port {
+                            port.record_delivery_failed(
                                 &outbound.correlation_id,
                                 &e.to_string(),
                                 chrono::Utc::now().timestamp_millis(),

@@ -6,13 +6,15 @@
 
 use std::sync::Arc;
 
+use crate::r#impl::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
 use crate::r#impl::approval::ApplyCoordinator;
 use crate::r#impl::channel::dispatcher::{ChannelGoalExecutor, ChannelTurnExecutor};
 use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
+use crate::r#impl::channel::ports::{ChannelApprovalDecision, ChannelApprovalPort};
 use crate::r#impl::channel::registry::ApprovalResolver;
 use crate::r#impl::goal::ObjectiveStore;
 use crate::service::DaemonTurnOrchestrator;
-use fabric::{GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId, ProcessId};
+use fabric::{ApprovalId, ApprovalSnapshot, GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId, ProcessId};
 use tokio::sync::Mutex;
 
 /// Wraps a `DaemonTurnOrchestrator` so the channel router can invoke
@@ -278,5 +280,102 @@ impl ChannelTurnExecutor for DaemonChannelTurnExecutor {
             .and_then(|r| r.as_str())
             .unwrap_or("");
         Ok(text.to_string())
+    }
+}
+
+/// Adapts the concrete `ApprovalRepository` to the fabric-native
+/// [`ChannelApprovalPort`] so `dispatcher.rs` and `handlers/approval.rs`
+/// no longer depend on `crate::r#impl::approval::*` directly.
+pub struct ApprovalRepositoryPort {
+    repository: Arc<std::sync::Mutex<ApprovalRepository>>,
+}
+
+impl ApprovalRepositoryPort {
+    pub fn new(repository: Arc<std::sync::Mutex<ApprovalRepository>>) -> Self {
+        Self { repository }
+    }
+}
+
+impl ChannelApprovalPort for ApprovalRepositoryPort {
+    fn get(&self, id: ApprovalId) -> anyhow::Result<Option<ApprovalSnapshot>> {
+        Ok(self.repository.lock().unwrap().get(id)?)
+    }
+
+    fn resolve(
+        &self,
+        id: ApprovalId,
+        expected_version: u64,
+        principal: PrincipalId,
+        channel: String,
+        decision: ChannelApprovalDecision,
+        now_ms: i64,
+    ) -> anyhow::Result<ApprovalSnapshot> {
+        let context = ApprovalResolutionContext {
+            principal_id: principal,
+            channel,
+        };
+        let decision = match decision {
+            ChannelApprovalDecision::Approve => ApprovalDecision::Approve,
+            ChannelApprovalDecision::Reject { reason } => ApprovalDecision::Reject { reason },
+        };
+        Ok(self.repository.lock().unwrap().resolve(
+            id,
+            expected_version,
+            &context,
+            decision,
+            now_ms,
+        )?)
+    }
+
+    fn record_delivery_pending(
+        &self,
+        approval_id: ApprovalId,
+        channel: &str,
+        conversation_id: &str,
+        correlation_id: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<()> {
+        self.repository.lock().unwrap().record_delivery_pending(
+            approval_id,
+            channel,
+            conversation_id,
+            correlation_id,
+            now_ms,
+        )?;
+        Ok(())
+    }
+
+    fn record_delivery_sent(
+        &self,
+        correlation_id: &str,
+        provider_message_id: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<()> {
+        Ok(self.repository.lock().unwrap().record_delivery_sent(
+            correlation_id,
+            provider_message_id,
+            now_ms,
+        )?)
+    }
+
+    fn record_delivery_failed(
+        &self,
+        correlation_id: &str,
+        error: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<()> {
+        Ok(self
+            .repository
+            .lock()
+            .unwrap()
+            .record_delivery_failed(correlation_id, error, now_ms)?)
+    }
+
+    fn list_pending(
+        &self,
+        principal: &PrincipalId,
+        now_ms: i64,
+    ) -> anyhow::Result<Vec<ApprovalSnapshot>> {
+        Ok(self.repository.lock().unwrap().list_pending(principal, now_ms)?)
     }
 }

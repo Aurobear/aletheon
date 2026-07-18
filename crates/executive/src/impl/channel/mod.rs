@@ -6,6 +6,7 @@ pub mod gmail;
 pub mod handlers;
 pub mod intent;
 pub mod notify;
+pub mod ports;
 pub mod registry;
 pub mod store;
 pub mod telegram;

@@ -1,7 +1,9 @@
 use corpus::tools::google::oauth::GoogleBinding;
 use executive::r#impl::approval::{ApprovalDecision, ApprovalResolutionContext};
 use executive::r#impl::artifact::{ArtifactRecord, ArtifactScanStatus};
-use executive::r#impl::channel::daemon_adapter::DaemonGmailDraftApprovalExecutor;
+use executive::r#impl::channel::daemon_adapter::{
+    ApprovalRepositoryPort, DaemonGmailDraftApprovalExecutor,
+};
 use executive::r#impl::channel::gmail::ingest::{
     GmailIngestResult, GmailOriginalReference, IngestedAttachment,
 };
@@ -446,7 +448,7 @@ async fn telegram_review_has_confirm_edit_reject_and_replayed_confirm_is_idempot
     let gmail_resolver: Arc<dyn ApprovalResolver> =
         Arc::new(DaemonGmailDraftApprovalExecutor::new(coordinator));
     let mut router = ChannelDispatcher::new(channels, Arc::new(NoTurn))
-        .with_approval_repository(approval_repo)
+        .with_approval_port(Arc::new(ApprovalRepositoryPort::new(approval_repo)))
         .with_approval_resolver(ApprovalCategory::ActivateGoal, gmail_resolver);
     let transport = CaptureTransport::default();
     assert!(router

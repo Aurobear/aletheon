@@ -8,8 +8,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::r#impl::channel::daemon_adapter::{
-    DaemonChannelApprovalExecutor, DaemonChannelGoalExecutor, DaemonChannelTurnExecutor,
-    DaemonGmailDraftApprovalExecutor,
+    ApprovalRepositoryPort, DaemonChannelApprovalExecutor, DaemonChannelGoalExecutor,
+    DaemonChannelTurnExecutor, DaemonGmailDraftApprovalExecutor,
 };
 use crate::r#impl::channel::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoalProgress,
@@ -87,9 +87,11 @@ pub(super) fn init_telegram_channel(
     registry.register(Arc::new(ChatHandler::new(turn_executor, chat_preprocessor)));
     registry.register(Arc::new(GreetingHandler));
 
+    let approval_port: Arc<dyn crate::r#impl::channel::ports::ChannelApprovalPort> =
+        Arc::new(ApprovalRepositoryPort::new(approval_repository));
     let mut dispatcher = ChannelDispatcher::with_registry(store, registry)
         .with_goal_executor(goal_executor)
-        .with_approval_repository(approval_repository);
+        .with_approval_port(approval_port);
 
     let gmail_resolver: Arc<dyn ApprovalResolver> =
         Arc::new(DaemonGmailDraftApprovalExecutor::new(gmail_goal_drafts));

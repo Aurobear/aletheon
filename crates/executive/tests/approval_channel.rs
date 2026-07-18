@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use executive::r#impl::approval::{ApprovalCreate, ApprovalRepository};
+use executive::r#impl::channel::daemon_adapter::ApprovalRepositoryPort;
 use executive::r#impl::channel::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
@@ -121,7 +122,8 @@ impl Fixture {
         store
             .bind("telegram", "telegram:7", "owner", "active")
             .unwrap();
-        ChannelDispatcher::new(store, Arc::new(NoTurn)).with_approval_repository(self.repo.clone())
+        ChannelDispatcher::new(store, Arc::new(NoTurn))
+            .with_approval_port(Arc::new(ApprovalRepositoryPort::new(self.repo.clone())))
     }
     fn callback(&self, message: &str, sender: &str, action: String, time: i64) -> ProviderEnvelope {
         ProviderEnvelope {
