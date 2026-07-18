@@ -23,6 +23,7 @@ pub mod governed_capability;
 pub mod harness_factory;
 pub mod inference_port;
 pub mod legacy_session_service;
+pub mod lifecycle_contributors;
 pub mod memory_consolidation_worker;
 pub mod post_turn;
 pub mod pre_turn;
