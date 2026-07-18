@@ -40,6 +40,27 @@ use anyhow::{Context, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Agent profile configuration with optional per-profile overrides.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentProfilesConfig {
+    /// Default profile name for new sessions (e.g. "code-agent").
+    pub default: String,
+    /// Per-profile overrides applied during profile construction.
+    pub overrides: HashMap<String, ProfileOverride>,
+}
+
+/// Per-profile override values. All fields are optional; only the provided
+/// values replace the profile's declared defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProfileOverride {
+    pub max_iterations: Option<usize>,
+    pub max_tool_calls: Option<u32>,
+    pub tool_timeout_ms: Option<u64>,
+    pub approval_policy: Option<fabric::AgentApprovalPolicy>,
+}
+
 /// The one application root schema. Its fields are typed domain inputs; it does
 /// not grant any domain permission to discover files or environment variables.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -68,6 +89,8 @@ pub struct AppConfig {
     /// S1 sandbox profiles (from trusted daemon config, never from repo).
     #[serde(default)]
     pub sandbox_profiles: fabric::SandboxProfiles,
+    #[serde(default)]
+    pub agent_profiles: AgentProfilesConfig,
 }
 
 impl AppConfig {

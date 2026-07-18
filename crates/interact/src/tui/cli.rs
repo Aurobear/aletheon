@@ -49,6 +49,10 @@ pub struct Args {
     #[arg(short, long)]
     pub message: Option<String>,
 
+    /// Agent profile to use for this session
+    #[arg(long = "agent-profile", value_name = "NAME", global = true)]
+    pub agent_profile: Option<String>,
+
     /// Force TUI mode
     #[arg(long)]
     pub tui: bool,

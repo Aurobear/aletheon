@@ -329,8 +329,8 @@ async fn handle_config(sub: &ConfigSub) -> Result<()> {
 
 async fn handle_doctor(
     json: bool,
-    config_path: Option<&PathBuf>,
-    project_dir: Option<&PathBuf>,
+    config_path: Option<&std::path::Path>,
+    project_dir: Option<&std::path::Path>,
 ) -> Result<()> {
     use executive::core::config;
     use executive::r#impl::doctor::DoctorReport;

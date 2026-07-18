@@ -284,6 +284,30 @@ pub async fn submit_message(app: &mut App, text: String) {
                 app.chat.add_text(ChatRole::System, msg);
                 return;
             }
+            Some(CommandType::Builtin(BuiltinCommand::Profile)) => {
+                // send a raw JSON-RPC to list profiles
+                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "agent.profile.list", "id": 1});
+                let payload = serde_json::to_string(&msg).unwrap_or_default();
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.chat
+                    .add_text(ChatRole::System, "Querying agent profiles...".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::ProfileSet { name })) => {
+                let msg = serde_json::json!({
+                    "jsonrpc": "2.0", "method": "agent.profile.set", "id": 1,
+                    "params": { "profile": name }
+                });
+                let payload = serde_json::to_string(&msg).unwrap_or_default();
+                let framed = format!("{}\n", payload);
+                let _ = app.stream.write_all(framed.as_bytes()).await;
+                let _ = app.stream.flush().await;
+                app.chat
+                    .add_text(ChatRole::System, format!("Switching agent profile to: {}", name));
+                return;
+            }
             Some(CommandType::Builtin(_)) => return,
             Some(CommandType::Skill { name, args }) => {
                 app.chat.add_text(ChatRole::User, text.clone());

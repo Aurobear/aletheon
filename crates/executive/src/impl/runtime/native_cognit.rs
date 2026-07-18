@@ -90,6 +90,42 @@ impl AgentProfileRegistry {
             )
         })
     }
+
+    /// Look up a profile by its human-readable name string.
+    pub fn resolve_by_name(&self, name: &str) -> Result<ResolvedAgentProfile, AgentControlError> {
+        self.resolve(&AgentProfileId(name.to_owned()))
+    }
+
+    /// Validate that a child profile is no more capable than the parent.
+    /// Returns `Ok(())` if the child is allowed, or an error describing the
+    /// specific escalation.
+    pub fn validate_child_profile(
+        &self,
+        parent_id: &AgentProfileId,
+        child_id: &AgentProfileId,
+    ) -> Result<(), AgentControlError> {
+        let parent = self.resolve(parent_id)?;
+        let child = self.resolve(child_id)?;
+        if !parent.profile.allows_child(&child.profile) {
+            return Err(control_error(
+                AgentControlErrorKind::Forbidden,
+                format!(
+                    "child profile '{}' (tier {:?}) exceeds parent '{}' (tier {:?})",
+                    child_id.0, child.profile.risk_tier, parent_id.0, parent.profile.risk_tier
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// All registered profile names.
+    pub fn names(&self) -> Vec<String> {
+        self.profiles
+            .read()
+            .keys()
+            .map(|id| id.0.clone())
+            .collect()
+    }
 }
 
 pub struct NativeCognitRuntimeResources {
@@ -100,8 +136,6 @@ pub struct NativeCognitRuntimeResources {
     pub conscious_actions:
         Option<Arc<dyn crate::service::governed_capability::GovernedActionLoopResolver>>,
     pub conscious_candidates: Option<Arc<dyn AgentCandidateSubmissionPort>>,
-    /// Staged hardening flags; `compaction_v2` selects the guarded compactor.
-    pub grok_hardening: crate::core::config::GrokHardeningConfig,
 }
 
 pub struct NativeCognitRuntime {
@@ -124,11 +158,7 @@ impl NativeCognitRuntime {
     ) -> Result<AgentResult, AgentControlError> {
         let resolved = self.resources.profiles.resolve(&input.request.profile_id)?;
         validate_requested_tools(&input.request.allowed_tools, &resolved.profile)?;
-        let config = harness_config(
-            &resolved.profile,
-            &input.request.budget,
-            self.resources.grok_hardening.compaction_v2,
-        );
+        let config = harness_config(&resolved.profile, &input.request.budget);
         let session_record = SessionRecord {
             schema_version: SESSION_SCHEMA_VERSION,
             id: SessionId(input.handle.agent_id.0.to_string()),
@@ -601,16 +631,11 @@ fn labelled_context(input: &AgentRuntimeInput) -> Option<String> {
     Some(output)
 }
 
-fn harness_config(
-    profile: &AgentProfile,
-    budget: &fabric::AgentBudget,
-    compaction_v2: bool,
-) -> HarnessConfig {
+fn harness_config(profile: &AgentProfile, budget: &fabric::AgentBudget) -> HarnessConfig {
     HarnessConfig {
         max_iterations: profile.max_iterations,
         context_window_tokens: profile.max_input_tokens.min(budget.max_input_tokens) as usize,
         max_tool_calls: profile.max_tool_calls.min(budget.max_tool_calls) as usize,
-        compaction_v2,
         ..HarnessConfig::default()
     }
 }

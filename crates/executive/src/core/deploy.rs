@@ -50,9 +50,8 @@ impl DeploymentInfo {
         if self.installed_sha != "unknown" {
             self.binary_matches_installed = Some(true);
         } else {
-            self.version_warnings.push(
-                "installed_sha is unknown — build without GIT_COMMIT_SHA".into()
-            );
+            self.version_warnings
+                .push("installed_sha is unknown — build without GIT_COMMIT_SHA".into());
         }
     }
 

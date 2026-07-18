@@ -13,10 +13,10 @@ use executive::service::agent_control::{
 use executive::service::harness_factory::LinearCognitiveSessionFactory;
 use executive::service::{CapabilityExecutionContext, CapabilityService};
 use fabric::{
-    AgentBudget, AgentContextFork, AgentControlErrorKind, AgentHandle, AgentId, AgentMessageKind,
+    AgentApprovalPolicy, AgentBudget, AgentContextFork, AgentControlErrorKind, AgentHandle, AgentId, AgentMessageKind,
     AgentMessagePayload, AgentProfile, AgentProfileId, AgentSpawnRequest, CapabilityCall,
-    CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream, OperationId, ProcessId,
-    RuntimeId, StopReason, ToolDefinition, Usage, AGENT_MESSAGE_SCHEMA_V1,
+    CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream, OperationId, ParentRestriction, ProcessId,
+    RiskTier, RuntimeId, StopReason, ToolDefinition, Usage, AGENT_MESSAGE_SCHEMA_V1,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -145,6 +145,12 @@ fn profile() -> AgentProfile {
         max_output_tokens: 1_000,
         max_tool_calls: 4,
         max_elapsed_ms: 5_000,
+        profile_name: "worker".into(),
+        risk_tier: RiskTier::Sandboxed,
+        approval_policy: AgentApprovalPolicy::PromptUser,
+        tool_timeout_ms: 5_000,
+        inheritable: false,
+        parent_restriction: ParentRestriction::None,
     }
 }
 
@@ -225,7 +231,6 @@ fn runtime(llm: Arc<ScriptedLlm>, capability: Arc<RecordingCapability>) -> Nativ
         clock,
         conscious_actions: None,
         conscious_candidates: None,
-        grok_hardening: Default::default(),
     })
 }
 
@@ -518,7 +523,6 @@ async fn provider_failure_and_iteration_exhaustion_are_bounded_runtime_errors() 
         clock,
         conscious_actions: None,
         conscious_candidates: None,
-        grok_hardening: Default::default(),
     });
     let error = runtime
         .launch(

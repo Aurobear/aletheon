@@ -196,12 +196,12 @@ pub use types::admission::{
 };
 pub use types::agent::Pid;
 pub use types::agent_control::{
-    AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork, AgentControlError,
-    AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle, AgentListRequest,
-    AgentMessageDeliveryState, AgentMessageKind, AgentMessagePayload, AgentMessageReceipt,
-    AgentProfile, AgentRecoveryDecision, AgentRecoveryReceipt, AgentResult, AgentRunStatus,
-    AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentTaskId, AgentWaitRequest,
-    RuntimeResumability, AGENT_MESSAGE_SCHEMA_V1,
+    AgentApprovalPolicy, AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork,
+    AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
+    AgentListRequest, AgentMessageDeliveryState, AgentMessageKind, AgentMessagePayload,
+    AgentMessageReceipt, AgentProfile, AgentRecoveryDecision, AgentRecoveryReceipt, AgentResult,
+    AgentRunStatus, AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentTaskId,
+    AgentWaitRequest, ParentRestriction, RiskTier, RuntimeResumability, AGENT_MESSAGE_SCHEMA_V1,
 };
 pub use types::approval::{
     ApprovalArtifactRef, ApprovalCategory, ApprovalContractError, ApprovalId, ApprovalResolution,

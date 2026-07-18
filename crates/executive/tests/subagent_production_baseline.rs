@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use corpus::tools::tools::agent_tool::AgentTool;
 use fabric::{
-    AgentControlError, AgentControlPort, AgentHandle, AgentId, AgentListRequest, AgentProfile,
+    AgentApprovalPolicy, AgentControlError, AgentControlPort, AgentHandle, AgentId, AgentListRequest, AgentProfile,
     AgentProfileId, AgentResult, AgentRunStatus, AgentSendRequest, AgentSnapshot,
     AgentSpawnRequest, AgentToolContext, AgentWaitRequest, AttemptUsage, Clock, OperationId,
-    ProcessId, RuntimeId, Tool, ToolContext,
+    ParentRestriction, ProcessId, RiskTier, RuntimeId, Tool, ToolContext,
 };
 
 #[derive(Default)]
@@ -95,6 +95,12 @@ fn profile() -> AgentProfile {
         max_output_tokens: 1_000,
         max_tool_calls: 7,
         max_elapsed_ms: 30_000,
+        profile_name: "reviewer".into(),
+        risk_tier: RiskTier::ReadOnly,
+        approval_policy: AgentApprovalPolicy::PromptUser,
+        tool_timeout_ms: 30_000,
+        inheritable: true,
+        parent_restriction: ParentRestriction::SameOrSafer,
     }
 }
 

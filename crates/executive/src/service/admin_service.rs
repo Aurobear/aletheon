@@ -54,6 +54,22 @@ pub struct SubAgentSummary {
     pub status: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct AgentProfileDescriptor {
+    pub name: String,
+    pub risk_tier: String,
+    pub tool_count: usize,
+    pub max_iterations: usize,
+    pub approval_policy: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AgentProfileSwitchResult {
+    pub previous: String,
+    pub current: String,
+    pub risk_tier: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct TransientApprovalRequest {
     /// Principal authenticated by the transport adapter.
@@ -232,6 +248,13 @@ pub trait AdminUseCases: Send + Sync {
     async fn tools(&self) -> Result<Vec<fabric::ToolDefinition>, AdminServiceError>;
     async fn hooks(&self) -> Result<Vec<HookDescriptor>, AdminServiceError>;
     async fn sub_agents(&self) -> Result<Vec<SubAgentSummary>, AdminServiceError>;
+    async fn list_agent_profiles(
+        &self,
+    ) -> Result<Vec<AgentProfileDescriptor>, AdminServiceError>;
+    async fn switch_agent_profile(
+        &self,
+        profile_name: String,
+    ) -> Result<AgentProfileSwitchResult, AdminServiceError>;
     async fn preview_memory_forget(
         &self,
         policy: mnemosyne::ForgetPolicy,
@@ -303,6 +326,8 @@ pub struct AdminResources {
     pub runtime_shutdown: Arc<dyn Fn() -> RuntimeShutdownFuture + Send + Sync>,
     pub memory_admin: Option<Arc<dyn MemoryAdminUseCases>>,
     pub agent_runs: Option<Arc<dyn crate::service::agent_control::AgentRunRepository>>,
+    pub agent_profiles: Option<Arc<crate::r#impl::runtime::AgentProfileRegistry>>,
+    pub current_profile: Option<Arc<tokio::sync::Mutex<String>>>,
 }
 
 pub type ToolCatalogFuture =
@@ -453,6 +478,65 @@ impl AdminUseCases for AdminService {
                 status: format!("{:?}", run.status()),
             })
             .collect())
+    }
+
+    async fn list_agent_profiles(
+        &self,
+    ) -> Result<Vec<AgentProfileDescriptor>, AdminServiceError> {
+        let registry = self
+            .resources
+            .agent_profiles
+            .as_ref()
+            .ok_or_else(|| AdminServiceError::Operation("agent profiles unavailable".into()))?;
+        let names = registry.names();
+        let mut descriptors = Vec::with_capacity(names.len());
+        for name in &names {
+            let resolved = registry.resolve_by_name(name).map_err(|error| {
+                AdminServiceError::Operation(error.to_string())
+            })?;
+            descriptors.push(AgentProfileDescriptor {
+                name: name.clone(),
+                risk_tier: format!("{:?}", resolved.profile.risk_tier),
+                tool_count: resolved.profile.allowed_tools.len(),
+                max_iterations: resolved.profile.max_iterations,
+                approval_policy: format!("{:?}", resolved.profile.approval_policy),
+            });
+        }
+        Ok(descriptors)
+    }
+
+    async fn switch_agent_profile(
+        &self,
+        profile_name: String,
+    ) -> Result<AgentProfileSwitchResult, AdminServiceError> {
+        let registry = self
+            .resources
+            .agent_profiles
+            .as_ref()
+            .ok_or_else(|| AdminServiceError::Operation("agent profiles unavailable".into()))?;
+        // Validate the profile exists before switching.
+        let resolved = registry
+            .resolve_by_name(&profile_name)
+            .map_err(|error| AdminServiceError::Operation(error.to_string()))?;
+        let previous = {
+            let mut current = self
+                .resources
+                .current_profile
+                .as_ref()
+                .ok_or_else(|| {
+                    AdminServiceError::Operation("current profile state unavailable".into())
+                })?
+                .lock()
+                .await;
+            let prev = current.clone();
+            *current = profile_name.clone();
+            prev
+        };
+        Ok(AgentProfileSwitchResult {
+            previous,
+            current: profile_name,
+            risk_tier: format!("{:?}", resolved.profile.risk_tier),
+        })
     }
 
     async fn preview_memory_forget(

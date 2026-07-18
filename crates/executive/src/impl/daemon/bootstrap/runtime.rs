@@ -15,6 +15,7 @@ pub(super) fn load_agent_profiles(
     default_llm: Arc<dyn LlmProvider>,
     definitions: &[fabric::ToolDefinition],
     config: &crate::core::config::ExecutiveConfig,
+    profiles_config: &crate::core::config::AgentProfilesConfig,
 ) -> anyhow::Result<(
     Arc<crate::r#impl::runtime::AgentProfileRegistry>,
     HashMap<String, fabric::AgentProfile>,
@@ -44,20 +45,47 @@ pub(super) fn load_agent_profiles(
             })?;
             tools.push(definition);
         }
+
+        // Apply per-profile overrides from AgentProfilesConfig.
+        let overrides = profiles_config.overrides.get(&role.name);
+        let max_iterations = overrides
+            .and_then(|ov| ov.max_iterations)
+            .unwrap_or(role.max_iterations)
+            .min(config.max_iterations)
+            .max(1);
+        let tool_timeout_ms = overrides
+            .and_then(|ov| ov.tool_timeout_ms)
+            .unwrap_or(30_000);
+        let approval_policy = overrides
+            .and_then(|ov| ov.approval_policy)
+            .unwrap_or(fabric::AgentApprovalPolicy::AutoApprove);
+
+        // Derive risk tier from tool permission levels — delegated to the
+        // registry construction; here we use a simple heuristic.
+        let risk_tier = derive_risk_tier(&role.tools, &catalog);
+
         let profile = fabric::AgentProfile {
             id: fabric::AgentProfileId(role.name.clone()),
             system_prompt: role.body.clone(),
             model: llm.name().to_string(),
             allowed_tools: role.tools.clone(),
-            max_iterations: role.max_iterations.min(config.max_iterations).max(1),
+            max_iterations,
             max_input_tokens: config.context_window_tokens as u64,
             max_output_tokens: 16_384,
-            max_tool_calls: if config.agent_loop.max_tool_calls == 0 {
-                128
-            } else {
-                config.agent_loop.max_tool_calls as u32
-            },
+            max_tool_calls: overrides
+                .and_then(|ov| ov.max_tool_calls)
+                .unwrap_or(if config.agent_loop.max_tool_calls == 0 {
+                    128
+                } else {
+                    config.agent_loop.max_tool_calls as u32
+                }),
             max_elapsed_ms: 10 * 60 * 1_000,
+            profile_name: role.name.clone(),
+            risk_tier,
+            approval_policy,
+            tool_timeout_ms,
+            inheritable: true,
+            parent_restriction: fabric::ParentRestriction::SameOrSafer,
         };
         registry.register(crate::r#impl::runtime::ResolvedAgentProfile {
             profile: profile.clone(),
@@ -67,6 +95,44 @@ pub(super) fn load_agent_profiles(
         profiles.insert(role.name.clone(), profile);
     }
     Ok((registry, profiles))
+}
+
+/// Derive the risk tier from the tool names and the tool catalog.
+/// Uses permission levels from registered tools to compute the maximum risk.
+fn derive_risk_tier(
+    tool_names: &[String],
+    catalog: &HashMap<String, fabric::ToolDefinition>,
+) -> fabric::RiskTier {
+    let mut max_level: i32 = 0;
+    for name in tool_names {
+        if let Some(_def) = catalog.get(name) {
+            // PermissionLevel is not directly exposed on ToolDefinition;
+            // use a name-based heuristic for built-in tools.
+            let level = tool_permission_level(name);
+            if level > max_level {
+                max_level = level;
+            }
+        }
+    }
+    match max_level {
+        0 => fabric::RiskTier::ReadOnly,
+        1 => fabric::RiskTier::Sandboxed,
+        2 => fabric::RiskTier::System,
+        _ => fabric::RiskTier::Unrestricted,
+    }
+}
+
+fn tool_permission_level(name: &str) -> i32 {
+    match name {
+        // L3 — Destructive
+        "module_load" | "kernel_build" => 3,
+        // L2 — System-level changes
+        "ebpf_compile" | "module_build" => 2,
+        // L1 — Sandboxed write
+        "file_write" | "bash_exec" | "apply_patch" | "web_fetch" => 1,
+        // L0 — Read-only (default)
+        _ => 0,
+    }
 }
 
 /// Register thin explicit controls plus the bounded compatibility `agent` tool.
@@ -365,6 +431,7 @@ mod goal_runtime_tests {
             llm,
             &definitions,
             &crate::core::config::ExecutiveConfig::default(),
+            &crate::core::config::AgentProfilesConfig::default(),
         )
         .unwrap();
         let profile = profiles.get("reviewer").unwrap();

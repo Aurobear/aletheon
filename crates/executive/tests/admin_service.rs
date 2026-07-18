@@ -52,6 +52,8 @@ fn setup(skills_dir: std::path::PathBuf) -> (AdminService, CancellationToken, Ar
         runtime_shutdown: noop_runtime_shutdown(),
         memory_admin: None,
         agent_runs: None,
+        agent_profiles: None,
+        current_profile: None,
     });
     (service, cancellation, cached_prefix)
 }
@@ -91,6 +93,8 @@ async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
         runtime_shutdown: noop_runtime_shutdown(),
         memory_admin: None,
         agent_runs: None,
+        agent_profiles: None,
+        current_profile: None,
     });
     assert!(matches!(
         service.reload_skills().await,
@@ -169,6 +173,8 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
         }),
         memory_admin: None,
         agent_runs: None,
+        agent_profiles: None,
+        current_profile: None,
     });
 
     assert!(service

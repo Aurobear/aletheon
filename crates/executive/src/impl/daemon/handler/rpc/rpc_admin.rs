@@ -85,40 +85,14 @@ impl RequestHandler {
             "budget_exceeded" => InterruptReason::BudgetExceeded,
             _ => InterruptReason::UserCancelled,
         };
-
-        let thread_id = request
-            .get("params")
-            .and_then(|params| params.get("thread_id"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        if self.grok_hardening.prompt_queue && !thread_id.is_empty() {
-            self.ports
-                .turn
-                .cancel_current_with_thread(thread_id.clone())
-                .await;
-        } else {
-            match self.ports.admin.interrupt(reason).await {
-                Ok(()) => {
-                    return json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "result": { "status": "interrupt_requested", "reason": format!("{:?}", reason) }
-                    });
-                }
-                Err(error) => {
-                    return admin_error(id, error);
-                }
-            }
+        match self.ports.admin.interrupt(reason).await {
+            Ok(()) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "status": "interrupt_requested", "reason": format!("{:?}", reason) }
+            }),
+            Err(error) => admin_error(id, error),
         }
-
-        // When grok_hardening.prompt_queue path was taken, return success.
-        json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": { "status": "interrupt_requested", "reason": format!("{:?}", reason), "thread_id": thread_id }
-        })
     }
 
     pub(super) async fn handle_mode_switch(
@@ -224,6 +198,50 @@ impl RequestHandler {
     ) -> serde_json::Value {
         match self.ports.admin.sub_agents().await {
             Ok(agents) => json!({"jsonrpc":"2.0", "id":id, "result":{"agents":agents}}),
+            Err(error) => admin_error(id, error),
+        }
+    }
+
+    pub(super) async fn handle_agent_profile_list(
+        &self,
+        id: &serde_json::Value,
+        _request: &serde_json::Value,
+    ) -> serde_json::Value {
+        match self.ports.admin.list_agent_profiles().await {
+            Ok(profiles) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {"profiles": profiles}
+            }),
+            Err(error) => admin_error(id, error),
+        }
+    }
+
+    pub(super) async fn handle_agent_profile_set(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let profile_name = request["params"]["profile"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        match self.ports.admin.switch_agent_profile(profile_name).await {
+            Ok(result) => {
+                if let Some(notify) = &self.notify_tx {
+                    let notification = json!({
+                        "jsonrpc": "2.0",
+                        "method": "event",
+                        "params": {"type": "profile_changed", "profile": &result.current}
+                    });
+                    let _ = notify.send(notification.to_string()).await;
+                }
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": result
+                })
+            }
             Err(error) => admin_error(id, error),
         }
     }

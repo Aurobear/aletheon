@@ -74,6 +74,8 @@ impl RequestHandler {
             "google.token.refresh" => self.handle_google_token_refresh(&id, &request).await,
             "hooks_list" => self.handle_hooks_list(&id, &request).await,
             "sub_agents" => self.handle_sub_agents(&id, &request).await,
+            "agent.profile.list" => self.handle_agent_profile_list(&id, &request).await,
+            "agent.profile.set" => self.handle_agent_profile_set(&id, &request).await,
 
             // ── Reflection / self-awareness ───────────────────────────
             "reflect" => self.handle_reflect(&id, &request).await,

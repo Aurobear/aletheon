@@ -5,8 +5,8 @@
 
 use serde::Serialize;
 
-use crate::core::config::{AppConfig, LoadedConfig, diagnostics::EffectiveConfigView};
-use crate::core::deploy::DeploymentInfo;
+use crate::core::config::{AppConfig, LoadedConfig};
+use crate::core::deploy::{DeploymentInfo, CORE_RUNTIME_VERSION};
 
 /// Schema-stable doctor report. All fields use predictable keys;
 /// secrets are always redacted by the config rendering layer.
@@ -101,7 +101,7 @@ impl DoctorReport {
 
         let mut deployment = DeploymentInfo::gather();
         deployment.verify_binary(None);
-        deployment.verify_runtime_compatibility(crate::core::deploy::CORE_RUNTIME_VERSION);
+        deployment.verify_runtime_compatibility(CORE_RUNTIME_VERSION);
         if !deployment.is_healthy() {
             warnings.extend(deployment.version_warnings.clone());
         }

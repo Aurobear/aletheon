@@ -750,6 +750,7 @@ impl RequestHandler {
         let agent_runtimes =
             Arc::new(crate::service::agent_control::AgentRuntimeRegistry::default());
         let agent_profiles_for_tools;
+        let agent_profile_registry;
 
         // Ordinary child Agents use one Cognit session runtime. Goal worker
         // and reviewer attempts remain explicit ProviderWorkerRuntime routes.
@@ -761,8 +762,10 @@ impl RequestHandler {
                 llm.clone(),
                 &definitions,
                 &runtime_config_snapshot,
+                &Default::default(), // agent_profiles config (full profiles config later)
             )?;
             agent_profiles_for_tools = tool_profiles;
+            agent_profile_registry = profiles.clone();
             let native = Arc::new(crate::r#impl::runtime::NativeCognitRuntime::new(
                 crate::r#impl::runtime::NativeCognitRuntimeResources {
                     sessions: domains.cognition(),
@@ -771,7 +774,6 @@ impl RequestHandler {
                     clock: clock.clone(),
                     conscious_actions: Some(conscious_registry.clone()),
                     conscious_candidates: Some(conscious_registry.clone()),
-                    grok_hardening: grok_hardening.clone(),
                 },
             ));
             agent_runtimes.register(
@@ -952,6 +954,7 @@ impl RequestHandler {
             "Agent terminal resource cleanup completed"
         );
         let agent_control: Arc<dyn fabric::AgentControlPort> = agent_control_service.clone();
+        let agent_live_runs = agent_control_service.live_runs();
         let agent_shutdown_cancel = cancel_token.clone();
         tokio::spawn(async move {
             agent_shutdown_cancel.cancelled().await;
@@ -1053,6 +1056,7 @@ impl RequestHandler {
                 kernel.lease_manager(),
                 grok_hardening.checkpoint_rewind,
             )
+            .with_safety_guard(agent_live_runs)
             .with_events(event_bus.clone(), Some(canonical_event_spine.clone())),
         );
         let session_service = Arc::new(crate::service::session_service::SessionService::new(
@@ -1274,6 +1278,8 @@ impl RequestHandler {
                 }),
                 memory_admin: Some(memory_admin_use_cases),
                 agent_runs: Some(agent_repository),
+                agent_profiles: Some(agent_profile_registry),
+                current_profile: Some(Arc::new(tokio::sync::Mutex::new(String::from("default")))),
             }),
         );
         let legacy_sessions: Arc<

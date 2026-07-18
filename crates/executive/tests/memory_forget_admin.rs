@@ -124,6 +124,8 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         runtime_shutdown: Arc::new(|| Box::pin(async { Ok(()) })),
         memory_admin: Some(memory_admin),
         agent_runs: None,
+        agent_profiles: None,
+        current_profile: None,
     });
     assert!(
         service.forget_memory(policy("owner")).await.is_err(),
