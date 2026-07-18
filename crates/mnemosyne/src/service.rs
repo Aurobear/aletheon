@@ -381,10 +381,16 @@ impl DefaultMemoryService {
     pub fn with_vector_search_backend(
         mut self,
         backend: Arc<dyn crate::RecallSearchBackend>,
-        endpoint_trusted: bool,
+        grant: &crate::credential::EmbeddingCredentialGrant,
+        endpoint_base_url: &str,
+        now_unix: u64,
     ) -> Self {
         self.vector_search = Some(backend);
-        self.embedding_endpoint_trusted = endpoint_trusted;
+        // Trust is derived from the endpoint-scoped grant at composition time;
+        // callers cannot assert it with an unaudited boolean. Keeping the
+        // backend installed on rejection lets hybrid recall fail closed to FTS
+        // while reporting EmbeddingEndpointUntrusted.
+        self.embedding_endpoint_trusted = grant.approved_for(endpoint_base_url, now_unix);
         self
     }
 
@@ -896,6 +902,20 @@ mod tests {
     use fabric::{Subsystem, SubsystemContext};
     use std::path::Path;
 
+    struct EmptyVectorBackend;
+
+    #[async_trait::async_trait]
+    impl crate::RecallSearchBackend for EmptyVectorBackend {
+        async fn search(
+            &self,
+            _request: &RecallRequest,
+            _predicate: &crate::ScopePredicate,
+            _top_k: usize,
+        ) -> anyhow::Result<crate::SearchOutcome> {
+            Ok(crate::SearchOutcome::default())
+        }
+    }
+
     fn test_clock() -> Arc<dyn fabric::Clock> {
         Arc::new(aletheon_kernel::chronos::TestClock::default())
     }
@@ -921,6 +941,35 @@ mod tests {
         episodic_memory.init(&ctx).await.unwrap();
         let episodic = Arc::new(Mutex::new(episodic_memory));
         DefaultMemoryService::new(recall_memory, fact_store, core_memory, episodic, clock)
+    }
+
+    #[tokio::test]
+    async fn vector_backend_trust_is_derived_from_exact_endpoint_grant() {
+        let grant = crate::credential::EmbeddingCredentialGrant::new(
+            "test-principal",
+            "https://embedding.example/v1",
+            "test-provider",
+            100,
+            1,
+            "secret",
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let rejected = build_service(dir.path()).await.with_vector_search_backend(
+            Arc::new(EmptyVectorBackend),
+            &grant,
+            "https://embedding.example.evil/v1",
+            10,
+        );
+        assert!(!rejected.embedding_endpoint_trusted);
+
+        let dir = tempfile::tempdir().unwrap();
+        let approved = build_service(dir.path()).await.with_vector_search_backend(
+            Arc::new(EmptyVectorBackend),
+            &grant,
+            "https://embedding.example/v1",
+            10,
+        );
+        assert!(approved.embedding_endpoint_trusted);
     }
 
     #[tokio::test]

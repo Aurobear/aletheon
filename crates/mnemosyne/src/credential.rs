@@ -25,7 +25,7 @@ impl SecretHandle {
 
     /// Reveal the secret. Callers must only use this at the moment of building
     /// an authorized request to an `approved_for` endpoint.
-    pub fn reveal(&self) -> &str {
+    pub(crate) fn reveal(&self) -> &str {
         &self.0
     }
 }
