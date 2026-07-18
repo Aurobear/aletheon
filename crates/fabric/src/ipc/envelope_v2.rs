@@ -319,6 +319,9 @@ impl SchemaId {
     pub const EVENT_MEMORY_CANDIDATE_V1: &'static str = "aletheon.event.memory_candidate/v1";
     pub const EVENT_AGORA_BROADCAST_V1: &'static str = "aletheon.event.agora_broadcast/v1";
     pub const EVENT_RUNTIME_RESTART_V1: &'static str = "aletheon.event.runtime_restart/v1";
+    pub const EVENT_SANDBOX_PROFILE_APPLIED_V1: &'static str =
+        "aletheon.event.sandbox_profile_applied/v1";
+    pub const EVENT_SANDBOX_VIOLATION_V1: &'static str = "aletheon.event.sandbox_violation/v1";
 
     pub fn supported_cross_process() -> &'static [&'static str] {
         &[

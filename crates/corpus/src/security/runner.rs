@@ -75,6 +75,8 @@ pub struct ToolRunnerWithGuard {
     /// S1 sandbox profiles from trusted daemon config. None = no profile layer
     /// (flag off or not configured); legacy behavior preserved.
     sandbox_profiles: Option<SandboxProfiles>,
+    /// Canonical event spine used for S1 profile and violation observability.
+    event_bus: Option<Arc<fabric::CanonicalEventBus>>,
 }
 
 impl ToolRunnerWithGuard {
@@ -92,6 +94,7 @@ impl ToolRunnerWithGuard {
             exec_policy: None,
             clock,
             sandbox_profiles: None,
+            event_bus: None,
         }
     }
 
@@ -138,6 +141,23 @@ impl ToolRunnerWithGuard {
     pub fn with_sandbox_profiles(mut self, profiles: SandboxProfiles) -> Self {
         self.sandbox_profiles = Some(profiles);
         self
+    }
+
+    pub fn with_event_bus(mut self, event_bus: Arc<fabric::CanonicalEventBus>) -> Self {
+        self.event_bus = Some(event_bus);
+        self
+    }
+
+    async fn publish_sandbox_event(&self, schema: &'static str, payload: serde_json::Value) {
+        let Some(event_bus) = &self.event_bus else {
+            return;
+        };
+        if let Err(error) = event_bus
+            .publish_event(fabric::SchemaId(schema.into()), "corpus.sandbox", payload)
+            .await
+        {
+            tracing::warn!(schema, error = %error, "failed to publish sandbox event");
+        }
     }
 
     /// Set the independent execpolicy engine. When set, this takes precedence
@@ -453,7 +473,7 @@ impl ToolRunnerWithGuard {
 
                 // S1 T13: resolve the default sandbox profile when profiles are
                 // configured.
-                let policy = self.sandbox_profiles.as_ref().and_then(|profiles| {
+                let policy = if let Some(profiles) = self.sandbox_profiles.as_ref() {
                     let name: ProfileName = profiles
                         .default_profile
                         .as_str()
@@ -471,15 +491,28 @@ impl ToolRunnerWithGuard {
                             Some(p)
                         }
                         Err(e) => {
-                            tracing::warn!(
-                                profile = %name,
-                                error = %e,
-                                "failed to resolve sandbox profile; running without profile layer"
-                            );
-                            None
+                            self.publish_sandbox_event(
+                                fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
+                                serde_json::json!({
+                                    "event": "sandbox.violation",
+                                    "target": name.to_string(),
+                                    "operation": "resolve_profile",
+                                    "principal": ctx.approval_authority.as_ref().map(|a| a.principal_id.0.as_str()),
+                                    "agent": ctx.agent.as_ref().map(|a| a.parent_agent_id.0.to_string()),
+                                    "reason": e.to_string(),
+                                }),
+                            )
+                            .await;
+                            return Err(ToolError::PolicyDenied {
+                                reason: format!(
+                                    "sandbox profile '{name}' could not be resolved (fail-closed): {e}"
+                                ),
+                            });
                         }
                     }
-                });
+                } else {
+                    None
+                };
 
                 let sandbox_config = SandboxConfig {
                     workspace,
@@ -490,6 +523,24 @@ impl ToolRunnerWithGuard {
                     ]),
                     policy,
                 };
+
+                if let Some(policy) = &sandbox_config.policy {
+                    self.publish_sandbox_event(
+                        fabric::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1,
+                        serde_json::json!({
+                            "event": "sandbox.profile.applied",
+                            "profile": policy.name,
+                            "read_only": policy.read_only_roots,
+                            "read_write": policy.read_write_roots,
+                            "deny_exact": policy.deny_exact,
+                            "deny_globs": policy.deny_globs,
+                            "restrict_network": policy.restrict_network,
+                            "principal": ctx.approval_authority.as_ref().map(|a| a.principal_id.0.as_str()),
+                            "agent": ctx.agent.as_ref().map(|a| a.parent_agent_id.0.to_string()),
+                        }),
+                    )
+                    .await;
+                }
 
                 // TODO(D1-T11): Insert ShellEscalationDetector scan here, gated
                 // behind grok_hardening.escape_detection (flag to be added).
@@ -509,6 +560,26 @@ impl ToolRunnerWithGuard {
                             .await
                     }
                 };
+                // Only backend/enforcement errors become violation events. A
+                // command can forge stderr text, so ordinary non-zero child
+                // exits must never be promoted to authoritative violations.
+                let violation = sandbox_result.as_ref().err().map(ToString::to_string);
+                if sandbox_config.policy.is_some() {
+                    if let Some(reason) = violation {
+                        self.publish_sandbox_event(
+                            fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
+                            serde_json::json!({
+                                "event": "sandbox.violation",
+                                "target": cmd,
+                                "operation": "execute",
+                                "principal": ctx.approval_authority.as_ref().map(|a| a.principal_id.0.as_str()),
+                                "agent": ctx.agent.as_ref().map(|a| a.parent_agent_id.0.to_string()),
+                                "reason": reason,
+                            }),
+                        )
+                        .await;
+                    }
+                }
                 match sandbox_result {
                     Ok(sandbox_result) => ToolResult {
                         content: format!("{}\n{}", sandbox_result.stdout, sandbox_result.stderr)
@@ -926,6 +997,66 @@ mod tests {
         }
         assert_eq!(progress, ["alpha", "beta"]);
         assert_eq!(terminals, 1);
+    }
+
+    #[tokio::test]
+    async fn sandbox_profile_applied_event_carries_policy_and_principal() {
+        let bus = Arc::new(fabric::CanonicalEventBus::new(8));
+        let mut events = bus.subscribe_channel(fabric::SchemaId(
+            fabric::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1.into(),
+        ));
+        let mut runner = make_runner(Arc::new(AutoApproveGate))
+            .with_sandbox_profiles(fabric::SandboxProfiles::default())
+            .with_event_bus(bus);
+
+        runner
+            .execute_tool(
+                &DummyL2Tool,
+                serde_json::json!({"command": "printf ok"}),
+                &make_ctx(),
+                "sandbox-event-turn",
+            )
+            .await
+            .expect("sandboxed execution");
+
+        let event = events.recv().await.expect("profile applied event");
+        assert_eq!(event.payload["event"], "sandbox.profile.applied");
+        assert_eq!(event.payload["profile"], "workspace");
+        assert_eq!(event.payload["principal"], "test");
+        assert!(event.payload.get("read_write").is_some());
+        assert!(event.payload.get("deny_exact").is_some());
+        assert!(event.payload.get("restrict_network").is_some());
+    }
+
+    #[tokio::test]
+    async fn sandbox_profile_resolution_violation_is_attributed_and_fails_closed() {
+        let bus = Arc::new(fabric::CanonicalEventBus::new(8));
+        let mut events = bus.subscribe_channel(fabric::SchemaId(
+            fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1.into(),
+        ));
+        let profiles = fabric::SandboxProfiles {
+            default_profile: "missing-custom".into(),
+            ..Default::default()
+        };
+        let mut runner = make_runner(Arc::new(AutoApproveGate))
+            .with_sandbox_profiles(profiles)
+            .with_event_bus(bus);
+
+        let result = runner
+            .execute_tool(
+                &DummyL2Tool,
+                serde_json::json!({"command": "printf must-not-run"}),
+                &make_ctx(),
+                "sandbox-violation-turn",
+            )
+            .await;
+
+        assert!(matches!(result, Err(ToolError::PolicyDenied { .. })));
+        let event = events.recv().await.expect("sandbox violation event");
+        assert_eq!(event.payload["event"], "sandbox.violation");
+        assert_eq!(event.payload["target"], "missing-custom");
+        assert_eq!(event.payload["operation"], "resolve_profile");
+        assert_eq!(event.payload["principal"], "test");
     }
 
     #[tokio::test]

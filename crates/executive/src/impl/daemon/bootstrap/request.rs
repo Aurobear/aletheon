@@ -426,6 +426,9 @@ impl RequestHandler {
         if grok_hardening.sandbox_profiles {
             runner = runner.with_sandbox_profiles(sandbox_profiles);
         }
+        if let Some(bus) = event_bus.as_ref() {
+            runner = runner.with_event_bus(bus.clone());
+        }
         let tool_runner = Arc::new(Mutex::new(runner));
 
         let runtime_config = ExecutiveConfig {
