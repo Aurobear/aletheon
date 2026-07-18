@@ -28,7 +28,10 @@ fn block(input: BlockInput) -> ContentBlock {
         BlockInput::ToolUse(id, name, input) => ContentBlock::ToolUse {
             id,
             name,
-            input: serde_json::from_str(&input).unwrap_or(serde_json::Value::String(input)),
+            // Keep this target focused on Message framing. Arbitrary parsed
+            // floating-point JSON is not byte-stable across a serde round trip;
+            // structured JSON inputs are covered by tool_input_json instead.
+            input: serde_json::Value::String(input),
         },
         BlockInput::ToolResult(tool_use_id, content, is_error) => ContentBlock::ToolResult {
             tool_use_id,
