@@ -51,6 +51,48 @@ fn defaults_system_user_project_environment_and_cli_have_total_precedence() {
 }
 
 #[test]
+fn project_sandbox_profiles_are_additive_and_cannot_override_trusted_names() {
+    let loaded = merge_layers([
+        layer(
+            ConfigSourceKind::User,
+            "~/.aletheon/config.toml",
+            r#"
+[sandbox_profiles]
+default_profile = "locked"
+[sandbox_profiles.profiles.locked]
+extends = "strict"
+deny = ["/trusted/secret"]
+"#,
+        ),
+        layer(
+            ConfigSourceKind::Project,
+            "/repo/.aletheon/config.toml",
+            r#"
+[sandbox_profiles]
+default_profile = "project-only"
+[sandbox_profiles.profiles.locked]
+extends = "workspace"
+deny = []
+[sandbox_profiles.profiles.project-only]
+extends = "read-only"
+deny = ["/project/secret"]
+"#,
+        ),
+    ])
+    .unwrap();
+
+    assert_eq!(loaded.value.sandbox_profiles.default_profile, "locked");
+    let locked = &loaded.value.sandbox_profiles.profiles["locked"];
+    assert_eq!(locked.extends.as_deref(), Some("strict"));
+    assert_eq!(locked.deny, vec!["/trusted/secret"]);
+    assert!(loaded
+        .value
+        .sandbox_profiles
+        .profiles
+        .contains_key("project-only"));
+}
+
+#[test]
 fn validation_errors_name_the_responsible_source_and_reject_unknown_or_invalid_values() {
     let unknown = ConfigLayer::from_toml(
         ConfigSource::new(ConfigSourceKind::Project, "/repo/.aletheon/config.toml"),

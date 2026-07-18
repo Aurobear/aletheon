@@ -8,6 +8,57 @@ use serde::Serialize;
 use crate::core::config::{AppConfig, LoadedConfig};
 use crate::core::deploy::{DeploymentInfo, DeploymentManifest};
 
+const MAX_DOCTOR_MCP_SERVERS: usize = 64;
+const MAX_DOCTOR_PROVENANCE: usize = 512;
+const MAX_DOCTOR_WARNINGS: usize = 64;
+const MAX_DOCTOR_TEXT_CHARS: usize = 512;
+const MAX_DOCTOR_JSON_ENTRIES: usize = 256;
+const MAX_DOCTOR_JSON_DEPTH: usize = 16;
+
+fn bounded_text(value: &str) -> String {
+    value.chars().take(MAX_DOCTOR_TEXT_CHARS).collect()
+}
+
+fn bounded_json(value: &serde_json::Value, depth: usize) -> serde_json::Value {
+    if depth >= MAX_DOCTOR_JSON_DEPTH {
+        return serde_json::Value::String("[depth limit]".into());
+    }
+    match value {
+        serde_json::Value::String(text) => serde_json::Value::String(bounded_text(text)),
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .iter()
+                .take(MAX_DOCTOR_JSON_ENTRIES)
+                .map(|value| bounded_json(value, depth + 1))
+                .collect(),
+        ),
+        serde_json::Value::Object(values) => serde_json::Value::Object(
+            values
+                .iter()
+                .take(MAX_DOCTOR_JSON_ENTRIES)
+                .map(|(key, value)| (bounded_text(key), bounded_json(value, depth + 1)))
+                .collect(),
+        ),
+        scalar => scalar.clone(),
+    }
+}
+
+fn redacted_transport(config: &cognit::config::McpTransportConfig) -> String {
+    match config {
+        cognit::config::McpTransportConfig::Stdio { command, .. } => {
+            let executable = std::path::Path::new(command)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("<command>");
+            format!("stdio:{} [arguments redacted]", bounded_text(executable))
+        }
+        cognit::config::McpTransportConfig::StreamableHttp { .. } => {
+            "streamable_http:[endpoint redacted]".into()
+        }
+        cognit::config::McpTransportConfig::Sse { .. } => "sse:[endpoint redacted]".into(),
+    }
+}
+
 /// Schema-stable doctor report. All fields use predictable keys;
 /// secrets are always redacted by the config rendering layer.
 #[derive(Debug, Clone, Serialize)]
@@ -124,18 +175,10 @@ impl DoctorReport {
         let mcp_servers: Vec<McpServerStatus> = config
             .mcp_servers
             .iter()
+            .take(MAX_DOCTOR_MCP_SERVERS)
             .map(|mcp| McpServerStatus {
-                name: mcp.name.clone(),
-                command: match &mcp.transport {
-                    cognit::config::McpTransportConfig::Stdio { command, args } => {
-                        std::iter::once(command.as_str())
-                            .chain(args.iter().map(String::as_str))
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    }
-                    cognit::config::McpTransportConfig::StreamableHttp { url }
-                    | cognit::config::McpTransportConfig::Sse { url } => url.clone(),
-                },
+                name: bounded_text(&mcp.name),
+                command: redacted_transport(&mcp.transport),
                 status: "unknown (standalone doctor)".to_string(),
                 error: None,
             })
@@ -187,15 +230,19 @@ impl DoctorReport {
             config: DoctorConfigStatus {
                 validity: "valid".to_string(),
                 leaf_count: effective.leaf_count,
-                effective: Some(effective.config.clone()),
+                effective: Some(bounded_json(&effective.config, 0)),
                 provenance: Some(
                     loaded_config
                         .provenance
                         .iter()
+                        .take(MAX_DOCTOR_PROVENANCE)
                         .map(|(path, source)| DoctorProvenanceEntry {
-                            path: path.to_string(),
+                            path: bounded_text(&path.to_string()),
                             source_kind: format!("{:?}", source.kind).to_lowercase(),
-                            locator: source.locator.clone(),
+                            // A locator may contain a home path, URL query, or
+                            // environment-derived secret. The source kind is
+                            // sufficient for standalone diagnosis.
+                            locator: "[redacted]".into(),
                         })
                         .collect(),
                 ),
@@ -206,7 +253,11 @@ impl DoctorReport {
             writer_health,
             turn_recovery,
             daemon_version: env!("CARGO_PKG_VERSION"),
-            warnings,
+            warnings: warnings
+                .into_iter()
+                .take(MAX_DOCTOR_WARNINGS)
+                .map(|warning| bounded_text(&warning))
+                .collect(),
         }
     }
 }
@@ -245,6 +296,38 @@ mod tests {
         assert!(json.contains("\"config\""));
         assert!(json.contains("\"deployment\""));
         assert!(!json.contains("\"api_key\": \"")); // secrets redacted
+    }
+
+    #[test]
+    fn doctor_redacts_mcp_arguments_and_remote_endpoints() {
+        let stdio = cognit::config::McpTransportConfig::Stdio {
+            command: "/secret/home/bin/server".into(),
+            args: vec!["--token=super-secret".into()],
+        };
+        let http = cognit::config::McpTransportConfig::StreamableHttp {
+            url: "https://user:secret@example.test/private?token=secret".into(),
+        };
+        let stdio = redacted_transport(&stdio);
+        let http = redacted_transport(&http);
+        assert_eq!(stdio, "stdio:server [arguments redacted]");
+        assert!(!stdio.contains("super-secret"));
+        assert_eq!(http, "streamable_http:[endpoint redacted]");
+        assert!(!http.contains("example.test"));
+    }
+
+    #[test]
+    fn doctor_text_fields_are_deterministically_bounded() {
+        let bounded = bounded_text(&"x".repeat(MAX_DOCTOR_TEXT_CHARS + 100));
+        assert_eq!(bounded.chars().count(), MAX_DOCTOR_TEXT_CHARS);
+        let value = serde_json::Value::Array(
+            (0..MAX_DOCTOR_JSON_ENTRIES + 10)
+                .map(serde_json::Value::from)
+                .collect(),
+        );
+        assert_eq!(
+            bounded_json(&value, 0).as_array().unwrap().len(),
+            MAX_DOCTOR_JSON_ENTRIES
+        );
     }
 
     #[test]

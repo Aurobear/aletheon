@@ -1088,6 +1088,79 @@ fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
 mod terminal_event_tests {
     use super::*;
 
+    #[tokio::test]
+    async fn real_bash_progress_crosses_guard_bridge_and_client_projection() {
+        use corpus::security::approval::AutoApproveGate;
+        use corpus::security::sandbox::executor::SandboxPreference;
+        use corpus::{AuditLogger, ToolRunnerWithGuard};
+        use fabric::ToolContext;
+
+        let temp = tempfile::tempdir().unwrap();
+        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+        let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
+            AuditLogger::new(temp.path().join("audit.jsonl")).unwrap(),
+            SandboxPreference::Forbid,
+            clock.clone(),
+        )
+        .with_approval_gate(Arc::new(AutoApproveGate));
+        let context = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: temp.path().to_path_buf(),
+            session_id: "g2-client-stream".into(),
+            clock,
+        };
+        let (mut sink, event_rx) = fabric::tool_event_channel();
+
+        let report = runner
+            .execute_tool_streaming_report(
+                &corpus::tools::bash_exec::BashExecTool,
+                serde_json::json!({
+                    "command": "printf 'alpha\\n'; sleep 0.02; printf 'beta\\n'"
+                }),
+                &context,
+                "g2-turn",
+                &mut sink,
+            )
+            .await;
+        assert!(
+            report.result.is_ok(),
+            "real BashExecTool must settle successfully"
+        );
+        drop(sink);
+
+        let (mut turn_stream, turn_sender) =
+            fabric::ipc::TurnEventStream::new(StreamConfig::turn_events(8));
+        let outcome = crate::service::tool_stream_bridge::bridge_tool_stream(
+            event_rx,
+            turn_sender,
+            "bash_exec".into(),
+            "call-g2-real".into(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(outcome.terminal.is_ok());
+        assert!(outcome.progress_emitted > 0);
+
+        let mut visible_text = String::new();
+        while let Some(Ok(event)) = turn_stream.try_recv() {
+            if let Some(ClientEvent::ToolProgress {
+                call_id,
+                tool,
+                kind,
+                payload,
+            }) = turn_event_to_client_event(&event)
+            {
+                assert_eq!(call_id, "call-g2-real");
+                assert_eq!(tool, "bash_exec");
+                assert_eq!(kind, "text");
+                visible_text.push_str(payload.as_str().expect("text progress payload"));
+            }
+        }
+        assert!(visible_text.contains("alpha"));
+        assert!(visible_text.contains("beta"));
+    }
+
     #[test]
     fn failed_react_task_emits_exactly_error_then_turn_done() {
         let events =

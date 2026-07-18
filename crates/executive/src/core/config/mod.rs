@@ -176,8 +176,61 @@ pub fn merge_layers(layers: impl IntoIterator<Item = ConfigLayer>) -> Result<Loa
     provenance::record_leaves(&merged, "", &ConfigSource::defaults(), &mut provenance);
 
     for layer in layers {
-        provenance::record_leaves(&layer.value, "", &layer.source, &mut provenance);
+        // Project configuration is the only lower-trust profile source. It may
+        // add names, but cannot hollow out a daemon/system/user profile by
+        // redefining the same name. Environment and CLI remain trusted daemon
+        // operator boundaries and retain their normal precedence.
+        let project_profiles = if layer.source.kind == ConfigSourceKind::Project {
+            layer
+                .value
+                .get("sandbox_profiles")
+                .cloned()
+                .map(|value| value.try_into::<fabric::SandboxProfiles>())
+                .transpose()
+                .context("validate project sandbox profiles")?
+        } else {
+            None
+        };
+        let lower_profiles = project_profiles.as_ref().map(|_| {
+            merged
+                .get("sandbox_profiles")
+                .cloned()
+                .unwrap_or_else(|| toml::Value::Table(Default::default()))
+                .try_into::<fabric::SandboxProfiles>()
+                .expect("effective lower sandbox profiles remain typed")
+        });
+        let mut provenance_value = layer.value.clone();
+        if project_profiles.is_some() {
+            // Ignored same-name definitions must never appear authoritative in
+            // diagnostics. Profile authority is enforced by the typed merge;
+            // this prevents ignored project leaves from impersonating the
+            // trusted lower source in diagnostics.
+            if let Some(table) = provenance_value.as_table_mut() {
+                table.remove("sandbox_profiles");
+            }
+        }
+        provenance::record_leaves(&provenance_value, "", &layer.source, &mut provenance);
         merge_value(&mut merged, layer.value);
+        if let (Some(mut lower), Some(project)) = (lower_profiles, project_profiles) {
+            for name in project
+                .profiles
+                .keys()
+                .filter(|name| lower.profiles.contains_key(*name))
+            {
+                tracing::warn!(
+                    profile = %name,
+                    source = %layer.source.locator,
+                    "project sandbox profile cannot override trusted same-name profile"
+                );
+            }
+            lower.merge_project_additive(project);
+            let encoded = toml::Value::try_from(lower)
+                .context("serialize additively merged project sandbox profiles")?;
+            merged
+                .as_table_mut()
+                .expect("AppConfig root is a TOML table")
+                .insert("sandbox_profiles".into(), encoded);
+        }
     }
     let value = merged
         .try_into::<AppConfig>()
