@@ -71,10 +71,12 @@
 | `ba1f05cb` | **G1 T12–T16**：Executive trust resolver/ports、principal+workspace 内存 upsert、已知 repo 执行配置的有界只读稳定 digest 发现 | executive | workspace_trust 4 全走 |
 | `458f37ab` | **G1 T17**：principal+workspace receipt 持久 JSON store，串行原子替换；缺失/损坏状态 fail-closed | executive | workspace_trust 6 全走（含 reopen/corruption） |
 | `cf12ba0e` | **G1 T18**：启用态 trust decision 经 canonical bus 发布版本化事件，含 principal/workspace/scope/granting client | executive | scoped decision event 1 全走 |
+| `b894d455` | **G1 T19–T20**：daemon chat 入口装配持久 resolver；headless 按 canonical workspace 评估，flag 关严格旁路；普通文件访问与 repo executable config 授权解耦 | executive | workspace_trust 8 全走 + executive check |
+| `4f1cf222` | **G1 T21**：清理 Executive 严格 Clippy 依赖链遗留 lint；格式化触及文件 | corpus + executive | `clippy -p executive --lib -- -D warnings` 通过；相关单测 110 全走 |
 
-**状态**：S1 端到端完成。`grok_hardening.sandbox_profiles = true` + 配置中声明 profiles → `resolve_profile` → `SandboxConfig.policy` → bubblewrap 施加 deny + network；关=逐字节旧行为。C1+S1 两条从契约贯通到激活。
+**状态**：G1、S1 端到端完成。`grok_hardening.sandbox_profiles = true` + 配置中声明 profiles → `resolve_profile` → `SandboxConfig.policy` → bubblewrap 施加 deny + network；关=逐字节旧行为。C1+S1 两条从契约贯通到激活。
 
-**进行中**：G1 已完成 fabric T1–T11 与 Executive T12–T18；待 T19–T21（装配、端到端验收与收尾）。S1 T14（事件）与 G3–G8 其余 consumer 收尾仍按 §4 序列推进。
+**进行中**：G1 T1–T21 已完成并通过定向验收；S1 T14（事件）与 G2–G8 其余 consumer 收尾仍按 §4 序列推进。
 
 ## 2. 合并映射：Grok fabric × DeepSeek OUTSTANDING
 
