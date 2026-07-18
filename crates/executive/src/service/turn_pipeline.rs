@@ -278,14 +278,28 @@ impl TurnPipeline {
         // -- Context source preparation --
         self.runtime_ports.storm.reset().await;
         let mut effective_message = String::new();
-        for effect in lifecycle_start.effects {
+        let mut durable_fragments = Vec::new();
+        for effect in &lifecycle_start.effects {
             if let crate::service::lifecycle_contributors::LifecycleEffect::AddContextFragment {
                 source,
                 content,
             } = effect
             {
                 effective_message.push_str(&format!("[lifecycle:{source}]\n{content}\n"));
+                durable_fragments.push((source.clone(), content.clone()));
             }
+        }
+        if !durable_fragments.is_empty() {
+            let turn_id = lifecycle_turn
+                .ok_or_else(|| anyhow::anyhow!("lifecycle context requires an explicit turn_id"))?;
+            self.canonical_sessions
+                .persist_context_fragments(
+                    &fabric::SessionId(turn_request.context.thread_id.0.clone()),
+                    turn_id,
+                    fabric::types::lifecycle::LifecyclePhase::BeforeTurnInput,
+                    durable_fragments,
+                )
+                .await?;
         }
 
         // -- PreTurn hooks (including configured scripts owned by Corpus) --

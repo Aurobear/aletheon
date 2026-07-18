@@ -70,6 +70,38 @@ impl SessionService {
         self.store.load_items(session_id, None).await
     }
 
+    /// Persist lifecycle-provided workspace context into canonical history
+    /// before it is used for model projection. The Fabric validator is the
+    /// single authority for effect bounds and phase legality.
+    pub async fn persist_context_fragments(
+        &self,
+        session_id: &SessionId,
+        turn_id: TurnId,
+        phase: fabric::types::lifecycle::LifecyclePhase,
+        fragments: Vec<(String, String)>,
+    ) -> Result<usize> {
+        if fragments.is_empty() {
+            return Ok(0);
+        }
+        let effects = fragments
+            .into_iter()
+            .map(|(source, content)| {
+                fabric::types::lifecycle::LifecycleEffect::AddContextFragment { source, content }
+            })
+            .collect::<Vec<_>>();
+        let items = self.items(session_id).await?;
+        let mut sequence = items.last().map_or(1, |item| item.sequence + 1);
+        super::context_fragment::inject_context_fragments(
+            self.store.as_ref(),
+            session_id,
+            turn_id,
+            &mut sequence,
+            phase,
+            &effects,
+        )
+        .await
+    }
+
     /// Ensure a legacy session has a canonical Session/Turn/Item projection.
     ///
     /// Import is intentionally append-only: an existing canonical history is
@@ -164,6 +196,47 @@ impl SessionService {
         active.cancel.cancel();
         interrupted.insert(session_id.0.clone());
         Ok(InterruptOutcome::Interrupted)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn lifecycle_context_fragment_is_bounded_and_durable() {
+        let store: Arc<dyn SessionAppendStore> = Arc::new(
+            crate::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
+                .unwrap(),
+        );
+        let session_id = SessionId("context-session".into());
+        store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 1,
+                status: SessionStatus::Active,
+            })
+            .await
+            .unwrap();
+        let service = SessionService::new(store, Arc::new(Mutex::new(Default::default())));
+        let persisted = service
+            .persist_context_fragments(
+                &session_id,
+                TurnId::new(),
+                fabric::types::lifecycle::LifecyclePhase::BeforeTurnInput,
+                vec![("workspace".into(), "branch=feature".into())],
+            )
+            .await
+            .unwrap();
+        assert_eq!(persisted, 1);
+        let items = service.items(&session_id).await.unwrap();
+        assert!(matches!(
+            &items[0].payload,
+            ItemPayload::SystemNotice { content }
+                if content.contains("source=workspace") && content.contains("branch=feature")
+        ));
     }
 }
 
