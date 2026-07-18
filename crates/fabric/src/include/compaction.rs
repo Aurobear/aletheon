@@ -433,6 +433,61 @@ mod guardrail_tests {
     }
 
     #[test]
+    fn safe_tail_cut_preserves_pair_invariant_for_arbitrary_bounded_sequences() {
+        // Exhaust all length <= 6 sequences over text/use/result and every cut.
+        // This is deterministic property coverage without a new test dependency.
+        for len in 0..=6 {
+            for mut shape in 0usize..3usize.pow(len) {
+                let mut messages = Vec::with_capacity(len as usize);
+                for index in 0..len {
+                    let message = match shape % 3 {
+                        0 => Message::user(format!("text-{index}")),
+                        1 => tool_use(if index % 2 == 0 { "A" } else { "B" }),
+                        _ => tool_result(if index % 2 == 0 { "A" } else { "B" }),
+                    };
+                    messages.push(message);
+                    shape /= 3;
+                }
+                for keep_from in 0..=messages.len() + 1 {
+                    let cut = safe_tail_cut(&messages, keep_from);
+                    assert!(cut <= keep_from.min(messages.len()));
+                    let all_uses: std::collections::HashSet<&str> = messages
+                        .iter()
+                        .flat_map(|message| message.content.iter())
+                        .filter_map(|block| match block {
+                            ContentBlock::ToolUse { id, .. } => Some(id.as_str()),
+                            _ => None,
+                        })
+                        .collect();
+                    let tail_uses: std::collections::HashSet<&str> = messages[cut..]
+                        .iter()
+                        .flat_map(|message| message.content.iter())
+                        .filter_map(|block| match block {
+                            ContentBlock::ToolUse { id, .. } => Some(id.as_str()),
+                            _ => None,
+                        })
+                        .collect();
+                    for result_id in messages[cut..]
+                        .iter()
+                        .flat_map(|message| message.content.iter())
+                        .filter_map(|block| match block {
+                            ContentBlock::ToolResult { tool_use_id, .. } => {
+                                Some(tool_use_id.as_str())
+                            }
+                            _ => None,
+                        })
+                    {
+                        assert!(
+                            !all_uses.contains(result_id) || tail_uses.contains(result_id),
+                            "pair split at cut={cut} keep_from={keep_from} messages={messages:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn min_summary_seed_chars_is_reasonable() {
         const { assert!(MIN_SUMMARY_SEED_CHARS >= 100) };
     }

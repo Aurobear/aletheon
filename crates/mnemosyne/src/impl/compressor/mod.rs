@@ -216,11 +216,10 @@ impl AdvancedCompressor {
         }
 
         // Segments that will leave the main buffer — surfaced for promotion.
-        let evicted = if strategy == CompactionStrategy::PromoteToMemory {
-            old_messages.to_vec()
-        } else {
-            Vec::new()
-        };
+        // Every removed message is reported to the harness. The harness may
+        // promote it through its bounded callback; the strategy controls the
+        // compaction shape, not whether removal remains observable.
+        let evicted = old_messages.to_vec();
         let tail_messages = &messages[cut..];
 
         let latest_text_user = messages.iter().rposition(|message| {
@@ -641,5 +640,40 @@ mod tests {
             Some(CompactionFailure::TooShortToSummarize)
         ));
         assert_eq!(serde_json::to_value(&messages).unwrap(), snapshot);
+    }
+
+    #[tokio::test]
+    async fn full_replace_applies_good_summary_and_preserves_recent_tail() {
+        let mut compressor = AdvancedCompressor::new(100, 200, 1_000);
+        let mut messages = (0..8)
+            .map(|index| {
+                if index % 2 == 0 {
+                    Message::user(format!("request {index} {}", "x".repeat(2_000)))
+                } else {
+                    Message::assistant(format!("response {index} {}", "y".repeat(2_000)))
+                }
+            })
+            .collect::<Vec<_>>();
+        let latest = serde_json::to_value(messages.last().unwrap()).unwrap();
+        let outcome = compressor
+            .compact_v2_impl(
+                &mut messages,
+                &GoodLlm,
+                CompactionStrategy::FullReplace,
+                true,
+            )
+            .await
+            .unwrap();
+
+        assert!(outcome.applied);
+        assert_eq!(outcome.strategy, CompactionStrategy::FullReplace);
+        assert!(outcome.failure.is_none());
+        assert!(!outcome.evicted.is_empty());
+        assert_eq!(
+            serde_json::to_value(messages.last().unwrap()).unwrap(),
+            latest
+        );
+        assert!(matches!(messages[0].role, fabric::Role::System));
+        assert!(outcome.tokens_after < outcome.tokens_before);
     }
 }

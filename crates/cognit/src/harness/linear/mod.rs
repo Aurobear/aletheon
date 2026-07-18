@@ -28,6 +28,7 @@ use fabric::message::Message;
 use fabric::policy::verifier::Verifier;
 use fabric::self_field::{Intent, IntentSource};
 use fabric::{Clock, CompactionStrategy, ToolDefinition};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Thin wrapper to allow passing `&dyn LlmProvider` to generic functions
@@ -81,6 +82,27 @@ pub trait BatchPlanner: Send + Sync {
 /// Shared between `ReActLoop` and `Controller` to keep them in sync.
 pub const PLAN_MODE_MARKER: &str = "[PLAN MODE ACTIVE]";
 
+static COMPACTION_DEGENERATE_TOTAL: AtomicU64 = AtomicU64::new(0);
+static COMPACTION_SAMPLER_ERROR_TOTAL: AtomicU64 = AtomicU64::new(0);
+static COMPACTION_EVICTED_MESSAGES_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CompactionMetrics {
+    pub degenerate_total: u64,
+    pub sampler_error_total: u64,
+    pub evicted_messages_total: u64,
+}
+
+pub fn compaction_metrics() -> CompactionMetrics {
+    CompactionMetrics {
+        degenerate_total: COMPACTION_DEGENERATE_TOTAL.load(Ordering::Relaxed),
+        sampler_error_total: COMPACTION_SAMPLER_ERROR_TOTAL.load(Ordering::Relaxed),
+        evicted_messages_total: COMPACTION_EVICTED_MESSAGES_TOTAL.load(Ordering::Relaxed),
+    }
+}
+
+pub type EvictedCallback = Arc<dyn Fn(Vec<Message>) + Send + Sync>;
+
 /// The ReAct (Reason + Act) iteration loop
 /// This is the core cognitive cycle extracted from Engine::run_turn()
 pub struct ReActLoop {
@@ -121,6 +143,9 @@ pub struct ReActLoop {
     /// Optional batch planner — called before each tool-execution batch to
     /// reorder calls according to conscious arbitration policy.
     batch_planner: Option<Arc<dyn BatchPlanner>>,
+    /// Bounded handoff for messages removed by guarded compaction. None is the
+    /// documented no-op until a Mnemosyne promoter is composed.
+    evicted_callback: Option<EvictedCallback>,
     /// Clock for deterministic time (mono/wall).
     clock: Arc<dyn Clock>,
 }
@@ -163,6 +188,7 @@ impl ReActLoop {
             max_verify_attempts: 2,
             dasein_ctx_provider: None,
             batch_planner: None,
+            evicted_callback: None,
             clock,
         }
     }
@@ -181,7 +207,11 @@ impl ReActLoop {
     /// degenerate summary or sampler failure then leaves the buffer unchanged,
     /// logged), otherwise the legacy `maybe_compact`. Errors are swallowed: a
     /// proactive pass must never fail the turn.
-    async fn run_proactive_compaction(&mut self, llm: &dyn LlmProvider) {
+    async fn run_proactive_compaction(
+        &mut self,
+        llm: &dyn LlmProvider,
+        event_sink: Option<&dyn crate::harness::event_sink::EventSink>,
+    ) {
         if self.config.compaction_v2 {
             match self
                 .compressor
@@ -189,6 +219,7 @@ impl ReActLoop {
                 .await
             {
                 Ok(outcome) => {
+                    self.observe_compaction_outcome(&outcome, event_sink);
                     if let Some(failure) = &outcome.failure {
                         tracing::warn!(
                             ?failure,
@@ -206,12 +237,17 @@ impl ReActLoop {
     /// Reactive compaction on a context-overflow error. Same v2/legacy routing
     /// as the proactive path, but errors propagate so the caller can decide
     /// whether the retried completion is still viable.
-    async fn run_reactive_compaction(&mut self, llm: &dyn LlmProvider) -> anyhow::Result<()> {
+    async fn run_reactive_compaction(
+        &mut self,
+        llm: &dyn LlmProvider,
+        event_sink: Option<&dyn crate::harness::event_sink::EventSink>,
+    ) -> anyhow::Result<()> {
         if self.config.compaction_v2 {
             let outcome = self
                 .compressor
                 .maybe_compact_v2(&mut self.messages, llm, CompactionStrategy::TailKeep)
                 .await?;
+            self.observe_compaction_outcome(&outcome, event_sink);
             if let Some(failure) = &outcome.failure {
                 tracing::warn!(
                     ?failure,
@@ -224,6 +260,42 @@ impl ReActLoop {
                 .await?;
         }
         Ok(())
+    }
+
+    fn observe_compaction_outcome(
+        &self,
+        outcome: &fabric::CompactionOutcome,
+        event_sink: Option<&dyn crate::harness::event_sink::EventSink>,
+    ) {
+        match outcome.failure.as_ref() {
+            Some(fabric::CompactionFailure::DegenerateSummary { .. }) => {
+                COMPACTION_DEGENERATE_TOTAL.fetch_add(1, Ordering::Relaxed);
+            }
+            Some(fabric::CompactionFailure::SamplerError { .. }) => {
+                COMPACTION_SAMPLER_ERROR_TOTAL.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+        COMPACTION_EVICTED_MESSAGES_TOTAL
+            .fetch_add(outcome.evicted.len() as u64, Ordering::Relaxed);
+        if let Some(event_sink) = event_sink {
+            event_sink.emit(crate::harness::event_sink::Event::CompactionOutcome {
+                strategy: format!("{:?}", outcome.strategy).to_ascii_lowercase(),
+                applied: outcome.applied,
+                tokens_before: outcome.tokens_before,
+                tokens_after: outcome.tokens_after,
+                evicted_messages: outcome.evicted.len(),
+                failure: outcome
+                    .failure
+                    .as_ref()
+                    .map(|failure| format!("{failure:?}")),
+            });
+        }
+        if !outcome.evicted.is_empty() {
+            if let Some(callback) = &self.evicted_callback {
+                callback(outcome.evicted.clone());
+            }
+        }
     }
 
     /// Number of messages in the conversation buffer.
@@ -346,6 +418,12 @@ impl ReActLoop {
     pub fn set_batch_planner(&mut self, planner: Arc<dyn BatchPlanner>) {
         self.batch_planner = Some(planner);
     }
+
+    /// Install the bounded evicted-message promoter. The callback receives one
+    /// owned batch after the buffer mutation has succeeded.
+    pub fn set_evicted_callback(&mut self, callback: EvictedCallback) {
+        self.evicted_callback = Some(callback);
+    }
 }
 
 /// Check if an error indicates a context window overflow.
@@ -445,9 +523,12 @@ mod tests {
                 legacy: legacy.clone(),
             }),
         );
-        lp.run_proactive_compaction(&ScriptedLlm {
-            calls: Mutex::new(0),
-        })
+        lp.run_proactive_compaction(
+            &ScriptedLlm {
+                calls: Mutex::new(0),
+            },
+            None,
+        )
         .await;
         assert_eq!(v2.load(Ordering::SeqCst), 1, "v2 path should be taken");
         assert_eq!(legacy.load(Ordering::SeqCst), 0, "legacy must not run");
@@ -468,9 +549,12 @@ mod tests {
                 legacy: legacy.clone(),
             }),
         );
-        lp.run_proactive_compaction(&ScriptedLlm {
-            calls: Mutex::new(0),
-        })
+        lp.run_proactive_compaction(
+            &ScriptedLlm {
+                calls: Mutex::new(0),
+            },
+            None,
+        )
         .await;
         assert_eq!(
             legacy.load(Ordering::SeqCst),
@@ -478,6 +562,84 @@ mod tests {
             "legacy path should be taken"
         );
         assert_eq!(v2.load(Ordering::SeqCst), 0, "v2 must not run");
+    }
+
+    struct CollectingEventSink(Mutex<Vec<crate::harness::event_sink::Event>>);
+
+    impl crate::harness::event_sink::EventSink for CollectingEventSink {
+        fn emit(&self, event: crate::harness::event_sink::Event) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    #[test]
+    fn compaction_outcome_updates_metrics_emits_event_and_hands_off_evicted() {
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        let promoted = Arc::new(Mutex::new(Vec::<Message>::new()));
+        let promoted_clone = promoted.clone();
+        lp.set_evicted_callback(Arc::new(move |messages| {
+            promoted_clone.lock().unwrap().extend(messages);
+        }));
+        let sink = CollectingEventSink(Mutex::new(Vec::new()));
+        let before = compaction_metrics();
+        let failed = CompactionOutcome {
+            strategy: CompactionStrategy::TailKeep,
+            applied: false,
+            tokens_before: 100,
+            tokens_after: 100,
+            evicted: Vec::new(),
+            failure: Some(fabric::CompactionFailure::DegenerateSummary {
+                reason: "short".into(),
+            }),
+        };
+        let applied = CompactionOutcome {
+            strategy: CompactionStrategy::TailKeep,
+            applied: true,
+            tokens_before: 100,
+            tokens_after: 50,
+            evicted: vec![Message::user("remember this")],
+            failure: None,
+        };
+
+        lp.observe_compaction_outcome(&failed, Some(&sink));
+        lp.observe_compaction_outcome(&applied, Some(&sink));
+
+        let after = compaction_metrics();
+        assert!(after.degenerate_total >= before.degenerate_total + 1);
+        assert!(after.evicted_messages_total >= before.evicted_messages_total + 1);
+        assert_eq!(promoted.lock().unwrap().len(), 1);
+        let events = sink.0.lock().unwrap();
+        assert!(matches!(
+            &events[1],
+            crate::harness::event_sink::Event::CompactionOutcome {
+                strategy,
+                applied: true,
+                tokens_before: 100,
+                tokens_after: 50,
+                evicted_messages: 1,
+                failure: None,
+            } if strategy == "tailkeep"
+        ));
+    }
+
+    #[test]
+    fn sampler_failure_increments_its_distinct_metric() {
+        let lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        let before = compaction_metrics();
+        lp.observe_compaction_outcome(
+            &CompactionOutcome {
+                strategy: CompactionStrategy::FullReplace,
+                applied: false,
+                tokens_before: 1,
+                tokens_after: 1,
+                evicted: Vec::new(),
+                failure: Some(fabric::CompactionFailure::SamplerError {
+                    detail: "offline".into(),
+                }),
+            },
+            None,
+        );
+        assert!(compaction_metrics().sampler_error_total >= before.sampler_error_total + 1);
     }
 
     struct ScriptedLlm {

@@ -41,7 +41,7 @@ impl ReActLoop {
                 Err(e) if is_context_overflow(&e) => {
                     // A3: reactive compaction on context overflow
                     warn!("Context overflow detected, forcing compaction: {e}");
-                    self.run_reactive_compaction(llm).await?;
+                    self.run_reactive_compaction(llm, None).await?;
                     llm.complete(&self.messages, tool_defs).await?
                 }
                 Err(e) => return Err(e),
@@ -375,7 +375,7 @@ impl ReActLoop {
 
             // A2: proactive compaction after pushing tool results
             if self.config.compaction_enabled {
-                self.run_proactive_compaction(llm).await;
+                self.run_proactive_compaction(llm, None).await;
             }
         }
 

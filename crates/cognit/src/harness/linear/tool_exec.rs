@@ -66,7 +66,7 @@ impl ReActLoop {
                 Ok(s) => s,
                 Err(e) if is_context_overflow(&e) => {
                     warn!("Context overflow detected, forcing compaction: {e}");
-                    self.run_reactive_compaction(llm).await?;
+                    self.run_reactive_compaction(llm, Some(event_sink)).await?;
                     llm.complete_stream(&self.messages, tool_defs).await?
                 }
                 Err(e) => return Err(e),
@@ -558,7 +558,8 @@ impl ReActLoop {
             }
 
             if self.config.compaction_enabled {
-                self.run_proactive_compaction(llm as &dyn LlmProvider).await;
+                self.run_proactive_compaction(llm as &dyn LlmProvider, Some(event_sink))
+                    .await;
             }
         }
 

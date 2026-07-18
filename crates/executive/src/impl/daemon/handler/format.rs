@@ -119,6 +119,7 @@ pub fn event_to_client_event(event: &Event) -> Option<ClientEvent> {
         | Event::AskRequest { .. }
         | Event::CompactionStarted
         | Event::CompactionDone { .. }
+        | Event::CompactionOutcome { .. }
         | Event::MemoryUpdated { .. }
         | Event::PlanModeChanged { .. }
         | Event::CacheDiagnostics { .. } => None,

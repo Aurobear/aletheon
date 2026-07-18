@@ -276,6 +276,17 @@ pub enum TurnEventV1 {
         threshold: usize,
         reason: String,
     },
+    /// Guarded C1 compaction result. This is emitted for applied, skipped, and
+    /// classified failure outcomes so projections never infer success from a
+    /// trigger alone.
+    CompactionOutcome {
+        strategy: String,
+        applied: bool,
+        tokens_before: usize,
+        tokens_after: usize,
+        evicted_messages: usize,
+        failure: Option<String>,
+    },
     Reflection {
         summary: String,
         recommendation: String,

@@ -116,6 +116,15 @@ pub enum Event {
         threshold: usize,
         reason: String,
     },
+    /// Rich guarded compaction result (C1).
+    CompactionOutcome {
+        strategy: String,
+        applied: bool,
+        tokens_before: usize,
+        tokens_after: usize,
+        evicted_messages: usize,
+        failure: Option<String>,
+    },
 }
 
 /// Project Cognit's internal lifecycle vocabulary onto the canonical turn
@@ -219,6 +228,21 @@ impl From<Event> for TurnEventV1 {
                 threshold,
                 reason,
             },
+            Event::CompactionOutcome {
+                strategy,
+                applied,
+                tokens_before,
+                tokens_after,
+                evicted_messages,
+                failure,
+            } => Self::CompactionOutcome {
+                strategy,
+                applied,
+                tokens_before,
+                tokens_after,
+                evicted_messages,
+                failure,
+            },
             Event::ApprovalRequest {
                 id,
                 tool,
@@ -260,6 +284,30 @@ impl From<&ToolResult> for ToolResultEvent {
             is_error: tr.is_error,
             execution_time_ms: tr.metadata.execution_time_ms,
         }
+    }
+}
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+
+    #[test]
+    fn compaction_outcome_projects_to_canonical_turn_event() {
+        let event: TurnEventV1 = Event::CompactionOutcome {
+            strategy: "fullreplace".into(),
+            applied: true,
+            tokens_before: 900,
+            tokens_after: 300,
+            evicted_messages: 4,
+            failure: None,
+        }
+        .into();
+        let encoded = serde_json::to_value(event).unwrap();
+        assert_eq!(encoded["type"], "compaction_outcome");
+        assert_eq!(encoded["strategy"], "fullreplace");
+        assert_eq!(encoded["tokens_before"], 900);
+        assert_eq!(encoded["evicted_messages"], 4);
+        assert!(encoded["failure"].is_null());
     }
 }
 

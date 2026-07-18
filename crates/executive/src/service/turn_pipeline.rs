@@ -1051,10 +1051,12 @@ fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
             reason: reason.clone(),
         }),
         TurnEventV1::CompactionTriggered { .. } => Some(ClientEvent::CompactionTriggered),
-        // TextDeltaStop, Approval and Generic have no client-facing projection.
-        TurnEventV1::TextDeltaStop | TurnEventV1::Approval { .. } | TurnEventV1::Generic { .. } => {
-            None
-        }
+        // Outcome remains on the canonical turn stream for audit/metrics; the
+        // legacy UI only has a generic triggered marker.
+        TurnEventV1::CompactionOutcome { .. }
+        | TurnEventV1::TextDeltaStop
+        | TurnEventV1::Approval { .. }
+        | TurnEventV1::Generic { .. } => None,
     }
 }
 
