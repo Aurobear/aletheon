@@ -512,6 +512,7 @@ async fn connected_manager(state: HttpState) -> McpManager {
             trust: McpTrustLevel::RemoteTrusted,
             enabled: true,
             bearer_token_env: None,
+            request_timeout_ms: None,
         }],
         ..Default::default()
     });

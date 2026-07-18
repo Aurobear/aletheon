@@ -178,6 +178,7 @@ async fn build_adapter(state: FakeState, timeout: Duration) -> (GbrainMcpAdapter
             trust: McpTrustLevel::RemoteTrusted,
             enabled: true,
             bearer_token_env: None,
+            request_timeout_ms: None,
         }],
         ..Default::default()
     });
