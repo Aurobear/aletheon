@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,8 +18,25 @@ use crate::security::strategy::{resolve_strategy, ToolExecutionStrategy};
 use fabric::execpolicy::{Decision as ExecDecision, Policy as ExecPolicy};
 use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use fabric::{
-    resolve_profile, PermissionBehavior, PermissionContext, ProfileName, SandboxProfiles,
+    resolve_profile, PermissionBehavior, PermissionContext, ProfileName, ProfileResolveError,
+    SandboxProfiles,
 };
+
+static SANDBOX_FS_VIOLATION_TOTAL: AtomicU64 = AtomicU64::new(0);
+static SANDBOX_GLOB_OVERFLOW_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SandboxMetricSnapshot {
+    pub sandbox_fs_violation_total: u64,
+    pub sandbox_glob_overflow_total: u64,
+}
+
+pub fn sandbox_metrics() -> SandboxMetricSnapshot {
+    SandboxMetricSnapshot {
+        sandbox_fs_violation_total: SANDBOX_FS_VIOLATION_TOTAL.load(Ordering::Relaxed),
+        sandbox_glob_overflow_total: SANDBOX_GLOB_OVERFLOW_TOTAL.load(Ordering::Relaxed),
+    }
+}
 
 #[derive(Debug)]
 pub enum ToolError {
@@ -480,7 +498,41 @@ impl ToolRunnerWithGuard {
                         .parse()
                         .unwrap_or(ProfileName::Workspace);
                     match resolve_profile(&name, &workspace, profiles) {
-                        Ok(p) => {
+                        Ok(mut p) => {
+                            let mut expansion_roots = vec![workspace.cwd().to_path_buf()];
+                            expansion_roots.extend(workspace.writable_roots().iter().cloned());
+                            expansion_roots.sort();
+                            expansion_roots.dedup();
+                            match fabric::expand_deny_globs(&p.deny_globs, &expansion_roots) {
+                                Ok(expanded) => {
+                                    for path in expanded {
+                                        if !p.deny_exact.contains(&path) {
+                                            p.deny_exact.push(path);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    SANDBOX_FS_VIOLATION_TOTAL.fetch_add(1, Ordering::Relaxed);
+                                    SANDBOX_GLOB_OVERFLOW_TOTAL.fetch_add(1, Ordering::Relaxed);
+                                    self.publish_sandbox_event(
+                                        fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
+                                        serde_json::json!({
+                                            "event": "sandbox.violation",
+                                            "target": name.to_string(),
+                                            "operation": "expand_deny_globs",
+                                            "principal": ctx.approval_authority.as_ref().map(|a| a.principal_id.0.as_str()),
+                                            "agent": ctx.agent.as_ref().map(|a| a.parent_agent_id.0.to_string()),
+                                            "reason": e.to_string(),
+                                        }),
+                                    )
+                                    .await;
+                                    return Err(ToolError::PolicyDenied {
+                                        reason: format!(
+                                            "sandbox profile '{name}' deny globs could not be expanded (fail-closed): {e}"
+                                        ),
+                                    });
+                                }
+                            }
                             tracing::debug!(
                                 profile = %p.name,
                                 restrict_network = p.restrict_network,
@@ -491,6 +543,10 @@ impl ToolRunnerWithGuard {
                             Some(p)
                         }
                         Err(e) => {
+                            SANDBOX_FS_VIOLATION_TOTAL.fetch_add(1, Ordering::Relaxed);
+                            if matches!(&e, ProfileResolveError::GlobOverflow) {
+                                SANDBOX_GLOB_OVERFLOW_TOTAL.fetch_add(1, Ordering::Relaxed);
+                            }
                             self.publish_sandbox_event(
                                 fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
                                 serde_json::json!({
@@ -566,6 +622,7 @@ impl ToolRunnerWithGuard {
                 let violation = sandbox_result.as_ref().err().map(ToString::to_string);
                 if sandbox_config.policy.is_some() {
                     if let Some(reason) = violation {
+                        SANDBOX_FS_VIOLATION_TOTAL.fetch_add(1, Ordering::Relaxed);
                         self.publish_sandbox_event(
                             fabric::SchemaId::EVENT_SANDBOX_VIOLATION_V1,
                             serde_json::json!({
@@ -1041,6 +1098,7 @@ mod tests {
         let mut runner = make_runner(Arc::new(AutoApproveGate))
             .with_sandbox_profiles(profiles)
             .with_event_bus(bus);
+        let before = sandbox_metrics();
 
         let result = runner
             .execute_tool(
@@ -1057,6 +1115,139 @@ mod tests {
         assert_eq!(event.payload["target"], "missing-custom");
         assert_eq!(event.payload["operation"], "resolve_profile");
         assert_eq!(event.payload["principal"], "test");
+        assert!(
+            sandbox_metrics().sandbox_fs_violation_total >= before.sandbox_fs_violation_total + 1
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_deny_globs_are_expanded_before_backend_execution() {
+        let workspace = tempfile::tempdir().unwrap();
+        let denied = workspace.path().join(".env");
+        std::fs::write(&denied, "secret").unwrap();
+        let mut ctx = make_ctx();
+        ctx.working_dir = workspace.path().to_path_buf();
+        ctx.approval_authority.as_mut().unwrap().workspace =
+            fabric::WorkspacePolicy::from_resolved_roots(
+                workspace.path().to_path_buf(),
+                Vec::new(),
+            )
+            .unwrap();
+        let profiles = fabric::SandboxProfiles {
+            default_profile: "guarded".into(),
+            profiles: std::collections::BTreeMap::from([(
+                "guarded".into(),
+                fabric::SandboxProfileConfig {
+                    extends: Some("workspace".into()),
+                    restrict_network: None,
+                    read_only: Vec::new(),
+                    read_write: Vec::new(),
+                    deny: vec!["**/.env".into()],
+                },
+            )]),
+        };
+        let bus = Arc::new(fabric::CanonicalEventBus::new(8));
+        let mut events = bus.subscribe_channel(fabric::SchemaId(
+            fabric::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1.into(),
+        ));
+        let mut runner = make_runner(Arc::new(AutoApproveGate))
+            .with_sandbox_profiles(profiles)
+            .with_event_bus(bus);
+
+        runner
+            .execute_tool(
+                &DummyL2Tool,
+                serde_json::json!({"command": "printf ok"}),
+                &ctx,
+                "glob-expansion-turn",
+            )
+            .await
+            .expect("sandboxed execution");
+
+        let event = events.recv().await.expect("profile applied event");
+        assert!(event.payload["deny_exact"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == denied.to_str().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn deny_glob_overflow_is_counted_and_fails_closed() {
+        let profiles = fabric::SandboxProfiles {
+            default_profile: "overflow".into(),
+            profiles: std::collections::BTreeMap::from([(
+                "overflow".into(),
+                fabric::SandboxProfileConfig {
+                    extends: Some("workspace".into()),
+                    restrict_network: None,
+                    read_only: Vec::new(),
+                    read_write: Vec::new(),
+                    deny: (0..=fabric::DENY_GLOB_MAX_ENTRIES)
+                        .map(|index| format!("**/secret-{index}*"))
+                        .collect(),
+                },
+            )]),
+        };
+        let before = sandbox_metrics();
+        let mut runner = make_runner(Arc::new(AutoApproveGate)).with_sandbox_profiles(profiles);
+
+        let result = runner
+            .execute_tool(
+                &DummyL2Tool,
+                serde_json::json!({"command": "printf must-not-run"}),
+                &make_ctx(),
+                "glob-overflow-turn",
+            )
+            .await;
+
+        assert!(matches!(result, Err(ToolError::PolicyDenied { .. })));
+        assert!(
+            sandbox_metrics().sandbox_glob_overflow_total >= before.sandbox_glob_overflow_total + 1
+        );
+    }
+
+    #[tokio::test]
+    async fn child_agent_context_cannot_widen_the_daemon_bound_profile() {
+        let bus = Arc::new(fabric::CanonicalEventBus::new(8));
+        let mut events = bus.subscribe_channel(fabric::SchemaId(
+            fabric::SchemaId::EVENT_SANDBOX_PROFILE_APPLIED_V1.into(),
+        ));
+        let mut runner = make_runner(Arc::new(AutoApproveGate))
+            .with_sandbox_profiles(fabric::SandboxProfiles::default())
+            .with_event_bus(bus);
+        let parent_ctx = make_ctx();
+        let mut child_ctx = make_ctx();
+        child_ctx.agent = Some(fabric::AgentToolContext {
+            caller_root_agent_id: fabric::AgentId::new(),
+            parent_agent_id: fabric::AgentId::new(),
+            parent_process_id: fabric::ProcessId::new(),
+        });
+
+        runner
+            .execute_tool(
+                &DummyL2Tool,
+                serde_json::json!({"command": "printf parent"}),
+                &parent_ctx,
+                "parent-profile-turn",
+            )
+            .await
+            .unwrap();
+        runner
+            .execute_tool(
+                &DummyL2Tool,
+                serde_json::json!({"command": "printf child"}),
+                &child_ctx,
+                "child-profile-turn",
+            )
+            .await
+            .unwrap();
+
+        let parent = events.recv().await.unwrap();
+        let child = events.recv().await.unwrap();
+        assert_eq!(parent.payload["profile"], child.payload["profile"]);
+        assert_eq!(child.payload["profile"], "workspace");
+        assert!(child.payload["agent"].is_string());
     }
 
     #[tokio::test]
