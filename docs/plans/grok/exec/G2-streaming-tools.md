@@ -1,7 +1,7 @@
 # G2 可执行 Spec：Streaming Tool Runtime
 
 > 对应研究文档 `../03-streaming-tool-runtime.md`。优先级 P0。
-> **状态（2026-07-18）**：T1–T18 的实现与定向验证已完成；§8 属性测试及 §9 全部协议违规日志仍待收口。
+> **状态（2026-07-18）**：T1–T18、§8 属性测试与 §9 协议违规诊断均已完成，并通过定向测试、严格 Clippy 与 workspace rustfmt gate。
 > 实施前按 `README.md §5` 重新核对 §2 锚点。
 
 ## 1. 目标与非目标
@@ -201,7 +201,7 @@ ToolProgress {
 
 ## 6. 任务分解（TDD，2-5 分钟粒度）
 
-**实现证据**：T1–T18 的提交与定向测试映射见 `00-EXECUTION-INDEX.md §1.4`；最终关闭仍以 §8–§9 为准。
+**完成证据**：T1–T18、§8–§9 的提交与定向测试映射见 `00-EXECUTION-INDEX.md §1.4`。
 
 **阶段 A：Fabric 契约（无行为变更）**
 - T1. 新建 `tool_stream.rs`，写 `ToolExecutionEvent`/`ToolProgress`/`ToolNotification`/`ToolExecutionError` 类型。`cargo check -p fabric`。
