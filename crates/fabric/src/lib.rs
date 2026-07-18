@@ -107,6 +107,11 @@ pub use types::conscious_field_metrics::{
     quantize, FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot,
     MAX_FIELD_METRIC_HISTORY, QUIET_CONVERGENCE_WINDOW,
 };
+pub use types::prompt_queue::{
+    evaluate_cancel, evaluate_edit, truncate_prompt_content, PromptEnvelope, PromptId, PromptKind,
+    PromptState, QueueOpResult, QueueSnapshot, MAX_INTERJECTION_BYTES, MAX_PROMPT_BYTES,
+    MAX_QUEUE_LEN,
+};
 pub use types::workspace::{
     ActionProposalFrame, BroadcastAck, BroadcastAckStatus, BroadcastDelivery, BroadcastEpoch,
     CandidateScore, CareConcernFrame, ContentId, GoalFrame, GovernedActionOutcomeFrame,

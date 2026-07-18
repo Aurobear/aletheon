@@ -26,6 +26,7 @@ pub mod legacy_session_service;
 pub mod memory_consolidation_worker;
 pub mod post_turn;
 pub mod pre_turn;
+pub mod session_input;
 pub mod session_service;
 pub mod thread_authority;
 pub mod tool_stream_bridge;

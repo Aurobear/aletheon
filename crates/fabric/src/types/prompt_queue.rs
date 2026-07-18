@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::types::admission::PrincipalId;
 use crate::types::local_authority::{ConnectionId, ThreadId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PromptId(pub Uuid);
 
 impl PromptId {
@@ -84,6 +84,31 @@ pub enum QueueOpResult {
 pub const MAX_QUEUE_LEN: usize = 64;
 pub const MAX_PROMPT_BYTES: usize = 128 * 1024;
 pub const MAX_INTERJECTION_BYTES: usize = 16 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueSnapshot {
+    pub thread_id: ThreadId,
+    pub running: Option<PromptId>,
+    pub pending: Vec<PromptEnvelope>,
+    pub queue_position: std::collections::BTreeMap<PromptId, usize>,
+}
+
+/// Bound prompt content without splitting a UTF-8 code point. Returns the
+/// retained content and the number of dropped bytes for observability.
+pub fn truncate_prompt_content(kind: PromptKind, content: &str) -> (String, usize) {
+    let limit = match kind {
+        PromptKind::Prompt => MAX_PROMPT_BYTES,
+        PromptKind::Interjection => MAX_INTERJECTION_BYTES,
+    };
+    if content.len() <= limit {
+        return (content.to_owned(), 0);
+    }
+    let mut end = limit;
+    while !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    (content[..end].to_owned(), content.len() - end)
+}
 
 /// Pure edit rule (optimistic concurrency + authority checks). The coordinator
 /// calls this before persisting; keeping it pure makes the concurrency
@@ -239,5 +264,14 @@ mod tests {
         let json = serde_json::to_string(&e).unwrap();
         let back: PromptEnvelope = serde_json::from_str(&json).unwrap();
         assert_eq!(e, back);
+    }
+
+    #[test]
+    fn interjection_truncation_preserves_utf8_boundary() {
+        let content = format!("{}界", "a".repeat(MAX_INTERJECTION_BYTES - 1));
+        let (bounded, dropped) = truncate_prompt_content(PromptKind::Interjection, &content);
+        assert_eq!(bounded.len(), MAX_INTERJECTION_BYTES - 1);
+        assert_eq!(dropped, "界".len());
+        assert!(bounded.is_char_boundary(bounded.len()));
     }
 }
