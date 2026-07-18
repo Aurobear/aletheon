@@ -16,7 +16,7 @@ pub mod launcher;
 pub mod systemd;
 
 use aletheon_kernel::chronos::SystemTimer;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use fabric::Timer;
 use std::path::PathBuf;
 
@@ -150,28 +150,43 @@ impl RuntimeHost for DaemonHost {
 
     async fn serve(self: Box<Self>) -> Result<()> {
         let core = self.core.expect("init() must be called before serve()");
+        let mut exec_server = if core.app_config.grok_hardening.streaming_tools {
+            use crate::r#impl::channel::exec_server_client::{ExecServerClient, ExecServerConfig};
+
+            let working_dir = PathBuf::from(&core.daemon_config.working_dir)
+                .canonicalize()
+                .context("canonicalize exec-server workspace root")?;
+            let binary_path = exec_server_binary_path()?;
+            // A fresh, unlogged secret is scoped to this child and its private
+            // stdio session; it is never sourced from repository config.
+            let shared_secret = format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            );
+            let mut client = ExecServerClient::spawn(ExecServerConfig {
+                binary_path: binary_path.to_string_lossy().into_owned(),
+                shared_secret,
+                startup_timeout: std::time::Duration::from_secs(5),
+                request_timeout: std::time::Duration::from_secs(30),
+                workspace_roots: vec![working_dir],
+            })
+            .await?;
+            client
+                .ping()
+                .await
+                .context("exec-server startup ping failed")?;
+            info!(path = %binary_path.display(), "exec-server started");
+            Some(client)
+        } else {
+            None
+        };
         let request_handler = core.request_handler;
         let cancel_token = core.cancel_token;
         let socket = self.socket;
         let pulse_handle = core.pulse_handle;
         let pid_file = self.pid_file;
         let clock = request_handler.clock();
-
-        // TODO(D1-T9): Spawn exec-server when grok_hardening.streaming_tools is enabled.
-        // The ExecServerClient lives in crate::impl::channel::exec_server_client.
-        //
-        // let _exec_server = if core.app_config.grok_hardening.streaming_tools {
-        //     use crate::impl::channel::exec_server_client::{ExecServerClient, ExecServerConfig};
-        //     let client = ExecServerClient::spawn(ExecServerConfig {
-        //         binary_path: core.app_config.exec_server_path.clone(),
-        //         shared_secret: core.app_config.exec_server_secret.clone(),
-        //         startup_timeout: std::time::Duration::from_secs(5),
-        //         request_timeout: std::time::Duration::from_secs(30),
-        //     }).await?;
-        //     Some(client)
-        // } else {
-        //     None
-        // };
 
         // ── MCP embedded server ─────────────────────────────────────
         let mcp_socket = socket
@@ -229,6 +244,11 @@ impl RuntimeHost for DaemonHost {
                 .await;
         }
 
+        if let Some(client) = exec_server.as_mut() {
+            client.shutdown().await.context("shut down exec-server")?;
+            info!("exec-server stopped");
+        }
+
         // ── Remove PID file ─────────────────────────────────────────
         if let Some(ref pid_file) = pid_file {
             std::fs::remove_file(pid_file).ok();
@@ -257,6 +277,21 @@ impl RuntimeHost for DaemonHost {
 
         Ok(())
     }
+}
+
+fn exec_server_binary_path() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("ALETHEON_EXEC_SERVER_PATH") {
+        let path = PathBuf::from(path);
+        if path.as_os_str().is_empty() {
+            anyhow::bail!("ALETHEON_EXEC_SERVER_PATH must not be empty");
+        }
+        return Ok(path);
+    }
+    let current = std::env::current_exe().context("locate current daemon executable")?;
+    let directory = current
+        .parent()
+        .context("daemon executable has no parent directory")?;
+    Ok(directory.join("exec-server"))
 }
 
 #[cfg(test)]

@@ -17,6 +17,7 @@ fn main() -> io::Result<()> {
             "ALETHEON_EXEC_SERVER_SECRET must not be empty",
         ));
     }
+    let workspace_roots = filesystem::WorkspaceRoots::from_env()?;
     let stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
     let mut process_mgr = process::ProcessManager::new();
@@ -77,7 +78,7 @@ fn main() -> io::Result<()> {
             handshake_done = matches!(&response.result, protocol::ResponseResult::Ok { .. });
             response
         } else {
-            dispatch(&request, &mut process_mgr, &rt)
+            dispatch(&request, &mut process_mgr, &rt, &workspace_roots)
         };
 
         writeln!(
@@ -115,6 +116,7 @@ fn dispatch(
     req: &protocol::Request,
     pm: &process::ProcessManager,
     rt: &tokio::runtime::Runtime,
+    workspace_roots: &filesystem::WorkspaceRoots,
 ) -> protocol::Response {
     match req.method.as_str() {
         "ping" => protocol::Response::ok(req.id.clone(), serde_json::json!({"status": "ok"})),
@@ -129,18 +131,20 @@ fn dispatch(
             serde_json::json!({"status": "shutting_down"}),
         ),
         // Try filesystem methods
-        method if method.starts_with("fs/") => filesystem::handle_fs(method, &req.params)
-            .map(|mut r| {
-                r.id = req.id.clone();
-                r
-            })
-            .unwrap_or_else(|| {
-                protocol::Response::err(
-                    req.id.clone(),
-                    protocol::METHOD_NOT_FOUND,
-                    format!("Method not found: {}", req.method),
-                )
-            }),
+        method if method.starts_with("fs/") => {
+            filesystem::handle_fs(method, &req.params, workspace_roots)
+                .map(|mut r| {
+                    r.id = req.id.clone();
+                    r
+                })
+                .unwrap_or_else(|| {
+                    protocol::Response::err(
+                        req.id.clone(),
+                        protocol::METHOD_NOT_FOUND,
+                        format!("Method not found: {}", req.method),
+                    )
+                })
+        }
         _ => protocol::Response::err(
             req.id.clone(),
             protocol::METHOD_NOT_FOUND,

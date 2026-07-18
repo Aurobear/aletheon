@@ -3,6 +3,7 @@
 //! Spawns the exec-server binary as a child process and communicates
 //! via newline-delimited JSON-RPC over private stdin/stdout pipes.
 
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -20,6 +21,7 @@ pub(crate) struct ExecServerConfig {
     pub shared_secret: String,
     pub startup_timeout: Duration,
     pub request_timeout: Duration,
+    pub workspace_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -65,8 +67,14 @@ impl ExecServerClient {
         if config.shared_secret.is_empty() {
             bail!("exec-server shared secret must not be empty");
         }
+        if config.workspace_roots.is_empty() {
+            bail!("exec-server requires at least one workspace root");
+        }
+        let workspace_roots = serde_json::to_string(&config.workspace_roots)
+            .context("encode exec-server workspace roots")?;
         let mut child = Command::new(&config.binary_path)
             .env("ALETHEON_EXEC_SERVER_SECRET", &config.shared_secret)
+            .env("ALETHEON_EXEC_SERVER_WORKSPACE_ROOTS", workspace_roots)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

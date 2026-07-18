@@ -546,7 +546,7 @@ All filesystem operations in the exec-server enforce the sandbox profile. Before
 1. The target path is within `write_roots` (for writes) or `read_roots \cup write_roots` (for reads).
 2. The target path is not in `deny_paths`.
 3. Symlink traversal is resolved and checked against the profile.
-4. Operations outside permitted paths return error code `-32001` (sandbox denial).
+4. Operations outside permitted paths return error code `-32002` (sandbox denial).
 
 File handles support up to 128 concurrent open handles. Chunked reads support streaming large files without buffering the entire content in memory. Maximum file size for reads is 100MB (configurable).
 
