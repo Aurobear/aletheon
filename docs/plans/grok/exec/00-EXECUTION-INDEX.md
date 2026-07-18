@@ -68,10 +68,11 @@
 | `ac7fe197` | **Structured editing P1.1–P1.4**：结构化 patch 类型、文本/JSON parser、路径校验与四类文件操作执行器 | corpus | structured_patch 初始单测 |
 | `59e3d83b` | **Structured editing Phase 1 收尾**：`apply_patch` 双格式接入、Unicode/尾空白归一化、±3 后有界全文匹配、Add 防覆盖、hunk 失败进度 | corpus | apply_patch 11 + structured_patch 40 全走 |
 | `69c163a3` | **Testing infrastructure 兼容收尾**：mock response 生命周期、runtime fixture 新配置、并发 policy 生命周期、直接 event-spine 单调性验证 | executive tests | native runtime 9 + coordinator 22 全走 |
+| `ba1f05cb` | **G1 T12–T16**：Executive trust resolver/ports、principal+workspace 内存 upsert、已知 repo 执行配置的有界只读稳定 digest 发现 | executive | workspace_trust 4 全走 |
 
 **状态**：S1 端到端完成。`grok_hardening.sandbox_profiles = true` + 配置中声明 profiles → `resolve_profile` → `SandboxConfig.policy` → bubblewrap 施加 deny + network；关=逐字节旧行为。C1+S1 两条从契约贯通到激活。
 
-**尚未开始**：S1 T14（事件）、T15（收尾）；D1/D2/D3 桥接；G1–G8 Executive consumer 层。这些是多会话工程量（见 §4 序列）。
+**进行中**：G1 已完成 fabric T1–T11 与 Executive T12–T16；待 T17–T21（持久化、事件、装配与端到端验收）。S1 T14（事件）与 G3–G8 其余 consumer 收尾仍按 §4 序列推进。
 
 ## 2. 合并映射：Grok fabric × DeepSeek OUTSTANDING
 
