@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-use super::client::{McpClient, McpTool};
+use super::client::{McpClient, McpResource, McpTool};
 use super::config::McpTrustLevel;
 use crate::tools::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
@@ -79,6 +79,80 @@ impl Tool for McpToolWrapper {
             }
             Err(e) => ToolResult {
                 content: format!("MCP tool error: {}", e),
+                is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                },
+            },
+        }
+    }
+}
+
+/// Wraps an MCP resource as a Tool so it can be called by the harness.
+///
+/// Resources are read-only content accessed via `resources/read`.
+pub struct McpResourceProvider {
+    pub uri: String,
+    pub normalized_name: String,
+    pub mcp_resource: McpResource,
+    pub client: Arc<Mutex<McpClient>>,
+    /// The server this resource belongs to, used for permission override lookup.
+    pub server_name: String,
+    /// Per-server permission level overrides (server_name → PermissionLevel).
+    pub overrides: HashMap<String, PermissionLevel>,
+}
+
+#[async_trait]
+impl Tool for McpResourceProvider {
+    fn name(&self) -> &str {
+        &self.normalized_name
+    }
+
+    fn description(&self) -> &str {
+        self.mcp_resource
+            .description
+            .as_deref()
+            .unwrap_or("MCP resource")
+    }
+
+    fn input_schema(&self) -> Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        if let Some(override_level) = self.overrides.get(&self.server_name) {
+            return *override_level;
+        }
+        PermissionLevel::L0
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(McpResourceProvider {
+            uri: self.uri.clone(),
+            normalized_name: self.normalized_name.clone(),
+            mcp_resource: self.mcp_resource.clone(),
+            client: self.client.clone(),
+            server_name: self.server_name.clone(),
+            overrides: self.overrides.clone(),
+        })
+    }
+
+    async fn execute(&self, _input: Value, ctx: &ToolContext) -> ToolResult {
+        let mut client = self.client.lock().await;
+        let start = ctx.clock.mono_now();
+
+        match client.read_resource(&self.uri).await {
+            Ok(content) => ToolResult {
+                content: content.text,
+                is_error: false,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                },
+            },
+            Err(e) => ToolResult {
+                content: format!("Error reading resource: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),

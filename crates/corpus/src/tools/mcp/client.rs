@@ -2,20 +2,41 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 use super::auth::BearerTokenAuth;
 use super::config::{McpConfig, McpTransportConfig, McpTrustLevel};
-use super::transport::McpTransport;
-use super::wrapper::McpToolWrapper;
+use super::transport::{McpNotification, McpTransport};
+use super::wrapper::{McpResourceProvider, McpToolWrapper};
 
 /// Tool discovered from an MCP server.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpTool {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+}
+
+/// Resource content returned by an MCP server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceContent {
+    pub uri: String,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    pub text: String,
+}
+
+/// Resource discovered from an MCP server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpResource {
+    pub uri: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
 }
 
 /// MCP client for a single server.
@@ -25,6 +46,9 @@ pub struct McpClient {
     next_id: u64,
     pub trust_level: McpTrustLevel,
     pub tools: Vec<McpTool>,
+    pub resources: Vec<McpResource>,
+    /// Channel sender for notifications received from the server.
+    pub notification_tx: mpsc::Sender<McpNotification>,
 }
 
 impl McpClient {
@@ -35,6 +59,7 @@ impl McpClient {
         args: &[String],
         trust_level: McpTrustLevel,
     ) -> Result<Self> {
+        let (notification_tx, _notification_rx) = mpsc::channel(64);
         let mut transport = McpTransport::stdio(command, args).await?;
 
         // Initialize handshake
@@ -63,12 +88,18 @@ impl McpClient {
 
         tracing::info!(server = %server_name, count = tools.len(), "MCP tools discovered");
 
+        // Discover resources
+        let resources = Self::discover_resources(&mut transport, &server_name, 3).await
+            .unwrap_or_default();
+
         Ok(Self {
             server_name,
             transport,
-            next_id: 3,
+            next_id: 4,
             trust_level,
             tools,
+            resources,
+            notification_tx,
         })
     }
 
@@ -79,6 +110,7 @@ impl McpClient {
         auth: Option<BearerTokenAuth>,
         trust_level: McpTrustLevel,
     ) -> Result<Self> {
+        let (notification_tx, _notification_rx) = mpsc::channel(64);
         let mut transport = McpTransport::streamable_http(url, auth);
 
         // Initialize handshake
@@ -104,12 +136,18 @@ impl McpClient {
 
         tracing::info!(server = %server_name, count = tools.len(), "MCP HTTP tools discovered");
 
+        // Discover resources
+        let resources = Self::discover_resources(&mut transport, &server_name, 3).await
+            .unwrap_or_default();
+
         Ok(Self {
             server_name,
             transport,
-            next_id: 3,
+            next_id: 4,
             trust_level,
             tools,
+            resources,
+            notification_tx,
         })
     }
 
@@ -120,6 +158,7 @@ impl McpClient {
         auth: Option<BearerTokenAuth>,
         trust_level: McpTrustLevel,
     ) -> Result<Self> {
+        let (notification_tx, _notification_rx) = mpsc::channel(64);
         let mut transport = McpTransport::sse(url, auth).await?;
 
         // Initialize handshake
@@ -145,12 +184,18 @@ impl McpClient {
 
         tracing::info!(server = %server_name, count = tools.len(), "MCP SSE tools discovered");
 
+        // Discover resources
+        let resources = Self::discover_resources(&mut transport, &server_name, 3).await
+            .unwrap_or_default();
+
         Ok(Self {
             server_name,
             transport,
-            next_id: 3,
+            next_id: 4,
             trust_level,
             tools,
+            resources,
+            notification_tx,
         })
     }
 
@@ -184,6 +229,71 @@ impl McpClient {
         tools
     }
 
+    /// Discover resources from the server via `resources/list`.
+    async fn discover_resources(
+        transport: &mut McpTransport,
+        server_name: &str,
+        starting_id: u64,
+    ) -> Result<Vec<McpResource>> {
+        let result = transport
+            .request(starting_id, "resources/list", serde_json::json!({}))
+            .await;
+        match result {
+            Ok(response) => {
+                let resources = Self::parse_resources(&response);
+                tracing::info!(
+                    server = %server_name,
+                    count = resources.len(),
+                    "MCP resources discovered"
+                );
+                Ok(resources)
+            }
+            Err(e) => {
+                tracing::debug!(
+                    server = %server_name,
+                    error = %e,
+                    "MCP resources/list not supported by server"
+                );
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    fn parse_resources(result: &Value) -> Vec<McpResource> {
+        let mut resources = Vec::new();
+        if let Some(resources_array) = result.get("resources").and_then(|v| v.as_array()) {
+            for res_val in resources_array {
+                let uri = res_val
+                    .get("uri")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let name = res_val
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let description = res_val
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let mime_type = res_val
+                    .get("mimeType")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                if !uri.is_empty() && !name.is_empty() {
+                    resources.push(McpResource {
+                        uri,
+                        name,
+                        description,
+                        mime_type,
+                    });
+                }
+            }
+        }
+        resources
+    }
+
     /// Call a tool on this server.
     pub async fn call_tool(&mut self, tool_name: &str, args: Value) -> Result<Value> {
         let id = self.next_id;
@@ -209,6 +319,102 @@ impl McpClient {
             anyhow::bail!("MCP tool '{}' reported an application error", tool_name);
         }
         Ok(result)
+    }
+
+    /// List available resources from this server.
+    pub async fn list_resources(&mut self) -> Result<Vec<McpResource>> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let result = self
+            .transport
+            .request(id, "resources/list", serde_json::json!({}))
+            .await?;
+        Ok(Self::parse_resources(&result))
+    }
+
+    /// Read a specific resource by URI.
+    pub async fn read_resource(&mut self, uri: &str) -> Result<super::client::ResourceContent> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let result = self
+            .transport
+            .request(
+                id,
+                "resources/read",
+                serde_json::json!({"uri": uri}),
+            )
+            .await?;
+
+        // MCP resources/read returns the content array
+        let text = if let Some(contents) = result.get("contents").and_then(|v| v.as_array()) {
+            contents
+                .iter()
+                .filter_map(|c| {
+                    let mime_type = c.get("mimeType").and_then(|v| v.as_str()).unwrap_or("text/plain");
+                    // Prioritize "text" field, fall back to "blob" (but blob is base64 so we note it)
+                    if let Some(t) = c.get("text").and_then(|v| v.as_str()) {
+                        Some(t.to_string())
+                    } else if let Some(_b) = c.get("blob").and_then(|v| v.as_str()) {
+                        Some(format!("[base64 blob: mimeType={}]", mime_type))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        } else {
+            String::new()
+        };
+
+        let mime_type = result
+            .get("contents")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|c| c.get("mimeType"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        Ok(super::client::ResourceContent {
+            uri: uri.to_string(),
+            mime_type,
+            text,
+        })
+    }
+
+    /// Watch for `ToolsListChanged` notifications and re-discover tools.
+    ///
+    /// Callers should spawn this as a background task, passing the receive
+    /// side of the notification channel created at connect time.
+    pub async fn watch_tool_changes(&mut self, mut rx: mpsc::Receiver<McpNotification>) {
+        while let Some(notification) = rx.recv().await {
+            if matches!(notification, McpNotification::ToolsListChanged) {
+                let id = self.next_id;
+                self.next_id += 1;
+                match self
+                    .transport
+                    .request(id, "tools/list", serde_json::json!({}))
+                    .await
+                {
+                    Ok(result) => {
+                        let tools = Self::parse_tools(&result);
+                        tracing::info!(
+                            server = %self.server_name,
+                            old_count = self.tools.len(),
+                            new_count = tools.len(),
+                            "MCP tools re-discovered after ToolsListChanged"
+                        );
+                        self.tools = tools;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            server = %self.server_name,
+                            error = %e,
+                            "Failed to re-discover tools after ToolsListChanged"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -422,5 +628,56 @@ impl McpConnectionManager {
     pub fn server_tools(&self, server_name: &str) -> Option<Vec<McpTool>> {
         let client = self.clients.get(server_name)?.try_lock().ok()?;
         Some(client.tools.clone())
+    }
+
+    /// Get all resource providers from all connected servers.
+    pub fn get_all_resource_providers(&self) -> Vec<McpResourceProvider> {
+        let mut providers = Vec::new();
+        for (server_name, client_arc) in &self.clients {
+            let Ok(client) = client_arc.try_lock() else {
+                tracing::warn!(server = %server_name, "MCP client busy during resource discovery");
+                continue;
+            };
+            for resource in &client.resources {
+                // Build normalized name: mcp.{server_name}.resource.{resource_name}
+                let normalized_name = format!("mcp.{}.resource.{}", server_name, resource.name);
+                providers.push(McpResourceProvider {
+                    uri: resource.uri.clone(),
+                    normalized_name,
+                    mcp_resource: resource.clone(),
+                    client: client_arc.clone(),
+                    server_name: server_name.clone(),
+                    overrides: self.config.permission_overrides.clone(),
+                });
+            }
+        }
+        providers
+    }
+
+    /// List resources from a named server.
+    pub async fn list_resources(
+        &self,
+        server_name: &str,
+    ) -> Result<Vec<McpResource>> {
+        let client_arc = self
+            .clients
+            .get(server_name)
+            .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
+        let mut client = client_arc.lock().await;
+        client.list_resources().await
+    }
+
+    /// Read a resource from a named server by URI.
+    pub async fn read_resource(
+        &self,
+        server_name: &str,
+        uri: &str,
+    ) -> Result<super::client::ResourceContent> {
+        let client_arc = self
+            .clients
+            .get(server_name)
+            .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
+        let mut client = client_arc.lock().await;
+        client.read_resource(uri).await
     }
 }

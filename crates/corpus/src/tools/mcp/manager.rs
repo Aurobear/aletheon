@@ -1,10 +1,10 @@
 //! High-level MCP facade for the daemon: connect configured servers and expose
-//! their tools as `Box<dyn Tool>` ready to register into the ToolRegistry.
+//! their tools and resources as `Box<dyn Tool>` ready to register into the ToolRegistry.
 
 use anyhow::Result;
 use serde_json::Value;
 
-use super::client::McpConnectionManager;
+use super::client::{McpConnectionManager, McpResource, ResourceContent};
 use super::client::McpTool;
 use super::config::McpConfig;
 use crate::tools::Tool;
@@ -47,6 +47,25 @@ impl McpManager {
             .into_iter()
             .map(|w| w.boxed_clone())
             .collect()
+    }
+
+    /// Return discovered resources as boxed [`Tool`] trait objects.
+    pub fn resource_wrappers(&self) -> Vec<Box<dyn Tool>> {
+        self.inner
+            .get_all_resource_providers()
+            .into_iter()
+            .map(|p| p.boxed_clone())
+            .collect()
+    }
+
+    /// List resources from a named server.
+    pub async fn list_resources(&self, server_name: &str) -> Result<Vec<McpResource>> {
+        self.inner.list_resources(server_name).await
+    }
+
+    /// Read a resource from a named server by URI.
+    pub async fn read_resource(&self, server_name: &str, uri: &str) -> Result<ResourceContent> {
+        self.inner.read_resource(server_name, uri).await
     }
 
     /// Number of servers that were successfully connected.
@@ -212,6 +231,36 @@ mod tests {
                 }),
                 "tools/list" => tools_list,
                 "tools/call" => search_resp,
+                "resources/list" => json!({
+                    "resources": [
+                        {
+                            "uri": "file:///docs/readme.md",
+                            "name": "docs_readme",
+                            "description": "Project readme",
+                            "mimeType": "text/markdown"
+                        },
+                        {
+                            "uri": "file:///config/app.toml",
+                            "name": "app_config",
+                            "description": "Application configuration"
+                        }
+                    ]
+                }),
+                "resources/read" => {
+                    // Extract URI from params
+                    let uri = req_json
+                        .get("params")
+                        .and_then(|p| p.get("uri"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    json!({
+                        "contents": [{
+                            "uri": uri,
+                            "mimeType": "text/plain",
+                            "text": format!("Content of {}", uri)
+                        }]
+                    })
+                },
                 _ => json!({}),
             };
 
@@ -522,5 +571,173 @@ mod tests {
         assert_eq!(mgr.connected_count(), 0);
 
         std::env::remove_var("TEST_DISABLED_TOKEN");
+    }
+
+    // ---------------------------------------------------------------------------
+    // D3-T6: Resource access tests
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn resources_discovered_during_connect() {
+        std::env::set_var("TEST_RESOURCE_TOKEN", "resource-token");
+
+        let state = Arc::new(Mutex::new(MockMcpState::with_token("resource-token")));
+        let addr = spawn_mock_server(state.clone()).await;
+
+        let config = McpConfig {
+            servers: vec![McpServerConfig {
+                name: "gbrain".into(),
+                transport: McpTransportConfig::StreamableHttp {
+                    url: format!("http://{}/mcp", addr),
+                },
+                trust: McpTrustLevel::RemoteTrusted,
+                enabled: true,
+                bearer_token_env: Some("TEST_RESOURCE_TOKEN".into()),
+            }],
+            ..McpConfig::default()
+        };
+
+        let mut mgr = McpManager::new(config);
+        mgr.connect_all().await.unwrap();
+        assert_eq!(mgr.connected_count(), 1);
+
+        // Resource wrappers should be available
+        let resource_tools = mgr.resource_wrappers();
+        assert!(!resource_tools.is_empty(), "Should have discovered resources");
+        assert_eq!(resource_tools.len(), 2);
+
+        // Check naming convention: mcp.{server_name}.resource.{resource_name}
+        let names: Vec<&str> = resource_tools.iter().map(|t| t.name()).collect();
+        assert!(names.contains(&"mcp.gbrain.resource.docs_readme"));
+        assert!(names.contains(&"mcp.gbrain.resource.app_config"));
+
+        // Resources should be permission L0 (read-only)
+        for tool in &resource_tools {
+            assert!(
+                matches!(tool.permission_level(), crate::tools::PermissionLevel::L0),
+                "Resource should have L0 permission, got {:?}",
+                tool.permission_level()
+            );
+        }
+
+        std::env::remove_var("TEST_RESOURCE_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn read_resource_returns_content() {
+        std::env::set_var("TEST_READ_RESOURCE_TOKEN", "read-resource-token");
+
+        let state = Arc::new(Mutex::new(MockMcpState::with_token("read-resource-token")));
+        let addr = spawn_mock_server(state.clone()).await;
+
+        let config = McpConfig {
+            servers: vec![McpServerConfig {
+                name: "gbrain".into(),
+                transport: McpTransportConfig::StreamableHttp {
+                    url: format!("http://{}/mcp", addr),
+                },
+                trust: McpTrustLevel::RemoteTrusted,
+                enabled: true,
+                bearer_token_env: Some("TEST_READ_RESOURCE_TOKEN".into()),
+            }],
+            ..McpConfig::default()
+        };
+
+        let mut mgr = McpManager::new(config);
+        mgr.connect_all().await.unwrap();
+
+        let result = mgr
+            .read_resource("gbrain", "file:///docs/readme.md")
+            .await;
+        assert!(result.is_ok(), "read_resource failed: {:?}", result);
+        let content = result.unwrap();
+        assert!(content.text.contains("Content of file:///docs/readme.md"));
+        assert_eq!(content.uri, "file:///docs/readme.md");
+
+        std::env::remove_var("TEST_READ_RESOURCE_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn list_resources_returns_known_resources() {
+        std::env::set_var("TEST_LIST_RESOURCES_TOKEN", "list-resources-token");
+
+        let state = Arc::new(Mutex::new(MockMcpState::with_token("list-resources-token")));
+        let addr = spawn_mock_server(state.clone()).await;
+
+        let config = McpConfig {
+            servers: vec![McpServerConfig {
+                name: "gbrain".into(),
+                transport: McpTransportConfig::StreamableHttp {
+                    url: format!("http://{}/mcp", addr),
+                },
+                trust: McpTrustLevel::RemoteTrusted,
+                enabled: true,
+                bearer_token_env: Some("TEST_LIST_RESOURCES_TOKEN".into()),
+            }],
+            ..McpConfig::default()
+        };
+
+        let mut mgr = McpManager::new(config);
+        mgr.connect_all().await.unwrap();
+
+        let resources = mgr.list_resources("gbrain").await.unwrap();
+        assert_eq!(resources.len(), 2);
+        assert_eq!(resources[0].uri, "file:///docs/readme.md");
+        assert_eq!(resources[1].uri, "file:///config/app.toml");
+
+        std::env::remove_var("TEST_LIST_RESOURCES_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn resource_wrapper_executes_successfully() {
+        std::env::set_var("TEST_RESOURCE_EXEC_TOKEN", "resource-exec-token");
+
+        let state = Arc::new(Mutex::new(MockMcpState::with_token("resource-exec-token")));
+        let addr = spawn_mock_server(state.clone()).await;
+
+        let config = McpConfig {
+            servers: vec![McpServerConfig {
+                name: "gbrain".into(),
+                transport: McpTransportConfig::StreamableHttp {
+                    url: format!("http://{}/mcp", addr),
+                },
+                trust: McpTrustLevel::RemoteTrusted,
+                enabled: true,
+                bearer_token_env: Some("TEST_RESOURCE_EXEC_TOKEN".into()),
+            }],
+            ..McpConfig::default()
+        };
+
+        let mut mgr = McpManager::new(config);
+        mgr.connect_all().await.unwrap();
+
+        let resource_tools = mgr.resource_wrappers();
+        let readme_tool = resource_tools
+            .iter()
+            .find(|t| t.name() == "mcp.gbrain.resource.docs_readme")
+            .expect("Should have docs_readme resource tool");
+
+        use std::path::PathBuf;
+        let ctx = fabric::ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: PathBuf::from("/tmp"),
+            session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        };
+        let result = readme_tool.execute(serde_json::json!({}), &ctx).await;
+
+        assert!(
+            !result.is_error,
+            "Resource execution should succeed, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("Content of file:///docs/readme.md"),
+            "Should contain resource content, got: {}",
+            result.content
+        );
+
+        std::env::remove_var("TEST_RESOURCE_EXEC_TOKEN");
     }
 }
