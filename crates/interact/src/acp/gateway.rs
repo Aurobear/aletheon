@@ -9,8 +9,7 @@ use serde_json::Value;
 use tokio::io::{AsyncBufRead, AsyncWrite};
 
 use super::{
-    map_client_event_to_acp, transport::AcpTransport, AcpAdapter, AcpError, AcpRequest,
-    AcpResponse,
+    map_client_event_to_acp, transport::AcpTransport, AcpAdapter, AcpError, AcpRequest, AcpResponse,
 };
 
 /// Authentication is a required constructor input, never an optional fallback.
@@ -101,10 +100,7 @@ impl AcpAdapter {
         backend: &B,
         request: AcpRequest,
     ) -> AcpResponse {
-        match self
-            .try_dispatch(connection, backend, request)
-            .await
-        {
+        match self.try_dispatch(connection, backend, request).await {
             Ok(response) => response,
             Err(error) => AcpResponse::Error {
                 message: error.to_string(),
@@ -140,12 +136,7 @@ impl AcpAdapter {
                     .resolve_session(&session_id, &principal.connection_id)?
                     .clone();
                 backend
-                    .submit_prompt(
-                        principal,
-                        &session_id,
-                        &binding.thread_id,
-                        &text,
-                    )
+                    .submit_prompt(principal, &session_id, &binding.thread_id, &text)
                     .await?;
                 Ok(AcpResponse::Accepted)
             }
@@ -166,16 +157,13 @@ impl AcpAdapter {
         connection: &AuthenticatedAcpConnection,
         event: AcpSessionEvent,
     ) -> Result<Option<AcpServerFrame>, AcpError> {
-        self.resolve_session(
-            &event.session_id,
-            &connection.principal().connection_id,
-        )?;
-        Ok(map_client_event_to_acp(&event.event).map(|update| {
-            AcpServerFrame::SessionUpdate {
+        self.resolve_session(&event.session_id, &connection.principal().connection_id)?;
+        Ok(
+            map_client_event_to_acp(&event.event).map(|update| AcpServerFrame::SessionUpdate {
                 session_id: event.session_id,
                 update,
-            }
-        }))
+            }),
+        )
     }
 }
 
@@ -183,7 +171,8 @@ fn canonical_authorized_workspace(
     principal: &PrincipalContext,
     requested: &Path,
 ) -> Result<std::path::PathBuf, AcpError> {
-    let canonical = std::fs::canonicalize(requested).map_err(|_| AcpError::WorkspaceNotAuthorized)?;
+    let canonical =
+        std::fs::canonicalize(requested).map_err(|_| AcpError::WorkspaceNotAuthorized)?;
     if !canonical.is_dir()
         || !principal
             .workspace
@@ -475,8 +464,9 @@ mod tests {
             reader.read_line(&mut line).await.unwrap();
             lines.push(serde_json::from_str::<Value>(&line).unwrap());
         }
-        assert!(lines.iter().any(|frame| frame["type"] == "response"
-            && frame["request_id"] == 7));
+        assert!(lines
+            .iter()
+            .any(|frame| frame["type"] == "response" && frame["request_id"] == 7));
         assert!(lines.iter().any(|frame| frame["type"] == "session_update"
             && frame["update"]["content"]["text"] == "chunk"));
 

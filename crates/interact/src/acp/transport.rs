@@ -26,11 +26,7 @@ where
         }
     }
 
-    pub fn with_max_frame_bytes(
-        reader: R,
-        writer: W,
-        max_frame_bytes: usize,
-    ) -> io::Result<Self> {
+    pub fn with_max_frame_bytes(reader: R, writer: W, max_frame_bytes: usize) -> io::Result<Self> {
         if max_frame_bytes == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -102,12 +98,18 @@ mod tests {
 
         tokio::spawn(async move {
             let mut input_writer = input_writer;
-            input_writer.write_all(b"{\"method\":\"cancel\"}\n").await.unwrap();
+            input_writer
+                .write_all(b"{\"method\":\"cancel\"}\n")
+                .await
+                .unwrap();
         });
         let frame: Value = transport.read_frame().await.unwrap().unwrap();
         assert_eq!(frame["method"], "cancel");
 
-        transport.write_frame(&json!({"result": "cancelled"})).await.unwrap();
+        transport
+            .write_frame(&json!({"result": "cancelled"}))
+            .await
+            .unwrap();
         let mut output_reader = BufReader::new(output_reader);
         let mut line = String::new();
         output_reader.read_line(&mut line).await.unwrap();

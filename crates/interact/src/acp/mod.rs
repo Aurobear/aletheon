@@ -11,8 +11,8 @@ pub mod transport;
 use std::{collections::VecDeque, path::PathBuf};
 
 use fabric::{
-    protocol::client::negotiate_protocol_version, ConnectionId, LocalOsPrincipal,
-    PrincipalContext, PrincipalId, ThreadId, WorkspacePolicy,
+    protocol::client::negotiate_protocol_version, ConnectionId, LocalOsPrincipal, PrincipalContext,
+    PrincipalId, ThreadId, WorkspacePolicy,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -318,8 +318,8 @@ mod tests {
     #[test]
     fn client_session_id_is_not_part_of_principal_authority() {
         let root = tempfile::tempdir().unwrap();
-        let workspace = WorkspacePolicy::from_resolved_roots(root.path().to_path_buf(), vec![])
-            .unwrap();
+        let workspace =
+            WorkspacePolicy::from_resolved_roots(root.path().to_path_buf(), vec![]).unwrap();
         let connection_id = ConnectionId::new();
         let context = establish_principal(
             LocalOsPrincipal { uid: 501, gid: 20 },

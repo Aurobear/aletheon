@@ -1,8 +1,6 @@
 //! Pure Aletheon client-event to ACP session-update translation.
 
-use fabric::protocol::client::{
-    ApprovalEvent, ClientEvent, EventCursor, ItemEvent, ItemPhase,
-};
+use fabric::protocol::client::{ApprovalEvent, ClientEvent, EventCursor, ItemEvent, ItemPhase};
 use serde_json::{json, Value};
 
 pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
