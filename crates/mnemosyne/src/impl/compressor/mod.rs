@@ -318,9 +318,9 @@ impl CompactorTrait for AdvancedCompressor {
 /// prefix is substantial enough to be worth summarizing.
 fn content_block_chars(block: &ContentBlock) -> usize {
     match block {
-        ContentBlock::Text { text } => text.len(),
-        ContentBlock::ToolResult { content, .. } => content.len(),
-        ContentBlock::ToolUse { input, .. } => input.to_string().len(),
+        ContentBlock::Text { text } => text.chars().count(),
+        ContentBlock::ToolResult { content, .. } => content.chars().count(),
+        ContentBlock::ToolUse { input, .. } => input.to_string().chars().count(),
         _ => 0,
     }
 }
@@ -626,6 +626,32 @@ mod tests {
         // is below MIN_SUMMARY_SEED_CHARS.
         let mut c = AdvancedCompressor::new(1_000_000, 200, 1_000);
         let mut messages = vec![Message::user("a"), Message::user("b"), Message::user("c")];
+        let snapshot = serde_json::to_value(&messages).unwrap();
+        let outcome = c
+            .compact_v2_impl(
+                &mut messages,
+                &GoodLlm,
+                CompactionStrategy::FullReplace,
+                true,
+            )
+            .await
+            .unwrap();
+        assert!(!outcome.applied);
+        assert!(matches!(
+            outcome.failure,
+            Some(CompactionFailure::TooShortToSummarize)
+        ));
+        assert_eq!(serde_json::to_value(&messages).unwrap(), snapshot);
+    }
+
+    #[tokio::test]
+    async fn v2_summary_seed_limit_counts_unicode_characters_not_utf8_bytes() {
+        let mut c = AdvancedCompressor::new(1_000_000, 200, 1_000);
+        let mut messages = vec![
+            Message::user("界".repeat(100)),
+            Message::assistant("tail-a"),
+            Message::user("tail-b"),
+        ];
         let snapshot = serde_json::to_value(&messages).unwrap();
         let outcome = c
             .compact_v2_impl(

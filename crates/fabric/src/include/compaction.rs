@@ -229,9 +229,9 @@ fn is_mostly_repetition(s: &str) -> bool {
 }
 
 /// Compute a tail-keep cut point that never splits a tool_use / tool_result
-/// pair. Returns the largest index `cut <= keep_from` such that every
-/// `ToolResult` in `messages[cut..]` has its matching `ToolUse` also in
-/// `messages[cut..]`. `messages[..cut]` is safe to drop.
+/// pair. Returns the largest index `cut <= keep_from` such that every known
+/// `ToolUse`/`ToolResult` pair is wholly retained or wholly discarded.
+/// Pre-existing orphan results do not force an unrelated cut to zero.
 pub fn safe_tail_cut(messages: &[Message], keep_from: usize) -> usize {
     let mut cut = keep_from.min(messages.len());
     while cut > 0 && splits_tool_pair(messages, cut) {
@@ -244,6 +244,14 @@ pub fn safe_tail_cut(messages: &[Message], keep_from: usize) -> usize {
 /// `ToolUse` is not present in the tail.
 fn splits_tool_pair(messages: &[Message], cut: usize) -> bool {
     let tail = &messages[cut..];
+    let all_tool_use_ids: std::collections::HashSet<&str> = messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|block| match block {
+            ContentBlock::ToolUse { id, .. } => Some(id.as_str()),
+            _ => None,
+        })
+        .collect();
     let mut tool_use_ids = std::collections::HashSet::new();
     for msg in tail {
         for block in &msg.content {
@@ -255,7 +263,12 @@ fn splits_tool_pair(messages: &[Message], cut: usize) -> bool {
     for msg in tail {
         for block in &msg.content {
             if let ContentBlock::ToolResult { tool_use_id, .. } = block {
-                if !tool_use_ids.contains(tool_use_id.as_str()) {
+                // A pre-existing orphan is malformed history, but the cut did
+                // not create it. Only retreat when the matching call exists in
+                // the discarded prefix and would therefore be split away.
+                if all_tool_use_ids.contains(tool_use_id.as_str())
+                    && !tool_use_ids.contains(tool_use_id.as_str())
+                {
                     return true;
                 }
             }
@@ -422,6 +435,17 @@ mod guardrail_tests {
             Message::assistant("y"),
             tool_use("B"),
             tool_result("B"),
+        ];
+        assert_eq!(safe_tail_cut(&msgs, 2), 2);
+    }
+
+    #[test]
+    fn safe_tail_cut_does_not_over_retreat_for_preexisting_orphan_result() {
+        let msgs = vec![
+            Message::user("old"),
+            Message::assistant("older"),
+            tool_result("missing-call"),
+            Message::assistant("tail"),
         ];
         assert_eq!(safe_tail_cut(&msgs, 2), 2);
     }
