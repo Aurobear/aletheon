@@ -178,12 +178,20 @@ impl DaemonTurnOrchestrator {
 
         let _turn_token = self.begin_turn_token().await;
         let pipeline = self.pipeline.clone();
+        #[cfg(test)]
+        let test_runner = self.test_runner.clone();
         let rpc_id = id.clone();
         let principal = turn_request.context.principal_id.clone();
         let policy = TurnPolicy::daemon();
         let coordinated = self
             .coordinator
             .submit_with(turn_request, &policy, move |request, cancel| async move {
+                #[cfg(test)]
+                if let Some(runner) = test_runner {
+                    return runner(request, cancel).await;
+                }
+                let pipeline =
+                    pipeline.expect("production daemon orchestrator has a turn pipeline");
                 let turn_cancel = cancel.clone();
                 {
                     let mut guard = pipeline.current_scope.lock().await;
@@ -279,10 +287,80 @@ impl DaemonTurnOrchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::daemon_turn::test_support::DaemonTurnTestBuilder;
+
+    fn context(thread: &str) -> PrincipalContext {
+        PrincipalContext::new(
+            fabric::PrincipalId(format!("test:{thread}")),
+            fabric::LocalOsPrincipal {
+                uid: nix::unistd::Uid::effective().as_raw(),
+                gid: nix::unistd::Gid::effective().as_raw(),
+            },
+            fabric::ConnectionId::new(),
+            fabric::ThreadId(thread.into()),
+            fabric::WorkspacePolicy::from_resolved_roots(std::env::temp_dir(), Vec::new()).unwrap(),
+            fabric::PermissionProfileId::workspace_write(),
+            fabric::ApprovalPolicy::OnRequest,
+        )
+    }
 
     #[test]
     fn disabled_prompt_queue_preserves_direct_turn_admission() {
         assert_eq!(prompt_admission_mode(false), PromptAdmissionMode::Direct);
         assert_eq!(prompt_admission_mode(true), PromptAdmissionMode::Queued);
+    }
+
+    #[tokio::test]
+    async fn execute_turn_success_runs_kernel_and_coordinator_lifecycle() {
+        let harness = DaemonTurnTestBuilder::succeeding("mock answer")
+            .build()
+            .await;
+        let response = harness
+            .orchestrator
+            .execute_turn(json!(7), "hello", context("daemon-success"))
+            .await;
+
+        assert_eq!(response["result"]["response"], "mock answer");
+        assert_eq!(harness.coordinator.active_turn_count().await, 0);
+        assert!(harness
+            .orchestrator
+            .main_agent_process_id
+            .lock()
+            .await
+            .is_some());
+        let items = harness
+            .store
+            .load_items(&fabric::SessionId("daemon-success".into()), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            items.len(),
+            2,
+            "coordinator persists user and terminal items"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_turn_error_settles_operation_and_returns_json_rpc_error() {
+        let harness = DaemonTurnTestBuilder::failing("mock provider failed")
+            .build()
+            .await;
+        let response = harness
+            .orchestrator
+            .execute_turn(json!(8), "hello", context("daemon-error"))
+            .await;
+
+        assert_eq!(response["error"]["code"], -32603);
+        assert!(response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("mock provider failed"));
+        assert_eq!(harness.coordinator.active_turn_count().await, 0);
+        assert!(harness
+            .orchestrator
+            .main_agent_process_id
+            .lock()
+            .await
+            .is_some());
     }
 }

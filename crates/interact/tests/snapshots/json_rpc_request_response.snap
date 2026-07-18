@@ -1,0 +1,101 @@
+[
+  {
+    "name": "chat_success",
+    "request": {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "chat",
+      "params": {
+        "message": "inspect",
+        "working_dir": "/workspace/project",
+        "workspace_roots": [
+          "/workspace/project",
+          "/workspace/shared"
+        ]
+      }
+    },
+    "response": {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "result": {
+        "accepted": true
+      }
+    }
+  },
+  {
+    "name": "profile_list_success",
+    "request": {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "method": "agent.profile.list"
+    },
+    "response": {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "result": {
+        "profiles": [
+          {
+            "name": "safe"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "profile_set_success",
+    "request": {
+      "id": 3,
+      "jsonrpc": "2.0",
+      "method": "agent.profile.set",
+      "params": {
+        "profile": "safe"
+      }
+    },
+    "response": {
+      "id": 3,
+      "jsonrpc": "2.0",
+      "result": {
+        "current": "safe",
+        "previous": "admin"
+      }
+    }
+  },
+  {
+    "name": "profile_set_denied",
+    "request": {
+      "id": 4,
+      "jsonrpc": "2.0",
+      "method": "agent.profile.set",
+      "params": {
+        "profile": "admin"
+      }
+    },
+    "response": {
+      "error": {
+        "code": -32000,
+        "message": "profile switch denied"
+      },
+      "id": 4,
+      "jsonrpc": "2.0"
+    }
+  },
+  {
+    "name": "approval_response",
+    "request": {
+      "id": 5,
+      "jsonrpc": "2.0",
+      "method": "approval_response",
+      "params": {
+        "approval_id": "approval-1",
+        "decision": "approve_for_session"
+      }
+    },
+    "response": {
+      "id": 5,
+      "jsonrpc": "2.0",
+      "result": {
+        "accepted": true
+      }
+    }
+  }
+]

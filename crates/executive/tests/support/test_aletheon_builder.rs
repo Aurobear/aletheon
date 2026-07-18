@@ -23,6 +23,8 @@ use aletheon_kernel::chronos::TestClock;
 use aletheon_kernel::KernelRuntime;
 use executive::r#impl::events::SqliteEventSpine;
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
+use executive::service::harness_factory::LinearCognitiveSessionFactory;
+use executive::service::session_input::SessionInputCoordinator;
 use executive::service::turn_coordinator::TurnCoordinator;
 use fabric::{Clock, SessionAppendStore};
 
@@ -33,6 +35,10 @@ pub struct TestAletheon {
     pub store: Arc<dyn SessionAppendStore>,
     pub event_spine: Arc<SqliteEventSpine>,
     pub coordinator: TurnCoordinator,
+    /// Real Cognit session factory for boundary-level turn tests.
+    pub cognitive_sessions: Arc<LinearCognitiveSessionFactory>,
+    /// Isolated prompt/interjection queue shared by boundary-level turn tests.
+    pub session_input: Arc<SessionInputCoordinator>,
 }
 
 /// Builder for a fully wired, deterministic test Aletheon instance.
@@ -71,6 +77,11 @@ impl TestAletheonBuilder {
             Arc::new(SqliteEventSpine::open(":memory:").expect("in-memory event spine"));
         let coordinator =
             TurnCoordinator::with_event_spine(kernel.clone(), store.clone(), event_spine.clone());
+        let cognitive_sessions = Arc::new(LinearCognitiveSessionFactory::new(
+            cognit::HarnessConfig::default(),
+            clock.clone() as Arc<dyn Clock>,
+        ));
+        let session_input = Arc::new(SessionInputCoordinator::in_memory());
 
         TestAletheon {
             kernel,
@@ -78,6 +89,8 @@ impl TestAletheonBuilder {
             store,
             event_spine,
             coordinator,
+            cognitive_sessions,
+            session_input,
         }
     }
 }

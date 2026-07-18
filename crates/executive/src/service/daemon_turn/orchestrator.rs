@@ -9,16 +9,27 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
-pub struct DaemonTurnResources {
-    pub kernel: Arc<KernelRuntime>,
-    pub notify: Arc<Mutex<Option<mpsc::Sender<String>>>>,
-    pub default_session_id: Arc<Mutex<String>>,
-    pub main_agent_process_id: Arc<Mutex<Option<ProcessId>>>,
-    pub turn_token: Arc<Mutex<Option<CancellationToken>>>,
-    pub pipeline: Arc<TurnPipeline>,
-    pub coordinator: Arc<TurnCoordinator>,
-    pub session_service: Arc<crate::service::session_service::SessionService>,
-    pub grok_hardening: GrokHardeningConfig,
+#[cfg(test)]
+pub(crate) type TestTurnRunner = Arc<
+    dyn Fn(
+            fabric::TurnRequest,
+            CancellationToken,
+        ) -> futures::future::BoxFuture<
+            'static,
+            anyhow::Result<crate::service::turn_coordinator::TurnExecution>,
+        > + Send
+        + Sync,
+>;
+
+pub(crate) struct DaemonTurnResources {
+    pub(crate) kernel: Arc<KernelRuntime>,
+    pub(crate) notify: Arc<Mutex<Option<mpsc::Sender<String>>>>,
+    pub(crate) main_agent_process_id: Arc<Mutex<Option<ProcessId>>>,
+    pub(crate) turn_token: Arc<Mutex<Option<CancellationToken>>>,
+    pub(crate) pipeline: Arc<TurnPipeline>,
+    pub(crate) coordinator: Arc<TurnCoordinator>,
+    pub(crate) session_service: Arc<crate::service::session_service::SessionService>,
+    pub(crate) grok_hardening: GrokHardeningConfig,
 }
 
 pub struct DaemonTurnOrchestrator {
@@ -26,24 +37,28 @@ pub struct DaemonTurnOrchestrator {
     pub(crate) notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
     pub(crate) main_agent_process_id: Arc<Mutex<Option<ProcessId>>>,
     pub(crate) turn_token: Arc<Mutex<Option<CancellationToken>>>,
-    pub(crate) pipeline: Arc<TurnPipeline>,
+    pub(crate) pipeline: Option<Arc<TurnPipeline>>,
     pub(crate) coordinator: Arc<TurnCoordinator>,
     pub(crate) session_service: Arc<crate::service::session_service::SessionService>,
     #[allow(dead_code)]
     pub(crate) grok_hardening: GrokHardeningConfig,
+    #[cfg(test)]
+    pub(crate) test_runner: Option<TestTurnRunner>,
 }
 
 impl DaemonTurnOrchestrator {
-    pub fn new(resources: DaemonTurnResources) -> Self {
+    pub(crate) fn new(resources: DaemonTurnResources) -> Self {
         Self {
             kernel: resources.kernel,
             notify_tx: resources.notify,
             main_agent_process_id: resources.main_agent_process_id,
             turn_token: resources.turn_token,
-            pipeline: resources.pipeline,
+            pipeline: Some(resources.pipeline),
             coordinator: resources.coordinator,
             session_service: resources.session_service,
             grok_hardening: resources.grok_hardening,
+            #[cfg(test)]
+            test_runner: None,
         }
     }
 
@@ -116,13 +131,20 @@ impl DaemonTurnOrchestrator {
         workspace: &fabric::types::workspace_checkpoint::WorkspaceIdentity,
     ) -> fabric::types::workspace_checkpoint::RestoreOutcome {
         self.pipeline
+            .as_ref()
+            .expect("production daemon orchestrator has a turn pipeline")
             .workspace_checkpoint
             .rewind_to(
                 principal_id,
                 session_id,
                 prompt_index,
                 workspace,
-                self.pipeline.clock.mono_now().0,
+                self.pipeline
+                    .as_ref()
+                    .expect("production daemon orchestrator has a turn pipeline")
+                    .clock
+                    .mono_now()
+                    .0,
             )
             .await
     }

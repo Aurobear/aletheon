@@ -62,6 +62,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libxcb1-dev ripgrep
       - run: cargo +stable test --workspace
+      # Snapshot assertions run through ordinary tests; no cargo-insta CLI is required.
+      - name: JSON-RPC contract snapshots
+        run: cargo +stable test -p interact --test json_rpc_snapshots
 
   pi-contract:
     name: pinned Pi RPC contract
@@ -98,6 +101,35 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo +stable fmt --all -- --check
+
+  fuzz-quick-check:
+    name: fuzz quick-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/executive/fuzz -> target
+      - name: Install cargo-fuzz
+        run: cargo +nightly install cargo-fuzz --locked
+      - name: Run all executive fuzz targets
+        shell: bash
+        run: |
+          targets=(
+            envelope_v2_parse
+            envelope_v2_roundtrip
+            jsonrpc_message_parse
+            jsonrpc_method_dispatch
+            toml_config_parse
+            tool_input_json
+            message_roundtrip
+          )
+          for target in "${targets[@]}"; do
+            cargo +nightly fuzz run "$target" \
+              --fuzz-dir crates/executive/fuzz -- -max_total_time=30
+          done
 
   doc:
     name: cargo doc
