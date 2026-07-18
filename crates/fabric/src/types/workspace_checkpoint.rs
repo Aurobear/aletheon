@@ -79,13 +79,21 @@ pub struct TurnCheckpoint {
     pub runtime_checkpoint_ref: Option<String>,
     pub created_at_ms: i64,
     pub schema_version: u32,
+    /// SHA-256 over every immutable checkpoint field and the captured file
+    /// entries.  This value is host-computed and must be verified before a
+    /// checkpoint is loaded or restored.
+    pub integrity_digest: String,
     pub finalize_state: CheckpointFinalizeState,
 }
 
 impl TurnCheckpoint {
-    /// Deterministic integrity digest over the identity-bearing fields (not the
-    /// mutable finalize_state). Stable across process restarts (sha256).
-    pub fn integrity_digest(&self) -> String {
+    /// Calculate the deterministic integrity digest.
+    ///
+    /// `finalize_state` is deliberately excluded because finalization is the
+    /// sole permitted mutation after insertion.  The persisted digest itself
+    /// is also excluded.  All restore-bearing data, including file contents,
+    /// is covered.
+    pub fn calculate_integrity_digest(&self, files: &[CheckpointFileEntry]) -> String {
         #[derive(Serialize)]
         struct Material<'a> {
             checkpoint_id: &'a CheckpointId,
@@ -95,7 +103,12 @@ impl TurnCheckpoint {
             prompt_index: u64,
             workspace: &'a WorkspaceIdentity,
             fs_domain: &'a FsDomainRef,
+            vcs_domain_ref: &'a Option<String>,
+            patch_domain_ref: &'a Option<String>,
+            runtime_checkpoint_ref: &'a Option<String>,
+            created_at_ms: i64,
             schema_version: u32,
+            files: &'a [CheckpointFileEntry],
         }
         let material = Material {
             checkpoint_id: &self.checkpoint_id,
@@ -105,11 +118,28 @@ impl TurnCheckpoint {
             prompt_index: self.prompt_index,
             workspace: &self.workspace,
             fs_domain: &self.fs_domain,
+            vcs_domain_ref: &self.vcs_domain_ref,
+            patch_domain_ref: &self.patch_domain_ref,
+            runtime_checkpoint_ref: &self.runtime_checkpoint_ref,
+            created_at_ms: self.created_at_ms,
             schema_version: self.schema_version,
+            files,
         };
-        let encoded = serde_json::to_vec(&material).unwrap_or_default();
+        let encoded = serde_json::to_vec(&material)
+            .expect("checkpoint integrity material contains only serializable fields");
         let digest = Sha256::digest(&encoded);
         format!("{digest:x}")
+    }
+
+    /// Seal a newly-created checkpoint before persistence.
+    pub fn seal_integrity(&mut self, files: &[CheckpointFileEntry]) {
+        self.integrity_digest = self.calculate_integrity_digest(files);
+    }
+
+    /// Verify persisted checkpoint metadata and snapshot contents.
+    pub fn verify_integrity(&self, files: &[CheckpointFileEntry]) -> bool {
+        !self.integrity_digest.is_empty()
+            && self.integrity_digest == self.calculate_integrity_digest(files)
     }
 }
 
@@ -175,6 +205,7 @@ mod tests {
             runtime_checkpoint_ref: None,
             created_at_ms: 1000,
             schema_version: 1,
+            integrity_digest: String::new(),
             finalize_state: CheckpointFinalizeState::Open,
         }
     }
@@ -183,19 +214,18 @@ mod tests {
     fn integrity_digest_is_deterministic() {
         let a = ck();
         let b = ck();
-        assert_eq!(a.integrity_digest(), b.integrity_digest());
+        assert_eq!(
+            a.calculate_integrity_digest(&[]),
+            b.calculate_integrity_digest(&[])
+        );
     }
 
     #[test]
     fn integrity_digest_ignores_finalize_state() {
         let mut a = ck();
-        let d1 = a.integrity_digest();
+        let d1 = a.calculate_integrity_digest(&[]);
         a.finalize_state = CheckpointFinalizeState::Finalized;
-        assert_eq!(
-            a.integrity_digest(),
-            d1,
-            "finalize_state must not affect digest"
-        );
+        assert_eq!(a.calculate_integrity_digest(&[]), d1);
     }
 
     #[test]
@@ -203,7 +233,25 @@ mod tests {
         let a = ck();
         let mut b = ck();
         b.prompt_index = 99;
-        assert_ne!(a.integrity_digest(), b.integrity_digest());
+        assert_ne!(
+            a.calculate_integrity_digest(&[]),
+            b.calculate_integrity_digest(&[])
+        );
+    }
+
+    #[test]
+    fn integrity_digest_covers_snapshot_contents() {
+        let mut checkpoint = ck();
+        let files = vec![CheckpointFileEntry {
+            path: PathBuf::from("src/lib.rs"),
+            content: Some("safe".into()),
+        }];
+        checkpoint.seal_integrity(&files);
+        assert!(checkpoint.verify_integrity(&files));
+
+        let mut tampered = files;
+        tampered[0].content = Some("tampered".into());
+        assert!(!checkpoint.verify_integrity(&tampered));
     }
 
     #[test]

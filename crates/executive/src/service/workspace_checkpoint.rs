@@ -72,6 +72,10 @@ impl CheckpointStore for InMemoryCheckpointStore {
         checkpoint: TurnCheckpoint,
         files: Vec<CheckpointFileEntry>,
     ) -> Result<()> {
+        anyhow::ensure!(
+            checkpoint.verify_integrity(&files),
+            "checkpoint integrity verification failed"
+        );
         let key = (checkpoint.session_id.clone(), checkpoint.prompt_index);
         let mut records = self.records.lock().await;
         anyhow::ensure!(!records.contains_key(&key), "checkpoint already exists");
@@ -85,6 +89,10 @@ impl CheckpointStore for InMemoryCheckpointStore {
             .values_mut()
             .find(|(checkpoint, _)| checkpoint.checkpoint_id == id)
             .ok_or_else(|| anyhow!("checkpoint not found"))?;
+        anyhow::ensure!(
+            checkpoint.0.verify_integrity(&checkpoint.1),
+            "checkpoint integrity verification failed"
+        );
         if checkpoint.0.finalize_state == CheckpointFinalizeState::Open {
             checkpoint.0.finalize_state = state;
         }
@@ -96,25 +104,39 @@ impl CheckpointStore for InMemoryCheckpointStore {
         session: &str,
         prompt_index: u64,
     ) -> Result<Option<(TurnCheckpoint, Vec<CheckpointFileEntry>)>> {
-        Ok(self
+        let loaded = self
             .records
             .lock()
             .await
             .get(&(session.to_owned(), prompt_index))
-            .cloned())
+            .cloned();
+        if let Some((checkpoint, files)) = &loaded {
+            anyhow::ensure!(
+                checkpoint.verify_integrity(files),
+                "checkpoint integrity verification failed"
+            );
+        }
+        Ok(loaded)
     }
 
     async fn load_by_id(
         &self,
         id: CheckpointId,
     ) -> Result<Option<(TurnCheckpoint, Vec<CheckpointFileEntry>)>> {
-        Ok(self
+        let loaded = self
             .records
             .lock()
             .await
             .values()
             .find(|(checkpoint, _)| checkpoint.checkpoint_id == id)
-            .cloned())
+            .cloned();
+        if let Some((checkpoint, files)) = &loaded {
+            anyhow::ensure!(
+                checkpoint.verify_integrity(files),
+                "checkpoint integrity verification failed"
+            );
+        }
+        Ok(loaded)
     }
 
     async fn truncate_after(&self, session: &str, prompt_index: u64) -> Result<()> {
@@ -363,7 +385,7 @@ impl WorkspaceCheckpointService {
         } else {
             CheckpointFinalizeState::Open
         };
-        let checkpoint = TurnCheckpoint {
+        let mut checkpoint = TurnCheckpoint {
             checkpoint_id,
             session_id: context.session_id,
             thread_id: context.thread_id,
@@ -379,8 +401,10 @@ impl WorkspaceCheckpointService {
             runtime_checkpoint_ref: None,
             created_at_ms: context.created_at_ms,
             schema_version: CHECKPOINT_SCHEMA_VERSION,
+            integrity_digest: String::new(),
             finalize_state,
         };
+        checkpoint.seal_integrity(&capture.files);
         self.files_captured
             .fetch_add(capture.files.len() as u64, Ordering::Relaxed);
         self.store.begin(checkpoint.clone(), capture.files).await?;
@@ -457,6 +481,11 @@ impl WorkspaceCheckpointService {
             }
         };
         let (checkpoint, files) = loaded;
+        if !checkpoint.verify_integrity(&files) {
+            return RestoreOutcome::FsRestoreFailed {
+                detail: "checkpoint integrity verification failed".into(),
+            };
+        }
         if checkpoint.finalize_state != CheckpointFinalizeState::Finalized {
             return RestoreOutcome::FsRestoreFailed {
                 detail: "checkpoint is not finalized".into(),
@@ -912,6 +941,7 @@ mod tests {
         future.checkpoint_id = CheckpointId::new();
         future.prompt_index = 2;
         future.turn_id = "turn-2".into();
+        future.seal_integrity(&future_files);
         store.begin(future, future_files).await.unwrap();
 
         std::fs::write(directory.path().join("modified"), "after").unwrap();

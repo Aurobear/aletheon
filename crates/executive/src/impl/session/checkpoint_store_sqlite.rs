@@ -43,6 +43,21 @@ impl SqliteCheckpointStore {
             connection: Mutex::new(connection),
         })
     }
+
+    fn decode_verified(
+        checkpoint_json: &str,
+        files_json: &str,
+    ) -> Result<(TurnCheckpoint, Vec<CheckpointFileEntry>)> {
+        let checkpoint: TurnCheckpoint = serde_json::from_str(checkpoint_json)
+            .context("decode workspace checkpoint metadata")?;
+        let files: Vec<CheckpointFileEntry> =
+            serde_json::from_str(files_json).context("decode workspace checkpoint files")?;
+        anyhow::ensure!(
+            checkpoint.verify_integrity(&files),
+            "workspace checkpoint integrity verification failed"
+        );
+        Ok((checkpoint, files))
+    }
 }
 
 #[async_trait]
@@ -52,6 +67,10 @@ impl CheckpointStore for SqliteCheckpointStore {
         checkpoint: TurnCheckpoint,
         files: Vec<CheckpointFileEntry>,
     ) -> Result<()> {
+        anyhow::ensure!(
+            checkpoint.verify_integrity(&files),
+            "workspace checkpoint integrity verification failed"
+        );
         let connection = self
             .connection
             .lock()
@@ -77,15 +96,20 @@ impl CheckpointStore for SqliteCheckpointStore {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let json: Option<String> = transaction
+        let row: Option<(String, String)> = transaction
             .query_row(
-                "SELECT checkpoint_json FROM workspace_checkpoints WHERE checkpoint_id = ?1",
+                "SELECT checkpoint_json, files_json FROM workspace_checkpoints WHERE checkpoint_id = ?1",
                 params![id.0.to_string()],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        let mut checkpoint: TurnCheckpoint =
-            serde_json::from_str(&json.ok_or_else(|| anyhow::anyhow!("checkpoint not found"))?)?;
+        let (checkpoint_json, files_json) =
+            row.ok_or_else(|| anyhow::anyhow!("checkpoint not found"))?;
+        let (mut checkpoint, _) = Self::decode_verified(&checkpoint_json, &files_json)?;
+        anyhow::ensure!(
+            checkpoint.checkpoint_id == id,
+            "checkpoint row identity mismatch"
+        );
         if checkpoint.finalize_state == CheckpointFinalizeState::Open {
             checkpoint.finalize_state = state;
             transaction.execute(
@@ -114,13 +138,16 @@ impl CheckpointStore for SqliteCheckpointStore {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        row.map(|(checkpoint, files)| {
-            Ok((
-                serde_json::from_str(&checkpoint)?,
-                serde_json::from_str(&files)?,
-            ))
-        })
-        .transpose()
+        let decoded = row
+            .map(|(checkpoint, files)| Self::decode_verified(&checkpoint, &files))
+            .transpose()?;
+        if let Some((checkpoint, _)) = &decoded {
+            anyhow::ensure!(
+                checkpoint.session_id == session && checkpoint.prompt_index == prompt_index,
+                "checkpoint row lookup identity mismatch"
+            );
+        }
+        Ok(decoded)
     }
 
     async fn load_by_id(
@@ -139,13 +166,16 @@ impl CheckpointStore for SqliteCheckpointStore {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        row.map(|(checkpoint, files)| {
-            Ok((
-                serde_json::from_str(&checkpoint)?,
-                serde_json::from_str(&files)?,
-            ))
-        })
-        .transpose()
+        let decoded = row
+            .map(|(checkpoint, files)| Self::decode_verified(&checkpoint, &files))
+            .transpose()?;
+        if let Some((checkpoint, _)) = &decoded {
+            anyhow::ensure!(
+                checkpoint.checkpoint_id == id,
+                "checkpoint row identity mismatch"
+            );
+        }
+        Ok(decoded)
     }
 
     async fn truncate_after(&self, session: &str, prompt_index: u64) -> Result<()> {
@@ -190,7 +220,11 @@ mod tests {
     use uuid::Uuid;
 
     fn checkpoint(index: u64, state: CheckpointFinalizeState) -> TurnCheckpoint {
-        TurnCheckpoint {
+        let files = vec![CheckpointFileEntry {
+            path: PathBuf::from("file"),
+            content: Some("one".into()),
+        }];
+        let mut checkpoint = TurnCheckpoint {
             checkpoint_id: CheckpointId::new(),
             session_id: "session".into(),
             thread_id: "thread".into(),
@@ -209,8 +243,11 @@ mod tests {
             runtime_checkpoint_ref: None,
             created_at_ms: 1,
             schema_version: 1,
+            integrity_digest: String::new(),
             finalize_state: state,
-        }
+        };
+        checkpoint.seal_integrity(&files);
+        checkpoint
     }
 
     #[tokio::test]
@@ -231,7 +268,16 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            store.begin(aborted.clone(), vec![]).await.unwrap();
+            store
+                .begin(
+                    aborted.clone(),
+                    vec![CheckpointFileEntry {
+                        path: PathBuf::from("file"),
+                        content: Some("one".into()),
+                    }],
+                )
+                .await
+                .unwrap();
             store
                 .finalize(first.checkpoint_id, CheckpointFinalizeState::Finalized)
                 .await
@@ -259,5 +305,78 @@ mod tests {
         store.truncate_after("session", 1).await.unwrap();
         assert!(store.load("session", 1).await.unwrap().is_some());
         assert!(store.load("session", 2).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn reopen_rejects_tampered_checkpoint_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("checkpoints.sqlite");
+        let original = checkpoint(1, CheckpointFinalizeState::Open);
+        {
+            let store = SqliteCheckpointStore::open(&path).unwrap();
+            store
+                .begin(
+                    original,
+                    vec![CheckpointFileEntry {
+                        path: PathBuf::from("file"),
+                        content: Some("one".into()),
+                    }],
+                )
+                .await
+                .unwrap();
+        }
+        let connection = Connection::open(&path).unwrap();
+        let json: String = connection
+            .query_row(
+                "SELECT checkpoint_json FROM workspace_checkpoints",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value["turn_id"] = serde_json::Value::String("forged".into());
+        connection
+            .execute(
+                "UPDATE workspace_checkpoints SET checkpoint_json = ?1",
+                [serde_json::to_string(&value).unwrap()],
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = SqliteCheckpointStore::open(&path).unwrap();
+        let error = store.load("session", 1).await.unwrap_err();
+        assert!(error.to_string().contains("integrity verification failed"));
+    }
+
+    #[tokio::test]
+    async fn reopen_rejects_tampered_snapshot_contents() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("checkpoints.sqlite");
+        let original = checkpoint(1, CheckpointFinalizeState::Finalized);
+        {
+            let store = SqliteCheckpointStore::open(&path).unwrap();
+            store
+                .begin(
+                    original,
+                    vec![CheckpointFileEntry {
+                        path: PathBuf::from("file"),
+                        content: Some("one".into()),
+                    }],
+                )
+                .await
+                .unwrap();
+        }
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE workspace_checkpoints SET files_json = ?1",
+                [r#"[{"path":"file","content":"forged"}]"#],
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = SqliteCheckpointStore::open(&path).unwrap();
+        let error = store.load("session", 1).await.unwrap_err();
+        assert!(error.to_string().contains("integrity verification failed"));
     }
 }
