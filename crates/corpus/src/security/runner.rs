@@ -1362,9 +1362,7 @@ mod tests {
         assert_eq!(event.payload["target"], "missing-custom");
         assert_eq!(event.payload["operation"], "resolve_profile");
         assert_eq!(event.payload["principal"], "test");
-        assert!(
-            sandbox_metrics().sandbox_fs_violation_total >= before.sandbox_fs_violation_total + 1
-        );
+        assert!(sandbox_metrics().sandbox_fs_violation_total > before.sandbox_fs_violation_total);
     }
 
     #[tokio::test]
@@ -1449,9 +1447,7 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(ToolError::PolicyDenied { .. })));
-        assert!(
-            sandbox_metrics().sandbox_glob_overflow_total >= before.sandbox_glob_overflow_total + 1
-        );
+        assert!(sandbox_metrics().sandbox_glob_overflow_total > before.sandbox_glob_overflow_total);
     }
 
     #[tokio::test]

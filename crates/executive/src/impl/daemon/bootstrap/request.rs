@@ -424,16 +424,15 @@ impl RequestHandler {
                     }
                 }
             }
-            if config.gbrain_memory.enabled {
-                if mcp
+            if config.gbrain_memory.enabled
+                && mcp
                     .server_tools(&config.gbrain_memory.server_name)
                     .is_none()
-                {
-                    tracing::warn!(
-                        server = %config.gbrain_memory.server_name,
-                        "GBrain server unavailable; local memory remains active"
-                    );
-                }
+            {
+                tracing::warn!(
+                    server = %config.gbrain_memory.server_name,
+                    "GBrain server unavailable; local memory remains active"
+                );
             }
             Some(Arc::new(mcp))
         };

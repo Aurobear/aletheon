@@ -643,10 +643,7 @@ impl SettlementEngine {
                 AgentResourceClass::BackgroundCommand | AgentResourceClass::NotificationRoute => {
                     let reparent = request.parent_owner.as_deref().and_then(|parent| {
                         let context = self.resources.reparent_context(resource, parent);
-                        can_reparent(resource, &context)
-                            .map(|()| parent)
-                            .map_err(|reason| reason)
-                            .ok()
+                        can_reparent(resource, &context).ok().map(|()| parent)
                     });
                     if let Some(parent) = reparent {
                         match self

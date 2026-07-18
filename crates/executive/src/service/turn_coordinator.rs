@@ -386,7 +386,7 @@ impl TurnCoordinator {
             && outcome
                 .as_ref()
                 .err()
-                .is_some_and(|error| is_terminal_durable_write_failure(error));
+                .is_some_and(is_terminal_durable_write_failure);
         if !terminal_write_failed {
             self.active.lock().await.remove(&active_key);
         } else {

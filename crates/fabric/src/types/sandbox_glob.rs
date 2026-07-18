@@ -203,7 +203,8 @@ mod tests {
         touch(&root.join("a/notes.txt"));
         touch(&root.join("top.pem"));
 
-        let out = expand_deny_globs(&["**/*.pem".to_string()], &[root.clone()]).unwrap();
+        let out =
+            expand_deny_globs(&["**/*.pem".to_string()], std::slice::from_ref(&root)).unwrap();
         assert!(out.contains(&root.join("a/b/secret.pem")));
         assert!(out.contains(&root.join("top.pem")));
         assert!(!out.iter().any(|p| p.ends_with("notes.txt")));
@@ -216,7 +217,7 @@ mod tests {
         touch(&root.join("svc/config/.env"));
         touch(&root.join("svc/config/app.yaml"));
 
-        let out = expand_deny_globs(&["**/.env".to_string()], &[root.clone()]).unwrap();
+        let out = expand_deny_globs(&["**/.env".to_string()], std::slice::from_ref(&root)).unwrap();
         assert_eq!(out, vec![root.join("svc/config/.env")]);
     }
 

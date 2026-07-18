@@ -237,7 +237,7 @@ impl DoctorReport {
                         .iter()
                         .take(MAX_DOCTOR_PROVENANCE)
                         .map(|(path, source)| DoctorProvenanceEntry {
-                            path: bounded_text(&path.to_string()),
+                            path: bounded_text(path),
                             source_kind: format!("{:?}", source.kind).to_lowercase(),
                             // A locator may contain a home path, URL query, or
                             // environment-derived secret. The source kind is
