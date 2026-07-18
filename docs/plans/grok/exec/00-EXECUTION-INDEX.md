@@ -83,10 +83,16 @@
 | `ff1ce39a` + `6056f614` | **G2 T3/T6/§8–§9**：terminal/serde 契约、proptest 随机序列、call-bound 路由与协议违规诊断 | fabric + executive | Fabric stream 9 + bridge 8 + strict clippy + fmt |
 | `104a3639` + `c939b02b` | **S1 T13–T15/§8–§9**：canonical applied/violation 事件、解析/展开 fail-closed、生产 glob 装配、指标与 child 不放宽 | fabric + corpus + executive | S1 focused 6 + strict clippy + fmt |
 | `5506c5a2`..`4a1fd81d` | **G3 T1–T18/§8–§9**：版本队列、SQLite 恢复、单 session 顺序消费、safe-point interjection、event spine/广播与 flag-off 旁路 | fabric + cognit + executive | queue 8 + reopen 1 + safe-point 5 + strict clippy + fmt |
+| `97dba191` | **G4**：启动完整性校验、`Open → Aborted` 原子恢复、固定基数指标与 restore 阶段诊断 | executive | checkpoint focused 14 + strict clippy |
+| `ab7ae9a3` | **G6**：持久 reservation/transfer、恢复结算、通知 reparent 与 host-authorized detach | kernel + fabric + executive | budget/settlement focused + strict clippy |
+| `5226b76c` | **D2 M3–M5**：版本化 mutation identity、SQLite event cursor、connection-owned live subscription | fabric + executive + interact | reconnect/schema/subscription focused + strict clippy |
+| `2d17e8dd` | **Conscious R3**：host-only proposal confidence、不可变 proposal、同 turn 精确改序与 fail-closed planner | corpus + cognit + executive | production reorder + registry boundary + strict clippy |
+| `6eccbc62` | **Structured editing Phase 2**：typed patch progress/delta、streaming applier、partial argument consumer、TUI 实时投影 | fabric + corpus + executive + interact | focused progress/delta/TUI + all-target compile |
+| `08120768` | **Structured editing Phase 3**：turn-wide delta tracker、下一次模型调用前注入、code-agent 工具激活 | executive | tracker + real next-model-input test + strict clippy |
 
-**状态**：G1、S1 端到端完成。`grok_hardening.sandbox_profiles = true` + 配置中声明 profiles → `resolve_profile` → `SandboxConfig.policy` → bubblewrap 施加 deny + network；关=逐字节旧行为。C1+S1 两条从契约贯通到激活。
+**状态（2026-07-19）**：G1–G8、S1、C1、D1–D3、conscious R1–R3 与 structured editing Phase 1–3 均已从契约贯通到生产 consumer，并完成定向验收；C1 T13 仍是可选策略，不作为完成门槛。
 
-**进行中**：G1、G2、G3、S1 已完成并通过定向验收；G4–G8 consumer 收尾仍按 §4 序列推进。
+**外部延期**：V02 外部验收由用户在另一分支重构，本分支不执行、不声称其证据。
 
 ## 2. 合并映射：Grok fabric × DeepSeek OUTSTANDING
 
