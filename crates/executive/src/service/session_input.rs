@@ -890,6 +890,10 @@ mod tests {
         let mut enqueued =
             bus.subscribe_channel(SchemaId::from(SchemaId::EVENT_PROMPT_ENQUEUED_V1));
         let mut edited = bus.subscribe_channel(SchemaId::from(SchemaId::EVENT_PROMPT_EDITED_V1));
+        let mut cancelled =
+            bus.subscribe_channel(SchemaId::from(SchemaId::EVENT_PROMPT_CANCELLED_V1));
+        let mut consumed =
+            bus.subscribe_channel(SchemaId::from(SchemaId::EVENT_INTERJECTION_CONSUMED_V1));
         let coordinator = SessionInputCoordinator::in_memory().with_event_bus(bus);
 
         let prompt = coordinator
@@ -903,7 +907,7 @@ mod tests {
             )
             .await
             .unwrap();
-        coordinator
+        let edited_result = coordinator
             .edit(
                 prompt.prompt_id,
                 prompt.version,
@@ -912,8 +916,36 @@ mod tests {
             )
             .await
             .unwrap();
+        let edited_version = match edited_result {
+            QueueOpResult::Ok { new_version } => new_version,
+            other => panic!("unexpected edit result: {other:?}"),
+        };
+        coordinator
+            .cancel(prompt.prompt_id, edited_version, principal("p"))
+            .await
+            .unwrap();
+        coordinator
+            .enqueue(
+                principal("p"),
+                connection(1),
+                thread("t"),
+                PromptKind::Interjection,
+                "interjection secret".into(),
+                "interjection-idem".into(),
+            )
+            .await
+            .unwrap();
+        coordinator
+            .drain_interjections_at_safe_point(&principal("p"), &thread("t"), "receipt")
+            .await
+            .unwrap();
 
-        for event in [enqueued.recv().await.unwrap(), edited.recv().await.unwrap()] {
+        for event in [
+            enqueued.recv().await.unwrap(),
+            edited.recv().await.unwrap(),
+            cancelled.recv().await.unwrap(),
+            consumed.recv().await.unwrap(),
+        ] {
             assert_eq!(event.target.0, "thread:t");
             assert_eq!(event.namespace.0, "principal:p");
             assert_eq!(event.payload["thread_id"], "t");

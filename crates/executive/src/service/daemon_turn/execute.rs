@@ -11,6 +11,20 @@ use fabric::{PrincipalContext, PromptEnvelope, PromptKind, TurnRequest, TurnResu
 use serde_json::json;
 use tracing::warn;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptAdmissionMode {
+    Direct,
+    Queued,
+}
+
+fn prompt_admission_mode(enabled: bool) -> PromptAdmissionMode {
+    if enabled {
+        PromptAdmissionMode::Queued
+    } else {
+        PromptAdmissionMode::Direct
+    }
+}
+
 impl DaemonTurnOrchestrator {
     /// Execute a full daemon chat turn through the macro-kernel pipeline.
     ///
@@ -42,7 +56,7 @@ impl DaemonTurnOrchestrator {
         message: &str,
         context: PrincipalContext,
     ) -> serde_json::Value {
-        if !self.grok_hardening.prompt_queue {
+        if prompt_admission_mode(self.grok_hardening.prompt_queue) == PromptAdmissionMode::Direct {
             return self.execute_one_turn(id, message, context).await;
         }
 
@@ -259,5 +273,16 @@ impl DaemonTurnOrchestrator {
                 json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": error.to_string()}})
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_prompt_queue_preserves_direct_turn_admission() {
+        assert_eq!(prompt_admission_mode(false), PromptAdmissionMode::Direct);
+        assert_eq!(prompt_admission_mode(true), PromptAdmissionMode::Queued);
     }
 }
