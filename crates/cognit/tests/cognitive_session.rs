@@ -9,6 +9,7 @@ use fabric::{
     TurnRequest, TurnServices, TurnStop, Usage,
 };
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -257,6 +258,7 @@ async fn streaming_session_preserves_interactive_events_behind_the_facade() {
 struct InterjectingServices {
     llm: cognit::testing::mock_llm::MockLlmProvider,
     drains: Mutex<VecDeque<Vec<String>>>,
+    drain_calls: AtomicUsize,
     invoked: Mutex<usize>,
 }
 
@@ -275,6 +277,11 @@ impl TurnServices for InterjectingServices {
     }
 
     async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
+        assert_eq!(
+            self.drain_calls.load(Ordering::SeqCst),
+            0,
+            "interjections must not drain while a tool/approval is in flight"
+        );
         *self.invoked.lock().unwrap() += 1;
         CapabilityResult {
             call_id: call.call_id,
@@ -298,6 +305,7 @@ impl TurnServices for InterjectingServices {
     }
 
     async fn drain_interjections(&self) -> anyhow::Result<Vec<String>> {
+        self.drain_calls.fetch_add(1, Ordering::SeqCst);
         Ok(self.drains.lock().unwrap().pop_front().unwrap_or_default())
     }
 }
@@ -317,6 +325,7 @@ async fn react_completion_injects_fifo_interjections_as_independent_user_message
     let services = InterjectingServices {
         llm,
         drains: Mutex::new(VecDeque::from([vec!["first".into(), "second".into()]])),
+        drain_calls: AtomicUsize::new(0),
         invoked: Mutex::new(0),
     };
     let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
@@ -369,6 +378,7 @@ async fn tool_interjection_is_injected_only_after_tool_result_is_absorbed() {
     let services = InterjectingServices {
         llm,
         drains: Mutex::new(VecDeque::from([vec!["after-tool".into()]])),
+        drain_calls: AtomicUsize::new(0),
         invoked: Mutex::new(0),
     };
     let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
@@ -384,6 +394,7 @@ async fn tool_interjection_is_injected_only_after_tool_result_is_absorbed() {
         .unwrap();
 
     assert_eq!(*services.invoked.lock().unwrap(), 1);
+    assert!(services.drain_calls.load(Ordering::SeqCst) >= 1);
     let log = services.llm.call_log.lock().unwrap();
     let second_call = &log[1];
     let interjection_index = second_call
