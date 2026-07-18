@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use executive::r#impl::channel::dispatcher::{
+use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
-use executive::r#impl::channel::store::ChannelStore;
+use gateway::store::ChannelStore;
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,

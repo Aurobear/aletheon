@@ -1141,6 +1141,7 @@ dependencies = [
  "dirs",
  "fabric",
  "futures",
+ "gateway",
  "hmac",
  "http-body-util",
  "hyper",
@@ -1388,6 +1389,25 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
+]
+
+[[package]]
+name = "gateway"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "fabric",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

@@ -22,9 +22,10 @@ use async_trait::async_trait;
 use fabric::ExternalEventEnvelope;
 use tokio_util::sync::CancellationToken;
 
-use super::super::effect::OutboundEffect;
+use gateway::effect::OutboundEffect;
+use gateway::registry::{EventCapabilityHandler, IntentKind};
+
 use super::super::gmail::GmailGoalEventIngress;
-use super::super::registry::{EventCapabilityHandler, IntentKind};
 
 /// Thin [`EventCapabilityHandler`] wrapper around [`GmailGoalEventIngress`].
 pub struct GmailIngestHandler {

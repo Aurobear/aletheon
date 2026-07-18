@@ -6,11 +6,11 @@ use fabric::{ExternalEventEnvelope, ExternalEventId};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
-use crate::r#impl::channel::registry::{EventCapabilityHandler, EventCapabilityRegistry, IntentKind};
-use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::goal::GoalCoordinator;
 use fabric::channel::{MessageContent, OutboundMessage};
 use fabric::{ConversationId, GoogleEvent};
+use gateway::registry::{EventCapabilityHandler, EventCapabilityRegistry, IntentKind};
+use gateway::store::ChannelStore;
 use std::path::Path;
 
 #[async_trait]

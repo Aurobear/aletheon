@@ -11,21 +11,21 @@ use crate::r#impl::channel::daemon_adapter::{
     ApprovalRepositoryPort, DaemonChannelApprovalExecutor, DaemonChannelGoalExecutor,
     DaemonChannelTurnExecutor, DaemonGmailDraftApprovalExecutor,
 };
-use crate::r#impl::channel::dispatcher::{
-    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoalProgress,
-};
 use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
-use crate::r#impl::channel::handlers::chat::ChatHandler;
-use crate::r#impl::channel::handlers::google_read::{
-    ChatPreprocessor, GoogleChannelAccountDirectory, GoogleReadPreprocessor,
-};
-use crate::r#impl::channel::handlers::greeting::GreetingHandler;
-use crate::r#impl::channel::registry::{ApprovalResolver, CapabilityRegistry};
-use crate::r#impl::channel::store::ChannelStore;
-use crate::r#impl::channel::telegram::TelegramTransport;
 use crate::r#impl::external::GoogleIntegration;
 use crate::r#impl::goal::ObjectiveStore;
 use fabric::ApprovalCategory;
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoalProgress,
+};
+use gateway::handlers::chat::ChatHandler;
+use gateway::handlers::google_read::{
+    ChatPreprocessor, GoogleChannelAccountDirectory, GoogleReadPreprocessor,
+};
+use gateway::handlers::greeting::GreetingHandler;
+use gateway::registry::{ApprovalResolver, CapabilityRegistry};
+use gateway::store::ChannelStore;
+use gateway::telegram::TelegramTransport;
 
 /// Build the Telegram long-poll channel transport, router, and spawn the
 /// poll loop. Returns the task handle for graceful shutdown.
@@ -87,7 +87,7 @@ pub(super) fn init_telegram_channel(
     registry.register(Arc::new(ChatHandler::new(turn_executor, chat_preprocessor)));
     registry.register(Arc::new(GreetingHandler));
 
-    let approval_port: Arc<dyn crate::r#impl::channel::ports::ChannelApprovalPort> =
+    let approval_port: Arc<dyn gateway::ports::ChannelApprovalPort> =
         Arc::new(ApprovalRepositoryPort::new(approval_repository));
     let mut dispatcher = ChannelDispatcher::with_registry(store, registry)
         .with_goal_executor(goal_executor)

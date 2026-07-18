@@ -8,9 +8,9 @@
 use async_trait::async_trait;
 use fabric::channel::{InboundMessage, MessageContent, OutboundMessage};
 
-use crate::r#impl::channel::effect::OutboundEffect;
-use crate::r#impl::channel::intent::Intent;
-use crate::r#impl::channel::registry::{CapabilityHandler, HandlerContext, IntentKind};
+use crate::effect::OutboundEffect;
+use crate::intent::Intent;
+use crate::registry::{CapabilityHandler, HandlerContext, IntentKind};
 
 pub struct GreetingHandler;
 

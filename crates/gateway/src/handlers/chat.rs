@@ -11,11 +11,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use fabric::channel::{InboundMessage, MessageContent, OutboundMessage};
 
-use crate::r#impl::channel::dispatcher::ChannelTurnExecutor;
-use crate::r#impl::channel::effect::OutboundEffect;
-use crate::r#impl::channel::handlers::google_read::{ChatPreprocess, ChatPreprocessor};
-use crate::r#impl::channel::intent::Intent;
-use crate::r#impl::channel::registry::{CapabilityHandler, HandlerContext, IntentKind};
+use crate::dispatcher::ChannelTurnExecutor;
+use crate::effect::OutboundEffect;
+use crate::handlers::google_read::{ChatPreprocess, ChatPreprocessor};
+use crate::intent::Intent;
+use crate::registry::{CapabilityHandler, HandlerContext, IntentKind};
 
 pub struct ChatHandler {
     turn_executor: Arc<dyn ChannelTurnExecutor>,

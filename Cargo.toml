@@ -11,6 +11,7 @@ members = [
     "crates/agora",
     "crates/metacog",
     "crates/kernel",
+    "crates/gateway",
     "crates/executive",
     "crates/exec-server",
     "examples/basic-agent",

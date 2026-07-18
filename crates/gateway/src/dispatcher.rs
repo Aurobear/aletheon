@@ -12,8 +12,6 @@ use fabric::channel::{
 };
 use fabric::{ApprovalCategory, ApprovalSnapshot, ApprovalStatus, AttemptId, GoalId, GoalSnapshot};
 
-use crate::r#impl::goal::{AttemptCoordinationOutcome, RetryDecision};
-
 use super::effect::OutboundEffect;
 use super::handlers::approval::ApprovalExecutor;
 use super::handlers::chat::ChatHandler;
@@ -120,29 +118,6 @@ pub struct GoalProgress {
 }
 
 impl GoalProgress {
-    pub fn from_outcome(outcome: &AttemptCoordinationOutcome) -> Self {
-        match outcome {
-            AttemptCoordinationOutcome::Succeeded { attempt, .. } => Self {
-                goal_id: attempt.goal_id,
-                attempt_id: attempt.id,
-                kind: GoalProgressKind::Succeeded,
-            },
-            AttemptCoordinationOutcome::Failed {
-                attempt, decision, ..
-            } => Self {
-                goal_id: attempt.goal_id,
-                attempt_id: attempt.id,
-                kind: match decision {
-                    RetryDecision::RetrySame { .. } => GoalProgressKind::RetryBackoff,
-                    RetryDecision::Escalate { .. } => GoalProgressKind::Escalated,
-                    RetryDecision::AwaitHuman { .. } => GoalProgressKind::AwaitingHuman,
-                    RetryDecision::Fail { .. } => GoalProgressKind::Failed,
-                    RetryDecision::Cancel => GoalProgressKind::Cancelled,
-                },
-            },
-        }
-    }
-
     fn text(&self) -> String {
         let status = match self.kind {
             GoalProgressKind::Succeeded => "completed successfully",

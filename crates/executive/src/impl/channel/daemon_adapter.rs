@@ -8,13 +8,13 @@ use std::sync::Arc;
 
 use crate::r#impl::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
 use crate::r#impl::approval::ApplyCoordinator;
-use crate::r#impl::channel::dispatcher::{ChannelGoalExecutor, ChannelTurnExecutor};
 use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
-use crate::r#impl::channel::ports::{ChannelApprovalDecision, ChannelApprovalPort};
-use crate::r#impl::channel::registry::ApprovalResolver;
 use crate::r#impl::goal::ObjectiveStore;
 use crate::service::DaemonTurnOrchestrator;
 use fabric::{ApprovalId, ApprovalSnapshot, GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId, ProcessId};
+use gateway::dispatcher::{ChannelGoalExecutor, ChannelTurnExecutor};
+use gateway::ports::{ChannelApprovalDecision, ChannelApprovalPort};
+use gateway::registry::ApprovalResolver;
 use tokio::sync::Mutex;
 
 /// Wraps a `DaemonTurnOrchestrator` so the channel router can invoke

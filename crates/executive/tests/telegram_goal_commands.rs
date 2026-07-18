@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use executive::r#impl::channel::daemon_adapter::DaemonChannelGoalExecutor;
-use executive::r#impl::channel::dispatcher::{
+use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
-use executive::r#impl::channel::store::ChannelStore;
+use gateway::store::ChannelStore;
 use executive::r#impl::goal::ObjectiveStore;
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,

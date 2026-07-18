@@ -13,11 +13,11 @@ use executive::r#impl::channel::gmail::sender_policy::{
 use executive::r#impl::channel::gmail::{
     GmailChannelMessage, GmailChannelStore, GmailGoalDraftCoordinator,
 };
-use executive::r#impl::channel::dispatcher::{
+use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
-use executive::r#impl::channel::registry::ApprovalResolver;
-use executive::r#impl::channel::store::ChannelStore;
+use gateway::registry::ApprovalResolver;
+use gateway::store::ChannelStore;
 use executive::r#impl::external::ExternalIdentityRepository;
 use executive::r#impl::goal::ObjectiveStore;
 use fabric::{

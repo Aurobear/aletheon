@@ -1,8 +1,8 @@
 //! Approval-callback capability.
 //!
-//! This is not a [`CapabilityHandler`](crate::r#impl::channel::registry::CapabilityHandler) —
+//! This is not a [`CapabilityHandler`](crate::registry::CapabilityHandler) —
 //! approval callbacks are recognized by `reply_to_action.is_some()` on the
-//! inbound message, *before* [`classify_intent`](crate::r#impl::channel::intent::classify_intent)
+//! inbound message, *before* [`classify_intent`](crate::intent::classify_intent)
 //! runs, so it sits outside the intent-keyed registry. It is invoked
 //! directly by the dispatcher (step 4 of `process()`), moved here verbatim
 //! from the god-object router's `execute_approval_action`.
@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use fabric::{ApprovalCategory, ApprovalId, PrincipalId};
 
-use crate::r#impl::channel::ports::{ChannelApprovalDecision, ChannelApprovalPort};
-use crate::r#impl::channel::registry::ApprovalResolverRegistry;
+use crate::ports::{ChannelApprovalDecision, ChannelApprovalPort};
+use crate::registry::ApprovalResolverRegistry;
 
 pub struct ApprovalExecutor {
     approval_port: Arc<dyn ChannelApprovalPort>,

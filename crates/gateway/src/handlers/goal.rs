@@ -9,10 +9,10 @@ use async_trait::async_trait;
 use fabric::channel::InboundMessage;
 use fabric::{ApprovalCategory, GoalId};
 
-use crate::r#impl::channel::dispatcher::ChannelGoalExecutor;
-use crate::r#impl::channel::effect::OutboundEffect;
-use crate::r#impl::channel::intent::Intent;
-use crate::r#impl::channel::registry::{
+use crate::dispatcher::ChannelGoalExecutor;
+use crate::effect::OutboundEffect;
+use crate::intent::Intent;
+use crate::registry::{
     ApprovalResolverRegistry, CapabilityHandler, HandlerContext, IntentKind,
 };
 

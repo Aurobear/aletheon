@@ -1,5 +1,5 @@
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::channel::store::ChannelStore;
+use gateway::store::ChannelStore;
 use executive::r#impl::external::ExternalIdentityRepository;
 use executive::r#impl::goal::coordinator::{GoalCoordinator, GoogleEventWaitCondition};
 use executive::r#impl::goal::ObjectiveStore;

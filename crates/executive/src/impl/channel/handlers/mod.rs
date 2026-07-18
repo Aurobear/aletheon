@@ -1,8 +1,5 @@
-//! Capability implementations dispatched by the [`super::registry::CapabilityRegistry`].
+//! Executive-side capability implementations that still depend on
+//! executive internals (Gmail ingestion depends on the artifact store and
+//! goal migrations). Neutral capability handlers now live in `gateway::handlers`.
 
-pub mod approval;
-pub mod chat;
 pub mod gmail_ingest;
-pub mod goal;
-pub mod google_read;
-pub mod greeting;

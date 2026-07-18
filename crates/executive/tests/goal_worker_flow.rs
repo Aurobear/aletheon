@@ -1,12 +1,13 @@
 use async_trait::async_trait;
 use executive::kernel::chronos::TestClock;
-use executive::r#impl::channel::dispatcher::{
-    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoalProgress, ProviderEnvelope,
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
-use executive::r#impl::channel::store::ChannelStore;
+use gateway::store::ChannelStore;
 use executive::r#impl::goal::{
-    AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
-    AttemptRequest, GoalCoordinator, ObjectiveStore, RetryDecision, RetryPolicy,
+    goal_progress_from_outcome, AttemptCoordinationOutcome, AttemptCoordinator,
+    AttemptCoordinatorError, AttemptExecutor, AttemptRequest, GoalCoordinator, ObjectiveStore,
+    RetryDecision, RetryPolicy,
 };
 use fabric::channel::{ConversationId, OutboundMessage};
 use fabric::{
@@ -234,7 +235,7 @@ fn failure(class: FailureClass, retryable: bool) -> RuntimeFailure {
 }
 
 async fn notify(h: &Harness, outcome: &AttemptCoordinationOutcome) {
-    let progress = GoalProgress::from_outcome(outcome);
+    let progress = goal_progress_from_outcome(outcome);
     assert!(h
         .router
         .notify_goal_progress(&h.transport, ConversationId("owner-chat".into()), &progress,)
