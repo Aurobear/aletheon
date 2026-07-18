@@ -1,10 +1,12 @@
 use fabric::protocol::client::{
     client_schema, negotiate_protocol_version, ClientCapabilities, ClientEvent, ClientMessage,
     ClientRequest, ClientRpcRequest, EventCursor, EventSubscription, InitializeParams,
-    InitializedResult, SnapshotRequest, TransientApprovalDecision, CLIENT_PROTOCOL_VERSION,
+    InitializedResult, SnapshotRequest, TransientApprovalDecision, TurnCompletionError,
+    TurnCompletionUsage, CLIENT_PROTOCOL_VERSION,
 };
 use fabric::{
-    ConnectionId, LocalOsPrincipal, PrincipalId, SessionId, TurnStop, TurnTerminalStatus,
+    ConnectionId, LocalOsPrincipal, OperationId, PrincipalId, SessionId, ThreadId, TurnId,
+    TurnStop, TurnTerminalStatus,
 };
 
 #[test]
@@ -135,6 +137,68 @@ fn internal_stops_map_to_one_external_terminal_status() {
         TurnTerminalStatus::from(TurnStop::Failed),
         TurnTerminalStatus::Failed
     );
+}
+
+#[test]
+fn rich_turn_terminal_round_trips_structured_outcome() {
+    let event = ClientEvent::TurnCompleted {
+        thread_id: ThreadId("thread-1".into()),
+        turn_id: TurnId::new(),
+        operation_id: OperationId::new(),
+        stop: TurnStop::Failed,
+        status: Some(TurnTerminalStatus::Failed),
+        error: Some(TurnCompletionError {
+            code: Some("provider_timeout".into()),
+            message: "provider timed out".into(),
+        }),
+        retryable: true,
+        usage: TurnCompletionUsage {
+            input_tokens: 10,
+            output_tokens: 4,
+            tool_calls: 2,
+            elapsed_ms: 250,
+        },
+    };
+    let wire = serde_json::to_value(&event).unwrap();
+    let decoded: ClientEvent = serde_json::from_value(wire).unwrap();
+    assert_eq!(decoded, event);
+}
+
+#[test]
+fn current_client_decodes_legacy_turn_terminal_without_additive_fields() {
+    let event = ClientEvent::TurnCompleted {
+        thread_id: ThreadId("thread-legacy".into()),
+        turn_id: TurnId::new(),
+        operation_id: OperationId::new(),
+        stop: TurnStop::Completed,
+        status: Some(TurnTerminalStatus::Completed),
+        error: None,
+        retryable: false,
+        usage: TurnCompletionUsage::default(),
+    };
+    let mut wire = serde_json::to_value(event).unwrap();
+    let data = wire["data"].as_object_mut().unwrap();
+    data.remove("status");
+    data.remove("error");
+    data.remove("retryable");
+    data.remove("usage");
+
+    let decoded: ClientEvent = serde_json::from_value(wire).unwrap();
+    assert!(matches!(
+        decoded,
+        ClientEvent::TurnCompleted {
+            status: None,
+            error: None,
+            retryable: false,
+            usage: TurnCompletionUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                tool_calls: 0,
+                elapsed_ms: 0,
+            },
+            ..
+        }
+    ));
 }
 
 #[test]

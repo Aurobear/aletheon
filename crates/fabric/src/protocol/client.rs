@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ui_event::{CollaborationMode, InterruptReason},
     AgentSnapshot, ApprovalSnapshot, ConnectionId, ItemRecord, LocalOsPrincipal, OperationId,
-    PrincipalId, SessionId, ThreadId, TurnId, TurnStop, WorkspacePolicy,
+    PrincipalId, SessionId, ThreadId, TurnId, TurnStop, TurnTerminalStatus, WorkspacePolicy,
 };
 
 pub const CLIENT_PROTOCOL_VERSION: u16 = 1;
@@ -680,6 +680,29 @@ pub struct AgentEvent {
     pub agent: AgentSnapshot,
 }
 
+/// Structured terminal failure carried by the versioned protocol. `code` is
+/// stable for clients; `message` remains human-readable diagnostic context.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TurnCompletionError {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    pub message: String,
+}
+
+/// Bounded turn-level usage projection. Additive fields default to zero so a
+/// current client can decode terminal events emitted by an older daemon.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TurnCompletionUsage {
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub tool_calls: u64,
+    #[serde(default)]
+    pub elapsed_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ClientEvent {
@@ -703,7 +726,16 @@ pub enum ClientEvent {
         thread_id: ThreadId,
         turn_id: TurnId,
         operation_id: OperationId,
+        /// Compatibility field retained for protocol-v1 decoders.
         stop: TurnStop,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<TurnTerminalStatus>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<TurnCompletionError>,
+        #[serde(default)]
+        retryable: bool,
+        #[serde(default)]
+        usage: TurnCompletionUsage,
     },
     TurnStopped {
         thread_id: ThreadId,

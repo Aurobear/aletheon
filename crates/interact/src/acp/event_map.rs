@@ -21,12 +21,27 @@ pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
             "message": message,
             "cursor": cursor.as_ref().map(cursor_json),
         })),
-        ClientEvent::TurnCompleted { stop, .. } | ClientEvent::TurnStopped { reason: stop, .. } => {
-            let status = fabric::TurnTerminalStatus::from(stop.clone());
+        ClientEvent::TurnCompleted {
+            status,
+            stop,
+            error,
+            retryable,
+            usage,
+            ..
+        } => {
+            let status = status.unwrap_or_else(|| fabric::TurnTerminalStatus::from(stop.clone()));
             Some(json!({
                 "sessionUpdate": "turn_end",
-                // Use the protocol's canonical terminal projection so TUI and
-                // ACP do not disagree on Cancelled/Blocked semantics.
+                "stopReason": format!("{status:?}").to_ascii_lowercase(),
+                "error": error,
+                "retryable": retryable,
+                "usage": usage,
+            }))
+        }
+        ClientEvent::TurnStopped { reason, .. } => {
+            let status = fabric::TurnTerminalStatus::from(reason.clone());
+            Some(json!({
+                "sessionUpdate": "turn_end",
                 "stopReason": format!("{status:?}").to_ascii_lowercase(),
             }))
         }
@@ -219,12 +234,43 @@ mod tests {
                 thread_id: fabric::ThreadId("thread".into()),
                 turn_id: fabric::TurnId::new(),
                 operation_id: fabric::OperationId::new(),
+                status: Some(fabric::TurnTerminalStatus::from(stop.clone())),
                 stop,
+                error: None,
+                retryable: false,
+                usage: Default::default(),
             };
             let update = map_client_event_to_acp(&event).unwrap();
             assert_eq!(update["sessionUpdate"], "turn_end");
             assert_eq!(update["stopReason"], expected);
             assert!(is_turn_terminal(&event));
         }
+    }
+
+    #[test]
+    fn acp_terminal_projection_preserves_rich_failure_fields() {
+        let event = ClientEvent::TurnCompleted {
+            thread_id: fabric::ThreadId("thread".into()),
+            turn_id: fabric::TurnId::new(),
+            operation_id: fabric::OperationId::new(),
+            stop: fabric::TurnStop::Failed,
+            status: Some(fabric::TurnTerminalStatus::Failed),
+            error: Some(fabric::protocol::client::TurnCompletionError {
+                code: Some("overloaded".into()),
+                message: "provider overloaded".into(),
+            }),
+            retryable: true,
+            usage: fabric::protocol::client::TurnCompletionUsage {
+                input_tokens: 7,
+                output_tokens: 2,
+                tool_calls: 1,
+                elapsed_ms: 40,
+            },
+        };
+        let update = map_client_event_to_acp(&event).unwrap();
+        assert_eq!(update["stopReason"], "failed");
+        assert_eq!(update["error"]["code"], "overloaded");
+        assert_eq!(update["retryable"], true);
+        assert_eq!(update["usage"]["input_tokens"], 7);
     }
 }
