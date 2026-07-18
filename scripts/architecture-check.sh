@@ -72,15 +72,15 @@ if [[ ! -s config/schema/aletheon-config.schema.json ]]; then
   exit 1
 fi
 
-# Q02 deletion gates: Interact is a Fabric protocol client and Bin is a host
-# selector. Domain construction belongs to Executive/Corpus composition.
+# Q02 deletion gates: Interact and Bin may depend on Fabric protocol types, while
+# domain construction belongs to Executive/Corpus composition.
 if rg -n '^\s*(aletheon-kernel|corpus)\s*=' crates/interact/Cargo.toml || \
    rg -n '\b(aletheon_kernel|corpus)::|use\s+(aletheon_kernel|corpus)\b' \
      crates/interact/src -g '*.rs'; then
   echo "architecture-check: Interact imports Kernel or Corpus" >&2
   exit 1
 fi
-if rg -n '\b(aletheon_kernel|fabric|corpus|cognit|mnemosyne|dasein|agora|metacog)\s*=' \
+if rg -n '\b(aletheon_kernel|corpus|cognit|mnemosyne|dasein|agora|metacog)\s*=' \
      crates/bin/Cargo.toml || \
    rg -n '\b(ExecSessionBuilder|TurnRequest|RuntimeHost|KernelRuntime|ToolRegistry)\b|\b(corpus|cognit|mnemosyne|dasein|agora|metacog)::' \
      crates/bin/src -g '*.rs'; then
