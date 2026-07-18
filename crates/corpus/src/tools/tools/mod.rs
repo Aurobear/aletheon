@@ -21,6 +21,7 @@ pub mod output;
 pub mod process_list;
 pub mod registry;
 pub mod script_tool;
+pub mod structured_patch;
 pub mod search;
 pub mod system_status;
 pub mod task_tools;
