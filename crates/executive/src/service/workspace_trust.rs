@@ -13,7 +13,7 @@ use fabric::workspace_trust::{
     decide, ClientMode, DiscoveredConfigDigest, ExecutableConfigSource, TrustEvaluationInput,
     TrustReceipt, WorkspaceIdentity, WorkspaceTrustDecision,
 };
-use fabric::PrincipalId;
+use fabric::{CommunicationBus, PrincipalId, SchemaId};
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 
@@ -37,6 +37,7 @@ pub struct WorkspaceTrustResolver {
     store: Arc<dyn TrustStore>,
     discoverer: Arc<dyn ConfigDiscoverer>,
     feature_enabled: bool,
+    event_bus: Option<Arc<CommunicationBus>>,
 }
 
 impl WorkspaceTrustResolver {
@@ -49,7 +50,13 @@ impl WorkspaceTrustResolver {
             store,
             discoverer,
             feature_enabled,
+            event_bus: None,
         }
+    }
+
+    pub fn with_event_bus(mut self, event_bus: Arc<CommunicationBus>) -> Self {
+        self.event_bus = Some(event_bus);
+        self
     }
 
     pub async fn evaluate(
@@ -68,20 +75,52 @@ impl WorkspaceTrustResolver {
 
         let discovered = self.discoverer.discover(&workspace.canonical_path).await;
         let existing_receipt = self.store.get(&principal_id, &workspace).await;
-        decide(&TrustEvaluationInput {
-            principal_id,
-            workspace,
+        let granting_client = existing_receipt
+            .as_ref()
+            .map(|receipt| receipt.granting_client.clone());
+        let decision = decide(&TrustEvaluationInput {
+            principal_id: principal_id.clone(),
+            workspace: workspace.clone(),
             discovered,
             client_mode,
             feature_enabled: true,
             existing_receipt,
             is_broad_unrecordable_root,
             now_unix,
-        })
+        });
+        if let Some(event_bus) = &self.event_bus {
+            let (decision_name, sources) = decision_event_fields(&decision);
+            let _ = event_bus
+                .publish_event_v2(
+                    SchemaId::from("aletheon.event.workspace_trust_decided/v1"),
+                    "executive:workspace-trust",
+                    serde_json::json!({
+                        "principal_id": principal_id.0,
+                        "workspace": workspace.canonical_path,
+                        "decision": decision_name,
+                        "sources": sources,
+                        "granting_client": granting_client,
+                    }),
+                )
+                .await;
+        }
+        decision
     }
 
     pub async fn record_grant(&self, receipt: TrustReceipt) {
         self.store.put(receipt).await;
+    }
+}
+
+fn decision_event_fields(
+    decision: &WorkspaceTrustDecision,
+) -> (&'static str, Vec<ExecutableConfigSource>) {
+    match decision {
+        WorkspaceTrustDecision::Trusted { granted } => ("trusted", granted.clone()),
+        WorkspaceTrustDecision::Restricted { blocked } => ("restricted", blocked.clone()),
+        WorkspaceTrustDecision::PromptRequired { findings } => {
+            ("prompt_required", findings.clone())
+        }
     }
 }
 
@@ -506,6 +545,42 @@ mod tests {
             WorkspaceTrustDecision::Trusted {
                 granted: ExecutableConfigSource::all()
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluation_publishes_scoped_decision_event() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join(".envrc"), "export SAFE=1").unwrap();
+        let bus = Arc::new(CommunicationBus::new());
+        let mut events =
+            bus.subscribe_envelope_v2(SchemaId::from("aletheon.event.workspace_trust_decided/v1"));
+        let resolver = WorkspaceTrustResolver::new(
+            Arc::new(InMemoryTrustStore::default()),
+            Arc::new(KnownConfigDiscoverer::default()),
+            true,
+        )
+        .with_event_bus(bus);
+
+        let decision = resolver
+            .evaluate(
+                PrincipalId("alice".into()),
+                identity(temp.path()),
+                ClientMode::Headless,
+                false,
+                1,
+            )
+            .await;
+        assert!(matches!(
+            decision,
+            WorkspaceTrustDecision::Restricted { .. }
+        ));
+        let event = events.recv().await.unwrap();
+        assert_eq!(event.payload["principal_id"], "alice");
+        assert_eq!(event.payload["decision"], "restricted");
+        assert_eq!(
+            event.payload["workspace"],
+            temp.path().to_string_lossy().as_ref()
         );
     }
 }
