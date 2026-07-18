@@ -1017,6 +1017,21 @@ impl RequestHandler {
             }
         }
 
+        let session_input = if grok_hardening.prompt_queue {
+            let coordinator =
+                crate::service::session_input::SessionInputCoordinator::new(Arc::new(
+                    crate::r#impl::session::prompt_queue_sqlite::SqlitePromptQueueStore::open(
+                        data_dir.join("prompt-queue.sqlite"),
+                    )?,
+                ));
+            Arc::new(if let Some(bus) = event_bus.as_ref() {
+                coordinator.with_event_bus(bus.clone())
+            } else {
+                coordinator
+            })
+        } else {
+            Arc::new(crate::service::session_input::SessionInputCoordinator::in_memory())
+        };
         let coordinator = Arc::new(
             crate::service::turn_coordinator::TurnCoordinator::with_event_spine_and_grok(
                 kernel.clone(),
@@ -1024,7 +1039,8 @@ impl RequestHandler {
                 canonical_event_spine.clone(),
                 grok_hardening.clone(),
             )
-            .with_event_projections(event_projections.clone()),
+            .with_event_projections(event_projections.clone())
+            .with_session_input(session_input.clone()),
         );
         let session_service = Arc::new(crate::service::session_service::SessionService::new(
             coordinator.store(),
@@ -1102,6 +1118,8 @@ impl RequestHandler {
                 runtime: runtime_ports,
                 cognitive_sessions: domains.cognition(),
                 conscious_core: Some(conscious_registry),
+                session_input,
+                prompt_queue_enabled: grok_hardening.prompt_queue,
             },
         ));
         let turn_orchestrator = Arc::new(crate::service::DaemonTurnOrchestrator::new(

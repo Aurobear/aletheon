@@ -65,6 +65,7 @@ pub struct TurnCoordinator {
     active: Arc<Mutex<HashMap<ActiveTurnKey, ActiveTurn>>>,
     grok_hardening: GrokHardeningConfig,
     backpressure: BackpressureConfig,
+    session_input: Arc<super::session_input::SessionInputCoordinator>,
 }
 
 impl TurnCoordinator {
@@ -147,6 +148,7 @@ impl TurnCoordinator {
             active: Arc::new(Mutex::new(HashMap::new())),
             grok_hardening,
             backpressure: BackpressureConfig::default(),
+            session_input: Arc::new(super::session_input::SessionInputCoordinator::in_memory()),
         }
     }
 
@@ -175,6 +177,18 @@ impl TurnCoordinator {
     pub fn with_backpressure(mut self, backpressure: BackpressureConfig) -> Self {
         self.backpressure = backpressure;
         self
+    }
+
+    pub fn with_session_input(
+        mut self,
+        session_input: Arc<super::session_input::SessionInputCoordinator>,
+    ) -> Self {
+        self.session_input = session_input;
+        self
+    }
+
+    pub fn session_input(&self) -> Arc<super::session_input::SessionInputCoordinator> {
+        self.session_input.clone()
     }
 
     /// Number of currently active turns across all connections.

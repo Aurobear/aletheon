@@ -25,6 +25,8 @@ pub struct DaemonStreamingTurnContext<F> {
     pub cancel_token: CancellationToken,
     pub sessions: Arc<dyn CognitiveSessionFactory>,
     pub batch_planner: Option<Arc<dyn cognit::harness::BatchPlanner>>,
+    pub session_input: Arc<crate::service::session_input::SessionInputCoordinator>,
+    pub prompt_queue_enabled: bool,
 }
 
 /// Submit one daemon turn through Cognit's authoritative session facade.
@@ -47,6 +49,8 @@ where
         cancel_token,
         sessions,
         batch_planner,
+        session_input,
+        prompt_queue_enabled,
     } = context;
     let services = DaemonTurnServices {
         llm,
@@ -54,6 +58,11 @@ where
         execute_tool,
         request_messages,
         dasein_context,
+        session_input,
+        prompt_queue_enabled,
+        principal_id: request.context.principal_id.clone(),
+        thread_id: request.context.thread_id.clone(),
+        receipt_prefix: request.operation_id.0.to_string(),
     };
     let session_record = SessionRecord {
         schema_version: SESSION_SCHEMA_VERSION,
@@ -83,6 +92,11 @@ struct DaemonTurnServices<F> {
     execute_tool: F,
     request_messages: Vec<Message>,
     dasein_context: Arc<dyn Fn() -> Option<String> + Send + Sync>,
+    session_input: Arc<crate::service::session_input::SessionInputCoordinator>,
+    prompt_queue_enabled: bool,
+    principal_id: fabric::PrincipalId,
+    thread_id: fabric::ThreadId,
+    receipt_prefix: String,
 }
 
 #[async_trait]
@@ -114,6 +128,19 @@ where
             usage: fabric::UsageReport::default(),
             audit_id: None,
         }
+    }
+
+    async fn drain_interjections(&self) -> anyhow::Result<Vec<String>> {
+        if !self.prompt_queue_enabled {
+            return Ok(Vec::new());
+        }
+        self.session_input
+            .drain_interjections_at_safe_point(
+                &self.principal_id,
+                &self.thread_id,
+                &self.receipt_prefix,
+            )
+            .await
     }
 
     fn llm_provider(&self) -> Option<&dyn LlmProvider> {

@@ -7,7 +7,7 @@ use super::orchestrator::DaemonTurnOrchestrator;
 
 use crate::service::turn_coordinator::TurnExecution;
 use crate::service::turn_policy::TurnPolicy;
-use fabric::{PrincipalContext, TurnRequest, TurnResult, TurnStop};
+use fabric::{PrincipalContext, PromptEnvelope, PromptKind, TurnRequest, TurnResult, TurnStop};
 use serde_json::json;
 use tracing::warn;
 
@@ -37,6 +37,107 @@ impl DaemonTurnOrchestrator {
     }
 
     async fn execute_turn_with_context(
+        &self,
+        id: serde_json::Value,
+        message: &str,
+        context: PrincipalContext,
+    ) -> serde_json::Value {
+        if !self.grok_hardening.prompt_queue {
+            return self.execute_one_turn(id, message, context).await;
+        }
+
+        let principal = context.principal_id.clone();
+        let thread = context.thread_id.clone();
+        let session_input = self.coordinator.session_input();
+        let idempotency_key = format!(
+            "chat:{}:{}:{}",
+            context.connection_id.0,
+            thread.0,
+            serde_json::to_string(&id).unwrap_or_default()
+        );
+        let queued = match session_input
+            .enqueue(
+                principal.clone(),
+                context.connection_id.clone(),
+                thread.clone(),
+                PromptKind::Prompt,
+                message.to_owned(),
+                idempotency_key,
+            )
+            .await
+        {
+            Ok(prompt) => prompt,
+            Err(error) => {
+                return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": error.to_string()}});
+            }
+        };
+
+        if !session_input.try_claim_processor(&principal, &thread).await {
+            return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "queued": true,
+                    "prompt_id": queued.prompt_id.0.to_string()
+                }
+            });
+        }
+
+        let mut requested_result = None;
+        loop {
+            let next = match session_input
+                .take_next_or_release(&principal, &thread)
+                .await
+            {
+                Ok(Some(prompt)) => prompt,
+                Ok(None) => break,
+                Err(error) => {
+                    session_input.release_processor(&principal, &thread).await;
+                    return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": error.to_string()}});
+                }
+            };
+            let prompt_id = next.prompt_id;
+            let rpc_id = if prompt_id == queued.prompt_id {
+                id.clone()
+            } else {
+                serde_json::Value::Null
+            };
+            let turn_result = self
+                .execute_queued_prompt(rpc_id, next, context.clone())
+                .await;
+            let succeeded = turn_result.get("error").is_none();
+            if succeeded {
+                let receipt = format!("turn-completed:{prompt_id:?}");
+                if let Err(error) = session_input
+                    .mark_prompt_completed(prompt_id, &receipt)
+                    .await
+                {
+                    warn!(%error, ?prompt_id, "failed to persist prompt completion");
+                }
+            } else if let Err(error) = session_input.mark_prompt_rejected(prompt_id).await {
+                warn!(%error, ?prompt_id, "failed to persist prompt rejection");
+            }
+            if prompt_id == queued.prompt_id {
+                requested_result = Some(turn_result);
+            }
+        }
+        requested_result.unwrap_or_else(|| {
+            json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": "queued prompt was not executed"}})
+        })
+    }
+
+    async fn execute_queued_prompt(
+        &self,
+        id: serde_json::Value,
+        prompt: PromptEnvelope,
+        mut context: PrincipalContext,
+    ) -> serde_json::Value {
+        context.connection_id = prompt.connection_id;
+        context.thread_id = prompt.thread_id;
+        self.execute_one_turn(id, &prompt.content, context).await
+    }
+
+    async fn execute_one_turn(
         &self,
         id: serde_json::Value,
         message: &str,

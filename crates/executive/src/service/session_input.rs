@@ -7,8 +7,9 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use fabric::{
-    evaluate_cancel, evaluate_edit, truncate_prompt_content, ConnectionId, PrincipalId,
-    PromptEnvelope, PromptId, PromptKind, PromptState, QueueOpResult, QueueSnapshot, ThreadId,
+    evaluate_cancel, evaluate_edit, truncate_prompt_content, CanonicalEventBus, ConnectionId,
+    EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, NamespaceId, PrincipalId, PromptEnvelope,
+    PromptId, PromptKind, PromptState, QueueOpResult, QueueSnapshot, SchemaId, ThreadId,
     MAX_QUEUE_LEN,
 };
 use tokio::sync::Mutex;
@@ -143,6 +144,8 @@ pub struct SessionInputCoordinator {
     store: Arc<dyn PromptQueueStore>,
     operation_lock: Mutex<()>,
     interjections: Mutex<HashMap<(PrincipalId, ThreadId), InterjectionBuffer>>,
+    processors: Mutex<HashSet<(PrincipalId, ThreadId)>>,
+    event_bus: Option<Arc<CanonicalEventBus>>,
     edit_conflicts: AtomicU64,
     dropped_interjection_bytes: AtomicU64,
 }
@@ -153,6 +156,8 @@ impl SessionInputCoordinator {
             store,
             operation_lock: Mutex::new(()),
             interjections: Mutex::new(HashMap::new()),
+            processors: Mutex::new(HashSet::new()),
+            event_bus: None,
             edit_conflicts: AtomicU64::new(0),
             dropped_interjection_bytes: AtomicU64::new(0),
         }
@@ -160,6 +165,11 @@ impl SessionInputCoordinator {
 
     pub fn in_memory() -> Self {
         Self::new(Arc::new(InMemoryPromptQueueStore::default()))
+    }
+
+    pub fn with_event_bus(mut self, event_bus: Arc<CanonicalEventBus>) -> Self {
+        self.event_bus = Some(event_bus);
+        self
     }
 
     pub async fn enqueue(
@@ -216,6 +226,8 @@ impl SessionInputCoordinator {
                 .or_insert_with(|| InterjectionBuffer::new(thread))
                 .push(envelope.clone());
         }
+        self.publish_prompt_event(SchemaId::EVENT_PROMPT_ENQUEUED_V1, &envelope)
+            .await;
         Ok(envelope)
     }
 
@@ -249,7 +261,9 @@ impl SessionInputCoordinator {
             current.connection_id = editor.1;
             current.content = bounded;
             current.updated_at_unix = unix_now();
-            self.store.update(current).await?;
+            self.store.update(current.clone()).await?;
+            self.publish_prompt_event(SchemaId::EVENT_PROMPT_EDITED_V1, &current)
+                .await;
             Ok(QueueOpResult::Ok { new_version })
         } else {
             if matches!(verdict, QueueOpResult::Conflict { .. }) {
@@ -276,7 +290,9 @@ impl SessionInputCoordinator {
             current.version = new_version;
             current.state = PromptState::Cancelled;
             current.updated_at_unix = unix_now();
-            self.store.update(current).await?;
+            self.store.update(current.clone()).await?;
+            self.publish_prompt_event(SchemaId::EVENT_PROMPT_CANCELLED_V1, &current)
+                .await;
             Ok(QueueOpResult::Ok { new_version })
         } else {
             if matches!(verdict, QueueOpResult::Conflict { .. }) {
@@ -308,6 +324,70 @@ impl SessionInputCoordinator {
         next.updated_at_unix = unix_now();
         self.store.update(next.clone()).await?;
         Ok(Some(next))
+    }
+
+    /// Claim the single queue-consumer role for one session. Queue operations
+    /// and claim transitions share the operation lock, avoiding a stranded
+    /// enqueue between an empty check and processor release.
+    pub async fn try_claim_processor(&self, principal: &PrincipalId, thread: &ThreadId) -> bool {
+        let _guard = self.operation_lock.lock().await;
+        self.processors
+            .lock()
+            .await
+            .insert((principal.clone(), thread.clone()))
+    }
+
+    pub async fn take_next_or_release(
+        &self,
+        principal: &PrincipalId,
+        thread: &ThreadId,
+    ) -> Result<Option<PromptEnvelope>> {
+        let _guard = self.operation_lock.lock().await;
+        let next = self
+            .store
+            .ordered(principal, thread)
+            .await?
+            .into_iter()
+            .find(|prompt| {
+                prompt.kind == PromptKind::Prompt && prompt.state == PromptState::Queued
+            });
+        let Some(mut next) = next else {
+            self.processors
+                .lock()
+                .await
+                .remove(&(principal.clone(), thread.clone()));
+            return Ok(None);
+        };
+        next.state = PromptState::Running;
+        next.version = next.version.saturating_add(1);
+        next.updated_at_unix = unix_now();
+        self.store.update(next.clone()).await?;
+        Ok(Some(next))
+    }
+
+    pub async fn mark_prompt_completed(&self, id: PromptId, receipt: &str) -> Result<bool> {
+        self.store.mark_consumed(id, receipt).await
+    }
+
+    pub async fn mark_prompt_rejected(&self, id: PromptId) -> Result<()> {
+        let _guard = self.operation_lock.lock().await;
+        let mut prompt = self
+            .store
+            .get(id)
+            .await?
+            .ok_or_else(|| anyhow!("prompt not found"))?;
+        prompt.state = PromptState::Rejected;
+        prompt.version = prompt.version.saturating_add(1);
+        prompt.updated_at_unix = unix_now();
+        self.store.update(prompt).await
+    }
+
+    pub async fn release_processor(&self, principal: &PrincipalId, thread: &ThreadId) {
+        let _guard = self.operation_lock.lock().await;
+        self.processors
+            .lock()
+            .await
+            .remove(&(principal.clone(), thread.clone()));
     }
 
     pub async fn snapshot(
@@ -358,10 +438,36 @@ impl SessionInputCoordinator {
                 .mark_consumed(envelope.prompt_id, &receipt)
                 .await?
             {
+                self.publish_prompt_event(SchemaId::EVENT_INTERJECTION_CONSUMED_V1, &envelope)
+                    .await;
                 messages.push(envelope.content);
             }
         }
         Ok(messages)
+    }
+
+    async fn publish_prompt_event(&self, schema: &str, envelope: &PromptEnvelope) {
+        let Some(event_bus) = &self.event_bus else {
+            return;
+        };
+        let event = EnvelopeV2::new(
+            SchemaId::from(schema),
+            EnvelopeV2Target("executive:session-input".into()),
+            EnvelopeV2Target(format!("thread:{}", envelope.thread_id.0)),
+            EnvelopeV2Delivery::FanOut,
+            NamespaceId(format!("principal:{}", envelope.principal_id.0)),
+            serde_json::json!({
+                "principal_id": envelope.principal_id.0,
+                "thread_id": envelope.thread_id.0,
+                "prompt_id": envelope.prompt_id.0,
+                "version": envelope.version,
+                "kind": envelope.kind,
+                "state": envelope.state,
+            }),
+        );
+        // The durable store remains authoritative; a lagging or unavailable
+        // broadcast transport is recovered by the thread-scoped snapshot API.
+        let _ = event_bus.publish(event).await;
     }
 
     pub async fn metrics(
@@ -718,5 +824,101 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn claimed_processor_runs_queued_prompts_in_order_then_releases() {
+        let coordinator = SessionInputCoordinator::in_memory();
+        for (content, idem) in [("first", "one"), ("second", "two")] {
+            coordinator
+                .enqueue(
+                    principal("p"),
+                    connection(1),
+                    thread("t"),
+                    PromptKind::Prompt,
+                    content.into(),
+                    idem.into(),
+                )
+                .await
+                .unwrap();
+        }
+
+        assert!(
+            coordinator
+                .try_claim_processor(&principal("p"), &thread("t"))
+                .await
+        );
+        assert!(
+            !coordinator
+                .try_claim_processor(&principal("p"), &thread("t"))
+                .await
+        );
+        let first = coordinator
+            .take_next_or_release(&principal("p"), &thread("t"))
+            .await
+            .unwrap()
+            .unwrap();
+        coordinator
+            .mark_prompt_completed(first.prompt_id, "receipt-1")
+            .await
+            .unwrap();
+        let second = coordinator
+            .take_next_or_release(&principal("p"), &thread("t"))
+            .await
+            .unwrap()
+            .unwrap();
+        coordinator
+            .mark_prompt_completed(second.prompt_id, "receipt-2")
+            .await
+            .unwrap();
+        assert_eq!([first.content, second.content], ["first", "second"]);
+        assert!(coordinator
+            .take_next_or_release(&principal("p"), &thread("t"))
+            .await
+            .unwrap()
+            .is_none());
+        assert!(
+            coordinator
+                .try_claim_processor(&principal("p"), &thread("t"))
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn queue_events_are_canonical_thread_partitioned_and_content_free() {
+        let bus = Arc::new(CanonicalEventBus::new(8));
+        let mut enqueued =
+            bus.subscribe_channel(SchemaId::from(SchemaId::EVENT_PROMPT_ENQUEUED_V1));
+        let mut edited = bus.subscribe_channel(SchemaId::from(SchemaId::EVENT_PROMPT_EDITED_V1));
+        let coordinator = SessionInputCoordinator::in_memory().with_event_bus(bus);
+
+        let prompt = coordinator
+            .enqueue(
+                principal("p"),
+                connection(1),
+                thread("t"),
+                PromptKind::Prompt,
+                "secret prompt text".into(),
+                "event-idem".into(),
+            )
+            .await
+            .unwrap();
+        coordinator
+            .edit(
+                prompt.prompt_id,
+                prompt.version,
+                (principal("p"), connection(2)),
+                "new secret text".into(),
+            )
+            .await
+            .unwrap();
+
+        for event in [enqueued.recv().await.unwrap(), edited.recv().await.unwrap()] {
+            assert_eq!(event.target.0, "thread:t");
+            assert_eq!(event.namespace.0, "principal:p");
+            assert_eq!(event.payload["thread_id"], "t");
+            assert!(event.payload.get("content").is_none());
+            assert!(!serde_json::to_string(&event).unwrap().contains("secret"));
+        }
     }
 }

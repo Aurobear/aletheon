@@ -322,6 +322,11 @@ impl SchemaId {
     pub const EVENT_SANDBOX_PROFILE_APPLIED_V1: &'static str =
         "aletheon.event.sandbox_profile_applied/v1";
     pub const EVENT_SANDBOX_VIOLATION_V1: &'static str = "aletheon.event.sandbox_violation/v1";
+    pub const EVENT_PROMPT_ENQUEUED_V1: &'static str = "aletheon.event.prompt_enqueued/v1";
+    pub const EVENT_PROMPT_EDITED_V1: &'static str = "aletheon.event.prompt_edited/v1";
+    pub const EVENT_PROMPT_CANCELLED_V1: &'static str = "aletheon.event.prompt_cancelled/v1";
+    pub const EVENT_INTERJECTION_CONSUMED_V1: &'static str =
+        "aletheon.event.interjection_consumed/v1";
 
     pub fn supported_cross_process() -> &'static [&'static str] {
         &[

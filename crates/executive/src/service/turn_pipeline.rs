@@ -56,6 +56,8 @@ pub struct TurnPipeline {
         Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
     pub(crate) conscious_core:
         Option<Arc<dyn crate::service::conscious_workspace::ConsciousTurnPort>>,
+    pub(crate) session_input: Arc<crate::service::session_input::SessionInputCoordinator>,
+    pub(crate) prompt_queue_enabled: bool,
 }
 
 pub(crate) struct TurnPipelineResources {
@@ -74,6 +76,8 @@ pub(crate) struct TurnPipelineResources {
         Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
     pub(crate) conscious_core:
         Option<Arc<dyn crate::service::conscious_workspace::ConsciousTurnPort>>,
+    pub(crate) session_input: Arc<crate::service::session_input::SessionInputCoordinator>,
+    pub(crate) prompt_queue_enabled: bool,
 }
 
 impl TurnPipeline {
@@ -92,6 +96,8 @@ impl TurnPipeline {
             runtime_ports: resources.runtime,
             cognitive_sessions: resources.cognitive_sessions,
             conscious_core: resources.conscious_core,
+            session_input: resources.session_input,
+            prompt_queue_enabled: resources.prompt_queue_enabled,
         }
     }
 
@@ -382,6 +388,8 @@ impl TurnPipeline {
                 cancel_token: scope_token,
                 sessions: self.cognitive_sessions.clone(),
                 batch_planner,
+                session_input: self.session_input.clone(),
+                prompt_queue_enabled: self.prompt_queue_enabled,
             },
         ));
 
