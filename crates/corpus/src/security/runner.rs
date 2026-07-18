@@ -467,22 +467,39 @@ impl ToolRunnerWithGuard {
             }
         }
 
-        // 3. Determine the execution strategy for this tool.
-        let strategy = resolve_strategy(tool_name, tool.permission_level());
+        // 3. Determine the execution strategy for this tool. The profile layer
+        // is the D1 feature flag boundary: when absent, preserve the legacy
+        // contract exactly (only bash_exec is routed through SandboxExecutor).
+        let strategy = if self.sandbox_profiles.is_none() {
+            if tool_name == "bash_exec" {
+                ToolExecutionStrategy::Sandboxed
+            } else {
+                ToolExecutionStrategy::InProcess
+            }
+        } else {
+            let resolved = resolve_strategy(tool_name, tool.permission_level());
+            // A structured Tool cannot be represented by an empty shell command.
+            // Until run_with_tool/exec-server can transport structured calls,
+            // execute its real implementation with its existing canonical path
+            // confinement rather than silently replacing the operation with a
+            // successful no-op. Only bash_exec currently has a command-shaped
+            // transport understood by SandboxExecutor.
+            if matches!(resolved, ToolExecutionStrategy::Sandboxed) && tool_name != "bash_exec" {
+                tracing::warn!(
+                    tool = tool_name,
+                    "structured sandbox transport unavailable; preserving real tool execution"
+                );
+                ToolExecutionStrategy::InProcess
+            } else {
+                resolved
+            }
+        };
 
         let result = match strategy {
             ToolExecutionStrategy::Sandboxed | ToolExecutionStrategy::ExecServerRequired => {
-                // Shell/script tools: extract cmd string and run through sandbox.
-                // Structured tools (file_write, apply_patch, etc.): extract or
-                // fall back to an empty command — the sandbox backend applies
-                // the policy isolation regardless.
-                let cmd = if tool_name == "bash_exec" {
-                    input.get("command").and_then(|v| v.as_str()).unwrap_or("")
-                } else {
-                    // Structured tools run through their own execute() but we
-                    // still apply the sandbox policy layer at the filesystem level.
-                    ""
-                };
+                // Only command-shaped tools reach this branch. Structured
+                // tools must never be converted into an empty shell command.
+                let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
 
                 let workspace = ctx
                     .effective_workspace_policy()
@@ -873,7 +890,7 @@ mod tests {
     #[async_trait]
     impl Tool for StructuredL1Tool {
         fn name(&self) -> &str {
-            "file_read"
+            "file_write"
         }
         fn description(&self) -> &str {
             "structured read operation"
@@ -981,6 +998,29 @@ mod tests {
                 serde_json::json!({"path": "artifact.txt"}),
                 &make_ctx(),
                 "structured-turn",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.content, "wrote artifact");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn structured_mutation_executes_real_tool_when_profiles_are_enabled() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let tool = StructuredL1Tool {
+            calls: Arc::clone(&calls),
+        };
+        let mut runner = make_runner(Arc::new(AutoApproveGate))
+            .with_sandbox_profiles(fabric::SandboxProfiles::default());
+
+        let result = runner
+            .execute_tool(
+                &tool,
+                serde_json::json!({"path": "artifact.txt", "content": "written"}),
+                &make_ctx(),
+                "profile-structured-turn",
             )
             .await
             .unwrap();
