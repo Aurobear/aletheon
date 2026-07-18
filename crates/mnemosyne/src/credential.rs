@@ -39,7 +39,7 @@ impl std::fmt::Debug for SecretHandle {
 /// Credential grant for a remote embedding provider, bound to an exact origin.
 #[derive(Clone)]
 pub struct EmbeddingCredentialGrant {
-    pub principal: String,
+    pub principal: fabric::PrincipalId,
     /// Normalized scheme+host+port+base-path. A request must match this exactly.
     pub approved_base_url: String,
     pub provider_id: String,
@@ -73,7 +73,7 @@ impl EmbeddingCredentialGrant {
         secret: impl Into<String>,
     ) -> Self {
         Self {
-            principal: principal.into(),
+            principal: fabric::PrincipalId(principal.into()),
             approved_base_url: normalize_url(approved_base_url),
             provider_id: provider_id.into(),
             operation: EmbeddingOperation::EmbeddingOnly,
@@ -87,7 +87,11 @@ impl EmbeddingCredentialGrant {
     /// approved one after normalization, and the grant must be unexpired.
     /// Hostname-suffix widening and post-redirect origins never match.
     pub fn approved_for(&self, request_base_url: &str, now_unix: u64) -> bool {
-        now_unix < self.expiry_unix && normalize_url(request_base_url) == self.approved_base_url
+        let requested = normalize_url(request_base_url);
+        now_unix < self.expiry_unix
+            && self.approved_base_url != "\0invalid"
+            && requested != "\0invalid"
+            && requested == self.approved_base_url
     }
 
     /// Reveal the secret only after `approved_for` has authorized the request.
@@ -105,27 +109,26 @@ impl EmbeddingCredentialGrant {
 /// that do not look like `scheme://host[...]` normalize to a sentinel that can
 /// never match a real approved URL (fail-closed).
 pub fn normalize_url(url: &str) -> String {
-    let trimmed = url.trim();
-    let Some((scheme, rest)) = trimmed.split_once("://") else {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
         return "\0invalid".to_string();
     };
-    if scheme.is_empty() || rest.is_empty() {
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
         return "\0invalid".to_string();
     }
-    // Drop query/fragment.
-    let rest = rest.split(['?', '#']).next().unwrap_or_default();
-    // Split authority from path.
-    let (authority, path) = match rest.split_once('/') {
-        Some((a, p)) => (a, format!("/{p}")),
-        None => (rest, String::new()),
-    };
-    let authority = authority.to_ascii_lowercase();
-    if authority.is_empty() {
-        return "\0invalid".to_string();
-    }
-    // Strip a single trailing slash from the path (but keep "/" -> "").
-    let path = path.trim_end_matches('/').to_string();
-    format!("{}://{}{}", scheme.to_ascii_lowercase(), authority, path)
+    let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
+    let port = parsed
+        .port()
+        .map(|value| format!(":{value}"))
+        .unwrap_or_default();
+    let path = parsed.path().trim_end_matches('/');
+    format!(
+        "{}://{host}{port}{path}",
+        parsed.scheme().to_ascii_lowercase()
+    )
 }
 
 #[cfg(test)]
@@ -205,6 +208,8 @@ mod tests {
         assert_eq!(normalize_url("not a url"), "\0invalid");
         assert_eq!(normalize_url("https://"), "\0invalid");
         assert_ne!(normalize_url("not a url"), normalize_url("https://a/b"));
+        let invalid = EmbeddingCredentialGrant::new("p", "not a url", "x", 10, 0, "secret");
+        assert!(!invalid.approved_for("also invalid", 1));
     }
 
     #[test]

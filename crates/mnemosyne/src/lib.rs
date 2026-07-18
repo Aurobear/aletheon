@@ -48,6 +48,10 @@ pub use projection::{
     DefaultMemoryWorkspaceProjector, MemoryCandidateContext, MemoryProjection,
     MemoryProjectionLimits, MemoryWorkspaceProjector, ProjectedMemory,
 };
+pub use recall::pipeline::{
+    hybrid_recall, DegradedSource, HybridRecallBackends, RankedRecallItem, RecallPreFilter,
+    RecallSearchBackend, RecallSearchParams, ScopePredicate, SearchOutcome,
+};
 pub use retention::{
     RetentionCompactionPolicy, RetentionCompactionReport, RetentionCompactor, RetentionRepository,
 };

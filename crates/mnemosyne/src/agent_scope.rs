@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     MemoryAuthority, MemoryKind, MemoryMetadata, MemoryProjection, MemoryRecord, MemoryRecordId,
-    MemoryScope, MemorySensitivity, MemoryStatus, ProjectedMemory,
+    MemoryScope, MemorySensitivity, MemoryStatus, ProjectedMemory, ScopeAncestry,
 };
 
 const SCHEMA: &str = r#"
@@ -78,6 +78,20 @@ impl AgentMemoryContext {
             "parent memory projection receipt is required"
         );
         Ok(())
+    }
+
+    /// Build recall ancestry exclusively from the server-verified child
+    /// identity. Query text and tool-provided scope strings never participate
+    /// in this authorization decision.
+    pub fn recall_ancestry(&self) -> anyhow::Result<ScopeAncestry> {
+        self.validate()?;
+        Ok(ScopeAncestry {
+            principal_id: None,
+            session_id: None,
+            goal_id: None,
+            agent_id: Some(self.agent_id.0.to_string()),
+            task_id: Some(self.task_id.0.clone()),
+        })
     }
 }
 

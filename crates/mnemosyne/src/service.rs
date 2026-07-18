@@ -302,6 +302,17 @@ pub struct DefaultMemoryService {
     metrics: MemoryMetrics,
 }
 
+fn all_memory_authorities() -> Vec<MemoryAuthority> {
+    vec![
+        MemoryAuthority::ApprovedCore,
+        MemoryAuthority::VerifiedLocalSemantic,
+        MemoryAuthority::LocalEpisode,
+        MemoryAuthority::AletheonExternal,
+        MemoryAuthority::ExternalReference,
+        MemoryAuthority::RawExperience,
+    ]
+}
+
 impl DefaultMemoryService {
     pub fn new(
         recall_memory: Arc<Mutex<RecallMemory>>,
@@ -456,6 +467,155 @@ impl DefaultMemoryService {
         }
         Ok(())
     }
+    /// Recall through an explicit, already-verified authority filter. This is
+    /// the production entry point for child Agent memory access.
+    pub async fn recall_with_prefilter(
+        &self,
+        req: RecallRequest,
+        prefilter: &crate::RecallPreFilter,
+    ) -> anyhow::Result<RecallSet> {
+        if let Err(error) = req.validate() {
+            self.metrics
+                .recall_omitted(RecallOmittedReason::InvalidRequest, 1);
+            return Err(error);
+        }
+        let fetch_limit = req
+            .max_items
+            .saturating_mul(4)
+            .min(RecallRequest::MAX_ITEMS);
+        let predicate = prefilter.to_scope_predicate();
+        let now = wall_to_datetime(self.clock.wall_now());
+        let messages = async {
+            let started = Instant::now();
+            let result = self
+                .recall_memory
+                .lock()
+                .await
+                .search_in_session_prefiltered(&req.session, &req.query, fetch_limit, &predicate)
+                .map(|rows| crate::recall::local::messages(rows, &req));
+            (started.elapsed(), result)
+        };
+        let facts = async {
+            let started = Instant::now();
+            let result = self
+                .fact_store
+                .lock()
+                .await
+                .search_facts_prefiltered(&req.query, &req.session, 0.0, fetch_limit, &predicate)
+                .map(|rows| crate::recall::local::facts(rows, &req, now));
+            (started.elapsed(), result)
+        };
+        let reflections = async {
+            let started = Instant::now();
+            let result = if predicate.allows_scope(&MemoryScope::Session(req.session.clone()))
+                && predicate.allows_authority(MemoryAuthority::LocalEpisode)
+                && predicate.allows_sensitivity(MemorySensitivity::Internal)
+            {
+                self.episodic
+                    .lock()
+                    .await
+                    .recall_reflections(fetch_limit)
+                    .map(|rows| crate::recall::local::reflections(rows, &req))
+            } else {
+                Ok(Vec::new())
+            };
+            (started.elapsed(), result)
+        };
+        let core = async {
+            let started = Instant::now();
+            let blocks = if predicate.allows_scope(&MemoryScope::Global)
+                && predicate.allows_authority(MemoryAuthority::ApprovedCore)
+                && predicate.allows_sensitivity(MemorySensitivity::Internal)
+            {
+                self.core_memory
+                    .lock()
+                    .await
+                    .blocks()
+                    .iter()
+                    .map(|(label, block)| (label.clone(), block.value.clone()))
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            (
+                started.elapsed(),
+                Ok::<_, anyhow::Error>(crate::recall::local::core(blocks, &req, now)),
+            )
+        };
+        let (messages, facts, reflections, core) = tokio::join!(messages, facts, reflections, core);
+        let mut sources = Vec::with_capacity(4);
+        let mut degraded_sources = Vec::new();
+        for (name, source, kind, (elapsed, result)) in [
+            (
+                "recall_memory",
+                RecallSourceLabel::RecallMemory,
+                MemoryKind::Message,
+                messages,
+            ),
+            (
+                "fact_store",
+                RecallSourceLabel::FactStore,
+                MemoryKind::SemanticFact,
+                facts,
+            ),
+            (
+                "episodic",
+                RecallSourceLabel::Episodic,
+                MemoryKind::Reflection,
+                reflections,
+            ),
+            ("core", RecallSourceLabel::Core, MemoryKind::CoreState, core),
+        ] {
+            self.metrics.observe_recall_latency(source, elapsed);
+            match result {
+                Ok(items) => {
+                    self.metrics.recall_hit(source, kind, items.len());
+                    sources.push(items);
+                }
+                Err(error) => {
+                    tracing::warn!(source = name, %error, "local memory recall source degraded");
+                    self.metrics
+                        .recall_omitted(RecallOmittedReason::SourceDegraded, 1);
+                    degraded_sources.push(name.to_string());
+                }
+            }
+        }
+        let mut items = crate::recall::merge_items(sources, &req, Some(&self.metrics));
+        if let Some(retention) = &self.retention {
+            let before = items.len();
+            items.retain(|item| {
+                !retention
+                    .is_tombstoned(&item.metadata.record_id)
+                    .unwrap_or(false)
+            });
+            self.metrics
+                .recall_omitted(RecallOmittedReason::Tombstoned, before - items.len());
+            self.metrics.set_tombstone_pending(
+                TombstoneDestination::Gbrain,
+                retention.pending_remote_count().unwrap_or_default(),
+            );
+        }
+        Ok(RecallSet {
+            items,
+            degraded_sources,
+        })
+    }
+
+    /// Derive authority from a server-verified child context. Query text cannot
+    /// widen the resulting Agent/Task ancestry.
+    pub async fn recall_for_agent(
+        &self,
+        context: &crate::AgentMemoryContext,
+        req: RecallRequest,
+        max_sensitivity: MemorySensitivity,
+    ) -> anyhow::Result<RecallSet> {
+        let prefilter = crate::RecallPreFilter {
+            ancestry: context.recall_ancestry()?,
+            max_sensitivity,
+            allowed_authorities: all_memory_authorities(),
+        };
+        self.recall_with_prefilter(req, &prefilter).await
+    }
 }
 
 #[async_trait]
@@ -594,118 +754,15 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn recall(&self, req: RecallRequest) -> anyhow::Result<RecallSet> {
-        if let Err(error) = req.validate() {
-            self.metrics
-                .recall_omitted(RecallOmittedReason::InvalidRequest, 1);
-            return Err(error);
-        }
-        let fetch_limit = req
-            .max_items
-            .saturating_mul(4)
-            .min(RecallRequest::MAX_ITEMS);
-        let now = wall_to_datetime(self.clock.wall_now());
-        let messages = async {
-            let started = Instant::now();
-            let result = self
-                .recall_memory
-                .lock()
-                .await
-                .search_in_session(&req.session, &req.query, fetch_limit)
-                .map(|rows| crate::recall::local::messages(rows, &req));
-            (started.elapsed(), result)
+        let prefilter = crate::RecallPreFilter {
+            ancestry: crate::ScopeAncestry {
+                session_id: Some(req.session.clone()),
+                ..Default::default()
+            },
+            max_sensitivity: MemorySensitivity::Restricted,
+            allowed_authorities: all_memory_authorities(),
         };
-        let facts = async {
-            let started = Instant::now();
-            let result = self
-                .fact_store
-                .lock()
-                .await
-                .search_facts(&req.query, None, 0.0, fetch_limit)
-                .map(|rows| crate::recall::local::facts(rows, &req, now));
-            (started.elapsed(), result)
-        };
-        let reflections = async {
-            let started = Instant::now();
-            let result = self
-                .episodic
-                .lock()
-                .await
-                .recall_reflections(fetch_limit)
-                .map(|rows| crate::recall::local::reflections(rows, &req));
-            (started.elapsed(), result)
-        };
-        let core = async {
-            let started = Instant::now();
-            let blocks = self
-                .core_memory
-                .lock()
-                .await
-                .blocks()
-                .iter()
-                .map(|(label, block)| (label.clone(), block.value.clone()))
-                .collect::<Vec<_>>();
-            (
-                started.elapsed(),
-                Ok::<_, anyhow::Error>(crate::recall::local::core(blocks, &req, now)),
-            )
-        };
-        let (messages, facts, reflections, core) = tokio::join!(messages, facts, reflections, core);
-        let mut sources = Vec::with_capacity(4);
-        let mut degraded_sources = Vec::new();
-        for (name, source, kind, (elapsed, result)) in [
-            (
-                "recall_memory",
-                RecallSourceLabel::RecallMemory,
-                MemoryKind::Message,
-                messages,
-            ),
-            (
-                "fact_store",
-                RecallSourceLabel::FactStore,
-                MemoryKind::SemanticFact,
-                facts,
-            ),
-            (
-                "episodic",
-                RecallSourceLabel::Episodic,
-                MemoryKind::Reflection,
-                reflections,
-            ),
-            ("core", RecallSourceLabel::Core, MemoryKind::CoreState, core),
-        ] {
-            self.metrics.observe_recall_latency(source, elapsed);
-            match result {
-                Ok(items) => {
-                    self.metrics.recall_hit(source, kind, items.len());
-                    sources.push(items);
-                }
-                Err(error) => {
-                    tracing::warn!(source = name, %error, "local memory recall source degraded");
-                    self.metrics
-                        .recall_omitted(RecallOmittedReason::SourceDegraded, 1);
-                    degraded_sources.push(name.to_string());
-                }
-            }
-        }
-        let mut items = crate::recall::merge_items(sources, &req, Some(&self.metrics));
-        if let Some(retention) = &self.retention {
-            let before = items.len();
-            items.retain(|item| {
-                !retention
-                    .is_tombstoned(&item.metadata.record_id)
-                    .unwrap_or(false)
-            });
-            self.metrics
-                .recall_omitted(RecallOmittedReason::Tombstoned, before - items.len());
-            self.metrics.set_tombstone_pending(
-                TombstoneDestination::Gbrain,
-                retention.pending_remote_count().unwrap_or_default(),
-            );
-        }
-        Ok(RecallSet {
-            items,
-            degraded_sources,
-        })
+        self.recall_with_prefilter(req, &prefilter).await
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {
@@ -824,6 +881,93 @@ mod tests {
         assert_eq!(item.metadata.confidence, 0.5);
         assert_eq!(item.metadata.sensitivity, MemorySensitivity::Internal);
         assert_eq!(item.temporal_state, TemporalState::Unknown);
+    }
+
+    #[tokio::test]
+    async fn verified_agent_recall_cannot_widen_scope_from_request_or_query() {
+        use fabric::{AgentId, AgentTaskId, ProcessId};
+        use uuid::Uuid;
+
+        let dir = tempfile::tempdir().unwrap();
+        let svc = build_service(dir.path()).await;
+        svc.record(ExperienceEvent::Message {
+            session: "parent-session".into(),
+            role: "user".into(),
+            content: "parent-only marker".into(),
+            metadata: metadata("parent-message"),
+        })
+        .await
+        .unwrap();
+        let context = crate::AgentMemoryContext::verified(
+            ProcessId(Uuid::new_v4()),
+            AgentId(Uuid::new_v4()),
+            AgentTaskId("child-task".into()),
+            "verified-parent-projection",
+        )
+        .unwrap();
+        let result = svc
+            .recall_for_agent(
+                &context,
+                RecallRequest::bounded(
+                    "parent-session",
+                    "parent-only marker global parent session",
+                ),
+                MemorySensitivity::Internal,
+            )
+            .await
+            .unwrap();
+        assert!(result.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn governed_fact_recall_materializes_only_allowed_principal_candidates() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = build_service(dir.path()).await;
+        {
+            let facts = svc.fact_store.lock().await;
+            facts
+                .add_fact_governed(
+                    "shared principal marker allowed",
+                    "general",
+                    "",
+                    "principal",
+                    "explicit",
+                    "owner-a",
+                    0.8,
+                    "long",
+                    0,
+                )
+                .unwrap();
+            facts
+                .add_fact_governed(
+                    "shared principal marker denied",
+                    "general",
+                    "",
+                    "principal",
+                    "explicit",
+                    "owner-b",
+                    0.8,
+                    "long",
+                    0,
+                )
+                .unwrap();
+        }
+        let prefilter = crate::RecallPreFilter {
+            ancestry: crate::ScopeAncestry {
+                principal_id: Some("owner-a".into()),
+                ..Default::default()
+            },
+            max_sensitivity: MemorySensitivity::Internal,
+            allowed_authorities: vec![MemoryAuthority::VerifiedLocalSemantic],
+        };
+        let result = svc
+            .recall_with_prefilter(
+                RecallRequest::bounded("untrusted-session", "shared principal marker"),
+                &prefilter,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.texts(), vec!["shared principal marker allowed"]);
     }
 
     #[test]

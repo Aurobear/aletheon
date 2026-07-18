@@ -24,6 +24,10 @@ pub struct VectorStoreConfig {
     pub lance_path: String,
     pub collection: String,
     pub dimension: usize,
+    /// Optional endpoint-scoped authorization. The raw key is never serialized
+    /// into configuration; callers may reveal it only after `approved_for`.
+    #[serde(skip)]
+    pub embedding_grant: Option<crate::credential::EmbeddingCredentialGrant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -47,7 +51,18 @@ impl Default for VectorStoreConfig {
                 .to_string(),
             collection: "archival_memory".to_string(),
             dimension: 384,
+            embedding_grant: None,
         }
+    }
+}
+
+impl VectorStoreConfig {
+    /// Return a credential only for this exact configured endpoint. Redirected
+    /// requests must call this again with the new origin and will fail closed.
+    pub fn credential_for_endpoint(&self, request_url: &str, now_unix: u64) -> Option<&str> {
+        self.embedding_grant
+            .as_ref()
+            .and_then(|grant| grant.secret_if_approved(request_url, now_unix))
     }
 }
 
