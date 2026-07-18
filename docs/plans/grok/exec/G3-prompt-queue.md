@@ -13,23 +13,24 @@
 - 不把"停止"编码为文本插话（用已有 `Interrupted`/cancellation）。
 - 不改 `TurnRequest.input` 的单输入模型（队列在其之上）。
 
-## 2. 当前代码锚点（已验证 @ commit bec15695）
+## 2. 当前代码锚点（已验证 @ commit fef90f44）
 
 | 符号 | 位置 | 关键事实 |
 |---|---|---|
 | `TurnRequest` | `crates/fabric/src/types/turn.rs:9-16` | `{ operation_id, process_id, context: PrincipalContext, input: String, model_policy, deadline }` |
 | `PrincipalContext` | `crates/fabric/src/types/local_authority.rs:279-288` | principal_id/os_principal/connection_id/thread_id/turn_id/workspace/permission_profile/approval_policy |
-| 提交入口 | `crates/executive/src/service/daemon_turn/execute.rs:19-71` | `execute_turn(id, message, context)` → `TurnCoordinator::submit_with` |
-| `TurnCoordinator` | `crates/executive/src/service/turn_coordinator.rs:36-61` | `ActiveTurnKey { principal_id, thread_id }`；`active: HashMap<ActiveTurnKey, ActiveTurn>` |
-| turn_id 分配 | 同上 `:164` | `submit_with()` 内分配 |
+| 提交入口 | `crates/executive/src/service/daemon_turn/execute.rs:53-151` | flag 关直达旧路径；flag 开 enqueue 后由 session 单消费者依序执行 |
+| `TurnCoordinator` | `crates/executive/src/service/turn_coordinator.rs:41-68,182-191` | `ActiveTurnKey=(principal,thread)`；持有共享 `SessionInputCoordinator` |
+| turn_id 分配 | 同上 `:291` | `submit_with()` 内分配 |
 | `TurnId` | `crates/fabric/src/types/session.rs:13-20` | `TurnId(pub Uuid)` |
 | `ConnectionId`/`ThreadId` | `crates/fabric/src/types/local_authority.rs:15-36` | `ConnectionId(Uuid)`、`ThreadId(String)` |
 | `TurnEventV1` | `crates/fabric/src/ipc/stream.rs:171-277` | 27 变体；`Interrupted`(254)、`Approval`(224) 均 outbound-only |
-| 持久层 | `crates/fabric/src/types/session.rs:168-184` | `SessionAppendStore` trait，支持文件 sqlite；`SqliteEventSpine` |
-| 安全点 | `crates/executive/src/service/turn_pipeline.rs:404-548` | select! 循环：react 完成(406)、tool result 吸收(430-473)、approval gate(494-516)、settlement(520-548) |
-| **现有队列/插话** | — | **无**（grep 零结果） |
+| Fabric 队列契约 | `crates/fabric/src/types/prompt_queue.rs:16-110` | envelope/state/snapshot/UTF-8 有界截断均已实现 |
+| Executive 队列 | `crates/executive/src/service/session_input.rs:144-493` | 内存/持久 store 协调、版本冲突、FIFO interjection、指标与 canonical 事件 |
+| 持久层 | `crates/executive/src/impl/session/prompt_queue_sqlite.rs:13-170` | SQLite 顺序、幂等 receipt、running/queued/consumed 重启恢复 |
+| 安全点 | `crates/cognit/src/harness/linear/tool_exec.rs:172-185,533-537` | react 完成与 tool/approval-backed invoke 返回且 tool result 已吸收后 drain |
 
-**核心事实**：`ActiveTurnKey=(principal,thread)` 已是天然的 session 归属键；多连接共享 thread。队列/插话应挂在这一层。
+**核心事实**：队列权威态已挂到 `ActiveTurnKey=(principal,thread)` 的 Executive session 层；Cognit 只通过 `TurnServices::drain_interjections` 在安全点消费独立 synthetic user messages。
 
 ## 3. 权威归属决策（doc10 §6 八问）
 
@@ -181,6 +182,8 @@ impl InterjectionBuffer {
 
 ## 6. 任务分解（TDD）
 
+**完成证据**：T1–T18 与 §8–§9 已由提交 `5506c5a2`、`ea03f7b8`、`6a28e810`、`19d9b26f`、`cb2f2f33`、`05eccf66`、`4a1fd81d` 覆盖；定向验收为 Executive queue 8 项、SQLite reopen 1 项、Cognit safe-point 5 项、Executive strict Clippy 与 workspace fmt。
+
 **阶段 A：Fabric 类型**
 - T1. 新建 `prompt_queue.rs` 全类型。`cargo check -p fabric`。
 - T2. 内容截断辅助（复用 `truncate_utf8_bytes`）+ 上限常量单测。
@@ -216,6 +219,7 @@ impl InterjectionBuffer {
 - **flag 关闭**：无队列层，`execute_turn` → `submit_with` 直提交（等价当前）。
 - **插话 vs interrupt**：停止仍走已有 `Interrupted`/cancellation，绝不编码为文本插话（见研究文档 ../04 §6）。
 - **单输入模型不变**：队列产出的仍是单 `TurnRequest.input`；插话是 turn 内 synthetic message，不改 TurnRequest 结构。
+- **灰度**：`grok_hardening.prompt_queue` 默认关闭；先在单用户 daemon 开启，观察 queue depth、edit conflict、interjection dropped bytes 与 event-spine append，再扩大到多连接共享 thread。
 
 ## 8. 测试计划（映射研究文档 ../04 §8 验收方向）
 
