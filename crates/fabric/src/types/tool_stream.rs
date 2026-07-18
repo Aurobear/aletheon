@@ -126,6 +126,9 @@ impl ToolEventSink {
     /// ignored (debug-asserted). Uses a bounded await send so the terminal is
     /// never dropped.
     pub async fn terminal(&mut self, result: Result<ToolResult, ToolExecutionError>) {
+        if self.terminal_sent {
+            tracing::warn!("second tool terminal ignored as a protocol violation");
+        }
         debug_assert!(
             !self.terminal_sent,
             "second terminal is a protocol violation"

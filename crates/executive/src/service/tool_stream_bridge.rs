@@ -1,6 +1,9 @@
 //! Tool stream bridge — connects G2 ToolEventSink producers to
 //! `TurnEventV1::ToolProgress` consumers without bypassing terminal governance.
 
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+
 use fabric::ipc::stream::{TurnEventSender, TurnEventV1};
 use fabric::types::tool::ToolResult;
 use fabric::types::tool_stream::{
@@ -12,6 +15,37 @@ use tokio_util::sync::CancellationToken;
 pub const TOOL_PROGRESS_TEXT_BYTES: usize = 4 * 1024;
 /// Per-call protection against flooding the downstream turn stream.
 pub const TOOL_PROGRESS_EVENT_LIMIT: usize = 64;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ToolStreamMetricSnapshot {
+    pub tool_progress_dropped_total: u64,
+    pub tool_no_terminal_total: u64,
+}
+
+static TOOL_STREAM_METRICS: LazyLock<Mutex<HashMap<String, ToolStreamMetricSnapshot>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub fn tool_stream_metrics(tool_name: &str) -> ToolStreamMetricSnapshot {
+    TOOL_STREAM_METRICS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(tool_name)
+        .copied()
+        .unwrap_or_default()
+}
+
+fn record_metrics(tool_name: &str, dropped: usize, no_terminal: bool) {
+    let mut metrics = TOOL_STREAM_METRICS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let metric = metrics.entry(tool_name.to_owned()).or_default();
+    metric.tool_progress_dropped_total = metric
+        .tool_progress_dropped_total
+        .saturating_add(dropped as u64);
+    if no_terminal {
+        metric.tool_no_terminal_total = metric.tool_no_terminal_total.saturating_add(1);
+    }
+}
 
 /// The tool-side handle given to streaming tool implementations.
 pub struct ToolStreamHandle {
@@ -163,6 +197,11 @@ pub async fn bridge_tool_stream(
         }
     };
     accumulator.flush_text(&turn_events, &tool_name, &call_id);
+    record_metrics(
+        &tool_name,
+        accumulator.dropped,
+        matches!(&terminal, Err(ToolExecutionError::NoTerminal)),
+    );
     ToolStreamOutcome {
         terminal,
         progress_emitted: accumulator.emitted,
@@ -249,10 +288,11 @@ mod tests {
         let (sink, rx) = tool_event_channel();
         drop(sink);
         let (_stream, sender) = turn_stream(1);
+        let before = tool_stream_metrics("metric-no-terminal");
         let outcome = bridge_tool_stream(
             rx,
             sender,
-            "tool".into(),
+            "metric-no-terminal".into(),
             "call-3".into(),
             CancellationToken::new(),
         )
@@ -261,6 +301,11 @@ mod tests {
             outcome.terminal,
             Err(ToolExecutionError::NoTerminal)
         ));
+        let after = tool_stream_metrics("metric-no-terminal");
+        assert_eq!(
+            after.tool_no_terminal_total,
+            before.tool_no_terminal_total + 1
+        );
     }
 
     #[tokio::test]
