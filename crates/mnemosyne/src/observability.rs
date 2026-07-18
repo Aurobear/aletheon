@@ -155,6 +155,10 @@ pub struct MemoryMetricsSnapshot {
     pub memory_gbrain_queue_depth: u64,
     pub memory_gbrain_degraded: BTreeMap<GbrainDegradedCategory, u64>,
     pub memory_tombstone_pending_total: BTreeMap<TombstoneDestination, u64>,
+    pub recall_fts_only_total: u64,
+    pub recall_vector_used_total: u64,
+    pub embedding_credential_rejected_total: u64,
+    pub recall_prefilter_excluded_total: u64,
 }
 
 /// Cloneable metrics handle shared by all memory pipeline components.
@@ -227,6 +231,29 @@ impl MemoryMetrics {
         self.lock()
             .memory_tombstone_pending_total
             .insert(destination, count as u64);
+    }
+
+    pub fn recall_fts_only(&self) {
+        let mut guard = self.lock();
+        guard.recall_fts_only_total = guard.recall_fts_only_total.saturating_add(1);
+    }
+
+    pub fn recall_vector_used(&self) {
+        let mut guard = self.lock();
+        guard.recall_vector_used_total = guard.recall_vector_used_total.saturating_add(1);
+    }
+
+    pub fn embedding_credential_rejected(&self) {
+        let mut guard = self.lock();
+        guard.embedding_credential_rejected_total =
+            guard.embedding_credential_rejected_total.saturating_add(1);
+    }
+
+    pub fn recall_prefilter_excluded(&self, count: usize) {
+        let mut guard = self.lock();
+        guard.recall_prefilter_excluded_total = guard
+            .recall_prefilter_excluded_total
+            .saturating_add(count as u64);
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, MemoryMetricsSnapshot> {

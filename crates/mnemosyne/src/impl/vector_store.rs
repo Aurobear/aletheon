@@ -66,6 +66,17 @@ impl VectorStoreConfig {
     }
 }
 
+/// Translate the governed recall predicate into backend metadata constraints.
+/// Vector implementations must attach this filter to KNN rather than filter
+/// materialized results after search.
+pub fn scope_predicate_filter(predicate: &crate::ScopePredicate) -> Value {
+    serde_json::json!({
+        "scope_key": { "$in": predicate.scope_keys },
+        "sensitivity_ord": { "$lte": predicate.max_sensitivity_ord },
+        "authority": { "$in": predicate.allowed_authorities },
+    })
+}
+
 /// Trait for vector storage backends.
 #[async_trait]
 pub trait VectorStore: Send + Sync {

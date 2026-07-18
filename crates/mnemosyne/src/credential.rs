@@ -99,6 +99,12 @@ impl EmbeddingCredentialGrant {
         if self.approved_for(request_base_url, now_unix) {
             Some(self.secret.reveal())
         } else {
+            tracing::warn!(
+                event = "memory.credential.rejected",
+                provider = %self.provider_id,
+                reason = "origin_or_expiry",
+                "embedding credential rejected"
+            );
             None
         }
     }

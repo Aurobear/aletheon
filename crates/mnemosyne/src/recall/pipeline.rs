@@ -160,6 +160,45 @@ pub trait RecallSearchBackend: Send + Sync {
     ) -> anyhow::Result<SearchOutcome>;
 }
 
+/// Vector decorator retaining the last non-stale result set. When the live
+/// backend reports a stale index without candidates, the bounded last-valid
+/// snapshot is served and remains marked stale for observability.
+pub struct LastValidSnapshotBackend {
+    live: std::sync::Arc<dyn RecallSearchBackend>,
+    last_valid: tokio::sync::Mutex<Option<SearchOutcome>>,
+}
+
+impl LastValidSnapshotBackend {
+    pub fn new(live: std::sync::Arc<dyn RecallSearchBackend>) -> Self {
+        Self {
+            live,
+            last_valid: tokio::sync::Mutex::new(None),
+        }
+    }
+}
+
+#[async_trait]
+impl RecallSearchBackend for LastValidSnapshotBackend {
+    async fn search(
+        &self,
+        request: &RecallRequest,
+        predicate: &ScopePredicate,
+        top_k: usize,
+    ) -> anyhow::Result<SearchOutcome> {
+        let mut outcome = self.live.search(request, predicate, top_k).await?;
+        let mut snapshot = self.last_valid.lock().await;
+        if !outcome.index_stale {
+            outcome.items.truncate(top_k);
+            *snapshot = Some(outcome.clone());
+        } else if outcome.items.is_empty() {
+            if let Some(last_valid) = snapshot.as_ref() {
+                outcome.items = last_valid.items.iter().take(top_k).cloned().collect();
+            }
+        }
+        Ok(outcome)
+    }
+}
+
 pub struct HybridRecallBackends<'a> {
     pub fts: Option<&'a dyn RecallSearchBackend>,
     pub vector: Option<&'a dyn RecallSearchBackend>,
@@ -193,7 +232,9 @@ pub async fn hybrid_recall(
     }
 
     if params.vector_enabled {
-        if !backends.embedding_endpoint_trusted {
+        if backends.vector.is_none() {
+            degraded.push(DegradedSource::NoEmbeddingConfig);
+        } else if !backends.embedding_endpoint_trusted {
             degraded.push(DegradedSource::EmbeddingEndpointUntrusted);
         } else if let Some(vector) = backends.vector {
             match vector.search(request, &predicate, top_k).await {
@@ -205,8 +246,6 @@ pub async fn hybrid_recall(
                 }
                 Err(_) => degraded.push(DegradedSource::EmbeddingTimeout),
             }
-        } else {
-            degraded.push(DegradedSource::NoEmbeddingConfig);
         }
     }
 
@@ -226,6 +265,10 @@ pub async fn hybrid_recall(
     });
     ranked.dedup_by(|left, right| left.item.metadata.record_id == right.item.metadata.record_id);
 
+    if params.use_mmr {
+        ranked = deterministic_mmr(ranked, top_k);
+    }
+
     let mut used_bytes = 0usize;
     let items = ranked
         .into_iter()
@@ -241,6 +284,55 @@ pub async fn hybrid_recall(
     degraded.sort_by_key(|source| source.as_str());
     degraded.dedup();
     (items, degraded)
+}
+
+/// Deterministic MMR with a fixed lambda of 0.7. Ties use record_id, matching
+/// the non-MMR total order; this makes the boolean parameter's behavior fully
+/// specified without adding a second assembly-time tuning surface.
+fn deterministic_mmr(mut candidates: Vec<RankedRecallItem>, limit: usize) -> Vec<RankedRecallItem> {
+    let mut selected: Vec<RankedRecallItem> = Vec::new();
+    while !candidates.is_empty() && selected.len() < limit {
+        let best = candidates
+            .iter()
+            .enumerate()
+            .max_by(|(_, left), (_, right)| {
+                let utility = |candidate: &RankedRecallItem| {
+                    let redundancy = selected
+                        .iter()
+                        .map(|chosen| {
+                            lexical_overlap(&candidate.item.content, &chosen.item.content)
+                        })
+                        .fold(0.0_f32, f32::max);
+                    0.7 * candidate.score - 0.3 * redundancy
+                };
+                utility(left)
+                    .partial_cmp(&utility(right))
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| {
+                        right
+                            .item
+                            .metadata
+                            .record_id
+                            .cmp(&left.item.metadata.record_id)
+                    })
+            })
+            .map(|(index, _)| index)
+            .expect("non-empty candidates");
+        selected.push(candidates.remove(best));
+    }
+    selected.extend(candidates);
+    selected
+}
+
+fn lexical_overlap(left: &str, right: &str) -> f32 {
+    let left: std::collections::BTreeSet<_> = left.split_whitespace().collect();
+    let right: std::collections::BTreeSet<_> = right.split_whitespace().collect();
+    let union = left.union(&right).count();
+    if union == 0 {
+        0.0
+    } else {
+        left.intersection(&right).count() as f32 / union as f32
+    }
 }
 
 fn scope_key(scope: &MemoryScope) -> String {
@@ -376,5 +468,190 @@ mod tests {
         .await;
         assert_eq!(vector.calls.load(AtomicOrdering::SeqCst), 0);
         assert!(degraded.contains(&DegradedSource::EmbeddingEndpointUntrusted));
+    }
+
+    #[tokio::test]
+    async fn fts_failure_is_degraded_without_synthetic_success() {
+        let fts = Backend {
+            calls: AtomicUsize::new(0),
+            outcome: Err(anyhow::anyhow!("db offline")),
+        };
+        let request = RecallRequest::bounded("session", "query");
+        let (items, degraded) = hybrid_recall(
+            &pre(),
+            &RecallSearchParams::default(),
+            HybridRecallBackends {
+                fts: Some(&fts),
+                vector: None,
+                embedding_endpoint_trusted: true,
+            },
+            &request,
+        )
+        .await;
+        assert!(items.is_empty());
+        assert_eq!(degraded, vec![DegradedSource::FtsDbError]);
+    }
+
+    #[tokio::test]
+    async fn vector_candidates_cannot_cross_scope_predicate() {
+        let vector = Backend {
+            calls: AtomicUsize::new(0),
+            outcome: Ok(SearchOutcome {
+                items: vec![
+                    RankedRecallItem {
+                        item: item("allowed", MemoryScope::Task("trusted-task".into())),
+                        score: 0.4,
+                    },
+                    RankedRecallItem {
+                        item: item("denied", MemoryScope::Task("other".into())),
+                        score: 1.0,
+                    },
+                ],
+                index_stale: false,
+            }),
+        };
+        let mut params = RecallSearchParams::default();
+        params.vector_enabled = true;
+        let (items, _) = hybrid_recall(
+            &pre(),
+            &params,
+            HybridRecallBackends {
+                fts: None,
+                vector: Some(&vector),
+                embedding_endpoint_trusted: true,
+            },
+            &RecallRequest::bounded("session", "query"),
+        )
+        .await;
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["allowed"]
+        );
+    }
+
+    #[tokio::test]
+    async fn deterministic_merge_and_mmr_repeat() {
+        async fn run() -> Vec<String> {
+            let vector = Backend {
+                calls: AtomicUsize::new(0),
+                outcome: Ok(SearchOutcome {
+                    items: vec![
+                        RankedRecallItem {
+                            item: item("b shared words", MemoryScope::Task("trusted-task".into())),
+                            score: 0.8,
+                        },
+                        RankedRecallItem {
+                            item: item("a shared words", MemoryScope::Task("trusted-task".into())),
+                            score: 0.8,
+                        },
+                        RankedRecallItem {
+                            item: item("c distinct", MemoryScope::Task("trusted-task".into())),
+                            score: 0.7,
+                        },
+                    ],
+                    index_stale: false,
+                }),
+            };
+            let mut params = RecallSearchParams::default();
+            params.vector_enabled = true;
+            params.use_mmr = true;
+            hybrid_recall(
+                &pre(),
+                &params,
+                HybridRecallBackends {
+                    fts: None,
+                    vector: Some(&vector),
+                    embedding_endpoint_trusted: true,
+                },
+                &RecallRequest::bounded("session", "q"),
+            )
+            .await
+            .0
+            .into_iter()
+            .map(|item| item.content)
+            .collect()
+        }
+        assert_eq!(run().await, run().await);
+    }
+
+    #[tokio::test]
+    async fn stale_vector_serves_last_valid_snapshot_with_signal() {
+        let fts = Backend {
+            calls: AtomicUsize::new(0),
+            outcome: Ok(SearchOutcome {
+                items: vec![RankedRecallItem {
+                    item: item("lexical", MemoryScope::Task("trusted-task".into())),
+                    score: 0.5,
+                }],
+                index_stale: false,
+            }),
+        };
+        let vector = Backend {
+            calls: AtomicUsize::new(0),
+            outcome: Ok(SearchOutcome {
+                items: vec![RankedRecallItem {
+                    item: item("snapshot", MemoryScope::Task("trusted-task".into())),
+                    score: 0.9,
+                }],
+                index_stale: true,
+            }),
+        };
+        let mut params = RecallSearchParams::default();
+        params.vector_enabled = true;
+        let (items, degraded) = hybrid_recall(
+            &pre(),
+            &params,
+            HybridRecallBackends {
+                fts: Some(&fts),
+                vector: Some(&vector),
+                embedding_endpoint_trusted: true,
+            },
+            &RecallRequest::bounded("session", "q"),
+        )
+        .await;
+        assert_eq!(items[0].content, "snapshot");
+        assert!(items.iter().any(|item| item.content == "lexical"));
+        assert_eq!(degraded, vec![DegradedSource::VectorIndexStale]);
+    }
+
+    #[tokio::test]
+    async fn stale_vector_wrapper_reuses_bounded_last_valid_snapshot() {
+        struct Sequence(tokio::sync::Mutex<std::collections::VecDeque<SearchOutcome>>);
+        #[async_trait]
+        impl RecallSearchBackend for Sequence {
+            async fn search(
+                &self,
+                _: &RecallRequest,
+                _: &ScopePredicate,
+                _: usize,
+            ) -> anyhow::Result<SearchOutcome> {
+                Ok(self.0.lock().await.pop_front().unwrap())
+            }
+        }
+        let live = std::sync::Arc::new(Sequence(tokio::sync::Mutex::new(
+            std::collections::VecDeque::from([
+                SearchOutcome {
+                    items: vec![RankedRecallItem {
+                        item: item("last-valid", MemoryScope::Task("trusted-task".into())),
+                        score: 0.9,
+                    }],
+                    index_stale: false,
+                },
+                SearchOutcome {
+                    items: Vec::new(),
+                    index_stale: true,
+                },
+            ]),
+        )));
+        let cached = LastValidSnapshotBackend::new(live);
+        let request = RecallRequest::bounded("s", "q");
+        let predicate = pre().to_scope_predicate();
+        cached.search(&request, &predicate, 1).await.unwrap();
+        let stale = cached.search(&request, &predicate, 1).await.unwrap();
+        assert!(stale.index_stale);
+        assert_eq!(stale.items[0].item.content, "last-valid");
     }
 }

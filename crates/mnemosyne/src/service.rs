@@ -300,6 +300,9 @@ pub struct DefaultMemoryService {
     consolidation: Option<Arc<crate::consolidation::ConsolidationRepository>>,
     retention: Option<Arc<crate::retention::RetentionRepository>>,
     metrics: MemoryMetrics,
+    hybrid_params: Option<crate::RecallSearchParams>,
+    vector_search: Option<Arc<dyn crate::RecallSearchBackend>>,
+    embedding_endpoint_trusted: bool,
 }
 
 fn all_memory_authorities() -> Vec<MemoryAuthority> {
@@ -311,6 +314,35 @@ fn all_memory_authorities() -> Vec<MemoryAuthority> {
         MemoryAuthority::ExternalReference,
         MemoryAuthority::RawExperience,
     ]
+}
+
+struct LexicalSnapshotBackend {
+    items: Vec<RecallItem>,
+}
+
+#[async_trait]
+impl crate::RecallSearchBackend for LexicalSnapshotBackend {
+    async fn search(
+        &self,
+        _request: &RecallRequest,
+        predicate: &crate::ScopePredicate,
+        top_k: usize,
+    ) -> anyhow::Result<crate::SearchOutcome> {
+        Ok(crate::SearchOutcome {
+            items: self
+                .items
+                .iter()
+                .take(top_k)
+                .enumerate()
+                .filter(|(_, item)| predicate.allows(item))
+                .map(|(index, item)| crate::RankedRecallItem {
+                    item: item.clone(),
+                    score: 1.0 / (index + 1) as f32,
+                })
+                .collect(),
+            index_stale: false,
+        })
+    }
 }
 
 impl DefaultMemoryService {
@@ -330,7 +362,30 @@ impl DefaultMemoryService {
             consolidation: None,
             retention: None,
             metrics: MemoryMetrics::default(),
+            hybrid_params: None,
+            vector_search: None,
+            embedding_endpoint_trusted: false,
         }
+    }
+
+    /// Single production composition switch. Disabled preserves the existing
+    /// FTS-only call graph byte-for-byte; enabled adds the optional vector path.
+    pub fn with_memory_hybrid(mut self, enabled: bool) -> Self {
+        self.hybrid_params = enabled.then(|| crate::RecallSearchParams {
+            vector_enabled: true,
+            ..crate::RecallSearchParams::default()
+        });
+        self
+    }
+
+    pub fn with_vector_search_backend(
+        mut self,
+        backend: Arc<dyn crate::RecallSearchBackend>,
+        endpoint_trusted: bool,
+    ) -> Self {
+        self.vector_search = Some(backend);
+        self.embedding_endpoint_trusted = endpoint_trusted;
+        self
     }
 
     pub fn with_metrics(mut self, metrics: MemoryMetrics) -> Self {
@@ -762,7 +817,49 @@ impl MemoryService for DefaultMemoryService {
             max_sensitivity: MemorySensitivity::Restricted,
             allowed_authorities: all_memory_authorities(),
         };
-        self.recall_with_prefilter(req, &prefilter).await
+        let lexical = self.recall_with_prefilter(req.clone(), &prefilter).await?;
+        let Some(params) = &self.hybrid_params else {
+            self.metrics.recall_fts_only();
+            return Ok(lexical);
+        };
+        let lexical_backend = LexicalSnapshotBackend {
+            items: lexical.items,
+        };
+        let (items, degraded) = crate::hybrid_recall(
+            &prefilter,
+            params,
+            crate::HybridRecallBackends {
+                fts: Some(&lexical_backend),
+                vector: self.vector_search.as_deref(),
+                embedding_endpoint_trusted: self.embedding_endpoint_trusted,
+            },
+            &req,
+        )
+        .await;
+        let mut degraded_sources = lexical.degraded_sources;
+        degraded_sources.extend(degraded.iter().map(|source| source.as_str().to_string()));
+        let vector_used = self.vector_search.is_some()
+            && !degraded.contains(&crate::DegradedSource::EmbeddingEndpointUntrusted)
+            && !degraded.contains(&crate::DegradedSource::EmbeddingTimeout);
+        if vector_used {
+            self.metrics.recall_vector_used();
+        }
+        if degraded.is_empty() {
+            tracing::info!(
+                event = "memory.recall.vector_used",
+                "hybrid memory recall completed"
+            );
+        } else {
+            if degraded.contains(&crate::DegradedSource::EmbeddingEndpointUntrusted) {
+                self.metrics.embedding_credential_rejected();
+            }
+            self.metrics.recall_fts_only();
+            tracing::warn!(event = "memory.recall.degraded", degraded_sources = ?degraded, "hybrid memory recall degraded");
+        }
+        Ok(RecallSet {
+            items,
+            degraded_sources,
+        })
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {
@@ -881,6 +978,33 @@ mod tests {
         assert_eq!(item.metadata.confidence, 0.5);
         assert_eq!(item.metadata.sensitivity, MemorySensitivity::Internal);
         assert_eq!(item.temporal_state, TemporalState::Unknown);
+    }
+
+    #[tokio::test]
+    async fn memory_hybrid_flag_off_is_fts_path_equivalent() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = build_service(dir.path()).await;
+        {
+            let fact_store = svc.fact_store.lock().await;
+            fact_store
+                .add_fact("stable lexical", "general", "", "test", 0.5, "long", 0)
+                .unwrap();
+        }
+        let request = RecallRequest::bounded("s1", "stable");
+        let prefilter = crate::RecallPreFilter {
+            ancestry: crate::ScopeAncestry {
+                session_id: Some("s1".into()),
+                ..Default::default()
+            },
+            max_sensitivity: MemorySensitivity::Restricted,
+            allowed_authorities: all_memory_authorities(),
+        };
+        let legacy = svc
+            .recall_with_prefilter(request.clone(), &prefilter)
+            .await
+            .unwrap();
+        let flagged_off = svc.recall(request).await.unwrap();
+        assert_eq!(flagged_off, legacy);
     }
 
     #[tokio::test]
