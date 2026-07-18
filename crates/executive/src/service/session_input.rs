@@ -8,9 +8,10 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use fabric::{
     evaluate_cancel, evaluate_edit, truncate_prompt_content, CanonicalEventBus, ConnectionId,
-    EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, NamespaceId, PrincipalId, PromptEnvelope,
+    EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, EventId, EventIdentity, EventPayload,
+    EventSpine, EventTreeId, EventVisibility, MessageId, NamespaceId, PrincipalId, PromptEnvelope,
     PromptId, PromptKind, PromptState, QueueOpResult, QueueSnapshot, SchemaId, ThreadId,
-    MAX_QUEUE_LEN,
+    UnsequencedEvent, MAX_QUEUE_LEN,
 };
 use tokio::sync::Mutex;
 
@@ -146,6 +147,7 @@ pub struct SessionInputCoordinator {
     interjections: Mutex<HashMap<(PrincipalId, ThreadId), InterjectionBuffer>>,
     processors: Mutex<HashSet<(PrincipalId, ThreadId)>>,
     event_bus: Option<Arc<CanonicalEventBus>>,
+    event_spine: Option<Arc<dyn EventSpine>>,
     edit_conflicts: AtomicU64,
     dropped_interjection_bytes: AtomicU64,
 }
@@ -158,6 +160,7 @@ impl SessionInputCoordinator {
             interjections: Mutex::new(HashMap::new()),
             processors: Mutex::new(HashSet::new()),
             event_bus: None,
+            event_spine: None,
             edit_conflicts: AtomicU64::new(0),
             dropped_interjection_bytes: AtomicU64::new(0),
         }
@@ -169,6 +172,11 @@ impl SessionInputCoordinator {
 
     pub fn with_event_bus(mut self, event_bus: Arc<CanonicalEventBus>) -> Self {
         self.event_bus = Some(event_bus);
+        self
+    }
+
+    pub fn with_event_spine(mut self, event_spine: Arc<dyn EventSpine>) -> Self {
+        self.event_spine = Some(event_spine);
         self
     }
 
@@ -447,27 +455,48 @@ impl SessionInputCoordinator {
     }
 
     async fn publish_prompt_event(&self, schema: &str, envelope: &PromptEnvelope) {
-        let Some(event_bus) = &self.event_bus else {
+        if self.event_bus.is_none() && self.event_spine.is_none() {
             return;
-        };
-        let event = EnvelopeV2::new(
+        }
+        let payload = serde_json::json!({
+            "principal_id": envelope.principal_id.0,
+            "thread_id": envelope.thread_id.0,
+            "prompt_id": envelope.prompt_id.0,
+            "version": envelope.version,
+            "kind": envelope.kind,
+            "state": envelope.state,
+        });
+        let event_id = EventId::new();
+        let mut event = EnvelopeV2::new(
             SchemaId::from(schema),
             EnvelopeV2Target("executive:session-input".into()),
             EnvelopeV2Target(format!("thread:{}", envelope.thread_id.0)),
             EnvelopeV2Delivery::FanOut,
             NamespaceId(format!("principal:{}", envelope.principal_id.0)),
-            serde_json::json!({
-                "principal_id": envelope.principal_id.0,
-                "thread_id": envelope.thread_id.0,
-                "prompt_id": envelope.prompt_id.0,
-                "version": envelope.version,
-                "kind": envelope.kind,
-                "state": envelope.state,
-            }),
+            payload.clone(),
         );
+        event.id = MessageId(event_id.0);
+        if let Some(event_spine) = &self.event_spine {
+            let session_id = format!("{}:{}", envelope.principal_id.0, envelope.thread_id.0);
+            let _ = event_spine.append(UnsequencedEvent {
+                tree_id: EventTreeId::for_root_session(&session_id),
+                event_id,
+                parent: None,
+                identity: EventIdentity {
+                    root_session_id: session_id.clone(),
+                    session_id,
+                    agent_id: None,
+                },
+                envelope: event.clone(),
+                visibility: EventVisibility::Control,
+                payload: EventPayload::Inline { value: payload },
+            });
+        }
         // The durable store remains authoritative; a lagging or unavailable
         // broadcast transport is recovered by the thread-scoped snapshot API.
-        let _ = event_bus.publish(event).await;
+        if let Some(event_bus) = &self.event_bus {
+            let _ = event_bus.publish(event).await;
+        }
     }
 
     pub async fn metrics(
@@ -894,7 +923,12 @@ mod tests {
             bus.subscribe_channel(SchemaId::from(SchemaId::EVENT_PROMPT_CANCELLED_V1));
         let mut consumed =
             bus.subscribe_channel(SchemaId::from(SchemaId::EVENT_INTERJECTION_CONSUMED_V1));
-        let coordinator = SessionInputCoordinator::in_memory().with_event_bus(bus);
+        let spine = Arc::new(
+            crate::r#impl::events::SqliteEventSpine::open(":memory:").expect("event spine"),
+        );
+        let coordinator = SessionInputCoordinator::in_memory()
+            .with_event_bus(bus)
+            .with_event_spine(spine.clone());
 
         let prompt = coordinator
             .enqueue(
@@ -952,5 +986,6 @@ mod tests {
             assert!(event.payload.get("content").is_none());
             assert!(!serde_json::to_string(&event).unwrap().contains("secret"));
         }
+        assert_eq!(spine.metrics().accepted, 5);
     }
 }
