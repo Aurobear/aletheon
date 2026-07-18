@@ -40,3 +40,10 @@
 
 ## 依赖
 - **R1 + R2 必须先落地并观察稳定**（R3 直接改行为，需前两步的信号与场态就位）。
+
+## 已裁决补充（2026-07-18）
+
+- `ActionProposal.confidence` 由 Corpus 工具注册的 host-only 元数据提供，模型输入不得提供或覆盖。
+- 每个同 turn batch 只读取一次不可变场投影；规划前构造只读 `ActionProposal`，不得提交 workspace 或推进 cycle。
+- 排序值严格为 `registered confidence * field precision`，不做 clamp；任一工具缺失、非有限或越界 confidence 时整批 fail-closed。
+- 未安装 planner 才保留兼容 identity order；已安装 production planner 后，规划失败不得退回 provider order执行。

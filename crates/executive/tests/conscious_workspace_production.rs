@@ -11,8 +11,8 @@ use executive::service::governed_capability::{
 };
 use fabric::{
     AgentId, AgentProfileId, AgoraSpaceId, CapabilityCall, CapabilityResult,
-    LatestConsciousContextPort, NamespaceId, PermitId, SpawnSpec, UsageReport,
-    WorkspaceAttribution, WorkspaceContent,
+    ConsciousArbitrationMode, LatestConsciousContextPort, NamespaceId, PermitId, SpawnSpec,
+    UsageReport, WorkspaceAttribution, WorkspaceContent,
 };
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallRequest, RecallSet};
 use tempfile::tempdir;
@@ -21,6 +21,95 @@ use uuid::Uuid;
 
 struct EmptyMemory {
     recalls: AtomicUsize,
+}
+
+#[tokio::test]
+async fn production_planner_reorders_same_turn_from_host_confidence() {
+    let directory = tempdir().unwrap();
+    let clock = Arc::new(TestClock::new(10_000, 20));
+    let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
+    let owner = kernel
+        .spawn_process(SpawnSpec {
+            agent_id: AgentId(Uuid::from_u128(101)),
+            parent: None,
+            profile: AgentProfileId("root".into()),
+            namespace: NamespaceId("production-reorder".into()),
+            initial_operation: None,
+            deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
+        })
+        .await
+        .unwrap()
+        .id;
+    let tools = Arc::new(Mutex::new(corpus::ToolRegistry::default()));
+    {
+        let mut registry = tools.lock().await;
+        registry.set_proposal_confidence("file_read", 0.2).unwrap();
+        registry.set_proposal_confidence("file_write", 0.9).unwrap();
+    }
+    let registry = Arc::new(
+        ConsciousWorkspaceRegistry::production_with_mode_and_tools(
+            directory.path().join("reorder.db"),
+            Arc::new(DaseinWorkspaceAdapter::new(
+                Arc::new(dasein::dasein::DaseinModule::new(clock.clone()).0),
+                clock.clone(),
+            )),
+            kernel,
+            clock,
+            Arc::new(EmptyMemory {
+                recalls: AtomicUsize::new(0),
+            }),
+            Arc::new(Mutex::new(corpus::SkillLoader::new(
+                directory.path().join("skills"),
+            ))),
+            tools,
+            ConsciousArbitrationMode::Enforce,
+        )
+        .unwrap(),
+    );
+    let space = AgoraSpaceId("session:production-reorder".into());
+    registry
+        .observe_turn(
+            space.clone(),
+            owner,
+            owner,
+            fabric::OperationId::new(),
+            "read then write",
+        )
+        .await
+        .unwrap();
+    let calls = vec![
+        CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: owner,
+            name: "file_read".into(),
+            input: serde_json::json!({"confidence": 1.0}),
+            call_id: "provider-first".into(),
+            deadline: None,
+        },
+        CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: owner,
+            name: "file_write".into(),
+            input: serde_json::json!({"confidence": 0.0}),
+            call_id: "provider-second".into(),
+            deadline: None,
+        },
+    ];
+    let plan = registry
+        .batch_planner(space)
+        .await
+        .unwrap()
+        .plan(calls)
+        .await
+        .unwrap();
+
+    assert_eq!(plan.mode, ConsciousArbitrationMode::Enforce);
+    assert_eq!(
+        plan.ordered_call_ids,
+        vec!["provider-second", "provider-first"]
+    );
+    assert!(plan.decisions[1].priority > plan.decisions[0].priority);
 }
 
 #[async_trait]
@@ -170,6 +259,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
                     ..UsageReport::default()
                 },
                 audit_id: Some(fabric::AuditEventId(Uuid::from_u128(13))),
+                patch_delta: None,
             },
         )
         .await
@@ -226,6 +316,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
                     ..UsageReport::default()
                 },
                 audit_id: None,
+                patch_delta: None,
             },
         )
         .await

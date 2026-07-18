@@ -107,6 +107,13 @@ pub trait ConsciousTurnPort: GovernedActionLoopResolver {
 struct ConsciousWorkspaceBatchPlanner {
     coordinator: Arc<ConsciousCoreCoordinator>,
     mode: ConsciousArbitrationMode,
+    tools: Arc<Mutex<corpus::ToolRegistry>>,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectedActionProposal {
+    content: fabric::ActionProposalFrame,
+    confidence: f32,
 }
 
 impl ConsciousWorkspaceBatchPlanner {
@@ -116,24 +123,30 @@ impl ConsciousWorkspaceBatchPlanner {
         plan
     }
 
-    fn priority(
-        readout: &ConsciousFieldReadout,
-        projection: &ConsciousContextProjection,
+    fn project_action(
         call: &CapabilityCall,
-    ) -> f32 {
-        projection
-            .latest_broadcast
-            .as_ref()
-            .and_then(|broadcast| {
-                broadcast.selected.iter().find_map(|candidate| {
-                    matches!(
-                        &candidate.content,
-                        WorkspaceContent::ActionProposal(action) if action.id == call.call_id
-                    )
-                    .then_some((candidate.confidence * readout.precision).clamp(0.0, 1.0))
-                })
-            })
-            .unwrap_or(readout.precision)
+        confidences: &HashMap<String, f32>,
+    ) -> anyhow::Result<ProjectedActionProposal> {
+        let confidence = *confidences
+            .get(&call.name)
+            .with_context(|| format!("tool {} has no trusted proposal confidence", call.name))?;
+        anyhow::ensure!(
+            confidence.is_finite() && (0.0..=1.0).contains(&confidence),
+            "tool {} has invalid trusted proposal confidence",
+            call.name
+        );
+        Ok(ProjectedActionProposal {
+            content: fabric::ActionProposalFrame {
+                id: call.call_id.clone(),
+                summary: format!("invoke governed capability {}", call.name),
+                risk: 0.5,
+            },
+            confidence,
+        })
+    }
+
+    fn priority(readout: &ConsciousFieldReadout, candidate: &ProjectedActionProposal) -> f32 {
+        candidate.confidence * readout.precision
     }
 
     fn metric_ref(&self, epoch: fabric::BroadcastEpoch) -> String {
@@ -194,6 +207,18 @@ fn reorder_trace_event(
 #[async_trait]
 impl cognit::harness::BatchPlanner for ConsciousWorkspaceBatchPlanner {
     async fn plan(&self, calls: Vec<CapabilityCall>) -> anyhow::Result<CapabilityBatchPlan> {
+        // Establish the trusted, read-only proposal set before consulting the
+        // field. Missing/invalid registration metadata therefore cannot be
+        // bypassed by an absent or degraded conscious projection.
+        let confidences = self.tools.lock().await.proposal_confidences();
+        let candidates: Vec<ProjectedActionProposal> = calls
+            .iter()
+            .map(|call| Self::project_action(call, &confidences))
+            .collect::<anyhow::Result<_>>()?;
+        debug_assert!(candidates
+            .iter()
+            .zip(&calls)
+            .all(|(candidate, call)| candidate.content.id == call.call_id));
         let projection = match self
             .coordinator
             .latest_context(self.coordinator.space())
@@ -213,9 +238,9 @@ impl cognit::harness::BatchPlanner for ConsciousWorkspaceBatchPlanner {
                 return Ok(self.identity(&calls));
             }
         };
-        let priorities: Vec<f32> = calls
+        let priorities: Vec<f32> = candidates
             .iter()
-            .map(|call| Self::priority(&readout, &projection, call))
+            .map(|candidate| Self::priority(&readout, candidate))
             .collect();
         let ordered_call_ids = stable_priority_order(
             &calls
@@ -276,6 +301,7 @@ pub struct ConsciousWorkspaceRegistry {
     clock: Arc<dyn Clock>,
     memory_service: Arc<dyn mnemosyne::MemoryService>,
     skills: Arc<Mutex<corpus::SkillLoader>>,
+    tools: Arc<Mutex<corpus::ToolRegistry>>,
     pool_config: CandidatePoolConfig,
     core_config: ConsciousCoreConfig,
     spaces: RwLock<HashMap<AgoraSpaceId, Arc<ConsciousCoreCoordinator>>>,
@@ -290,6 +316,7 @@ impl ConsciousWorkspaceRegistry {
         clock: Arc<dyn Clock>,
         memory: Arc<dyn mnemosyne::MemoryService>,
         skills: Arc<Mutex<corpus::SkillLoader>>,
+        tools: Arc<Mutex<corpus::ToolRegistry>>,
         pool_config: CandidatePoolConfig,
         core_config: ConsciousCoreConfig,
     ) -> anyhow::Result<Self> {
@@ -307,6 +334,7 @@ impl ConsciousWorkspaceRegistry {
             clock,
             memory_service: memory,
             skills,
+            tools,
             pool_config,
             core_config,
             spaces: RwLock::new(HashMap::new()),
@@ -341,6 +369,29 @@ impl ConsciousWorkspaceRegistry {
         skills: Arc<Mutex<corpus::SkillLoader>>,
         arbitration_mode: ConsciousArbitrationMode,
     ) -> anyhow::Result<Self> {
+        Self::production_with_mode_and_tools(
+            path,
+            dasein,
+            kernel,
+            clock,
+            memory,
+            skills,
+            Arc::new(Mutex::new(corpus::ToolRegistry::default())),
+            arbitration_mode,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn production_with_mode_and_tools(
+        path: impl AsRef<Path>,
+        dasein: Arc<dyn DaseinWorkspacePort>,
+        kernel: Arc<KernelRuntime>,
+        clock: Arc<dyn Clock>,
+        memory: Arc<dyn mnemosyne::MemoryService>,
+        skills: Arc<Mutex<corpus::SkillLoader>>,
+        tools: Arc<Mutex<corpus::ToolRegistry>>,
+        arbitration_mode: ConsciousArbitrationMode,
+    ) -> anyhow::Result<Self> {
         let core_config = ConsciousCoreConfig {
             arbitration_mode,
             ..ConsciousCoreConfig::default()
@@ -352,6 +403,7 @@ impl ConsciousWorkspaceRegistry {
             clock,
             memory,
             skills,
+            tools,
             CandidatePoolConfig {
                 capacity: 256,
                 per_source_capacity: 32,
@@ -584,6 +636,7 @@ impl ConsciousTurnPort for ConsciousWorkspaceRegistry {
         Ok(Arc::new(ConsciousWorkspaceBatchPlanner {
             coordinator,
             mode: self.core_config.arbitration_mode,
+            tools: self.tools.clone(),
         }))
     }
 
@@ -912,5 +965,75 @@ mod diagnostic_tests {
         assert_eq!(broadcast_epoch, Some(9));
         assert_eq!(effective, Some(0.75));
         assert_eq!(metric_ref, "metric:9");
+    }
+
+    #[test]
+    fn same_turn_projection_reorders_by_distinct_host_confidence() {
+        let readout = ConsciousFieldReadout {
+            epoch: fabric::BroadcastEpoch(10),
+            care_action: None,
+            concern_urgency: 0.8,
+            salience: max_salience(),
+            precision: 0.8,
+        };
+        let calls = [
+            CapabilityCall {
+                operation_id: fabric::OperationId::new(),
+                process_id: ProcessId::new(),
+                name: "low".into(),
+                input: serde_json::json!({"confidence": 1.0}),
+                call_id: "provider-first".into(),
+                deadline: None,
+            },
+            CapabilityCall {
+                operation_id: fabric::OperationId::new(),
+                process_id: ProcessId::new(),
+                name: "high".into(),
+                input: serde_json::json!({"confidence": 0.0}),
+                call_id: "provider-second".into(),
+                deadline: None,
+            },
+        ];
+        let confidences = HashMap::from([("low".into(), 0.2), ("high".into(), 0.9)]);
+        let projected = calls
+            .iter()
+            .map(|call| ConsciousWorkspaceBatchPlanner::project_action(call, &confidences))
+            .collect::<anyhow::Result<Vec<_>>>()
+            .unwrap();
+        let priorities = calls
+            .iter()
+            .zip(&projected)
+            .map(|(call, candidate)| {
+                (
+                    call.call_id.clone(),
+                    ConsciousWorkspaceBatchPlanner::priority(&readout, candidate),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(priorities[0].1, 0.2 * 0.8);
+        assert_eq!(priorities[1].1, 0.9 * 0.8);
+        assert_eq!(
+            stable_priority_order(&priorities).unwrap(),
+            vec!["provider-second", "provider-first"]
+        );
+    }
+
+    #[test]
+    fn proposal_projection_rejects_missing_and_invalid_host_confidence() {
+        let call = CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: ProcessId::new(),
+            name: "tool".into(),
+            input: serde_json::json!({"confidence": 1.0}),
+            call_id: "call".into(),
+            deadline: None,
+        };
+        assert!(ConsciousWorkspaceBatchPlanner::project_action(&call, &HashMap::new()).is_err());
+        assert!(ConsciousWorkspaceBatchPlanner::project_action(
+            &call,
+            &HashMap::from([("tool".into(), f32::NAN)]),
+        )
+        .is_err());
     }
 }

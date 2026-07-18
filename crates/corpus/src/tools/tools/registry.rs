@@ -8,6 +8,7 @@ use super::Tool;
 /// Central registry for all available tools.
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
+    proposal_confidences: HashMap<String, f32>,
     id_map: HashMap<RegistrationId, String>,
     next_id: u64,
 }
@@ -16,6 +17,7 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            proposal_confidences: HashMap::new(),
             id_map: HashMap::new(),
             next_id: 1,
         }
@@ -40,6 +42,33 @@ impl ToolRegistry {
                 input_schema: t.input_schema(),
             })
             .collect()
+    }
+
+    /// Declare trusted, host-only proposal confidence for a registered tool.
+    ///
+    /// This metadata is deliberately absent from `ToolDefinition` and tool
+    /// input, so an LLM cannot author or override it.
+    pub fn set_proposal_confidence(
+        &mut self,
+        name: &str,
+        confidence: f32,
+    ) -> Result<(), AgentError> {
+        if !self.tools.contains_key(name) {
+            return Err(AgentError::not_found(name));
+        }
+        if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
+            return Err(AgentError::config_missing(&format!(
+                "proposal confidence for {name} must be finite and within [0,1]"
+            )));
+        }
+        self.proposal_confidences
+            .insert(name.to_owned(), confidence);
+        Ok(())
+    }
+
+    /// Snapshot host-only proposal confidence metadata for planning.
+    pub fn proposal_confidences(&self) -> HashMap<String, f32> {
+        self.proposal_confidences.clone()
     }
 
     pub fn register_google_read_tools(
@@ -86,6 +115,9 @@ impl Registry<Arc<dyn Tool>> for ToolRegistry {
             .ok_or_else(|| AgentError::not_found(&format!("{:?}", id)))?;
         self.tools
             .remove(&name)
+            .inspect(|_| {
+                self.proposal_confidences.remove(&name);
+            })
             .ok_or_else(|| AgentError::not_found(&name))
     }
 
@@ -192,6 +224,18 @@ impl ToolRegistry {
                 task_store.clone(),
             )))
             .expect("duplicate built-in tool");
+        // Built-ins explicitly share a conservative host-authored baseline.
+        // Deployments may replace individual values after registration.
+        for name in registry
+            .list()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+        {
+            registry
+                .set_proposal_confidence(&name, 0.5)
+                .expect("built-in tool must be registered before metadata");
+        }
         registry
     }
 }
@@ -302,5 +346,36 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err.message.contains("dup_tool"));
         assert!(err.message.contains("already registered"));
+    }
+
+    #[test]
+    fn proposal_confidence_is_host_only_and_missing_by_default() {
+        let mut reg = ToolRegistry::new();
+        let tool = Arc::new(MockTool::new("ranked_tool"));
+        Registry::<Arc<dyn Tool>>::register(&mut reg, tool).unwrap();
+
+        assert!(!reg.proposal_confidences().contains_key("ranked_tool"));
+        reg.set_proposal_confidence("ranked_tool", 0.75).unwrap();
+        assert_eq!(reg.proposal_confidences()["ranked_tool"], 0.75);
+
+        let definition = reg
+            .definitions()
+            .into_iter()
+            .find(|definition| definition.name == "ranked_tool")
+            .unwrap();
+        let serialized = serde_json::to_value(definition).unwrap();
+        assert!(serialized.get("proposal_confidence").is_none());
+    }
+
+    #[test]
+    fn proposal_confidence_accepts_boundaries_and_rejects_invalid_values() {
+        let mut reg = ToolRegistry::new();
+        Registry::<Arc<dyn Tool>>::register(&mut reg, Arc::new(MockTool::new("bounded"))).unwrap();
+        assert!(reg.set_proposal_confidence("bounded", 0.0).is_ok());
+        assert!(reg.set_proposal_confidence("bounded", 1.0).is_ok());
+        for invalid in [f32::NAN, f32::INFINITY, -0.01, 1.01] {
+            assert!(reg.set_proposal_confidence("bounded", invalid).is_err());
+        }
+        assert_eq!(reg.proposal_confidences()["bounded"], 1.0);
     }
 }

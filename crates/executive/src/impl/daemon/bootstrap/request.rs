@@ -826,7 +826,7 @@ impl RequestHandler {
             .dasein_handle()
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
         let conscious_registry = Arc::new(
-            crate::service::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode(
+            crate::service::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_and_tools(
                 data_dir.join("conscious_workspace.db"),
                 Arc::new(
                     crate::service::dasein_workspace_adapter::DaseinWorkspaceAdapter::new(
@@ -838,6 +838,7 @@ impl RequestHandler {
                 clock.clone(),
                 gbrain_runtime.memory_service.clone(),
                 skill_loader.clone(),
+                tools.clone(),
                 config.conscious_arbitration_mode,
             )?,
         );

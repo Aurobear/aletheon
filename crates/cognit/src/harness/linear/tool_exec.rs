@@ -6,7 +6,7 @@ use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
 use crate::r#impl::llm::provider::{LlmProvider, StopReason, StreamChunk};
 use fabric::message::{ContentBlock, Message, Role};
-use fabric::{CapabilityBatchPlan, CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
+use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
 use std::future::Future;
 use tracing::{debug, warn};
 
@@ -228,13 +228,10 @@ impl ReActLoop {
                 ref planner,
             ) = self.batch_planner
             {
-                let plan = match planner.plan(calls.clone()).await {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!(error = %e, "batch planner failed, keeping provider order");
-                        CapabilityBatchPlan::identity(&calls)
-                    }
-                };
+                // A configured production planner is a trust boundary. Its
+                // rejection must stop the batch rather than silently execute
+                // unprojected calls in provider order.
+                let plan = planner.plan(calls.clone()).await?;
                 match plan.mode {
                     ConsciousArbitrationMode::Enforce => match plan.validate_against(&calls) {
                         Ok(()) => {

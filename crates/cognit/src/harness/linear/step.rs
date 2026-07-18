@@ -6,7 +6,7 @@ use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::r#impl::llm::provider::LlmProvider;
 use fabric::message::{ContentBlock, Message, Role};
 use fabric::policy::verifier::Verdict;
-use fabric::{CapabilityBatchPlan, CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
+use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
 use std::future::Future;
 use tracing::{debug, warn};
 
@@ -148,13 +148,9 @@ impl ReActLoop {
                 ref planner,
             ) = self.batch_planner
             {
-                let plan = match planner.plan(calls.clone()).await {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!(error = %e, "batch planner failed, keeping provider order");
-                        CapabilityBatchPlan::identity(&calls)
-                    }
-                };
+                // Fail closed when an installed planner cannot establish a
+                // trusted projection for every call in this batch.
+                let plan = planner.plan(calls.clone()).await?;
                 match plan.mode {
                     ConsciousArbitrationMode::Enforce => match plan.validate_against(&calls) {
                         Ok(()) => {

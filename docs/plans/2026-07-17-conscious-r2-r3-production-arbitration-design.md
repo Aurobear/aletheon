@@ -163,13 +163,30 @@ There is no mode that permits consciousness to relax authorization, admission, s
 
 ### 6.2 Derived action salience
 
-Action proposals no longer use `confidence = 1.0` and an all-maximum salience vector. The arbitrator derives proposal precision from the same field projection:
+Action proposals no longer use model-authored or field-invented confidence. The
+trusted Corpus tool registration declares a bounded proposal confidence for
+each tool. This metadata is not serialized in `ToolDefinition` and is never
+read from the call name's JSON input. Missing, non-finite, or out-of-range
+metadata rejects the whole pre-execution batch projection.
+
+The planner creates an immutable, read-only `ActionProposal` projection for
+each call before planning. It uses one field readout for the entire batch and
+does not submit the projected proposal to Agora, advance a workspace cycle,
+authorize, or mutate a call. Priority is exactly:
+
+```text
+priority = registered_tool_confidence * field_precision
+```
+
+Both factors are independently validated in `[0,1]`; no clamp or fallback
+value is applied. The remaining proposal salience dimensions come from the
+same field projection:
 
 - `urgency`: selected concern urgency.
 - `self_relevance`: selected broadcast self-relevance.
 - `goal_relevance`: maximum selected goal relevance.
 - `prediction_error`, `affect_intensity`, `novelty`, and `social_relevance`: corresponding bounded maxima from selected candidates.
-- `confidence`: `0.5 + 0.5 * max(selected candidate confidence)`, clamped to `[0,1]`; absent context uses the legacy proposal unchanged and bypasses arbitration.
+- `confidence`: trusted per-tool registration metadata described above.
 
 The hard-coded `CareConcernFrame.urgency = 0.7` is replaced by the originating concern's bounded urgency. Where an older signal contains no urgency, the compatibility projection uses the selected candidate's urgency rather than inventing a new constant.
 
@@ -184,9 +201,15 @@ For a multi-call assistant response, Cognit submits call descriptors as one batc
 - a per-call observe/enforce decision and reason code;
 - the projection epoch used to decide.
 
-Cognit validates the plan as an exact permutation: no missing, duplicate, or injected call IDs. An invalid or failed plan falls back to provider order and emits degraded diagnostics. In `Observe`, Cognit always retains provider order even when the plan records a proposed reorder. In `Enforce`, it applies the valid order.
+Cognit validates the plan as an exact permutation: no missing, duplicate, or injected call IDs. If no planner is installed, compatibility retains provider order. Once a production planner is installed, a failed projection or plan is fail-closed and the batch is not executed. In `Observe`, Cognit always retains provider order for a valid plan even when it records a proposed reorder. In `Enforce`, it applies the valid order.
 
 Batch planning does not execute, authorize, or mutate calls. Each reordered call still goes through the normal single-call invocation boundary.
+
+User adjudication of the earlier design conflict:
+
+| Requirement description | Code/design reality before adjudication | Agree? |
+|---|---|---|
+| Confidence is trusted host registration metadata; missing/invalid rejects projection | Confidence was derived from selected field candidates and failed planners fell back to provider order | No — this section records the approved host-only, fail-closed rule |
 
 ### 6.4 Per-call proceed/defer
 
