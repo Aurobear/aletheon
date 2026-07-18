@@ -8,9 +8,9 @@
 //! deny-by-default verification.
 //!
 //! Registered under [`IntentKind::GmailIngest`] in an
-//! [`EventCapabilityRegistry`], and invoked directly by
+//! `EventCapabilityRegistry`, and invoked directly by
 //! `google/event_dispatcher.rs` on `MailReceived` — never through
-//! [`super::super::dispatcher::ChannelDispatcher::process`] (no inbox dedup,
+//! `ChannelDispatcher::process` (no inbox dedup,
 //! no `complete_inbound`, no `transport.send`). Any Telegram notification for
 //! a matching subscription is already persisted by
 //! `DurableGoogleNotificationSink` independently of this handler, so

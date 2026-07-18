@@ -1,7 +1,7 @@
 //! Goal-command capability: wraps [`ChannelGoalExecutor`] for the M2 Goal
 //! lifecycle commands (`/goal`, `/goals`, `/status`, `/pause`, `/resume`,
 //! `/cancel`), plus `/edit` which drives the `ActivateGoal`
-//! [`ApprovalResolver`]'s revise path.
+//! `ApprovalResolver`'s revise path.
 
 use std::sync::Arc;
 

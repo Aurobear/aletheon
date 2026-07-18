@@ -8,7 +8,7 @@
 //!
 //! ## Quantization
 //!
-//! Values in [0,1] are quantized into 16 bins via:
+//! Values in \[0,1\] are quantized into 16 bins via:
 //! ```text
 //! min(floor(value * 16.0), 15)
 //! ```
@@ -438,7 +438,7 @@ impl FieldMetricHistory {
 
     /// Normalized Shannon entropy of the latest salience readout. The eight
     /// non-negative dimensions are normalized as a categorical proxy and the
-    /// result is scaled to [0,1].
+    /// result is scaled to \[0,1\].
     pub fn belief_entropy(&self) -> Option<f64> {
         let salience = &self.entries.back()?.salience;
         let total: f64 = salience.iter().sum();
