@@ -15,6 +15,7 @@ use crate::core::config::GrokHardeningConfig;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+use super::durable_write::{write_failed, TurnWriteTracker, WritePhase, WriteResult};
 use super::turn_policy::TurnPolicy;
 
 pub struct TurnExecution {
@@ -63,6 +64,7 @@ pub struct TurnCoordinator {
     event_spine: Arc<dyn EventSpine>,
     active: Arc<Mutex<HashMap<ActiveTurnKey, ActiveTurn>>>,
     grok_hardening: GrokHardeningConfig,
+    backpressure: BackpressureConfig,
 }
 
 impl TurnCoordinator {
@@ -144,6 +146,7 @@ impl TurnCoordinator {
             event_spine,
             active: Arc::new(Mutex::new(HashMap::new())),
             grok_hardening,
+            backpressure: BackpressureConfig::default(),
         }
     }
 
@@ -166,6 +169,26 @@ impl TurnCoordinator {
     }
     pub fn active_index(&self) -> Arc<Mutex<HashMap<ActiveTurnKey, ActiveTurn>>> {
         self.active.clone()
+    }
+
+    /// D2-M5-T2: set backpressure config for overload gating.
+    pub fn with_backpressure(mut self, backpressure: BackpressureConfig) -> Self {
+        self.backpressure = backpressure;
+        self
+    }
+
+    /// Number of currently active turns across all connections.
+    pub async fn active_turn_count(&self) -> usize {
+        self.active.lock().await.len()
+    }
+
+    /// D2-M5-T2: check if backpressure limit is exceeded.
+    pub async fn check_backpressure(&self) -> Result<(), anyhow::Error> {
+        let count = self.active_turn_count().await;
+        if self.backpressure.is_exceeded(count) {
+            anyhow::bail!(self.backpressure.overload_message());
+        }
+        Ok(())
     }
 
     /// Cancel an in-flight turn by operation_id (legacy scan). When
@@ -259,6 +282,9 @@ impl TurnCoordinator {
         F: FnOnce(TurnRequest, CancellationToken) -> Fut,
         Fut: Future<Output = Result<TurnExecution>>,
     {
+        // D2-M5-T2: backpressure gate — reject new turns when overloaded.
+        self.check_backpressure().await?;
+
         let operation = self
             .kernel
             .submit(OperationRequest {

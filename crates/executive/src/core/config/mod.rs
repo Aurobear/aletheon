@@ -4,6 +4,8 @@
 //! merges, validates, and reports application layers.
 
 mod agent;
+pub mod backpressure;
+pub mod diagnostics;
 mod genome;
 mod grok_hardening;
 mod infra;
@@ -15,6 +17,8 @@ pub use agent::{
     AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, ExecutiveConfig,
     HooksConfig, PerceptionConfig,
 };
+pub use backpressure::BackpressureConfig;
+pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
 pub use cognit::config::{
     AgentAdmissionConfig, BackupMode, CognitConfig, DeploymentBackupConfig, DeploymentConfig,
     DeploymentHealthConfig, DeploymentIntegrationsConfig, DeploymentMode, DeploymentPathsConfig,
@@ -58,6 +62,9 @@ pub struct AppConfig {
     pub pi_runtime: PiRuntimeConfig,
     pub deployment: DeploymentConfig,
     pub grok_hardening: GrokHardeningConfig,
+    /// D2-M5-T2: overload/backpressure limits (default unlimited).
+    #[serde(default)]
+    pub backpressure: BackpressureConfig,
     /// S1 sandbox profiles (from trusted daemon config, never from repo).
     #[serde(default)]
     pub sandbox_profiles: fabric::SandboxProfiles,
