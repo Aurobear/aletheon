@@ -28,6 +28,7 @@ pub(super) struct DaemonComposition {
     active_connections: Arc<AtomicUsize>,
     thread_authority: Arc<crate::service::thread_authority::ThreadAuthorityStore>,
     grok_hardening: GrokHardeningConfig,
+    workspace_trust: Arc<crate::service::workspace_trust::WorkspaceTrustResolver>,
 }
 
 impl DaemonComposition {
@@ -38,6 +39,7 @@ impl DaemonComposition {
             active_connections: self.active_connections,
             thread_authority: self.thread_authority,
             grok_hardening: self.grok_hardening,
+            workspace_trust: self.workspace_trust,
         }
     }
 }

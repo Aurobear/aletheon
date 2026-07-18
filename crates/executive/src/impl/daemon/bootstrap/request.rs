@@ -421,9 +421,8 @@ impl RequestHandler {
         let audit_path = data_dir.join("audit.jsonl");
         let audit_logger = AuditLogger::new(audit_path)?;
         let (approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
-        let mut runner =
-            ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
-                .with_approval_gate(Arc::new(approval_gate));
+        let mut runner = ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
+            .with_approval_gate(Arc::new(approval_gate));
         if grok_hardening.sandbox_profiles {
             runner = runner.with_sandbox_profiles(sandbox_profiles);
         }
@@ -1358,6 +1357,16 @@ impl RequestHandler {
             session_gateway,
             transport_ports,
         ));
+        let mut workspace_trust = crate::service::workspace_trust::WorkspaceTrustResolver::new(
+            Arc::new(crate::service::workspace_trust::FileTrustStore::new(
+                data_dir.join("workspace-trust-receipts.json"),
+            )),
+            Arc::new(crate::service::workspace_trust::KnownConfigDiscoverer::default()),
+            grok_hardening.folder_trust,
+        );
+        if let Some(bus) = event_bus {
+            workspace_trust = workspace_trust.with_event_bus(bus);
+        }
         let composition = super::DaemonComposition {
             request: handler_ports,
             active_connections,
@@ -1367,6 +1376,7 @@ impl RequestHandler {
                 ),
             ),
             grok_hardening,
+            workspace_trust: Arc::new(workspace_trust),
         };
         let handler = composition.into_handler();
 

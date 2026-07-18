@@ -9,11 +9,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use fabric::ipc::bus::kernel_bus::CanonicalEventBus;
 use fabric::workspace_trust::{
-    decide, ClientMode, DiscoveredConfigDigest, ExecutableConfigSource, TrustEvaluationInput,
-    TrustReceipt, WorkspaceIdentity, WorkspaceTrustDecision,
+    ClientMode, DiscoveredConfigDigest, ExecutableConfigSource, TrustEvaluationInput, TrustReceipt,
+    WorkspaceIdentity, WorkspaceTrustDecision, decide,
 };
-use fabric::{CommunicationBus, PrincipalId, SchemaId};
+use fabric::{PrincipalId, SchemaId};
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 
@@ -37,7 +38,7 @@ pub struct WorkspaceTrustResolver {
     store: Arc<dyn TrustStore>,
     discoverer: Arc<dyn ConfigDiscoverer>,
     feature_enabled: bool,
-    event_bus: Option<Arc<CommunicationBus>>,
+    event_bus: Option<Arc<CanonicalEventBus>>,
 }
 
 impl WorkspaceTrustResolver {
@@ -54,7 +55,7 @@ impl WorkspaceTrustResolver {
         }
     }
 
-    pub fn with_event_bus(mut self, event_bus: Arc<CommunicationBus>) -> Self {
+    pub fn with_event_bus(mut self, event_bus: Arc<CanonicalEventBus>) -> Self {
         self.event_bus = Some(event_bus);
         self
     }
@@ -91,7 +92,7 @@ impl WorkspaceTrustResolver {
         if let Some(event_bus) = &self.event_bus {
             let (decision_name, sources) = decision_event_fields(&decision);
             let _ = event_bus
-                .publish_event_v2(
+                .publish_event(
                     SchemaId::from("aletheon.event.workspace_trust_decided/v1"),
                     "executive:workspace-trust",
                     serde_json::json!({
@@ -122,6 +123,18 @@ fn decision_event_fields(
             ("prompt_required", findings.clone())
         }
     }
+}
+
+/// Query whether a specific repository executable source may be loaded.
+/// Normal workspace file access is intentionally outside this decision.
+pub fn source_is_granted(
+    decision: &WorkspaceTrustDecision,
+    source: ExecutableConfigSource,
+) -> bool {
+    matches!(
+        decision,
+        WorkspaceTrustDecision::Trusted { granted } if granted.contains(&source)
+    )
 }
 
 /// Deterministic in-memory store used by integration tests and ephemeral hosts.
@@ -451,10 +464,12 @@ mod tests {
         std::fs::write(&path, b"not-json").unwrap();
         let store = FileTrustStore::new(path);
 
-        assert!(store
-            .get(&PrincipalId("alice".into()), &identity(temp.path()))
-            .await
-            .is_none());
+        assert!(
+            store
+                .get(&PrincipalId("alice".into()), &identity(temp.path()))
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -552,9 +567,9 @@ mod tests {
     async fn evaluation_publishes_scoped_decision_event() {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join(".envrc"), "export SAFE=1").unwrap();
-        let bus = Arc::new(CommunicationBus::new());
+        let bus = Arc::new(CanonicalEventBus::new(16));
         let mut events =
-            bus.subscribe_envelope_v2(SchemaId::from("aletheon.event.workspace_trust_decided/v1"));
+            bus.subscribe_channel(SchemaId::from("aletheon.event.workspace_trust_decided/v1"));
         let resolver = WorkspaceTrustResolver::new(
             Arc::new(InMemoryTrustStore::default()),
             Arc::new(KnownConfigDiscoverer::default()),
@@ -582,5 +597,34 @@ mod tests {
             event.payload["workspace"],
             temp.path().to_string_lossy().as_ref()
         );
+    }
+
+    #[tokio::test]
+    async fn headless_untrusted_repo_blocks_loader_but_keeps_normal_files_usable() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join(".envrc"), "run-untrusted-command").unwrap();
+        let resolver = WorkspaceTrustResolver::new(
+            Arc::new(InMemoryTrustStore::default()),
+            Arc::new(KnownConfigDiscoverer::default()),
+            true,
+        );
+
+        let decision = resolver
+            .evaluate(
+                PrincipalId("headless-user".into()),
+                identity(temp.path()),
+                ClientMode::Headless,
+                false,
+                1,
+            )
+            .await;
+        assert!(!source_is_granted(
+            &decision,
+            ExecutableConfigSource::EnvrcLoader
+        ));
+
+        let ordinary = temp.path().join("ordinary.txt");
+        std::fs::write(&ordinary, "still writable").unwrap();
+        assert_eq!(std::fs::read_to_string(ordinary).unwrap(), "still writable");
     }
 }

@@ -28,6 +28,8 @@ pub struct RequestHandler {
     pub(crate) thread_authority: Arc<crate::service::thread_authority::ThreadAuthorityStore>,
     /// Feature flags for Grok-hardening mechanisms (folder_trust, etc.).
     pub(crate) grok_hardening: GrokHardeningConfig,
+    /// Principal-scoped gate for repository-provided executable configuration.
+    pub(crate) workspace_trust: Arc<crate::service::workspace_trust::WorkspaceTrustResolver>,
 }
 
 impl RequestHandler {
@@ -166,19 +168,28 @@ impl RequestHandler {
                 "error": { "code": -32602, "message": error.to_string() }
             });
         }
-        // G1 workspace trust gate — folder_trust gate
-        if self.grok_hardening.folder_trust {
-            // TODO(D2-M3-T4): Call WorkspaceTrustResolver::evaluate() here
-            // once ConfigDiscoverer and TrustStore are implemented.
-            // See G1-folder-trust.md §6 T12-T20.
-            // WorkspaceIdentity { canonical_path, repo_fingerprint } can be
-            // constructed from workspace.cwd() which is already available.
-            tracing::debug!(
-                principal = %context.principal_id.0,
-                workspace = %context.workspace.cwd().display(),
-                "folder_trust flag on — trust gate not yet implemented"
-            );
-        }
+        let trust_decision = self
+            .workspace_trust
+            .evaluate(
+                context.principal_id.clone(),
+                fabric::workspace_trust::WorkspaceIdentity {
+                    canonical_path: context.workspace.cwd().to_path_buf(),
+                    repo_fingerprint: None,
+                },
+                fabric::workspace_trust::ClientMode::Headless,
+                false,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            )
+            .await;
+        tracing::debug!(
+            principal = %context.principal_id.0,
+            workspace = %context.workspace.cwd().display(),
+            decision = ?trust_decision,
+            "evaluated repository executable configuration trust"
+        );
         tracing::info!(message = %message, "Chat request received");
         self.ports
             .turn
