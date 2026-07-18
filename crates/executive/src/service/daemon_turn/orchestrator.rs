@@ -106,4 +106,23 @@ impl DaemonTurnOrchestrator {
             .signal_process(process_id, ProcessSignal::Terminate)
             .await
     }
+
+    pub async fn rewind_workspace(
+        &self,
+        principal_id: &PrincipalId,
+        session_id: &str,
+        prompt_index: u64,
+        workspace: &fabric::types::workspace_checkpoint::WorkspaceIdentity,
+    ) -> fabric::types::workspace_checkpoint::RestoreOutcome {
+        self.pipeline
+            .workspace_checkpoint
+            .rewind_to(
+                principal_id,
+                session_id,
+                prompt_index,
+                workspace,
+                self.pipeline.clock.mono_now().0,
+            )
+            .await
+    }
 }

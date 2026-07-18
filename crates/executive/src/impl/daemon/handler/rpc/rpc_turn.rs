@@ -8,6 +8,58 @@ use serde_json::json;
 use tracing::{info, warn};
 
 impl RequestHandler {
+    /// Explicit user-triggered FS rewind. The caller supplies only the logical
+    /// session/turn index plus the normal host-resolved workspace selector; no
+    /// checkpoint path or blob is accepted from RPC input.
+    pub(super) async fn handle_workspace_rewind(
+        &self,
+        connection: &super::super::super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let session_id = request["params"]["session_id"].as_str().unwrap_or_default();
+        let prompt_index = request["params"]["prompt_index"].as_u64();
+        if session_id.is_empty() || prompt_index.is_none() {
+            return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32602, "message": "session_id and prompt_index are required" }
+            });
+        }
+        let workspace = match super::super::resolve_requested_workspace(&request["params"]) {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                return json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32602, "message": error }
+                });
+            }
+        };
+        let outcome = self
+            .ports
+            .turn
+            .rewind_workspace(
+                connection.principal_id.clone(),
+                session_id.to_owned(),
+                prompt_index.unwrap_or_default(),
+                fabric::types::workspace_checkpoint::WorkspaceIdentity {
+                    canonical_path: workspace.cwd().to_path_buf(),
+                    repo_fingerprint: None,
+                },
+            )
+            .await;
+        if outcome == fabric::types::workspace_checkpoint::RestoreOutcome::Completed {
+            json!({"jsonrpc": "2.0", "id": id, "result": {"outcome": outcome}})
+        } else {
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32043, "message": "workspace rewind did not complete", "data": outcome }
+            })
+        }
+    }
+
     /// Wait for a turn operation to reach a terminal state.
     ///
     /// JSON-RPC params:

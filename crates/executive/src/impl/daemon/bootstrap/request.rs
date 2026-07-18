@@ -1043,6 +1043,18 @@ impl RequestHandler {
             .with_event_projections(event_projections.clone())
             .with_session_input(session_input.clone()),
         );
+        let workspace_checkpoint = Arc::new(
+            crate::service::workspace_checkpoint::WorkspaceCheckpointService::new(
+                Arc::new(
+                    crate::r#impl::session::checkpoint_store_sqlite::SqliteCheckpointStore::open(
+                        data_dir.join("workspace-checkpoints.sqlite"),
+                    )?,
+                ),
+                kernel.lease_manager(),
+                grok_hardening.checkpoint_rewind,
+            )
+            .with_events(event_bus.clone(), Some(canonical_event_spine.clone())),
+        );
         let session_service = Arc::new(crate::service::session_service::SessionService::new(
             coordinator.store(),
             coordinator.active_index(),
@@ -1121,6 +1133,7 @@ impl RequestHandler {
                 conscious_core: Some(conscious_registry),
                 session_input,
                 prompt_queue_enabled: grok_hardening.prompt_queue,
+                workspace_checkpoint,
             },
         ));
         let turn_orchestrator = Arc::new(crate::service::DaemonTurnOrchestrator::new(

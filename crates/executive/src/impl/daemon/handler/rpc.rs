@@ -111,6 +111,10 @@ impl RequestHandler {
             "turn.wait" => self.handle_turn_wait(&id, &request).await,
             "turn.cancel" => self.handle_turn_cancel(&id, &request).await,
             "turn.exit" => self.handle_turn_exit(&id, &request).await,
+            "workspace.rewind" if self.grok_hardening.checkpoint_rewind => {
+                self.handle_workspace_rewind(connection, &id, &request)
+                    .await
+            }
 
             _ => serde_json::json!({
                 "jsonrpc": "2.0",

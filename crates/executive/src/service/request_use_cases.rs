@@ -453,6 +453,13 @@ pub trait TurnUseCases: Send + Sync {
         operation_id: OperationId,
     ) -> anyhow::Result<()>;
     async fn exit(&self, id: ProcessId) -> anyhow::Result<()>;
+    async fn rewind_workspace(
+        &self,
+        principal_id: PrincipalId,
+        session_id: String,
+        prompt_index: u64,
+        workspace: fabric::types::workspace_checkpoint::WorkspaceIdentity,
+    ) -> fabric::types::workspace_checkpoint::RestoreOutcome;
     async fn cancel_current(&self);
     async fn cancel_current_with_thread(&self, thread_id: String);
     async fn session_resume(&self, id: SessionId) -> anyhow::Result<ResumeResult>;
@@ -522,6 +529,17 @@ impl TurnUseCases for ProductionTurnUseCases {
     }
     async fn exit(&self, id: ProcessId) -> anyhow::Result<()> {
         self.orchestrator.exit_process(id).await
+    }
+    async fn rewind_workspace(
+        &self,
+        principal_id: PrincipalId,
+        session_id: String,
+        prompt_index: u64,
+        workspace: fabric::types::workspace_checkpoint::WorkspaceIdentity,
+    ) -> fabric::types::workspace_checkpoint::RestoreOutcome {
+        self.orchestrator
+            .rewind_workspace(&principal_id, &session_id, prompt_index, &workspace)
+            .await
     }
     async fn cancel_current(&self) {
         self.runtime_port

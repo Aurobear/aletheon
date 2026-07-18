@@ -58,6 +58,8 @@ pub struct TurnPipeline {
         Option<Arc<dyn crate::service::conscious_workspace::ConsciousTurnPort>>,
     pub(crate) session_input: Arc<crate::service::session_input::SessionInputCoordinator>,
     pub(crate) prompt_queue_enabled: bool,
+    pub(crate) workspace_checkpoint:
+        Arc<crate::service::workspace_checkpoint::WorkspaceCheckpointService>,
 }
 
 pub(crate) struct TurnPipelineResources {
@@ -78,6 +80,8 @@ pub(crate) struct TurnPipelineResources {
         Option<Arc<dyn crate::service::conscious_workspace::ConsciousTurnPort>>,
     pub(crate) session_input: Arc<crate::service::session_input::SessionInputCoordinator>,
     pub(crate) prompt_queue_enabled: bool,
+    pub(crate) workspace_checkpoint:
+        Arc<crate::service::workspace_checkpoint::WorkspaceCheckpointService>,
 }
 
 impl TurnPipeline {
@@ -98,6 +102,7 @@ impl TurnPipeline {
             conscious_core: resources.conscious_core,
             session_input: resources.session_input,
             prompt_queue_enabled: resources.prompt_queue_enabled,
+            workspace_checkpoint: resources.workspace_checkpoint,
         }
     }
 
@@ -120,6 +125,30 @@ impl TurnPipeline {
         // Resolve the authoritative runtime session before policy review. The
         // read is non-mutating; denied turns still never call `begin_user`.
         let (session_id, current_turn_count) = self.runtime_ports.sessions.current().await?;
+
+        let checkpoint_id = self
+            .workspace_checkpoint
+            .begin_turn(
+                crate::service::workspace_checkpoint::CheckpointTurnContext {
+                    session_id: session_id.clone(),
+                    thread_id: turn_request.context.thread_id.0.clone(),
+                    turn_id: turn_request.context.turn_id.as_ref().map_or_else(
+                        || operation_id.0.to_string(),
+                        |turn_id| turn_id.0.to_string(),
+                    ),
+                    prompt_index: current_turn_count as u64 + 1,
+                    principal_id: principal.clone(),
+                    workspace: fabric::types::workspace_checkpoint::WorkspaceIdentity {
+                        canonical_path: turn_request.context.workspace.cwd().to_path_buf(),
+                        repo_fingerprint: None,
+                    },
+                    writable_roots: turn_request.context.workspace.writable_roots().to_vec(),
+                    created_at_ms: self.clock.wall_now().0,
+                },
+            )
+            .await?;
+
+        let turn_result: anyhow::Result<serde_json::Value> = async {
 
         // -- SelfField review --
         let intent = Intent {
@@ -680,6 +709,22 @@ impl TurnPipeline {
                     "conscious_context": context_projection_receipt
                 }
         }}))
+        }
+        .await;
+
+        if let Some(checkpoint_id) = checkpoint_id {
+            let succeeded = turn_result
+                .as_ref()
+                .ok()
+                .and_then(|response| response.get("result"))
+                .and_then(|result| result.get("succeeded"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            self.workspace_checkpoint
+                .finalize_turn(checkpoint_id, succeeded)
+                .await?;
+        }
+        turn_result
     }
 }
 
