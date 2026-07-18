@@ -129,6 +129,15 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         } => {
             app.chat.update_exec(&call_id, &output, is_error);
         }
+        ClientEvent::ToolProgress {
+            call_id, payload, ..
+        } => {
+            let progress = payload
+                .as_str()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| payload.to_string());
+            app.chat.update_exec_progress(&call_id, &progress);
+        }
         ClientEvent::Usage {
             tokens_in,
             tokens_out,
@@ -379,6 +388,9 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
         ProtocolEvent::Agent(value) => UiAction::Agent(value),
         ProtocolEvent::Reconnected(value) => UiAction::Reconnected(value),
         ProtocolEvent::Failed { cursor, message } => UiAction::Failed(UiError { cursor, message }),
+        ProtocolEvent::TurnStarted { .. }
+        | ProtocolEvent::TurnCompleted { .. }
+        | ProtocolEvent::TurnStopped { .. } => return true,
     };
     let _effects = reduce(&mut app.app_state, action);
     true

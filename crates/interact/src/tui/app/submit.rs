@@ -150,8 +150,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                         .iter()
                         .position(|m| *m == app.app_state.mode)
                         .unwrap_or(0);
-                    let next = modes[(current + 1) % modes.len()];
-                    next
+                    modes[(current + 1) % modes.len()]
                 } else {
                     match name.as_str() {
                         "plan" => CollaborationMode::Plan,

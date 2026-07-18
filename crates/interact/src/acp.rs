@@ -62,6 +62,22 @@ pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
             "status": if *is_error { "failed" } else { "completed" },
             "content": [{ "type": "content", "content": { "type": "text", "text": output } }],
         })),
+        ClientEvent::ToolProgress {
+            call_id,
+            tool,
+            kind,
+            payload,
+        } => Some(json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": call_id,
+            "title": tool,
+            "status": "in_progress",
+            "content": [{
+                "type": "content",
+                "content": { "type": "text", "text": payload },
+            }],
+            "_meta": { "aletheonProgressKind": kind },
+        })),
         ClientEvent::PlanUpdate { plan, .. } => Some(json!({
             "sessionUpdate": "plan",
             "plan": plan,

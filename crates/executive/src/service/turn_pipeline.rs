@@ -4,11 +4,11 @@
 //! and CLI exec paths share the same Pre/Cognit/Post turn pipeline.
 
 use crate::core::session_gateway::SessionGateway;
-use crate::service::daemon_react::{DaemonStreamingTurnContext, submit_streaming_daemon_turn};
+use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use crate::service::daemon_turn::helpers::bounded_text_history;
 use crate::service::governed_capability::CapabilityExecutionContext;
-use aletheon_kernel::KernelRuntime;
 use aletheon_kernel::operation::OperationScope;
+use aletheon_kernel::KernelRuntime;
 use cognit::CanonicalTurnEventSink;
 use fabric::events::ui_event::ClientEvent;
 use fabric::hook::{HookContext, HookPoint, HookResult};
@@ -25,7 +25,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -752,6 +752,17 @@ fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
             is_error: *is_error,
             elapsed_ms: *execution_time_ms,
         }),
+        TurnEventV1::ToolProgress {
+            name,
+            call_id,
+            kind,
+            payload,
+        } => Some(ClientEvent::ToolProgress {
+            call_id: call_id.clone(),
+            tool: name.clone(),
+            kind: kind.clone(),
+            payload: payload.clone(),
+        }),
         TurnEventV1::Usage {
             tokens_in,
             tokens_out,
@@ -814,13 +825,10 @@ fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
             reason: reason.clone(),
         }),
         TurnEventV1::CompactionTriggered { .. } => Some(ClientEvent::CompactionTriggered),
-        // TextDeltaStop, Approval, Generic, ToolProgress → no client-facing event
-        // via this legacy converter. ToolProgress is bridged separately via
-        // tool_stream_bridge (G2), gated behind grok_hardening.streaming_tools.
-        TurnEventV1::TextDeltaStop
-        | TurnEventV1::Approval { .. }
-        | TurnEventV1::Generic { .. }
-        | TurnEventV1::ToolProgress { .. } => None,
+        // TextDeltaStop, Approval and Generic have no client-facing projection.
+        TurnEventV1::TextDeltaStop | TurnEventV1::Approval { .. } | TurnEventV1::Generic { .. } => {
+            None
+        }
     }
 }
 
@@ -882,5 +890,28 @@ mod terminal_event_tests {
 
         assert_eq!(events.len(), 1);
         assert!(matches!(&events[0], ClientEvent::TurnDone));
+    }
+
+    #[test]
+    fn tool_progress_projects_to_tui_wire_event() {
+        let event = turn_event_to_client_event(&TurnEventV1::ToolProgress {
+            name: "bash_exec".into(),
+            call_id: "call-progress".into(),
+            kind: "text".into(),
+            payload: serde_json::json!("building"),
+        });
+
+        assert!(matches!(
+            event,
+            Some(ClientEvent::ToolProgress {
+                call_id,
+                tool,
+                kind,
+                payload,
+            }) if call_id == "call-progress"
+                && tool == "bash_exec"
+                && kind == "text"
+                && payload == serde_json::json!("building")
+        ));
     }
 }

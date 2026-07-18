@@ -557,13 +557,16 @@ pub async fn single_message_with_workspace(
             // Handle streaming events via typed ClientEvent dispatch.
             if resp.get("method").and_then(|v| v.as_str()) == Some("event") {
                 if let Some(params) = resp.get("params") {
-                    if let Ok(event) = serde_json::from_value::<ClientEvent>(params.clone()) {
+                    if let Some(event) = ClientEvent::decode_if_known(params.clone()) {
                         match event {
                             ClientEvent::ToolCallStart { .. } => {
                                 // args arrive later via ToolCallComplete — skip here
                             }
                             ClientEvent::ToolCallComplete { tool, args, .. } => {
                                 eprintln!("[tool] {} {}", tool, serde_json::to_string(&args).unwrap_or_default());
+                            }
+                            ClientEvent::ToolProgress { tool, payload, .. } => {
+                                eprintln!("[tool:{tool}] {payload}");
                             }
                             ClientEvent::TextDelta { .. } => {
                                 had_streaming_text = true;

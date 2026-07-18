@@ -167,6 +167,13 @@ impl ExecEntry {
         self.finished = true;
     }
 
+    pub fn push_progress(&mut self, progress: &str) {
+        if !self.output.is_empty() {
+            self.output.push('\n');
+        }
+        self.output.push_str(progress);
+    }
+
     pub fn update_args(&mut self, args: &str) {
         self.args = args.to_string();
     }
@@ -420,6 +427,23 @@ impl ChatWidget {
             if let ChatEntry::Exec(ref mut ee) = entry {
                 if ee.call_id == call_id {
                     ee.finish(output, is_error);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if changed {
+            self.invalidate_layout();
+        }
+    }
+
+    /// Append observable progress while keeping the execution entry active.
+    pub fn update_exec_progress(&mut self, call_id: &str, progress: &str) {
+        let mut changed = false;
+        for entry in self.entries.iter_mut() {
+            if let ChatEntry::Exec(ref mut execution) = entry {
+                if execution.call_id == call_id {
+                    execution.push_progress(progress);
                     changed = true;
                     break;
                 }
@@ -1227,6 +1251,23 @@ mod tests {
                 assert!(ee.finished);
                 assert!(!ee.is_error);
                 assert_eq!(ee.output, "output text");
+            }
+            _ => panic!("expected Exec entry"),
+        }
+    }
+
+    #[test]
+    fn test_progress_updates_visible_output_without_finishing_exec() {
+        let caps = TermCaps::detect();
+        let mut widget = ChatWidget::new(caps);
+        widget.add_exec("c1".into(), "bash".into(), "{}".into());
+        widget.update_exec_progress("c1", "phase one");
+        widget.update_exec_progress("c1", "phase two");
+
+        match &widget.entries[0] {
+            ChatEntry::Exec(execution) => {
+                assert!(!execution.finished);
+                assert_eq!(execution.output, "phase one\nphase two");
             }
             _ => panic!("expected Exec entry"),
         }
