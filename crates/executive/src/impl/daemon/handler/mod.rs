@@ -33,6 +33,27 @@ pub struct RequestHandler {
 }
 
 impl RequestHandler {
+    pub(crate) async fn protocol_snapshot(
+        &self,
+        session_id: &fabric::SessionId,
+    ) -> anyhow::Result<fabric::protocol::client::UiSnapshot> {
+        self.ports
+            .session_gateway
+            .protocol_snapshot(session_id)
+            .await
+    }
+
+    pub(crate) async fn protocol_events_after(
+        &self,
+        session_id: &fabric::SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> anyhow::Result<Vec<fabric::protocol::client::ClientEvent>> {
+        self.ports
+            .session_gateway
+            .protocol_events_after(session_id, after)
+            .await
+    }
+
     pub(crate) async fn cleanup_disconnected_connection(
         &self,
         connection_id: &fabric::ConnectionId,

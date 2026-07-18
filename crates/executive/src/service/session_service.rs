@@ -70,6 +70,63 @@ impl SessionService {
         self.store.load_items(session_id, None).await
     }
 
+    /// Build the transport-neutral snapshot used by the versioned daemon
+    /// protocol. The cursor names the last durable item, so reconnect can
+    /// resume strictly after it without relying on process-local stream state.
+    pub async fn protocol_snapshot(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<fabric::protocol::client::UiSnapshot> {
+        let items = self.items(session_id).await?;
+        let cursor = items
+            .last()
+            .map(item_cursor)
+            .unwrap_or_else(fabric::protocol::client::EventCursor::origin);
+        Ok(fabric::protocol::client::UiSnapshot {
+            session_id: session_id.clone(),
+            cursor,
+            provider: None,
+            model: None,
+            items,
+            approvals: Vec::new(),
+            agents: Vec::new(),
+        })
+    }
+
+    /// Replay durable item terminals strictly after an authenticated cursor.
+    /// A non-origin cursor must name the item at its sequence; this prevents a
+    /// stale or forged `(sequence,event_id)` pair from skipping history.
+    pub async fn protocol_events_after(
+        &self,
+        session_id: &SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> Result<Vec<fabric::protocol::client::ClientEvent>> {
+        if after.sequence == 0 {
+            if after.event_id.is_some() {
+                bail!("origin cursor cannot carry an event_id");
+            }
+        } else {
+            let anchor = self
+                .store
+                .load_items(session_id, Some(after.sequence.saturating_sub(1)))
+                .await?
+                .into_iter()
+                .next()
+                .filter(|item| item.sequence == after.sequence)
+                .ok_or_else(|| anyhow::anyhow!("cursor sequence is not present"))?;
+            let anchor_event_id = anchor.id.0.to_string();
+            if after.event_id.as_deref() != Some(anchor_event_id.as_str()) {
+                bail!("cursor event_id does not match durable item");
+            }
+        }
+
+        let items = self
+            .store
+            .load_items(session_id, Some(after.sequence))
+            .await?;
+        Ok(items.into_iter().map(item_terminal_event).collect())
+    }
+
     /// Persist lifecycle-provided workspace context into canonical history
     /// before it is used for model projection. The Fabric validator is the
     /// single authority for effect bounds and phase legality.
@@ -197,6 +254,35 @@ impl SessionService {
         interrupted.insert(session_id.0.clone());
         Ok(InterruptOutcome::Interrupted)
     }
+}
+
+fn item_cursor(item: &ItemRecord) -> fabric::protocol::client::EventCursor {
+    fabric::protocol::client::EventCursor {
+        sequence: item.sequence,
+        event_id: Some(item.id.0.to_string()),
+    }
+}
+
+fn item_terminal_event(item: ItemRecord) -> fabric::protocol::client::ClientEvent {
+    let (phase, error) = match &item.payload {
+        ItemPayload::ToolResult {
+            content,
+            is_error: true,
+            ..
+        } => (
+            fabric::protocol::client::ItemPhase::Failed,
+            Some(content.clone()),
+        ),
+        _ => (fabric::protocol::client::ItemPhase::Completed, None),
+    };
+    fabric::protocol::client::ClientEvent::Item(fabric::protocol::client::ItemEvent {
+        cursor: item_cursor(&item),
+        item_id: item.id.0.to_string(),
+        phase,
+        delta: None,
+        item: Some(item),
+        error,
+    })
 }
 
 #[cfg(test)]

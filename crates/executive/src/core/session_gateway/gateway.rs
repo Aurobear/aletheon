@@ -85,6 +85,23 @@ pub struct SessionGateway {
 }
 
 impl SessionGateway {
+    pub async fn protocol_snapshot(
+        &self,
+        session_id: &fabric::SessionId,
+    ) -> anyhow::Result<fabric::protocol::client::UiSnapshot> {
+        self.canonical_sessions.protocol_snapshot(session_id).await
+    }
+
+    pub async fn protocol_events_after(
+        &self,
+        session_id: &fabric::SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> anyhow::Result<Vec<fabric::protocol::client::ClientEvent>> {
+        self.canonical_sessions
+            .protocol_events_after(session_id, after)
+            .await
+    }
+
     /// Create a new SessionGateway.
     pub fn new(
         param_registry: Arc<ParamRegistry>,

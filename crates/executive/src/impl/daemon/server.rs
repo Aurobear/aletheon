@@ -401,6 +401,54 @@ async fn dispatch_request(
     }
 }
 
+async fn dispatch_versioned_request(
+    handler: RequestHandler,
+    request: ClientRequest,
+    request_id: serde_json::Value,
+    notify_tx: Option<mpsc::Sender<String>>,
+) -> serde_json::Value {
+    let result: anyhow::Result<ProtocolClientEvent> = match request {
+        ClientRequest::Snapshot(request) => handler
+            .protocol_snapshot(&request.session_id)
+            .await
+            .map(ProtocolClientEvent::Snapshot),
+        ClientRequest::Subscribe(subscription) => {
+            match handler
+                .protocol_events_after(&subscription.session_id, &subscription.after)
+                .await
+            {
+                Ok(events) => {
+                    if let Some(tx) = notify_tx {
+                        for event in events {
+                            let notification = serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "method": "session.event",
+                                "params": ClientMessage::v1(event),
+                            });
+                            if tx.send(notification.to_string()).await.is_err() {
+                                return protocol_error(request_id, "session event receiver closed");
+                            }
+                        }
+                    }
+                    Ok(ProtocolClientEvent::Reconnected(subscription.after))
+                }
+                Err(error) => Err(error),
+            }
+        }
+        ClientRequest::Initialize(_) | ClientRequest::Initialized => {
+            Err(anyhow::anyhow!("handshake request cannot be dispatched"))
+        }
+    };
+    match result {
+        Ok(event) => serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": ClientMessage::v1(event),
+        }),
+        Err(error) => protocol_error(request_id, error),
+    }
+}
+
 fn request_task_failure(
     request_id: serde_json::Value,
     error: impl std::fmt::Display,
@@ -690,7 +738,15 @@ impl UnixServer {
                         .unwrap_or(serde_json::Value::Null);
 
                     if let Some(versioned) = parse_versioned_request(&request) {
-                        let response = match versioned.and_then(|request| protocol_state.accept(&request)) {
+                        let versioned = match versioned {
+                            Ok(versioned) => versioned,
+                            Err(error) => {
+                                let response = protocol_error(request_id, error);
+                                resp_tx.send(serde_json::to_string(&response)?).await?;
+                                continue;
+                            }
+                        };
+                        let response = match protocol_state.accept(&versioned) {
                             Ok(ProtocolAction::InitializeResponse(negotiated)) => {
                                 initialize_response(request_id, &connection, negotiated)
                             }
@@ -703,12 +759,10 @@ impl UnixServer {
                                 let handler = handler.clone();
                                 let notify_tx = handler.notify_tx.clone();
                                 let resp_tx = resp_tx.clone();
-                                let connection = connection.clone();
                                 request_tasks.spawn(async move {
-                                    let response = dispatch_request(
+                                    let response = dispatch_versioned_request(
                                         handler,
-                                        connection,
-                                        request,
+                                        versioned,
                                         request_id,
                                         notify_tx,
                                     )
