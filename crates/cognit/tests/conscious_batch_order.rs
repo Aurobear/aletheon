@@ -249,11 +249,12 @@ async fn run_with_plan(
             ..Default::default()
         },
         CognitiveSessionDependencies {
-            clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            clock: Arc::new(kernel::chronos::TestClock::default()),
             cancellation: CancellationToken::new(),
             compactor: None,
             batch_planner: Some(planner),
             evicted_callback: None,
+            verifier: None,
         },
     );
 

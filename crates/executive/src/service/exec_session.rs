@@ -13,14 +13,14 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tracing::info;
 
-use aletheon_kernel::chronos::SystemClock;
-use aletheon_kernel::KernelRuntime;
 use cognit::harness::HarnessConfig;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     CapabilityCall, CapabilityResult, LlmProvider, Message, PrincipalId, ProcessId, RecallSet,
     SandboxRequirement, ToolDefinition, TurnRequest, TurnServices,
 };
+use kernel::chronos::SystemClock;
+use kernel::KernelRuntime;
 use tokio_util::sync::CancellationToken;
 
 use crate::r#impl::session::canonical_store::CanonicalSessionStore;

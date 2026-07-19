@@ -15,9 +15,9 @@ pub mod container;
 pub mod launcher;
 pub mod systemd;
 
-use aletheon_kernel::chronos::SystemTimer;
 use anyhow::Result;
 use fabric::Timer;
+use kernel::chronos::SystemTimer;
 use std::path::PathBuf;
 
 use tracing::info;

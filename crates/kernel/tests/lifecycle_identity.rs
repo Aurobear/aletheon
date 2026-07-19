@@ -1,6 +1,6 @@
-use aletheon_kernel::supervision::RestartPolicy;
-use aletheon_kernel::KernelRuntime;
 use fabric::{ExitReason, OperationKind, OsProcessId, SpawnSpec};
+use kernel::supervision::RestartPolicy;
+use kernel::KernelRuntime;
 
 #[tokio::test]
 async fn one_agent_maps_to_one_live_process_generation_and_rejects_stale_pid_binding() {

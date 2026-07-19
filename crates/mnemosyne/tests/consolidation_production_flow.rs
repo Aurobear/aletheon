@@ -12,7 +12,7 @@ async fn service(
     root: &std::path::Path,
     repository: Arc<ConsolidationRepository>,
 ) -> DefaultMemoryService {
-    let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::TestClock::default());
+    let clock: Arc<dyn fabric::Clock> = Arc::new(kernel::chronos::TestClock::default());
     let recall = Arc::new(Mutex::new(
         RecallMemory::new(&root.join("recall.db"), clock.clone()).unwrap(),
     ));

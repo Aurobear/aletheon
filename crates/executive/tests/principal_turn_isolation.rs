@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use aletheon_kernel::KernelRuntime;
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
 use executive::service::turn_coordinator::{ActiveTurnKey, TurnCoordinator, TurnExecution};
 use executive::service::turn_policy::TurnPolicy;
@@ -9,6 +8,7 @@ use fabric::{
     PrincipalContext, PrincipalId, SessionAppendStore, ThreadId, TurnMetrics, TurnRequest,
     TurnResult, TurnStop, WorkspacePolicy,
 };
+use kernel::KernelRuntime;
 use tokio::sync::{mpsc, Barrier, Mutex, Semaphore};
 
 fn context(uid: u32, thread: &str, cwd: &str) -> PrincipalContext {

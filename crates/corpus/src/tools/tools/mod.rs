@@ -21,6 +21,7 @@ pub(crate) mod mutation_path;
 pub mod output;
 pub mod process_list;
 pub mod registry;
+mod scoped_filesystem;
 pub mod script_tool;
 pub mod search;
 pub mod structured_patch;

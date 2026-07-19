@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
-use aletheon_kernel::chronos::SystemTimer;
 use fabric::{Clock, Timer};
+use kernel::chronos::SystemTimer;
 
 use super::super::registry::AgentRegistry;
 use super::edge::Edge;

@@ -3,8 +3,8 @@
 //! Covers:
 //! - SupervisorTree restart-decision logic (kernel-level unit tests)
 
-use aletheon_kernel::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
 use fabric::{ExitReason, ProcessId};
+use kernel::supervision::{RestartDecision, RestartPolicy, SupervisorTree};
 
 // ---------------------------------------------------------------------------
 // SupervisorTree (kernel) direct tests

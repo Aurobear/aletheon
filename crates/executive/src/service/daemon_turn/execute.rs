@@ -204,9 +204,7 @@ impl DaemonTurnOrchestrator {
                 let turn_cancel = cancel.clone();
                 {
                     let mut guard = pipeline.current_scope.lock().await;
-                    *guard = Some(aletheon_kernel::operation::OperationScope::new(
-                        request.operation_id,
-                    ));
+                    *guard = Some(kernel::operation::OperationScope::new(request.operation_id));
                 }
                 let response = pipeline
                     .run(

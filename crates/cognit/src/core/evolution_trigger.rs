@@ -229,7 +229,7 @@ impl Default for EvolutionTrigger {
     fn default() -> Self {
         Self::new(
             EvolutionTriggerConfig::default(),
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
     }
 }
@@ -242,7 +242,7 @@ mod tests {
     fn make_trigger() -> EvolutionTrigger {
         EvolutionTrigger::new(
             EvolutionTriggerConfig::default(),
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
     }
 
@@ -496,7 +496,7 @@ mod tests {
         };
         let trigger = EvolutionTrigger::new(
             config.clone(),
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         );
         trigger.check_should_evolve(&[]);
         // Just verifying construction succeeds with custom values

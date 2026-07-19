@@ -58,7 +58,7 @@ impl SandboxBackend for ProcessBackend {
         let start = self.clock.mono_now();
 
         // Wrap the spawned process with a timeout.
-        let result = aletheon_kernel::chronos::SystemTimer
+        let result = kernel::chronos::SystemTimer
             .timeout(timeout, async {
                 tokio::process::Command::new("bash")
                     .arg("-c")
@@ -121,7 +121,7 @@ impl SandboxBackend for ProcessBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::SystemClock;
+    use kernel::chronos::SystemClock;
 
     #[tokio::test]
     async fn emits_stdout_lines_before_process_terminal() {

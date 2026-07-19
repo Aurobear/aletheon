@@ -115,7 +115,7 @@ pub async fn cleanup_overflow_dir(config: &OutputConfig, clock: &dyn Clock) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
     use tempfile::TempDir;
 
     fn test_clock() -> TestClock {

@@ -105,7 +105,7 @@ impl GoalTracker {
 #[cfg(test)]
 impl Default for GoalTracker {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+        Self::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 }
 
@@ -307,7 +307,7 @@ mod tests {
     use super::*;
 
     fn make_tracker() -> GoalTracker {
-        GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+        GoalTracker::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 
     #[test]

@@ -250,9 +250,7 @@ impl Fixture {
 
     async fn coordinator(&self) -> (executive::r#impl::approval::ApplyCoordinator, ProcessId) {
         let goal = GoalCoordinator::new(self.store.clone());
-        let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock(Arc::new(
-            TestClock,
-        )));
+        let kernel = Arc::new(::kernel::KernelRuntime::with_clock(Arc::new(TestClock)));
         let owner = kernel
             .spawn_process(fabric::SpawnSpec::default())
             .await

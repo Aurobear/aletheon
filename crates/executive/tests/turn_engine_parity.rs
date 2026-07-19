@@ -39,9 +39,7 @@ impl TurnEngine for StubTurnEngine {
                 events.on_turn_settled(result.turn_id, result).await;
                 Ok(result.clone())
             }
-            StubBehaviour::Reject => {
-                Err(TurnEngineError::AdmissionRejected("stub reject".into()))
-            }
+            StubBehaviour::Reject => Err(TurnEngineError::AdmissionRejected("stub reject".into())),
         }
     }
 }

@@ -25,7 +25,7 @@ use fabric::evolution::LlmPurpose;
 use fabric::CanonicalEventBus;
 use fabric::Clock;
 
-use aletheon_kernel::chronos::SystemClock;
+use kernel::chronos::SystemClock;
 
 use crate::r#impl::daemon::handler::RequestHandler;
 use crate::r#impl::daemon::DaemonConfig;

@@ -19,7 +19,7 @@ pub struct X11ClipboardDriver {
 
 impl Default for X11ClipboardDriver {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+        Self::new(Arc::new(kernel::chronos::SystemClock::new()))
     }
 }
 
@@ -209,7 +209,7 @@ impl ClipboardDriver for X11ClipboardDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
     use std::sync::Arc;
 
     /// Round-trip test: only runs when a DISPLAY is available.

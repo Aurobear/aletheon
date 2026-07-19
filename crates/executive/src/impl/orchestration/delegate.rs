@@ -227,7 +227,7 @@ mod tests {
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
             turn_event_sender: None,
         };
 
@@ -259,7 +259,7 @@ mod tests {
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
             turn_event_sender: None,
         };
 
@@ -282,7 +282,7 @@ mod tests {
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
             turn_event_sender: None,
         };
 

@@ -1,5 +1,5 @@
 [package]
-name = "aletheon-kernel"
+name = "kernel"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

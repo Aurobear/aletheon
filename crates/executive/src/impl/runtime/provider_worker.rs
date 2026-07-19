@@ -141,6 +141,16 @@ impl SubAgentRuntime for ProviderWorkerRuntime {
             .map(|result| result.output)
             .map_err(|failure| failure.message)
     }
+
+    async fn run_attempt_in_context(
+        &self,
+        task: &str,
+        cancel: CancellationToken,
+        context: SubAgentExecutionContext,
+    ) -> Result<RuntimeResult, RuntimeFailure> {
+        self.run_attempt_with_context(task, cancel, Some(context))
+            .await
+    }
 }
 
 impl ProviderWorkerRuntime {
@@ -321,11 +331,11 @@ impl ProviderWorkerRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
     use anyhow::anyhow;
     use corpus::tools::tools::ToolRegistry;
     use fabric::tool::{Tool, ToolContext, ToolResult, ToolResultMeta};
     use fabric::{LlmResponse, LlmStream, Registry, StopReason, Usage};
+    use kernel::chronos::TestClock;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Mutex;

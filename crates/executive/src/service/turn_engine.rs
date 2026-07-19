@@ -132,7 +132,9 @@ impl TurnEngine for SessionTurnEngine {
 
         let principal_id = context.principal_id.clone();
         let workspace = (*context.workspace).clone();
-        let model_policy = request.model_policy.or(context.profile.model_policy.clone());
+        let model_policy = request
+            .model_policy
+            .or(context.profile.model_policy.clone());
 
         let turn_request = fabric::TurnRequest {
             operation_id: context.operation_id,

@@ -36,7 +36,7 @@ fn permit(proposal: &AgoraProposal) -> WorkspaceCommitPermit {
 #[tokio::test]
 async fn transaction_same_base_proposals_cannot_both_commit() {
     let registry = Arc::new(AgoraRegistry::new(Arc::new(
-        aletheon_kernel::chronos::TestClock::default(),
+        kernel::chronos::TestClock::default(),
     )));
     let p1 = proposal(
         "s",
@@ -81,7 +81,7 @@ async fn transaction_same_base_proposals_cannot_both_commit() {
 
 #[tokio::test]
 async fn transaction_claim_and_release_require_current_owner() {
-    let registry = AgoraRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
+    let registry = AgoraRegistry::new(Arc::new(kernel::chronos::TestClock::default()));
     let owner = author(10);
     let other = author(11);
     let claim = proposal(
@@ -175,7 +175,7 @@ async fn durability_failure_is_not_visible_and_retry_applies_once() {
     log.fail.store(true, Ordering::SeqCst);
     let registry = AgoraRegistry::new_with_persistence(
         log.clone(),
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
     );
     let p = proposal(
         "s",
@@ -213,7 +213,7 @@ async fn durability_io_does_not_hold_workspace_state_lock() {
     log.block.store(true, Ordering::SeqCst);
     let registry = Arc::new(AgoraRegistry::new_with_persistence(
         log.clone(),
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
     ));
     let p = proposal(
         "blocked",
@@ -293,7 +293,7 @@ async fn recovery_rejects_wrong_space_or_checksum() {
     let commit = fabric::AgoraCommit::from_proposal(&p, 1, 1, None).unwrap();
     let registry = AgoraRegistry::new_with_persistence(
         Arc::new(CorruptRecovery { commit }),
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
     );
     assert!(registry.recover_session("s").await.is_err());
     assert_eq!(AgoraOps::version(&registry, "s").await.unwrap(), 0);

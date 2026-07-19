@@ -63,7 +63,7 @@ pub async fn enforce_turn_budget(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
     use tempfile::TempDir;
 
     #[tokio::test]

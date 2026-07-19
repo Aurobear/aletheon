@@ -4,12 +4,12 @@ pub mod checks;
 pub mod command;
 pub mod policy;
 
-use aletheon_kernel::chronos::SystemClock;
 use anyhow::{bail, Context, Result};
 use command::{severity, TrustedVerificationCommand, VerificationCommandRunner};
 use fabric::{
     AttemptId, ChangedFile, Clock, CodingJobId, GoalId, VerificationCheck, VerificationReport,
 };
+use kernel::chronos::SystemClock;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, PathBuf};

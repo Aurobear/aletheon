@@ -5,7 +5,7 @@ use fabric::tool::{ToolContext, ToolExecutionDescriptor, ToolResult};
 use fabric::SandboxConfig;
 
 /// Executes a structured tool through an isolated filesystem-capable owner
-/// (for example the exec-server). The runner deliberately has no in-process
+/// (for example the execd). The runner deliberately has no in-process
 /// fallback when this port is required but unavailable.
 #[async_trait]
 pub trait StructuredToolSandbox: Send + Sync {

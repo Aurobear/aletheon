@@ -6,7 +6,6 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use aletheon_kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use fabric::types::admission::RiskLevel;
@@ -16,6 +15,7 @@ use fabric::{
     FieldDecisionReason, InvocationControl, PrincipalId, ProcessId, SalienceVector,
     SandboxRequirement, UsageReport, WorkspaceAttribution,
 };
+use kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
@@ -513,6 +513,55 @@ impl RegistryAuthorityProvider {
     }
 }
 
+fn requested_scope_for_call(
+    call: &CapabilityCall,
+    workspace: &fabric::WorkspacePolicy,
+) -> Result<CapabilityScope> {
+    if !matches!(
+        call.name.as_str(),
+        "file_read" | "file_write" | "apply_patch"
+    ) {
+        return Ok(CapabilityScope::default());
+    }
+
+    let mut allowed_paths = workspace
+        .writable_roots()
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+
+    // Read-only access outside the workspace is deliberately exact-path, not
+    // parent-directory authority. Corpus applies the sensitive-path denylist
+    // before projecting this grant into a Platform FilesystemScope.
+    if call.name == "file_read" {
+        let requested = call
+            .input
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("file_read requires a path before admission"))?;
+        let candidate = if std::path::Path::new(requested).is_absolute() {
+            PathBuf::from(requested)
+        } else {
+            workspace.cwd().join(requested)
+        };
+        let canonical = std::fs::canonicalize(&candidate).map_err(|error| {
+            anyhow!(
+                "file_read path '{}' cannot be admitted: {error}",
+                candidate.display()
+            )
+        })?;
+        let canonical = canonical.to_string_lossy().to_string();
+        if !allowed_paths.contains(&canonical) {
+            allowed_paths.push(canonical);
+        }
+    }
+
+    Ok(CapabilityScope {
+        allowed_paths,
+        ..CapabilityScope::default()
+    })
+}
+
 #[async_trait]
 impl TurnAuthorityProvider for RegistryAuthorityProvider {
     async fn authorize(&self, call: &CapabilityCall) -> Result<AuthorizedInvocation> {
@@ -520,12 +569,13 @@ impl TurnAuthorityProvider for RegistryAuthorityProvider {
             .risk_by_tool
             .get(&call.name)
             .ok_or_else(|| anyhow!("unknown tool '{}'", call.name))?;
+        let requested_scope = requested_scope_for_call(call, &self.workspace)?;
         Ok(AuthorizedInvocation {
             authority: CapabilityAuthority {
                 agent: self.agent,
                 principal: self.principal.clone(),
                 action: call.name.clone(),
-                requested_scope: CapabilityScope::default(),
+                requested_scope,
                 risk,
                 budget: None,
                 lease: None,
@@ -542,5 +592,61 @@ impl TurnAuthorityProvider for RegistryAuthorityProvider {
                 turn_event_sender: self.turn_event_sender.clone(),
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod filesystem_scope_tests {
+    use super::*;
+
+    fn call(name: &str, path: &std::path::Path) -> CapabilityCall {
+        CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            name: name.into(),
+            input: serde_json::json!({"path": path}),
+            call_id: "scope-test".into(),
+            deadline: None,
+        }
+    }
+
+    #[test]
+    fn file_write_requests_workspace_roots_not_empty_any_scope() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+            root.path().canonicalize().unwrap(),
+            vec![],
+        )
+        .unwrap();
+        let scope = requested_scope_for_call(
+            &call("file_write", PathBuf::from("x").as_path()),
+            &workspace,
+        )
+        .unwrap();
+        assert_eq!(scope.allowed_paths, vec![root.path().to_string_lossy()]);
+    }
+
+    #[test]
+    fn file_read_requests_one_exact_external_path() {
+        let workspace_root = tempfile::tempdir().unwrap();
+        let external_root = tempfile::tempdir().unwrap();
+        let external = external_root.path().join("diagnostic.txt");
+        std::fs::write(&external, "diagnostic").unwrap();
+        let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+            workspace_root.path().canonicalize().unwrap(),
+            vec![],
+        )
+        .unwrap();
+        let scope = requested_scope_for_call(&call("file_read", &external), &workspace).unwrap();
+        assert!(scope.allowed_paths.contains(
+            &external
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        ));
+        assert!(!scope
+            .allowed_paths
+            .contains(&external_root.path().to_string_lossy().into_owned()));
     }
 }

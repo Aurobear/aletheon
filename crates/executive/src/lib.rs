@@ -17,7 +17,7 @@ pub mod tools;
 pub mod user_runtime;
 
 pub mod host;
-pub use aletheon_kernel as kernel;
+pub use kernel;
 
 // Re-export from core for backward compatibility
 pub use core::config::{

@@ -1,0 +1,6 @@
+id = "rust_bugfix"
+fixture = "rust_bugfix"
+prompt = "修复这个小型 Rust 仓库中限制条目数量的边界行为。先运行测试定位问题，不要修改测试。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml"]

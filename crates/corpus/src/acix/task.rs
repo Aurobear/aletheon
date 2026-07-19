@@ -504,7 +504,7 @@ impl TaskWorker {
                     Ok("Composite executed".into())
                 }
                 TaskAction::Wait(ms) => {
-                    aletheon_kernel::chronos::SystemTimer
+                    kernel::chronos::SystemTimer
                         .sleep(std::time::Duration::from_millis(*ms))
                         .await;
                     Ok(format!("Waited {ms}ms"))
@@ -712,7 +712,7 @@ mod tests {
     #[tokio::test]
     async fn test_task_worker_run() {
         let aci = Arc::new(mock_aci());
-        let clock = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+        let clock = Arc::new(kernel::chronos::SystemClock::new());
         let worker = TaskWorker::new(aci, clock);
 
         let mut graph = TaskGraph::new("test");
@@ -729,7 +729,7 @@ mod tests {
     #[tokio::test]
     async fn test_task_worker_execute_node_types() {
         let aci = Arc::new(mock_aci());
-        let clock = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+        let clock = Arc::new(kernel::chronos::SystemClock::new());
         let worker = TaskWorker::new(aci, clock);
 
         // Test each action type
@@ -819,7 +819,7 @@ mod tests {
     #[tokio::test]
     async fn test_task_worker_composite() {
         let aci = Arc::new(mock_aci());
-        let clock = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+        let clock = Arc::new(kernel::chronos::SystemClock::new());
         let worker = TaskWorker::new(aci, clock);
 
         let node = TaskNode {

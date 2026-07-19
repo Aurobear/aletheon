@@ -47,7 +47,7 @@ dependencies = [
 name = "agora"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
+ "kernel",
  "anyhow",
  "async-trait",
  "fabric",
@@ -81,7 +81,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aletheon-kernel"
+name = "kernel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -293,7 +293,7 @@ name = "corpus"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
- "aletheon-kernel",
+ "kernel",
  "anyhow",
  "async-trait",
  "base64",
@@ -376,7 +376,7 @@ dependencies = [
 name = "dasein"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
+ "kernel",
  "anyhow",
  "async-trait",
  "chrono",
@@ -512,7 +512,7 @@ name = "executive"
 version = "0.1.0"
 dependencies = [
  "agora",
- "aletheon-kernel",
+ "kernel",
  "anyhow",
  "async-trait",
  "base64",
@@ -1245,7 +1245,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 name = "metacog"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
+ "kernel",
  "anyhow",
  "async-trait",
  "chrono",
@@ -1291,7 +1291,7 @@ dependencies = [
 name = "mnemosyne"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
+ "kernel",
  "anyhow",
  "async-trait",
  "chrono",

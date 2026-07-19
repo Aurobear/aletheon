@@ -158,7 +158,7 @@ async fn disabled_and_unavailable_startup_keep_local_memory_operational() {
         local.clone(),
         None,
         &McpMemoryConfig::default(),
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
         &cancel,
     );
     assert!(!runtime.health.lock().unwrap().supplemental_enabled);
@@ -173,7 +173,7 @@ async fn disabled_and_unavailable_startup_keep_local_memory_operational() {
         local,
         None,
         &config,
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
         &cancel,
     );
     assert!(runtime.health.lock().unwrap().degraded);
@@ -203,7 +203,7 @@ async fn composite_records_local_first_selects_only_durable_types_and_survives_s
     let composite = CompositeMemoryService::new(
         local.clone(),
         Some(supplemental.clone()),
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
         Duration::from_millis(50),
         Duration::from_millis(50),
     );
@@ -230,7 +230,7 @@ async fn composite_records_local_first_selects_only_durable_types_and_survives_s
     let composite = CompositeMemoryService::new(
         local.clone(),
         Some(failing),
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
         Duration::from_millis(50),
         Duration::from_millis(50),
     );
@@ -257,7 +257,7 @@ async fn merge_prefers_new_valid_remote_and_historical_mode_retains_superseded()
     let composite = CompositeMemoryService::new(
         local,
         Some(supplemental),
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
         Duration::from_millis(50),
         Duration::from_millis(50),
     );
@@ -292,7 +292,7 @@ async fn slow_or_malformed_supplemental_recall_falls_back_to_local_with_health()
     let composite = CompositeMemoryService::new(
         local,
         Some(supplemental),
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
         Duration::from_millis(50),
         Duration::from_millis(5),
     );
@@ -327,7 +327,7 @@ async fn slow_or_malformed_supplemental_recall_falls_back_to_local_with_health()
     let composite = CompositeMemoryService::new(
         local,
         Some(malformed),
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
         Duration::from_millis(50),
         Duration::from_millis(50),
     );
@@ -352,7 +352,7 @@ async fn schema_drift_is_local_only_and_marked_degraded() {
         Arc::new(LocalMemory::new(Vec::new())),
         Some(manager),
         &config,
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
         &CancellationToken::new(),
     );
     let health = runtime.health.lock().unwrap();
@@ -381,7 +381,7 @@ async fn healthy_http_bootstrap_and_shutdown_leave_committed_queue_durable() {
         Arc::new(LocalMemory::new(Vec::new())),
         Some(Arc::new(manager)),
         &config,
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
         &cancel,
     );
     assert!(!runtime.health.lock().unwrap().degraded);
@@ -450,7 +450,7 @@ outbox_dir = "/tmp/overridden-below"
         Arc::new(LocalMemory::new(Vec::new())),
         Some(Arc::new(connected_manager(HttpState::valid()).await)),
         &config,
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
         &cancel,
     );
     assert!(legacy.join("one.json.migrated").exists());

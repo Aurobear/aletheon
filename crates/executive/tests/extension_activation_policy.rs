@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use aletheon_kernel::capability::ToolExecutor;
 use async_trait::async_trait;
 use corpus::{DefaultCorpusService, ExtensionCatalog, ExtensionGrant};
 use executive::core::config::{ConfigSource, ConfigSourceKind};
@@ -14,6 +13,7 @@ use fabric::{
     CapabilityId, CapabilityRequest, CapabilityResult, CapabilityScope, ExecutionPermit,
     ExtensionDescriptor, ExtensionId, ExtensionKind, PrincipalId,
 };
+use kernel::capability::ToolExecutor;
 
 #[derive(Default)]
 struct NeverExecutor;

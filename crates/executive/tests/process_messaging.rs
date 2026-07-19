@@ -4,14 +4,14 @@
 //! end-to-end: spawning processes with mailboxes, routing messages between them,
 //! and handling edge cases (unknown targets, backpressure, closed mailboxes).
 
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
 use fabric::ipc::mailbox::{
     DeliveryReceipt, InProcessMailbox, InProcessMailboxService, Mailbox, MailboxService,
 };
 use fabric::types::process::{NamespaceId, SpawnSpec};
 use fabric::ProcessSignal;
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------

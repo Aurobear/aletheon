@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use executive::r#impl::runtime::PiRpcRuntime;
 use executive::service::agent_control::{
     AgentContextProjection, AgentEventSink, AgentRuntimeEvent, AgentRuntimeInbox,
-    AgentRuntimeInput, AgentRuntimeLauncher,
+    AgentRuntimeInput, AgentRuntimeLauncher, AgentRuntimeRegistry,
 };
 use fabric::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
@@ -205,12 +205,35 @@ done
         PiRpcRuntime::prepare(
             &config,
             Arc::new(FixtureSandbox { script }),
-            Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            Arc::new(kernel::chronos::SystemClock::new()),
             BTreeMap::new(),
         )
         .unwrap()
         .unwrap(),
     );
+    let registry = AgentRuntimeRegistry::default();
+    registry
+        .register_manifested(
+            PiRpcRuntime::runtime_id(),
+            runtime.clone(),
+            executive::r#impl::runtime::pi_manifest().clone(),
+        )
+        .unwrap();
+    let selected = registry
+        .resolve_selector(
+            &runtime::RuntimeSelector::Alias("pi".into()),
+            &[
+                runtime::RuntimeCapability::CodeEdit,
+                runtime::RuntimeCapability::Test,
+            ],
+        )
+        .unwrap();
+    assert!(registry
+        .resolve_selector(
+            &runtime::RuntimeSelector::Alias("pi".into()),
+            &[runtime::RuntimeCapability::DeviceCommand],
+        )
+        .is_err());
     let mut tasks = Vec::new();
     for label in ["one", "two"] {
         let (sender, input) = input_with_inbox(policy.clone(), label);
@@ -227,7 +250,7 @@ done
                 .await
                 .unwrap();
         }
-        let runtime = runtime.clone();
+        let runtime = selected.clone();
         let events = Arc::new(Events::default());
         tasks.push(tokio::spawn(async move {
             (runtime.launch(input, events.clone()).await, events)
@@ -307,7 +330,7 @@ done
     let runtime = PiRpcRuntime::prepare(
         &config,
         Arc::new(FixtureSandbox { script }),
-        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+        Arc::new(kernel::chronos::SystemClock::new()),
         BTreeMap::new(),
     )
     .unwrap()

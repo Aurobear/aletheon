@@ -1,14 +1,14 @@
 //! Phase 5 budget/quota/lease admission tests.
 
-use aletheon_kernel::admission::{
-    InMemoryBudgetController, InMemoryResourceLeaseManager, ProductionAdmissionController,
-};
-use aletheon_kernel::chronos::TestClock;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionController, AdmissionError, AdmissionRequest, BudgetRequest, CapabilityId,
     CapabilityScope, LeaseRequest, PrincipalId, RevokeReason, SandboxRequirement, UsageReport,
 };
+use kernel::admission::{
+    InMemoryBudgetController, InMemoryResourceLeaseManager, ProductionAdmissionController,
+};
+use kernel::chronos::TestClock;
 use std::sync::Arc;
 
 fn request(principal: &str) -> AdmissionRequest {

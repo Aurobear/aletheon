@@ -688,9 +688,9 @@
           "description": "C1 — compaction guardrails + strategy selection (maybe_compact_v2).",
           "type": "boolean"
         },
-        "exec_server": {
+        "execd": {
           "default": false,
-          "description": "D1 — isolated exec-server backend activation.",
+          "description": "D1 — isolated execd backend activation.",
           "type": "boolean"
         },
         "folder_trust": {
@@ -1938,7 +1938,7 @@
       "default": {
         "acp_adapter": false,
         "compaction_v2": false,
-        "exec_server": false,
+        "execd": false,
         "folder_trust": false,
         "lifecycle_contributors": false,
         "memory_hybrid": false,

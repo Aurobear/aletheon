@@ -13,8 +13,8 @@ use crate::service::governed_capability::{
     CapabilityExecutionContext, CapabilityRuntimeFactory, RegistryAuthorityProvider,
 };
 use crate::service::turn_runtime_ports::{
-    ActiveAgentProfilePort, ResolvedTurnProfile, ApprovalNotice, GovernedTurnCapabilityPort,
-    ModelSelectionPort, PreparedCapabilities, SelfPolicyPort, StormStatePort, TurnApprovalPort,
+    ActiveAgentProfilePort, ApprovalNotice, GovernedTurnCapabilityPort, ModelSelectionPort,
+    PreparedCapabilities, ResolvedTurnProfile, SelfPolicyPort, StormStatePort, TurnApprovalPort,
     TurnConfigPort, TurnHookPort, TurnObservabilityPort, TurnRuntimePorts, TurnSessionStatePort,
 };
 
@@ -578,7 +578,7 @@ mod tests {
     #[test]
     fn configured_hooks_join_the_authoritative_corpus_registry() {
         let mut registry =
-            corpus::HookRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
+            corpus::HookRegistry::new(Arc::new(kernel::chronos::TestClock::default()));
         let config = crate::core::config::HooksConfig {
             on_session_start: vec!["session-start".into()],
             pre_turn: vec!["pre-turn".into()],
@@ -700,7 +700,10 @@ mod tests {
         assert_eq!(profile.max_output_tokens, 16_384);
         assert_eq!(profile.max_tool_calls, 64);
         assert_eq!(profile.max_elapsed_ms, 600_000);
-        assert_eq!(profile.approval_policy, fabric::AgentApprovalPolicy::AutoApprove);
+        assert_eq!(
+            profile.approval_policy,
+            fabric::AgentApprovalPolicy::AutoApprove
+        );
         assert_eq!(profile.tool_timeout_ms, 30_000);
     }
 

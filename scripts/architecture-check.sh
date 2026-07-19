@@ -8,7 +8,8 @@ set -euo pipefail
 # silently disabling all architecture enforcement.
 export LC_ALL=C
 
-ROOT=${ARCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT=${ARCH_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}
 ALLOW="$ROOT/config/architecture-allowlist.txt"
 DEPS="$ROOT/config/architecture-dependencies.txt"
 PATHS="$ROOT/config/architecture-path-inventory.txt"
@@ -60,7 +61,7 @@ if rg -n '\b(AppConfig|load_layered)\b|ALETHEON__|/etc/aletheon/config\.toml' \
   exit 1
 fi
 extension_activation_outside_owner=$(rg -l '\bActivationRequest\b' \
-  crates/executive/src crates/bin/src -g '*.rs' \
+  crates/executive/src crates/aletheon/src -g '*.rs' \
   | grep -v '^crates/executive/src/service/extension_service.rs$' || true)
 if [[ -n "$extension_activation_outside_owner" ]]; then
   echo "architecture-check: extension activation bypasses Executive ExtensionService:" >&2
@@ -74,16 +75,16 @@ fi
 
 # Q02 deletion gates: Interact and Bin may depend on Fabric protocol types, while
 # domain construction belongs to Executive/Corpus composition.
-if rg -n '^\s*(aletheon-kernel|corpus)\s*=' crates/interact/Cargo.toml || \
-   rg -n '\b(aletheon_kernel|corpus)::|use\s+(aletheon_kernel|corpus)\b' \
+if rg -n '^\s*(kernel|corpus)\s*=' crates/interact/Cargo.toml || \
+   rg -n '\b(kernel|corpus)::|use\s+(kernel|corpus)\b' \
      crates/interact/src -g '*.rs'; then
   echo "architecture-check: Interact imports Kernel or Corpus" >&2
   exit 1
 fi
-if rg -n '\b(aletheon_kernel|corpus|cognit|mnemosyne|dasein|agora|metacog)\s*=' \
-     crates/bin/Cargo.toml || \
+if rg -n '\b(kernel|corpus|cognit|mnemosyne|dasein|agora|metacog)\s*=' \
+     crates/aletheon/Cargo.toml || \
    rg -n '\b(ExecSessionBuilder|TurnRequest|RuntimeHost|KernelRuntime|ToolRegistry)\b|\b(corpus|cognit|mnemosyne|dasein|agora|metacog)::' \
-     crates/bin/src -g '*.rs'; then
+     crates/aletheon/src -g '*.rs'; then
   echo "architecture-check: Bin owns domain or runtime construction" >&2
   exit 1
 fi
@@ -95,7 +96,7 @@ fi
 for required in \
   crates/fabric/src/protocol/client.rs \
   crates/interact/src/tui/reducer.rs \
-  crates/bin/src/lib.rs; do
+  crates/aletheon/src/lib.rs; do
   if [[ ! -s "$required" ]]; then
     echo "architecture-check: missing Q02 boundary: $required" >&2
     exit 1
@@ -130,7 +131,7 @@ approved = {
     Path("crates/corpus/src/tools/tools/executor.rs"),
 }
 pattern = re.compile(r"\b(?:tool|exec)\.execute\(")
-for root in (Path("crates/corpus"), Path("crates/executive"), Path("crates/bin")):
+for root in (Path("crates/corpus"), Path("crates/executive"), Path("crates/aletheon")):
     for path in root.rglob("*.rs"):
         if "tests" in path.parts or path in approved:
             continue
@@ -142,7 +143,7 @@ for root in (Path("crates/corpus"), Path("crates/executive"), Path("crates/bin")
 PY
 scan legacy_event 'use fabric::(envelope|primitives::comm)|\bEnvelope::' crates -g '!**/tests/**'
 scan concrete_clock 'SystemClock::new\(' crates/dasein crates/agora crates/cognit crates/mnemosyne crates/metacog crates/interact -g '!**/tests/**'
-scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates/executive/src crates/bin/src \
+scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates/executive/src crates/aletheon/src \
   -g '!**/service/admin_service.rs' -g '!**/service/post_turn_projection.rs'
 scan duplicate_kernel 'executive::impl::kernel|crate::impl::kernel' crates
 scan raw_process 'tokio::process::Command' crates/dasein/src crates/executive/src
@@ -376,7 +377,7 @@ PY
 # private Kernel details. Executive and binaries may depend only on the opaque
 # runtime API, and the old Executive-local kernel implementation must stay gone.
 if rg -n 'ServicePorts|ProcessTable|OperationTable|InMemorySpaceManager|executive::.*kernel' \
-  crates/executive/src crates/bin/src; then
+  crates/executive/src crates/aletheon/src; then
   echo "architecture-check: production lifecycle authority escaped KernelRuntime" >&2
   exit 1
 fi
@@ -515,7 +516,7 @@ if [[ -n "$domain_port_outside_executive" ]]; then
   exit 1
 fi
 if [[ -e crates/executive/src/core/core_systems.rs ]] || \
-   rg -n '\bCoreSystems\b|\.subsystems\b' crates/executive/src crates/bin/src -g '*.rs'; then
+   rg -n '\bCoreSystems\b|\.subsystems\b' crates/executive/src crates/aletheon/src -g '*.rs'; then
   echo "architecture-check: retired god container escaped into production" >&2
   exit 1
 fi
@@ -573,15 +574,18 @@ if [[ ${ARCH_SKIP_DEPENDENCIES:-0} != 1 ]]; then
     echo "  Install Rust/cargo, or set ARCH_SKIP_DEPENDENCIES=1 to explicitly skip." >&2
     exit 1
   fi
-  cargo metadata --no-deps --format-version 1 | python3 -c '
+  bash "$SCRIPT_DIR/cargo-agent.sh" metadata --no-deps --format-version 1 | python3 -c '
 import json,sys
 data=json.load(sys.stdin)
 names={p["name"] for p in data["packages"]}
+forbidden=sorted(name for name in names if "-" in name)
+if forbidden:
+    raise SystemExit("architecture-check: forbidden hyphenated workspace package(s): " + ", ".join(forbidden))
 reviewed={
-    ("aletheon-bin", "fabric"),
+    ("aletheon", "fabric"),
     ("corpus", "cognit"),
     ("corpus", "mnemosyne"),
-    ("exec-server", "corpus"),
+    ("execd", "corpus"),
     ("executive", "gateway"),
     ("gateway", "fabric"),
     ("interact", "executive"),

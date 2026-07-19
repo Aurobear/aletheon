@@ -56,7 +56,10 @@ impl LinearCognitiveSessionFactory {
         }
     }
 
-    pub fn with_verifier(mut self, verifier: std::sync::Arc<dyn fabric::policy::verifier::Verifier>) -> Self {
+    pub fn with_verifier(
+        mut self,
+        verifier: std::sync::Arc<dyn fabric::policy::verifier::Verifier>,
+    ) -> Self {
         self.verifier = Some(verifier);
         self
     }
@@ -207,7 +210,7 @@ mod tests {
         let memory = std::sync::Arc::new(tokio::sync::Mutex::new(
             mnemosyne::RecallMemory::new(
                 &dir.path().join("recall.db"),
-                std::sync::Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                std::sync::Arc::new(kernel::chronos::SystemClock::new()),
             )
             .unwrap(),
         ));

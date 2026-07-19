@@ -1,7 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use aletheon_kernel::capability::ToolExecutor;
 use async_trait::async_trait;
 use corpus::{
     ActivationRequest, CorpusError, CorpusRetryDisposition, CorpusService, DefaultCorpusService,
@@ -15,6 +14,7 @@ use fabric::{
     PermitId, PrincipalId, ProcessId, SandboxDecision, SandboxRequirement, ToolDefinition,
     UsageReport,
 };
+use kernel::capability::ToolExecutor;
 
 fn descriptor(kind: ExtensionKind, name: &str, capability: &str) -> ExtensionDescriptor {
     let descriptor = ExtensionDescriptor::new(

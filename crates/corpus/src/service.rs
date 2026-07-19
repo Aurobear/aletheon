@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use aletheon_kernel::capability::ToolExecutor;
 use async_trait::async_trait;
 use fabric::hook::{HookContext, HookResult};
 use fabric::{
@@ -11,6 +10,7 @@ use fabric::{
     ExtensionDescriptor, ExtensionId, ExtensionKind, ExtensionSnapshot, PrincipalId, Registry,
     Tool,
 };
+use kernel::capability::ToolExecutor;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use uuid::Uuid;

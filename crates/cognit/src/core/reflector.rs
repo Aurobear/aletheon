@@ -263,7 +263,7 @@ mod tests {
     }
 
     fn make_reflector() -> Reflector {
-        Reflector::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+        Reflector::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 
     #[test]

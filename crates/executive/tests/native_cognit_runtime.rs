@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-use aletheon_kernel::chronos::TestClock;
 use async_trait::async_trait;
 use executive::r#impl::runtime::{
     AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources, ResolvedAgentProfile,
@@ -19,6 +18,7 @@ use fabric::{
     LlmStream, OperationId, ParentRestriction, ProcessId, RiskTier, RuntimeId, StopReason,
     ToolDefinition, Usage, AGENT_MESSAGE_SCHEMA_V1,
 };
+use kernel::chronos::TestClock;
 use tokio_util::sync::CancellationToken;
 
 struct ScriptedLlm {

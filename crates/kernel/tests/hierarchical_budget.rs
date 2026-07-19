@@ -1,10 +1,10 @@
-use aletheon_kernel::admission::InMemoryBudgetController;
-use aletheon_kernel::KernelRuntime;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionRequest, BudgetRequest, BudgetScopeKind, CapabilityId, CapabilityScope, OperationKind,
     OperationRequest, PermitId, PrincipalId, SandboxRequirement, SpawnSpec, UsageReport,
 };
+use kernel::admission::InMemoryBudgetController;
+use kernel::KernelRuntime;
 use std::sync::Arc;
 
 fn tokens(value: u64) -> BudgetRequest {

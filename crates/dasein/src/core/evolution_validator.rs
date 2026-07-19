@@ -359,9 +359,7 @@ mod tests {
 
     fn make_self_field() -> SelfField {
         SelfField::new(SelfFieldConfig {
-            clock: Some(std::sync::Arc::new(
-                aletheon_kernel::chronos::TestClock::default(),
-            )),
+            clock: Some(std::sync::Arc::new(kernel::chronos::TestClock::default())),
             ..SelfFieldConfig::default()
         })
     }

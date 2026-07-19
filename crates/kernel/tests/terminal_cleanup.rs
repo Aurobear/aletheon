@@ -1,5 +1,3 @@
-use aletheon_kernel::supervision::{RestartDecision, RestartPolicy};
-use aletheon_kernel::{KernelRuntime, LifecycleFaultInjector};
 use fabric::ipc::envelope_v2::Target;
 use fabric::ipc::mailbox::InProcessMailbox;
 use fabric::types::admission::RiskLevel;
@@ -7,6 +5,8 @@ use fabric::{
     AdmissionRequest, BudgetRequest, CapabilityId, CapabilityScope, ExitReason, LeaseRequest,
     OperationKind, OperationRequest, PrincipalId, ProcessSignal, SandboxRequirement, SpawnSpec,
 };
+use kernel::supervision::{RestartDecision, RestartPolicy};
+use kernel::{KernelRuntime, LifecycleFaultInjector};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -129,7 +129,7 @@ async fn terminal_transaction_cleans_all_owned_resources_before_publishing_exit(
 #[tokio::test]
 async fn cleanup_failure_is_retryable_before_terminal_publication() {
     let runtime = KernelRuntime::with_clock_and_faults(
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
         Arc::new(FailCleanupOnce(AtomicBool::new(true))),
     );
     let (process, operation) = running_process_with_operation(&runtime).await;

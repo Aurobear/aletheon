@@ -541,7 +541,7 @@ mod tests {
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
             turn_event_sender: None,
         };
         let result = tool.execute(json!({"action": "invalid"}), &ctx).await;
@@ -557,7 +557,7 @@ mod tests {
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
             turn_event_sender: None,
         };
         // /tmp exists, so clone should fail

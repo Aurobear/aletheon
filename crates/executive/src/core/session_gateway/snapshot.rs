@@ -217,9 +217,8 @@ mod tests {
 
     #[test]
     fn snapshot_with_no_goal() {
-        let clock = aletheon_kernel::chronos::TestClock::default();
-        let goal_tracker =
-            GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let clock = kernel::chronos::TestClock::default();
+        let goal_tracker = GoalTracker::new(Arc::new(kernel::chronos::TestClock::default()));
         let perf = PerfCounter::default();
         let config = ExecutiveConfig::default();
 
@@ -248,9 +247,8 @@ mod tests {
 
     #[test]
     fn snapshot_with_goal_and_errors() {
-        let clock = aletheon_kernel::chronos::TestClock::default();
-        let mut goal_tracker =
-            GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let clock = kernel::chronos::TestClock::default();
+        let mut goal_tracker = GoalTracker::new(Arc::new(kernel::chronos::TestClock::default()));
         goal_tracker.set_goal("Fix all the bugs".into());
         goal_tracker.add_sub_goal("Find the bugs".into());
         goal_tracker.add_sub_goal("Fix the bugs".into());
@@ -295,9 +293,8 @@ mod tests {
 
     #[test]
     fn snapshot_with_circuit_tripped() {
-        let clock = aletheon_kernel::chronos::TestClock::default();
-        let goal_tracker =
-            GoalTracker::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
+        let clock = kernel::chronos::TestClock::default();
+        let goal_tracker = GoalTracker::new(Arc::new(kernel::chronos::TestClock::default()));
         let perf = PerfCounter::default();
         let config = ExecutiveConfig::default();
 

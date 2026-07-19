@@ -1,9 +1,9 @@
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use fabric::{
     AgentId, AgentProfileId, CancelReason, NamespaceId, OperationKind, OperationRequest,
     OperationState, ProcessId, ProcessSignal, SpawnSpec,
 };
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use std::sync::Arc;
 
 fn child_spec(parent: ProcessId) -> SpawnSpec {

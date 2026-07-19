@@ -9,8 +9,8 @@ use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonExecutive;
 use crate::r#impl::daemon::handler::RequestHandler;
 use crate::session::store::SessionStore;
-use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
+use kernel::chronos::SystemClock;
 
 use super::approval_gate::{bootstrap_workspace_trust_resolver, DurableSocketApprovalGate};
 use cognit::core::reflector::Reflector;
@@ -453,20 +453,20 @@ impl RequestHandler {
         let sandbox_pref = SandboxPreference::from_str(&config.sandbox_preference);
         let mut structured_exec_backend: Option<Arc<dyn corpus::security::StructuredToolSandbox>> =
             None;
-        let exec_backend: Option<Box<dyn fabric::SandboxBackend>> = if grok_hardening.exec_server {
-            let binary_path = std::env::var_os("ALETHEON_EXEC_SERVER_PATH")
+        let exec_backend: Option<Box<dyn fabric::SandboxBackend>> = if grok_hardening.execd {
+            let binary_path = std::env::var_os("ALETHEON_EXECD_PATH")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| {
                     std::env::current_exe()
                         .ok()
-                        .and_then(|path| path.parent().map(|parent| parent.join("exec-server")))
-                        .unwrap_or_else(|| std::path::PathBuf::from("exec-server"))
+                        .and_then(|path| path.parent().map(|parent| parent.join("execd")))
+                        .unwrap_or_else(|| std::path::PathBuf::from("execd"))
                 });
             let workspace = std::path::PathBuf::from(&config.working_dir)
                 .canonicalize()
-                .context("canonicalize exec-server workspace root")?;
-            let backend = crate::r#impl::channel::exec_server_client::ExecServerSandboxBackend::new(
-                crate::r#impl::channel::exec_server_client::ExecServerConfig {
+                .context("canonicalize execd workspace root")?;
+            let backend = crate::r#impl::channel::execd_client::ExecdSandboxBackend::new(
+                crate::r#impl::channel::execd_client::ExecdConfig {
                     binary_path: binary_path.to_string_lossy().into_owned(),
                     shared_secret: format!(
                         "{}{}",
@@ -519,10 +519,7 @@ impl RequestHandler {
                     ),
                     clock.clone(),
                 )
-                .with_evicted_memory(recall_memory.clone())
-                .with_verifier(std::sync::Arc::new(
-                    crate::service::verifier::CodingVerifier::new(),
-                )),
+                .with_evicted_memory(recall_memory.clone()),
             );
 
         let mut runtime = AletheonExecutive::new(runtime_config);
@@ -726,12 +723,12 @@ impl RequestHandler {
         });
 
         let durable_budget = Arc::new(
-            aletheon_kernel::admission::DurableBudgetController::open_durable(
+            kernel::admission::DurableBudgetController::open_durable(
                 data_dir.join("budget-controller-v1.json"),
             )
             .context("opening durable budget controller")?,
         );
-        let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock_and_budget(
+        let kernel = Arc::new(kernel::KernelRuntime::with_clock_and_budget(
             clock.clone(),
             durable_budget,
         ));
@@ -876,9 +873,8 @@ impl RequestHandler {
             // load_agent_profiles so profiles can list them in `allowed_tools`
             // before the AgentControlService runtime is constructed.
             let mut definitions = corpus_group.tools.lock().await.definitions();
-            definitions.extend(
-                corpus::tools::tools::agent_control::AgentControlTools::definitions(),
-            );
+            definitions
+                .extend(corpus::tools::tools::agent_control::AgentControlTools::definitions());
             let (profiles, tool_profiles) = super::runtime::load_agent_profiles(
                 &aletheon_dir.join("agents"),
                 inference.clone(),
@@ -993,7 +989,11 @@ impl RequestHandler {
                 info!(runtime_id = "pi-coder", "Pi coding runtime registered");
             }
             if let Some(pi_rpc) = pi_rpc {
-                agent_runtimes.register(PiRpcRuntime::runtime_id(), Arc::new(pi_rpc))?;
+                agent_runtimes.register_manifested(
+                    PiRpcRuntime::runtime_id(),
+                    Arc::new(pi_rpc),
+                    crate::r#impl::runtime::pi_manifest().clone(),
+                )?;
                 info!(runtime_id = "pi-rpc", "Pi resident RPC runtime registered");
             }
         }

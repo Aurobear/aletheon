@@ -256,7 +256,7 @@ mod tests {
                     agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
-                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
                     turn_event_sender: None,
                 },
             )
@@ -295,7 +295,7 @@ mod tests {
                     agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
-                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
                     turn_event_sender: None,
                 },
             )
@@ -319,7 +319,7 @@ mod tests {
                     agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
-                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
                     turn_event_sender: None,
                 },
             )
@@ -353,7 +353,7 @@ mod tests {
                     agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
-                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
                     turn_event_sender: None,
                 },
             )

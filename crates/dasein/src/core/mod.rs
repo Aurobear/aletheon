@@ -576,7 +576,7 @@ mod tests {
 
     fn default_config() -> SelfFieldConfig {
         SelfFieldConfig {
-            clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::default())),
+            clock: Some(Arc::new(kernel::chronos::TestClock::default())),
             ..SelfFieldConfig::default()
         }
     }

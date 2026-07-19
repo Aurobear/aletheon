@@ -101,8 +101,7 @@ fn runtime_skills_and_hooks_are_discovered_before_activation() {
     .unwrap();
     let mut skills = corpus::SkillLoader::new(root.path().to_path_buf());
     assert_eq!(skills.load_all_enhanced(), 1);
-    let mut hooks =
-        corpus::HookRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
+    let mut hooks = corpus::HookRegistry::new(Arc::new(kernel::chronos::TestClock::default()));
     hooks.register(corpus::hook::registry::RegisteredHook {
         name: "audit".into(),
         source: "builtin".into(),

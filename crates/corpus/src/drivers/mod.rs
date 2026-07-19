@@ -20,6 +20,4 @@ pub mod sandbox_driver;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 
-pub mod platform;
-
 pub use types::*;

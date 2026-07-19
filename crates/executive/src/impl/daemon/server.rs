@@ -5,7 +5,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aletheon_kernel::chronos::SystemTimer;
 use anyhow::Result;
 use fabric::debug::DebugEvent;
 use fabric::events::ui_event::ClientEvent;
@@ -15,6 +14,7 @@ use fabric::protocol::client::{
 };
 use fabric::{Clock, ConnectionId, LocalOsPrincipal, PrincipalId, Timer};
 use futures::FutureExt;
+use kernel::chronos::SystemTimer;
 use nix::unistd::{Gid, Uid, User};
 use std::panic::AssertUnwindSafe;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

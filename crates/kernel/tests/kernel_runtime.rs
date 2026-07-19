@@ -1,6 +1,6 @@
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use fabric::{ExitReason, OperationKind, OperationRequest, ProcessId, ProcessSignal, SpawnSpec};
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use std::sync::Arc;
 
 #[tokio::test]

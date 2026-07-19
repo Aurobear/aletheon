@@ -233,7 +233,7 @@ async fn supervised_run_honors_shutdown_without_poll_delay() {
     tokio::time::timeout(
         Duration::from_millis(50),
         worker.run(
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
             Duration::from_secs(60),
             cancel,
         ),

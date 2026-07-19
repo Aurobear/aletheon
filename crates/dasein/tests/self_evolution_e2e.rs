@@ -20,7 +20,7 @@ use std::sync::Arc;
 use tempfile::NamedTempFile;
 
 fn test_clock() -> Arc<dyn fabric::Clock> {
-    Arc::new(aletheon_kernel::chronos::TestClock::default())
+    Arc::new(kernel::chronos::TestClock::default())
 }
 
 /// Approximate f64 comparison for test assertions.

@@ -24,7 +24,7 @@ fn kernel_and_domain_composition_are_separate() {
     assert!(!kernel_lib.contains("pub mod service"));
     assert!(!kernel_runtime.contains("Agora"));
     assert!(!root.join("executive/src/core/core_systems.rs").exists());
-    assert!(bootstrap.contains("let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock"));
+    assert!(bootstrap.contains("let kernel = Arc::new(kernel::KernelRuntime::with_clock"));
     assert!(bootstrap.contains("let domains ="));
     assert!(bootstrap.contains("crate::core::DomainPorts::new"));
     assert!(domain_ports.contains("agora: Arc<dyn AgoraService>"));
@@ -38,9 +38,9 @@ fn production_lifecycle_mutation_has_no_table_escape_hatch() {
     for path in files {
         let source = fs::read_to_string(&path).unwrap();
         for forbidden in [
-            "aletheon_kernel::process::ProcessTable",
-            "aletheon_kernel::operation::OperationTable",
-            "aletheon_kernel::space::InMemorySpaceManager",
+            "kernel::process::ProcessTable",
+            "kernel::operation::OperationTable",
+            "kernel::space::InMemorySpaceManager",
             "ServicePorts",
             "fabric::agent::Pid",
             "OperationKind::Other",

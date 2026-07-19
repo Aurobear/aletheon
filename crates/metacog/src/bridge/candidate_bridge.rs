@@ -41,7 +41,7 @@ impl CandidateBridge {
 mod tests {
     use super::*;
     use crate::r#impl::genome::loader::GenomeLoader;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
     use std::path::Path;
 
     #[tokio::test]

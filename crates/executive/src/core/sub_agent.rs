@@ -42,6 +42,15 @@ pub trait SubAgentRuntime: Send + Sync {
     ) -> Result<String, String> {
         self.run(task, cancel).await
     }
+
+    async fn run_attempt_in_context(
+        &self,
+        task: &str,
+        cancel: CancellationToken,
+        _context: SubAgentExecutionContext,
+    ) -> Result<RuntimeResult, RuntimeFailure> {
+        self.run_attempt(task, cancel).await
+    }
 }
 
 #[derive(Debug, Clone)]

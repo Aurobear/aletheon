@@ -3,8 +3,6 @@ use crate::service::harness_factory::{CognitiveSessionFactory, LinearCognitiveSe
 use crate::service::turn_coordinator::{cancelled_result, TurnCoordinator, TurnExecution};
 use crate::service::turn_policy::TurnPolicy;
 use crate::service::{PostTurnPipeline, PreTurnPipeline};
-use aletheon_kernel::chronos::SystemTimer;
-use aletheon_kernel::KernelRuntime;
 use anyhow::Result;
 use async_trait::async_trait;
 use cognit::harness::HarnessConfig;
@@ -12,6 +10,8 @@ use fabric::{
     CapabilityCall, CapabilityResult, Clock, ItemPayload, RecallRequest, RecallSet, Timer,
     TurnEventSink, TurnRequest, TurnServices,
 };
+use kernel::chronos::SystemTimer;
+use kernel::KernelRuntime;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;

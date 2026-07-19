@@ -89,22 +89,43 @@ impl Tool for FileSearchTool {
             .unwrap_or(50) as usize;
 
         // Strategy 1: Try ripgrep
-        if let Some(result) =
-            try_ripgrep(&query, &path, include.as_deref(), max_results, &*ctx.clock, &ctx.working_dir).await
+        if let Some(result) = try_ripgrep(
+            &query,
+            &path,
+            include.as_deref(),
+            max_results,
+            &*ctx.clock,
+            &ctx.working_dir,
+        )
+        .await
         {
             return result;
         }
 
         // Strategy 2: Fallback to grep -r
-        if let Some(result) =
-            try_grep(&query, &path, include.as_deref(), max_results, &*ctx.clock, &ctx.working_dir).await
+        if let Some(result) = try_grep(
+            &query,
+            &path,
+            include.as_deref(),
+            max_results,
+            &*ctx.clock,
+            &ctx.working_dir,
+        )
+        .await
         {
             return result;
         }
 
         // Strategy 3: Fallback to find + grep
-        if let Some(result) =
-            try_find_grep(&query, &path, include.as_deref(), max_results, &*ctx.clock, &ctx.working_dir).await
+        if let Some(result) = try_find_grep(
+            &query,
+            &path,
+            include.as_deref(),
+            max_results,
+            &*ctx.clock,
+            &ctx.working_dir,
+        )
+        .await
         {
             return result;
         }
@@ -360,7 +381,7 @@ mod tests {
                     agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
-                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
                     turn_event_sender: None,
                 },
             )
@@ -398,7 +419,7 @@ mod tests {
                     agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
-                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
                     turn_event_sender: None,
                 },
             )
@@ -426,7 +447,7 @@ mod tests {
                     agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
-                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
                     turn_event_sender: None,
                 },
             )
@@ -455,7 +476,7 @@ mod tests {
                     agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
-                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
                     turn_event_sender: None,
                 },
             )

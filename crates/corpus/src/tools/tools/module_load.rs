@@ -229,7 +229,7 @@ impl Tool for ModuleLoadTool {
                     .await;
 
                 // Small delay
-                aletheon_kernel::chronos::SystemTimer
+                kernel::chronos::SystemTimer
                     .sleep(std::time::Duration::from_millis(100))
                     .await;
 
@@ -298,7 +298,7 @@ mod tests {
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
             turn_event_sender: None,
         };
         let result = tool

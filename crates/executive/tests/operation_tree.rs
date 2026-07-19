@@ -1,9 +1,9 @@
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::operation::OperationScope;
-use aletheon_kernel::KernelRuntime;
 use fabric::{
     CancelReason, OperationExitReason, OperationKind, OperationRequest, OperationState, SpawnSpec,
 };
+use kernel::chronos::TestClock;
+use kernel::operation::OperationScope;
+use kernel::KernelRuntime;
 use std::sync::Arc;
 use std::time::Duration;
 

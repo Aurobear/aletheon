@@ -5,8 +5,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use anyhow::Context;
 use async_trait::async_trait;
 use executive::r#impl::events::{
@@ -34,6 +32,8 @@ use fabric::{
     SpawnSpec, SpineEvent, TurnId, UnsequencedEvent, UsageReport, WorkspaceContent,
     CONSCIOUS_CORE_TRACE_SCHEMA_V1, SESSION_SCHEMA_VERSION,
 };
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallItem, RecallRequest, RecallSet};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};

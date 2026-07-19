@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
 use fabric::paths::UserRuntimePaths;
+use kernel::chronos::SystemClock;
 use tokio_util::sync::CancellationToken;
 
 use crate::core::config::ModelRoutingConfig;
@@ -39,12 +39,12 @@ impl UserRuntimeConfig {
         paths: UserRuntimePaths,
         socket: PathBuf,
         enable_evolution: bool,
-        enable_exec_server: bool,
+        enable_execd: bool,
     ) -> anyhow::Result<Self> {
         let mut app = crate::core::config::load_for_host(None, config_path)?.value;
         // CLI activation is additive: an absent flag preserves the layered
-        // config value, while `--exec-server` can only enable the backend.
-        apply_exec_server_override(&mut app.grok_hardening, enable_exec_server);
+        // config value, while `--execd` can only enable the backend.
+        apply_execd_override(&mut app.grok_hardening, enable_execd);
         let crate::core::config::AppConfig {
             memory: crate::core::config::MemoryConfig { gbrain, .. },
             ..
@@ -157,11 +157,8 @@ impl UserRuntimeConfig {
     }
 }
 
-fn apply_exec_server_override(
-    config: &mut crate::core::config::GrokHardeningConfig,
-    cli_enabled: bool,
-) {
-    config.exec_server |= cli_enabled;
+fn apply_execd_override(config: &mut crate::core::config::GrokHardeningConfig, cli_enabled: bool) {
+    config.execd |= cli_enabled;
 }
 
 pub struct UserRuntime {
@@ -264,22 +261,22 @@ fn tempfile_path(label: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_exec_server_override;
+    use super::apply_execd_override;
     use crate::core::config::GrokHardeningConfig;
 
     #[test]
-    fn exec_server_cli_override_is_additive_over_layered_config() {
+    fn execd_cli_override_is_additive_over_layered_config() {
         let mut off = GrokHardeningConfig::default();
-        apply_exec_server_override(&mut off, false);
-        assert!(!off.exec_server);
-        apply_exec_server_override(&mut off, true);
-        assert!(off.exec_server);
+        apply_execd_override(&mut off, false);
+        assert!(!off.execd);
+        apply_execd_override(&mut off, true);
+        assert!(off.execd);
 
         let mut configured = GrokHardeningConfig {
-            exec_server: true,
+            execd: true,
             ..Default::default()
         };
-        apply_exec_server_override(&mut configured, false);
-        assert!(configured.exec_server);
+        apply_execd_override(&mut configured, false);
+        assert!(configured.execd);
     }
 }

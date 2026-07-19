@@ -9,9 +9,9 @@
 //! Reuses `RuntimeCore::bootstrap`, `UnixServer`, and `McpEmbedded`
 //! identically to `DaemonHost`.
 
-use aletheon_kernel::chronos::SystemTimer;
 use anyhow::Result;
 use fabric::{Clock, MonoTime, Timer};
+use kernel::chronos::SystemTimer;
 use std::os::unix::net::UnixDatagram;
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -57,7 +57,7 @@ impl Default for GraphState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
 
     #[test]
     fn test_state_set_get() {

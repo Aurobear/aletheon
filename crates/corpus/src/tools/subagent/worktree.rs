@@ -1,9 +1,9 @@
 //! Ownership-checked temporary git worktrees for coding jobs.
 
 use super::command::{CommandOutput, CommandRequest, CommandRunner};
-use aletheon_kernel::chronos::SystemClock;
 use anyhow::{bail, Context, Result};
 use fabric::{ChangedFile, ChangedFileKind, Clock, CodingJobId, WorkspaceBoundary};
+use kernel::chronos::SystemClock;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -496,7 +496,7 @@ fn hex_sha256(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
 
     async fn git(repo: &Path, args: &[&str]) -> String {
         let output = tokio::process::Command::new("git")

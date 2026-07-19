@@ -1,11 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
-use aletheon_kernel::capability::ToolExecutor;
 use async_trait::async_trait;
 use fabric::{
     AuditEventId, CapabilityId, CapabilityRequest, CapabilityResult, Clock, ExecutionPermit,
     ToolContext, UsageReport,
 };
+use kernel::capability::ToolExecutor;
 
 use crate::{CorpusError, ExtensionDescriptor, ExtensionKind};
 use crate::{ToolRegistry, ToolRunnerWithGuard};
@@ -168,6 +168,7 @@ impl ToolExecutor for CorpusToolExecutor {
                 turn_id: request.authority.turn_id,
                 call_id: request.call.call_id.clone(),
                 workspace: request.authority.workspace.clone(),
+                granted_scope: permit.granted_scope.clone(),
             }),
             working_dir: request.authority.working_dir.clone(),
             session_id: request.authority.session_id.clone(),
@@ -246,6 +247,7 @@ impl ToolExecutor for CorpusToolExecutor {
                 turn_id: request.authority.turn_id,
                 call_id: request.call.call_id.clone(),
                 workspace: request.authority.workspace.clone(),
+                granted_scope: permit.granted_scope.clone(),
             }),
             working_dir: request.authority.working_dir.clone(),
             session_id: request.authority.session_id.clone(),

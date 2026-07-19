@@ -1,4 +1,3 @@
-use aletheon_kernel::chronos::TestClock;
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
 use corpus::tools::google::oauth::{GoogleOAuthProvider, OAuthClientConfig};
@@ -22,6 +21,7 @@ use hyper::body::Bytes;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
+use kernel::chronos::TestClock;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as AsyncMutex;

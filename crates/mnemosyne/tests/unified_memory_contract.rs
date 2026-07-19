@@ -154,7 +154,7 @@ async fn approved_core_record_ranks_before_conflicting_local_fact() {
 }
 
 fn test_clock() -> Arc<dyn Clock> {
-    Arc::new(aletheon_kernel::chronos::TestClock::default())
+    Arc::new(kernel::chronos::TestClock::default())
 }
 
 fn metadata(id: &str) -> MemoryMetadata {

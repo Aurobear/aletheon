@@ -8,7 +8,6 @@ use agora::{
     AdmissionOutcome, BroadcastCoordinator, CandidatePool, CandidatePoolConfig,
     SqliteBroadcastStore,
 };
-use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use fabric::dasein::SelfTransitionReceipt;
 use fabric::{
@@ -22,6 +21,7 @@ use fabric::{
     SelectionResult, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
     WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
+use kernel::KernelRuntime;
 use parking_lot::RwLock;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;

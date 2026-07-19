@@ -16,11 +16,11 @@ use crate::r#impl::memory_projection::{
     ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
 };
 use crate::r#impl::storage_quota::{StorageClass, StorageQuota, StorageReservation};
-use aletheon_kernel::KernelRuntime;
 use fabric::goal::{GoalId, GoalSnapshot, GoalState, GoalWaitReason};
 use fabric::Clock;
 use fabric::ProcessId;
 use fabric::{ApprovalId, ExternalEventEnvelope, ExternalEventId, ExternalIdentityId, PrincipalId};
+use kernel::KernelRuntime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;

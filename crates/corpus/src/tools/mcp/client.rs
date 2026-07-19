@@ -8,10 +8,13 @@ use serde_json::Value;
 use tokio::sync::{mpsc, Mutex};
 
 use super::auth::{
-    discover_oauth_metadata, BearerTokenAuth, McpHttpAuth, McpOAuthProvider, OAuthClientAuthMethod,
-    OAuthEndpoints, TokenStore,
+    discover_oauth_metadata, BearerTokenAuth, McpEndpointCredentialGrant, McpHttpAuth,
+    McpOAuthProvider, OAuthClientAuthMethod, OAuthEndpoints, TokenStore,
 };
-use super::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
+use super::config::{
+    McpConfig, McpOAuthClientAuthMethod, McpPermissionLevel, McpServerConfig, McpTransportConfig,
+    McpTrustLevel,
+};
 use super::transport::{McpNotification, McpTransport};
 use super::wrapper::{McpResourceProvider, McpResourceReadTool, McpToolWrapper};
 
@@ -49,15 +52,14 @@ async fn connect_mcp_server(server: &McpServerConfig, global_timeout_ms: u64) ->
             McpTransportConfig::StreamableHttp { url } => {
                 Some(BearerTokenAuth::with_endpoint_scoping(
                     env_var.clone(),
-                    mnemosyne::credential::EmbeddingCredentialGrant::new(
+                    McpEndpointCredentialGrant::new(
                         format!("mcp:{}", server.name),
                         url,
                         server.name.clone(),
                         u64::MAX,
                         0,
-                        "environment-backed-mcp-token",
                     ),
-                    Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                    Arc::new(kernel::chronos::SystemClock::new()),
                 ))
             }
             McpTransportConfig::Sse { url } => {
@@ -65,26 +67,22 @@ async fn connect_mcp_server(server: &McpServerConfig, global_timeout_ms: u64) ->
                 Some(
                     BearerTokenAuth::with_endpoint_scoping(
                         env_var.clone(),
-                        mnemosyne::credential::EmbeddingCredentialGrant::new(
+                        McpEndpointCredentialGrant::new(
                             principal.clone(),
                             url,
                             server.name.clone(),
                             u64::MAX,
                             0,
-                            "environment-backed-mcp-token",
                         ),
-                        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                        Arc::new(kernel::chronos::SystemClock::new()),
                     )
-                    .allow_endpoint(
-                        mnemosyne::credential::EmbeddingCredentialGrant::new(
-                            principal,
-                            &format!("{}/sse", url.trim_end_matches('/')),
-                            server.name.clone(),
-                            u64::MAX,
-                            0,
-                            "environment-backed-mcp-token",
-                        ),
-                    ),
+                    .allow_endpoint(McpEndpointCredentialGrant::new(
+                        principal,
+                        &format!("{}/sse", url.trim_end_matches('/')),
+                        server.name.clone(),
+                        u64::MAX,
+                        0,
+                    )),
                 )
             }
             McpTransportConfig::Stdio { .. } => None,
@@ -169,13 +167,9 @@ async fn configured_oauth(
         .or_else(|| config.token_endpoint.clone())
         .context("OAuth requires issuer discovery or token_endpoint")?;
     let method = match config.token_endpoint_auth_method {
-        cognit::config::McpOAuthClientAuthMethod::None => OAuthClientAuthMethod::None,
-        cognit::config::McpOAuthClientAuthMethod::ClientSecretBasic => {
-            OAuthClientAuthMethod::ClientSecretBasic
-        }
-        cognit::config::McpOAuthClientAuthMethod::ClientSecretPost => {
-            OAuthClientAuthMethod::ClientSecretPost
-        }
+        McpOAuthClientAuthMethod::None => OAuthClientAuthMethod::None,
+        McpOAuthClientAuthMethod::ClientSecretBasic => OAuthClientAuthMethod::ClientSecretBasic,
+        McpOAuthClientAuthMethod::ClientSecretPost => OAuthClientAuthMethod::ClientSecretPost,
     };
     if let Some(metadata) = &discovered {
         let method_name = match method {
@@ -202,7 +196,7 @@ async fn configured_oauth(
         config.scopes.clone(),
         server.name.clone(),
         TokenStore::open_mcp_server(&server.name)?,
-        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+        Arc::new(kernel::chronos::SystemClock::new()),
     )
     .with_endpoint_scoping(resource_url);
     if let Some(secret) = client_secret {
@@ -966,15 +960,14 @@ impl McpConnectionManager {
                     McpTransportConfig::StreamableHttp { url } => {
                         Some(BearerTokenAuth::with_endpoint_scoping(
                             env_var.clone(),
-                            mnemosyne::credential::EmbeddingCredentialGrant::new(
+                            McpEndpointCredentialGrant::new(
                                 format!("mcp:{}", server_config.name),
                                 url,
                                 server_config.name.clone(),
                                 u64::MAX,
                                 0,
-                                "environment-backed-mcp-token",
                             ),
-                            Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                            Arc::new(kernel::chronos::SystemClock::new()),
                         ))
                     }
                     McpTransportConfig::Sse { url } => {
@@ -982,24 +975,22 @@ impl McpConnectionManager {
                         Some(
                             BearerTokenAuth::with_endpoint_scoping(
                                 env_var.clone(),
-                                mnemosyne::credential::EmbeddingCredentialGrant::new(
+                                McpEndpointCredentialGrant::new(
                                     principal.clone(),
                                     url,
                                     server_config.name.clone(),
                                     u64::MAX,
                                     0,
-                                    "environment-backed-mcp-token",
                                 ),
-                                Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+                                Arc::new(kernel::chronos::SystemClock::new()),
                             )
                             .allow_endpoint(
-                                mnemosyne::credential::EmbeddingCredentialGrant::new(
+                                McpEndpointCredentialGrant::new(
                                     principal,
                                     &format!("{}/sse", url.trim_end_matches('/')),
                                     server_config.name.clone(),
                                     u64::MAX,
                                     0,
-                                    "environment-backed-mcp-token",
                                 ),
                             ),
                         )
@@ -1250,10 +1241,10 @@ impl McpConnectionManager {
         {
             overrides.extend(server.permission_overrides.iter().map(|(name, level)| {
                 let level = match level {
-                    cognit::config::McpPermissionLevel::L0 => crate::tools::PermissionLevel::L0,
-                    cognit::config::McpPermissionLevel::L1 => crate::tools::PermissionLevel::L1,
-                    cognit::config::McpPermissionLevel::L2 => crate::tools::PermissionLevel::L2,
-                    cognit::config::McpPermissionLevel::L3 => crate::tools::PermissionLevel::L3,
+                    McpPermissionLevel::L0 => crate::tools::PermissionLevel::L0,
+                    McpPermissionLevel::L1 => crate::tools::PermissionLevel::L1,
+                    McpPermissionLevel::L2 => crate::tools::PermissionLevel::L2,
+                    McpPermissionLevel::L3 => crate::tools::PermissionLevel::L3,
                 };
                 (name.clone(), level)
             }));
@@ -1442,8 +1433,8 @@ impl McpConnectionManager {
 
 #[cfg(test)]
 mod oauth_selection_tests {
+    use super::super::config::McpOAuthConfig;
     use super::*;
-    use cognit::config::{McpOAuthClientAuthMethod, McpOAuthConfig};
 
     fn http_server() -> McpServerConfig {
         McpServerConfig {

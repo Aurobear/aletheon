@@ -196,18 +196,18 @@ Aletheon is organized as nine domain crates plus one executable assembly package
 | `bin` | Assembly | unified `aletheon` executable entry point; no domain logic |
 
 Executable entry point:
-- `aletheon` — assembled by `crates/bin` (`crates/bin/Cargo.toml`); provides TUI, `daemon`, and `exec` modes.
+- `aletheon` — assembled by `crates/aletheon` (`crates/aletheon/Cargo.toml`); provides TUI, `daemon`, and `exec` modes.
 
 ### Crate Dependency Graph
 
 ```
-aletheon (crates/bin) ---> interact, executive, fabric, cognit, corpus
+aletheon (crates/aletheon) ---> interact, executive, fabric, cognit, corpus
 interact               ---> fabric, corpus
 executive              ---> fabric, cognit, corpus, dasein, mnemosyne, metacog
 cognit                 ---> fabric
 ```
 
-> `crates/bin` is an assembly boundary only. Domain behavior remains in the nine domain crates.
+> `crates/aletheon` is an assembly boundary only. Domain behavior remains in the nine domain crates.
 
 ---
 
@@ -233,7 +233,7 @@ cognit                 ---> fabric
 | Multi-agent Collaboration | ✅ Stable | `crates/executive/src/impl/orchestration/agent.rs` | `crates/executive/tests/` |
 | io_uring IPC backend | 🔧 Experimental | `crates/fabric/src/ipc/backends/io_uring.rs` | `crates/fabric/tests/` |
 | Local/Offline Model | 🔧 Experimental | — | — |
-| Self-evolution loop example | 🔧 Requires explicit opt-in | `examples/self-evolution-loop/` | `crates/executive/tests/self_evolution_loop_test.rs` |
+| Self-evolution loop example | 🔧 Requires explicit opt-in | `examples/evolution_loop/` | `crates/executive/tests/self_evolution_loop_test.rs` |
 | eBPF kernel awareness | 📋 Design | `crates/fabric/src/ipc/bus/kernel_bus.rs` | — |
 | Android / Embedded targets | 📋 Design | — | — |
 | Cross-platform (macOS / Windows) | 📋 Design | — | — |
@@ -244,7 +244,7 @@ These capabilities have implementation and test coverage in the current reposito
 
 - **DaemonHost + SystemdHost** — Daemon runs as a systemd service with sd_notify, watchdog, and SIGTERM graceful shutdown.
 - **JSON-RPC API** — Line-delimited JSON-RPC over Unix socket with concurrent connection handling and streaming notifications (TextDelta, ToolCallStart, etc.).
-- **TUI client** — Terminal UI implemented in `crates/interact/` and assembled by `crates/bin`, connecting to the daemon over Unix socket.
+- **TUI client** — Terminal UI implemented in `crates/interact/` and assembled by `crates/aletheon`, connecting to the daemon over Unix socket.
 - **ReActLoop inference** — Sole production inference engine (Legacy Engine removed). Think-Act-Observe loop with streaming, tool execution, circuit breaker, and goal tracking.
 - **Multi-session** — HashMap-based session registry with create/list/switch RPC methods.
 - **Health check** — RPC endpoint returning uptime, active connections, session count, and version.
@@ -261,7 +261,7 @@ These have code but are gated behind features, environment variables, or exist o
 
 - **ContainerHost** — Docker/Podman container lifecycle management. Code exists at `crates/executive/src/host/container.rs` and is selected through `aletheon daemon --container <runtime>`.
 - **io_uring backend** — High-performance IPC backend using Linux io_uring. Code exists but not yet the default transport.
-- **Self-evolution loop** — Example agent that modifies its own code/config. See `examples/self-evolution-loop/`. Requires explicit opt-in.
+- **Self-evolution loop** — Example agent that modifies its own code/config. See `examples/evolution_loop/`. Requires explicit opt-in.
 - **eBPF probes** — Kernel-level perception via eBPF. Partial implementation in `kernel_bus.rs`.
 - **Local/Offline Model** — Support for locally-hosted inference engines (llama.cpp, Ollama). Experimental integration path.
 

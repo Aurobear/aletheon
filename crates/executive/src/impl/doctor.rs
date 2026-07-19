@@ -1,6 +1,6 @@
 //! Doctor diagnostics: comprehensive health check for `aletheon doctor [--json]`.
 //!
-//! Powers D2-M5-T1. Reports config validity, MCP server health, sandbox/exec-server
+//! Powers D2-M5-T1. Reports config validity, MCP server health, sandbox/execd
 //! status, and recent writer failures in a schema-stable JSON format with secrets redacted.
 
 use serde::Serialize;
@@ -43,19 +43,21 @@ fn bounded_json(value: &serde_json::Value, depth: usize) -> serde_json::Value {
     }
 }
 
-fn redacted_transport(config: &cognit::config::McpTransportConfig) -> String {
+fn redacted_transport(config: &corpus::tools::mcp::config::McpTransportConfig) -> String {
     match config {
-        cognit::config::McpTransportConfig::Stdio { command, .. } => {
+        corpus::tools::mcp::config::McpTransportConfig::Stdio { command, .. } => {
             let executable = std::path::Path::new(command)
                 .file_name()
                 .and_then(|value| value.to_str())
                 .unwrap_or("<command>");
             format!("stdio:{} [arguments redacted]", bounded_text(executable))
         }
-        cognit::config::McpTransportConfig::StreamableHttp { .. } => {
+        corpus::tools::mcp::config::McpTransportConfig::StreamableHttp { .. } => {
             "streamable_http:[endpoint redacted]".into()
         }
-        cognit::config::McpTransportConfig::Sse { .. } => "sse:[endpoint redacted]".into(),
+        corpus::tools::mcp::config::McpTransportConfig::Sse { .. } => {
+            "sse:[endpoint redacted]".into()
+        }
     }
 }
 
@@ -75,7 +77,7 @@ pub struct DoctorReport {
     /// Connected MCP servers and their health status.
     pub mcp_servers: Vec<McpServerStatus>,
 
-    /// Sandbox / exec-server status.
+    /// Sandbox / execd status.
     pub sandbox: SandboxStatus,
 
     /// Recent writer failures (from M4-T1 persistence layer).
@@ -132,7 +134,7 @@ pub struct SandboxStatus {
     pub command: Option<String>,
     /// Exec-server status if applicable.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub exec_server: Option<String>,
+    pub execd: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,7 +189,7 @@ impl DoctorReport {
         let sandbox = SandboxStatus {
             status: config.sandbox.preference.clone(),
             command: config.sandbox.bubblewrap_path.clone(),
-            exec_server: if config.grok_hardening.exec_server {
+            execd: if config.grok_hardening.execd {
                 Some("configured (not yet connected)".to_string())
             } else {
                 Some("not configured".to_string())
@@ -300,11 +302,11 @@ mod tests {
 
     #[test]
     fn doctor_redacts_mcp_arguments_and_remote_endpoints() {
-        let stdio = cognit::config::McpTransportConfig::Stdio {
+        let stdio = corpus::tools::mcp::config::McpTransportConfig::Stdio {
             command: "/secret/home/bin/server".into(),
             args: vec!["--token=super-secret".into()],
         };
-        let http = cognit::config::McpTransportConfig::StreamableHttp {
+        let http = corpus::tools::mcp::config::McpTransportConfig::StreamableHttp {
             url: "https://user:secret@example.test/private?token=secret".into(),
         };
         let stdio = redacted_transport(&stdio);

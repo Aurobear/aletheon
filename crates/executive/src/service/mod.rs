@@ -35,7 +35,6 @@ pub mod turn_coordinator;
 pub mod turn_diff_tracker;
 pub mod turn_engine;
 pub mod turn_pipeline;
-pub mod verifier;
 pub mod turn_policy;
 pub mod turn_recovery;
 pub mod turn_service;

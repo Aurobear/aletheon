@@ -10,9 +10,9 @@
 //! they run *inside* the container (the container entrypoint starts
 //! `aletheond` which handles that).
 
-use aletheon_kernel::chronos::SystemTimer;
 use anyhow::Result;
 use fabric::Timer;
+use kernel::chronos::SystemTimer;
 use std::path::PathBuf;
 
 use crate::core::runtime_core::RuntimeCore;

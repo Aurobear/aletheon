@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use aletheon_kernel::chronos::TestClock;
 use corpus::security::sandbox::{
     BubblewrapBackend, BwrapBuilder, FilesystemPolicy, SandboxBackend, SandboxConfig,
 };
 use fabric::WorkspacePolicy;
+use kernel::chronos::TestClock;
 
 fn count_triplet(args: &[String], flag: &str, source: &str, target: &str) -> usize {
     args.windows(3)

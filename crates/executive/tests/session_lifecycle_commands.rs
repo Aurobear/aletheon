@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use aletheon_kernel::KernelRuntime;
 use executive::r#impl::events::{EventReadFilter, SqliteEventSpine};
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
 use executive::service::session_service::{InterruptOutcome, SessionService};
@@ -9,6 +8,7 @@ use executive::service::turn_coordinator::{
 };
 use executive::service::turn_policy::TurnPolicy;
 use fabric::{SessionAppendStore, SessionId, TurnRequest};
+use kernel::KernelRuntime;
 
 fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
     TurnRequest {

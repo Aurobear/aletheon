@@ -7,8 +7,6 @@ use crate::core::session_gateway::SessionGateway;
 use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use crate::service::daemon_turn::helpers::bounded_text_history;
 use crate::service::governed_capability::CapabilityExecutionContext;
-use aletheon_kernel::operation::OperationScope;
-use aletheon_kernel::KernelRuntime;
 use cognit::CanonicalTurnEventSink;
 use fabric::events::ui_event::ClientEvent;
 use fabric::hook::{HookContext, HookPoint, HookResult};
@@ -22,6 +20,8 @@ use fabric::{
     IntentSource, OperationId, PrincipalId, ProcessId, Role, SandboxRequirement, SessionId,
     SpaceId, TurnRequest,
 };
+use kernel::operation::OperationScope;
+use kernel::KernelRuntime;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1237,7 +1237,7 @@ mod terminal_event_tests {
         use fabric::ToolContext;
 
         let temp = tempfile::tempdir().unwrap();
-        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+        let clock: Arc<dyn fabric::Clock> = Arc::new(kernel::chronos::SystemClock::new());
         let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
             AuditLogger::new(temp.path().join("audit.jsonl")).unwrap(),
             SandboxPreference::Forbid,
@@ -1256,6 +1256,7 @@ mod terminal_event_tests {
                     vec![],
                 )
                 .unwrap(),
+                granted_scope: fabric::CapabilityScope::default(),
             }),
             agent: None,
             working_dir: temp.path().to_path_buf(),

@@ -9,12 +9,12 @@ description = "Aletheon Runtime - core agent runtime and orchestration"
 [dependencies]
 fabric = { path = "../fabric" }
 gateway = { path = "../gateway" }
-aletheon-kernel = { path = "../kernel" }
+kernel = { path = "../kernel" }
 agora = { path = "../agora" }
 cognit = { path = "../cognit" }
 corpus = { path = "../corpus" }
 mnemosyne = { path = "../mnemosyne" }
-runtime-api = { path = "../runtime-api" }
+runtime = { path = "../runtime" }
 dasein = { path = "../dasein" }
 metacog = { path = "../metacog" }
 anyhow = "1"
@@ -45,6 +45,7 @@ regex = { workspace = true }
 which = "7"
 
 [dev-dependencies]
+hardware = { path = "../hardware" }
 tokio-test = "0.4"
 tempfile = "3"
 hyper = { version = "1", features = ["server", "http1"] }

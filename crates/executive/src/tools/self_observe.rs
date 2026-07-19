@@ -227,7 +227,7 @@ mod tests {
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
             turn_event_sender: None,
         };
         let result = tool.execute(json!({"query": "mood"}), &ctx).await;
@@ -243,7 +243,7 @@ mod tests {
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
             turn_event_sender: None,
         };
         let result = tool.execute(json!({"query": "full"}), &ctx).await;
@@ -259,7 +259,7 @@ mod tests {
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
             turn_event_sender: None,
         };
         let result = tool.execute(json!({"query": "bogus"}), &ctx).await;
@@ -274,7 +274,7 @@ mod tests {
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".into(),
-            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
             turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;

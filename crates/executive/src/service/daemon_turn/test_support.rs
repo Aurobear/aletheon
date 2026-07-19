@@ -10,9 +10,9 @@ use crate::r#impl::session::canonical_store::CanonicalSessionStore;
 use crate::service::session_service::SessionService;
 use crate::service::turn_coordinator::{TurnCoordinator, TurnExecution};
 use crate::service::turn_runtime_ports::{ActiveAgentProfilePort, ResolvedTurnProfile};
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use fabric::{Clock, SessionAppendStore};
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 

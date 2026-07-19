@@ -215,9 +215,7 @@ mod tests {
             success,
             level: ExperienceLevel::Narrative,
             embedding,
-            created_at: fabric::wall_to_datetime(
-                aletheon_kernel::chronos::SystemClock::new().wall_now(),
-            ),
+            created_at: fabric::wall_to_datetime(kernel::chronos::SystemClock::new().wall_now()),
         }
     }
 

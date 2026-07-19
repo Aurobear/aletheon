@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{AgentId, PrincipalId, ProcessId, ThreadId, TurnId, WorkspacePolicy};
+use crate::{AgentId, CapabilityScope, PrincipalId, ProcessId, ThreadId, TurnId, WorkspacePolicy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentToolContext {
@@ -69,6 +69,8 @@ pub struct ToolApprovalAuthority {
     pub turn_id: TurnId,
     pub call_id: String,
     pub workspace: WorkspacePolicy,
+    /// Kernel-granted resource scope for this exact capability invocation.
+    pub granted_scope: CapabilityScope,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

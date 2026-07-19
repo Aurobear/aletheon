@@ -192,10 +192,10 @@ pub(super) async fn register_agent_tools(
     }
 }
 
-#[cfg(test)]
-use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
 use fabric::{Clock, LlmProvider};
+#[cfg(test)]
+use kernel::chronos::SystemClock;
 #[cfg(test)]
 use tokio_util::sync::CancellationToken;
 
@@ -531,9 +531,7 @@ mod goal_runtime_tests {
             description: "read".into(),
             input_schema: serde_json::json!({"type": "object"}),
         }];
-        definitions.extend(
-            corpus::tools::tools::agent_control::AgentControlTools::definitions(),
-        );
+        definitions.extend(corpus::tools::tools::agent_control::AgentControlTools::definitions());
 
         let (registry, profiles) = super::load_agent_profiles(
             directory.path(),

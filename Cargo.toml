@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/bin",
+    "crates/aletheon",
     "crates/fabric",
     "crates/cognit",
     "crates/corpus",
@@ -13,23 +13,12 @@ members = [
     "crates/kernel",
     "crates/gateway",
     "crates/executive",
-    "crates/exec-server",
-    "crates/platform-api",
-    "crates/platform-host",
-    "crates/platform-linux",
-    "crates/platform-windows",
-    "crates/platform-macos",
-    "crates/runtime-api",
-    "crates/runtime-broker",
-    "crates/runtime-pi",
-    "crates/runtime-verifier",
-    "crates/hardware-api",
-    "crates/hardware-sim",
-    "crates/mcp-types",
-    "crates/state-authority",
-    "crates/coding-bench",
-    "examples/basic-agent",
-    "examples/self-evolution-loop",
+    "crates/execd",
+    "crates/platform",
+    "crates/runtime",
+    "crates/hardware",
+    "examples/basic_agent",
+    "examples/evolution_loop",
 ]
 
 [workspace.package]

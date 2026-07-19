@@ -289,7 +289,7 @@ impl SandboxBackend for BubblewrapBackend {
         let args = self.build_args(cmd, config);
         let start = self.clock.mono_now();
 
-        let result = aletheon_kernel::chronos::SystemTimer
+        let result = kernel::chronos::SystemTimer
             .timeout(timeout, async {
                 tokio::process::Command::new(&self.bwrap_path)
                     .args(&args)
@@ -348,7 +348,7 @@ impl SandboxBackend for BubblewrapBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
     use std::collections::BTreeMap;
 
     #[test]

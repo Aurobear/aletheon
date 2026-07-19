@@ -33,7 +33,11 @@ impl Default for HarnessConfig {
             context_window_tokens: 128_000,
             max_tool_calls: 20,
             reflection_interval: 5,
-            reflection_tool_call_limit: 3,
+            // Keep the advisory reflection ceiling aligned with the default
+            // execution budget.  A smaller value terminates ordinary coding
+            // work after the first diagnostic test failure, before the model
+            // can apply a fix.
+            reflection_tool_call_limit: 20,
             circuit_breaker_max_repeats: 5,
             circuit_breaker_window_size: 10,
             learning_enabled: true,

@@ -21,10 +21,7 @@ mod tests {
         use std::sync::atomic::AtomicI64;
         static COUNTER: AtomicI64 = AtomicI64::new(1);
         let wall_ms = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Arc::new(aletheon_kernel::chronos::TestClock::new(
-            wall_ms,
-            wall_ms as u64,
-        ))
+        Arc::new(kernel::chronos::TestClock::new(wall_ms, wall_ms as u64))
     }
 
     fn setup() -> (tempfile::NamedTempFile, EpisodicMemory) {

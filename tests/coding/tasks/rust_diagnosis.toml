@@ -1,0 +1,6 @@
+id = "rust_diagnosis"
+fixture = "rust_diagnosis"
+prompt = "测试显示重试计数与配置语义不一致。诊断配置和实现的约束，做最小修复；不要修改配置或测试。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "settings.toml"]

@@ -371,6 +371,7 @@ pub trait AgentRuntimeLauncher: Send + Sync {
 #[derive(Default)]
 pub struct AgentRuntimeRegistry {
     runtimes: RwLock<HashMap<RuntimeId, Arc<dyn AgentRuntimeLauncher>>>,
+    manifests: RwLock<HashMap<RuntimeId, runtime::RuntimeManifest>>,
 }
 
 impl AgentRuntimeRegistry {
@@ -391,6 +392,41 @@ impl AgentRuntimeRegistry {
         }
         runtimes.insert(id, launcher);
         Ok(())
+    }
+
+    /// Register a selectable runtime contract alongside the Executive-owned
+    /// launcher. The manifest describes capabilities; it does not gain
+    /// lifecycle, admission, cancellation, or settlement authority.
+    pub fn register_manifested(
+        &self,
+        id: RuntimeId,
+        launcher: Arc<dyn AgentRuntimeLauncher>,
+        manifest: runtime::RuntimeManifest,
+    ) -> Result<(), AgentControlError> {
+        if manifest.id != id.0 {
+            return Err(AgentControlError::invalid(
+                "runtime manifest id differs from registry id",
+            ));
+        }
+        self.register(id.clone(), launcher)?;
+        self.manifests.write().insert(id, manifest);
+        Ok(())
+    }
+
+    pub fn resolve_selector(
+        &self,
+        selector: &runtime::RuntimeSelector,
+        required: &[runtime::RuntimeCapability],
+    ) -> Result<Arc<dyn AgentRuntimeLauncher>, AgentControlError> {
+        let manifests = self.manifests.read();
+        let id = selector
+            .resolve_id(manifests.values(), required)
+            .map_err(|message| AgentControlError {
+                kind: AgentControlErrorKind::NotFound,
+                message,
+            })?;
+        drop(manifests);
+        self.resolve(&RuntimeId(id))
     }
 
     pub fn resolve(
@@ -438,18 +474,18 @@ impl AgentRuntimeLauncher for CompatibilityRuntimeLauncher {
             session_id: input.handle.root_agent_id.0.to_string(),
             working_dir: std::env::current_dir().unwrap_or_default(),
         };
-        let output = self
+        let result = self
             .runtime
-            .run_in_context(&input.request.task, input.cancellation, context)
+            .run_attempt_in_context(&input.request.task, input.cancellation, context)
             .await
-            .map_err(|message| AgentControlError {
+            .map_err(|failure| AgentControlError {
                 kind: AgentControlErrorKind::Runtime,
-                message,
+                message: failure.message,
             })?;
         let result = AgentResult {
-            output,
-            usage: fabric::AttemptUsage::default(),
-            evidence: vec![],
+            output: result.output,
+            usage: result.usage,
+            evidence: result.evidence,
             artifacts: vec![],
         };
         result.validate()?;

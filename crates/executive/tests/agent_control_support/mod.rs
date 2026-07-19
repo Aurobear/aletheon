@@ -3,8 +3,6 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use executive::service::agent_control::{
     AgentControlService, AgentEventSink, AgentRuntimeInput, AgentRuntimeLauncher,
@@ -14,6 +12,8 @@ use fabric::{
     AgentBudget, AgentContextFork, AgentControlError, AgentControlErrorKind, AgentControlPort,
     AgentId, AgentProfileId, AgentResult, AgentSpawnRequest, AttemptUsage, ProcessId, RuntimeId,
 };
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use tokio::sync::Notify;
 
 pub const TEST_RUNTIME: &str = "test-runtime";

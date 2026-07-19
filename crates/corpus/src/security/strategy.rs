@@ -10,8 +10,8 @@ pub enum ToolExecutionStrategy {
     Sandboxed,
     /// Execute via the network proxy (web_fetch, web_search). Phase 2+.
     NetworkProxied { allowed_domains: Vec<String> },
-    /// Tool requires exec-server isolation (Phase 2+). In Phase 1, treated as Sandboxed.
-    ExecServerRequired,
+    /// Tool requires execd isolation (Phase 2+). In Phase 1, treated as Sandboxed.
+    ExecdRequired,
 }
 
 /// Resolve the execution strategy for a given tool name and permission level.

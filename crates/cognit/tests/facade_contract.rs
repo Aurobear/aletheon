@@ -32,11 +32,12 @@ fn request() -> TurnRequest {
 
 fn dependencies(cancel: CancellationToken) -> CognitiveSessionDependencies {
     CognitiveSessionDependencies {
-        clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        clock: Arc::new(kernel::chronos::TestClock::default()),
         cancellation: cancel,
         compactor: None,
         batch_planner: None,
         evicted_callback: None,
+        verifier: None,
     }
 }
 
@@ -111,19 +112,15 @@ impl TurnServices for Services {
     }
 }
 
-
-
 #[test]
 fn production_cognit_has_no_concrete_kernel_dependency() {
     let manifest: toml::Value = toml::from_str(include_str!("../Cargo.toml")).unwrap();
-    assert!(manifest["dependencies"].get("aletheon-kernel").is_none());
-    assert!(manifest["dev-dependencies"]
-        .get("aletheon-kernel")
-        .is_some());
+    assert!(manifest["dependencies"].get("kernel").is_none());
+    assert!(manifest["dev-dependencies"].get("kernel").is_some());
 
     let scheduler = include_str!("../src/impl/llm/scheduler.rs");
     let production = scheduler.split("#[cfg(test)]").next().unwrap();
-    assert!(!production.contains("aletheon_kernel::"));
+    assert!(!production.contains("kernel::"));
 }
 
 #[test]
