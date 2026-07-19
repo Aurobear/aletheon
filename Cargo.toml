@@ -23,6 +23,8 @@ members = [
     "crates/runtime-verifier",
     "crates/hardware-api",
     "crates/hardware-sim",
+    "crates/state-authority",
+    "crates/coding-bench",
     "examples/basic-agent",
     "examples/self-evolution-loop",
 ]
