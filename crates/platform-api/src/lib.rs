@@ -10,6 +10,7 @@ pub mod process;
 pub mod pty;
 pub mod receipt;
 pub mod sandbox;
+pub mod structured_patch;
 pub mod service;
 
 pub use desktop::DesktopHost;

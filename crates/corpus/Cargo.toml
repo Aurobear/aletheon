@@ -11,6 +11,7 @@ cognit = { path = "../cognit" }
 fabric = { path = "../fabric" }
 aletheon-kernel = { path = "../kernel" }
 mnemosyne = { path = "../mnemosyne" }
+platform-api = { path = "../platform-api" }
 anyhow = "1"
 aes-gcm = { workspace = true }
 async-trait = "0.1"
