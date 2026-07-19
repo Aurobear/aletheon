@@ -28,6 +28,10 @@ impl Tool for GlobTool {
                 "root": {
                     "type": "string",
                     "description": "Root directory to search from (default: current working directory)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum results (default: 200). Values above 2000 are capped."
                 }
             },
             "required": ["pattern"]
@@ -70,7 +74,11 @@ impl Tool for GlobTool {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| ctx.working_dir.clone());
 
-        let max_results = 1000usize;
+        let max_results = input
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(200)
+            .min(2000) as usize;
 
         // Use walkdir + manual glob matching
         let glob_pattern = match GlobPattern::new(&pattern) {
