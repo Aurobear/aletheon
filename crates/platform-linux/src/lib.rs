@@ -2,7 +2,18 @@
 //! with Linux-specific primitives: cgroup v2, pidfd, inotify, PTY, systemd.
 
 #[cfg(target_os = "linux")]
+mod filesystem_host;
+#[cfg(target_os = "linux")]
 mod probe;
+#[cfg(target_os = "linux")]
+mod process_host;
+#[cfg(target_os = "linux")]
+mod pty_host;
+#[cfg(target_os = "linux")]
+mod sandbox_host;
+#[cfg(target_os = "linux")]
+mod service_host;
+
 #[cfg(not(target_os = "linux"))]
 mod stub;
 

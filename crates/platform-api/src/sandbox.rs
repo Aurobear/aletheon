@@ -4,7 +4,7 @@ use crate::error::HostError;
 use crate::receipt::HostReceipt;
 use async_trait::async_trait;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SandboxStrength {
     None,
     ProcessJob,
