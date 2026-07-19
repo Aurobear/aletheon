@@ -1,0 +1,9 @@
+[package]
+name = "platform-linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+platform-api = { path = "../platform-api" }
+anyhow = { workspace = true }
