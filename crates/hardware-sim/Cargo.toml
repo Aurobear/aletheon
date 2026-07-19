@@ -1,0 +1,9 @@
+[package]
+name = "hardware-sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hardware-api = { path = "../hardware-api" }
+serde_json = { workspace = true }

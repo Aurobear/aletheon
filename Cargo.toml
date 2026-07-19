@@ -19,6 +19,10 @@ members = [
     "crates/platform-linux",
     "crates/runtime-api",
     "crates/runtime-broker",
+    "crates/runtime-pi",
+    "crates/runtime-verifier",
+    "crates/hardware-api",
+    "crates/hardware-sim",
     "examples/basic-agent",
     "examples/self-evolution-loop",
 ]

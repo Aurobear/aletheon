@@ -1,0 +1,9 @@
+[package]
+name = "runtime-pi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+runtime-api = { path = "../runtime-api" }
+async-trait = "0.1"

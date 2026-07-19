@@ -1,0 +1,8 @@
+[package]
+name = "runtime-verifier"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+runtime-api = { path = "../runtime-api" }
