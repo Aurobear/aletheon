@@ -459,8 +459,10 @@ mod tests {
 
     #[test]
     fn descriptor_rejects_model_supplied_extra_fields() {
+        // Use a kind that does not exist in the enum — model-supplied
+        // descriptors must not deserialize into any valid variant.
         let injected = serde_json::json!({
-            "kind": "module_load",
+            "kind": "model_controlled",
             "canonical_path": "/tmp/model-controlled"
         });
         assert!(serde_json::from_value::<ToolExecutionDescriptor>(injected).is_err());
