@@ -2,6 +2,7 @@
 
 use crate::core::config::GrokHardeningConfig;
 use crate::service::turn_coordinator::TurnCoordinator;
+use crate::service::turn_runtime_ports::ActiveAgentProfilePort;
 use crate::service::TurnPipeline;
 use aletheon_kernel::KernelRuntime;
 use fabric::{OperationId, PrincipalId, ProcessId, ProcessSignal, ThreadId, TurnId};
@@ -30,6 +31,7 @@ pub(crate) struct DaemonTurnResources {
     pub(crate) coordinator: Arc<TurnCoordinator>,
     pub(crate) session_service: Arc<crate::service::session_service::SessionService>,
     pub(crate) grok_hardening: GrokHardeningConfig,
+    pub(crate) active_profile: Arc<dyn ActiveAgentProfilePort>,
 }
 
 pub struct DaemonTurnOrchestrator {
@@ -42,6 +44,7 @@ pub struct DaemonTurnOrchestrator {
     pub(crate) session_service: Arc<crate::service::session_service::SessionService>,
     #[allow(dead_code)]
     pub(crate) grok_hardening: GrokHardeningConfig,
+    pub(crate) active_profile: Arc<dyn ActiveAgentProfilePort>,
     #[cfg(test)]
     pub(crate) test_runner: Option<TestTurnRunner>,
 }
@@ -57,6 +60,7 @@ impl DaemonTurnOrchestrator {
             coordinator: resources.coordinator,
             session_service: resources.session_service,
             grok_hardening: resources.grok_hardening,
+            active_profile: resources.active_profile,
             #[cfg(test)]
             test_runner: None,
         }

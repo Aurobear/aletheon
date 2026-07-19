@@ -394,6 +394,12 @@ pub(super) async fn build_turn_services(
             event_bus: event_bus.clone(),
         },
     ));
+    let active_profile_port: Arc<
+        dyn crate::service::turn_runtime_ports::ActiveAgentProfilePort,
+    > = Arc::new(super::turn_runtime::ProductionActiveAgentProfile::new(
+        active_profile.clone(),
+        agent_profile_registry.clone(),
+    ));
     let turn_orchestrator = Arc::new(crate::service::DaemonTurnOrchestrator::new(
         crate::service::daemon_turn::DaemonTurnResources {
             kernel: kernel.clone(),
@@ -404,6 +410,7 @@ pub(super) async fn build_turn_services(
             coordinator,
             session_service: session_service.clone(),
             grok_hardening: grok_hardening.clone(),
+            active_profile: active_profile_port,
         },
     ));
 

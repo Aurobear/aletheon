@@ -703,4 +703,44 @@ mod tests {
         assert_eq!(profile.approval_policy, fabric::AgentApprovalPolicy::AutoApprove);
         assert_eq!(profile.tool_timeout_ms, 30_000);
     }
+
+    #[test]
+    fn turn_profile_is_applied_different_profiles_yield_different_configs() {
+        let code = ResolvedTurnProfile {
+            profile_name: "code-agent".into(),
+            allowed_tools: ["bash_exec".to_owned()].into_iter().collect(),
+            system_prompt: "Write production code with tests.".into(),
+            model_policy: Some("gpt-5-code".into()),
+            max_iterations: 20,
+            max_input_tokens: 100_000,
+            max_output_tokens: 16_384,
+            max_tool_calls: 64,
+            max_elapsed_ms: 600_000,
+            approval_policy: fabric::AgentApprovalPolicy::AutoApprove,
+            tool_timeout_ms: 30_000,
+        };
+
+        let review = ResolvedTurnProfile {
+            profile_name: "review-agent".into(),
+            allowed_tools: ["file_read".to_owned()].into_iter().collect(),
+            system_prompt: "Review code for bugs and security issues.".into(),
+            model_policy: Some("claude-opus-review".into()),
+            max_iterations: 10,
+            max_input_tokens: 200_000,
+            max_output_tokens: 8_192,
+            max_tool_calls: 32,
+            max_elapsed_ms: 300_000,
+            approval_policy: fabric::AgentApprovalPolicy::AutoDeny,
+            tool_timeout_ms: 60_000,
+        };
+
+        // Different profiles must produce observably different behavior configs.
+        assert_ne!(code.model_policy, review.model_policy);
+        assert_ne!(code.system_prompt, review.system_prompt);
+        assert_ne!(code.max_iterations, review.max_iterations);
+        assert_ne!(code.max_input_tokens, review.max_input_tokens);
+        assert_ne!(code.max_tool_calls, review.max_tool_calls);
+        assert_ne!(code.approval_policy, review.approval_policy);
+        assert_ne!(code.tool_timeout_ms, review.tool_timeout_ms);
+    }
 }
