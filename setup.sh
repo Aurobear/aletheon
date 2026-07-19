@@ -198,10 +198,10 @@ if ! $SKIP_BUILD; then
         # ensure target/ is writable by the original user
         chown -R "$SUDO_USER:$SUDO_USER" target/ 2>/dev/null || true
         log "Building release binary (cargo build --release)..."
-        sudo -u "$SUDO_USER" cargo build -p aletheon-bin --release 2>&1
+        sudo -u "$SUDO_USER" cargo build -p aletheon --release 2>&1
     else
         log "Building release binary (cargo build --release)..."
-        cargo build -p aletheon-bin --release 2>&1
+        cargo build -p aletheon --release 2>&1
     fi
 
     if [[ ! -f "$BINARY_PATH" ]]; then

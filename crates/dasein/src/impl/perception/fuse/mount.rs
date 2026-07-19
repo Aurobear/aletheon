@@ -275,7 +275,7 @@ mod fuse_impl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
     use std::sync::Arc;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {

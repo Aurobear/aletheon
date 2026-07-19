@@ -1,8 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use executive::service::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
@@ -14,6 +12,8 @@ use fabric::{
     ConsciousArbitrationMode, LatestConsciousContextPort, NamespaceId, PermitId, SpawnSpec,
     UsageReport, WorkspaceAttribution, WorkspaceContent,
 };
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallRequest, RecallSet};
 use tempfile::tempdir;
 use tokio::sync::Mutex;

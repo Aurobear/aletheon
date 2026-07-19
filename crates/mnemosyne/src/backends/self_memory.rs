@@ -378,7 +378,7 @@ mod tests {
     use super::*;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {
-        Arc::new(aletheon_kernel::chronos::TestClock::default())
+        Arc::new(kernel::chronos::TestClock::default())
     }
 
     fn setup() -> (tempfile::NamedTempFile, SelfMemory) {

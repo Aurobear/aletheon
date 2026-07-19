@@ -136,11 +136,11 @@ pub struct PipelineResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
     use async_trait::async_trait;
     use fabric::genome::*;
     use fabric::meta::Recommendation;
     use fabric::{wall_to_datetime, Clock, Subsystem, SubsystemHealth, TestResult, Version};
+    use kernel::chronos::TestClock;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 

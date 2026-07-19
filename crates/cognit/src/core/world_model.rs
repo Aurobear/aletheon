@@ -233,7 +233,7 @@ mod tests {
     fn make_wm(max_obs: usize) -> WorldModel {
         WorldModel::new(
             max_obs,
-            std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            std::sync::Arc::new(kernel::chronos::TestClock::default()),
         )
     }
 

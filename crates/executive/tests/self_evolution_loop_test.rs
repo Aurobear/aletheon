@@ -36,7 +36,7 @@ fn make_scheduler_with_mock(mock: Arc<MockLlmProvider>) -> Arc<LlmScheduler> {
     Arc::new(LlmScheduler::from_providers(
         providers,
         routing,
-        Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        Arc::new(kernel::chronos::TestClock::default()),
     ))
 }
 
@@ -183,7 +183,7 @@ async fn test_evolution_triggered_after_consecutive_failures() -> Result<()> {
 
 #[tokio::test]
 async fn test_mutation_approver_validates_intents() -> Result<()> {
-    let clock = Arc::new(aletheon_kernel::chronos::TestClock::default());
+    let clock = Arc::new(kernel::chronos::TestClock::default());
     let mutation_layer = Arc::new(MutationLayer::new(clock));
     let approver = MutationApprover::new(mutation_layer.clone());
 

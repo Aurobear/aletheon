@@ -1,275 +1,99 @@
 # Google Ecosystem Integration
 
-> **Status:** Proposed  
-> **Scope:** Gmail, Calendar, Drive, Contacts, Tasks, OAuth and synchronization
+> **Status:** Mixed current implementation and bounded target
+>
+> **Rewritten:** 2026-07-19
 
-## 1. Architectural Position
+## Ownership
 
-Google is an external capability provider and information ecosystem.
-
-Correct path:
+Google is an external capability provider, not a new domain authority:
 
 ```text
-Native Cognit
-    ↓
-CognitiveAction::InvokeCapability
-    ↓
-Executive permission and approval checks
-    ↓
-Google Capability Adapter
-    ↓
+Gateway input / Executive admin
+          |
+          v
+Executive account and scope checks
+          |
+          v
+Corpus Google tool adapter
+          |
+          v
 Google API
 ```
 
-Cognit must never receive raw Google tokens.
+Current adapters for Gmail, Calendar, Drive, OAuth and sync exist under
+`crates/corpus/src/tools/google/`. Executive performs account binding and
+scope-gated tool registration in
+`crates/executive/src/service/request_use_cases.rs:808-855`.
 
-## 2. Module Structure
+## Identity and Authorization
 
-```text
-Google Integration
-├── Google Identity
-├── Google Credential Vault
-├── Google Sync Manager
-├── Gmail Capability
-├── Calendar Capability
-├── Drive Capability
-├── Contacts Capability
-└── Tasks Capability
-```
+- A Google account is bound to an Aletheon principal.
+- OAuth scopes are explicit and least-privilege.
+- Read scope does not imply write, send or delete authority.
+- Refresh tokens are credentials, never Prompt or Agora content.
+- Revocation disables tools and future sync; cached durable records retain
+  provenance and retention policy.
 
-## 3. Identity and Authorization
-
-Responsibilities:
-
-- OAuth authorization code flow;
-- access token refresh;
-- encrypted refresh token storage;
-- scope management;
-- multiple Google accounts;
-- token revocation;
-- identity linking;
-- incremental authorization.
-
-```rust
-pub struct ExternalIdentity {
-    pub id: ExternalIdentityId,
-    pub principal: PrincipalId,
-    pub provider: IdentityProvider,
-    pub provider_subject: String,
-    pub email: Option<String>,
-}
-```
-
-```rust
-pub struct CapabilityGrant {
-    pub principal: PrincipalId,
-    pub provider: ProviderId,
-    pub account: ExternalIdentityId,
-    pub scopes: Vec<ExternalScope>,
-    pub granted_at: Timestamp,
-    pub revoked_at: Option<Timestamp>,
-}
-```
-
-Use least privilege. Begin with read-only Gmail and Calendar access. Request write scopes only when the user asks for write actions.
-
-## 4. Capability Interfaces
-
-```rust
-#[async_trait]
-pub trait GmailCapability {
-    async fn search_messages(
-        &self,
-        principal: PrincipalId,
-        query: GmailQuery,
-    ) -> Result<Vec<MessageSummary>>;
-
-    async fn read_message(
-        &self,
-        principal: PrincipalId,
-        id: GmailMessageId,
-    ) -> Result<MailMessage>;
-
-    async fn create_draft(
-        &self,
-        principal: PrincipalId,
-        draft: DraftRequest,
-    ) -> Result<DraftId>;
-
-    async fn send_message(
-        &self,
-        principal: PrincipalId,
-        request: SendMailRequest,
-    ) -> Result<MessageId>;
-}
-```
-
-```rust
-#[async_trait]
-pub trait CalendarCapability {
-    async fn list_events(
-        &self,
-        principal: PrincipalId,
-        range: TimeRange,
-    ) -> Result<Vec<CalendarEvent>>;
-
-    async fn create_event(
-        &self,
-        principal: PrincipalId,
-        request: CreateEventRequest,
-    ) -> Result<EventId>;
-}
-```
-
-## 5. Google Sync Manager
-
-```rust
-pub struct GoogleSyncManager {
-    pub accounts: AccountRegistry,
-    pub cursors: SyncCursorStore,
-    pub subscriptions: SubscriptionRegistry,
-    pub event_sink: EventSink,
-}
-```
-
-Responsibilities:
-
-- Gmail history cursor;
-- Calendar sync token;
-- Drive change cursor;
-- subscription renewal;
-- retry and backoff;
-- event deduplication;
-- normalization into Aletheon events;
-- local projection updates.
-
-## 6. Gmail Roles
-
-### Information source
-
-- important mail;
-- project history;
-- commitments and deadlines;
-- people and organization context.
-
-### Asynchronous task entry
-
-Suggested subjects:
+## Capability Classes
 
 ```text
-[ASK]
-[GOAL]
-[MEMORY]
-[DOC]
+Read
+  Gmail search/read
+  Calendar list
+  Drive metadata/content read
+
+Draft or propose
+  Gmail draft
+  Calendar change proposal
+  Drive change proposal
+
+Commit side effect
+  send mail
+  create/update event
+  modify/delete Drive content
 ```
 
-Email-triggered Goals enter `Draft` or `AwaitingHuman` by default.
+Read operations still pass capability admission. Draft/proposal operations
+produce reviewable artifacts. Commit side effects require the configured
+approval policy and an independently recorded receipt.
 
-### Formal output
+## Channel Boundary
 
-Aletheon may create drafts or send Goal completion reports, daily summaries, architecture reports and documents. Sending remains approval-controlled.
+Gmail ingest is not treated as an ordinary duplex chat transport. Gateway
+registers it as a non-duplex event capability; the boundary is documented in
+`crates/gateway/src/registry.rs:29-35` and `:115-124`.
 
-## 7. Calendar
+A received message may create an input event or goal proposal. It cannot by
+itself grant permission, activate a destructive goal or execute an outbound
+side effect.
 
-Calendar may:
+## Data Placement
 
-- list the daily schedule;
-- derive deadlines;
-- wake suspended Goals;
-- detect conflicts;
-- prepare meetings;
-- associate events with projects and commitments.
+| Data | Owner |
+|---|---|
+| provider cursor and delivery dedup | integration/gateway store |
+| OAuth credential | credential store |
+| normalized durable event | Executive event authority |
+| active hypothesis/task context | Agora |
+| retained experience/knowledge | Mnemosyne |
+| generated file or draft | artifact store with provenance |
 
-Calendar records are external projections, not direct Mnemosyne truth.
+Copy only the minimum provider data required by retention policy. Every copied
+record keeps account, provider ID, source time and ingest time.
 
-## 8. Drive
+## Sync Invariants
 
-Use incremental change tracking instead of rescanning all files.
+- provider cursors advance only with durable local settlement;
+- retries are idempotent;
+- deletion/tombstone semantics are explicit;
+- account ambiguity asks for selection instead of guessing;
+- partial scope is reported as unavailable capability;
+- provider errors never produce fabricated success.
 
-```text
-Drive cursor
-    ↓
-Changed metadata
-    ↓
-Policy check
-    ↓
-Download or ignore
-    ↓
-Artifact ingestion
-    ↓
-Mnemosyne/GBrain when valuable
-```
+## Current Limitations
 
-Not every Drive file belongs in long-term memory.
-
-## 9. Normalized Events
-
-```rust
-pub enum GoogleEvent {
-    MailReceived(MailReceived),
-    MailUpdated(MailUpdated),
-    CalendarEventCreated(CalendarEvent),
-    CalendarEventUpdated(CalendarEvent),
-    CalendarEventDeleted(ExternalEventId),
-    DriveFileCreated(DriveFileMetadata),
-    DriveFileUpdated(DriveFileMetadata),
-    DriveFileDeleted(ExternalFileId),
-    ContactUpdated(ContactRecord),
-}
-```
-
-Events may update a projection, wake a Goal, create a notification, propose a memory or request approval.
-
-## 10. Data Boundaries
-
-### External Store
-
-Provider data and sync state.
-
-### Agora
-
-Only task-relevant projections such as today's meetings or current Goal documents.
-
-### Mnemosyne/GBrain
-
-Durable knowledge such as decisions, commitments, recurring patterns and lessons.
-
-### Dasein
-
-Identity, values and long-term commitments. Google data may propose changes but cannot commit them automatically.
-
-## 11. Security Invariants
-
-1. Tokens are encrypted at rest.
-2. Refresh tokens never enter model context.
-3. Tokens never enter GBrain.
-4. Logs redact secrets and sensitive payloads.
-5. Read and write permissions are distinct.
-6. Destructive operations require approval.
-7. Email sender validation is mandatory.
-8. Events are deduplicated.
-9. Every imported fact preserves provenance.
-10. Old information retains temporal metadata.
-
-## 12. MVP
-
-First stage:
-
-```text
-Google OAuth
-Gmail read-only
-Calendar read-only
-manual refresh
-basic mail search
-basic event listing
-```
-
-Second stage:
-
-```text
-Gmail drafts
-Calendar writes
-selected Drive files
-incremental synchronization
-Telegram approval
-```
+The presence of adapters and sync modules does not prove every Google write path
+is production-ready. Each write capability needs a real provider test,
+approval test, retry/idempotency test and durable receipt before it is enabled by
+default.

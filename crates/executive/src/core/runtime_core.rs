@@ -25,7 +25,7 @@ use fabric::evolution::LlmPurpose;
 use fabric::CanonicalEventBus;
 use fabric::Clock;
 
-use aletheon_kernel::chronos::SystemClock;
+use kernel::chronos::SystemClock;
 
 use crate::r#impl::daemon::handler::RequestHandler;
 use crate::r#impl::daemon::DaemonConfig;
@@ -97,6 +97,7 @@ impl RuntimeCore {
             deployment: app_config.deployment.clone(),
             backpressure: app_config.backpressure.clone(),
             agent_admission: app_config.agent.admission.clone(),
+            agent_max_iterations: app_config.agent.max_iterations,
         };
 
         // ── Event bus ───────────────────────────────────────────────

@@ -234,7 +234,7 @@ fn evidence(
 async fn verify_apply_status_and_reopen_share_one_durable_lineage() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("mutation-state.json");
-    let clock: Arc<dyn Clock> = Arc::new(aletheon_kernel::chronos::TestClock::new(0, 0));
+    let clock: Arc<dyn Clock> = Arc::new(kernel::chronos::TestClock::new(0, 0));
     let runtime = Arc::new(MockRuntime::new());
     let service =
         DefaultMetacogService::with_state_path(runtime.clone(), clock.clone(), path.clone())
@@ -273,7 +273,7 @@ async fn verify_apply_status_and_reopen_share_one_durable_lineage() {
 
 #[tokio::test]
 async fn apply_and_rollback_fail_closed_without_bound_governance_evidence() {
-    let clock: Arc<dyn Clock> = Arc::new(aletheon_kernel::chronos::TestClock::new(0, 0));
+    let clock: Arc<dyn Clock> = Arc::new(kernel::chronos::TestClock::new(0, 0));
     let runtime = Arc::new(MockRuntime::new());
     let service = DefaultMetacogService::in_memory(runtime.clone(), clock);
     let mutation_id = Uuid::from_u128(43);
@@ -314,7 +314,7 @@ async fn apply_and_rollback_fail_closed_without_bound_governance_evidence() {
 
 #[tokio::test]
 async fn governed_rollback_is_idempotent_and_persisted() {
-    let clock: Arc<dyn Clock> = Arc::new(aletheon_kernel::chronos::TestClock::new(0, 0));
+    let clock: Arc<dyn Clock> = Arc::new(kernel::chronos::TestClock::new(0, 0));
     let runtime = Arc::new(MockRuntime::new());
     let service = DefaultMetacogService::in_memory(runtime.clone(), clock);
     let mutation_id = Uuid::from_u128(44);
@@ -356,7 +356,7 @@ async fn governed_rollback_is_idempotent_and_persisted() {
 async fn ambiguous_apply_is_durable_and_never_replayed() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("mutation-state.json");
-    let clock: Arc<dyn Clock> = Arc::new(aletheon_kernel::chronos::TestClock::new(0, 0));
+    let clock: Arc<dyn Clock> = Arc::new(kernel::chronos::TestClock::new(0, 0));
     let runtime = Arc::new(MockRuntime::failing_migration());
     let service =
         DefaultMetacogService::with_state_path(runtime.clone(), clock.clone(), path.clone())

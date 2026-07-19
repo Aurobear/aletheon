@@ -178,8 +178,8 @@ impl BodyRuntime for AletheonBodyRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
     use fabric::context::Context;
+    use kernel::chronos::TestClock;
     use std::path::PathBuf;
 
     #[tokio::test]

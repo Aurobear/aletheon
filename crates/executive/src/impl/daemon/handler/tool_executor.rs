@@ -19,7 +19,6 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 
-use aletheon_kernel::capability::ToolExecutor;
 use corpus::security::storm_breaker::StormBreaker;
 use corpus::{ActivatedCorpusExecutor, CorpusService, ExtensionGrant, ExtensionSnapshot};
 use dasein::SelfField;
@@ -32,6 +31,7 @@ use fabric::{
     Context as AbiContext, ExitReason, Intent, IntentSource, NamespaceId, OperationKind,
     OperationRequest, ProcessSignal, SelfFieldOps, SpawnSpec, Verdict,
 };
+use kernel::capability::ToolExecutor;
 
 use crate::service::admin_service::ScopedApprovalCache;
 use crate::service::{
@@ -41,7 +41,7 @@ use crate::service::{
 
 #[derive(Clone)]
 pub(crate) struct CapabilityResources {
-    pub(crate) kernel: Arc<aletheon_kernel::KernelRuntime>,
+    pub(crate) kernel: Arc<kernel::KernelRuntime>,
     pub(crate) corpus: Arc<dyn CorpusService>,
     pub(crate) capabilities: Arc<RwLock<Vec<fabric::CapabilityId>>>,
     pub(crate) storm: Arc<Mutex<StormBreaker>>,

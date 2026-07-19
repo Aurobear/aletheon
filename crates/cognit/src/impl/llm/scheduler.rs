@@ -577,7 +577,7 @@ mod tests {
         let sched = LlmScheduler::from_providers(
             providers,
             routing,
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
         .with_retry_policy(RetryPolicy {
             max_retries: 3,
@@ -609,7 +609,7 @@ mod tests {
         let sched = LlmScheduler::from_providers(
             providers,
             routing,
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
         .with_failover_order(vec!["a".into(), "b".into()])
         .with_retry_policy(RetryPolicy {
@@ -648,7 +648,7 @@ mod tests {
         let sched = LlmScheduler::from_providers(
             providers,
             routing,
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
         .with_failover_order(vec!["a".into(), "b".into()]);
         sched.mark_unhealthy("a");
@@ -674,7 +674,7 @@ mod tests {
         let sched = LlmScheduler::from_providers(
             providers,
             HashMap::new(),
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         );
 
         let good = sched.probe_provider("ok").await;

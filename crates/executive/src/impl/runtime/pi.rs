@@ -781,7 +781,7 @@ mod tests {
             &mut registry,
             &PiRuntimeConfig::default(),
             None,
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
         .unwrap());
         assert!(!registry.contains(&PiRuntime::runtime_id()));
@@ -795,7 +795,7 @@ mod tests {
         assert!(PiRuntime::prepare(
             &config,
             sandbox(IsolationLevel::Namespace),
-            Arc::new(aletheon_kernel::chronos::TestClock::default())
+            Arc::new(kernel::chronos::TestClock::default())
         )
         .is_err());
 
@@ -804,7 +804,7 @@ mod tests {
         assert!(PiRuntime::prepare(
             &config,
             sandbox(IsolationLevel::Namespace),
-            Arc::new(aletheon_kernel::chronos::TestClock::default())
+            Arc::new(kernel::chronos::TestClock::default())
         )
         .is_err());
     }
@@ -817,7 +817,7 @@ mod tests {
         let error = PiRuntime::prepare(
             &config,
             sandbox(IsolationLevel::Namespace),
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("pinned SHA-256"));
@@ -830,13 +830,13 @@ mod tests {
         assert!(PiRuntime::prepare(
             &config,
             sandbox(IsolationLevel::None),
-            Arc::new(aletheon_kernel::chronos::TestClock::default())
+            Arc::new(kernel::chronos::TestClock::default())
         )
         .is_err());
         assert!(PiRuntime::prepare(
             &config,
             sandbox(IsolationLevel::Process),
-            Arc::new(aletheon_kernel::chronos::TestClock::default())
+            Arc::new(kernel::chronos::TestClock::default())
         )
         .is_err());
     }
@@ -849,7 +849,7 @@ mod tests {
         let runtime = PiRuntime::prepare(
             &config,
             sandbox(IsolationLevel::Namespace),
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
         .unwrap()
         .unwrap();
@@ -861,7 +861,7 @@ mod tests {
             &mut registry,
             &config,
             Some(sandbox(IsolationLevel::Namespace)),
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
         .unwrap());
         assert!(registry.contains(&PiRuntime::runtime_id()));
@@ -876,7 +876,7 @@ mod tests {
         let error = PiRuntime::prepare(
             &config,
             sandbox(IsolationLevel::Namespace),
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("--api-key"));

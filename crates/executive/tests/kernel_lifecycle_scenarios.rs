@@ -1,6 +1,3 @@
-use aletheon_kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use fabric::types::admission::RiskLevel;
 use fabric::{
@@ -9,6 +6,9 @@ use fabric::{
     LeaseRequest, OperationKind, OperationRequest, PrincipalId, ProcessSignal, RevokeReason,
     SandboxRequirement, SpawnSpec, UsageReport,
 };
+use kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use std::sync::Arc;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;

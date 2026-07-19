@@ -55,7 +55,7 @@ impl Tool for BashExecTool {
 
         let start = ctx.clock.mono_now();
 
-        let result = aletheon_kernel::chronos::SystemTimer
+        let result = kernel::chronos::SystemTimer
             .timeout(
                 std::time::Duration::from_secs(timeout_secs),
                 Command::new("bash")
@@ -207,7 +207,7 @@ mod streaming_tests {
             agent: None,
             working_dir: std::env::temp_dir(),
             session_id: "bash-stream-test".into(),
-            clock: Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+            clock: Arc::new(kernel::chronos::SystemClock::new()),
             turn_event_sender: None,
         };
         BashExecTool

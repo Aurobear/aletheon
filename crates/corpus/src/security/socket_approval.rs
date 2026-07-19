@@ -9,8 +9,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 use super::approval::{ApprovalDecision, ApprovalGate, ApprovalRequest};
-use aletheon_kernel::chronos::SystemTimer;
 use fabric::Timer;
+use kernel::chronos::SystemTimer;
 
 /// A pending approval forwarded to the daemon side. The runner blocks on `respond`.
 pub struct PendingApproval {
@@ -58,7 +58,7 @@ impl ApprovalGate for SocketApprovalGate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
 
     #[tokio::test]
     async fn gate_forwards_request_and_returns_responder_decision() {

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
 use executive::service::post_turn_projection::{
@@ -12,6 +11,7 @@ use fabric::{
     ItemPayload, OperationId, OperationState, SessionAppendStore, SessionId, TurnMetrics,
     TurnRequest, TurnResult, TurnStop,
 };
+use kernel::KernelRuntime;
 use tokio::sync::{oneshot, Mutex};
 
 struct FailingProjection {

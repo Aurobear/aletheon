@@ -68,7 +68,7 @@ impl InMemoryArchival {
 
 impl Default for InMemoryArchival {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+        Self::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 }
 

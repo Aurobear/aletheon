@@ -104,8 +104,6 @@ impl EventAggregator {
 #[cfg(test)]
 impl Default for EventAggregator {
     fn default() -> Self {
-        Self::new(std::sync::Arc::new(
-            aletheon_kernel::chronos::TestClock::default(),
-        ))
+        Self::new(std::sync::Arc::new(kernel::chronos::TestClock::default()))
     }
 }

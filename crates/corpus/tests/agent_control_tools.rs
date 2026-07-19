@@ -142,7 +142,7 @@ fn context(root: AgentId, parent: AgentId, process: ProcessId) -> ToolContext {
         }),
         working_dir: std::env::temp_dir(),
         session_id: "agent-control-test".into(),
-        clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        clock: Arc::new(kernel::chronos::TestClock::default()),
         turn_event_sender: None,
     }
 }
@@ -271,7 +271,7 @@ async fn missing_trusted_context_and_zero_wait_fail_before_control() {
         agent: None,
         working_dir: std::env::temp_dir(),
         session_id: "untrusted".into(),
-        clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        clock: Arc::new(kernel::chronos::TestClock::default()),
         turn_event_sender: None,
     };
     assert!(

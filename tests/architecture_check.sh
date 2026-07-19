@@ -4,7 +4,12 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/config" "$tmp/target" \
   "$tmp/crates/corpus/src/legacy" "$tmp/crates/dasein/src" \
-  "$tmp/crates/executive/src" "$tmp/crates/interact/src"
+  "$tmp/crates/executive/src" "$tmp/crates/interact/src" "$tmp/crates/fabric/src"
+printf 'pub use example::Example;\n' > "$tmp/crates/fabric/src/lib.rs"
+cat > "$tmp/architecture-status.toml" <<'TOML'
+[freeze]
+fabric_root_reexports_max = 1
+TOML
 cat > "$tmp/crates/corpus/src/legacy/mod.rs" <<'RS'
 tool.execute(x)
 RS
@@ -53,11 +58,11 @@ name = "fabric"
 version = "0.1.0"
 edition = "2021"
 [dependencies]
-aletheon-kernel = { path = "../kernel" }
+kernel = { path = "../kernel" }
 TOML
 cat > "$deps/crates/kernel/Cargo.toml" <<'TOML'
 [package]
-name = "aletheon-kernel"
+name = "kernel"
 version = "0.1.0"
 edition = "2021"
 TOML
@@ -67,6 +72,16 @@ TOML
 if ARCH_ROOT="$deps" ARCH_SKIP_DELETION_GATES=1 \
   bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected a new dependency to fail' >&2; exit 1
+fi
+
+# Workspace package names are semantic domain names. Do not permit the deleted
+# api/types/broker/platform-* split-crate convention (or any other hyphenated
+# package name) to return.
+sed -i '/^\[dependencies\]/,$d' "$deps/crates/fabric/Cargo.toml"
+sed -i 's/name = "kernel"/name = "runtime-api"/' "$deps/crates/kernel/Cargo.toml"
+if ARCH_ROOT="$deps" ARCH_SKIP_DELETION_GATES=1 \
+  bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1; then
+  echo 'expected a hyphenated workspace package to fail' >&2; exit 1
 fi
 echo 'architecture-check fixture: pass'
 

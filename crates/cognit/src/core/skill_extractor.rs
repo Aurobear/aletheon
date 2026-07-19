@@ -257,7 +257,7 @@ impl SkillExtractor {
 #[cfg(test)]
 impl Default for SkillExtractor {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+        Self::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 }
 
@@ -303,7 +303,7 @@ mod tests {
     use std::sync::Arc;
 
     fn make_extractor() -> SkillExtractor {
-        SkillExtractor::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+        SkillExtractor::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 
     fn make_reflection(
@@ -315,9 +315,7 @@ mod tests {
     ) -> ReflectionEntry {
         ReflectionEntry {
             id: id.to_string(),
-            timestamp: fabric::wall_to_datetime(
-                aletheon_kernel::chronos::TestClock::default().wall_now(),
-            ),
+            timestamp: fabric::wall_to_datetime(kernel::chronos::TestClock::default().wall_now()),
             trigger: ReflectionTrigger::TaskComplete,
             task_summary: format!("task {}", id),
             outcome: ReflectionOutcome::Success,

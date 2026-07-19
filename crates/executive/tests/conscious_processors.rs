@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use aletheon_kernel::chronos::TestClock;
 use async_trait::async_trait;
 use executive::r#impl::conscious::{
     AgentAdapter, CorpusProcessor, MetacogProcessor, MnemosyneProcessor,
@@ -13,6 +12,7 @@ use fabric::{
     WorkspaceAttribution, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
     WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
+use kernel::chronos::TestClock;
 use mnemosyne::{
     ForgetPolicy, ForgetReceipt, MemoryAuthority, MemoryMetadata, MemoryScope, MemoryService,
     RecallItem, RecallRequest, RecallSet, TemporalState,

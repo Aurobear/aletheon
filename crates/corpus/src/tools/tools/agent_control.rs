@@ -22,6 +22,89 @@ impl AgentControlTools {
         Self { control }
     }
 
+    /// Stable `ToolDefinition` entries for the five explicit agent control
+    /// operations.  No `AgentControlPort` is needed — profiles can reference
+    /// these names before the runtime is bound.
+    pub fn definitions() -> Vec<fabric::ToolDefinition> {
+        [
+            (AgentControlOperation::Spawn, "agent_spawn"),
+            (AgentControlOperation::Wait, "agent_wait"),
+            (AgentControlOperation::Send, "agent_send"),
+            (AgentControlOperation::Cancel, "agent_cancel"),
+            (AgentControlOperation::List, "agent_list"),
+        ]
+        .into_iter()
+        .map(|(op, name)| fabric::ToolDefinition {
+            name: name.into(),
+            description: Self::describe(op).into(),
+            input_schema: Self::schema(op),
+        })
+        .collect()
+    }
+
+    fn describe(operation: AgentControlOperation) -> &'static str {
+        match operation {
+            AgentControlOperation::Spawn => {
+                "Spawn a bounded child Agent and return its durable handle"
+            }
+            AgentControlOperation::Wait => {
+                "Wait for a child Agent terminal snapshot with an explicit timeout"
+            }
+            AgentControlOperation::Send => "Persist and send a message to a live child Agent",
+            AgentControlOperation::Cancel => "Cancel a child Agent and return its durable snapshot",
+            AgentControlOperation::List => "List durable child Agent snapshots in the caller root",
+        }
+    }
+
+    fn schema(operation: AgentControlOperation) -> serde_json::Value {
+        // Return the same schema as the Tool impl's input_schema for each op.
+        match operation {
+            AgentControlOperation::Spawn => json!({
+                "type":"object","additionalProperties":false,
+                "properties":{
+                    "profile":{"type":"string","minLength":1,"maxLength":512},
+                    "runtime":{"type":"string","minLength":1,"maxLength":512},
+                    "task":{"type":"string","minLength":1,"maxLength":65536},
+                    "context":{"type":"object"},
+                    "tools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":512}},
+                    "budget":{
+                        "type":"object","additionalProperties":false,
+                        "properties":{
+                            "max_input_tokens":{"type":"integer","minimum":1},
+                            "max_output_tokens":{"type":"integer","minimum":1},
+                            "max_tool_calls":{"type":"integer","minimum":1},
+                            "max_elapsed_ms":{"type":"integer","minimum":1},
+                            "max_cost_usd":{"type":["number","null"],"minimum":0},
+                            "max_depth":{"type":"integer","minimum":1}
+                        },
+                        "required":["max_input_tokens","max_output_tokens","max_tool_calls","max_elapsed_ms","max_depth"]
+                    }
+                },
+                "required":["profile","runtime","task","budget"]
+            }),
+            AgentControlOperation::Wait => json!({
+                "type":"object","additionalProperties":false,
+                "properties":{"agent_id":{"type":"string","format":"uuid"},"timeout_ms":{"type":"integer","minimum":1}},
+                "required":["agent_id","timeout_ms"]
+            }),
+            AgentControlOperation::Send => json!({
+                "type":"object","additionalProperties":false,
+                "properties":{"agent_id":{"type":"string","format":"uuid"},"message":{"type":"string","minLength":1,"maxLength":65536},"start_turn":{"type":"boolean"}},
+                "required":["agent_id","message"]
+            }),
+            AgentControlOperation::Cancel => json!({
+                "type":"object","additionalProperties":false,
+                "properties":{"agent_id":{"type":"string","format":"uuid"}},
+                "required":["agent_id"]
+            }),
+            AgentControlOperation::List => json!({
+                "type":"object","additionalProperties":false,
+                "properties":{"status":{"type":"string","minLength":1,"maxLength":64},"limit":{"type":"integer","minimum":1,"maximum":4096}},
+                "required":["limit"]
+            }),
+        }
+    }
+
     pub fn tools(&self) -> Vec<Arc<dyn Tool>> {
         [
             AgentControlOperation::Spawn,

@@ -4,11 +4,83 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use fabric::Clock;
-use mnemosyne::credential::EmbeddingCredentialGrant;
 use serde::{Deserialize, Serialize};
 
 pub use super::token_store::{TokenEntry, TokenStore};
 use crate::tools::google::oauth::{AsyncOAuthClient, OAuthClientConfig};
+
+/// MCP-owned authorization to release a credential only to one exact endpoint.
+/// The credential itself remains in its environment variable or token store;
+/// this grant contains no secret material.
+#[derive(Clone)]
+pub struct McpEndpointCredentialGrant {
+    pub principal: fabric::PrincipalId,
+    pub approved_base_url: String,
+    pub server_id: String,
+    pub expiry_unix: u64,
+    pub rotation_generation: u32,
+}
+
+impl std::fmt::Debug for McpEndpointCredentialGrant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpEndpointCredentialGrant")
+            .field("principal", &self.principal)
+            .field("approved_base_url", &self.approved_base_url)
+            .field("server_id", &self.server_id)
+            .field("expiry_unix", &self.expiry_unix)
+            .field("rotation_generation", &self.rotation_generation)
+            .finish()
+    }
+}
+
+impl McpEndpointCredentialGrant {
+    pub fn new(
+        principal: impl Into<String>,
+        approved_base_url: &str,
+        server_id: impl Into<String>,
+        expiry_unix: u64,
+        rotation_generation: u32,
+    ) -> Self {
+        Self {
+            principal: fabric::PrincipalId(principal.into()),
+            approved_base_url: normalize_endpoint(approved_base_url),
+            server_id: server_id.into(),
+            expiry_unix,
+            rotation_generation,
+        }
+    }
+
+    pub fn approved_for(&self, request_url: &str, now_unix: u64) -> bool {
+        let requested = normalize_endpoint(request_url);
+        now_unix < self.expiry_unix
+            && self.approved_base_url != "\0invalid"
+            && requested != "\0invalid"
+            && requested == self.approved_base_url
+    }
+}
+
+fn normalize_endpoint(url: &str) -> String {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return "\0invalid".into();
+    };
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return "\0invalid".into();
+    }
+    let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
+    let port = parsed
+        .port()
+        .map(|port| format!(":{port}"))
+        .unwrap_or_default();
+    let path = parsed.path().trim_end_matches('/');
+    format!(
+        "{}://{host}{port}{path}",
+        parsed.scheme().to_ascii_lowercase()
+    )
+}
 
 /// Minimal percent-encoding for URL query parameters (RFC 3986 unreserved set).
 #[cfg(test)]
@@ -70,15 +142,15 @@ pub trait McpAuth: Send + Sync {
 /// each call to `header_value()` so that env changes at runtime are picked
 /// up without restarting.
 ///
-/// When an `EmbeddingCredentialGrant` is set (via `with_endpoint_scoping`),
+/// When an `McpEndpointCredentialGrant` is set (via `with_endpoint_scoping`),
 /// the token is only returned for requests whose target URL is approved by
 /// the grant. Without a grant, the token is returned unconditionally
 /// (backward compatible).
 #[derive(Clone)]
 pub struct BearerTokenAuth {
     env_var: String,
-    grant: Option<EmbeddingCredentialGrant>,
-    additional_grants: Vec<EmbeddingCredentialGrant>,
+    grant: Option<McpEndpointCredentialGrant>,
+    additional_grants: Vec<McpEndpointCredentialGrant>,
     /// Clock for checking grant expiry. `None` when no grant is set.
     clock: Option<Arc<dyn Clock>>,
 }
@@ -106,7 +178,7 @@ impl BearerTokenAuth {
     /// returned unconditionally.
     pub fn with_endpoint_scoping(
         env_var: impl Into<String>,
-        grant: EmbeddingCredentialGrant,
+        grant: McpEndpointCredentialGrant,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
@@ -119,7 +191,7 @@ impl BearerTokenAuth {
 
     /// Add another explicitly authorized endpoint for a transport that uses
     /// more than one URL (legacy SSE uses both the POST URL and `/sse`).
-    pub fn allow_endpoint(mut self, grant: EmbeddingCredentialGrant) -> Self {
+    pub fn allow_endpoint(mut self, grant: McpEndpointCredentialGrant) -> Self {
         self.additional_grants.push(grant);
         self
     }
@@ -316,7 +388,7 @@ pub struct McpOAuthProvider {
     pending_states: HashMap<String, OAuthState>,
     clock: Arc<dyn Clock>,
     oauth_client: AsyncOAuthClient,
-    endpoint_grant: Option<EmbeddingCredentialGrant>,
+    endpoint_grant: Option<McpEndpointCredentialGrant>,
 }
 
 impl McpOAuthProvider {
@@ -358,13 +430,12 @@ impl McpOAuthProvider {
     /// Restrict token release to the configured MCP endpoint. OAuth tokens are
     /// fail-closed until this grant is installed.
     pub fn with_endpoint_scoping(mut self, approved_base_url: &str) -> Self {
-        self.endpoint_grant = Some(EmbeddingCredentialGrant::new(
+        self.endpoint_grant = Some(McpEndpointCredentialGrant::new(
             format!("mcp:{}", self.server_id),
             approved_base_url,
             self.server_id.clone(),
             u64::MAX,
             0,
-            "oauth-token-store-handle",
         ));
         self
     }
@@ -698,11 +769,27 @@ fn parse_token_response(raw: &serde_json::Value, clock: &dyn Clock) -> Result<To
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
     use std::sync::Arc;
 
     fn test_clock() -> Arc<TestClock> {
         Arc::new(TestClock::default())
+    }
+
+    #[test]
+    fn endpoint_grant_is_exact_expiring_and_secret_free() {
+        let grant = McpEndpointCredentialGrant::new(
+            "mcp:test",
+            "https://MCP.example.test/rpc/",
+            "test",
+            100,
+            1,
+        );
+        assert!(grant.approved_for("https://mcp.example.test/rpc", 99));
+        assert!(!grant.approved_for("https://mcp.example.test/rpc/child", 99));
+        assert!(!grant.approved_for("https://mcp.example.test.evil/rpc", 99));
+        assert!(!grant.approved_for("https://mcp.example.test/rpc", 100));
+        assert!(!format!("{grant:?}").contains("token"));
     }
 
     // -- BearerTokenAuth tests (existing + trait) --------------------------

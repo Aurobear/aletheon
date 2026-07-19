@@ -20,7 +20,7 @@ mod tests {
     use schema::{cosine_similarity, hash_embedding, l2_norm, VectorIndex};
 
     fn test_clock() -> Arc<dyn fabric::Clock> {
-        Arc::new(aletheon_kernel::chronos::TestClock::default())
+        Arc::new(kernel::chronos::TestClock::default())
     }
 
     fn setup() -> (tempfile::NamedTempFile, SemanticMemory) {

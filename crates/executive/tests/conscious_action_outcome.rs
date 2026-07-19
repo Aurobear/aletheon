@@ -5,8 +5,6 @@ use agora::{
     BroadcastCoordinator, BroadcastHub, BroadcastHubConfig, CandidatePoolConfig, SelectionPolicy,
     SqliteBroadcastStore,
 };
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use anyhow::Result;
 use async_trait::async_trait;
 use executive::service::conscious_action::ConsciousActionBridge;
@@ -26,6 +24,8 @@ use fabric::{
     PrincipalId, ProcessId, SandboxRequirement, SpawnSpec, UsageReport, WorkspaceAttribution,
     WorkspaceContent,
 };
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 

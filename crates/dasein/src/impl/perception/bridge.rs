@@ -117,8 +117,8 @@ fn event_to_message(event: &PerceptionEvent) -> Message {
 mod tests {
     use super::super::event::*;
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
     use fabric::ContentBlock;
+    use kernel::chronos::TestClock;
 
     fn make_event(
         priority: Priority,

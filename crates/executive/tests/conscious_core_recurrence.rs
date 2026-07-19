@@ -6,8 +6,6 @@ use agora::{
     BroadcastCoordinator, BroadcastHub, BroadcastHubConfig, CandidatePoolConfig, SelectionPolicy,
     SqliteBroadcastStore,
 };
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use executive::service::conscious_core_coordinator::{
     ConsciousCoreConfig, ConsciousCoreCoordinator,
@@ -27,6 +25,8 @@ use fabric::{
     SalienceVector, SpawnSpec, VisibilityScope, WallTime, WorkspaceBroadcast, WorkspaceCandidate,
     WorkspaceContent, WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use uuid::Uuid;
 
 const SPACE: &str = "session:recurrence";

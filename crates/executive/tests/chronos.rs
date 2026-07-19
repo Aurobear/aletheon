@@ -1,5 +1,5 @@
-use aletheon_kernel::chronos::{SystemTimer, TestClock};
 use fabric::{Clock, MonoDeadline, MonoTime, Timer};
+use kernel::chronos::{SystemTimer, TestClock};
 
 #[test]
 fn chronos_virtual_clock_deadline_is_deterministic() {

@@ -47,10 +47,10 @@ dependencies = [
 name = "agora"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
  "anyhow",
  "async-trait",
  "fabric",
+ "kernel",
  "rusqlite",
  "serde",
  "serde_json",
@@ -82,7 +82,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aletheon-bin"
+name = "aletheon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -99,21 +99,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "aletheon-kernel"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "fabric",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -416,7 +401,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "basic-agent-example"
+name = "basic_agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -655,13 +640,13 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 name = "cognit"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
  "anyhow",
  "async-trait",
  "chrono",
  "dirs",
  "fabric",
  "futures",
+ "kernel",
  "parking_lot",
  "reqwest",
  "rusqlite",
@@ -737,13 +722,11 @@ name = "corpus"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
- "aletheon-kernel",
  "anyhow",
  "async-trait",
  "atspi",
  "base64",
  "chrono",
- "cognit",
  "dashmap",
  "dirs",
  "fabric",
@@ -753,13 +736,15 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "kernel",
  "libc",
- "mnemosyne",
  "nix 0.29.0",
  "parking_lot",
+ "platform",
  "png",
  "regex",
  "reqwest",
+ "schemars",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -900,13 +885,13 @@ dependencies = [
 name = "dasein"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
  "anyhow",
  "async-trait",
  "chrono",
  "dirs",
  "fabric",
  "glob",
+ "kernel",
  "libc",
  "parking_lot",
  "regex",
@@ -1112,14 +1097,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "exec-server"
+name = "evolution_loop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cognit",
  "corpus",
- "libc",
+ "dasein",
+ "executive",
+ "fabric",
+ "kernel",
+ "metacog",
+ "mnemosyne",
  "serde",
  "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "execd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "platform",
+ "serde",
+ "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "which 7.0.3",
@@ -1130,7 +1137,6 @@ name = "executive"
 version = "0.1.0"
 dependencies = [
  "agora",
- "aletheon-kernel",
  "anyhow",
  "async-trait",
  "base64",
@@ -1142,10 +1148,12 @@ dependencies = [
  "fabric",
  "futures",
  "gateway",
+ "hardware",
  "hmac",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "kernel",
  "libc",
  "metacog",
  "mnemosyne",
@@ -1154,6 +1162,7 @@ dependencies = [
  "proptest",
  "regex",
  "reqwest",
+ "runtime",
  "rusqlite",
  "schemars",
  "serde",
@@ -1508,6 +1517,14 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "hardware"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1974,6 +1991,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kernel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "fabric",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2125,11 +2157,11 @@ dependencies = [
 name = "metacog"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
  "anyhow",
  "async-trait",
  "chrono",
  "fabric",
+ "kernel",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2179,12 +2211,12 @@ dependencies = [
 name = "mnemosyne"
 version = "0.1.0"
 dependencies = [
- "aletheon-kernel",
  "anyhow",
  "async-trait",
  "chrono",
  "dirs",
  "fabric",
+ "kernel",
  "parking_lot",
  "proptest",
  "regex",
@@ -2439,6 +2471,21 @@ name = "pkg-config"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
+
+[[package]]
+name = "platform"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+]
 
 [[package]]
 name = "plist"
@@ -2835,6 +2882,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rusqlite"
 version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3008,27 +3064,6 @@ checksum = "6ce2691df843ecc5d231c0b14ece2acc3efb62c0a398c7e1d875f3983ce020e3"
 dependencies = [
  "core-foundation-sys",
  "libc",
-]
-
-[[package]]
-name = "self-evolution-loop-example"
-version = "0.1.0"
-dependencies = [
- "aletheon-kernel",
- "anyhow",
- "cognit",
- "corpus",
- "dasein",
- "executive",
- "fabric",
- "metacog",
- "mnemosyne",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]

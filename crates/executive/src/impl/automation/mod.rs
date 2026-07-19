@@ -261,7 +261,7 @@ impl AutomationScheduler {
 
 impl Default for AutomationScheduler {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::SystemClock::new()))
+        Self::new(Arc::new(kernel::chronos::SystemClock::new()))
     }
 }
 
@@ -270,8 +270,8 @@ impl Default for AutomationScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
     use chrono::TimeZone;
+    use kernel::chronos::TestClock;
 
     fn test_clock() -> Arc<dyn Clock> {
         Arc::new(TestClock::default())

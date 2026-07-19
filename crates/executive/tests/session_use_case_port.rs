@@ -1,6 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
 
-use aletheon_kernel::chronos::TestClock;
 use async_trait::async_trait;
 use executive::r#impl::daemon::session_manager::SessionManager;
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
@@ -13,6 +12,7 @@ use fabric::{
     Clock, ContentBlock, LlmProvider, LlmResponse, LlmStream, Message, SessionAppendStore,
     SessionId, StopReason, ToolDefinition, Usage,
 };
+use kernel::chronos::TestClock;
 use tokio::sync::Mutex;
 
 struct SummaryLlm;

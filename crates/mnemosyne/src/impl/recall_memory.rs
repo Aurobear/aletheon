@@ -393,7 +393,7 @@ mod tests {
 
     fn setup_recall() -> (RecallMemory, NamedTempFile) {
         let tmp = NamedTempFile::new().unwrap();
-        let clock = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let clock = Arc::new(kernel::chronos::TestClock::default());
         let recall = RecallMemory::new(tmp.path(), clock).unwrap();
         (recall, tmp)
     }

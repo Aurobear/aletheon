@@ -13,7 +13,7 @@ fn cognitive_exports_are_feature_gated() {
 #[test]
 fn episodic_memory_is_available_by_default() {
     let dir = tempfile::tempdir().unwrap();
-    let clock = std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default());
+    let clock = std::sync::Arc::new(kernel::chronos::TestClock::default());
     let _mem = mnemosyne::EpisodicMemory::new(dir.path().join("ep.db"), clock);
 }
 
@@ -21,6 +21,6 @@ fn episodic_memory_is_available_by_default() {
 #[test]
 fn router_is_available_with_the_feature() {
     let dir = tempfile::tempdir().unwrap();
-    let clock = std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default());
+    let clock = std::sync::Arc::new(kernel::chronos::TestClock::default());
     let _router = mnemosyne::MemoryRouter::new(dir.path(), clock);
 }

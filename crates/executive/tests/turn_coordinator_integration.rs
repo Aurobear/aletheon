@@ -127,8 +127,8 @@ async fn create_session_on_first_turn() {
 
 #[tokio::test]
 async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_boundary() {
-    let clock = Arc::new(aletheon_kernel::chronos::TestClock::default());
-    let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock(
+    let clock = Arc::new(kernel::chronos::TestClock::default());
+    let kernel = Arc::new(::kernel::KernelRuntime::with_clock(
         clock as Arc<dyn fabric::Clock>,
     ));
     let store: Arc<dyn SessionAppendStore> = Arc::new(TerminalFailingStore {

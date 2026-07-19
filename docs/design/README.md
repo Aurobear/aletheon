@@ -164,16 +164,22 @@ aletheon/
 ├── Cargo.toml                  # workspace 根
 │
 ├── crates/
-│   ├── fabric/            # ABI 层: 共享类型、Trait 接口 (include/)、IPC 层、primitives
-│   ├── mnemosyne/         # 记忆系统: episodic/semantic/procedural/self-memory
-│   ├── agora/             # 共享认知工作区: blackboard/attention/task_graph/trace
-│   ├── dasein/            # SelfField: identity, boundary, care, narrative
-│   ├── cognit/            # Cognit: reasoning, planning, reflection (CognitOps)
-│   ├── corpus/            # Body: tools, sandbox, perception, MCP
-│   ├── executive/         # 编排层: harness, cognitive loop, orchestration, daemon
-│   ├── metacog/           # MetaRuntime: self-update, self-generation
-│   ├── interact/          # CLI + TUI 客户端
-│   └── bin/               # aletheon-bin: aletheond/aletheon 二进制
+│   ├── aletheon/          # 用户入口: CLI, daemon, exec, TUI/ACP 装配
+│   ├── executive/         # composition root: Turn, Session, Goal, Agent 编排与最终验证
+│   ├── kernel/            # Operation, Process, Admission, Chronos, Space, Supervision
+│   ├── runtime/           # 外部执行器 lifecycle, manifest, receipt, registry
+│   ├── cognit/            # 推理、规划、反思与 cognitive harness
+│   ├── corpus/            # 工具、能力治理、MCP 与 provider adapter
+│   ├── platform/          # Host OS contract 与 Linux/Windows/macOS backend
+│   ├── execd/             # 隔离文件/进程副作用 daemon
+│   ├── hardware/          # 设备 contract 与 simulator（experimental）
+│   ├── fabric/            # 跨领域协议、共享 ID 与兼容基础设施
+│   ├── mnemosyne/         # 记忆与经验
+│   ├── agora/             # 共享认知工作区
+│   ├── dasein/            # identity, care, continuity
+│   ├── metacog/           # 受治理评估与演化
+│   ├── gateway/           # 外部 channel/request adapter
+│   └── interact/          # TUI 与交互 adapter
 │
 ├── agents/                     # Agent 定义文件 (TOML + .md)
 │   ├── fs-agent.md

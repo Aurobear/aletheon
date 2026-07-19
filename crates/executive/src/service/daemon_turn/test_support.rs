@@ -9,9 +9,10 @@ use crate::r#impl::events::SqliteEventSpine;
 use crate::r#impl::session::canonical_store::CanonicalSessionStore;
 use crate::service::session_service::SessionService;
 use crate::service::turn_coordinator::{TurnCoordinator, TurnExecution};
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
+use crate::service::turn_runtime_ports::{ActiveAgentProfilePort, ResolvedTurnProfile};
 use fabric::{Clock, SessionAppendStore};
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
@@ -84,6 +85,7 @@ impl DaemonTurnTestBuilder {
             coordinator: coordinator.clone(),
             session_service,
             grok_hardening: Default::default(),
+            active_profile: Arc::new(StubActiveAgentProfile),
             test_runner: Some(self.runner),
         };
         DaemonTurnTestHarness {
@@ -91,5 +93,27 @@ impl DaemonTurnTestBuilder {
             store,
             coordinator,
         }
+    }
+}
+
+/// Minimal stub that returns a default profile for daemon-turn tests.
+struct StubActiveAgentProfile;
+
+#[async_trait::async_trait]
+impl ActiveAgentProfilePort for StubActiveAgentProfile {
+    async fn snapshot(&self) -> anyhow::Result<ResolvedTurnProfile> {
+        Ok(ResolvedTurnProfile {
+            profile_name: "stub".into(),
+            allowed_tools: Default::default(),
+            system_prompt: String::new(),
+            model_policy: None,
+            max_iterations: 0,
+            max_input_tokens: 0,
+            max_output_tokens: 0,
+            max_tool_calls: 0,
+            max_elapsed_ms: 0,
+            approval_policy: fabric::AgentApprovalPolicy::AutoApprove,
+            tool_timeout_ms: 30_000,
+        })
     }
 }

@@ -25,10 +25,10 @@ models = ["claude-sonnet-4-5"]
 preference = "auto"
 
 # High-risk execution features are independently gated and default off.
-# `aletheon daemon --exec-server` additively enables only exec_server for that
+# `aletheon daemon --execd` additively enables only execd for that
 # launch; streaming_tools controls G2 progress projection, not backend choice.
 [grok_hardening]
-exec_server = false
+execd = false
 streaming_tools = false
 
 [plugins]

@@ -254,7 +254,7 @@ impl Default for EbpfSource {
     fn default() -> Self {
         Self::new(
             EbpfConfig::default(),
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
     }
 }

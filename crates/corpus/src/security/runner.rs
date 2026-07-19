@@ -574,7 +574,7 @@ impl ToolRunnerWithGuard {
         };
 
         let result = match strategy {
-            ToolExecutionStrategy::Sandboxed | ToolExecutionStrategy::ExecServerRequired => {
+            ToolExecutionStrategy::Sandboxed | ToolExecutionStrategy::ExecdRequired => {
                 // Command tools use SandboxExecutor; structured tools use the
                 // injected filesystem-capable transport below.
                 let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
@@ -902,7 +902,7 @@ impl ToolRunnerWithGuard {
                         tool.execute(input.clone(), ctx).await
                     }
                 };
-                match aletheon_kernel::chronos::SystemTimer
+                match kernel::chronos::SystemTimer
                     .timeout(Duration::from_secs(TOOL_TIMEOUT_SECS), execution)
                     .await
                 {
@@ -1043,7 +1043,6 @@ impl ToolRunnerWithGuard {
 mod tests {
     use super::super::approval::{AutoApproveGate, AutoDenyGate};
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
     use async_trait::async_trait;
     use fabric::execpolicy::{Decision as ExecDecision, PrefixRule as ExecPrefixRule};
     use fabric::tool::{
@@ -1051,6 +1050,7 @@ mod tests {
         ToolResultMeta,
     };
     use fabric::{PermissionContext, PermissionMode};
+    use kernel::chronos::TestClock;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// A dummy L2 tool used to exercise the approval gate path.
@@ -1290,6 +1290,7 @@ mod tests {
                 call_id: "test-call".into(),
                 workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![])
                     .unwrap(),
+                granted_scope: fabric::CapabilityScope::default(),
             }),
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),

@@ -2,15 +2,15 @@
 //!
 //! Validates the admission → permit → execute → settle pipeline.
 
-use aletheon_kernel::admission::AllowAllAdmissionController;
-use aletheon_kernel::capability::{DefaultCapabilityInvoker, StubToolExecutor, ToolExecutor};
-use aletheon_kernel::chronos::TestClock;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionController, AdmissionError, AdmissionRequest, CapabilityAuthority, CapabilityCall,
     CapabilityInvoker, CapabilityRequest, CapabilityScope, ExecutionPermit, InvocationControl,
     PermitId, PrincipalId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
 };
+use kernel::admission::AllowAllAdmissionController;
+use kernel::capability::{DefaultCapabilityInvoker, StubToolExecutor, ToolExecutor};
+use kernel::chronos::TestClock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

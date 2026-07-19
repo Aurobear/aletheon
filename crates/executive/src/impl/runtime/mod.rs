@@ -11,7 +11,7 @@ pub use native_cognit::{
 pub use pi::{
     register_pi_runtime, PiAttemptRequest, PiRuntime, ResolvedPiConfig, PI_CODER_RUNTIME_ID,
 };
-pub use pi_rpc::{pi_rpc_environment_from_process, PiRpcRuntime, PI_RPC_RUNTIME_ID};
+pub use pi_rpc::{pi_manifest, pi_rpc_environment_from_process, PiRpcRuntime, PI_RPC_RUNTIME_ID};
 pub use provider_worker::ProviderWorkerRuntime;
 
 pub mod worktree_recovery;

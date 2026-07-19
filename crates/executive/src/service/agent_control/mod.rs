@@ -2,9 +2,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aletheon_kernel::chronos::SystemTimer;
-use aletheon_kernel::operation::OperationScope;
-use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
 use fabric::ipc::mailbox::{InProcessMailbox, Mailbox};
@@ -16,6 +13,9 @@ use fabric::{
     OperationKind, OperationRequest, ProcessId, ProcessSignal, SettlementTerminal, SpawnSpec,
     Timer,
 };
+use kernel::chronos::SystemTimer;
+use kernel::operation::OperationScope;
+use kernel::KernelRuntime;
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
 

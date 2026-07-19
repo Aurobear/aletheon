@@ -8,13 +8,13 @@
 //! This test file is mandated by `docs/arch/07_M0_DETAILED_IMPLEMENTATION_PLAN.md`
 //! and implements the acceptance criteria in `docs/arch/06_PR_PLAN_AND_ACCEPTANCE.md`.
 
-use aletheon_kernel::admission::AllowAllAdmissionController;
-use aletheon_kernel::capability::{DefaultCapabilityInvoker, StubToolExecutor};
 use fabric::{
     AdmissionController, AdmissionError, AdmissionRequest, CapabilityAuthority, CapabilityCall,
     CapabilityInvoker, CapabilityRequest, CapabilityScope, ExecutionPermit, InvocationControl,
     PermitId, PrincipalId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
 };
+use kernel::admission::AllowAllAdmissionController;
+use kernel::capability::{DefaultCapabilityInvoker, StubToolExecutor};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ async fn allow_all_still_passes_without_sandbox() {
     // Regression: AllowAllAdmissionController (used for testing and
     // non-dangerous paths) must allow execution when sandbox is not required.
     let admission = Arc::new(AllowAllAdmissionController::new(Arc::new(
-        aletheon_kernel::chronos::TestClock::default(),
+        kernel::chronos::TestClock::default(),
     )));
     let executor = Arc::new(StubToolExecutor);
     let invoker = DefaultCapabilityInvoker::new(admission, executor);

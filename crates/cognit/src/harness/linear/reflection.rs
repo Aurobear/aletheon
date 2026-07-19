@@ -406,6 +406,26 @@ mod tests {
     }
 
     #[test]
+    fn default_budget_does_not_stop_after_first_reflection() {
+        let config = crate::harness::HarnessConfig::default();
+        let mut engine = ReflectionEngine::new(
+            config.reflection_interval,
+            config.reflection_tool_call_limit,
+        );
+
+        for call in 0..config.reflection_interval {
+            engine.record_call(call + 1 == config.reflection_interval);
+        }
+        let result = engine.reflect(&make_ctx(config.reflection_interval, 1));
+
+        assert!(matches!(
+            result.recommendation,
+            ReflectionRecommendation::Continue
+        ));
+        assert!(!engine.should_stop());
+    }
+
+    #[test]
     fn test_consecutive_timeouts_stop() {
         let mut engine = ReflectionEngine::new(5, 10);
 

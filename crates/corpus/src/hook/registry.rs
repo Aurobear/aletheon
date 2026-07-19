@@ -254,17 +254,16 @@ impl HookRegistry {
 
         // Wait for the child with a 30-second timeout.
         // We use `child.wait()` so we retain ownership and can `kill()` on timeout.
-        let deadline =
-            aletheon_kernel::chronos::SystemTimer.timeout(Duration::from_secs(30), async {
-                let stdout = child.stdout.take();
-                let status = child.wait().await?;
-                let mut out = Vec::new();
-                if let Some(mut s) = stdout {
-                    use tokio::io::AsyncReadExt;
-                    let _ = s.read_to_end(&mut out).await;
-                }
-                Ok::<_, std::io::Error>((status, out))
-            });
+        let deadline = kernel::chronos::SystemTimer.timeout(Duration::from_secs(30), async {
+            let stdout = child.stdout.take();
+            let status = child.wait().await?;
+            let mut out = Vec::new();
+            if let Some(mut s) = stdout {
+                use tokio::io::AsyncReadExt;
+                let _ = s.read_to_end(&mut out).await;
+            }
+            Ok::<_, std::io::Error>((status, out))
+        });
 
         match deadline.await {
             Ok(Ok((status, stdout))) => {
@@ -364,7 +363,7 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
 
 impl Default for HookRegistry {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+        Self::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 }
 

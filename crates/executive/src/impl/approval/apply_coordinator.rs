@@ -97,7 +97,7 @@ impl std::error::Error for ApplyCoordinationError {}
 pub struct ApplyCoordinator {
     store: Arc<Mutex<ObjectiveStore>>,
     approvals: Arc<Mutex<ApprovalRepository>>,
-    kernel: Arc<aletheon_kernel::KernelRuntime>,
+    kernel: Arc<kernel::KernelRuntime>,
     clock: Arc<dyn Clock>,
     config: ApplyCoordinatorConfig,
     cleaner: Arc<dyn ManagedWorktreeCleaner>,
@@ -108,7 +108,7 @@ impl ApplyCoordinator {
     pub fn new(
         store: Arc<Mutex<ObjectiveStore>>,
         approvals: Arc<Mutex<ApprovalRepository>>,
-        kernel: Arc<aletheon_kernel::KernelRuntime>,
+        kernel: Arc<kernel::KernelRuntime>,
         clock: Arc<dyn Clock>,
         config: ApplyCoordinatorConfig,
         cleaner: Arc<dyn ManagedWorktreeCleaner>,

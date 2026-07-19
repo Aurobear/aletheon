@@ -3,7 +3,6 @@
 pub mod backend;
 pub mod bubblewrap;
 pub mod bwrap_builder;
-pub mod container;
 pub mod env;
 pub mod executor;
 pub mod glob_scanner;
@@ -16,7 +15,6 @@ pub(crate) mod streaming;
 // Re-export key types for convenience (inlined from backend.rs)
 pub use bubblewrap::BubblewrapBackend;
 pub use bwrap_builder::BwrapBuilder;
-pub use container::{ContainerBackend, ContainerResourceLimits, ContainerRuntime, NetworkMode};
 pub use env::SandboxEnvironment;
 pub use executor::{SandboxExecutor, SandboxPreference};
 pub use fabric::sandbox::{

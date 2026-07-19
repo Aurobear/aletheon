@@ -199,7 +199,7 @@ fn empty_projection() -> ConsciousContextProjection {
 
 fn make_config(port_mode: Option<StubMode>) -> SelfFieldConfig {
     SelfFieldConfig {
-        clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::default())),
+        clock: Some(Arc::new(kernel::chronos::TestClock::default())),
         conscious_context: port_mode.map(|m| {
             Arc::new(StubConsciousContextPort::new(m)) as Arc<dyn LatestConsciousContextPort>
         }),

@@ -3,7 +3,6 @@ use std::sync::{
     Arc,
 };
 
-use aletheon_kernel::{capability::ToolExecutor, chronos::TestClock};
 use async_trait::async_trait;
 use corpus::{security::AuditLogger, CorpusToolExecutor, ToolRegistry, ToolRunnerWithGuard};
 use fabric::tool::PermissionLevel;
@@ -14,6 +13,7 @@ use fabric::{
     PrincipalId, ProcessId, Registry, SandboxDecision, SandboxRequirement, Tool, ToolContext,
     ToolResult, ToolResultMeta,
 };
+use kernel::{capability::ToolExecutor, chronos::TestClock};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]

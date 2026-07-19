@@ -7,7 +7,7 @@ use fabric::WallTime;
 use std::sync::Arc;
 
 fn module() -> DaseinModule {
-    DaseinModule::new(Arc::new(aletheon_kernel::chronos::TestClock::default())).0
+    DaseinModule::new(Arc::new(kernel::chronos::TestClock::default())).0
 }
 
 fn request(

@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use executive::r#impl::events::{EventReadFilter, SqliteEventSpine};
 use executive::service::agent_control::{
@@ -17,6 +15,8 @@ use fabric::{
     AttemptUsage, BroadcastEpoch, ContentId, LatestConsciousContextPort, NamespaceId, OperationId,
     ProcessId, RuntimeId, SpawnSpec, VisibilityScope, WorkspaceAttribution, WorkspaceContent,
 };
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallRequest, RecallSet};
 use tempfile::tempdir;
 use tokio::sync::Mutex;

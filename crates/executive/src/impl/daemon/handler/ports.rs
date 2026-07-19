@@ -19,7 +19,7 @@ pub(crate) struct TransportPorts {
 }
 
 pub(crate) struct HandlerPorts {
-    pub(crate) kernel: Arc<aletheon_kernel::KernelRuntime>,
+    pub(crate) kernel: Arc<kernel::KernelRuntime>,
     pub(crate) pending_approvals: crate::service::admin_service::PendingApprovals,
     pub(crate) facts: Arc<dyn FactUseCases>,
     pub(crate) goals: Arc<dyn GoalUseCases>,
@@ -42,7 +42,7 @@ pub(crate) struct HandlerPorts {
 
 impl HandlerPorts {
     pub(crate) fn new(
-        kernel: Arc<aletheon_kernel::KernelRuntime>,
+        kernel: Arc<kernel::KernelRuntime>,
         pending_approvals: crate::service::admin_service::PendingApprovals,
         facts: Arc<dyn FactUseCases>,
         goals: Arc<dyn GoalUseCases>,

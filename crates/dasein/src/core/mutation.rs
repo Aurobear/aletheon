@@ -247,7 +247,7 @@ impl MutationLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
     use serde_json::json;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {

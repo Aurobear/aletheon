@@ -85,7 +85,7 @@ impl MockMemoryBackend {
 
 impl Default for MockMemoryBackend {
     fn default() -> Self {
-        Self::episodic(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+        Self::episodic(Arc::new(kernel::chronos::TestClock::default()))
     }
 }
 
@@ -271,7 +271,7 @@ mod tests {
 
     async fn setup_backend() -> MockMemoryBackend {
         let mut backend =
-            MockMemoryBackend::episodic(Arc::new(aletheon_kernel::chronos::TestClock::default()));
+            MockMemoryBackend::episodic(Arc::new(kernel::chronos::TestClock::default()));
         let ctx = SubsystemContext {
             name: "test".into(),
             working_dir: PathBuf::from("/tmp"),

@@ -9,7 +9,6 @@ use agora::{
     BroadcastCoordinator, BroadcastHub, BroadcastHubConfig, CandidatePoolConfig, SelectionPolicy,
     SqliteBroadcastStore,
 };
-use aletheon_kernel::KernelRuntime;
 use anyhow::Context;
 use async_trait::async_trait;
 use fabric::{
@@ -21,6 +20,7 @@ use fabric::{
     VisibilityScope, WorkspaceAttribution, WorkspaceBroadcast, WorkspaceCandidate,
     WorkspaceContent, WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
+use kernel::KernelRuntime;
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;

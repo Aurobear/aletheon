@@ -1,4 +1,3 @@
-use aletheon_kernel::chronos::SystemClock;
 use executive::service::verification::{
     ArchitecturePolicy, CapabilityAuditSummary, ForbiddenDependencyEdge, VerificationCheckKind,
     VerificationContext, VerificationSelection, VerificationService, VerificationServiceConfig,
@@ -7,6 +6,7 @@ use fabric::{
     AttemptId, ChangedFile, ChangedFileKind, CodingJobId, GoalId, VerificationCheck,
     VerificationReport,
 };
+use kernel::chronos::SystemClock;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use aletheon_kernel::chronos::TestClock;
 use executive::r#impl::approval::{ApprovalCreate, ApprovalDecision, ApprovalRepository};
 use executive::r#impl::goal::ObjectiveStore;
 use executive::service::admin_service::{ApprovalOwner, PendingApprovals, ScopedApprovalCache};
@@ -13,6 +12,7 @@ use fabric::{
     ApprovalCategory, ApprovalRisk, ApprovalSubject, Clock, GoalSpec, GoalState, PrincipalId,
     ThreadId, TurnId,
 };
+use kernel::chronos::TestClock;
 use tempfile::tempdir;
 
 struct Fixture {

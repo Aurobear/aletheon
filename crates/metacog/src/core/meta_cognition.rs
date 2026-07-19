@@ -117,7 +117,7 @@ impl MetaCognition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
 
     #[test]
     fn test_meta_cognition_observe() {

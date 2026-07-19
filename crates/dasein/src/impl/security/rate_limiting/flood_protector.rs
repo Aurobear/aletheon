@@ -120,7 +120,7 @@ impl EventFloodProtector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {
         Arc::new(TestClock::default())

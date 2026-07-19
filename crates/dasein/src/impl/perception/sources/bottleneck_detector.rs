@@ -420,7 +420,7 @@ impl Default for BottleneckDetector {
     fn default() -> Self {
         Self::new(
             BottleneckThreshold::default(),
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
     }
 }
@@ -478,6 +478,6 @@ mod tests {
     }
 
     fn test_clock() -> Arc<dyn Clock> {
-        Arc::new(aletheon_kernel::chronos::TestClock::default())
+        Arc::new(kernel::chronos::TestClock::default())
     }
 }

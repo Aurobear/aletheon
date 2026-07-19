@@ -3,7 +3,6 @@
 use std::{collections::HashMap, future::Future, sync::Arc};
 
 use crate::core::config::{BackpressureConfig, GrokHardeningConfig};
-use aletheon_kernel::KernelRuntime;
 use anyhow::{anyhow, Context, Result};
 use fabric::types::prompt_queue::{evaluate_cancel, PromptEnvelope, PromptKind, PromptState};
 use fabric::{
@@ -12,6 +11,7 @@ use fabric::{
     SessionStatus, ThreadId, TurnId, TurnMetrics, TurnRequest, TurnResult, TurnStop,
     SESSION_SCHEMA_VERSION,
 };
+use kernel::KernelRuntime;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 

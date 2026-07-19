@@ -31,7 +31,7 @@ impl SorgeTimer for ManualTimer {
 }
 
 fn test_clock() -> Arc<dyn fabric::Clock> {
-    Arc::new(aletheon_kernel::chronos::TestClock::default())
+    Arc::new(kernel::chronos::TestClock::default())
 }
 
 async fn wait_for_position(module: &DaseinModule, expected: u64) {

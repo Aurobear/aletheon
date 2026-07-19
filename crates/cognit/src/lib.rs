@@ -1,9 +1,9 @@
-//! # Aletheon CognitCore
+//! # Aletheon Cognition
 //!
 //! The cognitive computation engine — handles "how do I?" reasoning, planning,
 //! critique, reflection, and learning.
 //!
-//! CognitCore has NO self. It does not decide "should I?" (that is SelfField's job).
+//! Cognition has NO self. It does not decide "should I?" (that is SelfField's job).
 //! It produces plans, evaluates them, reflects on outcomes, and extracts rules.
 //!
 //! ## Components
@@ -14,7 +14,8 @@
 //! - **Critic** — multi-dimensional critique (correctness, completeness, risk, efficiency, reversibility)
 //! - **Learner** — experience → learned rules
 //! - **WorldModel** — environment state tracking via observations
-//! - **CognitCore** — wires all components, implements CognitOps + Subsystem
+//! - **Harness** — production sessions compose the focused components through
+//!   `harness`.
 
 pub mod bridge;
 pub mod config;
@@ -29,7 +30,6 @@ pub use core::planner::Planner;
 pub use core::reasoner::{Reasoner, ReasoningStrategy};
 pub use core::reflector::Reflector;
 pub use core::world_model::WorldModel;
-pub use core::{CognitCore, CognitCoreConfig};
 
 // Re-export bridge components
 pub use bridge::dual_model::{DualModelBridge, DualModelConfig, TaskComplexity};
@@ -41,9 +41,8 @@ pub use bridge::llm::LlmBridge;
 pub use harness::config::HarnessConfig;
 pub use harness::{
     CanonicalTurnEventSink, ChannelCognitiveStreamSink, CognitError, CognitErrorKind,
-    CognitRetryDisposition, CognitiveSession, CognitiveSessionDependencies,
-    CognitiveSessionFactory, CognitiveStreamEvent, CognitiveStreamSink,
-    DefaultCognitiveSessionFactory, HarnessKind,
+    CognitRetryDisposition, CognitiveSession, CognitiveSessionDependencies, CognitiveStreamEvent,
+    CognitiveStreamSink, HarnessKind,
 };
 pub use r#impl::inference;
 pub use r#impl::learning;

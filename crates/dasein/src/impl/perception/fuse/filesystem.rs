@@ -373,7 +373,7 @@ impl AgentFs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
     use std::path::PathBuf;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {

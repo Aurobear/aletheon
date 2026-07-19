@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{
@@ -10,11 +8,14 @@ use fabric::{
     NoopTurnEventSink, OperationId, ProcessId, RecallRequest, RecallSet, StopReason,
     ToolDefinition, TurnRequest, TurnServices, Usage,
 };
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 
 fn test_kernel() -> Arc<KernelRuntime> {
     let clock: Arc<dyn fabric::Clock> = Arc::new(TestClock::default());
-    let admission: Arc<dyn fabric::AdmissionController> =
-        Arc::new(aletheon_kernel::admission::AllowAllAdmissionController::new(clock.clone()));
+    let admission: Arc<dyn fabric::AdmissionController> = Arc::new(
+        kernel::admission::AllowAllAdmissionController::new(clock.clone()),
+    );
     Arc::new(KernelRuntime::with_admission(clock, admission))
 }
 

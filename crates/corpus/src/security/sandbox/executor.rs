@@ -30,7 +30,7 @@ pub fn create_executor_with_front_backend(
     let mut backends: Vec<Box<dyn fabric::sandbox::SandboxBackend>> = Vec::new();
     // An explicitly supplied external owner is the requested execution route,
     // not merely another best-effort candidate. Put it first so enabling the
-    // exec-server gate cannot silently continue through bubblewrap and bypass
+    // execd gate cannot silently continue through bubblewrap and bypass
     // process/read streaming. With no front backend, Auto keeps the original
     // Bubblewrap > Process > Noop policy unchanged.
     if let Some(front) = front {
@@ -78,7 +78,7 @@ mod tests {
     #[async_trait]
     impl SandboxBackend for Front {
         fn name(&self) -> &str {
-            "exec-server"
+            "execd"
         }
         fn isolation_level(&self) -> IsolationLevel {
             IsolationLevel::Process
@@ -112,6 +112,6 @@ mod tests {
             Arc::new(FixedClock),
             Some(Box::new(Front)),
         );
-        assert_eq!(executor.select_backend().unwrap().name(), "exec-server");
+        assert_eq!(executor.select_backend().unwrap().name(), "execd");
     }
 }

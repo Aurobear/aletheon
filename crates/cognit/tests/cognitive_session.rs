@@ -15,11 +15,12 @@ use tokio_util::sync::CancellationToken;
 
 fn dependencies() -> CognitiveSessionDependencies {
     CognitiveSessionDependencies {
-        clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        clock: Arc::new(kernel::chronos::TestClock::default()),
         cancellation: CancellationToken::new(),
         compactor: None,
         batch_planner: None,
         evicted_callback: None,
+        verifier: None,
     }
 }
 

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/bin",
+    "crates/aletheon",
     "crates/fabric",
     "crates/cognit",
     "crates/corpus",
@@ -13,9 +13,12 @@ members = [
     "crates/kernel",
     "crates/gateway",
     "crates/executive",
-    "crates/exec-server",
-    "examples/basic-agent",
-    "examples/self-evolution-loop",
+    "crates/execd",
+    "crates/platform",
+    "crates/runtime",
+    "crates/hardware",
+    "examples/basic_agent",
+    "examples/evolution_loop",
 ]
 
 [workspace.package]
@@ -30,6 +33,7 @@ tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "registry"] }
 async-trait = "0.1"

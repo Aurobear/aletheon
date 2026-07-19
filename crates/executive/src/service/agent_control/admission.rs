@@ -4,7 +4,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aletheon_kernel::admission::InMemoryBudgetController;
 use async_trait::async_trait;
 use cognit::config::AgentAdmissionConfig;
 use fabric::BudgetController;
@@ -13,6 +12,7 @@ use fabric::{
     AttemptUsage, BudgetRequest, BudgetReservationId, BudgetScopeId, BudgetScopeKind,
     BudgetTransferReceipt, UsageReport,
 };
+use kernel::admission::InMemoryBudgetController;
 use parking_lot::Mutex;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

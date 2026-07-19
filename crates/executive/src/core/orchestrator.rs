@@ -4,10 +4,6 @@ use crate::core::mode_router::ModeRouter;
 use crate::core::runtime_registry::RuntimeRegistry;
 use anyhow::Result;
 use cognit::harness::interrupt::InterruptFlag;
-use fabric::body::{Action, ActionResult};
-use fabric::context::Context;
-use fabric::runtime::StepResult;
-use fabric::self_field::{Intent, Verdict};
 use fabric::Clock;
 use std::sync::Arc;
 
@@ -119,36 +115,6 @@ impl AletheonExecutive {
     /// Reference to the evolution coordinator, if configured.
     pub fn evolution(&self) -> Option<&EvolutionCoordinator> {
         self.evolution.as_ref()
-    }
-
-    /// Process a single step (for streaming/incremental execution)
-    pub async fn step<F, H>(
-        &mut self,
-        _ctx: &Context,
-        _review_fn: &F,
-        _execute_fn: &H,
-    ) -> Result<StepResult>
-    where
-        F: Fn(&Intent, &Context) -> Result<Verdict>,
-        H: Fn(&Action, &Context) -> Result<ActionResult>,
-    {
-        if self.iteration >= self.config.max_iterations {
-            return Ok(StepResult {
-                completed: true,
-                output: Some("Max iterations reached".to_string()),
-                tool_calls: 0,
-                continue_reason: None,
-            });
-        }
-
-        self.iteration += 1;
-
-        Ok(StepResult {
-            completed: false,
-            output: None,
-            tool_calls: 0,
-            continue_reason: Some("step completed".to_string()),
-        })
     }
 
     /// Get current iteration count

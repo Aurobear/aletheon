@@ -4,8 +4,6 @@ mod support {
 
 use std::sync::Arc;
 
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use executive::service::conscious_core_coordinator::{
     ConsciousCoreConfig, ConsciousCoreCoordinator,
 };
@@ -19,6 +17,8 @@ use fabric::{
     SalienceVector, SpawnSpec, VisibilityScope, WorkspaceAttribution, WorkspaceCandidate,
     WorkspaceContent, WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use support::conscious_core_harness::{run, run_ablation, AblationConfig};
 use uuid::Uuid;
 

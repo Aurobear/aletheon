@@ -2,8 +2,8 @@
 //! TurnPipeline turn-token methods.
 
 use super::orchestrator::DaemonTurnOrchestrator;
-use aletheon_kernel::supervision::RestartPolicy;
 use fabric::{AgentId, NamespaceId, OperationKind, ProcessId, ProcessSignal, SpawnSpec};
+use kernel::supervision::RestartPolicy;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 

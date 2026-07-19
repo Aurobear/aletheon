@@ -3,10 +3,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(test)]
-use aletheon_kernel::chronos::SystemTimer;
-#[cfg(test)]
 use fabric::Timer;
 use fabric::{Clock, MonoTime};
+#[cfg(test)]
+use kernel::chronos::SystemTimer;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
@@ -136,14 +136,14 @@ impl WatchdogTimer {
 #[cfg(test)]
 impl Default for WatchdogTimer {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+        Self::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
 
     fn test_clock() -> Arc<dyn Clock> {
         // Start at mono=600_000 (10 min) so MonoTime(0) is convincingly expired

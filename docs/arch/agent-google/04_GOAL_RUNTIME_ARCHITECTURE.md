@@ -1,385 +1,115 @@
 # Goal Runtime Architecture
 
-> **Status:** Proposed  
-> **Purpose:** Convert user intent into persistent, iterative and supervised execution.
+> **Status:** Canonical goal semantics; implementation is partially complete
+>
+> **Rewritten:** 2026-07-19
 
-## 1. Goal Is a Persistent Object
+## Goal Definition
 
-```rust
-pub struct Goal {
-    pub id: GoalId,
-    pub parent: Option<GoalId>,
-    pub owner: PrincipalId,
-    pub intent: GoalIntent,
-    pub desired_state: DesiredState,
-    pub constraints: Vec<Constraint>,
-    pub acceptance_criteria: Vec<AcceptanceCriterion>,
-    pub state: GoalState,
-    pub priority: Priority,
-    pub budget: GoalBudget,
-    pub plan: Option<Plan>,
-    pub progress: GoalProgress,
-    pub evidence: Vec<EvidenceRef>,
-    pub blockers: Vec<Blocker>,
-    pub created_at: Timestamp,
-    pub updated_at: Timestamp,
-    pub deadline: Option<Timestamp>,
-}
-```
+A Goal is a durable intent that may require multiple supervised attempts across
+time. It is not a Prompt, chat message, Runtime session or background task
+handle.
 
-```rust
-pub enum GoalState {
-    Draft,
-    Clarifying,
-    Planned,
-    Running,
-    Verifying,
-    Blocked,
-    AwaitingHuman,
-    Suspended,
-    Completed,
-    Failed,
-    Cancelled,
-}
-```
+Current typed Goal creation/list/action ports are defined at
+`crates/executive/src/service/goal_service.rs:43-72`. The SQLite objective store,
+migrations, attempts, retry, verification and worker modules are assembled at
+`crates/executive/src/impl/goal/mod.rs:1-37`.
 
-## 2. Intent Compilation
+## Authority
 
-Input:
+Executive owns Goal state and transitions. Kernel owns the lifecycle primitives
+for each attempt. Runtime may execute an attempt but cannot own the Goal or mark
+it globally complete.
 
 ```text
-/goal Integrate Pi as a coding subagent with isolated worktrees,
-timeouts, structured reports and Native Cognit review.
+Goal authority (Executive)
+    -> compile next bounded attempt
+    -> Kernel Operation + admission
+    -> Cognit or selected Runtime
+    -> evidence and untrusted receipt
+    -> independent verification
+    -> atomic Goal transition
 ```
 
-Output:
+## State Model
 
-```yaml
-objective: Integrate Pi as a supervised coding subagent
-
-desired_state:
-  - Aletheon can spawn Pi
-  - Pi runs in an isolated worktree
-  - timeout and cancellation work
-  - stdout and stderr are captured
-  - result becomes SubagentReport
-  - Native Cognit reviews the result
-
-constraints:
-  - Native Cognit remains primary
-  - Pi cannot modify Dasein
-  - core crates do not depend on Pi
-  - Pi cannot modify the main worktree directly
-
-acceptance_criteria:
-  - cargo check passes
-  - integration tests pass
-  - one real delegated task succeeds
-  - failed execution leaves the main workspace unchanged
-```
-
-The original intent remains immutable. Plans may change; the goal specification may not silently drift.
-
-## 3. Goal Supervisor
-
-```rust
-#[async_trait]
-pub trait GoalSupervisor {
-    async fn create_goal(
-        &self,
-        specification: GoalSpecification,
-    ) -> Result<GoalId>;
-
-    async fn tick(
-        &self,
-        goal_id: GoalId,
-    ) -> Result<GoalTransition>;
-
-    async fn suspend(&self, goal_id: GoalId) -> Result<()>;
-    async fn resume(&self, goal_id: GoalId) -> Result<()>;
-    async fn cancel(&self, goal_id: GoalId) -> Result<()>;
-}
-```
-
-Each `tick()` advances a bounded amount of work.
-
-## 4. Goal Cycle
+A Goal must distinguish at least:
 
 ```text
-Observe
-  ↓
-Evaluate
-  ↓
-Select
-  ↓
-Execute
-  ↓
-Verify
-  ↓
-Record
-  ↓
-Replan
+proposed
+active
+waiting
+paused
+completed
+failed
+cancelled
 ```
 
-The system must not use an unbounded `while not done` model loop.
+`waiting` includes a typed reason such as approval, external event, retry time,
+resource availability or user input. State transitions require expected-version
+checks; current service errors already distinguish version conflict at
+`crates/executive/src/service/goal_service.rs:31-40`.
 
-## 5. Plan Graph
+## Attempts
 
-```rust
-pub struct Plan {
-    pub version: u32,
-    pub tasks: HashMap<TaskId, PlannedTask>,
-    pub created_from: GoalSnapshot,
-}
-```
+Every attempt records:
 
-```rust
-pub struct PlannedTask {
-    pub id: TaskId,
-    pub objective: String,
-    pub dependencies: Vec<TaskId>,
-    pub state: TaskState,
-    pub executor: ExecutorPreference,
-    pub acceptance_criteria: Vec<AcceptanceCriterion>,
-    pub attempts: Vec<AttemptId>,
-}
-```
+- Goal ID and expected Goal version;
+- Operation and Process identity;
+- bounded input and acceptance criteria;
+- capability scope and budget;
+- selected Cognit/Runtime executor;
+- events, tool evidence and artifact references;
+- terminal reason and usage;
+- independent verification report.
 
-Example:
+Retry creates a new attempt. It does not overwrite the failed attempt or reuse a
+stale permit.
 
-```text
-Goal
-├── T1 Define SubagentTask
-├── T2 Define SubagentReport
-├── T3 Implement Pi adapter
-│      depends_on: T1, T2
-├── T4 Add worktree isolation
-│      depends_on: T3
-├── T5 Add timeout and cancellation
-│      depends_on: T3
-├── T6 Add integration tests
-│      depends_on: T4, T5
-└── T7 Add Native review workflow
-       depends_on: T2, T6
-```
+## Verification
 
-## 6. Attempts
+Completion requires acceptance evidence evaluated outside the executor that
+claims success. For coding work this includes deterministic commands and the
+workspace diff. For provider side effects it includes provider receipt and
+idempotency identity. For user-facing goals it may require explicit user
+acceptance.
 
-```rust
-pub struct Attempt {
-    pub id: AttemptId,
-    pub task_id: TaskId,
-    pub executor: ExecutorRef,
-    pub input: TaskContext,
-    pub result: AttemptResult,
-    pub evidence: Vec<EvidenceRef>,
-    pub started_at: Timestamp,
-    pub ended_at: Timestamp,
-}
-```
+A Runtime `SucceededUnverified` receipt is therefore expected evidence, not a
+Goal transition by itself.
 
-A task may have multiple attempts, each with independent evidence.
+## Recovery
 
-## 7. Failure Classification
+After restart, reconciliation must decide from durable facts whether an attempt:
 
-```rust
-pub enum FailureClass {
-    Compilation,
-    TestFailure,
-    PermissionDenied,
-    Timeout,
-    MissingDependency,
-    InvalidAssumption,
-    ArchitectureViolation,
-    ToolFailure,
-    ContextInsufficient,
-    RepeatedFailure,
-}
-```
+- never started and may be admitted;
+- is resumable through the same external Runtime identity;
+- lost its executor and must fail/retry;
+- already settled and must not execute again;
+- waits for an unexpired approval or external event.
 
-Policy examples:
+No recovery path may allocate two active attempts for the same exclusive work.
 
-```text
-Compilation
-→ DeepSeek retries with compiler evidence
+## Channels
 
-ArchitectureViolation
-→ GPT or Opus replans or reviews
+Channels may create, inspect, pause, resume or cancel Goals only through typed
+Executive use cases. Gmail drafts and Telegram commands are adapters; neither is
+the Goal authority.
 
-RepeatedFailure
-→ shrink the task or change executor
+## Non-Goals
 
-ContextInsufficient
-→ query Mnemosyne or ask the user
+- one OS process per Goal;
+- one crate called `goal-runtime`;
+- treating every chat turn as a durable Goal;
+- allowing a model or Runtime to self-approve;
+- hiding blocked/waiting states behind repeated retries;
+- keeping only the latest attempt result.
 
-PermissionDenied
-→ Executive checks capabilities
-```
+## Production Acceptance
 
-## 8. Retry and Escalation
-
-Recommended default:
-
-```text
-Attempt 1 failed
-→ same worker with evidence
-
-Same failure again
-→ change strategy or shrink task
-
-Third repeated failure
-→ GPT or Opus root-cause analysis
-
-Still unresolved
-→ Blocked or AwaitingHuman
-```
-
-No infinite retries.
-
-## 9. Verification Gates
-
-Code task example:
-
-```text
-implementation
-    ↓
-format
-    ↓
-compile
-    ↓
-unit tests
-    ↓
-integration tests
-    ↓
-diff scope check
-    ↓
-architecture review
-    ↓
-accept
-```
-
-```rust
-pub struct VerificationReport {
-    pub passed: bool,
-    pub checks: Vec<VerificationCheck>,
-    pub artifacts: Vec<ArtifactRef>,
-    pub risks: Vec<String>,
-}
-```
-
-## 10. Model Routing
-
-```text
-Native Cognit
-= control, intent ownership, orchestration and final decision
-
-DeepSeek
-= low-cost iterative worker
-
-Pi
-= specialized coding subagent
-
-GPT / Opus
-= planner, architect, reviewer and escalation model
-```
-
-```rust
-pub enum CognitiveRole {
-    IntentCompiler,
-    Planner,
-    Worker,
-    Reviewer,
-    Debugger,
-    Summarizer,
-    Verifier,
-}
-```
-
-## 11. Goal Frame
-
-```rust
-pub struct GoalFrame {
-    pub original_intent: String,
-    pub desired_state: DesiredState,
-    pub constraints: Vec<Constraint>,
-    pub acceptance_criteria: Vec<AcceptanceCriterion>,
-    pub current_plan: PlanSummary,
-    pub current_task: PlannedTask,
-    pub recent_attempts: Vec<AttemptSummary>,
-    pub relevant_memories: Vec<MemoryProjection>,
-    pub remaining_budget: GoalBudget,
-}
-```
-
-Every worker receives the Goal Frame so the original intent remains visible.
-
-## 12. Agora and Mnemosyne
-
-Agora stores active Goal state:
-
-```text
-GoalFrame
-current task
-recent observations
-active blockers
-subagent reports
-verification results
-pending approvals
-```
-
-Mnemosyne stores durable history:
-
-```text
-Goal specification
-plan versions
-attempts
-failures
-decisions
-outcomes
-lessons
-procedures
-```
-
-## 13. Commands
-
-```text
-/goal <objective>
-/goals
-/status <goal-id>
-/pause <goal-id>
-/resume <goal-id>
-/cancel <goal-id>
-/approve <request-id>
-/reject <request-id>
-```
-
-## 14. Safety
-
-Every Goal requires:
-
-- budget limit;
-- time limit;
-- attempt limit;
-- capability boundary;
-- workspace boundary;
-- pause and cancellation;
-- audit logs;
-- approval policy;
-- completion criteria;
-- escalation policy.
-
-## 15. MVP
-
-Implement `Single Active Goal Runtime v0`:
-
-- one active persistent Goal;
-- task list or small DAG;
-- DeepSeek worker;
-- Pi subagent;
-- verification;
-- three-attempt default;
-- GPT/Opus escalation;
-- pause, resume and cancel;
-- Telegram progress;
-- SQLite/Postgres persistence;
-- completion summary.
+- versioned transitions reject stale writers;
+- cancellation reaches live Operation/Process and settles once;
+- restart recovery does not duplicate attempts;
+- budgets and leases settle on every terminal path;
+- success requires independent evidence;
+- channel commands enforce principal ownership;
+- complete history is replayable from the durable authority.

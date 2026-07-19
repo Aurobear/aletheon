@@ -108,7 +108,7 @@ async fn daemon_self_field_bootstrap_replays_before_new_transitions() {
 
     let mut first = SelfField::new(SelfFieldConfig {
         db_path: Some(database.clone()),
-        clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::new(100, 0))),
+        clock: Some(Arc::new(kernel::chronos::TestClock::new(100, 0))),
         ..Default::default()
     });
     initialize_self_field(&mut first, root.path())
@@ -124,7 +124,7 @@ async fn daemon_self_field_bootstrap_replays_before_new_transitions() {
 
     let mut restarted = SelfField::new(SelfFieldConfig {
         db_path: Some(database),
-        clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::new(5_100, 0))),
+        clock: Some(Arc::new(kernel::chronos::TestClock::new(5_100, 0))),
         ..Default::default()
     });
     initialize_self_field(&mut restarted, root.path())

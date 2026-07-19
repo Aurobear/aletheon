@@ -103,7 +103,7 @@ async fn reservation_is_atomic_and_fifo_under_concurrent_sibling_contention() {
     let admission = Arc::new(
         BoundedAgentAdmission::with_budget(
             config,
-            Arc::new(aletheon_kernel::admission::InMemoryBudgetController::new()),
+            Arc::new(kernel::admission::InMemoryBudgetController::new()),
         )
         .unwrap(),
     );
@@ -180,7 +180,7 @@ async fn cancelled_waiter_releases_topology_and_does_not_block_fifo() {
     let admission = Arc::new(
         BoundedAgentAdmission::with_budget(
             config,
-            Arc::new(aletheon_kernel::admission::InMemoryBudgetController::new()),
+            Arc::new(kernel::admission::InMemoryBudgetController::new()),
         )
         .unwrap(),
     );
@@ -246,7 +246,7 @@ async fn timed_out_waiter_releases_every_reserved_counter() {
     };
     let admission = BoundedAgentAdmission::with_budget(
         config,
-        Arc::new(aletheon_kernel::admission::InMemoryBudgetController::new()),
+        Arc::new(kernel::admission::InMemoryBudgetController::new()),
     )
     .unwrap();
     let root = AgentId::new();
@@ -296,7 +296,7 @@ async fn shared_root_rollout_releases_capacity_for_a_later_sibling() {
     };
     let admission = BoundedAgentAdmission::with_budget(
         config,
-        Arc::new(aletheon_kernel::admission::InMemoryBudgetController::new()),
+        Arc::new(kernel::admission::InMemoryBudgetController::new()),
     )
     .unwrap();
     let root = AgentId::new();
@@ -364,7 +364,7 @@ async fn policy_rejects_depth_internal_delegation_and_storage_before_resources()
     };
     let admission = BoundedAgentAdmission::with_budget(
         config,
-        Arc::new(aletheon_kernel::admission::InMemoryBudgetController::new()),
+        Arc::new(kernel::admission::InMemoryBudgetController::new()),
     )
     .unwrap();
     let root = AgentId::new();

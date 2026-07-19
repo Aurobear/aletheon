@@ -40,8 +40,8 @@ pub struct DaemonLaunch {
     pub container: Option<String>,
     pub image: String,
     pub enable_evolution: bool,
-    /// Additively enable the isolated exec-server backend.
-    pub enable_exec_server: bool,
+    /// Additively enable the isolated execd backend.
+    pub enable_execd: bool,
 }
 
 fn select_daemon_socket(
@@ -78,7 +78,7 @@ pub async fn run_daemon(request: DaemonLaunch) -> Result<()> {
         paths,
         socket,
         request.enable_evolution,
-        request.enable_exec_server,
+        request.enable_execd,
     )?;
     let core_socket = std::env::var_os("ALETHEON_CORE_SOCKET")
         .map(PathBuf::from)
@@ -135,10 +135,11 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
         builder = builder.with_config(path);
     }
     let (turn_service, _, _, process_id) = builder.build().await?;
+    let operation_id = OperationId::new();
     let result = turn_service
         .submit(
             TurnRequest {
-                operation_id: OperationId::new(),
+                operation_id,
                 process_id,
                 context: {
                     let thread_id = uuid::Uuid::new_v4().to_string();
@@ -173,7 +174,7 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
     );
     let rendered = if request.json {
         serde_json::to_string_pretty(&serde_json::json!({
-            "success": success, "response": result.output, "iterations": result.metrics.iterations,
+            "success": success, "operation_id": operation_id.0, "response": result.output, "iterations": result.metrics.iterations,
             "tool_calls_made": result.metrics.tool_calls_made, "tool_errors": result.metrics.tool_errors,
             "elapsed_ms": result.metrics.elapsed_ms,
         }))?

@@ -1,418 +1,124 @@
-# Aletheon Daemon (aletheon daemon)
+# Aletheon Daemon
 
-> 持久运行的后台守护进程，通过 Unix socket 接收 CLI 请求，调度 LLM 推理与工具执行。
-> 作为 systemd 服务运行，是 Aletheon 系统的核心入口。
+> **Status:** Current design and implementation map
+>
+> **Verified:** 2026-07-19
 
-**模块编号:** Daemon
-**关联模块:** [cli](../interact/README.md), [cognitive-engine](../cognit/cognitive-engine.md), [perception](../dasein/perception.md)
-**最后更新:** 2026-07-03
+## 1. 定位
 
----
+`aletheon daemon` 是持久应用入口。它装配 Executive、Kernel、领域服务、channel、
+storage 和可选 `execd`，通过 Unix socket 提供请求入口。
 
-## Implementation Status
-
-| Component | Status | Code Location | Notes |
-|-----------|--------|---------------|-------|
-| CLI entry point | ✅ Implemented | `crates/bin/src/main.rs` | clap-based arg parsing |
-| .env loading | ✅ Implemented | `crates/executive/src/host/mod.rs` | `load_dotenv()` shared across hosts |
-| TOML config loading | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | `AppConfig::load_layered()` |
-| Provider registry init | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | `ProviderRegistry::from_config()` |
-| Unix socket server | ✅ Implemented | `crates/executive/src/impl/daemon/server.rs` | Line-delimited JSON-RPC, concurrent connections |
-| RequestHandler | ✅ Implemented | `crates/executive/src/impl/daemon/handler/mod.rs` | chat/clear/status/health/session.* methods |
-| Chat → ReAct loop | ✅ Implemented | `crates/executive/src/service/daemon_turn/orchestrator.rs` | `handle_chat` routes through `TurnService` / `DaemonTurnOrchestrator` with full tool calling |
-| Streaming responses | ✅ Implemented | `crates/executive/src/service/daemon_turn/` | `ChannelEventSink` → JSON-RPC notifications (TextDelta, ToolCallStart, etc.) |
-| Perception manager | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Spawns in background task via bootstrap |
-| Perception bridge | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Event→Engine injection channel |
-| Agent registry | ✅ Implemented | `crates/executive/src/impl/daemon/handler/mod.rs` | Config-based + builtin fallback |
-| Memory system init | ✅ Implemented | `crates/executive/src/impl/daemon/handler/mod.rs` | CoreMemory + RecallMemory + FactStore |
-| Graceful shutdown | ✅ Implemented | `crates/executive/src/impl/daemon/server.rs`, `host/mod.rs` | JoinSet connection drain (5s timeout), InterruptFlag, per-turn cancel token |
-| Health check endpoint | ✅ Implemented | `crates/executive/src/impl/daemon/handler/rpc.rs` | `health` RPC: uptime, connections, sessions, version |
-| Multi-session support | ✅ Implemented | `crates/executive/src/impl/daemon/handler/mod.rs` | HashMap-based session registry, `session.create/list/switch` RPC |
-| SystemdHost | ✅ Implemented | `crates/executive/src/host/systemd.rs` | sd_notify(READY/WATCHDOG/STOPPING), SIGTERM handler |
-| ContainerHost | ✅ Implemented | `crates/executive/src/host/container.rs` | Docker/Podman container lifecycle via CLI |
-| RuntimeCore (host-agnostic) | ✅ Implemented | `crates/executive/src/core/runtime_core.rs` | Shared bootstrap for all host types |
-| Goal role runtime routing | ✅ Implemented | `crates/executive/src/impl/daemon/handler/init.rs` | Optional worker/reviewer runtimes resolved through ProviderRegistry |
-| Isolated Pi coding runtime | 🟡 Configured | `crates/executive/src/impl/runtime/pi.rs` | Registers `pi-coder` only with a complete policy and namespace sandbox; execution lifecycle follows in M4 |
-| `aletheon exec` (CI/CD) | ✅ Implemented | `crates/bin/src/main.rs` | Non-interactive batch execution |
-
----
-
-## 目录
-
-- [1. 概述](#1-概述)
-- [2. 架构](#2-架构)
-- [3. 入口与启动流程](#3-入口与启动流程)
-  - [3.1 CLI 参数](#31-cli-参数)
-  - [3.2 配置加载](#32-配置加载)
-  - [3.3 Provider 注册表初始化](#33-provider-注册表初始化)
-  - [3.4 感知管理器启动](#34-感知管理器启动)
-  - [3.5 RequestHandler 初始化](#35-requesthandler-初始化)
-  - [3.6 Unix Socket 服务启动](#36-unix-socket-服务启动)
-- [4. 当前设计](#4-当前设计)
-  - [4.1 Unix Socket 服务器](#41-unix-socket-服务器)
-  - [4.2 RequestHandler 请求分发](#42-requesthandler-请求分发)
-  - [4.3 会话状态管理](#43-会话状态管理)
-- [5. 配置参考](#5-配置参考)
-- [6. 已识别缺陷](#6-已识别缺陷)
-
----
-
-## 1. 概述
-
-`aletheon daemon` 是 Aletheon 系统的持久后台进程。它：
-
-1. 加载 TOML 配置和环境变量
-2. 初始化 LLM Provider 注册表
-3. 启动感知管理器（procfs polling、journald）
-4. 通过 Unix socket 接收 CLI 的 JSON-RPC 请求
-5. 将请求分发到认知引擎（AletheonExecutive）处理
-6. 返回 JSON-RPC 响应
-
-设计目标：单一进程、单一会话、低开销常驻服务。
-
----
-
-## 2. 架构
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                     interact                          │
-│           (single message / TUI / simple REPL)            │
-└────────────────────────┬─────────────────────────────────┘
-                         │ Unix Socket (JSON-RPC, line-delimited)
-                         ▼
-┌──────────────────────────────────────────────────────────┐
-│                     aletheon daemon (daemon)                    │
-│                                                          │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │                 UnixServer                           │ │
-│  │  accept() → spawn handle_connection() per client     │ │
-│  │  BufReader::read_line → JSON parse → handler.handle()│ │
-│  └──────────────────────┬──────────────────────────────┘ │
-│                         ▼                                │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │              RequestHandler                          │ │
-│  │  "chat"   → LLM complete() → text response          │ │
-│  │  "clear"  → reset pending_input                      │ │
-│  │  "status" → runtime iteration + session_id           │ │
-│  └──────────────────────┬──────────────────────────────┘ │
-│                         ▼                                │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │              AletheonExecutive                         │ │
-│  │  (ReAct loop, tool execution, agent dispatch)        │ │
-│  └─────────────────────────────────────────────────────┘ │
-│                                                          │
-│  ┌──────────────────┐  ┌───────────────────────────────┐ │
-│  │ PerceptionManager│  │ PerceptionBridge               │ │
-│  │ /proc, journald  │→ │ event_rx → injection_tx        │ │
-│  └──────────────────┘  └───────────────────────────────┘ │
-│                                                          │
-│  ┌──────────────────┐  ┌───────────────────────────────┐ │
-│  │ ProviderRegistry │  │ AgentRegistry                  │ │
-│  │ LLM providers    │  │ Fs/Net/Code agents             │ │
-│  └──────────────────┘  └───────────────────────────────┘ │
-└──────────────────────────────────────────────────────────┘
+```text
+aletheon CLI
+    -> executive::host::launcher
+    -> daemon bootstrap
+    -> UnixServer
+    -> typed RPC handler
+    -> Turn / Goal / Approval / Admin use case
 ```
 
----
+CLI 入口位于 `crates/aletheon/src/main.rs:1-35`；daemon launcher 位于
+`crates/executive/src/host/launcher.rs:56-111`；Unix server 位于
+`crates/executive/src/impl/daemon/server.rs:622-708`。
 
-## 3. 入口与启动流程
+## 2. 责任边界
 
-### 3.1 CLI 参数
+Daemon 负责：
 
-入口文件: `crates/bin/src/main.rs`
+- 加载并验证顶层配置；
+- 创建唯一 composition root；
+- 打开 durable stores；
+- 装配 TurnRuntimePorts 与领域服务；
+- 启动 channel/worker/Unix RPC；
+- 传播 cancel、shutdown 与 health；
+- 对 optional feature 明确报告启用/不可用状态。
 
-```rust
-#[derive(Subcommand)]
-enum Commands {
-    Daemon {
-        #[arg(short, long)]
-        config: Option<PathBuf>,
-        #[arg(long)]
-        env: Option<PathBuf>,
-        #[arg(short, long)]
-        socket: Option<PathBuf>,
-        #[arg(long)]
-        container: Option<String>,
-        #[arg(long, default_value_t = false)]
-        enable_evolution: bool,
-    },
-    Exec { /* non-interactive execution options */ },
-    Version,
-}
+Daemon 不负责：
+
+- 复制 Cognit loop；
+- 实现具体工具；
+- 实现 Kernel lifecycle；
+- 实现 OS backend；
+- 在 handler 中直接写多个状态 authority。
+
+## 3. Bootstrap 分层
+
+当前 bootstrap 已按关注点拆分：
+
+```text
+crates/executive/src/impl/daemon/bootstrap/
+  request       composition entry
+  services      domain services and ports
+  runtime       model/agent runtime assembly
+  turn_runtime  TurnRuntimePorts
+  storage       durable stores
+  channels      channel workers
+  google        Google integration
+  extensions    plugins/runtime extensions
+  approval_gate approval wiring
 ```
 
-`main()` 根据 `daemon` 子命令选择 `SystemdHost`、`ContainerHost` 或前台 `DaemonHost`，随后完成初始化并进入服务循环。
+新依赖必须放入拥有它的 stage，不能重新堆回一个巨型 constructor。
 
-### 3.2 配置加载
+## 4. 请求路径
 
-代码位置: `executive/src/impl/daemon/mod.rs`
-
-启动顺序:
-
-1. **加载 .env** — 搜索 `~/.aletheon/.env`，回退到 `./.env`。简单的 KEY=VALUE 解析器，不覆盖已存在的环境变量。
-2. **加载 TOML 配置** — 搜索 `~/.aletheon/config.toml`，回退到 `/etc/aletheon/config.toml`。调用 `AppConfig::load_or_default()`，失败时使用默认配置。
-3. **构建 DaemonConfig** — 从 AppConfig 和环境变量中提取字段。
-
-```rust
-pub struct DaemonConfig {
-    pub api_key: String,
-    pub api_url: String,
-    pub model: String,
-    pub working_dir: String,
-    pub data_dir: String,
-    pub system_prompt: String,
-    pub sandbox_preference: String,
-}
+```text
+socket frame
+  -> connection validation
+  -> RPC method parse
+  -> typed request use case
+  -> TurnEngine / GoalService / ApprovalService / AdminService
+  -> structured response + streamed events
 ```
 
-环境变量回退:
+Turn 的唯一接口定义于
+`crates/executive/src/service/turn_engine.rs:14-22`。RPC handler 只做协议转换、
+身份/上下文解析和 use-case 调用。
 
-| 字段 | 环境变量 | 默认值 |
-|------|---------|--------|
-| working_dir | `AGENT_WORKING_DIR` | `/tmp` |
-| data_dir | `AGENT_DATA_DIR` | XDG data dir |
-| system_prompt | `AGENT_SYSTEM_PROMPT` | `"You are a helpful system assistant."` |
-| sandbox_preference | `AGENT_SANDBOX_PREFERENCE` | `"auto"` |
+## 5. Host 模式
 
-### 3.3 Provider 注册表初始化
+`aletheon` 可以按环境选择前台、systemd 或 container host。Systemd host 的
+READY/WATCHDOG 行为位于 `crates/executive/src/host/systemd.rs:31-131`。
 
-```rust
-let registry = ProviderRegistry::from_config(&app_config)?;
-let (default_provider_config, default_model) = registry.resolve("")?;
-```
+Host 选择不应改变 Turn、permission、session 或 recovery 语义。
 
-`ProviderRegistry` 从 TOML 配置的 `[providers]` 表构建。`resolve("")` 返回默认 provider（配置中的第一个）。后续 `RequestHandler` 通过 `registry.resolve_and_create("")` 创建 `LlmProvider` trait object。
+## 6. Execd
 
-#### 3.3.1 Goal worker/reviewer runtime routing
+当配置 `execd = true` 时，Executive 创建随机 shared secret、限制 workspace root
+并启动 `execd`：
+`crates/executive/src/impl/daemon/bootstrap/request.rs:452-479`。
 
-Goal attempt execution is disabled unless `[goal_runtime] enabled = true`.
-Enabling it requires both a worker and a reviewer route. Each route names a
-stable runtime ID plus either a strict key from `[model_aliases]` or an explicit
-`provider/model` specification; an unknown bare alias fails daemon startup
-instead of silently falling back to the default provider.
+Execd 只执行已批准的低层副作用。它不是第二个 daemon authority，也不是 Runtime。
 
-```toml
-[model_aliases]
-deepseek = "deepseek/deepseek-chat"
-reviewer = "anthropic/claude-sonnet"
+## 7. Shutdown 与恢复
 
-[goal_runtime]
-enabled = true
+Shutdown 顺序必须：
 
-[goal_runtime.worker]
-runtime_id = "deepseek-worker"
-model_alias = "deepseek"
-max_steps = 8
-max_persisted_bytes = 16384
-allowed_tools = ["file_read", "file_write", "grep"]
+1. 停止接收新请求；
+2. 取消或排空 live Operations；
+3. 停止 channel/worker；
+4. 终止并回收 `execd` 与外部 Runtime child；
+5. flush durable authority；
+6. 发布最终 health/stopping 状态。
 
-[goal_runtime.reviewer]
-runtime_id = "escalation-reviewer"
-model_alias = "reviewer"
-max_steps = 6
-max_persisted_bytes = 16384
-allowed_tools = ["file_read", "grep"]
-```
+Restart reconciliation 必须在新工作 admission 前完成，且不得重复已结算副作用。
 
-The runtime implementation does not inspect provider brands. Provider
-transport and model selection remain `ProviderRegistry` configuration, while
-`RuntimeRegistry` only maps the stable runtime IDs used by Goal attempts.
+## 8. 当前风险
 
-#### 3.3.2 Isolated Pi coding runtime
+- Executive 仍承担大量实现代码，bootstrap 修改需防止 owner 回流；
+- Runtime registry 尚未统一真实外部 executor selection；
+- MCP 配置仍由 Cognit 提供；
+- `execd` 暂时依赖完整 Corpus；
+- optional features 仍需持续验证不会静默 no-op。
 
-`[pi_runtime]` is disabled by default. When enabled, daemon startup resolves a
-fixed Pi executable from an absolute path or an explicit trusted directory and
-registers stable runtime ID `pi-coder` only after a namespace-capable sandbox
-reports both filesystem and network isolation. Noop and process-only backends
-are rejected; network access cannot be enabled in M4.
+## 9. 验收
 
-```toml
-[pi_runtime]
-enabled = true
-executable = "/opt/aletheon/bin/pi"
-fixed_args = ["--mode", "json"]
-worktree_base = "/var/lib/aletheon/pi-worktrees"
-timeout_ms = 1800000
-max_output_bytes = 1048576
-allowed_paths = ["crates", "Cargo.toml", "Cargo.lock"]
-forbidden_paths = [".git", ".env"]
-require_namespace_isolation = true
-network_enabled = false
-```
-
-Fixed arguments are deliberately omitted from `Debug` output. A Goal cannot
-replace the configured executable, relax path scope, request network access,
-or downgrade the sandbox.
-
-### 3.4 感知管理器启动
-
-代码位置: `executive/src/impl/daemon/mod.rs` `run()` 函数
-
-```rust
-let (event_tx, event_rx) = mpsc::channel::<PerceptionEvent>(256);
-let (injection_tx, injection_rx) = mpsc::channel::<PerceptionInjection>(64);
-
-// 启动 PerceptionManager（后台 tokio task）
-let watch_paths = vec![PathBuf::from("/etc"), PathBuf::from("/var/log")];
-tokio::spawn(async move {
-    let mut manager = PerceptionManager::new(event_tx, watch_paths, true);
-    manager.start().await;
-});
-
-// 启动 PerceptionBridge（后台 tokio task）
-let mut bridge = PerceptionBridge::new(event_rx, injection_tx);
-tokio::spawn(async move { bridge.run().await; });
-```
-
-- **PerceptionManager** — 轮询 `/proc`、监听 journald，产生 `PerceptionEvent`
-- **PerceptionBridge** — 将事件转换为 `PerceptionInjection`，通过 channel 传递给引擎
-
-### 3.5 RequestHandler 初始化
-
-代码位置: `executive/src/impl/daemon/handler/mod.rs`
-
-`RequestHandler::new()` 完成以下初始化:
-
-1. **LLM Provider** — 从 registry 创建 `Arc<dyn LlmProvider>`
-2. **Session** — 生成 UUID session_id，创建 `EventJournal` 和 `SessionStore`
-3. **Memory** — `CoreMemory`（in-memory）+ `RecallMemory`（SQLite，路径 `data_dir/recall_memory.db`）
-4. **Tools** — 注册 CoreMemoryAppend/Replace + MemorySearch 工具
-5. **Security** — `SandboxExecutor` + `AuditLogger`（`data_dir/audit.jsonl`）+ `ToolRunnerWithGuard`
-6. **Agent Registry** — 尝试从 `agents/` 目录加载配置 agent，回退到内置 FsAgent/NetAgent/CodeAgent
-7. **AletheonExecutive** — 创建 runtime 实例
-
-### 3.6 Unix Socket 服务启动
-
-```rust
-let unix_server = UnixServer::new(&socket, request_handler).await?;
-unix_server.run().await?;
-```
-
-`run()` 是无限循环，接受连接后 spawn 独立 tokio task 处理。
-
----
-
-## 4. 当前设计
-
-### 4.1 Unix Socket 服务器
-
-代码位置: `executive/src/impl/daemon/server.rs`
-
-协议: **行分隔 JSON-RPC**（每条消息以 `\n` 结尾）
-
-```rust
-pub struct UnixServer {
-    listener: UnixListener,
-    handler: RequestHandler,
-}
-```
-
-连接处理流程:
-
-```
-client connect
-  → BufReader::read_line()
-  → serde_json::from_str()
-  → handler.handle(request)
-  → serde_json::to_string(response)
-  → writer.write_all(response + "\n")
-  → loop (read next line or EOF)
-```
-
-关键设计点:
-- 启动时移除已存在的 stale socket 文件
-- socket 权限固定为 `0660`、所有者组为 `aletheon`
-- 安装时新增的 supplementary group 不会自动进入既有登录进程；使用
-  `id -nG | grep -w aletheon` 检查，并通过重新登录、`newgrp aletheon`
-  或临时执行 `sg aletheon -c 'aletheon'` 激活
-- 每个连接独立 tokio task（支持并发客户端）
-- 连接 EOF 时自动清理
-
-### 4.2 RequestHandler 请求分发
-
-代码位置: `executive/src/impl/daemon/handler/mod.rs`
-
-```rust
-pub async fn handle(&self, request: serde_json::Value) -> serde_json::Value
-```
-
-支持的方法:
-
-| 方法 | 参数 | 响应 | 说明 |
-|------|------|------|------|
-| `chat` | `params.message: string` | `result.response: string` (streaming via notifications) | 调用 TurnService/DaemonTurnOrchestrator 推理循环，支持工具调用 |
-| `clear` | 无 | `result.status: "ok"` | 清除 pending_input |
-| `status` | 无 | `result.iteration, config` | 查询 runtime 状态 |
-| `health` | 无 | `result.uptime, connections, sessions, version` | 健康检查端点 |
-| `session.create` | 无 | `result.session_id: string` | 创建新会话 |
-| `session.list` | 无 | `result.sessions: array` | 列出所有活跃会话 |
-| `session.switch` | `params.session_id: string` | `result.status: "ok"` | 切换活跃会话 |
-
-流式响应通过 JSON-RPC notification（无 id 字段）推送：`TextDelta`, `ToolCallStart`, `ToolCallEnd`, `ToolCallResult` 等事件类型。
-
-错误响应: JSON-RPC 标准错误格式，`code: -32000` (LLM error) 或 `-32601` (unknown method)。
-
-**注意:** `chat` 方法现已通过 `TurnService` / `DaemonTurnOrchestrator` 路由，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/turn_handler.rs`。
-
-### 4.3 会话状态管理
-
-会话管理通过 `SessionManager` (`crates/executive/src/impl/daemon/session_manager.rs`) 提供多会话支持:
-
-- `session.create` — 创建新会话（UUID），持久化到 SQLite
-- `session.list` — 列出所有活跃会话
-- `session.switch` — 切换活跃会话
-- 优雅关闭时自动持久化会话状态
-
----
-
-## 5. 配置参考
-
-TOML 配置文件路径: `~/.aletheon/config.toml`
-
-```toml
-[providers.anthropic]
-name = "anthropic"
-api_key = "sk-..."
-base_url = "https://api.anthropic.com"
-model = "claude-sonnet-4-20250514"
-```
-
-数据目录结构:
-
-```
-~/.local/share/aletheon/
-├── recall_memory.db      # SQLite 记忆数据库
-├── audit.jsonl           # 安全审计日志
-└── sessions/             # EventJournal 会话日志
-```
-
----
-
-## 6. 已识别缺陷（已全部修复）
-
-以下为历史缺陷记录，已在 P0-P2 稳定化阶段全部修复：
-
-### 6.1 Chat 未走 ReAct 循环 ✅ 已修复
-
-~~`chat` 方法直接调用 `llm.complete()`，绕过了 `AletheonExecutive` 的 ReAct 推理循环。~~
-
-现已通过 `handle_chat` 路由到 `TurnService`/`DaemonTurnOrchestrator` 完整集成，支持工具调用、多轮推理和安全策略检查。详见 `crates/executive/src/impl/daemon/handler/turn_handler.rs`。
-
-### 6.2 无流式响应 ✅ 已修复
-
-~~同步 request-response 模式，CLI 必须等待完整响应才能显示。~~
-
-现已通过 `ChannelEventSink` → JSON-RPC notification 实现流式 chunk 推送（TextDelta, ToolCallStart, ToolCallEnd 等）。详见 `crates/executive/src/service/daemon_turn/`。
-
-### 6.3 无优雅关闭 ✅ 已修复
-
-~~无 SIGTERM/SIGINT 处理，无连接排空逻辑。~~
-
-现已实现：JoinSet 连接排空（5s 超时）、InterruptFlag 取消机制、per-turn cancel token。详见 `crates/executive/src/impl/daemon/server.rs` 和 `crates/executive/src/host/mod.rs`。
-
-### 6.4 单会话限制 ✅ 已修复
-
-~~每次 daemon 启动创建一个 session，无多会话或会话恢复支持。~~
-
-现已通过 `SessionManager` 实现 HashMap-based 多会话注册表，支持 `session.create/list/switch` RPC 方法。详见 `crates/executive/src/impl/daemon/session_manager.rs`。
+- daemon 可从 repo 外目录启动；
+- socket 权限与身份绑定正确；
+- Turn/Goal/Approval use case 不被 RPC 旁路；
+- SIGTERM、client disconnect、timeout 能清理子进程；
+- systemd READY/WATCHDOG 有真实测试；
+- restart 不重复已结算 Operation；
+- disabled optional integration 在 doctor/health 中可见；
+- `bash scripts/architecture-check.sh` 通过。

@@ -236,7 +236,7 @@ impl McpEmbedded {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::capability::ToolExecutor;
+    use kernel::capability::ToolExecutor;
 
     struct RejectCapability;
 

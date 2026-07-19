@@ -125,14 +125,14 @@ impl ToolTracker {
 
 impl Default for ToolTracker {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+        Self::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
+    use kernel::chronos::TestClock;
 
     fn test_tracker() -> ToolTracker {
         ToolTracker::new(Arc::new(TestClock::default()))

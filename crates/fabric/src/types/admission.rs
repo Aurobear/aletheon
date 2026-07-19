@@ -48,7 +48,12 @@ pub struct CapabilityId(pub String);
 /// Scope limits for a capability invocation.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CapabilityScope {
-    /// Allowed paths (for filesystem operations). Empty = any.
+    /// Allowed paths (for filesystem operations).
+    ///
+    /// The generic scope representation treats an empty list as unbounded for
+    /// backward compatibility. Filesystem tool adapters must instead reject an
+    /// empty admitted list so a missing path projection cannot become ambient
+    /// host filesystem authority.
     pub allowed_paths: Vec<String>,
     /// Allowed network targets. Empty = any.
     pub allowed_targets: Vec<String>,

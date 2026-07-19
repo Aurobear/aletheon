@@ -45,7 +45,7 @@ impl LiveStateProvider {
 #[cfg(test)]
 impl Default for LiveStateProvider {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default()))
+        Self::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 }
 

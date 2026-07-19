@@ -943,7 +943,7 @@ pub fn register_acix_tools(registry: &mut crate::tools::tools::ToolRegistry) {
     register_acix_tools_with(
         registry,
         default_aci(),
-        Arc::new(aletheon_kernel::chronos::SystemClock::new()),
+        Arc::new(kernel::chronos::SystemClock::new()),
     );
 }
 

@@ -1,0 +1,36 @@
+[package]
+name = "aletheon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Aletheon — unified AI agent CLI (daemon, exec, TUI)"
+
+[[bin]]
+name = "aletheon"
+path = "src/main.rs"
+
+[features]
+integration-tests = []
+acp = ["dep:fabric", "dep:async-trait", "dep:libc"]
+
+[dependencies]
+executive = { path = "../executive" }
+interact = { path = "../interact" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+fabric = { path = "../fabric", optional = true }
+async-trait = { version = "0.1", optional = true }
+libc = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+async-trait = "0.1"
+futures = "0.3"
+libc = { workspace = true }
+tempfile = "3"
+tokio-util = { workspace = true }

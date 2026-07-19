@@ -198,7 +198,7 @@ impl ReActLoop {
         Self::new_with_clock(
             config,
             compressor,
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
     }
 

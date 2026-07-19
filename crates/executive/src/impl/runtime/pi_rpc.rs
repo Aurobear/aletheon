@@ -577,3 +577,30 @@ fn accumulate_usage(value: Option<&Value>, usage: &mut AttemptUsage) {
         usage.cost_usd = Some(usage.cost_usd.unwrap_or_default() + cost);
     }
 }
+
+// ── CapabilityRuntime impl (Wave 3) ─────────────────────────────────────
+use std::collections::BTreeSet;
+
+static PI_MANIFEST: std::sync::OnceLock<runtime::RuntimeManifest> = std::sync::OnceLock::new();
+
+pub fn pi_manifest() -> &'static runtime::RuntimeManifest {
+    PI_MANIFEST.get_or_init(|| runtime::RuntimeManifest {
+        id: PI_RPC_RUNTIME_ID.into(),
+        aliases: vec!["pi".into()],
+        display_name: "Pi Coding Runtime (RPC)".into(),
+        capabilities: BTreeSet::from([
+            runtime::RuntimeCapability::CodeRead,
+            runtime::RuntimeCapability::CodeSearch,
+            runtime::RuntimeCapability::CodeEdit,
+            runtime::RuntimeCapability::Shell,
+            runtime::RuntimeCapability::Test,
+        ]),
+        interaction_modes: BTreeSet::from([
+            runtime::InteractionMode::Resident,
+            runtime::InteractionMode::Steering,
+            runtime::InteractionMode::FollowUp,
+        ]),
+        workspace_mode: runtime::WorkspaceMode::Shared,
+        tool_governance: runtime::ToolGovernance::Observed,
+    })
+}

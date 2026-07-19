@@ -21,7 +21,7 @@ separate system units.
 Build a release binary, review `config/production.toml.example`, then install:
 
 ```bash
-cargo build --release -p aletheon-bin
+bash scripts/cargo-agent.sh build --release -p aletheon
 sudo ALETHEON_BINARY="$PWD/target/release/aletheon" \
   ALETHEON_CONFIG="$PWD/config/production.toml.example" \
   scripts/install-systemd.sh

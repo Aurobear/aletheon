@@ -555,8 +555,8 @@ fn external_scope(scope: &str) -> Result<ExternalScope> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::TestClock;
     use http_body_util::{BodyExt, Full};
+    use kernel::chronos::TestClock;
 
     #[test]
     fn drive_read_scope_is_supported_without_changing_default_scope_sets() {

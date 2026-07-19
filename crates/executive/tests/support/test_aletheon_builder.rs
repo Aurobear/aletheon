@@ -19,14 +19,14 @@
 
 use std::sync::Arc;
 
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use executive::r#impl::events::SqliteEventSpine;
 use executive::r#impl::session::canonical_store::CanonicalSessionStore;
 use executive::service::harness_factory::LinearCognitiveSessionFactory;
 use executive::service::session_input::SessionInputCoordinator;
 use executive::service::turn_coordinator::TurnCoordinator;
 use fabric::{Clock, SessionAppendStore};
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 
 /// A fully constructed test Aletheon, ready for test execution.
 pub struct TestAletheon {

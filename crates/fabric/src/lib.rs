@@ -171,9 +171,7 @@ pub use include::meta::{
 };
 pub use include::plugin::{Plugin, PluginContext};
 pub use include::process::{OperationHandle, OperationManager, ProcessHandle, ProcessManager};
-pub use include::runtime::{
-    AgentInfo, AgentStatus, RuntimeOps, ScheduleKind, ScheduledTask, StepResult,
-};
+pub use include::runtime::{AgentInfo, AgentStatus, ScheduleKind, ScheduledTask};
 pub use include::self_field::{
     AwarenessCore, AwarenessExtension, AwarenessExtensionCounts, AwarenessGrowthSuggestion,
     AwarenessRiskLevel, Care, Conflict, Identity, Intent, IntentSource, MutationIntent, Resolution,

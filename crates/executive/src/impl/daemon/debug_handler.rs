@@ -370,7 +370,7 @@ impl DebugHandler {
                 if speed > 0.0 && prev_ts > 0 && event.ts > prev_ts {
                     let delay_ms = (event.ts - prev_ts) as f64 / speed;
                     if delay_ms > 0.0 && delay_ms < 60_000.0 {
-                        aletheon_kernel::chronos::SystemTimer
+                        kernel::chronos::SystemTimer
                             .sleep(std::time::Duration::from_millis(delay_ms as u64))
                             .await;
                     }

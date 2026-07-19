@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aletheon_kernel::chronos::SystemTimer;
 use async_trait::async_trait;
 use fabric::Timer;
+use kernel::chronos::SystemTimer;
 use tokio::sync::mpsc;
 
 use fabric::Clock;

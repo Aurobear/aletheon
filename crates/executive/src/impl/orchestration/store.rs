@@ -192,7 +192,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = WorkflowStore::new(dir.path()).unwrap();
         let registry = AgentRegistry::new();
-        let clock = aletheon_kernel::chronos::TestClock::default();
+        let clock = kernel::chronos::TestClock::default();
 
         let direct = sample_graph()
             .execute(&registry, GraphState::new(), &clock)

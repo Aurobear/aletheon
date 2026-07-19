@@ -17,7 +17,7 @@ fn open_store(path: &Path) -> Arc<SelfFieldStore> {
 
 fn module_with_ledger(
     store: Arc<SelfFieldStore>,
-    clock: Arc<aletheon_kernel::chronos::TestClock>,
+    clock: Arc<kernel::chronos::TestClock>,
 ) -> DaseinModule {
     DaseinModule::with_runtime_and_ledger(
         clock,
@@ -97,7 +97,7 @@ async fn ledger_append_reopen_and_duplicate_are_idempotent() {
     let store = open_store(&path);
     let module = module_with_ledger(
         store.clone(),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(100, 0)),
+        Arc::new(kernel::chronos::TestClock::new(100, 0)),
     );
     let event = request(
         SelfEventId::new(),
@@ -114,7 +114,7 @@ async fn ledger_append_reopen_and_duplicate_are_idempotent() {
 
     let reopened = module_with_ledger(
         open_store(&path),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(200, 0)),
+        Arc::new(kernel::chronos::TestClock::new(200, 0)),
     );
     assert_eq!(reopened.replay_durable_state().await.unwrap(), 1);
     let duplicate = reopened.transition(event).await.unwrap();
@@ -133,14 +133,14 @@ async fn replay_restores_context_and_version_byte_for_byte() {
     let path = temp.path().join("self.db");
     let original = module_with_ledger(
         open_store(&path),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(100, 0)),
+        Arc::new(kernel::chronos::TestClock::new(100, 0)),
     );
     seed_three_events(&original).await;
     let expected_context = serde_json::to_vec(&original.to_context_injection()).unwrap();
 
     let replayed = module_with_ledger(
         open_store(&path),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(200, 0)),
+        Arc::new(kernel::chronos::TestClock::new(200, 0)),
     );
     assert_eq!(replayed.replay_durable_state().await.unwrap(), 3);
     assert_eq!(replayed.self_version().await, SelfVersion(3));
@@ -156,7 +156,7 @@ async fn replay_verifies_checkpoint_prefix_then_suffix() {
     let path = temp.path().join("self.db");
     let original = module_with_ledger(
         open_store(&path),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(100, 0)),
+        Arc::new(kernel::chronos::TestClock::new(100, 0)),
     );
     let seeded = seed_three_events(&original).await;
     original.checkpoint_durable_state().unwrap();
@@ -176,7 +176,7 @@ async fn replay_verifies_checkpoint_prefix_then_suffix() {
 
     let replayed = module_with_ledger(
         open_store(&path),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(200, 0)),
+        Arc::new(kernel::chronos::TestClock::new(200, 0)),
     );
     assert_eq!(replayed.replay_durable_state().await.unwrap(), 4);
     assert_eq!(
@@ -193,7 +193,7 @@ async fn ledger_corruption_fails_replay_closed() {
     let store = open_store(&path);
     let module = module_with_ledger(
         store.clone(),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(100, 0)),
+        Arc::new(kernel::chronos::TestClock::new(100, 0)),
     );
     seed_three_events(&module).await;
     store
@@ -206,7 +206,7 @@ async fn ledger_corruption_fails_replay_closed() {
 
     let replayed = module_with_ledger(
         open_store(&path),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(200, 0)),
+        Arc::new(kernel::chronos::TestClock::new(200, 0)),
     );
     let error = replayed.replay_durable_state().await.unwrap_err();
     assert!(error.to_string().contains("checksum"));
@@ -220,7 +220,7 @@ async fn replay_rejects_corrupt_checkpoint_even_when_ledger_is_valid() {
     let store = open_store(&path);
     let module = module_with_ledger(
         store.clone(),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(100, 0)),
+        Arc::new(kernel::chronos::TestClock::new(100, 0)),
     );
     seed_three_events(&module).await;
     module.checkpoint_durable_state().unwrap();
@@ -231,7 +231,7 @@ async fn replay_rejects_corrupt_checkpoint_even_when_ledger_is_valid() {
 
     let replayed = module_with_ledger(
         open_store(&path),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(200, 0)),
+        Arc::new(kernel::chronos::TestClock::new(200, 0)),
     );
     let error = replayed.replay_durable_state().await.unwrap_err();
     assert!(error.to_string().contains("snapshot checksum"));
@@ -244,7 +244,7 @@ async fn restart_replays_then_records_one_resumption_experience() {
     let path = temp.path().join("self.db");
     let original = module_with_ledger(
         open_store(&path),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(100, 0)),
+        Arc::new(kernel::chronos::TestClock::new(100, 0)),
     );
     original
         .transition(request(
@@ -263,7 +263,7 @@ async fn restart_replays_then_records_one_resumption_experience() {
     let store = open_store(&path);
     let restarted = module_with_ledger(
         store.clone(),
-        Arc::new(aletheon_kernel::chronos::TestClock::new(5_100, 0)),
+        Arc::new(kernel::chronos::TestClock::new(5_100, 0)),
     );
     dasein::dasein::persistence::load_dasein_state(&restarted, &store)
         .await
@@ -291,7 +291,7 @@ async fn restart_self_field_replays_before_start_and_checkpoints_after_stop() {
 
     let mut first = SelfField::new(SelfFieldConfig {
         db_path: Some(path.clone()),
-        clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::new(100, 0))),
+        clock: Some(Arc::new(kernel::chronos::TestClock::new(100, 0))),
         ..Default::default()
     });
     first.init(&context).await.unwrap();
@@ -309,7 +309,7 @@ async fn restart_self_field_replays_before_start_and_checkpoints_after_stop() {
 
     let mut restarted = SelfField::new(SelfFieldConfig {
         db_path: Some(path),
-        clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::new(5_100, 0))),
+        clock: Some(Arc::new(kernel::chronos::TestClock::new(5_100, 0))),
         ..Default::default()
     });
     restarted.init(&context).await.unwrap();

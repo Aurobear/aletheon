@@ -84,7 +84,7 @@ mod tests {
 
     fn test_store() -> (CoreMemoryStore, NamedTempFile) {
         let tmp = NamedTempFile::new().unwrap();
-        let clock = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let clock = Arc::new(kernel::chronos::TestClock::default());
         let store = CoreMemoryStore::new(tmp.path(), clock).unwrap();
         (store, tmp)
     }

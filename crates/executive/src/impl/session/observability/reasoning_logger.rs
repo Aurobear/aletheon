@@ -208,8 +208,8 @@ async fn cleanup_old_logs(dir: &Path, clock: &dyn Clock) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aletheon_kernel::chronos::{SystemTimer, TestClock};
     use fabric::Timer;
+    use kernel::chronos::{SystemTimer, TestClock};
     use tempfile::TempDir;
 
     fn test_clock() -> Arc<dyn Clock> {

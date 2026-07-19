@@ -244,8 +244,7 @@ mod tests {
         let debug_hook = Arc::new(tokio::sync::Mutex::new(DebugBusHook::new(
             EventFilter::default(),
         )));
-        let test_clock: Arc<dyn fabric::Clock> =
-            Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let test_clock: Arc<dyn fabric::Clock> = Arc::new(kernel::chronos::TestClock::default());
         let debug_handler = Arc::new(DebugHandler::new(
             debug_hook,
             Arc::new(PerfCounter::default()),
@@ -260,16 +259,14 @@ mod tests {
             tool_budget_max: 10,
             recent_tools: vec![],
             storm_breaker_failure_count: 0,
-            goal_tracker: GoalTracker::new(
-                Arc::new(aletheon_kernel::chronos::TestClock::default()),
-            ),
+            goal_tracker: GoalTracker::new(Arc::new(kernel::chronos::TestClock::default())),
         }));
         let tmp = tempfile::tempdir().unwrap();
         let sm = SessionManager::new(
             tmp.path(),
             "test-session".into(),
             100000,
-            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            Arc::new(kernel::chronos::TestClock::default()),
         )
         .await
         .unwrap();
@@ -290,13 +287,12 @@ mod tests {
         // Create test CoreMemory, RecallMemory, SelfField
         let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
         let recall_db = tmp.path().join("recall.db");
-        let recall_clock: Arc<dyn fabric::Clock> =
-            Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let recall_clock: Arc<dyn fabric::Clock> = Arc::new(kernel::chronos::TestClock::default());
         let recall_memory = Arc::new(Mutex::new(
             RecallMemory::new(&recall_db, recall_clock).unwrap(),
         ));
         let self_field = Arc::new(Mutex::new(SelfField::new(dasein::SelfFieldConfig {
-            clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::default())),
+            clock: Some(Arc::new(kernel::chronos::TestClock::default())),
             ..Default::default()
         })));
 

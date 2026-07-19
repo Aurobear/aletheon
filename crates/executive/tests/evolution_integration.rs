@@ -8,7 +8,6 @@
 //! 2. Periodic trigger (every N turns)
 //! 3. Sliding window eviction
 
-use aletheon_kernel::chronos::TestClock;
 use anyhow::Result;
 use async_trait::async_trait;
 use executive::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator};
@@ -18,6 +17,7 @@ use fabric::meta::{
 };
 use fabric::MutationIntent;
 use fabric::{Subsystem, SubsystemHealth, Version};
+use kernel::chronos::TestClock;
 use metacog::DefaultMetacogService;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

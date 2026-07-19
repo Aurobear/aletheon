@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::KernelRuntime;
 use executive::service::agent_control::{
     AgentControlService, AgentRecoveryCoordinator, AgentRecoveryObservation, AgentRunRecord,
     AgentRunRepository, AgentRuntimeRegistry, BoundedAgentAdmission, SqliteAgentRunRepository,
@@ -11,6 +9,8 @@ use fabric::{
     AgentRecoveryReceipt, AgentRunStatus, AgentSnapshot, AgentSpawnRequest, AgoraSpaceId,
     OperationId, ProcessId, RuntimeId, RuntimeResumability,
 };
+use kernel::chronos::TestClock;
+use kernel::KernelRuntime;
 use tempfile::tempdir;
 
 fn record(status: AgentRunStatus, resumability: RuntimeResumability) -> AgentRunRecord {

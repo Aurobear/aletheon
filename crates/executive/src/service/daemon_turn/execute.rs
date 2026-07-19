@@ -166,13 +166,22 @@ impl DaemonTurnOrchestrator {
             }
         };
 
+        // Resolve the active agent profile once per turn so model_policy,
+        // prompt, budget, and approval are all drawn from the same source.
+        let model_policy = self
+            .active_profile
+            .snapshot()
+            .await
+            .map(|p| p.model_policy)
+            .unwrap_or_default();
+
         // The coordinator replaces this placeholder with the authoritative Turn id.
         let turn_request = TurnRequest {
             operation_id: fabric::OperationId::default(),
             process_id: main_pid,
             context,
             input: message.to_string(),
-            model_policy: None,
+            model_policy,
             deadline: None,
         };
 
@@ -195,9 +204,7 @@ impl DaemonTurnOrchestrator {
                 let turn_cancel = cancel.clone();
                 {
                     let mut guard = pipeline.current_scope.lock().await;
-                    *guard = Some(aletheon_kernel::operation::OperationScope::new(
-                        request.operation_id,
-                    ));
+                    *guard = Some(kernel::operation::OperationScope::new(request.operation_id));
                 }
                 let response = pipeline
                     .run(

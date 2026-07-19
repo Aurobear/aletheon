@@ -9,6 +9,18 @@ use tracing::info;
 use crate::r#impl::agent_loader::AgentLoader;
 use crate::service::inference_port::{InferencePort, PortLlmProvider};
 
+/// Combine a profile-level and global iteration limit where `0` means
+/// "unlimited". The old `.min(global).max(1)` collapsed `0` (unlimited)
+/// into `1`; this preserves unlimited semantics on both sides.
+fn combine_limits(profile: usize, global: usize) -> usize {
+    match (profile, global) {
+        (0, 0) => 0,
+        (0, global) => global,
+        (profile, 0) => profile,
+        (profile, global) => profile.min(global),
+    }
+}
+
 pub(super) fn load_agent_profiles(
     agents_dir: &std::path::Path,
     inference: Arc<dyn InferencePort>,
@@ -62,11 +74,10 @@ pub(super) fn load_agent_profiles(
 
         // Apply per-profile overrides from AgentProfilesConfig.
         let overrides = profiles_config.overrides.get(&role.name);
-        let max_iterations = overrides
+        let profile_limit = overrides
             .and_then(|ov| ov.max_iterations)
-            .unwrap_or(role.max_iterations)
-            .min(config.max_iterations)
-            .max(1);
+            .unwrap_or(role.max_iterations);
+        let max_iterations = combine_limits(profile_limit, config.max_iterations);
         let tool_timeout_ms = overrides
             .and_then(|ov| ov.tool_timeout_ms)
             .unwrap_or(30_000);
@@ -181,10 +192,10 @@ pub(super) async fn register_agent_tools(
     }
 }
 
-#[cfg(test)]
-use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
 use fabric::{Clock, LlmProvider};
+#[cfg(test)]
+use kernel::chronos::SystemClock;
 #[cfg(test)]
 use tokio_util::sync::CancellationToken;
 
@@ -501,5 +512,95 @@ mod goal_runtime_tests {
             &unknown_default,
         )
         .is_err());
+    }
+
+    #[test]
+    fn agent_tool_registration_profile_can_reference_agent_spawn() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("orchestrator.md"),
+            "---\nname: orchestrator\ndescription: orch\ntools: [file_read, agent_spawn]\n---\nI orchestrate.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+
+        let mut definitions: Vec<fabric::ToolDefinition> = vec![fabric::ToolDefinition {
+            name: "file_read".into(),
+            description: "read".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        definitions.extend(corpus::tools::tools::agent_control::AgentControlTools::definitions());
+
+        let (registry, profiles) = super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &definitions,
+            &crate::core::config::ExecutiveConfig::default(),
+            &crate::core::config::AgentProfilesConfig::default(),
+        )
+        .unwrap();
+
+        let profile = profiles.get("orchestrator").unwrap();
+        assert_eq!(profile.allowed_tools.len(), 2);
+        assert!(profile.allowed_tools.contains(&"file_read".to_string()));
+        assert!(profile.allowed_tools.contains(&"agent_spawn".to_string()));
+        assert!(registry.resolve(&profile.id).is_ok());
+    }
+
+    #[test]
+    fn agent_tool_registration_unknown_tool_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("bad.md"),
+            "---\nname: bad\ndescription: bad\ntools: [file_read, not_a_tool]\n---\nBad profile.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let definitions: Vec<fabric::ToolDefinition> = vec![fabric::ToolDefinition {
+            name: "file_read".into(),
+            description: "read".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+
+        let result = super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &definitions,
+            &crate::core::config::ExecutiveConfig::default(),
+            &crate::core::config::AgentProfilesConfig::default(),
+        );
+        assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod combine_limits_tests {
+    use super::combine_limits;
+
+    #[test]
+    fn zero_profile_zero_global_is_unlimited() {
+        assert_eq!(combine_limits(0, 0), 0);
+    }
+
+    #[test]
+    fn zero_profile_uses_global_cap() {
+        assert_eq!(combine_limits(0, 50), 50);
+    }
+
+    #[test]
+    fn zero_global_keeps_profile() {
+        assert_eq!(combine_limits(20, 0), 20);
+    }
+
+    #[test]
+    fn both_nonzero_takes_min() {
+        assert_eq!(combine_limits(20, 50), 20);
+        assert_eq!(combine_limits(80, 50), 50);
     }
 }

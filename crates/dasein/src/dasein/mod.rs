@@ -309,7 +309,7 @@ impl DaseinModule {
 #[cfg(test)]
 impl Default for DaseinModule {
     fn default() -> Self {
-        Self::new(Arc::new(aletheon_kernel::chronos::TestClock::default())).0
+        Self::new(Arc::new(kernel::chronos::TestClock::default())).0
     }
 }
 
@@ -376,7 +376,7 @@ mod tests {
     use super::*;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {
-        Arc::new(aletheon_kernel::chronos::TestClock::default())
+        Arc::new(kernel::chronos::TestClock::default())
     }
 
     #[test]

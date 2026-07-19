@@ -320,7 +320,7 @@ mod tests {
     use std::sync::Arc;
 
     fn test_clock() -> Arc<dyn fabric::Clock> {
-        Arc::new(aletheon_kernel::chronos::TestClock::default())
+        Arc::new(kernel::chronos::TestClock::default())
     }
 
     fn make_reflection(what_worked: Vec<&str>, learned: Vec<&str>) -> ReflectionEntry {

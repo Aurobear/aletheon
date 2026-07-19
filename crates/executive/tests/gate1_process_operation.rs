@@ -25,15 +25,15 @@
 
 mod turn_request_support;
 
-use aletheon_kernel::chronos::TestClock;
-use aletheon_kernel::operation::OperationScope;
-use aletheon_kernel::KernelRuntime;
 use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
 use fabric::{
     CancelReason, MonoDeadlineMillis, NoopTurnEventSink, OperationExitReason, OperationId,
     OperationKind, OperationRequest, OperationState, ProcessId, ProcessSignal, ProcessState,
     SpawnSpec, TurnRequest, TurnServices, TurnStop,
 };
+use kernel::chronos::TestClock;
+use kernel::operation::OperationScope;
+use kernel::KernelRuntime;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,8 +44,9 @@ use std::time::Duration;
 
 fn test_kernel() -> Arc<KernelRuntime> {
     let clock: Arc<dyn fabric::Clock> = Arc::new(TestClock::default());
-    let admission: Arc<dyn fabric::AdmissionController> =
-        Arc::new(aletheon_kernel::admission::AllowAllAdmissionController::new(clock.clone()));
+    let admission: Arc<dyn fabric::AdmissionController> = Arc::new(
+        kernel::admission::AllowAllAdmissionController::new(clock.clone()),
+    );
     Arc::new(KernelRuntime::with_admission(clock, admission))
 }
 
