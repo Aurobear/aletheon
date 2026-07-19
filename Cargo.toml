@@ -17,6 +17,8 @@ members = [
     "crates/platform-api",
     "crates/platform-host",
     "crates/platform-linux",
+    "crates/runtime-api",
+    "crates/runtime-broker",
     "examples/basic-agent",
     "examples/self-evolution-loop",
 ]

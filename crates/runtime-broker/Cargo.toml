@@ -1,0 +1,9 @@
+[package]
+name = "runtime-broker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+runtime-api = { path = "../runtime-api" }
+anyhow = { workspace = true }
