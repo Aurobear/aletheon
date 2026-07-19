@@ -476,7 +476,7 @@ if rg -n '\.launch\(|\.run_in_context\(|provider.*\.complete\(' \
   echo "architecture-check: Agent recovery replays ordinary runtime/provider work" >&2
   exit 1
 fi
-if ! rg -q 'reconcile_startup' crates/executive/src/impl/daemon/bootstrap/request.rs; then
+if ! rg -q 'reconcile_startup' crates/executive/src/impl/daemon/bootstrap/request.rs crates/executive/src/impl/daemon/bootstrap/services.rs; then
   echo "architecture-check: daemon startup skips durable Agent reconciliation" >&2
   exit 1
 fi
