@@ -13,7 +13,7 @@ use crate::service::governed_capability::{
     CapabilityExecutionContext, CapabilityRuntimeFactory, RegistryAuthorityProvider,
 };
 use crate::service::turn_runtime_ports::{
-    ActiveAgentProfilePort, ActiveAgentProfileSnapshot, ApprovalNotice, GovernedTurnCapabilityPort,
+    ActiveAgentProfilePort, ResolvedTurnProfile, ApprovalNotice, GovernedTurnCapabilityPort,
     ModelSelectionPort, PreparedCapabilities, SelfPolicyPort, StormStatePort, TurnApprovalPort,
     TurnConfigPort, TurnHookPort, TurnObservabilityPort, TurnRuntimePorts, TurnSessionStatePort,
 };
@@ -432,7 +432,7 @@ impl ProductionActiveAgentProfile {
 
 #[async_trait]
 impl ActiveAgentProfilePort for ProductionActiveAgentProfile {
-    async fn snapshot(&self) -> anyhow::Result<ActiveAgentProfileSnapshot> {
+    async fn snapshot(&self) -> anyhow::Result<ResolvedTurnProfile> {
         // Clone the name under the switch lock, then resolve an owned profile.
         // No live mutable profile state survives this call.
         let profile_name = self.current.lock().await.clone();
@@ -440,15 +440,25 @@ impl ActiveAgentProfilePort for ProductionActiveAgentProfile {
             .profiles
             .resolve_by_name(&profile_name)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(ActiveAgentProfileSnapshot {
-            profile_name,
-            allowed_tools: resolved.profile.allowed_tools.into_iter().collect(),
+        let p = &resolved.profile;
+        Ok(ResolvedTurnProfile {
+            profile_name: p.profile_name.clone(),
+            allowed_tools: p.allowed_tools.iter().cloned().collect(),
+            system_prompt: p.system_prompt.clone(),
+            model_policy: Some(p.model.clone()),
+            max_iterations: p.max_iterations,
+            max_input_tokens: p.max_input_tokens,
+            max_output_tokens: p.max_output_tokens,
+            max_tool_calls: p.max_tool_calls,
+            max_elapsed_ms: p.max_elapsed_ms,
+            approval_policy: p.approval_policy,
+            tool_timeout_ms: p.tool_timeout_ms,
         })
     }
 }
 
 fn constrain_profile_capabilities(
-    snapshot: &ActiveAgentProfileSnapshot,
+    snapshot: &ResolvedTurnProfile,
     definitions: &mut Vec<fabric::ToolDefinition>,
     risk_by_tool: &mut HashMap<String, fabric::types::admission::RiskLevel>,
 ) {
@@ -591,9 +601,18 @@ mod tests {
 
     #[test]
     fn one_profile_snapshot_constrains_disclosure_and_executor_gate() {
-        let snapshot = ActiveAgentProfileSnapshot {
+        let snapshot = ResolvedTurnProfile {
             profile_name: "safe".into(),
             allowed_tools: ["file_read".to_owned()].into_iter().collect(),
+            system_prompt: String::new(),
+            model_policy: None,
+            max_iterations: 0,
+            max_input_tokens: 0,
+            max_output_tokens: 0,
+            max_tool_calls: 0,
+            max_elapsed_ms: 0,
+            approval_policy: fabric::AgentApprovalPolicy::AutoApprove,
+            tool_timeout_ms: 30_000,
         };
         let mut definitions = ["file_read", "file_write"]
             .into_iter()
@@ -633,9 +652,18 @@ mod tests {
     fn completed_turn_snapshot_is_immutable_across_profile_switch() {
         let mut active_allowed: std::collections::HashSet<_> =
             ["file_read".to_owned()].into_iter().collect();
-        let turn_snapshot = ActiveAgentProfileSnapshot {
+        let turn_snapshot = ResolvedTurnProfile {
             profile_name: "safe".into(),
             allowed_tools: active_allowed.clone(),
+            system_prompt: String::new(),
+            model_policy: None,
+            max_iterations: 0,
+            max_input_tokens: 0,
+            max_output_tokens: 0,
+            max_tool_calls: 0,
+            max_elapsed_ms: 0,
+            approval_policy: fabric::AgentApprovalPolicy::AutoApprove,
+            tool_timeout_ms: 30_000,
         };
         active_allowed.clear();
         active_allowed.insert("file_write".to_owned());
@@ -643,5 +671,36 @@ mod tests {
         assert!(turn_snapshot.allowed_tools.contains("file_read"));
         assert!(!turn_snapshot.allowed_tools.contains("file_write"));
         assert!(active_allowed.contains("file_write"));
+    }
+
+    #[test]
+    fn resolved_turn_profile_carries_behavior_and_authorization() {
+        let profile = crate::service::turn_runtime_ports::ResolvedTurnProfile {
+            profile_name: "test-code-agent".into(),
+            allowed_tools: ["file_read".to_owned(), "bash_exec".to_owned()]
+                .into_iter()
+                .collect(),
+            system_prompt: "You are a code agent. Write and test code.".into(),
+            model_policy: Some("gpt-5-code".into()),
+            max_iterations: 20,
+            max_input_tokens: 100_000,
+            max_output_tokens: 16_384,
+            max_tool_calls: 64,
+            max_elapsed_ms: 600_000,
+            approval_policy: fabric::AgentApprovalPolicy::AutoApprove,
+            tool_timeout_ms: 30_000,
+        };
+
+        assert_eq!(profile.profile_name, "test-code-agent");
+        assert!(profile.allowed_tools.contains("bash_exec"));
+        assert!(profile.system_prompt.contains("code agent"));
+        assert_eq!(profile.model_policy.as_deref(), Some("gpt-5-code"));
+        assert_eq!(profile.max_iterations, 20);
+        assert_eq!(profile.max_input_tokens, 100_000);
+        assert_eq!(profile.max_output_tokens, 16_384);
+        assert_eq!(profile.max_tool_calls, 64);
+        assert_eq!(profile.max_elapsed_ms, 600_000);
+        assert_eq!(profile.approval_policy, fabric::AgentApprovalPolicy::AutoApprove);
+        assert_eq!(profile.tool_timeout_ms, 30_000);
     }
 }

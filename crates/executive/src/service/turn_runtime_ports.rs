@@ -54,16 +54,27 @@ pub trait TurnObservabilityPort: Send + Sync {
     fn record_turn(&self, tokens_in: u64, tokens_out: u64);
 }
 
-/// Immutable authorization snapshot resolved once at the start of a turn.
+/// Immutable authorization + behavior snapshot resolved once per turn.
+/// Carries the full agent profile (prompt, model, budget, approval, tools)
+/// so the main turn does not silently fall back to hardcoded defaults.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ActiveAgentProfileSnapshot {
+pub struct ResolvedTurnProfile {
     pub profile_name: String,
     pub allowed_tools: HashSet<String>,
+    pub system_prompt: String,
+    pub model_policy: Option<String>,
+    pub max_iterations: usize,
+    pub max_input_tokens: u64,
+    pub max_output_tokens: u64,
+    pub max_tool_calls: u32,
+    pub max_elapsed_ms: u64,
+    pub approval_policy: fabric::AgentApprovalPolicy,
+    pub tool_timeout_ms: u64,
 }
 
 #[async_trait]
 pub trait ActiveAgentProfilePort: Send + Sync {
-    async fn snapshot(&self) -> anyhow::Result<ActiveAgentProfileSnapshot>;
+    async fn snapshot(&self) -> anyhow::Result<ResolvedTurnProfile>;
 }
 
 #[derive(Clone, Debug)]
