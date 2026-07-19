@@ -1,0 +1,76 @@
+# Aletheon 架构状态账本（Wave 0 基线，2026-07-19）
+# 由 scripts/architecture-check.sh 校验。每个条目声明 owner / 生产调用者 /
+# authority / 兼容删除期限。roadmap: docs/plans/2026-07-19-aletheon-execution-roadmap-design.md
+
+schema_version = 1
+
+[[turn_entry]]
+name = "TurnPipeline"
+role = "daemon 编排器"
+production_caller = "DaemonTurnOrchestrator"
+status = "production"
+
+[[turn_entry]]
+name = "TurnService"
+role = "CLI 生产入口"
+production_caller = "ExecSessionBuilder"
+status = "compatibility_facade"
+converge_into = "TurnEngine"
+target_wave = 1
+
+[[turn_entry]]
+name = "TurnCoordinator"
+role = "operation/session/cancel 控制外壳"
+production_caller = "TurnService"
+status = "production"
+
+[[turn_entry]]
+name = "AgentControlService"
+role = "child agent 运行"
+production_caller = "bootstrap/services.rs"
+status = "production"
+
+# 有名无实的抽象（无生产调用者）——标 experimental，后续 Wave 接入或删除。
+[[phantom_abstraction]]
+name = "fabric::RuntimeOps"
+evidence = "crates/fabric/src/include/runtime.rs:13 —— 零 impl"
+status = "experimental"
+decision = "delete_or_wire"
+target_wave = 2
+
+[[phantom_abstraction]]
+name = "AletheonExecutive::step"
+evidence = "crates/executive/src/core/orchestrator.rs:135 —— 占位递增，非生产路径"
+status = "experimental"
+decision = "delete_or_wire"
+target_wave = 2
+
+[[phantom_abstraction]]
+name = "CognitCore"
+evidence = "真实 turn 走 LinearCognitiveSession + ReActLoop"
+status = "experimental"
+decision = "delete_or_wire"
+target_wave = 2
+
+# 已 review 的跨界依赖——Wave 0 冻结（不新增），Wave 2 收敛到 0。
+[[reviewed_dependency]]
+from = "corpus"
+to = "cognit"
+reason = "MCP config 复用 cognit::config"
+target_removal_wave = 2
+
+[[reviewed_dependency]]
+from = "corpus"
+to = "mnemosyne"
+reason = "MCP credential 复用 mnemosyne::credential"
+target_removal_wave = 2
+
+[[reviewed_dependency]]
+from = "exec-server"
+to = "corpus"
+reason = "隔离 exec server 依赖整个 corpus"
+target_removal_wave = 2
+
+# 冻结基线：fabric 根级 pub use 数量（防止继续膨胀）。
+[freeze]
+fabric_root_reexports_max = 132
