@@ -97,6 +97,7 @@ impl RuntimeCore {
             deployment: app_config.deployment.clone(),
             backpressure: app_config.backpressure.clone(),
             agent_admission: app_config.agent.admission.clone(),
+            agent_max_iterations: app_config.agent.max_iterations,
         };
 
         // ── Event bus ───────────────────────────────────────────────

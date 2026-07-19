@@ -9,6 +9,18 @@ use tracing::info;
 use crate::r#impl::agent_loader::AgentLoader;
 use crate::service::inference_port::{InferencePort, PortLlmProvider};
 
+/// Combine a profile-level and global iteration limit where `0` means
+/// "unlimited". The old `.min(global).max(1)` collapsed `0` (unlimited)
+/// into `1`; this preserves unlimited semantics on both sides.
+fn combine_limits(profile: usize, global: usize) -> usize {
+    match (profile, global) {
+        (0, 0) => 0,
+        (0, global) => global,
+        (profile, 0) => profile,
+        (profile, global) => profile.min(global),
+    }
+}
+
 pub(super) fn load_agent_profiles(
     agents_dir: &std::path::Path,
     inference: Arc<dyn InferencePort>,
@@ -62,11 +74,10 @@ pub(super) fn load_agent_profiles(
 
         // Apply per-profile overrides from AgentProfilesConfig.
         let overrides = profiles_config.overrides.get(&role.name);
-        let max_iterations = overrides
+        let profile_limit = overrides
             .and_then(|ov| ov.max_iterations)
-            .unwrap_or(role.max_iterations)
-            .min(config.max_iterations)
-            .max(1);
+            .unwrap_or(role.max_iterations);
+        let max_iterations = combine_limits(profile_limit, config.max_iterations);
         let tool_timeout_ms = overrides
             .and_then(|ov| ov.tool_timeout_ms)
             .unwrap_or(30_000);
@@ -501,5 +512,31 @@ mod goal_runtime_tests {
             &unknown_default,
         )
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod combine_limits_tests {
+    use super::combine_limits;
+
+    #[test]
+    fn zero_profile_zero_global_is_unlimited() {
+        assert_eq!(combine_limits(0, 0), 0);
+    }
+
+    #[test]
+    fn zero_profile_uses_global_cap() {
+        assert_eq!(combine_limits(0, 50), 50);
+    }
+
+    #[test]
+    fn zero_global_keeps_profile() {
+        assert_eq!(combine_limits(20, 0), 20);
+    }
+
+    #[test]
+    fn both_nonzero_takes_min() {
+        assert_eq!(combine_limits(20, 50), 20);
+        assert_eq!(combine_limits(80, 50), 50);
     }
 }

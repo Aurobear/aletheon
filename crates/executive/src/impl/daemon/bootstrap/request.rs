@@ -505,6 +505,9 @@ impl RequestHandler {
             conscious_arbitration_mode: config.conscious_arbitration_mode,
             compaction_v2: grok_hardening.compaction_v2,
             streaming_tools: grok_hardening.streaming_tools,
+            // Wave 0: honor configured agent iteration cap (0 = unlimited)
+            // instead of the hardcoded Default (50).
+            max_iterations: config.agent_max_iterations,
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();

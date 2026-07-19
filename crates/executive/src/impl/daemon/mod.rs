@@ -56,6 +56,8 @@ pub struct DaemonConfig {
     pub backpressure: crate::core::config::BackpressureConfig,
     /// Root-scoped multi-Agent topology and rollout limits.
     pub agent_admission: cognit::config::AgentAdmissionConfig,
+    /// 0 = unlimited agent iterations; populated from AppConfig.agent.max_iterations.
+    pub agent_max_iterations: usize,
 }
 
 pub fn parse_conscious_arbitration_mode(

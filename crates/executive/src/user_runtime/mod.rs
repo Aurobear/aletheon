@@ -87,6 +87,7 @@ impl UserRuntimeConfig {
             deployment,
             backpressure: app.backpressure.clone(),
             agent_admission: app.agent.admission.clone(),
+            agent_max_iterations: app.agent.max_iterations,
         };
         Ok(Self {
             request,
