@@ -7,6 +7,12 @@ use async_trait::async_trait;
 
 pub struct LinuxSandboxHost;
 
+impl Default for LinuxSandboxHost {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl LinuxSandboxHost {
     pub fn new() -> Self {
         Self

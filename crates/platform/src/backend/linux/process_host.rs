@@ -11,11 +11,17 @@ pub struct LinuxProcessHost {
     children: tokio::sync::Mutex<HashMap<u32, tokio::process::Child>>,
 }
 
-impl LinuxProcessHost {
-    pub fn new() -> Self {
+impl Default for LinuxProcessHost {
+    fn default() -> Self {
         Self {
             children: tokio::sync::Mutex::new(HashMap::new()),
         }
+    }
+}
+
+impl LinuxProcessHost {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 

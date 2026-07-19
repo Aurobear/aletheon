@@ -4,6 +4,12 @@ use crate::manifest::{FeatureState, HostCapabilityManifest, HostFeature};
 
 pub struct LinuxStubBackend;
 
+impl Default for LinuxStubBackend {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl LinuxStubBackend {
     pub fn new() -> Self {
         Self

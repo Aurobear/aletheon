@@ -4,40 +4,46 @@ use crate::manifest::{FeatureState, HostCapabilityManifest, HostFeature};
 
 pub struct LinuxBackend;
 
+impl Default for LinuxBackend {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl LinuxBackend {
     pub fn new() -> Self {
         Self
     }
 
     pub fn probe(&self) -> HostCapabilityManifest {
-        let mut features = Vec::new();
-
-        // ProcessTree: pidfd support (Linux 5.3+)
-        features.push((HostFeature::ProcessTree, Self::check_pidfd()));
-        // FilesystemConfinement: only claim support when Landlock is exposed.
-        features.push((
-            HostFeature::FilesystemConfinement,
-            Self::check_path("/sys/kernel/security/landlock"),
-        ));
-        // FileWatching: inotify
-        features.push((HostFeature::FileWatching, Self::check_inotify()));
-        features.push((HostFeature::Pty, Self::check_path("/dev/ptmx")));
-        // ServiceManagement: systemd via D-Bus
-        features.push((HostFeature::ServiceManagement, Self::check_systemd()));
-        // Sandbox features
-        features.push((
-            HostFeature::SandboxNamespace,
-            Self::check_path("/proc/self/ns/user"),
-        ));
-        features.push((
-            HostFeature::SandboxSeccomp,
-            Self::check_path("/proc/sys/kernel/seccomp/actions_avail"),
-        ));
-        // Desktop: not probed yet (H4)
-        features.push((HostFeature::DesktopAccessibility, FeatureState::Unsupported));
-        features.push((HostFeature::DesktopInput, FeatureState::Unsupported));
-        features.push((HostFeature::MediaCamera, FeatureState::Unsupported));
-        features.push((HostFeature::CredentialVault, FeatureState::Unsupported));
+        let features = vec![
+            // ProcessTree: pidfd support (Linux 5.3+)
+            (HostFeature::ProcessTree, Self::check_pidfd()),
+            // FilesystemConfinement: only claim support when Landlock is exposed.
+            (
+                HostFeature::FilesystemConfinement,
+                Self::check_path("/sys/kernel/security/landlock"),
+            ),
+            // FileWatching: inotify
+            (HostFeature::FileWatching, Self::check_inotify()),
+            (HostFeature::Pty, Self::check_path("/dev/ptmx")),
+            // ServiceManagement: systemd via D-Bus
+            (HostFeature::ServiceManagement, Self::check_systemd()),
+            // Sandbox features
+            (
+                HostFeature::SandboxNamespace,
+                Self::check_path("/proc/self/ns/user"),
+            ),
+            (
+                HostFeature::SandboxSeccomp,
+                Self::check_path("/proc/sys/kernel/seccomp/actions_avail"),
+            ),
+            // Desktop: not probed yet (H4)
+            (HostFeature::DesktopAccessibility, FeatureState::Unsupported),
+            (HostFeature::DesktopInput, FeatureState::Unsupported),
+            (HostFeature::MediaCamera, FeatureState::Unsupported),
+            (HostFeature::CredentialVault, FeatureState::Unsupported),
+        ];
 
         HostCapabilityManifest {
             platform: "linux".into(),

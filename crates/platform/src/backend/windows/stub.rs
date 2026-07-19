@@ -4,6 +4,12 @@ use crate::manifest::{FeatureState, HostCapabilityManifest, HostFeature};
 
 pub struct WindowsStubBackend;
 
+impl Default for WindowsStubBackend {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl WindowsStubBackend {
     pub fn new() -> Self {
         Self

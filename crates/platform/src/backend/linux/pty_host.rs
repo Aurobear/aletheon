@@ -9,6 +9,12 @@ use std::time::Instant;
 
 pub struct LinuxPtyHost;
 
+impl Default for LinuxPtyHost {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl LinuxPtyHost {
     pub fn new() -> Self {
         Self

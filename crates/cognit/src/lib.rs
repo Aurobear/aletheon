@@ -14,7 +14,8 @@
 //! - **Critic** — multi-dimensional critique (correctness, completeness, risk, efficiency, reversibility)
 //! - **Learner** — experience → learned rules
 //! - **WorldModel** — environment state tracking via observations
-//! Production sessions compose the focused components through `harness`.
+//! - **Harness** — production sessions compose the focused components through
+//!   `harness`.
 
 pub mod bridge;
 pub mod config;

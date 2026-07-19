@@ -3,6 +3,13 @@
 use crate::manifest::{FeatureState, HostCapabilityManifest, HostFeature};
 
 pub struct MacOSStubBackend;
+
+impl Default for MacOSStubBackend {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl MacOSStubBackend {
     pub fn new() -> Self {
         Self

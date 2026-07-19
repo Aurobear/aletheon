@@ -43,8 +43,8 @@ pub fn probe() -> Result<HostCapabilityManifest, anyhow::Error> {
 pub fn open_filesystem(scope: FilesystemScope) -> Result<Box<dyn FilesystemHost>, HostError> {
     #[cfg(target_os = "linux")]
     {
-        return backend::linux::LinuxFilesystemHost::scoped(scope)
-            .map(|host| Box::new(host) as Box<dyn FilesystemHost>);
+        backend::linux::LinuxFilesystemHost::scoped(scope)
+            .map(|host| Box::new(host) as Box<dyn FilesystemHost>)
     }
     #[cfg(target_os = "windows")]
     {
