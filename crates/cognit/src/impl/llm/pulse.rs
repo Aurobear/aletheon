@@ -12,7 +12,7 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use fabric::evolution::CognitivePulseEvent;
-use fabric::CommunicationBus;
+use fabric::CanonicalEventBus;
 use fabric::SchemaId;
 
 use super::scheduler::LlmScheduler;
@@ -38,7 +38,7 @@ impl Default for PulseConfig {
 /// The heart — periodically broadcasts cognitive energy to the event bus.
 pub struct LlmPulse {
     scheduler: Arc<LlmScheduler>,
-    bus: Arc<CommunicationBus>,
+    bus: Arc<CanonicalEventBus>,
     config: PulseConfig,
     clock: Arc<dyn Clock>,
 }
@@ -46,7 +46,7 @@ pub struct LlmPulse {
 impl LlmPulse {
     pub fn new(
         scheduler: Arc<LlmScheduler>,
-        bus: Arc<CommunicationBus>,
+        bus: Arc<CanonicalEventBus>,
         config: PulseConfig,
         clock: Arc<dyn Clock>,
     ) -> Self {
@@ -92,7 +92,7 @@ impl LlmPulse {
         let json_payload = serde_json::to_value(&event)?;
 
         self.bus
-            .publish_event_v2(
+            .publish_event(
                 SchemaId(SchemaId::EVENT_COGNITIVE_PULSE_V1.into()),
                 "llm_pulse",
                 json_payload,

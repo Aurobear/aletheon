@@ -4,15 +4,15 @@ use std::sync::Arc;
 use aletheon_kernel::chronos::TestClock;
 use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
-use executive::service::conscious_core_ports::LatestConsciousContextPort;
 use executive::service::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use executive::service::governed_capability::{
-    GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
+    GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
 };
 use fabric::{
-    AgentId, AgentProfileId, AgoraSpaceId, CapabilityCall, CapabilityResult, NamespaceId, PermitId,
-    SpawnSpec, UsageReport, WorkspaceAttribution, WorkspaceContent,
+    AgentId, AgentProfileId, AgoraSpaceId, CapabilityCall, CapabilityResult,
+    ConsciousArbitrationMode, LatestConsciousContextPort, NamespaceId, PermitId, SpawnSpec,
+    UsageReport, WorkspaceAttribution, WorkspaceContent,
 };
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallRequest, RecallSet};
 use tempfile::tempdir;
@@ -21,6 +21,95 @@ use uuid::Uuid;
 
 struct EmptyMemory {
     recalls: AtomicUsize,
+}
+
+#[tokio::test]
+async fn production_planner_reorders_same_turn_from_host_confidence() {
+    let directory = tempdir().unwrap();
+    let clock = Arc::new(TestClock::new(10_000, 20));
+    let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
+    let owner = kernel
+        .spawn_process(SpawnSpec {
+            agent_id: AgentId(Uuid::from_u128(101)),
+            parent: None,
+            profile: AgentProfileId("root".into()),
+            namespace: NamespaceId("production-reorder".into()),
+            initial_operation: None,
+            deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
+        })
+        .await
+        .unwrap()
+        .id;
+    let tools = Arc::new(Mutex::new(corpus::ToolRegistry::default()));
+    {
+        let mut registry = tools.lock().await;
+        registry.set_proposal_confidence("file_read", 0.2).unwrap();
+        registry.set_proposal_confidence("file_write", 0.9).unwrap();
+    }
+    let registry = Arc::new(
+        ConsciousWorkspaceRegistry::production_with_mode_and_tools(
+            directory.path().join("reorder.db"),
+            Arc::new(DaseinWorkspaceAdapter::new(
+                Arc::new(dasein::dasein::DaseinModule::new(clock.clone()).0),
+                clock.clone(),
+            )),
+            kernel,
+            clock,
+            Arc::new(EmptyMemory {
+                recalls: AtomicUsize::new(0),
+            }),
+            Arc::new(Mutex::new(corpus::SkillLoader::new(
+                directory.path().join("skills"),
+            ))),
+            tools,
+            ConsciousArbitrationMode::Enforce,
+        )
+        .unwrap(),
+    );
+    let space = AgoraSpaceId("session:production-reorder".into());
+    registry
+        .observe_turn(
+            space.clone(),
+            owner,
+            owner,
+            fabric::OperationId::new(),
+            "read then write",
+        )
+        .await
+        .unwrap();
+    let calls = vec![
+        CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: owner,
+            name: "file_read".into(),
+            input: serde_json::json!({"confidence": 1.0}),
+            call_id: "provider-first".into(),
+            deadline: None,
+        },
+        CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: owner,
+            name: "file_write".into(),
+            input: serde_json::json!({"confidence": 0.0}),
+            call_id: "provider-second".into(),
+            deadline: None,
+        },
+    ];
+    let plan = registry
+        .batch_planner(space)
+        .await
+        .unwrap()
+        .plan(calls)
+        .await
+        .unwrap();
+
+    assert_eq!(plan.mode, ConsciousArbitrationMode::Enforce);
+    assert_eq!(
+        plan.ordered_call_ids,
+        vec!["provider-second", "provider-first"]
+    );
+    assert!(plan.decisions[1].priority > plan.decisions[0].priority);
 }
 
 #[async_trait]
@@ -56,6 +145,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
             namespace: NamespaceId("production-conscious".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await
         .unwrap()
@@ -143,7 +233,14 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
             })
         ));
 
-    let action_loop = registry.resolve(space.clone(), owner, owner).await.unwrap();
+    // Exercise action/outcome recurrence in a fresh field. The observation
+    // field intentionally retains competing processor candidates, so it is
+    // not a deterministic action-selection fixture.
+    let action_space = AgoraSpaceId("session:production-conscious-action".into());
+    let action_loop = registry
+        .resolve(action_space.clone(), owner, owner)
+        .await
+        .unwrap();
     let call = CapabilityCall {
         operation_id: fabric::OperationId(Uuid::from_u128(11)),
         process_id: owner,
@@ -152,7 +249,10 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
         call_id: "gmail-11".into(),
         deadline: None,
     };
-    let selected = action_loop.select_action(&call).await.unwrap();
+    let decision = action_loop.select_action(&call).await.unwrap();
+    let GovernedActionDecision::Proceed { selected, .. } = decision else {
+        panic!("production action must proceed: {decision:?}")
+    };
     let outcome: SelectedActionOutcomeReceipt = action_loop
         .observe_outcome(
             &selected,
@@ -166,13 +266,14 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
                     ..UsageReport::default()
                 },
                 audit_id: Some(fabric::AuditEventId(Uuid::from_u128(13))),
+                patch_delta: None,
             },
         )
         .await
         .unwrap();
 
     assert!(outcome.broadcast_epoch.0 > selected.broadcast_epoch.0);
-    let latest = registry.latest_context(&space).await.unwrap();
+    let latest = registry.latest_context(&action_space).await.unwrap();
     assert_eq!(
         latest.receipt.broadcast_epoch,
         Some(outcome.broadcast_epoch)
@@ -187,11 +288,16 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
             namespace: NamespaceId("production-conscious-child".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await
         .unwrap()
         .id;
-    let child_loop = registry.resolve(space.clone(), child, owner).await.unwrap();
+    let child_space = AgoraSpaceId("session:production-conscious-child".into());
+    let child_loop = registry
+        .resolve(child_space.clone(), child, owner)
+        .await
+        .unwrap();
     let child_call = CapabilityCall {
         operation_id: fabric::OperationId(Uuid::from_u128(20)),
         process_id: child,
@@ -200,7 +306,14 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
         call_id: "child-20".into(),
         deadline: None,
     };
-    let child_action = child_loop.select_action(&child_call).await.unwrap();
+    let child_decision = child_loop.select_action(&child_call).await.unwrap();
+    let GovernedActionDecision::Proceed {
+        selected: child_action,
+        ..
+    } = child_decision
+    else {
+        panic!("legacy empty child field must proceed")
+    };
     let child_outcome = child_loop
         .observe_outcome(
             &child_action,
@@ -214,11 +327,12 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
                     ..UsageReport::default()
                 },
                 audit_id: None,
+                patch_delta: None,
             },
         )
         .await
         .unwrap();
-    let child_context = registry.latest_context(&space).await.unwrap();
+    let child_context = registry.latest_context(&child_space).await.unwrap();
     assert_eq!(
         child_context.receipt.broadcast_epoch,
         Some(child_outcome.broadcast_epoch)
@@ -234,14 +348,16 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
                 if frame.attribution == WorkspaceAttribution::ChildAgent { process: child }
         )));
 
-    let replay = registry.store().replay(&space).unwrap();
-    assert_eq!(replay.len(), 6);
-    for entry in replay {
-        assert!(registry
-            .store()
-            .integration(&space, entry.broadcast.epoch)
-            .unwrap()
-            .is_some());
+    for (replay_space, expected) in [(&space, 2), (&action_space, 2), (&child_space, 2)] {
+        let replay = registry.store().replay(replay_space).unwrap();
+        assert_eq!(replay.len(), expected);
+        for entry in replay {
+            assert!(registry
+                .store()
+                .integration(replay_space, entry.broadcast.epoch)
+                .unwrap()
+                .is_some());
+        }
     }
 }
 

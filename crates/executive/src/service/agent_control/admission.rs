@@ -10,7 +10,8 @@ use cognit::config::AgentAdmissionConfig;
 use fabric::BudgetController;
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentId, AgentProfileId, AgentSpawnRequest,
-    AttemptUsage, BudgetRequest, BudgetReservationId, BudgetScopeId, BudgetScopeKind, UsageReport,
+    AttemptUsage, BudgetRequest, BudgetReservationId, BudgetScopeId, BudgetScopeKind,
+    BudgetTransferReceipt, UsageReport,
 };
 use parking_lot::Mutex;
 
@@ -21,6 +22,7 @@ pub struct AgentStorageRequest {
 }
 
 pub struct AgentAdmissionRequest<'a> {
+    pub agent_id: AgentId,
     pub spawn: &'a AgentSpawnRequest,
     pub depth: u16,
     pub parent_profile: Option<&'a AgentProfileId>,
@@ -35,6 +37,23 @@ impl<'a> AgentAdmissionRequest<'a> {
         storage: AgentStorageRequest,
     ) -> Self {
         Self {
+            agent_id: AgentId::new(),
+            spawn,
+            depth,
+            parent_profile,
+            storage,
+        }
+    }
+
+    pub fn new_for_agent(
+        agent_id: AgentId,
+        spawn: &'a AgentSpawnRequest,
+        depth: u16,
+        parent_profile: Option<&'a AgentProfileId>,
+        storage: AgentStorageRequest,
+    ) -> Self {
+        Self {
+            agent_id,
             spawn,
             depth,
             parent_profile,
@@ -59,6 +78,11 @@ pub trait AgentAdmissionLease: Send {
     async fn mark_running(&mut self) -> Result<(), AgentControlError>;
     async fn settle(&mut self, usage: &AttemptUsage) -> Result<(), AgentControlError>;
     async fn revoke(&mut self) -> Result<(), AgentControlError>;
+    async fn transfer_remaining_to(
+        &mut self,
+        parent: AgentId,
+        usage: &AttemptUsage,
+    ) -> Result<BudgetTransferReceipt, AgentControlError>;
 }
 
 #[async_trait]
@@ -88,6 +112,7 @@ struct AdmissionState {
     running_slots: usize,
     waiters: VecDeque<u64>,
     next_waiter: u64,
+    agent_reservations: HashMap<AgentId, BudgetReservationId>,
 }
 
 pub struct BoundedAgentAdmission {
@@ -187,7 +212,7 @@ impl AgentAdmissionPort for BoundedAgentAdmission {
     ) -> Result<Box<dyn AgentAdmissionLease>, AgentControlError> {
         self.validate_policy(&request)?;
         let root = request.spawn.root_agent_id;
-        let (waiter_id, ticket) = {
+        let (waiter_id, _ticket) = {
             let mut state = self.state.lock();
             let root_state = state.roots.entry(root).or_default();
             if root_state.resident >= self.config.max_agents_per_root {
@@ -313,7 +338,7 @@ impl AgentAdmissionPort for BoundedAgentAdmission {
             .reserve_child(
                 root_scope,
                 BudgetScopeKind::Process,
-                format!("agent-ticket:{}:{ticket}", root.0),
+                format!("agent:{}", request.agent_id.0),
                 BudgetRequest {
                     max_tokens: Some(requested_tokens),
                     max_cost_micro: cost_micro(request.spawn.budget.max_cost_usd)?,
@@ -326,6 +351,10 @@ impl AgentAdmissionPort for BoundedAgentAdmission {
                 return Err(capacity("Agent root rollout budget is exhausted"));
             }
         };
+        self.state
+            .lock()
+            .agent_reservations
+            .insert(request.agent_id, reservation.reservation_id);
         pending.disarm();
         Ok(Box::new(BoundedAdmissionLease {
             state: self.state.clone(),
@@ -334,6 +363,7 @@ impl AgentAdmissionPort for BoundedAgentAdmission {
             root,
             storage: request.storage,
             reservation: Some(reservation.reservation_id),
+            agent_id: request.agent_id,
             phase: LeasePhase::Queued,
         }))
     }
@@ -370,6 +400,7 @@ struct BoundedAdmissionLease {
     root: AgentId,
     storage: AgentStorageRequest,
     reservation: Option<BudgetReservationId>,
+    agent_id: AgentId,
     phase: LeasePhase,
 }
 
@@ -409,6 +440,7 @@ impl AgentAdmissionLease for BoundedAdmissionLease {
             .await
             .map_err(|error| conflict(format!("Agent budget settlement failed: {error}")))?;
         self.reservation = None;
+        self.state.lock().agent_reservations.remove(&self.agent_id);
         release_topology(
             &self.state,
             &self.capacity_changed,
@@ -430,6 +462,7 @@ impl AgentAdmissionLease for BoundedAdmissionLease {
                 .await
                 .map_err(|error| conflict(format!("Agent budget revoke failed: {error}")))?;
         }
+        self.state.lock().agent_reservations.remove(&self.agent_id);
         release_topology(
             &self.state,
             &self.capacity_changed,
@@ -439,6 +472,51 @@ impl AgentAdmissionLease for BoundedAdmissionLease {
         );
         self.phase = LeasePhase::Closed;
         Ok(())
+    }
+
+    async fn transfer_remaining_to(
+        &mut self,
+        parent: AgentId,
+        usage: &AttemptUsage,
+    ) -> Result<BudgetTransferReceipt, AgentControlError> {
+        if self.phase == LeasePhase::Closed {
+            return Err(conflict("Agent admission lease is already closed"));
+        }
+        let child = self
+            .reservation
+            .ok_or_else(|| conflict("Agent admission lease has no live budget reservation"))?;
+        let parent = self
+            .state
+            .lock()
+            .agent_reservations
+            .get(&parent)
+            .copied()
+            .ok_or_else(|| conflict("parent Agent has no live budget reservation"))?;
+        let receipt = self
+            .budget
+            .transfer_remaining_reservation(
+                child,
+                parent,
+                &UsageReport {
+                    tokens_used: usage.input_tokens.saturating_add(usage.output_tokens),
+                    cost_micro: cost_micro(usage.cost_usd)?.unwrap_or(0),
+                    wall_time_ms: usage.elapsed_ms,
+                    ..UsageReport::default()
+                },
+            )
+            .await
+            .map_err(|error| conflict(format!("Agent budget transfer failed: {error}")))?;
+        self.reservation = None;
+        self.state.lock().agent_reservations.remove(&self.agent_id);
+        release_topology(
+            &self.state,
+            &self.capacity_changed,
+            self.root,
+            self.storage,
+            self.phase,
+        );
+        self.phase = LeasePhase::Closed;
+        Ok(receipt)
     }
 }
 

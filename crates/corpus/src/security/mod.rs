@@ -2,12 +2,15 @@
 
 pub mod approval;
 pub mod credential_vault;
+pub mod escape_detector;
 pub mod exec_policy;
 pub mod permission_rules;
 pub mod runner;
 pub mod sandbox;
 pub mod socket_approval;
 pub mod storm_breaker;
+pub mod strategy;
+pub mod structured_sandbox;
 
 // Shared security types — re-exported from fabric (single source of truth).
 // Both corpus and dasein share these types via fabric::security.
@@ -51,3 +54,4 @@ pub use exec_policy::{
 pub use permission_rules::{load_permission_context, load_permission_context_from_str};
 pub use runner::ToolRunnerWithGuard;
 pub use socket_approval::{PendingApproval, SocketApprovalGate};
+pub use structured_sandbox::StructuredToolSandbox;

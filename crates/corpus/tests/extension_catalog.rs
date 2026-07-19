@@ -4,6 +4,7 @@ use fabric::{
     ActivationConstraints, CapabilityId, ExtensionCatalog as _, ExtensionDescriptor, ExtensionKind,
     ExtensionOrigin, ToolDefinition,
 };
+use std::sync::Arc;
 
 fn descriptor(kind: ExtensionKind, name: &str, capability: &str) -> ExtensionDescriptor {
     let value = ExtensionDescriptor::new(
@@ -88,4 +89,34 @@ fn duplicate_identity_and_executable_capability_conflicts_are_deterministic() {
     assert!(
         matches!(conflict, CorpusError::ConflictingCapability { capability, .. } if capability == "file.read")
     );
+}
+
+#[test]
+fn runtime_skills_and_hooks_are_discovered_before_activation() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("review.md"),
+        "# Review\nChecks a result.\n\nReview instructions.",
+    )
+    .unwrap();
+    let mut skills = corpus::SkillLoader::new(root.path().to_path_buf());
+    assert_eq!(skills.load_all_enhanced(), 1);
+    let mut hooks =
+        corpus::HookRegistry::new(Arc::new(aletheon_kernel::chronos::TestClock::default()));
+    hooks.register(corpus::hook::registry::RegisteredHook {
+        name: "audit".into(),
+        source: "builtin".into(),
+        script_path: None,
+        point: fabric::hook::HookPoint::PostTool,
+        priority: 10,
+    });
+
+    let descriptors = corpus::discover_runtime_extensions(&skills, &hooks).unwrap();
+    assert_eq!(descriptors.len(), 2);
+    assert!(descriptors
+        .iter()
+        .any(|entry| entry.kind == ExtensionKind::Skill));
+    assert!(descriptors
+        .iter()
+        .any(|entry| entry.kind == ExtensionKind::Hook));
 }

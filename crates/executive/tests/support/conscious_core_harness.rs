@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use aletheon_kernel::chronos::TestClock;
 use aletheon_kernel::KernelRuntime;
+use anyhow::Context;
 use async_trait::async_trait;
 use executive::r#impl::events::{
     agent_tree_projection::AgentTreeProjection, debug_projection::DebugProjection,
@@ -21,7 +22,7 @@ use executive::service::conscious_workspace::{ConsciousTurnPort, ConsciousWorksp
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use executive::service::event_projection::{EventProjection, SqliteProjectionStore};
 use executive::service::governed_capability::{
-    GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
+    GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
 };
 use fabric::{
     AcceptanceEvidence, AgentBudget, AgentContextFork, AgentControlError, AgentControlPort,
@@ -104,6 +105,8 @@ impl mnemosyne::MemoryService for FileBackedMemory {
                 temporal_state: mnemosyne::TemporalState::Current,
                 authority: mnemosyne::MemoryAuthority::ExternalReference,
                 scope: MemoryScope::Session("acceptance-session".into()),
+                score: 0.0,
+                evidence: None,
             }],
             degraded_sources: vec!["network-disabled-by-harness".into()],
         })
@@ -247,6 +250,7 @@ fn agent_spawn_request(root: AgentId, parent: fabric::ProcessId, label: &str) ->
         },
         broadcast_refs: vec![],
         allowed_tools: vec!["file_read".into()],
+        background_decls: vec![],
         budget: AgentBudget {
             max_input_tokens: 1_000,
             max_output_tokens: 1_000,
@@ -787,6 +791,7 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
             namespace: NamespaceId("ablation".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await?
         .id;
@@ -813,7 +818,8 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
             store.clone(),
             dasein.clone(),
             fabric::ProcessId(Uuid::from_u128(804)),
-            kernel,
+            kernel.clone(),
+            Arc::new(agora::AgoraRegistry::new(kernel.clock())),
             executive::service::conscious_core_coordinator::ConsciousCoreConfig::default(),
         )?;
     coordinator.register_processor(
@@ -900,6 +906,7 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
             namespace: NamespaceId("acceptance".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await?
         .id;
@@ -999,7 +1006,7 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
         });
 
     let action_loop = registry.resolve(space.clone(), owner, owner).await?;
-    let call = CapabilityCall {
+    let mut call = CapabilityCall {
         operation_id: fabric::OperationId(Uuid::from_u128(11)),
         process_id: owner,
         name: "fixture_local_search".into(),
@@ -1023,11 +1030,25 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
                 is_error: false,
                 usage: UsageReport::default(),
                 audit_id: None,
+                patch_delta: None,
             },
         )
         .await
         .is_err();
-    let selected = action_loop.select_action(&call).await?;
+    let mut selected = None;
+    for attempt in 0..16 {
+        call.call_id = format!("acceptance-call-11-{attempt}");
+        match action_loop.select_action(&call).await? {
+            GovernedActionDecision::Proceed {
+                selected: context, ..
+            } => {
+                selected = Some(context);
+                break;
+            }
+            GovernedActionDecision::Defer { .. } => {}
+        }
+    }
+    let selected = selected.context("acceptance fixture action never won bounded competition")?;
     let outcome: SelectedActionOutcomeReceipt = action_loop
         .observe_outcome(
             &selected,
@@ -1041,6 +1062,7 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
                     ..UsageReport::default()
                 },
                 audit_id: Some(fabric::AuditEventId(Uuid::from_u128(13))),
+                patch_delta: None,
             },
         )
         .await?;

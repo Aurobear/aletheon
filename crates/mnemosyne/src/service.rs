@@ -71,6 +71,10 @@ pub struct RecallRequest {
     pub max_content_bytes: usize,
     pub current_at: Option<DateTime<Utc>>,
     pub include_historical: bool,
+    /// Optional recall mode override. When `Some`, the pipeline resolves
+    /// the corresponding `RecallModeBundle` instead of using defaults.
+    #[serde(default)]
+    pub mode: Option<crate::recall::pipeline::RecallMode>,
 }
 
 impl RecallRequest {
@@ -86,6 +90,7 @@ impl RecallRequest {
             max_content_bytes: 64 * 1024,
             current_at: None,
             include_historical: false,
+            mode: None,
         }
     }
 
@@ -118,6 +123,12 @@ pub struct RecallItem {
     #[serde(default)]
     pub authority: MemoryAuthority,
     pub scope: MemoryScope,
+    /// Relevance score set by the recall pipeline (0.0 = unranked).
+    #[serde(default)]
+    pub score: f32,
+    /// Evidence level stamped during recall post-processing.
+    #[serde(default)]
+    pub evidence: Option<crate::recall::evidence::EvidenceLevel>,
 }
 
 /// Result of a recall query.
@@ -179,6 +190,8 @@ impl RecallItem {
             temporal_state,
             authority: record.authority,
             scope: record.scope,
+            score: 0.0,
+            evidence: None,
         })
     }
 }
@@ -276,6 +289,73 @@ impl ForgetReceipt {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Wave 3: Synthesis + Gap Analysis (GBrain "think" absorption)
+// ---------------------------------------------------------------------------
+
+/// A single inline citation linking back to a source record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SynthesisCitation {
+    pub index: usize,
+    pub record_id: String,
+    pub excerpt: String,
+    #[serde(default)]
+    pub evidence: Option<crate::recall::evidence::EvidenceLevel>,
+}
+
+/// A gap — something the memory system knows it doesn't know.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SynthesisGap {
+    pub question: String,
+    pub reason: String,
+}
+
+/// Synthesized answer with citations and gap analysis.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SynthesisResult {
+    /// Markdown answer with inline citation markers.
+    pub answer: String,
+    pub citations: Vec<SynthesisCitation>,
+    pub gaps: Vec<SynthesisGap>,
+    pub confidence: f64,
+}
+
+/// Request to synthesize an answer from memory.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SynthesisRequest {
+    pub question: String,
+    pub session: String,
+    /// Pre-fetched recall items (optional — if omitted, auto-recalled).
+    #[serde(default)]
+    pub pre_fetched: Option<Vec<RecallItem>>,
+    #[serde(default = "default_max_citations")]
+    pub max_citations: usize,
+}
+
+fn default_max_citations() -> usize {
+    8
+}
+
+/// A block of context fed to the synthesis model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SynthesisContextBlock {
+    pub record_id: String,
+    pub content: String,
+    pub score: f32,
+    pub evidence: Option<crate::recall::evidence::EvidenceLevel>,
+}
+
+/// Model trait for LLM-powered synthesis (feature-gated behind `llm-synthesis`).
+#[cfg(feature = "llm-synthesis")]
+#[async_trait]
+pub trait SynthesisModel: Send + Sync {
+    async fn synthesize(
+        &self,
+        question: &str,
+        context: &[SynthesisContextBlock],
+    ) -> anyhow::Result<SynthesisResult>;
+}
+
 /// Unified facade over the Mnemosyne memory objects.
 #[async_trait]
 pub trait MemoryService: Send + Sync {
@@ -286,6 +366,12 @@ pub trait MemoryService: Send + Sync {
         anyhow::bail!("forget preview is unavailable")
     }
     async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt>;
+
+    /// Synthesize an answer from memory with citations and gap analysis.
+    /// Default implementation returns an error (like `preview_forget`).
+    async fn synthesize(&self, _request: SynthesisRequest) -> anyhow::Result<SynthesisResult> {
+        anyhow::bail!("synthesis is unavailable")
+    }
 }
 
 /// Default `MemoryService` implementation delegating to the real
@@ -300,6 +386,53 @@ pub struct DefaultMemoryService {
     consolidation: Option<Arc<crate::consolidation::ConsolidationRepository>>,
     retention: Option<Arc<crate::retention::RetentionRepository>>,
     metrics: MemoryMetrics,
+    hybrid_params: Option<crate::RecallSearchParams>,
+    vector_search: Option<Arc<dyn crate::RecallSearchBackend>>,
+    embedding_endpoint_trusted: bool,
+    #[cfg(feature = "llm-synthesis")]
+    synthesis_model: Option<Arc<dyn SynthesisModel>>,
+    #[allow(dead_code)]
+    knowledge_graph: Option<Arc<Mutex<crate::knowledge_graph::KnowledgeGraph>>>,
+}
+
+fn all_memory_authorities() -> Vec<MemoryAuthority> {
+    vec![
+        MemoryAuthority::ApprovedCore,
+        MemoryAuthority::VerifiedLocalSemantic,
+        MemoryAuthority::LocalEpisode,
+        MemoryAuthority::AletheonExternal,
+        MemoryAuthority::ExternalReference,
+        MemoryAuthority::RawExperience,
+    ]
+}
+
+struct LexicalSnapshotBackend {
+    items: Vec<RecallItem>,
+}
+
+#[async_trait]
+impl crate::RecallSearchBackend for LexicalSnapshotBackend {
+    async fn search(
+        &self,
+        _request: &RecallRequest,
+        predicate: &crate::ScopePredicate,
+        top_k: usize,
+    ) -> anyhow::Result<crate::SearchOutcome> {
+        Ok(crate::SearchOutcome {
+            items: self
+                .items
+                .iter()
+                .take(top_k)
+                .enumerate()
+                .filter(|(_, item)| predicate.allows(item))
+                .map(|(index, item)| crate::RankedRecallItem {
+                    item: item.clone(),
+                    score: 1.0 / (index + 1) as f32,
+                })
+                .collect(),
+            index_stale: false,
+        })
+    }
 }
 
 impl DefaultMemoryService {
@@ -319,7 +452,39 @@ impl DefaultMemoryService {
             consolidation: None,
             retention: None,
             metrics: MemoryMetrics::default(),
+            hybrid_params: None,
+            vector_search: None,
+            embedding_endpoint_trusted: false,
+            #[cfg(feature = "llm-synthesis")]
+            synthesis_model: None,
+            knowledge_graph: None,
         }
+    }
+
+    /// Single production composition switch. Disabled preserves the existing
+    /// FTS-only call graph byte-for-byte; enabled adds the optional vector path.
+    pub fn with_memory_hybrid(mut self, enabled: bool) -> Self {
+        self.hybrid_params = enabled.then(|| crate::RecallSearchParams {
+            vector_enabled: true,
+            ..crate::RecallSearchParams::default()
+        });
+        self
+    }
+
+    pub fn with_vector_search_backend(
+        mut self,
+        backend: Arc<dyn crate::RecallSearchBackend>,
+        grant: &crate::credential::EmbeddingCredentialGrant,
+        endpoint_base_url: &str,
+        now_unix: u64,
+    ) -> Self {
+        self.vector_search = Some(backend);
+        // Trust is derived from the endpoint-scoped grant at composition time;
+        // callers cannot assert it with an unaudited boolean. Keeping the
+        // backend installed on rejection lets hybrid recall fail closed to FTS
+        // while reporting EmbeddingEndpointUntrusted.
+        self.embedding_endpoint_trusted = grant.approved_for(endpoint_base_url, now_unix);
+        self
     }
 
     pub fn with_metrics(mut self, metrics: MemoryMetrics) -> Self {
@@ -456,6 +621,155 @@ impl DefaultMemoryService {
         }
         Ok(())
     }
+    /// Recall through an explicit, already-verified authority filter. This is
+    /// the production entry point for child Agent memory access.
+    pub async fn recall_with_prefilter(
+        &self,
+        req: RecallRequest,
+        prefilter: &crate::RecallPreFilter,
+    ) -> anyhow::Result<RecallSet> {
+        if let Err(error) = req.validate() {
+            self.metrics
+                .recall_omitted(RecallOmittedReason::InvalidRequest, 1);
+            return Err(error);
+        }
+        let fetch_limit = req
+            .max_items
+            .saturating_mul(4)
+            .min(RecallRequest::MAX_ITEMS);
+        let predicate = prefilter.to_scope_predicate();
+        let now = wall_to_datetime(self.clock.wall_now());
+        let messages = async {
+            let started = Instant::now();
+            let result = self
+                .recall_memory
+                .lock()
+                .await
+                .search_in_session_prefiltered(&req.session, &req.query, fetch_limit, &predicate)
+                .map(|rows| crate::recall::local::messages(rows, &req));
+            (started.elapsed(), result)
+        };
+        let facts = async {
+            let started = Instant::now();
+            let result = self
+                .fact_store
+                .lock()
+                .await
+                .search_facts_prefiltered(&req.query, &req.session, 0.0, fetch_limit, &predicate)
+                .map(|rows| crate::recall::local::facts(rows, &req, now));
+            (started.elapsed(), result)
+        };
+        let reflections = async {
+            let started = Instant::now();
+            let result = if predicate.allows_scope(&MemoryScope::Session(req.session.clone()))
+                && predicate.allows_authority(MemoryAuthority::LocalEpisode)
+                && predicate.allows_sensitivity(MemorySensitivity::Internal)
+            {
+                self.episodic
+                    .lock()
+                    .await
+                    .recall_reflections(fetch_limit)
+                    .map(|rows| crate::recall::local::reflections(rows, &req))
+            } else {
+                Ok(Vec::new())
+            };
+            (started.elapsed(), result)
+        };
+        let core = async {
+            let started = Instant::now();
+            let blocks = if predicate.allows_scope(&MemoryScope::Global)
+                && predicate.allows_authority(MemoryAuthority::ApprovedCore)
+                && predicate.allows_sensitivity(MemorySensitivity::Internal)
+            {
+                self.core_memory
+                    .lock()
+                    .await
+                    .blocks()
+                    .iter()
+                    .map(|(label, block)| (label.clone(), block.value.clone()))
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            (
+                started.elapsed(),
+                Ok::<_, anyhow::Error>(crate::recall::local::core(blocks, &req, now)),
+            )
+        };
+        let (messages, facts, reflections, core) = tokio::join!(messages, facts, reflections, core);
+        let mut sources = Vec::with_capacity(4);
+        let mut degraded_sources = Vec::new();
+        for (name, source, kind, (elapsed, result)) in [
+            (
+                "recall_memory",
+                RecallSourceLabel::RecallMemory,
+                MemoryKind::Message,
+                messages,
+            ),
+            (
+                "fact_store",
+                RecallSourceLabel::FactStore,
+                MemoryKind::SemanticFact,
+                facts,
+            ),
+            (
+                "episodic",
+                RecallSourceLabel::Episodic,
+                MemoryKind::Reflection,
+                reflections,
+            ),
+            ("core", RecallSourceLabel::Core, MemoryKind::CoreState, core),
+        ] {
+            self.metrics.observe_recall_latency(source, elapsed);
+            match result {
+                Ok(items) => {
+                    self.metrics.recall_hit(source, kind, items.len());
+                    sources.push(items);
+                }
+                Err(error) => {
+                    tracing::warn!(source = name, %error, "local memory recall source degraded");
+                    self.metrics
+                        .recall_omitted(RecallOmittedReason::SourceDegraded, 1);
+                    degraded_sources.push(name.to_string());
+                }
+            }
+        }
+        let mut items = crate::recall::merge_items(sources, &req, Some(&self.metrics));
+        if let Some(retention) = &self.retention {
+            let before = items.len();
+            items.retain(|item| {
+                !retention
+                    .is_tombstoned(&item.metadata.record_id)
+                    .unwrap_or(false)
+            });
+            self.metrics
+                .recall_omitted(RecallOmittedReason::Tombstoned, before - items.len());
+            self.metrics.set_tombstone_pending(
+                TombstoneDestination::Gbrain,
+                retention.pending_remote_count().unwrap_or_default(),
+            );
+        }
+        Ok(RecallSet {
+            items,
+            degraded_sources,
+        })
+    }
+
+    /// Derive authority from a server-verified child context. Query text cannot
+    /// widen the resulting Agent/Task ancestry.
+    pub async fn recall_for_agent(
+        &self,
+        context: &crate::AgentMemoryContext,
+        req: RecallRequest,
+        max_sensitivity: MemorySensitivity,
+    ) -> anyhow::Result<RecallSet> {
+        let prefilter = crate::RecallPreFilter {
+            ancestry: context.recall_ancestry()?,
+            max_sensitivity,
+            allowed_authorities: all_memory_authorities(),
+        };
+        self.recall_with_prefilter(req, &prefilter).await
+    }
 }
 
 #[async_trait]
@@ -490,6 +804,8 @@ impl MemoryService for DefaultMemoryService {
                     &scope,
                     false,
                 )?;
+                self.maybe_extract_to_kg(&content, &metadata.record_id)
+                    .await;
                 if let Some(retention) = &self.retention {
                     let record = MemoryRecord {
                         id: MemoryRecordId(metadata.record_id.clone()),
@@ -571,10 +887,13 @@ impl MemoryService for DefaultMemoryService {
                     &scope,
                     completed,
                 )?;
+                // Grab record_id before content/metadata move into MemoryRecord
+                let record_id = metadata.record_id.clone();
+                self.maybe_extract_to_kg(&content, &record_id).await;
                 if let Some(retention) = &self.retention {
                     retention.register(
                         &MemoryRecord {
-                            id: MemoryRecordId(metadata.record_id.clone()),
+                            id: MemoryRecordId(record_id),
                             kind,
                             scope: scope.clone(),
                             content,
@@ -594,113 +913,53 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn recall(&self, req: RecallRequest) -> anyhow::Result<RecallSet> {
-        if let Err(error) = req.validate() {
-            self.metrics
-                .recall_omitted(RecallOmittedReason::InvalidRequest, 1);
-            return Err(error);
+        let prefilter = crate::RecallPreFilter {
+            ancestry: crate::ScopeAncestry {
+                session_id: Some(req.session.clone()),
+                ..Default::default()
+            },
+            max_sensitivity: MemorySensitivity::Restricted,
+            allowed_authorities: all_memory_authorities(),
+        };
+        let lexical = self.recall_with_prefilter(req.clone(), &prefilter).await?;
+        let Some(params) = &self.hybrid_params else {
+            self.metrics.recall_fts_only();
+            return Ok(lexical);
+        };
+        let lexical_backend = LexicalSnapshotBackend {
+            items: lexical.items,
+        };
+        let (items, degraded) = crate::recall::pipeline::hybrid_recall_with_metrics(
+            &prefilter,
+            params,
+            crate::HybridRecallBackends {
+                fts: Some(&lexical_backend),
+                vector: self.vector_search.as_deref(),
+                embedding_endpoint_trusted: self.embedding_endpoint_trusted,
+            },
+            &req,
+            Some(&self.metrics),
+        )
+        .await;
+        let mut degraded_sources = lexical.degraded_sources;
+        degraded_sources.extend(degraded.iter().map(|source| source.as_str().to_string()));
+        let vector_used = self.vector_search.is_some()
+            && !degraded.contains(&crate::DegradedSource::EmbeddingEndpointUntrusted)
+            && !degraded.contains(&crate::DegradedSource::EmbeddingTimeout);
+        if vector_used {
+            self.metrics.recall_vector_used();
         }
-        let fetch_limit = req
-            .max_items
-            .saturating_mul(4)
-            .min(RecallRequest::MAX_ITEMS);
-        let now = wall_to_datetime(self.clock.wall_now());
-        let messages = async {
-            let started = Instant::now();
-            let result = self
-                .recall_memory
-                .lock()
-                .await
-                .search_in_session(&req.session, &req.query, fetch_limit)
-                .map(|rows| crate::recall::local::messages(rows, &req));
-            (started.elapsed(), result)
-        };
-        let facts = async {
-            let started = Instant::now();
-            let result = self
-                .fact_store
-                .lock()
-                .await
-                .search_facts(&req.query, None, 0.0, fetch_limit)
-                .map(|rows| crate::recall::local::facts(rows, &req, now));
-            (started.elapsed(), result)
-        };
-        let reflections = async {
-            let started = Instant::now();
-            let result = self
-                .episodic
-                .lock()
-                .await
-                .recall_reflections(fetch_limit)
-                .map(|rows| crate::recall::local::reflections(rows, &req));
-            (started.elapsed(), result)
-        };
-        let core = async {
-            let started = Instant::now();
-            let blocks = self
-                .core_memory
-                .lock()
-                .await
-                .blocks()
-                .iter()
-                .map(|(label, block)| (label.clone(), block.value.clone()))
-                .collect::<Vec<_>>();
-            (
-                started.elapsed(),
-                Ok::<_, anyhow::Error>(crate::recall::local::core(blocks, &req, now)),
-            )
-        };
-        let (messages, facts, reflections, core) = tokio::join!(messages, facts, reflections, core);
-        let mut sources = Vec::with_capacity(4);
-        let mut degraded_sources = Vec::new();
-        for (name, source, kind, (elapsed, result)) in [
-            (
-                "recall_memory",
-                RecallSourceLabel::RecallMemory,
-                MemoryKind::Message,
-                messages,
-            ),
-            (
-                "fact_store",
-                RecallSourceLabel::FactStore,
-                MemoryKind::SemanticFact,
-                facts,
-            ),
-            (
-                "episodic",
-                RecallSourceLabel::Episodic,
-                MemoryKind::Reflection,
-                reflections,
-            ),
-            ("core", RecallSourceLabel::Core, MemoryKind::CoreState, core),
-        ] {
-            self.metrics.observe_recall_latency(source, elapsed);
-            match result {
-                Ok(items) => {
-                    self.metrics.recall_hit(source, kind, items.len());
-                    sources.push(items);
-                }
-                Err(error) => {
-                    tracing::warn!(source = name, %error, "local memory recall source degraded");
-                    self.metrics
-                        .recall_omitted(RecallOmittedReason::SourceDegraded, 1);
-                    degraded_sources.push(name.to_string());
-                }
-            }
-        }
-        let mut items = crate::recall::merge_items(sources, &req, Some(&self.metrics));
-        if let Some(retention) = &self.retention {
-            let before = items.len();
-            items.retain(|item| {
-                !retention
-                    .is_tombstoned(&item.metadata.record_id)
-                    .unwrap_or(false)
-            });
-            self.metrics
-                .recall_omitted(RecallOmittedReason::Tombstoned, before - items.len());
-            self.metrics.set_tombstone_pending(
-                TombstoneDestination::Gbrain,
-                retention.pending_remote_count().unwrap_or_default(),
+        if degraded.is_empty() {
+            tracing::info!(
+                event = "memory.recall.vector_used",
+                "hybrid memory recall completed"
             );
+        } else {
+            if degraded.contains(&crate::DegradedSource::EmbeddingEndpointUntrusted) {
+                self.metrics.embedding_credential_rejected();
+            }
+            self.metrics.recall_fts_only();
+            tracing::warn!(event = "memory.recall.degraded", degraded_sources = ?degraded, "hybrid memory recall degraded");
         }
         Ok(RecallSet {
             items,
@@ -734,6 +993,83 @@ impl MemoryService for DefaultMemoryService {
             .ok_or_else(|| anyhow::anyhow!("retention repository is unavailable"))?;
         repository.forget(&policy, self.clock.wall_now().0.max(0))
     }
+
+    async fn synthesize(&self, request: SynthesisRequest) -> anyhow::Result<SynthesisResult> {
+        self.synthesize(request).await
+    }
+}
+
+impl DefaultMemoryService {
+    /// Attach a knowledge graph for zero-LLM entity extraction during `record`.
+    pub fn with_knowledge_graph(mut self, kg: crate::knowledge_graph::KnowledgeGraph) -> Self {
+        self.knowledge_graph = Some(Arc::new(Mutex::new(kg)));
+        self
+    }
+
+    /// Fire-and-forget entity/relation extraction into the knowledge graph.
+    /// Failures are logged and swallowed (fail-open, matching GBrain).
+    async fn maybe_extract_to_kg(&self, content: &str, record_id: &str) {
+        let Some(kg) = &self.knowledge_graph else {
+            return;
+        };
+        let mut kg = kg.lock().await;
+        let entities = crate::knowledge_graph::extract_entities_from_content(content, record_id);
+        let relations = crate::knowledge_graph::infer_relations(content, &entities, record_id);
+        for entity in entities {
+            kg.upsert_entity(entity);
+        }
+        for relation in relations {
+            kg.add_relation(relation);
+        }
+    }
+
+    /// Attach a synthesis model for LLM-powered `synthesize()`.
+    #[cfg(feature = "llm-synthesis")]
+    pub fn with_synthesis_model(mut self, model: Arc<dyn SynthesisModel>) -> Self {
+        self.synthesis_model = Some(model);
+        self
+    }
+
+    /// Synthesize an answer from memory with citations and gap analysis.
+    #[cfg(feature = "llm-synthesis")]
+    async fn synthesize(&self, request: SynthesisRequest) -> anyhow::Result<SynthesisResult> {
+        let model = self
+            .synthesis_model
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("synthesis model is unavailable"))?;
+        let items = match request.pre_fetched {
+            Some(items) => items,
+            None => {
+                let recall_req = RecallRequest {
+                    session: request.session.clone(),
+                    query: request.question.clone(),
+                    max_items: request.max_citations * 4,
+                    max_content_bytes: 128 * 1024,
+                    current_at: None,
+                    include_historical: false,
+                    mode: None,
+                };
+                self.recall(recall_req).await?.items
+            }
+        };
+        let context: Vec<SynthesisContextBlock> = items
+            .into_iter()
+            .take(request.max_citations * 2)
+            .map(|item| SynthesisContextBlock {
+                record_id: item.metadata.record_id.clone(),
+                content: item.content,
+                score: item.score,
+                evidence: item.evidence,
+            })
+            .collect();
+        model.synthesize(&request.question, &context).await
+    }
+
+    /// Fallback when `llm-synthesis` feature is disabled.
+    #[cfg(not(feature = "llm-synthesis"))]
+    async fn synthesize(&self, _request: SynthesisRequest) -> anyhow::Result<SynthesisResult> {
+        anyhow::bail!("synthesis is unavailable (enable the llm-synthesis feature)")
+    }
 }
 
 #[cfg(test)]
@@ -741,6 +1077,20 @@ mod tests {
     use super::*;
     use fabric::{Subsystem, SubsystemContext};
     use std::path::Path;
+
+    struct EmptyVectorBackend;
+
+    #[async_trait::async_trait]
+    impl crate::RecallSearchBackend for EmptyVectorBackend {
+        async fn search(
+            &self,
+            _request: &RecallRequest,
+            _predicate: &crate::ScopePredicate,
+            _top_k: usize,
+        ) -> anyhow::Result<crate::SearchOutcome> {
+            Ok(crate::SearchOutcome::default())
+        }
+    }
 
     fn test_clock() -> Arc<dyn fabric::Clock> {
         Arc::new(aletheon_kernel::chronos::TestClock::default())
@@ -767,6 +1117,35 @@ mod tests {
         episodic_memory.init(&ctx).await.unwrap();
         let episodic = Arc::new(Mutex::new(episodic_memory));
         DefaultMemoryService::new(recall_memory, fact_store, core_memory, episodic, clock)
+    }
+
+    #[tokio::test]
+    async fn vector_backend_trust_is_derived_from_exact_endpoint_grant() {
+        let grant = crate::credential::EmbeddingCredentialGrant::new(
+            "test-principal",
+            "https://embedding.example/v1",
+            "test-provider",
+            100,
+            1,
+            "secret",
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let rejected = build_service(dir.path()).await.with_vector_search_backend(
+            Arc::new(EmptyVectorBackend),
+            &grant,
+            "https://embedding.example.evil/v1",
+            10,
+        );
+        assert!(!rejected.embedding_endpoint_trusted);
+
+        let dir = tempfile::tempdir().unwrap();
+        let approved = build_service(dir.path()).await.with_vector_search_backend(
+            Arc::new(EmptyVectorBackend),
+            &grant,
+            "https://embedding.example/v1",
+            10,
+        );
+        assert!(approved.embedding_endpoint_trusted);
     }
 
     #[tokio::test]
@@ -824,6 +1203,120 @@ mod tests {
         assert_eq!(item.metadata.confidence, 0.5);
         assert_eq!(item.metadata.sensitivity, MemorySensitivity::Internal);
         assert_eq!(item.temporal_state, TemporalState::Unknown);
+    }
+
+    #[tokio::test]
+    async fn memory_hybrid_flag_off_is_fts_path_equivalent() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = build_service(dir.path()).await;
+        {
+            let fact_store = svc.fact_store.lock().await;
+            fact_store
+                .add_fact("stable lexical", "general", "", "test", 0.5, "long", 0)
+                .unwrap();
+        }
+        let request = RecallRequest::bounded("s1", "stable");
+        let prefilter = crate::RecallPreFilter {
+            ancestry: crate::ScopeAncestry {
+                session_id: Some("s1".into()),
+                ..Default::default()
+            },
+            max_sensitivity: MemorySensitivity::Restricted,
+            allowed_authorities: all_memory_authorities(),
+        };
+        let legacy = svc
+            .recall_with_prefilter(request.clone(), &prefilter)
+            .await
+            .unwrap();
+        let flagged_off = svc.recall(request).await.unwrap();
+        assert_eq!(flagged_off, legacy);
+    }
+
+    #[tokio::test]
+    async fn verified_agent_recall_cannot_widen_scope_from_request_or_query() {
+        use fabric::{AgentId, AgentTaskId, ProcessId};
+        use uuid::Uuid;
+
+        let dir = tempfile::tempdir().unwrap();
+        let svc = build_service(dir.path()).await;
+        svc.record(ExperienceEvent::Message {
+            session: "parent-session".into(),
+            role: "user".into(),
+            content: "parent-only marker".into(),
+            metadata: metadata("parent-message"),
+        })
+        .await
+        .unwrap();
+        let context = crate::AgentMemoryContext::verified(
+            ProcessId(Uuid::new_v4()),
+            AgentId(Uuid::new_v4()),
+            AgentTaskId("child-task".into()),
+            "verified-parent-projection",
+        )
+        .unwrap();
+        let result = svc
+            .recall_for_agent(
+                &context,
+                RecallRequest::bounded(
+                    "parent-session",
+                    "parent-only marker global parent session",
+                ),
+                MemorySensitivity::Internal,
+            )
+            .await
+            .unwrap();
+        assert!(result.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn governed_fact_recall_materializes_only_allowed_principal_candidates() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = build_service(dir.path()).await;
+        {
+            let facts = svc.fact_store.lock().await;
+            facts
+                .add_fact_governed(
+                    "shared principal marker allowed",
+                    "general",
+                    "",
+                    "principal",
+                    "explicit",
+                    "owner-a",
+                    0.8,
+                    "long",
+                    0,
+                )
+                .unwrap();
+            facts
+                .add_fact_governed(
+                    "shared principal marker denied",
+                    "general",
+                    "",
+                    "principal",
+                    "explicit",
+                    "owner-b",
+                    0.8,
+                    "long",
+                    0,
+                )
+                .unwrap();
+        }
+        let prefilter = crate::RecallPreFilter {
+            ancestry: crate::ScopeAncestry {
+                principal_id: Some("owner-a".into()),
+                ..Default::default()
+            },
+            max_sensitivity: MemorySensitivity::Internal,
+            allowed_authorities: vec![MemoryAuthority::VerifiedLocalSemantic],
+        };
+        let result = svc
+            .recall_with_prefilter(
+                RecallRequest::bounded("untrusted-session", "shared principal marker"),
+                &prefilter,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.texts(), vec!["shared principal marker allowed"]);
     }
 
     #[test]

@@ -55,6 +55,18 @@ pub enum ConsciousTraceEvent {
         receipt_ref: String,
         authority: String,
     },
+    FieldModulation {
+        mode: crate::ConsciousArbitrationMode,
+        decision: crate::FieldDecisionKind,
+        reason: crate::FieldDecisionReason,
+        operation_id: String,
+        call_id: String,
+        broadcast_epoch: Option<u64>,
+        baseline: Option<f64>,
+        effective: Option<f64>,
+        delta: Option<f64>,
+        metric_ref: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

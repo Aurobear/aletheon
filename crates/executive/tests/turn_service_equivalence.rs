@@ -154,6 +154,7 @@ impl TurnServices for EquivalenceServices {
             is_error: false,
             usage: fabric::UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 
@@ -293,6 +294,7 @@ impl TurnServices for HangingServices {
             is_error: false,
             usage: fabric::UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 

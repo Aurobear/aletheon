@@ -4,6 +4,8 @@
 //!   (none)       TUI client (auto-starts daemon if not running)
 //!   daemon       Start daemon (auto-detects systemd/container/foreground)
 //!   exec         Non-interactive execution
+//!   config       Inspect effective configuration or layers
+//!   doctor       Run diagnostics and print a health report
 //!   -m `msg`      Send single message to daemon
 //!   version      Print version + git commit
 
@@ -14,11 +16,19 @@ use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
+#[cfg(feature = "acp")]
+mod acp;
+
 #[derive(Parser)]
 #[command(name = "aletheon", about = "AI agent with sandbox, multi-agent, IPC")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Run the feature-gated ACP stdio gateway.
+    #[cfg(feature = "acp")]
+    #[arg(long)]
+    acp: bool,
 
     /// Send a single message to the daemon
     #[arg(short = 'm', long = "message", value_name = "MSG")]
@@ -83,6 +93,9 @@ enum Commands {
         /// Enable self-evolution loop (HIGH-risk autonomy -- OFF by default)
         #[arg(long, default_value_t = false)]
         enable_evolution: bool,
+        /// Enable the isolated exec-server tool backend (OFF by default)
+        #[arg(long = "exec-server", default_value_t = false)]
+        exec_server: bool,
     },
     /// Non-interactive execution
     Exec {
@@ -109,11 +122,59 @@ enum Commands {
     Version,
     /// Restore terminal modes after an interrupted TUI session
     RestoreTerminal,
+    /// Inspect effective configuration (merged layers)
+    Config {
+        #[command(subcommand)]
+        sub: ConfigSub,
+    },
+    /// Run diagnostics and print a health report
+    Doctor {
+        /// Output as JSON schema-stable report
+        #[arg(long)]
+        json: bool,
+        /// Path to a specific config file to validate
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Project directory for layered config discovery
+        #[arg(short = 'd', long)]
+        project_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigSub {
+    /// Print the fully merged effective configuration (secrets redacted)
+    Effective {
+        /// Path to a specific config file
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Project directory for layered config discovery
+        #[arg(short = 'd', long)]
+        project_dir: Option<PathBuf>,
+    },
+    /// Show each config layer source and its overrides
+    Layers {
+        /// Path to a specific config file
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Project directory for layered config discovery
+        #[arg(short = 'd', long)]
+        project_dir: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    #[cfg(feature = "acp")]
+    if cli.acp {
+        anyhow::ensure!(
+            cli.command.is_none() && cli.message.is_none(),
+            "--acp cannot be combined with a subcommand or --message"
+        );
+        init_tracing("aletheon::acp");
+        return acp::run(cli.workspace.executive_launch()).await;
+    }
     if matches!(&cli.command, Some(Commands::Core { .. }))
         && (cli.workspace.cwd.is_some() || !cli.workspace.add_dirs.is_empty())
     {
@@ -137,6 +198,7 @@ async fn main() -> Result<()> {
                 container,
                 image,
                 enable_evolution,
+                exec_server,
             }),
             _,
         ) => {
@@ -149,6 +211,7 @@ async fn main() -> Result<()> {
                 container: container.clone(),
                 image: image.clone(),
                 enable_evolution: *enable_evolution,
+                enable_exec_server: *exec_server,
             })
             .await
         }
@@ -186,6 +249,21 @@ async fn main() -> Result<()> {
             println!("aletheon {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        (Some(Commands::Config { sub }), _) => {
+            init_tracing("aletheon::config");
+            handle_config(sub).await
+        }
+        (
+            Some(Commands::Doctor {
+                json,
+                config,
+                project_dir,
+            }),
+            _,
+        ) => {
+            init_tracing("aletheon::doctor");
+            handle_doctor(*json, config.as_deref(), project_dir.as_deref()).await
+        }
         (Some(Commands::RestoreTerminal), _) => {
             interact::tui::restore_terminal();
             println!("Terminal restored to normal state.");
@@ -222,6 +300,109 @@ async fn main() -> Result<()> {
     }
 }
 
+// ── Config & Doctor handlers ────────────────────────────────────────────────
+
+async fn handle_config(sub: &ConfigSub) -> Result<()> {
+    use executive::core::config;
+    match sub {
+        ConfigSub::Effective {
+            config,
+            project_dir,
+        } => {
+            let loaded = if let Some(path) = config {
+                let txt = std::fs::read_to_string(path)?;
+                let layer = config::ConfigLayer::from_toml(
+                    config::ConfigSource::new(
+                        config::ConfigSourceKind::Cli,
+                        path.display().to_string(),
+                    ),
+                    &txt,
+                )?;
+                config::merge_layers([layer])?
+            } else {
+                config::diagnostics::load_config_diagnostics(project_dir.as_deref())?
+            };
+            let view = loaded.effective_view();
+            println!("{}", serde_json::to_string_pretty(&view.config)?);
+        }
+        ConfigSub::Layers {
+            config,
+            project_dir,
+        } => {
+            let loaded = if let Some(path) = config {
+                let txt = std::fs::read_to_string(path)?;
+                let layer = config::ConfigLayer::from_toml(
+                    config::ConfigSource::new(
+                        config::ConfigSourceKind::Cli,
+                        path.display().to_string(),
+                    ),
+                    &txt,
+                )?;
+                config::merge_layers([layer])?
+            } else {
+                config::diagnostics::load_config_diagnostics(project_dir.as_deref())?
+            };
+            let view = loaded.layers_view();
+            println!("{}", serde_json::to_string_pretty(&view)?);
+        }
+    }
+    Ok(())
+}
+
+async fn handle_doctor(
+    json: bool,
+    config_path: Option<&std::path::Path>,
+    project_dir: Option<&std::path::Path>,
+) -> Result<()> {
+    use executive::core::config;
+    use executive::r#impl::doctor::DoctorReport;
+    let loaded = if let Some(path) = config_path {
+        let txt = std::fs::read_to_string(path)?;
+        let layer = config::ConfigLayer::from_toml(
+            config::ConfigSource::new(config::ConfigSourceKind::Cli, path.display().to_string()),
+            &txt,
+        )?;
+        config::merge_layers([layer])?
+    } else {
+        config::diagnostics::load_config_diagnostics(project_dir)?
+    };
+    let report = DoctorReport::standalone(&loaded);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("aletheon doctor — v{}", report.daemon_version);
+        println!("  status:    {}", report.status);
+        println!(
+            "  config:    {} ({} leaves)",
+            report.config.validity, report.config.leaf_count
+        );
+        println!(
+            "  deploy:    sha={} (core_compat={})",
+            report.deployment.installed_sha,
+            report
+                .deployment
+                .runtime_versions_compatible
+                .map_or("unknown".to_string(), |c| c.to_string())
+        );
+        println!(
+            "  MCP:       {} servers configured",
+            report.mcp_servers.len()
+        );
+        println!("  sandbox:   {}", report.sandbox.status);
+        println!("  writer:    {}", report.writer_health.status);
+        println!(
+            "  recovery:  {} sessions / {} turns / {} recovered",
+            report.turn_recovery.sessions_scanned,
+            report.turn_recovery.turns_scanned,
+            report.turn_recovery.incomplete_turns_recovered
+        );
+        for warning in &report.warnings {
+            println!("  WARNING:   {warning}");
+        }
+    }
+    Ok(())
+}
+
 // ── Tracing ─────────────────────────────────────────────────────────────────
 
 fn init_tracing(target: &str) {
@@ -246,4 +427,41 @@ fn init_tracing(target: &str) {
         .with(env_filter)
         .with(stderr_layer)
         .init();
+}
+
+#[cfg(all(test, feature = "acp"))]
+mod acp_cli_tests {
+    use super::*;
+
+    #[test]
+    fn acp_flag_is_exposed_only_in_acp_feature_build() {
+        let cli = Cli::try_parse_from(["aletheon", "--acp"]).unwrap();
+        assert!(cli.acp);
+    }
+}
+
+#[cfg(test)]
+mod daemon_cli_tests {
+    use super::*;
+
+    #[test]
+    fn exec_server_flag_defaults_off_and_enables_additively() {
+        let default_cli = Cli::try_parse_from(["aletheon", "daemon"]).unwrap();
+        assert!(matches!(
+            default_cli.command,
+            Some(Commands::Daemon {
+                exec_server: false,
+                ..
+            })
+        ));
+
+        let enabled_cli = Cli::try_parse_from(["aletheon", "daemon", "--exec-server"]).unwrap();
+        assert!(matches!(
+            enabled_cli.command,
+            Some(Commands::Daemon {
+                exec_server: true,
+                ..
+            })
+        ));
+    }
 }

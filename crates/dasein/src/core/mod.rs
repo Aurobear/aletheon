@@ -1,4 +1,4 @@
-//! SelfField — the main struct wiring all 8 internal layers.
+//! SelfField — constitutional policy facade and self-state read projection.
 //!
 //! Implements `SelfFieldOps` (the policy engine trait) and `Subsystem`
 //! (the lifecycle trait). The `review()` pipeline runs:
@@ -27,7 +27,6 @@ use fabric::{
 use std::sync::Arc;
 use tracing::info;
 
-use crate::bridge::hook::HookBridge;
 use crate::bridge::loop_detector::LoopBridge;
 use crate::bridge::policy::PolicyBridge;
 use crate::core::attention::AttentionLayer;
@@ -39,7 +38,7 @@ use crate::core::identity::IdentityLayer;
 use crate::core::mutation::MutationLayer;
 use crate::core::narrative::NarrativeLayer;
 
-use crate::core::store::SelfFieldStore;
+use crate::core::store::{CareModulationTrace, SelfFieldStore};
 use crate::dasein::DaseinEventBridge;
 use crate::dasein::DaseinModule;
 use fabric::dasein::DaseinEvent;
@@ -63,6 +62,9 @@ pub struct SelfFieldConfig {
     pub dasein_decay_rate: f64,
     /// Clock supplied by the application composition root.
     pub clock: Option<Arc<dyn fabric::Clock>>,
+    /// Optional conscious context reader (R2 field feedback).
+    /// When None (legacy), the field is ignored.
+    pub conscious_context: Option<Arc<dyn fabric::LatestConsciousContextPort>>,
 }
 
 impl Default for SelfFieldConfig {
@@ -80,11 +82,17 @@ impl Default for SelfFieldConfig {
             dasein_retention_depth: 50,
             dasein_decay_rate: 0.8,
             clock: None,
+            conscious_context: None,
         }
     }
 }
 
-/// SelfField — the policy engine implementing `SelfFieldOps`.
+/// Constitutional policy facade implementing `SelfFieldOps`.
+///
+/// Mutable lived, autobiographical and reflective state belongs to the
+/// versioned `DaseinModule` reducer. These legacy layers provide policy gates,
+/// audit projections and persisted configuration, not an alternate public
+/// self-mutation authority.
 pub struct SelfField {
     boundary: BoundaryLayer,
     identity: IdentityLayer,
@@ -100,7 +108,6 @@ pub struct SelfField {
     // Bridges to external subsystems
     policy_bridge: PolicyBridge,
     loop_bridge: LoopBridge,
-    hook_bridge: HookBridge,
     // DaseinModule (optional, opt-in via config)
     dasein: Option<Arc<DaseinModule>>,
     dasein_event_tx: Option<tokio::sync::mpsc::Sender<DaseinEvent>>,
@@ -111,9 +118,19 @@ pub struct SelfField {
     /// Clock for deterministic time in sub-modules.
     #[allow(dead_code)]
     clock: Arc<dyn fabric::Clock>,
+    /// Optional conscious context reader for R2 field feedback. None means legacy mode.
+    conscious_context: Option<Arc<dyn fabric::LatestConsciousContextPort>>,
 }
 
 impl SelfField {
+    /// Read durable R2 modulation traces for diagnostics and audit.
+    pub fn care_modulation_traces(&self, session_id: &str) -> Result<Vec<CareModulationTrace>> {
+        self.store
+            .as_ref()
+            .map(|store| store.care_modulations(session_id))
+            .unwrap_or_else(|| Ok(Vec::new()))
+    }
+
     pub fn new(config: SelfFieldConfig) -> Self {
         let clock: Arc<dyn fabric::Clock> = config
             .clock
@@ -175,16 +192,17 @@ impl SelfField {
             store,
             policy_bridge: PolicyBridge::new(),
             loop_bridge: LoopBridge::new(),
-            hook_bridge: HookBridge::new(clock.clone()),
             dasein,
             permission_authority: None,
             dasein_event_tx,
             clock,
+            conscious_context: config.conscious_context,
         }
     }
 
-    /// Access the boundary layer (for configuring rules at runtime).
-    pub fn boundary_mut(&mut self) -> &mut BoundaryLayer {
+    /// Test-only access to legacy policy configuration.
+    #[cfg(test)]
+    pub(crate) fn boundary_mut(&mut self) -> &mut BoundaryLayer {
         &mut self.boundary
     }
 
@@ -210,21 +228,23 @@ impl SelfField {
         &self.care
     }
 
-    /// Access the care layer (mutable).
-    pub fn care_mut(&mut self) -> &CareLayer {
+    /// Test-only access for the legacy validator. Production state changes use
+    /// `DaseinModule::transition` and return a versioned receipt.
+    #[cfg(test)]
+    pub(crate) fn care_mut(&mut self) -> &CareLayer {
         // CareLayer uses interior mutability (RwLock), so &CareLayer suffices for mutation.
         // This method exists for API clarity when the caller intends to modify.
         &self.care
     }
 
-    /// Access the narrative layer.
-    pub fn narrative(&self) -> &NarrativeLayer {
-        &self.narrative
+    /// Read the current attention projection without exposing its mutators.
+    pub fn current_attention_focus(&self) -> Option<crate::core::attention::FocusTopic> {
+        self.attention.current_focus()
     }
 
-    /// Access the attention layer.
-    pub fn attention(&self) -> &AttentionLayer {
-        &self.attention
+    /// Read all current attention projections without exposing their mutators.
+    pub fn attention_topics(&self) -> Vec<crate::core::attention::FocusTopic> {
+        self.attention.all_topics()
     }
 
     /// Check for loops (called by Runtime during ReAct loop).
@@ -284,18 +304,18 @@ impl SelfField {
         self.dasein_event_tx.as_ref()
     }
 
-    /// Connect the DaseinModule to the CommunicationBus for real system event integration.
+    /// Connect the DaseinModule to the canonical event bus.
     ///
-    /// This should be called after SelfField::init() when the CommunicationBus is available.
+    /// This should be called after SelfField::init() when the event bus is available.
     /// It subscribes the DaseinModule to tool execution, memory, evolution, and
     /// session lifecycle events.
     pub async fn wire_dasein_event_bridge(
         &self,
-        communication_bus: &fabric::CommunicationBus,
+        event_bus: &fabric::CanonicalEventBus,
     ) -> anyhow::Result<()> {
         if let (Some(ref _dasein), Some(ref tx)) = (&self.dasein, &self.dasein_event_tx) {
             let bridge = DaseinEventBridge::new(tx.clone());
-            bridge.subscribe(communication_bus).await?;
+            bridge.subscribe(event_bus).await?;
             info!("DaseinModule connected to EventBus via DaseinEventBridge");
         }
         Ok(())
@@ -384,26 +404,60 @@ impl Subsystem for SelfField {
     }
 }
 
+impl SelfField {
+    /// Compute the effective care score, modulating the baseline with the
+    /// conscious field readout when available.
+    ///
+    /// When the reader is absent, errors, or returns an empty projection,
+    /// the baseline score is returned unchanged (exact fallback).
+    async fn effective_care_score(&self, baseline: f64, ctx: &fabric::Context) -> f64 {
+        let Some(reader) = &self.conscious_context else {
+            return baseline;
+        };
+        let Ok(projection) = reader
+            .latest_context(&fabric::AgoraSpaceId(ctx.session_id.clone()))
+            .await
+        else {
+            tracing::warn!(session_id = %ctx.session_id, "conscious read failed; using baseline care");
+            return baseline;
+        };
+        let Ok(Some(readout)) = fabric::ConsciousFieldReadout::from_projection(&projection) else {
+            return baseline;
+        };
+        let effective =
+            (baseline + (1.0 - baseline) * 0.25 * f64::from(readout.precision)).clamp(0.0, 1.0);
+        if let Some(store) = &self.store {
+            if let Err(error) = store.append_care_modulation(&CareModulationTrace {
+                session_id: ctx.session_id.clone(),
+                baseline,
+                effective,
+                delta: effective - baseline,
+                precision: readout.precision,
+                observed_at_ms: self.clock.wall_now().0,
+            }) {
+                tracing::warn!(%error, session_id = %ctx.session_id, "failed to persist care modulation trace");
+            }
+        }
+        tracing::info!(
+            target: "aletheon.conscious",
+            schema = "conscious.field.care_modulation.v1",
+            session_id = %ctx.session_id,
+            baseline,
+            effective,
+            delta = effective - baseline,
+            precision = f64::from(readout.precision),
+            "conscious field modulated SelfField care"
+        );
+        effective
+    }
+}
+
 #[async_trait]
 impl fabric::SelfFieldOps for SelfField {
-    /// Core review pipeline: Hook -> Policy -> Boundary -> Care -> Permissions -> Narrative -> Verdict.
+    /// Core review pipeline: Policy -> Boundary -> Care -> Permissions -> Narrative -> Verdict.
     async fn review(&self, intent: &Intent, ctx: &Context) -> Result<Verdict> {
-        // 1. Hook check (pre-tool hooks can block)
-        if let Some(verdict) = self
-            .hook_bridge
-            .fire_pre_tool(&intent.action, &intent.parameters.to_string())
-            .await
-        {
-            self.narrative.record(
-                "hook_check",
-                &format!("Blocked by hook: {:?}", verdict),
-                Some(&intent.action),
-                &verdict,
-            );
-            return Ok(verdict);
-        }
-
-        // 2. Policy check (PolicyEngine)
+        // 1. Policy check (PolicyEngine). Executable lifecycle hooks are owned
+        // by the governed Corpus path and run before this semantic review.
         if let Some(verdict) = self.policy_bridge.check(&intent.action, &intent.parameters) {
             self.narrative.record(
                 "policy_check",
@@ -414,7 +468,7 @@ impl fabric::SelfFieldOps for SelfField {
             return Ok(verdict);
         }
 
-        // 3. Boundary check (fast gate)
+        // 2. Boundary check (fast gate)
         if let Some(verdict) = self.boundary.check(intent) {
             self.narrative.record(
                 "boundary_check",
@@ -425,8 +479,9 @@ impl fabric::SelfFieldOps for SelfField {
             return Ok(verdict);
         }
 
-        // 4. Care scoring
-        let care_score = self.care.score_action(&intent.description);
+        // 4. Care scoring — baseline from keywords, then modulate with conscious field.
+        let baseline_care = self.care.score_action(&intent.description);
+        let care_score = self.effective_care_score(baseline_care, ctx).await;
 
         // 5. Permission check -- delegate to the Runtime authority if installed,
         //    otherwise fall back to the historical inline rule (behavior-preserving).

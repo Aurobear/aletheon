@@ -28,6 +28,8 @@ pub enum BuiltinCommand {
     SkillRun { name: String, args: String },
     Interrupt,
     Context,
+    Profile,
+    ProfileSet { name: String },
 }
 
 /// Parsed command type.
@@ -85,6 +87,15 @@ pub fn parse_command(input: &str) -> Option<CommandType> {
         })),
         "interrupt" | "int" => Some(CommandType::Builtin(BuiltinCommand::Interrupt)),
         "context" | "ctx" => Some(CommandType::Builtin(BuiltinCommand::Context)),
+        "profile" | "prof" => {
+            if args.is_empty() {
+                Some(CommandType::Builtin(BuiltinCommand::Profile))
+            } else {
+                Some(CommandType::Builtin(BuiltinCommand::ProfileSet {
+                    name: args.to_string(),
+                }))
+            }
+        }
         _ => Some(CommandType::Skill {
             name: name.to_string(),
             args: args.to_string(),

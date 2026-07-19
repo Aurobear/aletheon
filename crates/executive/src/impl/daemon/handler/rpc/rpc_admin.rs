@@ -7,6 +7,49 @@ use serde_json::json;
 use tracing::info;
 
 impl RequestHandler {
+    pub(super) async fn handle_deployment_rollback(
+        &self,
+        connection: &super::super::super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let params = &request["params"];
+        if params.get("confirm").and_then(|value| value.as_str())
+            != Some("restore-previous-deployment")
+        {
+            return json!({
+                "jsonrpc":"2.0", "id":id,
+                "error":{"code":-32602,"message":"explicit rollback confirmation is required"}
+            });
+        }
+        let Some(expected_sha) = params
+            .get("expected_installed_sha")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+        else {
+            return json!({
+                "jsonrpc":"2.0", "id":id,
+                "error":{"code":-32602,"message":"expected_installed_sha is required"}
+            });
+        };
+        match self
+            .ports
+            .admin
+            .rollback_deployment(expected_sha.to_owned())
+            .await
+        {
+            Ok(receipt) => {
+                info!(
+                    principal = ?connection.principal_id,
+                    installed_sha = %receipt.installed_sha,
+                    "authenticated deployment rollback completed"
+                );
+                json!({"jsonrpc":"2.0","id":id,"result":receipt})
+            }
+            Err(error) => admin_error(id, error),
+        }
+    }
+
     pub(super) async fn handle_daemon_shutdown(
         &self,
         id: &serde_json::Value,
@@ -198,6 +241,50 @@ impl RequestHandler {
     ) -> serde_json::Value {
         match self.ports.admin.sub_agents().await {
             Ok(agents) => json!({"jsonrpc":"2.0", "id":id, "result":{"agents":agents}}),
+            Err(error) => admin_error(id, error),
+        }
+    }
+
+    pub(super) async fn handle_agent_profile_list(
+        &self,
+        id: &serde_json::Value,
+        _request: &serde_json::Value,
+    ) -> serde_json::Value {
+        match self.ports.admin.list_agent_profiles().await {
+            Ok(profiles) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {"profiles": profiles}
+            }),
+            Err(error) => admin_error(id, error),
+        }
+    }
+
+    pub(super) async fn handle_agent_profile_set(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let profile_name = request["params"]["profile"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        match self.ports.admin.switch_agent_profile(profile_name).await {
+            Ok(result) => {
+                if let Some(notify) = &self.notify_tx {
+                    let notification = json!({
+                        "jsonrpc": "2.0",
+                        "method": "event",
+                        "params": {"type": "profile_changed", "profile": &result.current}
+                    });
+                    let _ = notify.send(notification.to_string()).await;
+                }
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": result
+                })
+            }
             Err(error) => admin_error(id, error),
         }
     }

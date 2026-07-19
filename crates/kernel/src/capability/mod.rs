@@ -46,6 +46,28 @@ pub trait ToolExecutor: Send + Sync {
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
     ) -> CapabilityResult;
+
+    /// Additive streaming execution. Legacy executors retain their exact
+    /// execution path and emit a terminal-only stream.
+    async fn execute_streaming_with_permit(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+        sink: &mut fabric::ToolEventSink,
+    ) -> CapabilityResult {
+        let result = self.execute_with_permit(request, permit).await;
+        sink.terminal(Ok(fabric::ToolResult {
+            content: result.output.clone(),
+            is_error: result.is_error,
+            metadata: fabric::ToolResultMeta {
+                execution_time_ms: result.usage.wall_time_ms,
+                truncated: false,
+                patch_delta: result.patch_delta.clone(),
+            },
+        }))
+        .await;
+        result
+    }
 }
 
 impl<A, E> DefaultCapabilityInvoker<A, E>
@@ -68,6 +90,28 @@ where
     E: ToolExecutor + ?Sized,
 {
     async fn invoke(&self, request: CapabilityRequest) -> CapabilityResult {
+        self.invoke_inner(request, None).await
+    }
+
+    async fn invoke_streaming(
+        &self,
+        request: CapabilityRequest,
+        sink: &mut fabric::ToolEventSink,
+    ) -> CapabilityResult {
+        self.invoke_inner(request, Some(sink)).await
+    }
+}
+
+impl<A, E> DefaultCapabilityInvoker<A, E>
+where
+    A: AdmissionController + ?Sized,
+    E: ToolExecutor + ?Sized,
+{
+    async fn invoke_inner(
+        &self,
+        request: CapabilityRequest,
+        mut sink: Option<&mut fabric::ToolEventSink>,
+    ) -> CapabilityResult {
         // 1. Build admission request.
         let admission_req = AdmissionRequest {
             operation_id: request.call.operation_id,
@@ -96,6 +140,7 @@ where
                     is_error: true,
                     usage: UsageReport::default(),
                     audit_id: None,
+                    patch_delta: None,
                 };
             }
         };
@@ -120,12 +165,23 @@ where
                     ..Default::default()
                 },
                 audit_id: Some(AuditEventId::new()),
+                patch_delta: None,
             };
         }
 
         // 3. Execute.
+        let execution = async {
+            match sink.as_deref_mut() {
+                Some(sink) => {
+                    self.executor
+                        .execute_streaming_with_permit(&request, &permit, sink)
+                        .await
+                }
+                None => self.executor.execute_with_permit(&request, &permit).await,
+            }
+        };
         let mut result = tokio::select! {
-            result = self.executor.execute_with_permit(&request, &permit) => result,
+            result = execution => result,
             _ = request.control.cancel.cancelled() => {
                 let _ = self
                     .admission
@@ -137,9 +193,24 @@ where
                     is_error: true,
                     usage: UsageReport { permit_id: permit.id, ..Default::default() },
                     audit_id: Some(AuditEventId::new()),
+                    patch_delta: None,
                 };
             }
         };
+        if let Some(sink) = sink {
+            if !sink.terminal_sent() {
+                sink.terminal(Ok(fabric::ToolResult {
+                    content: result.output.clone(),
+                    is_error: result.is_error,
+                    metadata: fabric::ToolResultMeta {
+                        execution_time_ms: result.usage.wall_time_ms,
+                        truncated: false,
+                        patch_delta: result.patch_delta.clone(),
+                    },
+                }))
+                .await;
+            }
+        }
         result.usage.permit_id = permit.id;
         if result.audit_id.is_none() {
             result.audit_id = Some(AuditEventId::new());
@@ -155,6 +226,7 @@ where
                 is_error: true,
                 usage: result.usage,
                 audit_id: result.audit_id,
+                patch_delta: result.patch_delta,
             };
         }
 
@@ -189,6 +261,7 @@ impl ToolExecutor for StubToolExecutor {
                 ..Default::default()
             },
             audit_id: Some(AuditEventId::new()),
+            patch_delta: None,
         }
     }
 }

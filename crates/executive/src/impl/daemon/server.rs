@@ -14,13 +14,17 @@ use fabric::protocol::client::{
     ClientMessage, ClientRequest, InitializedResult,
 };
 use fabric::{Clock, ConnectionId, LocalOsPrincipal, PrincipalId, Timer};
+use futures::FutureExt;
 use nix::unistd::{Gid, Uid, User};
+use std::panic::AssertUnwindSafe;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
+
+const CONNECTION_NOTIFICATION_CAPACITY: usize = 64;
 
 use super::handler::RequestHandler;
 
@@ -371,10 +375,20 @@ async fn dispatch_request(
     request_id: serde_json::Value,
     notify_tx: Option<mpsc::Sender<String>>,
 ) -> serde_json::Value {
-    let task = tokio::spawn(async move { handler.handle(&connection, request).await });
-    match task.await {
+    // Catch a handler panic without spawning a detached nested task. The
+    // connection's JoinSet can therefore cancel the complete request future
+    // before disconnect cleanup starts.
+    match AssertUnwindSafe(handler.handle(&connection, request))
+        .catch_unwind()
+        .await
+    {
         Ok(response) => response,
-        Err(error) => {
+        Err(payload) => {
+            let error = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("request handler panicked");
             let (response, terminal_events) = request_task_failure(request_id, error);
             error!(message = %response["error"]["message"], "Request handler task failed");
             if let Some(tx) = notify_tx {
@@ -385,6 +399,202 @@ async fn dispatch_request(
                 }
             }
             response
+        }
+    }
+}
+
+async fn dispatch_versioned_request(
+    handler: RequestHandler,
+    connection: ConnectionContext,
+    request: ClientRequest,
+    request_id: serde_json::Value,
+    notify_tx: Option<mpsc::Sender<String>>,
+) -> serde_json::Value {
+    let result: anyhow::Result<ProtocolClientEvent> = match request {
+        ClientRequest::Snapshot(request) => handler
+            .protocol_snapshot(&request.session_id)
+            .await
+            .map(ProtocolClientEvent::Snapshot),
+        ClientRequest::Subscribe(subscription) => {
+            match handler
+                .protocol_events_after(&subscription.session_id, &subscription.after)
+                .await
+            {
+                Ok(events) => {
+                    if let Some(tx) = notify_tx {
+                        for event in events {
+                            let notification = serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "method": "session.event",
+                                "params": ClientMessage::v1(event),
+                            });
+                            if tx.send(notification.to_string()).await.is_err() {
+                                return protocol_error(request_id, "session event receiver closed");
+                            }
+                        }
+                    }
+                    Ok(ProtocolClientEvent::Reconnected(subscription.after))
+                }
+                Err(error) => Err(error),
+            }
+        }
+        ClientRequest::Chat(request) => {
+            let thread_id = request.thread_id.clone();
+            let workspace = fabric::WorkspaceSelection::new(
+                Some(request.working_dir.clone()),
+                request.additional_writable_roots,
+            )
+            .resolve_with_profile(
+                &request.working_dir,
+                &fabric::PermissionProfileId::workspace_write(),
+            );
+            let response = match workspace {
+                Ok(workspace) => {
+                    handler
+                        .execute_explicit_chat(
+                            &connection,
+                            request_id.clone(),
+                            request.message,
+                            request.thread_id,
+                            workspace,
+                        )
+                        .await
+                }
+                Err(error) => protocol_error(request_id.clone(), error),
+            };
+            if let Some(error) = response.get("error") {
+                Err(anyhow::anyhow!(
+                    "{}",
+                    error
+                        .get("message")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("chat failed")
+                ))
+            } else {
+                Ok(ProtocolClientEvent::CommandCompleted {
+                    command: "chat".into(),
+                    thread_id,
+                    turn_id: None,
+                    operation_id: None,
+                    detail: response.get("result").cloned().unwrap_or_default(),
+                })
+            }
+        }
+        ClientRequest::Approval(request) => {
+            let thread_id = request.thread_id.clone();
+            let turn_id = request.turn_id;
+            let operation_id = request.operation_id;
+            match handler
+                .resolve_versioned_approval(&connection, request)
+                .await
+            {
+                Ok(approval) => serde_json::to_value(approval)
+                    .map(|detail| ProtocolClientEvent::CommandCompleted {
+                        command: "approval".into(),
+                        thread_id,
+                        turn_id: Some(turn_id),
+                        operation_id: Some(operation_id),
+                        detail,
+                    })
+                    .map_err(anyhow::Error::from),
+                Err(error) => Err(error),
+            }
+        }
+        ClientRequest::Cancel(request) => {
+            let thread_id = request.thread_id.clone();
+            let turn_id = request.turn_id;
+            let operation_id = request.operation_id;
+            handler
+                .cancel_versioned_turn(&connection, request)
+                .await
+                .map(|()| ProtocolClientEvent::CommandCompleted {
+                    command: "cancel".into(),
+                    thread_id,
+                    turn_id: Some(turn_id),
+                    operation_id: Some(operation_id),
+                    detail: serde_json::json!({"status":"cancelled"}),
+                })
+        }
+        ClientRequest::Initialize(_) | ClientRequest::Initialized => {
+            Err(anyhow::anyhow!("handshake request cannot be dispatched"))
+        }
+    };
+    match result {
+        Ok(event) => serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": ClientMessage::v1(event),
+        }),
+        Err(error) => protocol_error(request_id, error),
+    }
+}
+
+async fn run_versioned_subscription(
+    handler: RequestHandler,
+    subscription: fabric::protocol::client::EventSubscription,
+    request_id: serde_json::Value,
+    notify_tx: mpsc::Sender<String>,
+    resp_tx: mpsc::Sender<String>,
+) {
+    let mut cursor = subscription.after;
+    let events = match handler
+        .protocol_events_after(&subscription.session_id, &cursor)
+        .await
+    {
+        Ok(events) => events,
+        Err(error) => {
+            let response = protocol_error(request_id.clone(), error);
+            let _ = resp_tx.send(response.to_string()).await;
+            return;
+        }
+    };
+    for event in events {
+        if let ProtocolClientEvent::Item(item) = &event {
+            cursor = item.cursor.clone();
+        }
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session.event",
+            "params": ClientMessage::v1(event),
+        });
+        if notify_tx.send(notification.to_string()).await.is_err() {
+            return;
+        }
+    }
+    // Acknowledge only after the initial replay is enqueued. The task then
+    // remains connection-owned and tails durable events until disconnect.
+    let response = serde_json::json!({
+        "jsonrpc":"2.0",
+        "id":request_id,
+        "result":ClientMessage::v1(ProtocolClientEvent::Reconnected(cursor.clone())),
+    });
+    if resp_tx.send(response.to_string()).await.is_err() {
+        return;
+    }
+    loop {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let events = match handler
+            .protocol_events_after(&subscription.session_id, &cursor)
+            .await
+        {
+            Ok(events) => events,
+            Err(error) => {
+                tracing::warn!(%error, session = %subscription.session_id.0, "versioned subscription tail failed");
+                return;
+            }
+        };
+        for event in events {
+            if let ProtocolClientEvent::Item(item) = &event {
+                cursor = item.cursor.clone();
+            }
+            let notification = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "session.event",
+                "params": ClientMessage::v1(event),
+            });
+            if notify_tx.send(notification.to_string()).await.is_err() {
+                return;
+            }
         }
     }
 }
@@ -514,7 +724,8 @@ impl UnixServer {
                     // Create a per-connection notify channel so each client receives
                     // its own events independently (shared channels would cause events
                     // to be consumed by whichever connection reads first).
-                    let (notify_tx, notify_rx) = mpsc::channel::<String>(64);
+                    let (notify_tx, notify_rx) =
+                        mpsc::channel::<String>(CONNECTION_NOTIFICATION_CAPACITY);
                     handler.set_notify_channel(notify_tx).await;
                     handler.increment_connections();
 
@@ -613,6 +824,29 @@ impl UnixServer {
     async fn handle_connection(
         stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         handler: RequestHandler,
+        notify_rx: mpsc::Receiver<String>,
+        connection: ConnectionContext,
+    ) -> Result<()> {
+        let result =
+            Self::handle_connection_inner(stream, handler.clone(), notify_rx, connection.clone())
+                .await;
+        if let Err(error) = handler
+            .cleanup_disconnected_connection(&connection.connection_id)
+            .await
+        {
+            tracing::warn!(
+                connection_id = %connection.connection_id.0,
+                %error,
+                "failed to clean up connection-owned foreground processes"
+            );
+        }
+        handler.decrement_connections();
+        result
+    }
+
+    async fn handle_connection_inner(
+        stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        handler: RequestHandler,
         mut notify_rx: mpsc::Receiver<String>,
         connection: ConnectionContext,
     ) -> Result<()> {
@@ -628,6 +862,8 @@ impl UnixServer {
         // while the handler is processing a long-running request (e.g. LLM API call).
         let (resp_tx, mut resp_rx) = mpsc::channel::<String>(1);
         let mut protocol_state = ConnectionProtocolState::New;
+        let mut request_tasks = JoinSet::new();
+        let mut versioned_subscription_started = false;
 
         loop {
             tokio::select! {
@@ -654,7 +890,15 @@ impl UnixServer {
                         .unwrap_or(serde_json::Value::Null);
 
                     if let Some(versioned) = parse_versioned_request(&request) {
-                        let response = match versioned.and_then(|request| protocol_state.accept(&request)) {
+                        let versioned = match versioned {
+                            Ok(versioned) => versioned,
+                            Err(error) => {
+                                let response = protocol_error(request_id, error);
+                                resp_tx.send(serde_json::to_string(&response)?).await?;
+                                continue;
+                            }
+                        };
+                        let response = match protocol_state.accept(&versioned) {
                             Ok(ProtocolAction::InitializeResponse(negotiated)) => {
                                 initialize_response(request_id, &connection, negotiated)
                             }
@@ -664,15 +908,48 @@ impl UnixServer {
                                 "result": { "status": "ready" }
                             }),
                             Ok(ProtocolAction::Dispatch) => {
+                                if let ClientRequest::Subscribe(subscription) = &versioned {
+                                    if versioned_subscription_started {
+                                        let response = protocol_error(
+                                            request_id,
+                                            "connection already has an active session subscription",
+                                        );
+                                        resp_tx.send(response.to_string()).await?;
+                                        continue;
+                                    }
+                                    let Some(notify_tx) = handler.notify_tx.clone() else {
+                                        let response = protocol_error(
+                                            request_id,
+                                            "connection notification channel is unavailable",
+                                        );
+                                        resp_tx.send(response.to_string()).await?;
+                                        continue;
+                                    };
+                                    versioned_subscription_started = true;
+                                    let handler = handler.clone();
+                                    let subscription = subscription.clone();
+                                    let resp_tx = resp_tx.clone();
+                                    request_tasks.spawn(async move {
+                                        run_versioned_subscription(
+                                            handler,
+                                            subscription,
+                                            request_id,
+                                            notify_tx,
+                                            resp_tx,
+                                        )
+                                        .await;
+                                    });
+                                    continue;
+                                }
                                 let handler = handler.clone();
                                 let notify_tx = handler.notify_tx.clone();
                                 let resp_tx = resp_tx.clone();
-                                let connection = connection.clone();
-                                tokio::spawn(async move {
-                                    let response = dispatch_request(
+                                let request_connection = connection.clone();
+                                request_tasks.spawn(async move {
+                                    let response = dispatch_versioned_request(
                                         handler,
-                                        connection,
-                                        request,
+                                        request_connection,
+                                        versioned,
                                         request_id,
                                         notify_tx,
                                     )
@@ -703,7 +980,7 @@ impl UnixServer {
                     let notify_tx = handler.notify_tx.clone();
                     let resp_tx = resp_tx.clone();
                     let connection = connection.clone();
-                    tokio::spawn(async move {
+                    request_tasks.spawn(async move {
                         let response = dispatch_request(
                             handler,
                             connection,
@@ -730,6 +1007,11 @@ impl UnixServer {
                             debug_subscriber_rx = Some(rx);
                             info!("Debug subscriber channel attached to client connection");
                         }
+                    }
+                }
+                completed = request_tasks.join_next(), if !request_tasks.is_empty() => {
+                    if let Some(Err(error)) = completed {
+                        warn!(%error, "connection request task failed");
                     }
                 }
                 // Forward out-of-band notifications from the handler to the client.
@@ -766,7 +1048,10 @@ impl UnixServer {
             }
         }
 
-        handler.decrement_connections();
+        // No request started by this transport may outlive it. In particular,
+        // this closes the race where a detached request could register an
+        // approval after disconnect cleanup had already run.
+        request_tasks.shutdown().await;
         Ok(())
     }
 }
@@ -1075,6 +1360,27 @@ mod tests {
             &versioned
         ));
         assert!(matches!(versioned_state, ConnectionProtocolState::New));
+    }
+
+    #[tokio::test]
+    async fn connection_owned_subscription_task_is_bounded_and_cancelled_on_cleanup() {
+        let (tx, _rx) = mpsc::channel::<String>(CONNECTION_NOTIFICATION_CAPACITY);
+        assert_eq!(tx.capacity(), CONNECTION_NOTIFICATION_CAPACITY);
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        struct DropMark(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for DropMark {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let mut tasks = JoinSet::new();
+        let marker = DropMark(dropped.clone());
+        tasks.spawn(async move {
+            let _marker = marker;
+            std::future::pending::<()>().await;
+        });
+        tasks.shutdown().await;
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

@@ -40,9 +40,10 @@ pub use bridge::llm::LlmBridge;
 // Re-export harness components
 pub use harness::config::HarnessConfig;
 pub use harness::{
-    ChannelCognitiveStreamSink, CognitError, CognitErrorKind, CognitRetryDisposition,
-    CognitiveSession, CognitiveSessionDependencies, CognitiveSessionFactory, CognitiveStreamEvent,
-    CognitiveStreamSink, DefaultCognitiveSessionFactory, HarnessKind,
+    CanonicalTurnEventSink, ChannelCognitiveStreamSink, CognitError, CognitErrorKind,
+    CognitRetryDisposition, CognitiveSession, CognitiveSessionDependencies,
+    CognitiveSessionFactory, CognitiveStreamEvent, CognitiveStreamSink,
+    DefaultCognitiveSessionFactory, HarnessKind,
 };
 pub use r#impl::inference;
 pub use r#impl::learning;

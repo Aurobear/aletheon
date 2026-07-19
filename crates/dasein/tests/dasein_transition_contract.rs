@@ -1,5 +1,3 @@
-use dasein::dasein::self_model::{AssertionSource, SelfAssertion};
-use dasein::dasein::types::{BewandtnisNode, EntityId, ReadinessState, TemporalPosition};
 use dasein::dasein::DaseinModule;
 use fabric::dasein::{
     CareActionKind, ExperienceProvenance, ExperienceSource, InterpretedExperience, OutcomeStatus,
@@ -118,13 +116,17 @@ async fn reducer_structured_outcome_controls_mood_without_keywords() {
 #[tokio::test]
 async fn reducer_explicitly_handles_reflective_variants() {
     let module = module();
-    module.self_model().assert(SelfAssertion {
-        content: "fixed identity".into(),
-        source: AssertionSource::Habitual,
-        stability: 0.5,
-        since: TemporalPosition(0),
-        bewandtnis: Vec::new(),
-    });
+    module
+        .transition(request(
+            SelfEventId::new(),
+            0,
+            InterpretedExperience::KnowledgeAsserted {
+                assertions: vec!["fixed identity".into()],
+                confidence: 0.5,
+            },
+        ))
+        .await
+        .unwrap();
 
     let variants = [
         InterpretedExperience::KnowledgeAsserted {
@@ -150,14 +152,14 @@ async fn reducer_explicitly_handles_reflective_variants() {
 
     for (index, content) in variants.into_iter().enumerate() {
         module
-            .transition(request(SelfEventId::new(), index as u64, content))
+            .transition(request(SelfEventId::new(), index as u64 + 1, content))
             .await
             .unwrap();
     }
 
-    assert_eq!(module.self_version().await, SelfVersion(5));
+    assert_eq!(module.self_version().await, SelfVersion(6));
     assert_eq!(module.temporality().current_position().0, 0);
-    assert_eq!(module.narrative_reference_count().await, 5);
+    assert_eq!(module.narrative_reference_count().await, 6);
     let self_snapshot = module.self_model().to_snapshot();
     assert!(self_snapshot
         .current_assertions
@@ -207,18 +209,24 @@ async fn scheduled_reflection_emits_care_decision() {
 #[tokio::test]
 async fn reducer_readiness_change_is_compare_and_set() {
     let module = module();
-    module.world().add_entity(BewandtnisNode {
-        id: EntityId::new("compiler"),
-        what_it_is: "build tool".into(),
-        for_the_sake_of: Vec::new(),
-        appears_in: Vec::new(),
-        readiness: ReadinessState::ReadyToHand,
-    });
-
     module
         .transition(request(
             SelfEventId::new(),
             0,
+            InterpretedExperience::WorldEntityObserved {
+                entity_id: "compiler".into(),
+                what_it_is: "build tool".into(),
+                for_the_sake_of: Vec::new(),
+                readiness: fabric::dasein::ReadinessState::ReadyToHand,
+            },
+        ))
+        .await
+        .unwrap();
+
+    module
+        .transition(request(
+            SelfEventId::new(),
+            1,
             InterpretedExperience::ReadinessChanged {
                 entity_id: "compiler".into(),
                 old_state: fabric::dasein::ReadinessState::ReadyToHand,
@@ -231,7 +239,7 @@ async fn reducer_readiness_change_is_compare_and_set() {
     let error = module
         .transition(request(
             SelfEventId::new(),
-            1,
+            2,
             InterpretedExperience::ReadinessChanged {
                 entity_id: "compiler".into(),
                 old_state: fabric::dasein::ReadinessState::ReadyToHand,
@@ -241,7 +249,7 @@ async fn reducer_readiness_change_is_compare_and_set() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("readiness conflict"));
-    assert_eq!(module.self_version().await, SelfVersion(1));
+    assert_eq!(module.self_version().await, SelfVersion(2));
     let snapshot = module.world().to_snapshot();
     assert_eq!(snapshot.present_at_hand.len(), 1);
     assert!(snapshot.unavailable.is_empty());

@@ -17,6 +17,10 @@ pub struct HarnessConfig {
     pub circuit_breaker_max_repeats: usize,
     pub circuit_breaker_window_size: usize,
     pub learning_enabled: bool,
+    /// C1: when true, compaction uses the guarded `maybe_compact_v2` (degenerate
+    /// / failure leaves the buffer unchanged). Default false = legacy
+    /// `maybe_compact`. Set from `grok_hardening.compaction_v2`.
+    pub compaction_v2: bool,
 }
 
 impl Default for HarnessConfig {
@@ -33,6 +37,7 @@ impl Default for HarnessConfig {
             circuit_breaker_max_repeats: 5,
             circuit_breaker_window_size: 10,
             learning_enabled: true,
+            compaction_v2: false,
         }
     }
 }

@@ -9,6 +9,7 @@ use super::workflow;
 
 use super::response::deduplicate_consecutive_text as deduplicate_response;
 use super::response::{format_evolution, format_genome, format_reflections, format_status};
+use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
 use fabric::ui_event::ClientEvent;
 
 use std::io;
@@ -47,6 +48,10 @@ pub struct Args {
     /// Single message mode (non-interactive)
     #[arg(short, long)]
     pub message: Option<String>,
+
+    /// Agent profile to use for this session
+    #[arg(long = "agent-profile", value_name = "NAME", global = true)]
+    pub agent_profile: Option<String>,
 
     /// Force TUI mode
     #[arg(long)]
@@ -286,35 +291,17 @@ async fn memory_cmd(socket: &PathBuf, action: MemoryAction) -> Result<()> {
             text,
             scope,
             subject,
-        } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.add",
-            "params": { "content": text, "scope": scope, "subject": subject }
-        }),
-        MemoryAction::List { scope, all } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.list",
-            "params": { "scope": scope, "all": all }
-        }),
-        MemoryAction::Search { query, scope } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.search",
-            "params": { "query": query, "scope": scope }
-        }),
-        MemoryAction::Show { id } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.show",
-            "params": { "id": id }
-        }),
-        MemoryAction::Forget { id, hard } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.forget",
-            "params": { "id": id, "hard": hard }
-        }),
-        MemoryAction::Pin { id } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.pin",
-            "params": { "id": id }
-        }),
-        MemoryAction::Unpin { id } => serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "memory.unpin",
-            "params": { "id": id }
-        }),
-    };
+        } => ClientRpcRequest::memory_add(text, scope, subject),
+        MemoryAction::List { scope, all } => ClientRpcRequest::memory_list(scope.clone(), *all),
+        MemoryAction::Search { query, scope } => {
+            ClientRpcRequest::memory_search(query, scope.clone())
+        }
+        MemoryAction::Show { id } => ClientRpcRequest::memory_show(*id),
+        MemoryAction::Forget { id, hard } => ClientRpcRequest::memory_forget(*id, *hard),
+        MemoryAction::Pin { id } => ClientRpcRequest::memory_pin(*id),
+        MemoryAction::Unpin { id } => ClientRpcRequest::memory_unpin(*id),
+    }
+    .to_json_rpc(Some(1))?;
 
     let resp = super::rpc_client::send_rpc(socket, &req).await?;
 
@@ -440,10 +427,7 @@ async fn handle_daemon_action(socket: &PathBuf, action: DaemonAction) -> Result<
             }
         }
         DaemonAction::Stop => {
-            let req = serde_json::json!({
-                "jsonrpc": "2.0", "id": 1, "method": "daemon.shutdown",
-                "params": {}
-            });
+            let req = ClientRpcRequest::DaemonShutdown.to_json_rpc(Some(1))?;
             let resp = super::rpc_client::send_rpc(socket, &req).await?;
             if let Some(err) = resp.get("error") {
                 eprintln!("Error: {}", err["message"].as_str().unwrap_or("unknown"));
@@ -487,38 +471,29 @@ pub async fn single_message_with_workspace(
     let (reader, mut writer) = stream.split();
     let mut reader = BufReader::new(reader);
 
-    // Determine JSON-RPC method from slash commands
-    let request = if msg.starts_with('/') {
+    // Select a typed daemon request from slash commands.
+    let typed_request = if msg.starts_with('/') {
         let cmd = msg.strip_prefix('/').unwrap_or(msg);
         let (name, _args) = match cmd.find(' ') {
             Some(i) => (&cmd[..i], cmd[i + 1..].trim()),
             None => (cmd, ""),
         };
         match name {
-            "reflect" | "r" => serde_json::json!({
-                "jsonrpc": "2.0", "id": 1, "method": "reflect"
-            }),
-            "reflect_now" | "rn" => serde_json::json!({
-                "jsonrpc": "2.0", "id": 1, "method": "reflect_now"
-            }),
-            "evolution" | "evo" => serde_json::json!({
-                "jsonrpc": "2.0", "id": 1, "method": "evolution"
-            }),
-            "genome" | "gene" => serde_json::json!({
-                "jsonrpc": "2.0", "id": 1, "method": "genome"
-            }),
-            "status" | "st" => serde_json::json!({
-                "jsonrpc": "2.0", "id": 1, "method": "status"
-            }),
+            "reflect" | "r" => ClientRpcRequest::Reflect,
+            "reflect_now" | "rn" => ClientRpcRequest::ReflectNow,
+            "evolution" | "evo" => ClientRpcRequest::Evolution,
+            "genome" | "gene" => ClientRpcRequest::Genome,
+            "status" | "st" => ClientRpcRequest::Status,
             "cwd" => {
                 println!("{}", workspace.cwd().display());
                 return Ok(());
             }
-            _ => super::chat_request(msg, workspace),
+            _ => ClientRpcRequest::chat(msg, workspace),
         }
     } else {
-        super::chat_request(msg, workspace)
+        ClientRpcRequest::chat(msg, workspace)
     };
+    let request = typed_request.to_json_rpc(Some(1))?;
     let req_str = serde_json::to_string(&request)?;
     writer.write_all(req_str.as_bytes()).await?;
     writer.write_all(b"\n").await?;
@@ -568,22 +543,15 @@ pub async fn single_message_with_workspace(
                 let mut line = String::new();
                 let stdin = io::stdin();
                 let decision = match stdin.read_line(&mut line) {
-                    Ok(0) | Err(_) => "deny",
+                    Ok(0) | Err(_) => TransientApprovalDecision::Deny,
                     Ok(_) => match line.trim().to_lowercase().as_str() {
-                        "y" | "yes" => "approve",
-                        "a" | "always" => "approve_for_session",
-                        _ => "deny",
+                        "y" | "yes" => TransientApprovalDecision::Approve,
+                        "a" | "always" => TransientApprovalDecision::ApproveForSession,
+                        _ => TransientApprovalDecision::Deny,
                     },
                 };
-                let approval_resp = serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": null,
-                    "method": "approval_response",
-                    "params": {
-                        "approval_id": approval_id,
-                        "decision": decision,
-                    }
-                });
+                let approval_resp = ClientRpcRequest::approval_response(approval_id, decision)
+                    .to_json_rpc(None)?;
                 let resp_str = serde_json::to_string(&approval_resp)?;
                 writer.write_all(resp_str.as_bytes()).await?;
                 writer.write_all(b"\n").await?;
@@ -593,13 +561,16 @@ pub async fn single_message_with_workspace(
             // Handle streaming events via typed ClientEvent dispatch.
             if resp.get("method").and_then(|v| v.as_str()) == Some("event") {
                 if let Some(params) = resp.get("params") {
-                    if let Ok(event) = serde_json::from_value::<ClientEvent>(params.clone()) {
+                    if let Some(event) = ClientEvent::decode_if_known(params.clone()) {
                         match event {
                             ClientEvent::ToolCallStart { .. } => {
                                 // args arrive later via ToolCallComplete — skip here
                             }
                             ClientEvent::ToolCallComplete { tool, args, .. } => {
                                 eprintln!("[tool] {} {}", tool, serde_json::to_string(&args).unwrap_or_default());
+                            }
+                            ClientEvent::ToolProgress { tool, payload, .. } => {
+                                eprintln!("[tool:{tool}] {payload}");
                             }
                             ClientEvent::TextDelta { .. } => {
                                 had_streaming_text = true;

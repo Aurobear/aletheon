@@ -397,6 +397,7 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         }
     }
 

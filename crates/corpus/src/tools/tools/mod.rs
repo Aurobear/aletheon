@@ -22,6 +22,7 @@ pub mod process_list;
 pub mod registry;
 pub mod script_tool;
 pub mod search;
+pub mod structured_patch;
 pub mod system_status;
 pub mod task_tools;
 pub mod toolset;
@@ -30,6 +31,8 @@ pub mod web_search;
 
 // Re-export types from fabric (the canonical definitions)
 pub use fabric::tool::{ConcurrencyClass, ToolExposure};
-pub use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+pub use fabric::tool::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,
+};
 pub use registry::ToolRegistry;
 pub use toolset::ToolsetRegistry;

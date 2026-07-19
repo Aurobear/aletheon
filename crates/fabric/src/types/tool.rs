@@ -38,6 +38,9 @@ pub struct ToolContext {
     pub working_dir: std::path::PathBuf,
     pub session_id: String,
     pub clock: Arc<dyn crate::Clock>,
+    /// Optional canonical turn stream supplied by the trusted Executive path.
+    /// Tool/model input cannot create or replace this sender.
+    pub turn_event_sender: Option<crate::ipc::TurnEventSender>,
 }
 
 impl ToolContext {
@@ -105,10 +108,50 @@ pub struct ToolResult {
     pub metadata: ToolResultMeta,
 }
 
+/// Neutral, protocol-stable description of a structured patch result. Fabric
+/// owns the transport contract while Corpus remains free to own patch parsing
+/// and filesystem application.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchDelta {
+    pub applied: Vec<PatchDeltaApplied>,
+    pub failed: Vec<PatchDeltaFailed>,
+    pub files_changed: Vec<PatchDeltaFileChange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchDeltaApplied {
+    pub operation: String,
+    pub path: String,
+    pub hunks_applied: Option<usize>,
+    pub bytes_written: Option<u64>,
+    pub moved_to: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchDeltaFailed {
+    pub operation: String,
+    pub path: String,
+    pub error: String,
+    pub hunks_applied_before_failure: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchDeltaFileChange {
+    pub path: String,
+    pub change_type: String,
+    pub hunks_applied: usize,
+    pub bytes_before: u64,
+    pub bytes_after: u64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolResultMeta {
     pub execution_time_ms: u64,
     pub truncated: bool,
+    /// Structured filesystem delta produced by an `apply_patch` invocation.
+    /// Fabric owns this neutral DTO so it does not depend on Corpus patch types.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_delta: Option<PatchDelta>,
 }
 
 /// Visibility tier for tools.
@@ -150,6 +193,36 @@ pub enum ConcurrencyClass {
     SideEffect,
 }
 
+/// Host-authored execution identity for structured tools.
+///
+/// This value is obtained from the registered `Tool` implementation, never
+/// from model-provided JSON input. Transport implementations must continue to
+/// treat `input` and this descriptor as separate trust domains.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ToolExecutionDescriptor {
+    EbpfCompile,
+    KernelBuild,
+    ModuleBuild,
+    ModuleLoad,
+    Script { canonical_path: std::path::PathBuf },
+}
+
+impl std::fmt::Debug for ToolExecutionDescriptor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EbpfCompile => formatter.write_str("EbpfCompile"),
+            Self::KernelBuild => formatter.write_str("KernelBuild"),
+            Self::ModuleBuild => formatter.write_str("ModuleBuild"),
+            Self::ModuleLoad => formatter.write_str("ModuleLoad"),
+            Self::Script { .. } => formatter
+                .debug_struct("Script")
+                .field("canonical_path", &"[REDACTED]")
+                .finish(),
+        }
+    }
+}
+
 /// Canonical Tool trait. See shared/traits.md.
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -157,7 +230,25 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     fn input_schema(&self) -> serde_json::Value;
     fn permission_level(&self) -> PermissionLevel;
+
+    /// Trusted, host-only execution identity for isolated structured dispatch.
+    /// Read-only and legacy tools inherit `None` and remain unaffected.
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        None
+    }
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult;
+
+    /// Execute through the additive G2 streaming contract. Legacy tools inherit
+    /// this terminal-only adapter and therefore require no implementation
+    /// changes. The terminal remains subject to Executive settlement.
+    async fn execute_streaming(
+        &self,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+        sink: &mut crate::types::tool_stream::ToolEventSink,
+    ) {
+        sink.terminal(Ok(self.execute(input, ctx).await)).await;
+    }
 
     /// Clone this tool into a `Box<dyn Tool>`. Required for agent config loading
     /// where tools must be duplicated across agents.
@@ -231,6 +322,83 @@ pub trait Previewer: Tool {
 mod tests {
     use super::*;
 
+    #[derive(Clone)]
+    struct LegacyTool;
+
+    #[async_trait]
+    impl Tool for LegacyTool {
+        fn name(&self) -> &str {
+            "legacy"
+        }
+
+        fn description(&self) -> &str {
+            "legacy terminal-only tool"
+        }
+
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+
+        fn permission_level(&self) -> PermissionLevel {
+            PermissionLevel::L0
+        }
+
+        async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+            ToolResult {
+                content: "legacy-result".into(),
+                is_error: false,
+                metadata: ToolResultMeta::default(),
+            }
+        }
+
+        fn boxed_clone(&self) -> Box<dyn Tool> {
+            Box::new(self.clone())
+        }
+    }
+
+    struct FixedClock;
+
+    impl crate::Clock for FixedClock {
+        fn wall_now(&self) -> crate::WallTime {
+            crate::WallTime(0)
+        }
+
+        fn mono_now(&self) -> crate::MonoTime {
+            crate::MonoTime(0)
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_tool_streaming_adapter_emits_exactly_one_terminal() {
+        let (mut sink, mut rx) = crate::types::tool_stream::tool_event_channel();
+        LegacyTool
+            .execute_streaming(
+                serde_json::json!({}),
+                &ToolContext {
+                    agent: None,
+                    approval_authority: None,
+                    working_dir: std::env::temp_dir(),
+                    session_id: "test".into(),
+                    clock: Arc::new(FixedClock),
+                    turn_event_sender: None,
+                },
+                &mut sink,
+            )
+            .await;
+        drop(sink);
+
+        let terminal = rx.recv().await.expect("terminal event");
+        assert!(matches!(
+            terminal,
+            crate::types::tool_stream::ToolExecutionEvent::Terminal(Ok(ToolResult {
+                content,
+                is_error: false,
+                ..
+            })) if content == "legacy-result"
+        ));
+        assert!(rx.recv().await.is_none(), "adapter must emit one terminal");
+    }
+
     #[test]
     fn exposure_default_is_direct() {
         assert_eq!(ToolExposure::default(), ToolExposure::Direct);
@@ -266,5 +434,38 @@ mod tests {
             .filter(|e| **e == ToolExposure::Direct)
             .collect();
         assert_eq!(direct.len(), 2);
+    }
+
+    #[test]
+    fn execution_descriptor_serializes_as_a_separate_typed_contract() {
+        let descriptor = ToolExecutionDescriptor::ModuleBuild;
+        let encoded = serde_json::to_value(&descriptor).unwrap();
+        assert_eq!(encoded, serde_json::json!({"kind": "module_build"}));
+        assert_eq!(
+            serde_json::from_value::<ToolExecutionDescriptor>(encoded).unwrap(),
+            descriptor
+        );
+    }
+
+    #[test]
+    fn script_descriptor_debug_redacts_host_path() {
+        let descriptor = ToolExecutionDescriptor::Script {
+            canonical_path: "/trusted/host/secret/tool.sh".into(),
+        };
+        let debug = format!("{descriptor:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("secret/tool.sh"));
+    }
+
+    #[test]
+    fn descriptor_rejects_model_supplied_extra_fields() {
+        // Use a kind that does not exist in the enum — model-supplied
+        // descriptors must not deserialize into any valid variant.
+        let injected = serde_json::json!({
+            "kind": "model_controlled",
+            "canonical_path": "/tmp/model-controlled"
+        });
+        assert!(serde_json::from_value::<ToolExecutionDescriptor>(injected).is_err());
+        assert!(LegacyTool.execution_descriptor().is_none());
     }
 }

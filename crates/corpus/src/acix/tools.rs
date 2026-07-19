@@ -27,6 +27,7 @@ fn ok(content: String, elapsed_ms: u64) -> ToolResult {
         metadata: ToolResultMeta {
             execution_time_ms: elapsed_ms,
             truncated: false,
+            patch_delta: None,
         },
     }
 }
@@ -38,6 +39,7 @@ fn err(msg: impl Into<String>, elapsed_ms: u64) -> ToolResult {
         metadata: ToolResultMeta {
             execution_time_ms: elapsed_ms,
             truncated: false,
+            patch_delta: None,
         },
     }
 }

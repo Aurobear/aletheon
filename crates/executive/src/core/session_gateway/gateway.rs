@@ -41,6 +41,7 @@ use super::subsystem_query::SubsystemRegistry;
 use crate::core::config::ExecutiveConfig;
 use crate::r#impl::daemon::debug_handler::DebugHandler;
 use crate::r#impl::daemon::session_manager::SessionManager;
+use crate::service::session_service::SessionService;
 #[cfg(test)]
 use cognit::harness::linear::circuit_breaker::CircuitBreakerStatus;
 #[cfg(test)]
@@ -67,6 +68,7 @@ pub struct SessionGateway {
     pub(super) session_id: String,
     pub(super) state: Arc<Mutex<SessionStateRef>>,
     pub(super) session_manager: Arc<Mutex<SessionManager>>,
+    pub(super) canonical_sessions: Arc<SessionService>,
     pub(super) started_at: MonoTime,
     pub(super) runtime_config: ExecutiveConfig,
 
@@ -83,6 +85,23 @@ pub struct SessionGateway {
 }
 
 impl SessionGateway {
+    pub async fn protocol_snapshot(
+        &self,
+        session_id: &fabric::SessionId,
+    ) -> anyhow::Result<fabric::protocol::client::UiSnapshot> {
+        self.canonical_sessions.protocol_snapshot(session_id).await
+    }
+
+    pub async fn protocol_events_after(
+        &self,
+        session_id: &fabric::SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> anyhow::Result<Vec<fabric::protocol::client::ClientEvent>> {
+        self.canonical_sessions
+            .protocol_events_after(session_id, after)
+            .await
+    }
+
     /// Create a new SessionGateway.
     pub fn new(
         param_registry: Arc<ParamRegistry>,
@@ -90,6 +109,7 @@ impl SessionGateway {
         session_id: String,
         state: Arc<Mutex<SessionStateRef>>,
         session_manager: Arc<Mutex<SessionManager>>,
+        canonical_sessions: Arc<SessionService>,
         started_at: MonoTime,
         runtime_config: ExecutiveConfig,
         core_memory: Arc<Mutex<CoreMemory>>,
@@ -105,6 +125,7 @@ impl SessionGateway {
             session_id,
             state,
             session_manager,
+            canonical_sessions,
             started_at,
             runtime_config,
             core_memory,
@@ -252,6 +273,19 @@ mod tests {
         )
         .await
         .unwrap();
+        let canonical_sessions = Arc::new(SessionService::new(
+            Arc::new(
+                crate::r#impl::session::canonical_store::CanonicalSessionStore::open(
+                    tmp.path().join("sessions.db"),
+                )
+                .unwrap(),
+            ),
+            Arc::new(Mutex::new(std::collections::HashMap::new())),
+        ));
+        canonical_sessions
+            .ensure_legacy_projection(&fabric::SessionId("test-session".into()), &[], 0)
+            .await
+            .unwrap();
 
         // Create test CoreMemory, RecallMemory, SelfField
         let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
@@ -275,6 +309,7 @@ mod tests {
             "test-session".into(),
             state,
             Arc::new(Mutex::new(sm)),
+            canonical_sessions,
             test_clock.mono_now(),
             ExecutiveConfig::default(),
             core_memory,
@@ -388,17 +423,14 @@ mod tests {
     async fn journal_returns_entries() {
         let f = make_gateway().await;
         let gw = f.gw;
-        // Append some events to the journal first
-        {
-            let sm = gw.session_manager.lock().await;
-            sm.journal()
-                .append(crate::r#impl::session::journal::SessionEvent::UserMessage {
-                    content: "test question".into(),
-                })
-                .await
-                .unwrap();
-            sm.journal().flush().await.unwrap();
-        }
+        gw.canonical_sessions
+            .ensure_legacy_projection(
+                &fabric::SessionId("test-session".into()),
+                &[fabric::Message::user("test question")],
+                0,
+            )
+            .await
+            .unwrap();
 
         let resp = gw
             .handle_method("session.journal", &json!("1"), &json!({}))
@@ -412,25 +444,17 @@ mod tests {
     async fn journal_filter_by_type() {
         let f = make_gateway().await;
         let gw = f.gw;
-        // Append some events
-        {
-            let sm = gw.session_manager.lock().await;
-            sm.journal()
-                .append(crate::r#impl::session::journal::SessionEvent::UserMessage {
-                    content: "hello".into(),
-                })
-                .await
-                .unwrap();
-            sm.journal()
-                .append(
-                    crate::r#impl::session::journal::SessionEvent::AssistantMessage {
-                        content: "hi".into(),
-                    },
-                )
-                .await
-                .unwrap();
-            sm.journal().flush().await.unwrap();
-        }
+        gw.canonical_sessions
+            .ensure_legacy_projection(
+                &fabric::SessionId("test-session".into()),
+                &[
+                    fabric::Message::user("hello"),
+                    fabric::Message::assistant("hi"),
+                ],
+                0,
+            )
+            .await
+            .unwrap();
 
         let resp = gw
             .handle_method(

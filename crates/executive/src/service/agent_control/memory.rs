@@ -13,6 +13,19 @@ use sha2::{Digest, Sha256};
 
 use super::{AgentContextProjection, AgentEventSink, AgentRuntimeEvent};
 
+/// Host-reviewed promotion input. Fields are private so an unreviewed child
+/// draft cannot be promoted merely by calling a method with receipt-shaped
+/// strings.
+pub(crate) struct ReviewedChildMemoryDraft {
+    source_record: MemoryRecordId,
+    root_content: fabric::ContentId,
+    broadcast: fabric::BroadcastEpoch,
+    selected_candidate: fabric::ContentId,
+    selection_receipt: String,
+    reviewer: PrincipalId,
+    review_receipt: String,
+}
+
 pub fn context_projection_receipt(
     projection: &AgentContextProjection,
 ) -> Result<String, AgentControlError> {
@@ -48,7 +61,8 @@ impl MemoryRecordingAgentEventSink {
         self.error.lock().take()
     }
 
-    pub fn promote_reviewed(
+    #[allow(dead_code)]
+    pub(crate) fn review_draft(
         &self,
         source_record: MemoryRecordId,
         root_content: fabric::ContentId,
@@ -57,18 +71,55 @@ impl MemoryRecordingAgentEventSink {
         selection_receipt: String,
         reviewer: PrincipalId,
         review_receipt: String,
+    ) -> Result<ReviewedChildMemoryDraft, AgentControlError> {
+        if selection_receipt.trim().is_empty()
+            || reviewer.0.trim().is_empty()
+            || review_receipt.trim().is_empty()
+            || broadcast.0 == 0
+        {
+            return Err(memory_error(anyhow::anyhow!(
+                "reviewed child draft requires root selection and reviewer receipts"
+            )));
+        }
+        let source = self
+            .vault
+            .get_record(&source_record)
+            .map_err(memory_error)?
+            .ok_or_else(|| memory_error(anyhow::anyhow!("child memory draft does not exist")))?;
+        if source.scope != self.context.task_scope
+            || source.authority == MemoryAuthority::ApprovedCore
+        {
+            return Err(memory_error(anyhow::anyhow!(
+                "memory draft is not an unpromoted child-scoped record"
+            )));
+        }
+        Ok(ReviewedChildMemoryDraft {
+            source_record,
+            root_content,
+            broadcast,
+            selected_candidate,
+            selection_receipt,
+            reviewer,
+            review_receipt,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn promote_reviewed(
+        &self,
+        reviewed: ReviewedChildMemoryDraft,
         target_scope: MemoryScope,
     ) -> Result<MemoryPromotionReceipt, AgentControlError> {
         self.vault
             .promote(&MemoryPromotionRequest {
-                source_record,
+                source_record: reviewed.source_record,
                 child: self.context.clone(),
-                root_content,
-                broadcast,
-                selected_candidate,
-                selection_receipt,
-                reviewer,
-                review_receipt,
+                root_content: reviewed.root_content,
+                broadcast: reviewed.broadcast,
+                selected_candidate: reviewed.selected_candidate,
+                selection_receipt: reviewed.selection_receipt,
+                reviewer: reviewed.reviewer,
+                review_receipt: reviewed.review_receipt,
                 target_scope,
             })
             .map_err(memory_error)
@@ -146,5 +197,52 @@ fn memory_error(error: anyhow::Error) -> AgentControlError {
     AgentControlError {
         kind: AgentControlErrorKind::Persistence,
         message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fabric::{AgentId, AgentTaskId, OperationId, ProcessId};
+
+    #[test]
+    fn reviewed_gate_rejects_receiptless_child_draft() {
+        let vault = Arc::new(AgentMemoryVault::in_memory().unwrap());
+        let context = AgentMemoryContext::verified(
+            ProcessId::new(),
+            AgentId::new(),
+            AgentTaskId("review-test".into()),
+            "projection:review-test",
+        )
+        .unwrap();
+        vault.register(&context).unwrap();
+        let source = vault
+            .record_child(
+                &context,
+                ChildMemoryDraft {
+                    kind: MemoryKind::Reflection,
+                    content: "draft".into(),
+                    authority: MemoryAuthority::RawExperience,
+                    source_event_ids: vec![format!("operation:{}", OperationId::new().0)],
+                    tags: vec![],
+                },
+            )
+            .unwrap();
+        let sink = MemoryRecordingAgentEventSink::new(
+            Arc::new(super::super::NoopAgentEventSink),
+            vault,
+            context,
+        );
+        assert!(sink
+            .review_draft(
+                source.id,
+                fabric::ContentId::new(),
+                fabric::BroadcastEpoch(1),
+                fabric::ContentId::new(),
+                "selection".into(),
+                PrincipalId("reviewer".into()),
+                String::new(),
+            )
+            .is_err());
     }
 }

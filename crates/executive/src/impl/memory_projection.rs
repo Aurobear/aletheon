@@ -179,7 +179,7 @@ impl MemoryProjection {
                     "approved_at_ms": decision.approved_at_ms,
                     "supersedes": decision.supersedes,
                 }),
-                sensitivity: decision.sensitivity.clone(),
+                sensitivity: decision.sensitivity,
             },
         )
     }

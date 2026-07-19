@@ -34,6 +34,7 @@ fn spawn_request() -> AgentSpawnRequest {
         },
         broadcast_refs: vec![],
         allowed_tools: vec!["file_read".into()],
+        background_decls: vec![],
         budget: budget(),
     }
 }

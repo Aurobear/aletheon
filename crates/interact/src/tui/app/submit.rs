@@ -1,20 +1,29 @@
 use std::io;
 use std::io::Write;
 
+use fabric::protocol::client::ClientRpcRequest;
 use fabric::ui_event::CollaborationMode;
+use fabric::ui_event::InterruptReason;
 use tokio::io::AsyncWriteExt;
 
 use super::super::chat::{ChatWidget, Role as ChatRole};
 use super::super::command::{looks_like_command, parse_command, BuiltinCommand, CommandType};
 use super::super::App;
 
-/// Send a simple JSON-RPC method call to the daemon (no params).
-async fn send_jsonrpc_method(app: &mut App, method: &str) {
-    let request = serde_json::json!({"jsonrpc": "2.0", "method": method, "id": 1});
+pub(super) async fn write_request(app: &mut App, request: ClientRpcRequest) {
+    let request = request
+        .to_json_rpc(Some(1))
+        .expect("typed client request serializes");
     let payload = serde_json::to_string(&request).unwrap_or_default();
     let framed = format!("{}\n", payload);
     let _ = app.stream.write_all(framed.as_bytes()).await;
     let _ = app.stream.flush().await;
+}
+
+/// Send a typed protocol request whose response is handled by the streaming
+/// response path.
+async fn send_request(app: &mut App, request: ClientRpcRequest) {
+    write_request(app, request).await;
     app.streaming = true;
     app.response_buf.clear();
     app.status.waiting = true;
@@ -69,37 +78,37 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Status)) => {
-                send_jsonrpc_method(app, "status").await;
+                send_request(app, ClientRpcRequest::Status).await;
                 app.chat
                     .add_text(ChatRole::System, "查询状态中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Reflect)) => {
-                send_jsonrpc_method(app, "reflect").await;
+                send_request(app, ClientRpcRequest::Reflect).await;
                 app.chat
                     .add_text(ChatRole::System, "查询反思记录中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::ReflectNow)) => {
-                send_jsonrpc_method(app, "reflect_now").await;
+                send_request(app, ClientRpcRequest::ReflectNow).await;
                 app.chat
                     .add_text(ChatRole::System, "执行即时反思中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Evolution)) => {
-                send_jsonrpc_method(app, "evolution").await;
+                send_request(app, ClientRpcRequest::Evolution).await;
                 app.chat
                     .add_text(ChatRole::System, "查询演化历史中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Genome)) => {
-                send_jsonrpc_method(app, "genome").await;
+                send_request(app, ClientRpcRequest::Genome).await;
                 app.chat
                     .add_text(ChatRole::System, "查询基因组中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
-                send_jsonrpc_method(app, "sessions").await;
+                send_request(app, ClientRpcRequest::Sessions).await;
                 app.chat
                     .add_text(ChatRole::System, "查询会话列表中...".to_string());
                 return;
@@ -110,36 +119,26 @@ pub async fn submit_message(app: &mut App, text: String) {
                         .add_text(ChatRole::System, "用法: /resume <session_id>".to_string());
                     return;
                 }
-                let msg = serde_json::json!({
-                    "jsonrpc": "2.0", "method": "resume", "id": 1,
-                    "params": { "session_id": id }
-                });
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.streaming = true;
-                app.response_buf.clear();
-                app.status.waiting = true;
+                send_request(app, ClientRpcRequest::resume(id.clone())).await;
                 app.chat
                     .add_text(ChatRole::System, format!("恢复会话 {}...", id));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
-                send_jsonrpc_method(app, "compact").await;
+                send_request(app, ClientRpcRequest::Compact).await;
                 app.chat
                     .add_text(ChatRole::System, "压缩上下文中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Model)) => {
-                send_jsonrpc_method(app, "model_list").await;
+                send_request(app, ClientRpcRequest::ModelList).await;
                 app.chat
                     .add_text(ChatRole::System, "查询可用模型中...".to_string());
                 return;
             }
             // ── New P2 commands ──
             Some(CommandType::Builtin(BuiltinCommand::Mode { name })) => {
-                let mode_str = if name.is_empty() {
+                let mode = if name.is_empty() {
                     // Cycle to next mode
                     let modes = [
                         CollaborationMode::Default,
@@ -151,41 +150,37 @@ pub async fn submit_message(app: &mut App, text: String) {
                         .iter()
                         .position(|m| *m == app.app_state.mode)
                         .unwrap_or(0);
-                    let next = modes[(current + 1) % modes.len()];
-                    next.display_name().to_string()
+                    modes[(current + 1) % modes.len()]
                 } else {
-                    name
+                    match name.as_str() {
+                        "plan" => CollaborationMode::Plan,
+                        "auto" => CollaborationMode::Auto,
+                        "sandbox" => CollaborationMode::Sandbox,
+                        _ => CollaborationMode::Default,
+                    }
                 };
-                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "mode_switch", "id": 1, "params": {"mode": mode_str}});
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.chat
-                    .add_text(ChatRole::System, format!("Switching mode to: {}", mode_str));
+                write_request(app, ClientRpcRequest::mode_switch(mode)).await;
+                app.chat.add_text(
+                    ChatRole::System,
+                    format!("Switching mode to: {}", mode.display_name()),
+                );
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Plan)) => {
                 let target = if app.app_state.mode == CollaborationMode::Plan {
-                    "default"
+                    CollaborationMode::Default
                 } else {
-                    "plan"
+                    CollaborationMode::Plan
                 };
-                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "mode_switch", "id": 1, "params": {"mode": target}});
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
-                app.chat
-                    .add_text(ChatRole::System, format!("Switching to {} mode", target));
+                write_request(app, ClientRpcRequest::mode_switch(target)).await;
+                app.chat.add_text(
+                    ChatRole::System,
+                    format!("Switching to {} mode", target.display_name()),
+                );
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Approve)) => {
-                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "plan_approve", "id": 1});
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
+                write_request(app, ClientRpcRequest::PlanApprove).await;
                 app.chat
                     .add_text(ChatRole::System, "Plan approved".to_string());
                 return;
@@ -221,7 +216,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Hooks)) => {
-                send_jsonrpc_method(app, "hooks_list").await;
+                send_request(app, ClientRpcRequest::HooksList).await;
                 app.chat
                     .add_text(ChatRole::System, "Querying hooks...".to_string());
                 return;
@@ -264,11 +259,11 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Interrupt)) => {
-                let msg = serde_json::json!({"jsonrpc": "2.0", "method": "interrupt", "id": 1, "params": {"reason": "user_cancelled"}});
-                let payload = serde_json::to_string(&msg).unwrap_or_default();
-                let framed = format!("{}\n", payload);
-                let _ = app.stream.write_all(framed.as_bytes()).await;
-                let _ = app.stream.flush().await;
+                write_request(
+                    app,
+                    ClientRpcRequest::interrupt(InterruptReason::UserCancelled),
+                )
+                .await;
                 app.chat
                     .add_text(ChatRole::System, "Interrupt sent".to_string());
                 return;
@@ -287,6 +282,20 @@ pub async fn submit_message(app: &mut App, text: String) {
                     app.app_state.awareness.level.display_name(),
                 );
                 app.chat.add_text(ChatRole::System, msg);
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Profile)) => {
+                write_request(app, ClientRpcRequest::AgentProfileList).await;
+                app.chat
+                    .add_text(ChatRole::System, "Querying agent profiles...".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::ProfileSet { name })) => {
+                write_request(app, ClientRpcRequest::agent_profile_set(name.clone())).await;
+                app.chat.add_text(
+                    ChatRole::System,
+                    format!("Switching agent profile to: {}", name),
+                );
                 return;
             }
             Some(CommandType::Builtin(_)) => return,

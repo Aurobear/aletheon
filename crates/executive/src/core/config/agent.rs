@@ -22,9 +22,19 @@ pub struct ExecutiveConfig {
     pub session_id: String,
     pub learning_enabled: bool,
     pub compaction_enabled: bool,
+    /// Grok C1: route the main turn compactor through the guarded
+    /// `maybe_compact_v2` path. Defaults off (byte-identical legacy behavior);
+    /// fed from `grok_hardening.compaction_v2` at handler construction.
+    #[serde(default)]
+    pub compaction_v2: bool,
+    /// G2: expose governed tool progress on the canonical turn stream.
+    #[serde(default)]
+    pub streaming_tools: bool,
     pub tail_token_budget: usize,
     pub target_summary_chars: usize,
     pub context_window_tokens: usize,
+    #[serde(default)]
+    pub conscious_arbitration_mode: fabric::ConsciousArbitrationMode,
     #[serde(default)]
     pub agent_loop: AgentLoopConfig,
     #[serde(default)]
@@ -43,9 +53,12 @@ impl Default for ExecutiveConfig {
             session_id: uuid::Uuid::new_v4().to_string(),
             learning_enabled: true,
             compaction_enabled: true,
+            compaction_v2: false,
+            streaming_tools: false,
             tail_token_budget: 16_000,
             target_summary_chars: 2_000,
             context_window_tokens: 128_000,
+            conscious_arbitration_mode: fabric::ConsciousArbitrationMode::Observe,
             agent_loop: AgentLoopConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
             harness_kind: HarnessKind::default(),
@@ -64,6 +77,9 @@ impl Default for ExecutiveConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HooksConfig {
+    /// Scripts to run when a session starts.
+    #[serde(default)]
+    pub on_session_start: Vec<String>,
     /// Scripts to run before each turn (receives user prompt as JSON on stdin).
     #[serde(default)]
     pub pre_turn: Vec<String>,
@@ -76,6 +92,22 @@ pub struct HooksConfig {
     /// Scripts to run before each tool call (can block execution).
     #[serde(default)]
     pub pre_tool: Vec<String>,
+    #[serde(default)]
+    pub post_tool_failure: Vec<String>,
+    #[serde(default)]
+    pub permission_denied: Vec<String>,
+    #[serde(default)]
+    pub user_prompt_submit: Vec<String>,
+    #[serde(default)]
+    pub notification: Vec<String>,
+    #[serde(default)]
+    pub subagent_start: Vec<String>,
+    #[serde(default)]
+    pub subagent_stop: Vec<String>,
+    #[serde(default)]
+    pub pre_compact: Vec<String>,
+    #[serde(default)]
+    pub post_compact: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

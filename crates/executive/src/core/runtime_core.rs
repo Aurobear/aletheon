@@ -22,8 +22,8 @@ use cognit::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
 use fabric::evolution::LlmPurpose;
+use fabric::CanonicalEventBus;
 use fabric::Clock;
-use fabric::CommunicationBus;
 
 use aletheon_kernel::chronos::SystemClock;
 
@@ -38,7 +38,7 @@ pub struct RuntimeCore {
     pub app_config: crate::core::config::AppConfig,
     pub registry: ProviderRegistry,
     pub daemon_config: DaemonConfig,
-    pub event_bus: Arc<CommunicationBus>,
+    pub event_bus: Arc<CanonicalEventBus>,
     pub pulse_handle: Option<(watch::Sender<bool>, JoinHandle<()>)>,
     pub request_handler: RequestHandler,
     pub cancel_token: CancellationToken,
@@ -83,33 +83,10 @@ impl RuntimeCore {
                 .unwrap_or_else(|_| app_config.agent.system_prompt.clone()),
             sandbox_preference: std::env::var("AGENT_SANDBOX_PREFERENCE")
                 .unwrap_or_else(|_| "auto".to_string()),
+            conscious_arbitration_mode: crate::r#impl::daemon::conscious_arbitration_mode_from_env(
+            )?,
             enable_evolution,
-            mcp_servers: app_config
-                .mcp_servers
-                .iter()
-                .map(|s| corpus::tools::mcp::config::McpServerConfig {
-                    name: s.name.clone(),
-                    transport: match s.transport.as_str() {
-                        "stdio" => corpus::tools::mcp::config::McpTransportConfig::Stdio {
-                            command: s.command.clone().unwrap_or_default(),
-                            args: Vec::new(),
-                        },
-                        "http" => corpus::tools::mcp::config::McpTransportConfig::StreamableHttp {
-                            url: s.url.clone().unwrap_or_default(),
-                        },
-                        "sse" => corpus::tools::mcp::config::McpTransportConfig::Sse {
-                            url: s.url.clone().unwrap_or_default(),
-                        },
-                        _ => corpus::tools::mcp::config::McpTransportConfig::Stdio {
-                            command: s.command.clone().unwrap_or_default(),
-                            args: Vec::new(),
-                        },
-                    },
-                    trust: corpus::tools::mcp::config::McpTrustLevel::LocalTrusted,
-                    enabled: true,
-                    bearer_token_env: s.bearer_token_env.clone(),
-                })
-                .collect(),
+            mcp_servers: super::mcp_config::convert_mcp_servers(&app_config.mcp_servers),
             hooks: {
                 // Honor --config: hooks must come from the same file(s) as the
                 // main config, not always ~/.aletheon. (Fixes the hooks bug.)
@@ -118,11 +95,12 @@ impl RuntimeCore {
             telegram: app_config.telegram.clone(),
             gbrain_memory: app_config.memory.gbrain.clone(),
             deployment: app_config.deployment.clone(),
+            backpressure: app_config.backpressure.clone(),
             agent_admission: app_config.agent.admission.clone(),
         };
 
         // ── Event bus ───────────────────────────────────────────────
-        let bus: Arc<CommunicationBus> = Arc::new(CommunicationBus::new());
+        let bus = Arc::new(CanonicalEventBus::default());
 
         let cancel_token = CancellationToken::new();
 
@@ -230,6 +208,10 @@ impl RuntimeCore {
             app_config.model_aliases.clone(),
             app_config.goal_runtime.clone().unwrap_or_default(),
             app_config.pi_runtime.clone(),
+            app_config.grok_hardening.clone(),
+            app_config.sandbox_profiles.clone(),
+            app_config.network_policy.clone(),
+            app_config.agent_profiles.clone(),
             config.enable_evolution,
             Some(bus.clone()),
             cancel_token.clone(),

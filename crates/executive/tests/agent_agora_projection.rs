@@ -9,14 +9,13 @@ use executive::service::agent_control::{
     AgentRuntimeEvent, AgentRuntimeInbox, AgentRuntimeInput, NoopAgentEventSink,
     SpineAgentEventSink,
 };
-use executive::service::conscious_core_ports::LatestConsciousContextPort;
 use executive::service::conscious_workspace::ConsciousWorkspaceRegistry;
 use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use fabric::{
     AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork, AgentHandle, AgentId,
     AgentProfileId, AgentResult, AgentRunStatus, AgentSpawnRequest, AgoraSpaceId, AttemptEvidence,
-    AttemptUsage, BroadcastEpoch, ContentId, NamespaceId, OperationId, ProcessId, RuntimeId,
-    SpawnSpec, VisibilityScope, WorkspaceAttribution, WorkspaceContent,
+    AttemptUsage, BroadcastEpoch, ContentId, LatestConsciousContextPort, NamespaceId, OperationId,
+    ProcessId, RuntimeId, SpawnSpec, VisibilityScope, WorkspaceAttribution, WorkspaceContent,
 };
 use mnemosyne::{ExperienceEvent, ForgetPolicy, MemoryScope, RecallRequest, RecallSet};
 use tempfile::tempdir;
@@ -45,6 +44,7 @@ fn input() -> AgentRuntimeInput {
             content_id: broadcast,
         }],
         allowed_tools: vec![],
+        background_decls: vec![],
         budget: AgentBudget {
             max_input_tokens: 1_000,
             max_output_tokens: 1_000,
@@ -79,6 +79,9 @@ fn input() -> AgentRuntimeInput {
         root_process_id: root,
         inbox: AgentRuntimeInbox::empty(),
         cancellation: CancellationToken::new(),
+        background_cancellations: std::collections::HashMap::new(),
+        background_registrations: std::collections::HashMap::new(),
+        background_notification_targets: std::collections::HashMap::new(),
     }
 }
 
@@ -337,6 +340,7 @@ async fn root_broadcast_child_candidate_and_later_c01_selection_are_replayable()
             namespace: NamespaceId("projection-root".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await
         .unwrap()
@@ -349,6 +353,7 @@ async fn root_broadcast_child_candidate_and_later_c01_selection_are_replayable()
             namespace: NamespaceId("projection-child".into()),
             initial_operation: None,
             deadline: None,
+            ownership: fabric::ProcessOwnership::Unowned,
         })
         .await
         .unwrap()

@@ -45,6 +45,13 @@ pub enum AgoraOperation {
     ReleaseSharedObject {
         oid: String,
     },
+    /// Atomically replace the workspace's committed attention ordering.
+    UpdateAttention {
+        focus: Option<String>,
+        priorities: Vec<String>,
+        /// Durable selection/broadcast reference that caused this update.
+        selection_ref: String,
+    },
 }
 
 /// A proposal to apply an operation at a specific workspace version.
@@ -507,5 +514,30 @@ mod tests {
             assert!(permit.validate_for(&proposal, 100).is_err());
         }
         assert!(valid.validate_for(&proposal, 200).is_err());
+    }
+
+    #[test]
+    fn attention_operation_roundtrips_and_hash_binds_order() {
+        let operation = AgoraOperation::UpdateAttention {
+            focus: Some("winner-a".into()),
+            priorities: vec!["winner-a".into(), "winner-b".into()],
+            selection_ref: "broadcast:space-a:7".into(),
+        };
+        let encoded = serde_json::to_vec(&operation).unwrap();
+        let decoded: AgoraOperation = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(
+            decoded.operation_hash().unwrap(),
+            operation.operation_hash().unwrap()
+        );
+
+        let reordered = AgoraOperation::UpdateAttention {
+            focus: Some("winner-b".into()),
+            priorities: vec!["winner-b".into(), "winner-a".into()],
+            selection_ref: "broadcast:space-a:7".into(),
+        };
+        assert_ne!(
+            operation.operation_hash().unwrap(),
+            reordered.operation_hash().unwrap()
+        );
     }
 }

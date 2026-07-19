@@ -733,39 +733,197 @@ impl Default for SandboxConfig {
     }
 }
 
-/// MCP (Model Context Protocol) server configuration.
+/// Canonical MCP (Model Context Protocol) server configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "McpServerConfigWire")]
 pub struct McpServerConfig {
     pub name: String,
-    /// "stdio", "http", or "sse"
-    #[serde(default = "default_mcp_transport")]
-    pub transport: String,
-    /// For stdio transport: command to run
-    #[serde(default)]
-    pub command: Option<String>,
-    /// For http/sse transport: URL to connect to
-    #[serde(default)]
-    pub url: Option<String>,
-    /// Environment variable containing the bearer token (never the token itself).
+    pub transport: McpTransportConfig,
+    pub trust: McpTrustLevel,
+    pub enabled: bool,
     #[serde(default)]
     pub bearer_token_env: Option<String>,
+    /// Explicit opt-in OAuth configuration. A configured bearer token takes
+    /// precedence when both are present.
+    #[serde(default)]
+    pub oauth: Option<McpOAuthConfig>,
+    #[serde(default)]
+    pub request_timeout_ms: Option<u64>,
+    #[serde(default = "default_mcp_health_check_interval_sec")]
+    pub health_check_interval_sec: u64,
+    /// Tool names exposed by this server. Empty means all discovered tools.
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+    /// Tool names never exposed by this server. Deny entries take precedence.
+    #[serde(default)]
+    pub denylist: Vec<String>,
+    /// Per-tool permission levels, keyed by the server-advertised tool name or
+    /// its final registered name.
+    #[serde(default)]
+    pub permission_overrides: std::collections::HashMap<String, McpPermissionLevel>,
 }
 
-fn default_mcp_transport() -> String {
-    "stdio".to_string()
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpPermissionLevel {
+    L0,
+    L1,
+    L2,
+    L3,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpOAuthConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Environment variable containing the OAuth client id.
+    pub client_id_env: String,
+    /// Environment variable containing the client secret, when confidential
+    /// client authentication is selected. Raw secrets are never configured.
+    #[serde(default)]
+    pub client_secret_env: Option<String>,
+    pub redirect_uri: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub token_endpoint_auth_method: McpOAuthClientAuthMethod,
+    /// RFC 8414 issuer/base URL. Discovery is authoritative when supplied.
+    #[serde(default)]
+    pub issuer: Option<String>,
+    /// Explicit fallback endpoints for providers without discovery.
+    #[serde(default)]
+    pub authorization_endpoint: Option<String>,
+    #[serde(default)]
+    pub token_endpoint: Option<String>,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum McpOAuthClientAuthMethod {
+    #[default]
+    None,
+    ClientSecretBasic,
+    ClientSecretPost,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum McpTransportConfig {
+    Stdio { command: String, args: Vec<String> },
+    StreamableHttp { url: String },
+    Sse { url: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum McpTrustLevel {
+    LocalTrusted,
+    RemoteTrusted,
+    Untrusted,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+enum McpTransportWire {
+    Canonical(McpTransportConfig),
+    Legacy(String),
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct McpServerConfigWire {
+    name: String,
+    #[serde(default = "default_mcp_transport_wire")]
+    transport: McpTransportWire,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default = "default_mcp_trust")]
+    trust: McpTrustLevel,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default)]
+    bearer_token_env: Option<String>,
+    #[serde(default)]
+    oauth: Option<McpOAuthConfig>,
+    #[serde(default)]
+    request_timeout_ms: Option<u64>,
+    #[serde(default = "default_mcp_health_check_interval_sec")]
+    health_check_interval_sec: u64,
+    #[serde(default, alias = "allowlist")]
+    tool_allowlist: Vec<String>,
+    #[serde(default, alias = "denylist")]
+    tool_denylist: Vec<String>,
+    #[serde(default)]
+    permission_overrides: std::collections::HashMap<String, McpPermissionLevel>,
+}
+
+fn default_mcp_transport_wire() -> McpTransportWire {
+    McpTransportWire::Legacy("stdio".to_string())
+}
+fn default_mcp_trust() -> McpTrustLevel {
+    McpTrustLevel::LocalTrusted
+}
+impl From<McpServerConfigWire> for McpServerConfig {
+    fn from(wire: McpServerConfigWire) -> Self {
+        let transport = match wire.transport {
+            McpTransportWire::Canonical(value) => value,
+            McpTransportWire::Legacy(value) if value == "http" => {
+                McpTransportConfig::StreamableHttp {
+                    url: wire.url.unwrap_or_default(),
+                }
+            }
+            McpTransportWire::Legacy(value) if value == "sse" => McpTransportConfig::Sse {
+                url: wire.url.unwrap_or_default(),
+            },
+            McpTransportWire::Legacy(_) => McpTransportConfig::Stdio {
+                command: wire.command.unwrap_or_default(),
+                args: wire.args,
+            },
+        };
+        Self {
+            name: wire.name,
+            transport,
+            trust: wire.trust,
+            enabled: wire.enabled,
+            bearer_token_env: wire.bearer_token_env,
+            oauth: wire.oauth,
+            request_timeout_ms: wire.request_timeout_ms,
+            health_check_interval_sec: wire.health_check_interval_sec,
+            allowlist: wire.tool_allowlist,
+            denylist: wire.tool_denylist,
+            permission_overrides: wire.permission_overrides,
+        }
+    }
 }
 
 impl Default for McpServerConfig {
     fn default() -> Self {
         Self {
             name: String::new(),
-            transport: default_mcp_transport(),
-            command: None,
-            url: None,
+            transport: McpTransportConfig::Stdio {
+                command: String::new(),
+                args: Vec::new(),
+            },
+            trust: McpTrustLevel::LocalTrusted,
+            enabled: true,
             bearer_token_env: None,
+            oauth: None,
+            request_timeout_ms: None,
+            health_check_interval_sec: default_mcp_health_check_interval_sec(),
+            allowlist: Vec::new(),
+            denylist: Vec::new(),
+            permission_overrides: std::collections::HashMap::new(),
         }
     }
+}
+
+fn default_mcp_health_check_interval_sec() -> u64 {
+    30
 }
 
 /// Plugin directories.
@@ -787,7 +945,7 @@ pub struct MemoryConfig {
     pub data_dir: String,
     /// Optional gbrain shared memory integration (disabled by default).
     #[serde(default)]
-    pub gbrain: GbrainMemoryConfig,
+    pub gbrain: McpMemoryConfig,
 }
 
 fn default_memory_backend() -> String {
@@ -802,14 +960,15 @@ impl Default for MemoryConfig {
         Self {
             backend: default_memory_backend(),
             data_dir: default_memory_data_dir(),
-            gbrain: GbrainMemoryConfig::default(),
+            gbrain: McpMemoryConfig::default(),
         }
     }
 }
 /// Optional GBrain supplemental memory over the configured HTTP MCP server.
+/// Renamed to `McpMemoryConfig` for generic MCP-based memory integration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct GbrainMemoryConfig {
+pub struct McpMemoryConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default = "default_gbrain_server_name")]
@@ -849,6 +1008,9 @@ pub struct GbrainMemoryConfig {
     #[serde(default = "default_gbrain_outbox_dir", alias = "outbox_dir")]
     pub legacy_outbox_dir: String,
 }
+
+/// Backward-compatible type alias for the legacy `GbrainMemoryConfig` name.
+pub type GbrainMemoryConfig = McpMemoryConfig;
 
 fn default_gbrain_server_name() -> String {
     "gbrain".into()
@@ -902,7 +1064,7 @@ fn default_gbrain_outbox_dir() -> String {
     "~/.aletheon/gbrain-outbox".into()
 }
 
-impl Default for GbrainMemoryConfig {
+impl Default for McpMemoryConfig {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -1271,7 +1433,7 @@ schema_fixture = "config/gbrain/tools-schema.json"
 schema_version = "v0.42.59.0"
 legacy_outbox_dir = "/tmp/legacy"
 "#;
-        let cfg: GbrainMemoryConfig = toml::from_str(toml).unwrap();
+        let cfg: McpMemoryConfig = toml::from_str(toml).unwrap();
         assert!(cfg.enabled);
         assert_eq!(cfg.server_name, "gbrain-primary");
         assert_eq!(cfg.read_sources, ["project", "general"]);
@@ -1299,6 +1461,94 @@ max_results = 6
         assert_eq!(mem.gbrain.write_source, "aletheon");
         assert_eq!(mem.gbrain.request_timeout_ms, 2500);
         assert_eq!(mem.gbrain.server_name, "gbrain");
+    }
+
+    #[test]
+    fn mcp_oauth_schema_is_explicit_opt_in_and_rejects_unknown_fields() {
+        let configured: McpServerConfig = toml::from_str(
+            r#"
+name = "search"
+transport = "http"
+url = "https://mcp.example.test/rpc"
+
+[oauth]
+client_id_env = "MCP_CLIENT_ID"
+redirect_uri = "http://127.0.0.1:8765/callback"
+issuer = "https://issuer.example.test"
+"#,
+        )
+        .unwrap();
+        let oauth = configured.oauth.unwrap();
+        assert!(
+            !oauth.enabled,
+            "OAuth must remain off without enabled = true"
+        );
+        assert_eq!(
+            oauth.token_endpoint_auth_method,
+            McpOAuthClientAuthMethod::None
+        );
+
+        let unknown = r#"
+name = "search"
+transport = "http"
+url = "https://mcp.example.test/rpc"
+[oauth]
+enabled = true
+client_id_env = "MCP_CLIENT_ID"
+redirect_uri = "http://127.0.0.1:8765/callback"
+issuer = "https://issuer.example.test"
+client_secret = "must-not-be-inline"
+"#;
+        assert!(toml::from_str::<McpServerConfig>(unknown).is_err());
+    }
+
+    #[test]
+    fn mcp_server_exposes_production_tool_policy() {
+        let configured: McpServerConfig = toml::from_str(
+            r#"
+name = "external"
+transport = "http"
+url = "https://mcp.example.test/rpc"
+allowlist = ["search", "mcp_resource_read"]
+denylist = ["search.delete"]
+
+[permission_overrides]
+search = "l0"
+"external__mcp_resource_read" = "l1"
+"#,
+        )
+        .unwrap();
+        assert_eq!(configured.allowlist, ["search", "mcp_resource_read"]);
+        assert_eq!(configured.denylist, ["search.delete"]);
+        assert_eq!(
+            configured.permission_overrides.get("search"),
+            Some(&McpPermissionLevel::L0)
+        );
+    }
+
+    #[test]
+    fn mcp_oauth_schema_requires_env_reference_and_redirect() {
+        let missing_client_id = r#"
+name = "search"
+transport = "http"
+url = "https://mcp.example.test/rpc"
+[oauth]
+enabled = true
+redirect_uri = "http://127.0.0.1:8765/callback"
+"#;
+        assert!(toml::from_str::<McpServerConfig>(missing_client_id).is_err());
+
+        let invalid_method = r#"
+name = "search"
+transport = "http"
+url = "https://mcp.example.test/rpc"
+[oauth]
+enabled = true
+client_id_env = "MCP_CLIENT_ID"
+redirect_uri = "http://127.0.0.1:8765/callback"
+token_endpoint_auth_method = "private_key_jwt"
+"#;
+        assert!(toml::from_str::<McpServerConfig>(invalid_method).is_err());
     }
 
     #[test]

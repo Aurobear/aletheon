@@ -200,6 +200,29 @@ pub enum TurnEventV1 {
         is_error: bool,
         execution_time_ms: u64,
     },
+    /// Streaming tool progress (G2). Does not enter the model context by
+    /// default; clients may display it. Zero-to-many precede the single
+    /// authoritative `ToolResult` terminal for a given `call_id`.
+    ToolProgress {
+        name: String,
+        call_id: String,
+        /// "text" | "structured" | "resource_ref"
+        kind: String,
+        /// text chunk, structured JSON, or resource uri.
+        payload: serde_json::Value,
+    },
+    /// Structured patch application progress. These events report operational
+    /// progress only; the authoritative terminal remains the tool result.
+    PatchProgress {
+        /// "started" | "file_changed" | "file_failed" | "completed"
+        status: String,
+        path: Option<String>,
+        /// "add" | "update" | "delete" | "append" | "move"
+        operation: Option<String>,
+        error: Option<String>,
+        applied_count: Option<usize>,
+        failed_count: Option<usize>,
+    },
 
     // -- Bookkeeping --
     Usage {
@@ -265,6 +288,17 @@ pub enum TurnEventV1 {
         threshold: usize,
         reason: String,
     },
+    /// Guarded C1 compaction result. This is emitted for applied, skipped, and
+    /// classified failure outcomes so projections never infer success from a
+    /// trigger alone.
+    CompactionOutcome {
+        strategy: String,
+        applied: bool,
+        tokens_before: usize,
+        tokens_after: usize,
+        evicted_messages: usize,
+        failure: Option<String>,
+    },
     Reflection {
         summary: String,
         recommendation: String,
@@ -280,6 +314,7 @@ pub enum TurnEventV1 {
 ///
 /// Serializes `TurnEventV1` into an `EnvelopeV2` and pushes it into the
 /// underlying mpsc channel.
+#[derive(Debug, Clone)]
 pub struct TurnEventSender {
     tx: mpsc::Sender<crate::ipc::envelope_v2::EnvelopeV2>,
 }
@@ -296,9 +331,10 @@ impl TurnEventSender {
             crate::types::process::NamespaceId("turn-events".into()),
             payload,
         );
-        self.tx
-            .try_send(envelope)
-            .map_err(|_| StreamSendError::ReceiverClosed)
+        self.tx.try_send(envelope).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => StreamSendError::Overflow,
+            mpsc::error::TrySendError::Closed(_) => StreamSendError::ReceiverClosed,
+        })
     }
 }
 
@@ -357,5 +393,66 @@ impl TurnEventStream {
             actual: format!("deserialization error: {}", e),
             payload_preview: String::new(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn tool_progress_roundtrips_through_canonical_turn_stream() {
+        let (mut stream, sender) = TurnEventStream::new(StreamConfig::turn_events(4));
+        sender
+            .send(&TurnEventV1::ToolProgress {
+                name: "bash_exec".into(),
+                call_id: "call-1".into(),
+                kind: "structured".into(),
+                payload: serde_json::json!({"pct": 50}),
+            })
+            .unwrap();
+
+        assert!(matches!(
+            stream.recv().await.unwrap(),
+            TurnEventV1::ToolProgress {
+                name,
+                call_id,
+                kind,
+                payload,
+            } if name == "bash_exec"
+                && call_id == "call-1"
+                && kind == "structured"
+                && payload == serde_json::json!({"pct": 50})
+        ));
+    }
+
+    #[tokio::test]
+    async fn patch_progress_roundtrips_through_canonical_turn_stream() {
+        let (mut stream, sender) = TurnEventStream::new(StreamConfig::turn_events(2));
+        sender
+            .send(&TurnEventV1::PatchProgress {
+                status: "file_failed".into(),
+                path: Some("src/lib.rs".into()),
+                operation: Some("update".into()),
+                error: Some("hunk did not match".into()),
+                applied_count: None,
+                failed_count: None,
+            })
+            .unwrap();
+
+        assert!(matches!(
+            stream.recv().await.unwrap(),
+            TurnEventV1::PatchProgress {
+                status,
+                path: Some(path),
+                operation: Some(operation),
+                error: Some(error),
+                applied_count: None,
+                failed_count: None,
+            } if status == "file_failed"
+                && path == "src/lib.rs"
+                && operation == "update"
+                && error == "hunk did not match"
+        ));
     }
 }

@@ -26,6 +26,7 @@ fn request(
         context: AgentContextFork::None,
         broadcast_refs: vec![],
         allowed_tools: vec!["file_read".into()],
+        background_decls: vec![],
         budget: AgentBudget {
             max_input_tokens: 100,
             max_output_tokens: 100,

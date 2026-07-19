@@ -143,6 +143,29 @@ MCP 支持两种认证方式：
 - Token 存储通过 `TokenStore` 管理
 - CSRF state 验证（`pending_states` HashMap）
 
+OAuth 必须由每个 server 显式开启；client id/secret 只引用环境变量，token
+保存在当前用户 data 目录下按 server 隔离的加密 vault。若同时配置
+`bearer_token_env`，静态 Bearer 凭证优先，OAuth 不会启动：
+
+```toml
+[[mcp_servers]]
+name = "enterprise-search"
+transport = "http"
+url = "https://mcp.example.com/rpc"
+
+[mcp_servers.oauth]
+enabled = true
+client_id_env = "MCP_SEARCH_CLIENT_ID"
+client_secret_env = "MCP_SEARCH_CLIENT_SECRET"
+redirect_uri = "http://127.0.0.1:8765/callback"
+issuer = "https://login.example.com"
+scopes = ["tools:read"]
+token_endpoint_auth_method = "client_secret_basic"
+```
+
+生产 redirect 应使用 HTTPS；本机授权回调可使用 HTTP loopback。RFC 8414
+discovery 拒绝 redirect、issuer 不匹配及不安全的远程 HTTP endpoint。
+
 ---
 
 ## 5. 工具名规范化

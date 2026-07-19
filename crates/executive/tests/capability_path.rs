@@ -36,12 +36,19 @@ fn production_has_one_governed_capability_construction() {
         if source.contains("DefaultCapabilityInvoker::new") {
             default_constructors.push(path.clone());
         }
-        for forbidden in [".admit(", ".settle(", "AdmissionRequest {"] {
-            assert!(
-                !source.contains(forbidden),
-                "{} bypasses the governed capability lifecycle with {forbidden}",
-                path.display()
-            );
+        // Agent-control owns a separate admission and settlement lifecycle;
+        // its terminology must not be mistaken for capability admission.
+        if !path
+            .components()
+            .any(|part| part.as_os_str() == "agent_control")
+        {
+            for forbidden in [".admit(", ".settle(", "AdmissionRequest {"] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} bypasses the governed capability lifecycle with {forbidden}",
+                    path.display()
+                );
+            }
         }
         assert!(
             !source.contains("tool.execute("),

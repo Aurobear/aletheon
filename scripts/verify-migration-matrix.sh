@@ -62,7 +62,7 @@ PY
 
 # Execute the declared pre-migration/reopen evidence. Production installed-host
 # tests execute the declared PRAGMA integrity query against every resulting DB.
-CARGO_INCREMENTAL=0 cargo test -p mnemosyne --test gbrain_spool \
+CARGO_INCREMENTAL=0 bash "$repo_root/scripts/cargo-agent.sh" test -p mnemosyne --test gbrain_spool \
   legacy_migration_redacts_commits_then_renames_and_restarts_idempotently -- --exact
-CARGO_INCREMENTAL=0 cargo test -p executive --test agent_control_repository \
+CARGO_INCREMENTAL=0 bash "$repo_root/scripts/cargo-agent.sh" test -p executive --test agent_control_repository \
   repository_migrates_pre_workspace_rows_without_losing_runs -- --exact

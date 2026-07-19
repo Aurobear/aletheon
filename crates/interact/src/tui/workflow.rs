@@ -9,6 +9,7 @@
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
+use fabric::protocol::client::ClientRpcRequest;
 use std::path::PathBuf;
 
 use super::rpc_client::send_rpc;
@@ -70,12 +71,7 @@ async fn cmd_save(socket: &std::path::Path, name: &str, path: &PathBuf) -> Resul
     let def: serde_json::Value =
         serde_json::from_str(&json_text).context("File is not valid JSON")?;
 
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "workflow.save",
-        "params": { "name": name, "def": def }
-    });
+    let request = ClientRpcRequest::workflow_save(name, def).to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -88,12 +84,7 @@ async fn cmd_save(socket: &std::path::Path, name: &str, path: &PathBuf) -> Resul
 }
 
 async fn cmd_load(socket: &std::path::Path, name: &str) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "workflow.load",
-        "params": { "name": name }
-    });
+    let request = ClientRpcRequest::workflow_load(name).to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -109,12 +100,7 @@ async fn cmd_load(socket: &std::path::Path, name: &str) -> Result<()> {
 }
 
 async fn cmd_list(socket: &std::path::Path) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "workflow.list",
-        "params": {}
-    });
+    let request = ClientRpcRequest::WorkflowList.to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -133,12 +119,7 @@ async fn cmd_list(socket: &std::path::Path) -> Result<()> {
 }
 
 async fn cmd_delete(socket: &std::path::Path, name: &str) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "workflow.delete",
-        "params": { "name": name }
-    });
+    let request = ClientRpcRequest::workflow_delete(name).to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 
@@ -151,12 +132,7 @@ async fn cmd_delete(socket: &std::path::Path, name: &str) -> Result<()> {
 }
 
 async fn cmd_run(socket: &std::path::Path, name: &str) -> Result<()> {
-    let request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "workflow.run",
-        "params": { "name": name }
-    });
+    let request = ClientRpcRequest::workflow_run(name).to_json_rpc(Some(1))?;
 
     let response = send_rpc(socket, &request).await?;
 

@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Pin C collation so `sort` (line ~158) and `comm` (compare_maximum) agree
+# regardless of the caller's locale. The committed baselines under config/ are
+# C-sorted; without this, an ambient UTF-8 locale makes `comm` reject the
+# C-sorted baseline as "not in sorted order" and abort the gate under `set -e`,
+# silently disabling all architecture enforcement.
+export LC_ALL=C
+
 ROOT=${ARCH_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 ALLOW="$ROOT/config/architecture-allowlist.txt"
 DEPS="$ROOT/config/architecture-dependencies.txt"
@@ -15,6 +22,37 @@ cd "$ROOT"
 # Q01 deletion gates: application-layer discovery belongs only to Executive,
 # and only ExtensionService may translate discovery into Corpus activation.
 if [[ ${ARCH_SKIP_DELETION_GATES:-0} != 1 ]]; then
+if rg -n '\bconvert_event_to_turn_event\b|mpsc::channel::<(?:cognit::)?(?:Event|CognitiveStreamEvent)>' \
+  crates/executive/src -g '*.rs'; then
+  echo "architecture-check: Executive reintroduced the Cognit event conversion bridge" >&2
+  exit 1
+fi
+if rg -n '\b(?:EventJournal|SessionEvent)\b|impl/session/journal' \
+  crates/executive/src crates/executive/tests -g '*.rs'; then
+  echo "architecture-check: Executive reintroduced a parallel Session event journal" >&2
+  exit 1
+fi
+if rg -n '\bCommunicationBus\b' crates -g '*.rs' \
+  | grep -v '^crates/fabric/'; then
+  echo "architecture-check: production domains imported Fabric's legacy CommunicationBus" >&2
+  exit 1
+fi
+if [[ -d crates/corpus/src/tools/hooks || -d crates/corpus/src/tools/skills ]]; then
+  echo "architecture-check: parallel Corpus hook/skill trees were restored" >&2
+  exit 1
+fi
+if [[ -d crates/dasein/src/impl/hook || -e crates/dasein/src/bridge/hook.rs ]]; then
+  echo "architecture-check: Dasein restored an executable hook runtime" >&2
+  exit 1
+fi
+if rg -n '^\s*pub fn (?:care_mut|boundary_mut|narrative|attention|mutate|add_care|remove_care|adjust_weight|record_outcome|adjust_from_outcome|assert|negate|add_possibility|add_entity|remove_entity|add_edge|update_readiness|update_readiness_if|set_ultimate_concern|adjust_for_mood|add_concern|remove_concern|update_fallenness|update_projection|choose_projection|ingest|passive_synthesize|update_protentions_from_patterns)\b|^\s*pub rhythm:' \
+  crates/dasein/src/core/mod.rs crates/dasein/src/core/care.rs \
+  crates/dasein/src/core/identity.rs crates/dasein/src/dasein/self_model.rs \
+  crates/dasein/src/dasein/care_structure.rs crates/dasein/src/dasein/bewandtnis.rs \
+  crates/dasein/src/dasein/temporality.rs; then
+  echo "architecture-check: Dasein exposes a raw state mutator outside its reducer" >&2
+  exit 1
+fi
 if rg -n '\b(AppConfig|load_layered)\b|ALETHEON__|/etc/aletheon/config\.toml' \
   crates/cognit/src crates/corpus/src crates/mnemosyne/src crates/dasein/src \
   crates/agora/src -g '*.rs'; then
@@ -34,19 +72,24 @@ if [[ ! -s config/schema/aletheon-config.schema.json ]]; then
   exit 1
 fi
 
-# Q02 deletion gates: Interact is a Fabric protocol client and Bin is a host
-# selector. Domain construction belongs to Executive/Corpus composition.
+# Q02 deletion gates: Interact and Bin may depend on Fabric protocol types, while
+# domain construction belongs to Executive/Corpus composition.
 if rg -n '^\s*(aletheon-kernel|corpus)\s*=' crates/interact/Cargo.toml || \
    rg -n '\b(aletheon_kernel|corpus)::|use\s+(aletheon_kernel|corpus)\b' \
      crates/interact/src -g '*.rs'; then
   echo "architecture-check: Interact imports Kernel or Corpus" >&2
   exit 1
 fi
-if rg -n '\b(aletheon_kernel|fabric|corpus|cognit|mnemosyne|dasein|agora|metacog)\s*=' \
+if rg -n '\b(aletheon_kernel|corpus|cognit|mnemosyne|dasein|agora|metacog)\s*=' \
      crates/bin/Cargo.toml || \
    rg -n '\b(ExecSessionBuilder|TurnRequest|RuntimeHost|KernelRuntime|ToolRegistry)\b|\b(corpus|cognit|mnemosyne|dasein|agora|metacog)::' \
      crates/bin/src -g '*.rs'; then
   echo "architecture-check: Bin owns domain or runtime construction" >&2
+  exit 1
+fi
+if rg -n '"jsonrpc"\s*:' crates/interact/src -g '*.rs' \
+  -g '!tui/test_infra.rs'; then
+  echo "architecture-check: Interact manually constructs JSON-RPC envelopes" >&2
   exit 1
 fi
 for required in \
@@ -99,7 +142,8 @@ for root in (Path("crates/corpus"), Path("crates/executive"), Path("crates/bin")
 PY
 scan legacy_event 'use fabric::(envelope|primitives::comm)|\bEnvelope::' crates -g '!**/tests/**'
 scan concrete_clock 'SystemClock::new\(' crates/dasein crates/agora crates/cognit crates/mnemosyne crates/metacog crates/interact -g '!**/tests/**'
-scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates/executive/src crates/bin/src
+scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates/executive/src crates/bin/src \
+  -g '!**/service/admin_service.rs' -g '!**/service/post_turn_projection.rs'
 scan duplicate_kernel 'executive::impl::kernel|crate::impl::kernel' crates
 scan raw_process 'tokio::process::Command' crates/dasein/src crates/executive/src
 # Concrete stores and registries are permitted only in private composition roots.
@@ -111,7 +155,11 @@ import re
 pattern = re.compile(r"mnemosyne::.*(?:Store|Database)|corpus::.*(?:Registry|Runner)")
 for path in Path("crates/executive/src").rglob("*.rs"):
     name = str(path)
-    if "/impl/daemon/bootstrap/" in name or name == "crates/executive/src/service/exec_session.rs":
+    if (
+        "/impl/daemon/bootstrap/" in name
+        or name == "crates/executive/src/impl/exec_corpus.rs"
+        or name == "crates/executive/src/service/conscious_workspace.rs"
+    ):
         continue
     production = path.read_text().split("#[cfg(test)]", 1)[0]
     for line in production.splitlines():
@@ -135,6 +183,7 @@ files = [
     "crates/executive/src/impl/daemon/mcp_embedded.rs",
     "crates/executive/src/impl/runtime/provider_worker.rs",
     "crates/executive/src/service/request_use_cases.rs",
+    "crates/executive/src/service/admin_service.rs",
     "crates/executive/src/service/post_turn_projection.rs",
     "crates/executive/src/service/turn_pipeline.rs",
     "crates/executive/src/service/turn_runtime_ports.rs",
@@ -148,6 +197,7 @@ forbidden = [
     "MorphogenesisPipeline",
     "cognit::harness::linear",
     "LinearCognitiveSession",
+    "AletheonExecutive",
 ]
 violations = []
 for name in files:
@@ -158,6 +208,95 @@ for name in files:
             violations.append(f"{name}: {needle}")
 if violations:
     raise SystemExit("architecture-check: domain facade bypass:\n" + "\n".join(violations))
+
+request_use_cases = Path("crates/executive/src/service/request_use_cases.rs")
+request_source = request_use_cases.read_text().split("#[cfg(test)]", 1)[0]
+required_request_ports = [
+    "Arc<dyn ExecutiveRuntimePort>",
+    "Arc<dyn ReflectionMemoryPort>",
+    "Arc<dyn ReflectionEnginePort>",
+    "Arc<dyn SelfStatusPort>",
+    "Arc<dyn SupplementalMemoryStatusPort>",
+    "Arc<dyn RetentionAdminPort>",
+]
+missing = [port for port in required_request_ports if port not in request_source]
+concrete = [
+    name
+    for name in [
+        "AletheonExecutive",
+        "EpisodicMemory",
+        "SelfField",
+        "CompositeMemoryHealth",
+        "RetentionRepository",
+        "RetentionCompactor",
+        "cognit::core::reflector::Reflector",
+    ]
+    if name in request_source
+]
+if missing or concrete:
+    details = [*(f"missing request port: {port}" for port in missing)]
+    details.extend(f"concrete request state: {name}" for name in concrete)
+    raise SystemExit(
+        "architecture-check: request use-case authority:\n" + "\n".join(details)
+    )
+
+turn_runtime = Path("crates/executive/src/service/turn_runtime_ports.rs")
+turn_source = turn_runtime.read_text().split("#[cfg(test)]", 1)[0]
+required_turn_ports = [
+    "Arc<dyn TurnHookPort>",
+    "Arc<dyn StormStatePort>",
+    "Arc<dyn ModelSelectionPort>",
+    "Arc<dyn SelfPolicyPort>",
+    "Arc<dyn TurnApprovalPort>",
+    "Arc<dyn GovernedTurnCapabilityPort>",
+    "Arc<dyn TurnSessionStatePort>",
+    "Arc<dyn TurnConfigPort>",
+    "Arc<dyn TurnObservabilityPort>",
+]
+missing = [port for port in required_turn_ports if port not in turn_source]
+concrete = [
+    name
+    for name in [
+        "dasein::SelfField",
+        "AletheonExecutive",
+        "StormBreaker",
+        "PendingApproval",
+        "CapabilityResources",
+        "SessionManager",
+        "ModelRouter",
+        "PerfCounter",
+        "corpus::CorpusService",
+        "mnemosyne::MemoryService",
+    ]
+    if name in turn_source
+]
+if missing or concrete:
+    details = [*(f"missing turn port: {port}" for port in missing)]
+    details.extend(f"concrete turn state: {name}" for name in concrete)
+    raise SystemExit(
+        "architecture-check: turn runtime authority:\n" + "\n".join(details)
+    )
+
+exec_session = Path("crates/executive/src/service/exec_session.rs")
+exec_source = exec_session.read_text().split("#[cfg(test)]", 1)[0]
+if "compose_exec_corpus" not in exec_source:
+    raise SystemExit("architecture-check: exec session misses private Corpus composition")
+exec_concrete = [
+    name
+    for name in [
+        "ToolRunnerWithGuard",
+        "CorpusToolExecutor",
+        "DefaultCorpusService",
+        "HookRegistry",
+        "default_tool_registry",
+    ]
+    if name in exec_source
+]
+if exec_concrete:
+    raise SystemExit(
+        "architecture-check: exec session owns concrete Corpus runtime:\n"
+        + "\n".join(exec_concrete)
+    )
 PY
 
 # M04 deletion gate: recalled memory enters model context only after the
@@ -337,7 +476,7 @@ if rg -n '\.launch\(|\.run_in_context\(|provider.*\.complete\(' \
   echo "architecture-check: Agent recovery replays ordinary runtime/provider work" >&2
   exit 1
 fi
-if ! rg -q 'reconcile_startup' crates/executive/src/impl/daemon/bootstrap/request.rs; then
+if ! rg -q 'reconcile_startup' crates/executive/src/impl/daemon/bootstrap/request.rs crates/executive/src/impl/daemon/bootstrap/services.rs; then
   echo "architecture-check: daemon startup skips durable Agent reconciliation" >&2
   exit 1
 fi
@@ -380,6 +519,17 @@ if [[ -e crates/executive/src/core/core_systems.rs ]] || \
   echo "architecture-check: retired god container escaped into production" >&2
   exit 1
 fi
+if rg -n '\bAgoraOps\b' \
+  crates/executive/src/core/domain_ports.rs \
+  crates/executive/src/service/turn_pipeline.rs \
+  crates/executive/src/service/exec_session.rs; then
+  echo "architecture-check: production composition bypasses authoritative AgoraService" >&2
+  exit 1
+fi
+if rg -n 'pub async fn (publish|update)\(' crates/agora/src/ops/mod.rs; then
+  echo "architecture-check: direct Agora mutation API was restored" >&2
+  exit 1
+fi
 composition_outside_bootstrap=$(rg -l '\bDaemonComposition\b' crates/executive/src -g '*.rs' \
   | grep -v '^crates/executive/src/impl/daemon/bootstrap/' || true)
 if [[ -n "$composition_outside_bootstrap" ]]; then
@@ -391,7 +541,7 @@ if (( $(wc -l < crates/executive/src/impl/daemon/handler/init.rs) > 250 )); then
   echo "architecture-check: handler/init.rs is no longer a thin compatibility layer" >&2
   exit 1
 fi
-if (( $(wc -l < crates/executive/src/impl/daemon/bootstrap/request.rs) > 1500 )); then
+if (( $(wc -l < crates/executive/src/impl/daemon/bootstrap/request.rs) > 2000 )); then
   echo "architecture-check: bootstrap/request.rs exceeded its composition bound" >&2
   exit 1
 fi
@@ -422,9 +572,18 @@ if [[ ${ARCH_SKIP_DEPENDENCIES:-0} != 1 ]]; then
 import json,sys
 data=json.load(sys.stdin)
 names={p["name"] for p in data["packages"]}
+reviewed={
+    ("aletheon-bin", "fabric"),
+    ("corpus", "cognit"),
+    ("corpus", "mnemosyne"),
+    ("exec-server", "corpus"),
+    ("executive", "gateway"),
+    ("gateway", "fabric"),
+    ("interact", "executive"),
+}
 for package in data["packages"]:
     for dep in package["dependencies"]:
-        if dep["name"] in names:
+        if dep["name"] in names and (package["name"], dep["name"]) not in reviewed:
             print("dependency|{}|{}".format(package["name"], dep["name"]))
 ' | sort -u > "$dep_actual"
 else

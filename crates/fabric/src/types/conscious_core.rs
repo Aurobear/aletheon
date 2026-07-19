@@ -203,6 +203,8 @@ pub struct StructuredSelfView {
     pub version: SelfVersion,
     pub mood: Stimmung,
     pub concerns: Vec<String>,
+    #[serde(default)]
+    pub care_concerns: Vec<crate::CareConcernFrame>,
     pub projection: Option<String>,
     pub protentions: Vec<String>,
 }
@@ -211,12 +213,14 @@ impl StructuredSelfView {
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.concerns.len() <= MAX_SELF_VIEW_ITEMS
+                && self.care_concerns.len() <= MAX_SELF_VIEW_ITEMS
                 && self.protentions.len() <= MAX_SELF_VIEW_ITEMS,
             "structured SelfView exceeds item budget"
         );
         for text in self
             .concerns
             .iter()
+            .chain(self.care_concerns.iter().map(|concern| &concern.purpose))
             .chain(self.protentions.iter())
             .chain(self.projection.iter())
         {
@@ -225,6 +229,12 @@ impl StructuredSelfView {
                 "structured SelfView text is invalid"
             );
         }
+        anyhow::ensure!(
+            self.care_concerns.iter().all(|concern| {
+                concern.urgency.is_finite() && (0.0..=1.0).contains(&concern.urgency)
+            }),
+            "structured SelfView care urgency must be finite and in [0,1]"
+        );
         Ok(())
     }
 }

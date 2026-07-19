@@ -68,6 +68,7 @@ pub(crate) struct TurnToolExecutor {
     working_dir: PathBuf,
     session_id: String,
     turn_count: usize,
+    repo_hooks_trusted: bool,
     /// Kernel operation id for this turn (used by admission controller).
     operation_id: OperationId,
     /// Kernel process id for the main agent (used by admission controller).
@@ -81,6 +82,7 @@ impl TurnToolExecutor {
         inner: Arc<dyn ToolExecutor>,
         session_id: String,
         turn_count: usize,
+        repo_hooks_trusted: bool,
         working_dir: PathBuf,
         operation_id: OperationId,
         process_id: ProcessId,
@@ -96,6 +98,7 @@ impl TurnToolExecutor {
             working_dir,
             session_id,
             turn_count,
+            repo_hooks_trusted,
             operation_id,
             process_id,
         }
@@ -123,6 +126,7 @@ impl TurnToolExecutor {
         &self,
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
+        sink: Option<&mut fabric::ToolEventSink>,
     ) -> CapabilityResult {
         let name = &request.call.name;
         let input = &request.call.input;
@@ -151,6 +155,7 @@ impl TurnToolExecutor {
         let working_dir = self.working_dir.clone();
         let session_id = self.session_id.clone();
         let turn_count = self.turn_count;
+        let repo_hooks_trusted = self.repo_hooks_trusted;
 
         // --- PreTool hook ---
         {
@@ -162,9 +167,24 @@ impl TurnToolExecutor {
                 tool_input: Some(input.clone()),
                 tool_result: None,
                 message: None,
-                metadata: HashMap::new(),
+                metadata: HashMap::from([
+                    ("workspace_root".into(), working_dir.display().to_string()),
+                    ("repo_hooks_trusted".into(), repo_hooks_trusted.to_string()),
+                ]),
             };
             if let HookResult::Block { reason } = corpus.execute_hook(&ctx).await {
+                corpus
+                    .execute_hook(&HookContext {
+                        point: HookPoint::PermissionDenied,
+                        session_id: session_id.clone(),
+                        turn_count,
+                        tool_name: Some(name.clone()),
+                        tool_input: Some(input.clone()),
+                        tool_result: None,
+                        message: Some(reason.clone()),
+                        metadata: ctx.metadata.clone(),
+                    })
+                    .await;
                 return self.error_result(request, permit, format!("Blocked by hook: {reason}"));
             }
         }
@@ -179,7 +199,10 @@ impl TurnToolExecutor {
                 tool_input: Some(input.clone()),
                 tool_result: None,
                 message: None,
-                metadata: HashMap::new(),
+                metadata: HashMap::from([
+                    ("workspace_root".into(), working_dir.display().to_string()),
+                    ("repo_hooks_trusted".into(), repo_hooks_trusted.to_string()),
+                ]),
             };
             corpus.execute_hook(&ctx).await;
         }
@@ -230,7 +253,14 @@ impl TurnToolExecutor {
             }
         }
 
-        let mut result = inner.execute_with_permit(request, permit).await;
+        let mut result = match sink {
+            Some(sink) => {
+                inner
+                    .execute_streaming_with_permit(request, permit, sink)
+                    .await
+            }
+            None => inner.execute_with_permit(request, permit).await,
+        };
         let content = result.output.clone();
         let is_error = result.is_error;
 
@@ -252,7 +282,11 @@ impl TurnToolExecutor {
         // --- PostTool hook ---
         {
             let ctx = HookContext {
-                point: HookPoint::PostTool,
+                point: if is_error {
+                    HookPoint::PostToolFailure
+                } else {
+                    HookPoint::PostTool
+                },
                 session_id,
                 turn_count,
                 tool_name: Some(name.clone()),
@@ -263,7 +297,10 @@ impl TurnToolExecutor {
                     execution_time_ms: 0,
                 }),
                 message: None,
-                metadata: HashMap::new(),
+                metadata: HashMap::from([
+                    ("workspace_root".into(), working_dir.display().to_string()),
+                    ("repo_hooks_trusted".into(), repo_hooks_trusted.to_string()),
+                ]),
             };
             corpus.execute_hook(&ctx).await;
         }
@@ -290,6 +327,7 @@ impl TurnToolExecutor {
                 ..Default::default()
             },
             audit_id: Some(AuditEventId::new()),
+            patch_delta: None,
         }
     }
 }
@@ -301,7 +339,16 @@ impl ToolExecutor for TurnToolExecutor {
         request: &CapabilityRequest,
         permit: &ExecutionPermit,
     ) -> CapabilityResult {
-        self.execute(request, permit).await
+        self.execute(request, permit, None).await
+    }
+
+    async fn execute_streaming_with_permit(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+        sink: &mut fabric::ToolEventSink,
+    ) -> CapabilityResult {
+        self.execute(request, permit, Some(sink)).await
     }
 }
 
@@ -329,11 +376,13 @@ impl ProductionCapabilityService {
             prepared.executor,
             context.session_id.clone(),
             context.turn_count,
+            context.repo_hooks_trusted,
             context.workspace.cwd().to_path_buf(),
             context.operation_id,
             context.process_id,
         ));
         let authority_working_dir = context.workspace.cwd().to_path_buf();
+        let turn_event_sender = context.turn_event_sender.clone();
         let authority = Arc::new(
             RegistryAuthorityProvider::new(
                 prepared.risk_by_tool,
@@ -347,7 +396,8 @@ impl ProductionCapabilityService {
                 context.sandbox,
                 context.cancel,
             )
-            .with_agent_context(context.agent),
+            .with_agent_context(context.agent)
+            .with_turn_event_sender(turn_event_sender),
         );
         CapabilityRuntimeFactory::build(resources.kernel.admission(), executor, authority)
             .invoke(call)
@@ -361,6 +411,7 @@ impl ProductionCapabilityService {
             is_error: true,
             usage: UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 }
@@ -504,7 +555,10 @@ impl CapabilityService for ProductionCapabilityService {
             sandbox: fabric::SandboxRequirement::NotRequired,
             cancel,
             turn_count: 0,
+            repo_hooks_trusted: false,
             action_loop: None,
+            streaming_tools: false,
+            turn_event_sender: None,
         };
         let result = Self::invoke_existing(&self.resources, context, call).await;
         if result.is_error {

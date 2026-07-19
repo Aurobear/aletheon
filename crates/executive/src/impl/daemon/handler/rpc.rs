@@ -42,9 +42,17 @@ impl RequestHandler {
             // ── Health / status ───────────────────────────────────────
             "status" => self.handle_status(&id, &request).await,
             "health" => self.handle_health(&id, &request).await,
+            "conscious.diagnostics" => {
+                self.handle_conscious_diagnostics(connection, &id, &request)
+                    .await
+            }
 
             // ── Admin / meta ──────────────────────────────────────────
             "daemon.shutdown" => self.handle_daemon_shutdown(&id, &request).await,
+            "deployment.rollback" => {
+                self.handle_deployment_rollback(connection, &id, &request)
+                    .await
+            }
             "reload_skills" => self.handle_reload_skills(&id, &request).await,
             "approval_response" => {
                 self.handle_approval_response(connection, &id, &request)
@@ -57,6 +65,14 @@ impl RequestHandler {
                     .await
             }
             "approval.reject" => self.handle_approval_reject(connection, &id, &request).await,
+            "workspace.trust.evaluate" => {
+                self.handle_workspace_trust_evaluate(connection, &id, &request)
+                    .await
+            }
+            "workspace.trust.grant" => {
+                self.handle_workspace_trust_grant(connection, &id, &request)
+                    .await
+            }
             "interrupt" => self.handle_interrupt(&id, &request).await,
             "mode_switch" => self.handle_mode_switch(&id, &request).await,
             "model_list" => self.handle_model_list(&id, &request).await,
@@ -74,6 +90,8 @@ impl RequestHandler {
             "google.token.refresh" => self.handle_google_token_refresh(&id, &request).await,
             "hooks_list" => self.handle_hooks_list(&id, &request).await,
             "sub_agents" => self.handle_sub_agents(&id, &request).await,
+            "agent.profile.list" => self.handle_agent_profile_list(&id, &request).await,
+            "agent.profile.set" => self.handle_agent_profile_set(&id, &request).await,
 
             // ── Reflection / self-awareness ───────────────────────────
             "reflect" => self.handle_reflect(&id, &request).await,
@@ -109,8 +127,21 @@ impl RequestHandler {
 
             // ── Turn lifecycle (PR-3) ─────────────────────────────────
             "turn.wait" => self.handle_turn_wait(&id, &request).await,
-            "turn.cancel" => self.handle_turn_cancel(&id, &request).await,
+            "turn.cancel" => self.handle_turn_cancel(connection, &id, &request).await,
             "turn.exit" => self.handle_turn_exit(&id, &request).await,
+            "prompt.edit" if self.grok_hardening.prompt_queue => {
+                self.handle_prompt_edit(connection, &id, &request).await
+            }
+            "prompt.cancel" if self.grok_hardening.prompt_queue => {
+                self.handle_prompt_cancel(connection, &id, &request).await
+            }
+            "prompt.metrics" if self.grok_hardening.prompt_queue => {
+                self.handle_prompt_metrics(connection, &id, &request).await
+            }
+            "workspace.rewind" if self.grok_hardening.workspace_checkpoint => {
+                self.handle_workspace_rewind(connection, &id, &request)
+                    .await
+            }
 
             _ => serde_json::json!({
                 "jsonrpc": "2.0",

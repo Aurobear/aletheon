@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use cognit::config::GbrainMemoryConfig;
+use cognit::config::McpMemoryConfig;
 use corpus::tools::mcp::manager::McpManager;
 use mnemosyne::backends::gbrain::{
     GbrainBackend, GbrainBackendConfig, GbrainSpool, RetryPolicy, SpoolLimits,
@@ -22,7 +22,7 @@ pub struct GbrainMemoryRuntime {
     pub worker_task: Option<JoinHandle<()>>,
 }
 
-pub fn backend_config(config: &GbrainMemoryConfig) -> GbrainBackendConfig {
+pub fn backend_config(config: &McpMemoryConfig) -> GbrainBackendConfig {
     GbrainBackendConfig {
         enabled: config.enabled,
         projection_enabled: config.projection_enabled,
@@ -52,7 +52,7 @@ pub fn backend_config(config: &GbrainMemoryConfig) -> GbrainBackendConfig {
 pub fn build_gbrain_memory_runtime(
     local: Arc<dyn MemoryService>,
     manager: Option<Arc<McpManager>>,
-    config: &GbrainMemoryConfig,
+    config: &McpMemoryConfig,
     clock: Arc<dyn fabric::Clock>,
     daemon_cancel: &CancellationToken,
 ) -> GbrainMemoryRuntime {
@@ -62,7 +62,7 @@ pub fn build_gbrain_memory_runtime(
 pub fn build_gbrain_memory_runtime_with_retention(
     local: Arc<dyn MemoryService>,
     manager: Option<Arc<McpManager>>,
-    config: &GbrainMemoryConfig,
+    config: &McpMemoryConfig,
     clock: Arc<dyn fabric::Clock>,
     daemon_cancel: &CancellationToken,
     retention: Option<Arc<mnemosyne::RetentionRepository>>,
@@ -162,7 +162,7 @@ pub fn build_gbrain_memory_runtime_with_retention(
     }
 }
 
-fn valid_runtime_config(config: &GbrainMemoryConfig) -> bool {
+fn valid_runtime_config(config: &McpMemoryConfig) -> bool {
     !config.server_name.trim().is_empty()
         && !config.write_source.trim().is_empty()
         && !config.read_sources.is_empty()

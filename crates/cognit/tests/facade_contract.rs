@@ -36,6 +36,8 @@ fn dependencies(cancel: CancellationToken) -> CognitiveSessionDependencies {
         clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
         cancellation: cancel,
         compactor: None,
+        batch_planner: None,
+        evicted_callback: None,
     }
 }
 
@@ -101,6 +103,7 @@ impl TurnServices for Services {
             is_error: true,
             usage: fabric::UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 

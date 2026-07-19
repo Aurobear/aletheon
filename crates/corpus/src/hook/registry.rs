@@ -7,14 +7,67 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
+use std::time::Instant;
 
 use fabric::Clock;
 use fabric::Timer;
 use tracing::warn;
 
 use fabric::hook::{HookContext, HookPoint, HookResult};
+
+const MAX_HOOK_ENVELOPE_BYTES: usize = 128 * 1024;
+const MAX_HOOK_METRIC_SERIES: usize = 256;
+const MAX_HOOK_METRIC_NAME_BYTES: usize = 128;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HookMetricSnapshot {
+    pub executions_total: u64,
+    pub failed_total: u64,
+    pub restricted_total: u64,
+    pub latency_micros_total: u64,
+}
+
+static HOOK_METRICS: LazyLock<Mutex<HashMap<String, HookMetricSnapshot>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Process-local, bounded metrics keyed by the host-registered hook name.
+pub fn hook_metrics(name: &str) -> HookMetricSnapshot {
+    HOOK_METRICS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&bounded_metric_name(name))
+        .copied()
+        .unwrap_or_default()
+}
+
+fn bounded_metric_name(name: &str) -> String {
+    let mut end = name.len().min(MAX_HOOK_METRIC_NAME_BYTES);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    name[..end].to_owned()
+}
+
+fn record_hook_metric(name: &str, elapsed: Duration, failed: bool, restricted: bool) {
+    let name = bounded_metric_name(name);
+    let mut metrics = HOOK_METRICS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !metrics.contains_key(&name) && metrics.len() == MAX_HOOK_METRIC_SERIES {
+        return;
+    }
+    let metric = metrics.entry(name).or_default();
+    metric.executions_total = metric.executions_total.saturating_add(1);
+    metric.failed_total = metric.failed_total.saturating_add(u64::from(failed));
+    metric.restricted_total = metric
+        .restricted_total
+        .saturating_add(u64::from(restricted));
+    metric.latency_micros_total = metric
+        .latency_micros_total
+        .saturating_add(elapsed.as_micros().try_into().unwrap_or(u64::MAX));
+}
 
 /// A registered hook.
 #[derive(Debug, Clone)]
@@ -34,8 +87,8 @@ pub struct RegisteredHook {
 /// Registry of lifecycle hooks.
 pub struct HookRegistry {
     hooks: HashMap<HookPoint, Vec<RegisteredHook>>,
-    #[allow(dead_code)]
     clock: Arc<dyn Clock>,
+    event_bus: Option<Arc<fabric::CanonicalEventBus>>,
 }
 
 impl HookRegistry {
@@ -43,7 +96,13 @@ impl HookRegistry {
         Self {
             hooks: HashMap::new(),
             clock,
+            event_bus: None,
         }
+    }
+
+    pub fn with_event_bus(mut self, event_bus: Option<Arc<fabric::CanonicalEventBus>>) -> Self {
+        self.event_bus = event_bus;
+        self
     }
 
     /// Register a hook. Hooks are kept sorted by priority.
@@ -79,6 +138,18 @@ impl HookRegistry {
     /// - All `Inject` results are merged.
     /// - `Continue` is returned if no hooks modify behavior.
     pub async fn execute(&self, ctx: &HookContext) -> HookResult {
+        if let Some(bus) = &self.event_bus {
+            let _ = bus
+                .publish_event(
+                    fabric::SchemaId::from("aletheon.event.hook_triggered/v1"),
+                    format!("session:{}", ctx.session_id),
+                    serde_json::json!({
+                        "hook_event_name": ctx.point.event_name(),
+                        "turn_count": ctx.turn_count,
+                    }),
+                )
+                .await;
+        }
         let hooks = match self.hooks.get(&ctx.point) {
             Some(h) => h,
             None => return HookResult::Continue,
@@ -90,8 +161,19 @@ impl HookRegistry {
             let result = self.execute_single(hook, ctx).await;
             match result {
                 HookResult::Continue => {}
-                HookResult::ModifyInput(v) => return HookResult::ModifyInput(v),
-                HookResult::Block { reason } => return HookResult::Block { reason },
+                HookResult::ModifyInput(v) if ctx.point.is_blocking() => {
+                    return HookResult::ModifyInput(v)
+                }
+                HookResult::Block { reason } if ctx.point.is_blocking() => {
+                    return HookResult::Block { reason }
+                }
+                HookResult::ModifyInput(_) | HookResult::Block { .. } => {
+                    warn!(
+                        hook = %hook.name,
+                        point = ctx.point.event_name(),
+                        "Ignoring blocking hook result at non-blocking lifecycle point"
+                    );
+                }
                 HookResult::Inject(s) => injections.push(s),
             }
         }
@@ -115,12 +197,39 @@ impl HookRegistry {
 
     /// Execute a single hook.
     async fn execute_single(&self, hook: &RegisteredHook, ctx: &HookContext) -> HookResult {
+        let started = Instant::now();
         let script = match hook.script_path {
             Some(ref s) => s,
-            None => return HookResult::Continue,
+            None => {
+                record_hook_metric(&hook.name, started.elapsed(), false, false);
+                return HookResult::Continue;
+            }
         };
 
-        let ctx_json = serde_json::to_string(ctx).unwrap_or_default();
+        if is_restricted_repo_hook(hook, script, ctx) {
+            warn!(
+                hook = %hook.name,
+                point = ctx.point.event_name(),
+                "Skipping untrusted repository hook"
+            );
+            if let Some(bus) = &self.event_bus {
+                let _ = bus
+                    .publish_event(
+                        fabric::SchemaId::from("aletheon.event.hook_restricted/v1"),
+                        format!("session:{}", ctx.session_id),
+                        serde_json::json!({
+                            "hook": hook.name,
+                            "hook_event_name": ctx.point.event_name(),
+                            "reason": "untrusted_repository_hook",
+                        }),
+                    )
+                    .await;
+            }
+            record_hook_metric(&hook.name, started.elapsed(), false, true);
+            return HookResult::Continue;
+        }
+
+        let ctx_json = hook_envelope_json(ctx, self.clock.wall_now().0);
 
         let child = tokio::process::Command::new(script)
             .stdin(std::process::Stdio::piped())
@@ -132,6 +241,7 @@ impl HookRegistry {
             Ok(c) => c,
             Err(e) => {
                 warn!(hook = %hook.name, error = %e, "Hook spawn failed");
+                record_hook_metric(&hook.name, started.elapsed(), true, false);
                 return HookResult::Continue;
             }
         };
@@ -157,18 +267,99 @@ impl HookRegistry {
             });
 
         match deadline.await {
-            Ok(Ok((_status, stdout))) => parse_hook_output(&stdout),
+            Ok(Ok((status, stdout))) => {
+                let failed = !status.success();
+                if failed {
+                    warn!(hook = %hook.name, ?status, "Hook exited unsuccessfully");
+                }
+                record_hook_metric(&hook.name, started.elapsed(), failed, false);
+                parse_hook_output(&stdout)
+            }
             Ok(Err(e)) => {
                 warn!(hook = %hook.name, error = %e, "Hook execution failed");
+                record_hook_metric(&hook.name, started.elapsed(), true, false);
                 HookResult::Continue
             }
             Err(_) => {
                 warn!(hook = %hook.name, "Hook execution timed out after 30s");
                 child.kill().await.ok();
+                record_hook_metric(&hook.name, started.elapsed(), true, false);
                 HookResult::Continue
             }
         }
     }
+}
+
+fn is_restricted_repo_hook(
+    hook: &RegisteredHook,
+    script: &std::path::Path,
+    ctx: &HookContext,
+) -> bool {
+    if hook.source == "config" {
+        return false;
+    }
+    let Some(workspace_root) = ctx.metadata.get("workspace_root") else {
+        return false;
+    };
+    let workspace_root = std::fs::canonicalize(workspace_root)
+        .unwrap_or_else(|_| std::path::PathBuf::from(workspace_root));
+    let script = std::fs::canonicalize(script).unwrap_or_else(|_| script.to_path_buf());
+    script.starts_with(workspace_root)
+        && ctx.metadata.get("repo_hooks_trusted").map(String::as_str) != Some("true")
+}
+
+fn hook_envelope_json(ctx: &HookContext, timestamp_ms: i64) -> String {
+    let workspace_root = ctx.metadata.get("workspace_root").cloned();
+    let full = serde_json::json!({
+        "hook_event_name": ctx.point.event_name(),
+        "timestamp_ms": timestamp_ms,
+        "session_id": ctx.session_id,
+        "turn_count": ctx.turn_count,
+        "workspace_root": workspace_root,
+        "tool_name": ctx.tool_name,
+        "tool_input": ctx.tool_input,
+        "tool_result": ctx.tool_result,
+        "message": ctx.message,
+        "metadata": ctx.metadata,
+        "payload_truncated": false,
+    });
+    let encoded = serde_json::to_string(&full).unwrap_or_default();
+    if encoded.len() <= MAX_HOOK_ENVELOPE_BYTES {
+        return encoded;
+    }
+
+    // Keep the authority/scope fields intact and carry a UTF-8-safe bounded
+    // rendering of the original detail. Re-serialize while shrinking because
+    // JSON escaping can make the encoded representation larger than the text.
+    let mut keep = MAX_HOOK_ENVELOPE_BYTES / 2;
+    loop {
+        let detail = truncate_utf8(&encoded, keep);
+        let bounded = serde_json::json!({
+            "hook_event_name": ctx.point.event_name(),
+            "timestamp_ms": timestamp_ms,
+            "session_id": ctx.session_id,
+            "turn_count": ctx.turn_count,
+            "workspace_root": workspace_root,
+            "payload_truncated": true,
+            "truncated_detail": detail,
+        });
+        let bounded = serde_json::to_string(&bounded).unwrap_or_default();
+        if bounded.len() <= MAX_HOOK_ENVELOPE_BYTES || keep == 0 {
+            return bounded;
+        }
+        keep /= 2;
+    }
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
 }
 
 impl Default for HookRegistry {
@@ -254,6 +445,107 @@ mod tests {
         assert_eq!(hooks[0].name, "high");
         assert_eq!(hooks[1].name, "mid");
         assert_eq!(hooks[2].name, "low");
+    }
+
+    #[test]
+    fn command_envelope_is_stable_and_utf8_bounded() {
+        let mut metadata = HashMap::new();
+        metadata.insert("workspace_root".into(), "/tmp/project".into());
+        let context = HookContext {
+            point: HookPoint::PostToolFailure,
+            session_id: "session-a".into(),
+            turn_count: 4,
+            tool_name: Some("bash_exec".into()),
+            tool_input: Some(serde_json::json!({"command": "x".repeat(200_000)})),
+            tool_result: None,
+            message: Some("界".repeat(100_000)),
+            metadata,
+        };
+
+        let encoded = hook_envelope_json(&context, 1234);
+        assert!(encoded.len() <= MAX_HOOK_ENVELOPE_BYTES);
+        let envelope: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(envelope["hook_event_name"], "post_tool_failure");
+        assert_eq!(envelope["timestamp_ms"], 1234);
+        assert_eq!(envelope["workspace_root"], "/tmp/project");
+        assert_eq!(envelope["payload_truncated"], true);
+    }
+
+    #[test]
+    fn repository_hook_requires_explicit_host_trust_but_config_is_exempt() {
+        let directory = TempDir::new().unwrap();
+        let script = directory.path().join("hook.sh");
+        std::fs::write(&script, "#!/bin/sh").unwrap();
+        let mut metadata = HashMap::from([(
+            "workspace_root".to_string(),
+            directory.path().display().to_string(),
+        )]);
+        let context = HookContext {
+            point: HookPoint::PreTool,
+            session_id: "session-a".into(),
+            turn_count: 0,
+            tool_name: None,
+            tool_input: None,
+            tool_result: None,
+            message: None,
+            metadata: metadata.clone(),
+        };
+        let mut hook = RegisteredHook {
+            name: "repo-hook".into(),
+            source: "skill:repo".into(),
+            script_path: Some(script.clone()),
+            point: HookPoint::PreTool,
+            priority: 0,
+        };
+        assert!(is_restricted_repo_hook(&hook, &script, &context));
+
+        metadata.insert("repo_hooks_trusted".into(), "true".into());
+        let trusted = HookContext {
+            metadata,
+            ..context
+        };
+        assert!(!is_restricted_repo_hook(&hook, &script, &trusted));
+        hook.source = "config".into();
+        assert!(!is_restricted_repo_hook(&hook, &script, &trusted));
+    }
+
+    #[tokio::test]
+    async fn restricted_repository_hook_emits_canonical_receipt() {
+        let directory = TempDir::new().unwrap();
+        let script = directory.path().join("hook.sh");
+        std::fs::write(&script, "#!/bin/sh\necho should-not-run").unwrap();
+        let bus = Arc::new(fabric::CanonicalEventBus::new(8));
+        let mut receipts =
+            bus.subscribe_channel(fabric::SchemaId::from("aletheon.event.hook_restricted/v1"));
+        let mut registry = HookRegistry::default().with_event_bus(Some(bus));
+        registry.register(RegisteredHook {
+            name: "repo-hook".into(),
+            source: "skill:repo".into(),
+            script_path: Some(script),
+            point: HookPoint::PreTool,
+            priority: 0,
+        });
+        let context = HookContext {
+            point: HookPoint::PreTool,
+            session_id: "session-a".into(),
+            turn_count: 0,
+            tool_name: None,
+            tool_input: None,
+            tool_result: None,
+            message: None,
+            metadata: HashMap::from([(
+                "workspace_root".into(),
+                directory.path().display().to_string(),
+            )]),
+        };
+
+        assert!(matches!(
+            registry.execute(&context).await,
+            HookResult::Continue
+        ));
+        let receipt = receipts.recv().await.unwrap();
+        assert_eq!(receipt.source.0, "session:session-a");
+        assert_eq!(receipt.payload["reason"], "untrusted_repository_hook");
     }
 
     #[tokio::test]
@@ -390,6 +682,82 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn block_is_ignored_outside_pre_tool() {
+        let dir = TempDir::new().unwrap();
+        let script = dir.path().join("block.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/bash\necho '{\"action\":\"block\",\"reason\":\"late\"}'",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let mut registry = HookRegistry::default();
+        registry.register(RegisteredHook {
+            name: "late-block".into(),
+            source: "config".into(),
+            script_path: Some(script),
+            point: HookPoint::PostTurn,
+            priority: 0,
+        });
+        let context = HookContext {
+            point: HookPoint::PostTurn,
+            session_id: "session".into(),
+            turn_count: 1,
+            tool_name: None,
+            tool_input: None,
+            tool_result: None,
+            message: None,
+            metadata: HashMap::new(),
+        };
+        assert!(matches!(
+            registry.execute(&context).await,
+            HookResult::Continue
+        ));
+    }
+
+    #[tokio::test]
+    async fn named_hook_metrics_record_latency_and_failure() {
+        let dir = TempDir::new().unwrap();
+        let script = dir.path().join("fail.sh");
+        std::fs::write(&script, "#!/bin/bash\nexit 7").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let name = "metrics:known-failure";
+        let before = hook_metrics(name);
+        let mut registry = HookRegistry::default();
+        registry.register(RegisteredHook {
+            name: name.into(),
+            source: "config".into(),
+            script_path: Some(script),
+            point: HookPoint::PostTurn,
+            priority: 0,
+        });
+        registry
+            .execute(&HookContext {
+                point: HookPoint::PostTurn,
+                session_id: "metrics-session".into(),
+                turn_count: 1,
+                tool_name: None,
+                tool_input: None,
+                tool_result: None,
+                message: None,
+                metadata: HashMap::new(),
+            })
+            .await;
+        let after = hook_metrics(name);
+        assert_eq!(after.executions_total, before.executions_total + 1);
+        assert_eq!(after.failed_total, before.failed_total + 1);
+        assert!(after.latency_micros_total >= before.latency_micros_total);
+    }
+
     #[test]
     fn unregister_hook() {
         let mut reg = HookRegistry::default();
@@ -412,7 +780,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let script = dir.path().join("hanging.sh");
         // Script sleeps for 3600s -- far beyond the 30s timeout.
-        std::fs::write(&script, "#!/bin/bash\nsleep 3600").unwrap();
+        std::fs::write(&script, "#!/bin/bash\nexec sleep 3600").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use fabric::dasein::{SelfEventId, SelfTransitionReceipt, SelfVersion};
 use fabric::{
-    BroadcastEpoch, ConsciousContextProjection, MonoTime, ProcessorHealth, ProcessorId,
-    SalienceVector, StructuredSelfView, WorkspaceBroadcast, WorkspaceCandidate,
+    BroadcastEpoch, MonoTime, ProcessorHealth, ProcessorId, SalienceVector, StructuredSelfView,
+    WorkspaceBroadcast, WorkspaceCandidate,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,14 +151,6 @@ pub trait ConsciousCandidatePort: Send + Sync {
         &self,
         submission: CandidateSubmission,
     ) -> anyhow::Result<CandidateSubmissionReceipt>;
-}
-
-#[async_trait]
-pub trait LatestConsciousContextPort: Send + Sync {
-    async fn latest_context(
-        &self,
-        space: &fabric::AgoraSpaceId,
-    ) -> anyhow::Result<ConsciousContextProjection>;
 }
 
 #[derive(Debug, Clone)]

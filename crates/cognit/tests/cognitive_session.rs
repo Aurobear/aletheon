@@ -8,6 +8,8 @@ use fabric::{
     NoopTurnEventSink, OperationId, ProcessId, StopReason, StubTurnServices, ToolDefinition,
     TurnRequest, TurnServices, TurnStop, Usage,
 };
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -16,6 +18,8 @@ fn dependencies() -> CognitiveSessionDependencies {
         clock: Arc::new(aletheon_kernel::chronos::TestClock::default()),
         cancellation: CancellationToken::new(),
         compactor: None,
+        batch_planner: None,
+        evicted_callback: None,
     }
 }
 
@@ -134,6 +138,7 @@ impl TurnServices for ScriptedTurnServices {
             is_error: false,
             usage: fabric::UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 
@@ -204,6 +209,7 @@ impl TurnServices for StreamingServices {
             is_error: true,
             usage: Default::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 
@@ -250,4 +256,159 @@ async fn streaming_session_preserves_interactive_events_behind_the_facade() {
     assert!(events
         .iter()
         .any(|event| matches!(event, CognitiveStreamEvent::TurnDone { result: Ok(text) } if text == "streamed answer")));
+}
+
+struct InterjectingServices {
+    llm: cognit::testing::mock_llm::MockLlmProvider,
+    drains: Mutex<VecDeque<Vec<String>>>,
+    drain_calls: AtomicUsize,
+    invoked: Mutex<usize>,
+}
+
+#[async_trait]
+impl TurnServices for InterjectingServices {
+    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+        Ok(Default::default())
+    }
+
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
+        Ok(Default::default())
+    }
+
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+        Ok(Default::default())
+    }
+
+    async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
+        assert_eq!(
+            self.drain_calls.load(Ordering::SeqCst),
+            0,
+            "interjections must not drain while a tool/approval is in flight"
+        );
+        *self.invoked.lock().unwrap() += 1;
+        CapabilityResult {
+            call_id: call.call_id,
+            output: "tool-finished".into(),
+            is_error: false,
+            usage: Default::default(),
+            audit_id: None,
+            patch_delta: None,
+        }
+    }
+
+    fn llm_provider(&self) -> Option<&dyn LlmProvider> {
+        Some(&self.llm)
+    }
+
+    fn tool_definitions(&self) -> Vec<ToolDefinition> {
+        vec![ToolDefinition {
+            name: "echo_tool".into(),
+            description: "test".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }]
+    }
+
+    async fn drain_interjections(&self) -> anyhow::Result<Vec<String>> {
+        self.drain_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.drains.lock().unwrap().pop_front().unwrap_or_default())
+    }
+}
+
+fn single_text(message: &fabric::Message) -> Option<&str> {
+    match message.content.as_slice() {
+        [ContentBlock::Text { text }] => Some(text),
+        _ => None,
+    }
+}
+
+#[tokio::test]
+async fn react_completion_injects_fifo_interjections_as_independent_user_messages() {
+    let llm = cognit::testing::mock_llm::MockLlmProvider::new("interjection");
+    llm.push_text_response("draft", StopReason::EndTurn);
+    llm.push_text_response("final", StopReason::EndTurn);
+    let services = InterjectingServices {
+        llm,
+        drains: Mutex::new(VecDeque::from([vec!["first".into(), "second".into()]])),
+        drain_calls: AtomicUsize::new(0),
+        invoked: Mutex::new(0),
+    };
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+
+    let result = session
+        .run_streaming_turn(
+            request("start"),
+            &services,
+            &NoopTurnEventSink,
+            &RecordingStream::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.output, "final");
+    let log = services.llm.call_log.lock().unwrap();
+    let second_call = &log[1];
+    assert_eq!(
+        single_text(&second_call[second_call.len() - 3]),
+        Some("draft")
+    );
+    assert_eq!(
+        single_text(&second_call[second_call.len() - 2]),
+        Some("first")
+    );
+    assert_eq!(
+        single_text(&second_call[second_call.len() - 1]),
+        Some("second")
+    );
+    assert!(second_call[second_call.len() - 2..]
+        .iter()
+        .all(|message| message.role == fabric::Role::User));
+}
+
+#[tokio::test]
+async fn tool_interjection_is_injected_only_after_tool_result_is_absorbed() {
+    let llm = cognit::testing::mock_llm::MockLlmProvider::new("tool-interjection");
+    llm.push_response(LlmResponse {
+        content: vec![ContentBlock::ToolUse {
+            id: "call-1".into(),
+            name: "echo_tool".into(),
+            input: serde_json::json!({}),
+        }],
+        stop_reason: StopReason::ToolUse,
+        usage: Usage::default(),
+        cache_hit_tokens: 0,
+        cache_miss_tokens: 0,
+    });
+    llm.push_text_response("final", StopReason::EndTurn);
+    let services = InterjectingServices {
+        llm,
+        drains: Mutex::new(VecDeque::from([vec!["after-tool".into()]])),
+        drain_calls: AtomicUsize::new(0),
+        invoked: Mutex::new(0),
+    };
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+
+    session
+        .run_streaming_turn(
+            request("use tool"),
+            &services,
+            &NoopTurnEventSink,
+            &RecordingStream::default(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(*services.invoked.lock().unwrap(), 1);
+    assert!(services.drain_calls.load(Ordering::SeqCst) >= 1);
+    let log = services.llm.call_log.lock().unwrap();
+    let second_call = &log[1];
+    let interjection_index = second_call
+        .iter()
+        .position(|message| single_text(message) == Some("after-tool"))
+        .unwrap();
+    assert!(second_call[..interjection_index].iter().any(|message| {
+        message
+            .content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::ToolResult { .. }))
+    }));
 }

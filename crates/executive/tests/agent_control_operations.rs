@@ -174,6 +174,46 @@ async fn child_parent_identity_is_validated_server_side() {
     fixture.port.cancel(root, parent.agent_id).await.unwrap();
 }
 
+#[tokio::test]
+async fn cancelling_parent_propagates_to_live_child_runtime() {
+    let launcher = TestLauncher::blocked();
+    let fixture = fixture(3, launcher.clone());
+    let root = AgentId::new();
+    let parent = fixture.port.spawn(spawn_request(root, None)).await.unwrap();
+    launcher.wait_started().await;
+    let child = fixture
+        .port
+        .spawn(spawn_request(
+            root,
+            Some((parent.agent_id, parent.process_id)),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fixture
+            .port
+            .cancel(root, parent.agent_id)
+            .await
+            .unwrap()
+            .status,
+        AgentRunStatus::Cancelled
+    );
+    assert_eq!(
+        fixture
+            .port
+            .wait(AgentWaitRequest {
+                caller_root_agent_id: root,
+                agent_id: child.agent_id,
+                timeout_ms: 1_000,
+            })
+            .await
+            .unwrap()
+            .status,
+        AgentRunStatus::Cancelled
+    );
+}
+
 fn send_request(root: AgentId, sender: AgentId, target: AgentId, text: &str) -> AgentSendRequest {
     AgentSendRequest {
         caller_root_agent_id: root,

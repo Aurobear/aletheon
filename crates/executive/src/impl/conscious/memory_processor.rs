@@ -72,6 +72,7 @@ impl ConsciousProcessor for MnemosyneProcessor {
                 max_content_bytes: 16 * 1024,
                 current_at: Some(fabric::wall_to_datetime(self.adapter.clock.wall_now())),
                 include_historical: false,
+                mode: None,
             })
             .await
             .and_then(|recall| {

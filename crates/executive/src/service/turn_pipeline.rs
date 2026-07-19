@@ -4,21 +4,22 @@
 //! and CLI exec paths share the same Pre/Cognit/Post turn pipeline.
 
 use crate::core::session_gateway::SessionGateway;
-use crate::service::daemon_react::{
-    submit_streaming_daemon_turn, DaemonCognitiveEvent as Event, DaemonStreamingTurnContext,
-};
+use crate::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use crate::service::daemon_turn::helpers::bounded_text_history;
 use crate::service::governed_capability::CapabilityExecutionContext;
 use aletheon_kernel::operation::OperationScope;
 use aletheon_kernel::KernelRuntime;
-use cognit::ChannelCognitiveStreamSink;
+use cognit::CanonicalTurnEventSink;
 use fabric::events::ui_event::ClientEvent;
 use fabric::hook::{HookContext, HookPoint, HookResult};
-use fabric::include::agora::{AgoraOperation, WorkspaceCommitPermit};
+use fabric::include::agora::{
+    AgoraOperation, AgoraProposal, AgoraService, AgoraViewRequest, WorkspaceCommitPermit,
+};
 use fabric::ipc::{StreamConfig, TurnEventStream, TurnEventV1};
+use fabric::CanonicalEventBus;
 use fabric::{
-    AgoraOps, AgoraSpaceId, AgoraVersion, CapabilityCall, Clock, ContentBlock, ContextBinding,
-    Intent, IntentSource, OperationId, PrincipalId, ProcessId, Role, SandboxRequirement, SessionId,
+    AgoraSpaceId, AgoraVersion, CapabilityCall, Clock, ContentBlock, ContextBinding, Intent,
+    IntentSource, OperationId, PrincipalId, ProcessId, Role, SandboxRequirement, SessionId,
     SpaceId, TurnRequest,
 };
 use serde_json::json;
@@ -43,7 +44,7 @@ pub struct TurnPipeline {
     pub(crate) session_gateway: Arc<SessionGateway>,
     pub(crate) notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
     pub(crate) clock: Arc<dyn Clock>,
-    pub(crate) agora: Option<Arc<dyn AgoraOps>>,
+    pub(crate) agora: Option<Arc<dyn AgoraService>>,
     pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) current_scope: Arc<Mutex<Option<OperationScope>>>,
     pub(crate) daemon_cancel_token: Option<CancellationToken>,
@@ -56,13 +57,20 @@ pub struct TurnPipeline {
         Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
     pub(crate) conscious_core:
         Option<Arc<dyn crate::service::conscious_workspace::ConsciousTurnPort>>,
+    pub(crate) session_input: Arc<crate::service::session_input::SessionInputCoordinator>,
+    pub(crate) prompt_queue_enabled: bool,
+    pub(crate) workspace_checkpoint:
+        Arc<crate::service::workspace_checkpoint::WorkspaceCheckpointService>,
+    pub(crate) lifecycle: Arc<crate::service::lifecycle_contributors::LifecycleRegistry>,
+    pub(crate) lifecycle_enabled: bool,
+    pub(crate) event_bus: Option<Arc<CanonicalEventBus>>,
 }
 
 pub(crate) struct TurnPipelineResources {
     pub(crate) session_gateway: Arc<SessionGateway>,
     pub(crate) notify: Arc<Mutex<Option<mpsc::Sender<String>>>>,
     pub(crate) clock: Arc<dyn Clock>,
-    pub(crate) agora: Option<Arc<dyn AgoraOps>>,
+    pub(crate) agora: Option<Arc<dyn AgoraService>>,
     pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) current_scope: Arc<Mutex<Option<OperationScope>>>,
     pub(crate) daemon_cancel: Option<CancellationToken>,
@@ -74,6 +82,13 @@ pub(crate) struct TurnPipelineResources {
         Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
     pub(crate) conscious_core:
         Option<Arc<dyn crate::service::conscious_workspace::ConsciousTurnPort>>,
+    pub(crate) session_input: Arc<crate::service::session_input::SessionInputCoordinator>,
+    pub(crate) prompt_queue_enabled: bool,
+    pub(crate) workspace_checkpoint:
+        Arc<crate::service::workspace_checkpoint::WorkspaceCheckpointService>,
+    pub(crate) lifecycle: Arc<crate::service::lifecycle_contributors::LifecycleRegistry>,
+    pub(crate) lifecycle_enabled: bool,
+    pub(crate) event_bus: Option<Arc<CanonicalEventBus>>,
 }
 
 impl TurnPipeline {
@@ -92,7 +107,111 @@ impl TurnPipeline {
             runtime_ports: resources.runtime,
             cognitive_sessions: resources.cognitive_sessions,
             conscious_core: resources.conscious_core,
+            session_input: resources.session_input,
+            prompt_queue_enabled: resources.prompt_queue_enabled,
+            workspace_checkpoint: resources.workspace_checkpoint,
+            lifecycle: resources.lifecycle,
+            lifecycle_enabled: resources.lifecycle_enabled,
+            event_bus: resources.event_bus,
         }
+    }
+
+    async fn dispatch_lifecycle(
+        &self,
+        input: crate::service::lifecycle_contributors::LifecycleInput,
+        cancel: &CancellationToken,
+    ) -> anyhow::Result<crate::service::lifecycle_contributors::LifecycleDispatch> {
+        use crate::service::lifecycle_contributors::LifecycleEffect;
+
+        let target = format!("thread:{}", input.thread_id.0);
+        let dispatch = self
+            .lifecycle
+            .dispatch_if_enabled(self.lifecycle_enabled, input)
+            .await?;
+        for effect in &dispatch.effects {
+            match effect {
+                LifecycleEffect::EmitEvent { schema, payload } => {
+                    if let Some(bus) = &self.event_bus {
+                        let _ = bus
+                            .publish_event(
+                                fabric::SchemaId::from(schema.as_str()),
+                                &target,
+                                payload.clone(),
+                            )
+                            .await;
+                    }
+                }
+                LifecycleEffect::RequestCancellation { .. } => cancel.cancel(),
+                _ => {}
+            }
+            if let Some(bus) = &self.event_bus {
+                let _ = bus
+                    .publish_event(
+                        fabric::SchemaId::from("aletheon.event.lifecycle_effect_applied/v1"),
+                        &target,
+                        serde_json::json!({"effect": format!("{effect:?}")}),
+                    )
+                    .await;
+            }
+        }
+        Ok(dispatch)
+    }
+
+    async fn journal_protocol_turn_event(
+        &self,
+        session_id: &str,
+        turn_id: fabric::TurnId,
+        assistant_item_id: &str,
+        event: &TurnEventV1,
+    ) -> anyhow::Result<()> {
+        use fabric::protocol::client::ItemPhase;
+        let session_id = fabric::SessionId(session_id.to_owned());
+        let entry = match event {
+            TurnEventV1::TurnStarted { .. } => Some((
+                assistant_item_id.to_owned(),
+                ItemPhase::Started,
+                None,
+                Some(format!("{assistant_item_id}:assistant-started")),
+            )),
+            TurnEventV1::TextDelta { delta } => Some((
+                assistant_item_id.to_owned(),
+                ItemPhase::Streaming,
+                Some(delta.clone()),
+                None,
+            )),
+            TurnEventV1::ToolCallStart { call_id, .. } => {
+                let id = format!("tool:{}:{call_id}", turn_id.0);
+                Some((
+                    id.clone(),
+                    ItemPhase::Started,
+                    None,
+                    Some(format!("{id}:tool-started")),
+                ))
+            }
+            TurnEventV1::ToolProgress {
+                call_id, payload, ..
+            } => Some((
+                format!("tool:{}:{call_id}", turn_id.0),
+                ItemPhase::Streaming,
+                Some(payload.to_string()),
+                None,
+            )),
+            _ => None,
+        };
+        if let Some((item_id, phase, delta, dedupe_key)) = entry {
+            self.canonical_sessions
+                .append_protocol_item_event(
+                    &session_id,
+                    item_id,
+                    phase,
+                    delta,
+                    None,
+                    None,
+                    dedupe_key,
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     /// Run the full Pre/Cognit/Post turn pipeline.
@@ -111,6 +230,56 @@ impl TurnPipeline {
         scope_token: CancellationToken,
         principal: PrincipalId,
     ) -> anyhow::Result<serde_json::Value> {
+        // Resolve the authoritative runtime session before policy review. The
+        // read is non-mutating; denied turns still never call `begin_user`.
+        let (session_id, current_turn_count) = self.runtime_ports.sessions.current().await?;
+
+        let checkpoint_id = self
+            .workspace_checkpoint
+            .begin_turn(
+                crate::service::workspace_checkpoint::CheckpointTurnContext {
+                    session_id: session_id.clone(),
+                    thread_id: turn_request.context.thread_id.0.clone(),
+                    turn_id: turn_request.context.turn_id.as_ref().map_or_else(
+                        || operation_id.0.to_string(),
+                        |turn_id| turn_id.0.to_string(),
+                    ),
+                    prompt_index: current_turn_count as u64 + 1,
+                    principal_id: principal.clone(),
+                    workspace: fabric::types::workspace_checkpoint::WorkspaceIdentity {
+                        canonical_path: turn_request.context.workspace.cwd().to_path_buf(),
+                        repo_fingerprint: None,
+                    },
+                    writable_roots: turn_request.context.workspace.writable_roots().to_vec(),
+                    created_at_ms: self.clock.wall_now().0,
+                },
+            )
+            .await?;
+
+        let lifecycle_principal = principal.clone();
+        let lifecycle_thread = turn_request.context.thread_id.clone();
+        let lifecycle_turn = turn_request.context.turn_id;
+        let lifecycle_session = session_id.clone();
+        let assistant_protocol_item = format!(
+            "turn:{}:assistant",
+            lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)).0
+        );
+        let turn_result: anyhow::Result<serde_json::Value> = async {
+
+        let lifecycle_start = self
+            .dispatch_lifecycle(
+                crate::service::lifecycle_contributors::LifecycleInput {
+                    phase: crate::service::lifecycle_contributors::LifecyclePhase::BeforeTurnInput,
+                    principal_id: lifecycle_principal.clone(),
+                    thread_id: lifecycle_thread.clone(),
+                    turn_id: lifecycle_turn,
+                    session_id: lifecycle_session.clone(),
+                    detail: serde_json::json!({"message": message}),
+                },
+                &scope_token,
+            )
+            .await?;
+
         // -- SelfField review --
         let intent = Intent {
             action: "chat".to_string(),
@@ -126,7 +295,7 @@ impl TurnPipeline {
             },
         };
         let sf_ctx = fabric::Context::new(
-            &turn_request.context.thread_id.0,
+            &session_id,
             turn_request.context.workspace.cwd().to_path_buf(),
         );
         let verdict = self
@@ -169,31 +338,64 @@ impl TurnPipeline {
         // -- Context source preparation --
         self.runtime_ports.storm.reset().await;
         let mut effective_message = String::new();
+        let mut durable_fragments = Vec::new();
+        for effect in &lifecycle_start.effects {
+            if let crate::service::lifecycle_contributors::LifecycleEffect::AddContextFragment {
+                source,
+                content,
+            } = effect
+            {
+                effective_message.push_str(&format!("[lifecycle:{source}]\n{content}\n"));
+                durable_fragments.push((source.clone(), content.clone()));
+            }
+        }
+        if !durable_fragments.is_empty() {
+            let turn_id = lifecycle_turn
+                .ok_or_else(|| anyhow::anyhow!("lifecycle context requires an explicit turn_id"))?;
+            self.canonical_sessions
+                .persist_context_fragments(
+                    &fabric::SessionId(turn_request.context.thread_id.0.clone()),
+                    turn_id,
+                    fabric::types::lifecycle::LifecyclePhase::BeforeTurnInput,
+                    durable_fragments,
+                )
+                .await?;
+        }
 
-        // -- Configured pre_turn hook scripts --
-        let hook_session_id = self.runtime_ports.sessions.current().await?.0;
-        effective_message.push_str(
-            &self
-                .runtime_ports
-                .hooks
-                .run_pre_turn_script(&message, &hook_session_id)
-                .await,
-        );
-
-        effective_message.push_str(&message);
-
-        // -- PreTurn hooks --
+        // -- PreTurn hooks (including configured scripts owned by Corpus) --
         {
-            let (sess_id, turn_count) = self.runtime_ports.sessions.current().await?;
+            let authority_metadata = HashMap::from([
+                (
+                    "workspace_root".into(),
+                    turn_request.context.workspace.cwd().display().to_string(),
+                ),
+                (
+                    "repo_hooks_trusted".into(),
+                    turn_request.context.repo_hooks_trusted.to_string(),
+                ),
+            ]);
+            self.runtime_ports
+                .hooks
+                .execute(HookContext {
+                    point: HookPoint::UserPromptSubmit,
+                    session_id: session_id.clone(),
+                    turn_count: current_turn_count,
+                    tool_name: None,
+                    tool_input: None,
+                    tool_result: None,
+                    message: Some(message.clone()),
+                    metadata: authority_metadata.clone(),
+                })
+                .await;
             let ctx = HookContext {
                 point: HookPoint::PreTurn,
-                session_id: sess_id,
-                turn_count,
+                session_id: session_id.clone(),
+                turn_count: current_turn_count,
                 tool_name: None,
                 tool_input: None,
                 tool_result: None,
                 message: Some(message.clone()),
-                metadata: HashMap::new(),
+                metadata: authority_metadata,
             };
             match self.runtime_ports.hooks.execute(ctx).await {
                 HookResult::Block { reason } => {
@@ -209,6 +411,7 @@ impl TurnPipeline {
                 _ => {}
             }
         }
+        effective_message.push_str(&message);
 
         let (sess_id, turn_count) = self.runtime_ports.sessions.begin_user(&message).await?;
 
@@ -259,7 +462,13 @@ impl TurnPipeline {
         // shared Agora fact. Shared visibility requires an explicit proposal.
         let agora = self.agora.clone();
         let mut agora_version = if let Some(ref agora) = agora {
-            agora.version(&sess_id).await.unwrap_or(0)
+            agora
+                .view(AgoraViewRequest {
+                    space: AgoraSpaceId(sess_id.clone()),
+                })
+                .await
+                .map(|view| view.version)
+                .unwrap_or(0)
         } else {
             tracing::warn!(target: "agora", "DomainPorts.agora is not configured; shared evidence commits disabled for this turn");
             0
@@ -304,6 +513,39 @@ impl TurnPipeline {
             ),
             None => None,
         };
+        let batch_planner = match &self.conscious_core {
+            Some(conscious) => Some(
+                conscious
+                    .batch_planner(AgoraSpaceId(sess_id.clone()))
+                    .await?,
+            ),
+            None => None,
+        };
+        // Create the canonical stream before capability composition so G2
+        // progress and cognitive events share the same per-turn spine.
+        let (mut turn_stream, turn_sender) = TurnEventStream::new(StreamConfig::turn_events(64));
+        let config = self.runtime_ports.config.config().await;
+        let before_tools = self
+            .dispatch_lifecycle(
+                crate::service::lifecycle_contributors::LifecycleInput {
+                    phase: crate::service::lifecycle_contributors::LifecyclePhase::BeforeToolBatch,
+                    principal_id: lifecycle_principal.clone(),
+                    thread_id: lifecycle_thread.clone(),
+                    turn_id: lifecycle_turn,
+                    session_id: lifecycle_session.clone(),
+                    detail: serde_json::json!({"tool_count": 0}),
+                },
+                &scope_token,
+            )
+            .await?;
+        if let Some(reason) = before_tools.effects.iter().find_map(|effect| match effect {
+            crate::service::lifecycle_contributors::LifecycleEffect::RejectInput { reason } => {
+                Some(reason)
+            }
+            _ => None,
+        }) {
+            anyhow::bail!("lifecycle contributor rejected tool batch: {reason}");
+        }
         let prepared =
             self.runtime_ports
                 .capabilities
@@ -315,7 +557,7 @@ impl TurnPipeline {
                     }),
                     process_id: main_pid,
                     operation_id,
-                    principal,
+                    principal: principal.clone(),
                     connection_id: turn_request.context.connection_id.clone(),
                     thread_id: turn_request.context.thread_id.clone(),
                     turn_id: turn_request.context.turn_id.ok_or_else(|| {
@@ -327,49 +569,86 @@ impl TurnPipeline {
                     sandbox: sandbox_requirement,
                     cancel: scope_token.clone(),
                     turn_count,
+                    repo_hooks_trusted: turn_request.context.repo_hooks_trusted,
                     action_loop,
+                    streaming_tools: config.streaming_tools,
+                    turn_event_sender: Some(turn_sender.clone()),
                 })
                 .await?;
         let tool_defs = prepared.definitions;
         let capability = prepared.invoker;
 
+        let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
+            crate::service::turn_diff_tracker::TurnDiffTracker::default(),
+        ));
+        let diff_session_input = self.session_input.clone();
+        let diff_principal = lifecycle_principal.clone();
+        let diff_thread = lifecycle_thread.clone();
+        let diff_connection = turn_request.context.connection_id.clone();
         let execute_tool = move |tool_id: &str, name: &str, input: &serde_json::Value| {
             let capability = capability.clone();
+            let tracker = turn_diff_tracker.clone();
+            let session_input = diff_session_input.clone();
+            let principal = diff_principal.clone();
+            let thread = diff_thread.clone();
+            let connection = diff_connection.clone();
             let (tid, n, inp) = (tool_id.to_string(), name.to_string(), input.clone());
             async move {
                 let result = capability
                     .invoke(CapabilityCall {
                         operation_id,
                         process_id: main_pid,
-                        name: n,
-                        input: inp,
-                        call_id: tid,
+                        name: n.clone(),
+                        input: inp.clone(),
+                        call_id: tid.clone(),
                         deadline: None,
                     })
                     .await;
+                if !result.is_error {
+                    let mut tracker = tracker.lock().await;
+                    let changed = if n == "apply_patch" {
+                        serde_json::from_str::<
+                            corpus::tools::tools::structured_patch::StructuredPatchResult,
+                        >(&result.output)
+                        .map(|delta| {
+                            tracker.record_patch(&delta);
+                        })
+                        .is_ok()
+                    } else if n == "file_write" {
+                        inp.get("path")
+                            .and_then(serde_json::Value::as_str)
+                            .zip(inp.get("content").and_then(serde_json::Value::as_str))
+                            .map(|(path, content)| {
+                                tracker.record_file_write(path, content.len() as u64);
+                            })
+                            .is_some()
+                    } else {
+                        false
+                    };
+                    let injection = changed.then(|| tracker.to_context_injection());
+                    drop(tracker);
+                    if let Some(injection) = injection.filter(|value| !value.is_empty()) {
+                        if let Err(error) = session_input
+                            .enqueue(
+                                principal,
+                                connection,
+                                thread,
+                                fabric::PromptKind::Interjection,
+                                injection,
+                                format!("turn-diff:{tid}"),
+                            )
+                            .await
+                        {
+                            tracing::warn!(%error, call_id = %tid, "failed to inject turn file delta");
+                        }
+                    }
+                }
                 (result.output, result.is_error)
             }
         };
 
-        // Cognit streaming events are projected into the canonical turn stream.
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<Event>(64);
-        let event_sink = ChannelCognitiveStreamSink::new(event_tx.clone());
-        drop(event_tx);
+        let event_sink = CanonicalTurnEventSink::new(turn_sender);
 
-        // Turn event stream — EnvelopeV2-typed channel for turn orchestration
-        let (mut turn_stream, turn_sender) = TurnEventStream::new(StreamConfig::turn_events(64));
-
-        // Bridge task: convert Event → TurnEventV1 → EnvelopeV2
-        let _bridge_task = tokio::spawn(async move {
-            while let Some(event) = event_rx.recv().await {
-                let turn_event = convert_event_to_turn_event(event);
-                if turn_sender.send(&turn_event).is_err() {
-                    break;
-                }
-            }
-        });
-
-        let config = self.runtime_ports.config.config().await;
         let goal_message = message.to_string();
         let goal_message_for_gw = goal_message.clone();
 
@@ -384,8 +663,11 @@ impl TurnPipeline {
                 event_sink,
                 request_messages,
                 dasein_context,
-                cancel_token: scope_token,
+                cancel_token: scope_token.clone(),
                 sessions: self.cognitive_sessions.clone(),
+                batch_planner,
+                session_input: self.session_input.clone(),
+                prompt_queue_enabled: self.prompt_queue_enabled,
             },
         ));
 
@@ -412,6 +694,12 @@ impl TurnPipeline {
                             continue;
                         }
                     };
+                    self.journal_protocol_turn_event(
+                        &lifecycle_session,
+                        lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)),
+                        &assistant_protocol_item,
+                        &event,
+                    ).await?;
                     let is_terminal = terminal_events.observe(&event);
                     match &event {
                         TurnEventV1::ToolCallStart { name, call_id } => {
@@ -435,38 +723,59 @@ impl TurnPipeline {
                                 call_id.clone(), name.clone(), content.clone(), *is_error,
                             );
                             if let Some(ref agora) = agora_for_events {
-                                match agora.propose(
-                                    &session_id_for_agora,
-                                    agora_version,
-                                    AgoraOperation::AcceptEvidence { evidence },
-                                    main_pid,
-                                ).await {
-                                    Ok(prop) => {
-                                        let permit = WorkspaceCommitPermit::issue_for(
-                                            &prop,
-                                            clock_for_agora.wall_now().0.saturating_add(30_000),
-                                        );
-                                        let result = match permit {
-                                            Ok(permit) => agora.commit_with_permit(
-                                                &session_id_for_agora,
-                                                prop.id,
-                                                permit,
-                                            ).await,
-                                            Err(error) => Err(error.to_string()),
-                                        };
+                                let proposal = AgoraProposal {
+                                    id: uuid::Uuid::new_v4(),
+                                    space: AgoraSpaceId(session_id_for_agora.clone()),
+                                    author: main_pid,
+                                    base_version: agora_version,
+                                    operation: AgoraOperation::AcceptEvidence { evidence },
+                                    evidence: vec![format!("tool-call:{call_id}")],
+                                    confidence: if *is_error { 0.5 } else { 1.0 },
+                                    expires_at_ms: Some(
+                                        clock_for_agora.wall_now().0.saturating_add(30_000),
+                                    ),
+                                };
+                                let permit = WorkspaceCommitPermit::issue_for(
+                                    &proposal,
+                                    clock_for_agora.wall_now().0.saturating_add(30_000),
+                                );
+                                match (agora.propose(proposal.clone()).await, permit) {
+                                    (Ok(id), Ok(permit)) => {
+                                        let result = agora.commit(id, permit).await;
                                         if let Err(e) = result {
                                             tracing::warn!(target: "agora", error = %e, "agora commit (evidence) failed");
                                         } else {
                                             agora_version += 1;
                                         }
                                     }
-                                    Err(e) => tracing::warn!(target: "agora", error = %e, "agora propose (evidence) failed"),
+                                    (Err(e), _) => tracing::warn!(target: "agora", error = %e, "agora propose (evidence) failed"),
+                                    (_, Err(e)) => tracing::warn!(target: "agora", error = %e, "agora permit issue failed"),
                                 }
                             } else {
                                 tracing::warn!(
                                     target: "agora",
                                     "DomainPorts.agora missing; skipping shared evidence commit"
                                 );
+                            }
+                            if let Err(error) = self.dispatch_lifecycle(
+                                crate::service::lifecycle_contributors::LifecycleInput {
+                                    phase: crate::service::lifecycle_contributors::LifecyclePhase::AfterToolTerminal,
+                                    principal_id: lifecycle_principal.clone(),
+                                    thread_id: lifecycle_thread.clone(),
+                                    turn_id: lifecycle_turn,
+                                    session_id: lifecycle_session.clone(),
+                                    detail: serde_json::json!({
+                                        "call_id": call_id,
+                                        "tool_name": name,
+                                        "is_error": is_error,
+                                    }),
+                                },
+                                &scope_token,
+                            ).await {
+                                scope_token.cancel();
+                                react_task.abort();
+                                let _ = (&mut react_task).await;
+                                return Err(error);
                             }
                         }
                         TurnEventV1::Usage { tokens_in, tokens_out, .. } => {
@@ -521,6 +830,12 @@ impl TurnPipeline {
         loop {
             match turn_stream.try_recv() {
                 Some(Ok(event)) => {
+                    self.journal_protocol_turn_event(
+                        &lifecycle_session,
+                        lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)),
+                        &assistant_protocol_item,
+                        &event,
+                    ).await?;
                     let is_terminal = terminal_events.observe(&event);
                     if !is_terminal {
                         let sender = notify_tx.lock().await.clone();
@@ -659,6 +974,19 @@ impl TurnPipeline {
             }
         }
 
+        self.dispatch_lifecycle(
+            crate::service::lifecycle_contributors::LifecycleInput {
+                phase: crate::service::lifecycle_contributors::LifecyclePhase::AfterTurnTerminal,
+                principal_id: lifecycle_principal.clone(),
+                thread_id: lifecycle_thread.clone(),
+                turn_id: lifecycle_turn,
+                session_id: lifecycle_session.clone(),
+                detail: serde_json::json!({"succeeded": turn_succeeded}),
+            },
+            &scope_token,
+        )
+        .await?;
+
         Ok(json!({"jsonrpc": "2.0", "id": id, "result": {
             "response": text, "turn": turn, "succeeded": turn_succeeded,
                 "metrics": {
@@ -675,6 +1003,38 @@ impl TurnPipeline {
                     "conscious_context": context_projection_receipt
                 }
         }}))
+        }
+        .await;
+
+        if turn_result.is_err() {
+            let _ = self
+                .dispatch_lifecycle(
+                    crate::service::lifecycle_contributors::LifecycleInput {
+                        phase: crate::service::lifecycle_contributors::LifecyclePhase::OnAbort,
+                        principal_id: lifecycle_principal,
+                        thread_id: lifecycle_thread,
+                        turn_id: lifecycle_turn,
+                        session_id: lifecycle_session,
+                        detail: serde_json::json!({"reason": "turn pipeline error"}),
+                    },
+                    &scope_token,
+                )
+                .await;
+        }
+
+        if let Some(checkpoint_id) = checkpoint_id {
+            let succeeded = turn_result
+                .as_ref()
+                .ok()
+                .and_then(|response| response.get("result"))
+                .and_then(|result| result.get("succeeded"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            self.workspace_checkpoint
+                .finalize_turn(checkpoint_id, succeeded)
+                .await?;
+        }
+        turn_result
     }
 }
 
@@ -719,126 +1079,11 @@ impl TerminalEventBuffer {
     }
 }
 
-// ---------------------------------------------------------------------------
-// TurnEventV1 conversion helpers (bridge from cognit::Event to fabric TurnEventV1)
-// ---------------------------------------------------------------------------
-
-/// Convert a `cognit::Event` into a `TurnEventV1` for EnvelopeV2 streaming.
-fn convert_event_to_turn_event(event: Event) -> TurnEventV1 {
-    match event {
-        Event::TurnStarted { iteration } => TurnEventV1::TurnStarted { iteration },
-        Event::TextDelta { delta } => TurnEventV1::TextDelta { delta },
-        Event::ToolCallStart { name, call_id } => TurnEventV1::ToolCallStart { name, call_id },
-        Event::ToolCallComplete {
-            call_id,
-            name,
-            args,
-        } => TurnEventV1::ToolCallComplete {
-            call_id,
-            name,
-            args,
-        },
-        Event::ToolResult {
-            name,
-            call_id,
-            result,
-        } => TurnEventV1::ToolResult {
-            name,
-            call_id,
-            content: result.content,
-            is_error: result.is_error,
-            execution_time_ms: result.execution_time_ms,
-        },
-        Event::Usage {
-            tokens_in,
-            tokens_out,
-            cache_hit_tokens,
-            cache_miss_tokens,
-        } => TurnEventV1::Usage {
-            tokens_in,
-            tokens_out,
-            cache_hit_tokens,
-            cache_miss_tokens,
-        },
-        Event::TurnDone { result } => TurnEventV1::TurnDone {
-            result: match result {
-                Ok(text) => Some(text),
-                Err(e) => Some(format!("error: {}", e)),
-            },
-        },
-        Event::Error { message } => TurnEventV1::Error { message },
-        Event::AwarenessChanged { level, context } => {
-            TurnEventV1::AwarenessChanged { level, context }
-        }
-        Event::ModeChanged { mode } => TurnEventV1::ModeChanged { mode },
-        Event::SubAgentStatusChanged {
-            agent_id,
-            status,
-            task,
-        } => TurnEventV1::SubAgentStatusChanged {
-            agent_id,
-            status,
-            task,
-        },
-        Event::PlanUpdate {
-            version,
-            plan,
-            critique,
-            ready_for_approval,
-        } => TurnEventV1::PlanUpdate {
-            version,
-            plan,
-            critique,
-            ready_for_approval,
-        },
-        Event::Interrupted { reason } => TurnEventV1::Interrupted { reason },
-        Event::ContextUpdate {
-            used_tokens,
-            max_tokens,
-        } => TurnEventV1::ContextUpdate {
-            used_tokens,
-            max_tokens,
-        },
-        Event::ModelSwitch { model_name } => TurnEventV1::ModelSwitch { model_name },
-        Event::GoalSet { goal, sub_goals } => TurnEventV1::GoalSet { goal, sub_goals },
-        Event::Reflection {
-            summary,
-            recommendation,
-        } => TurnEventV1::Reflection {
-            summary,
-            recommendation,
-        },
-        Event::BudgetExceeded { used, max } => TurnEventV1::BudgetExceeded { used, max },
-        Event::CircuitBreakerTripped { reason } => TurnEventV1::CircuitBreakerTripped { reason },
-        Event::CompactionTriggered {
-            used_tokens,
-            threshold,
-            reason,
-        } => TurnEventV1::CompactionTriggered {
-            used_tokens,
-            threshold,
-            reason,
-        },
-        Event::ApprovalRequest {
-            id,
-            tool,
-            args,
-            reason,
-        } => TurnEventV1::Approval {
-            id,
-            tool,
-            args,
-            reason,
-        },
-        // Internal-only events → Generic catch-all (no serialization needed)
-        _ => TurnEventV1::Generic {
-            payload: serde_json::Value::Null,
-        },
-    }
-}
-
 /// Convert a `TurnEventV1` into a `ClientEvent` for TUI forwarding.
-fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
+/// Project the canonical daemon turn stream into the legacy TUI wire event.
+/// Public so transport/consumer integration tests exercise the production
+/// projection rather than duplicating its field mapping.
+pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
     match event {
         TurnEventV1::TurnStarted { iteration } => Some(ClientEvent::TurnStarted {
             iteration: *iteration,
@@ -872,6 +1117,32 @@ fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
             output: content.clone(),
             is_error: *is_error,
             elapsed_ms: *execution_time_ms,
+        }),
+        TurnEventV1::ToolProgress {
+            name,
+            call_id,
+            kind,
+            payload,
+        } => Some(ClientEvent::ToolProgress {
+            call_id: call_id.clone(),
+            tool: name.clone(),
+            kind: kind.clone(),
+            payload: payload.clone(),
+        }),
+        TurnEventV1::PatchProgress {
+            status,
+            path,
+            operation,
+            error,
+            applied_count,
+            failed_count,
+        } => Some(ClientEvent::PatchProgress {
+            status: status.clone(),
+            path: path.clone(),
+            operation: operation.clone(),
+            error: error.clone(),
+            applied_count: *applied_count,
+            failed_count: *failed_count,
         }),
         TurnEventV1::Usage {
             tokens_in,
@@ -935,10 +1206,12 @@ fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
             reason: reason.clone(),
         }),
         TurnEventV1::CompactionTriggered { .. } => Some(ClientEvent::CompactionTriggered),
-        // TextDeltaStop, Approval, Generic → no client-facing event
-        TurnEventV1::TextDeltaStop | TurnEventV1::Approval { .. } | TurnEventV1::Generic { .. } => {
-            None
-        }
+        // Outcome remains on the canonical turn stream for audit/metrics; the
+        // legacy UI only has a generic triggered marker.
+        TurnEventV1::CompactionOutcome { .. }
+        | TurnEventV1::TextDeltaStop
+        | TurnEventV1::Approval { .. }
+        | TurnEventV1::Generic { .. } => None,
     }
 }
 
@@ -955,6 +1228,93 @@ fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
 #[cfg(test)]
 mod terminal_event_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn real_bash_progress_crosses_guard_bridge_and_client_projection() {
+        use corpus::security::approval::AutoApproveGate;
+        use corpus::security::sandbox::executor::SandboxPreference;
+        use corpus::{AuditLogger, ToolRunnerWithGuard};
+        use fabric::ToolContext;
+
+        let temp = tempfile::tempdir().unwrap();
+        let clock: Arc<dyn fabric::Clock> = Arc::new(aletheon_kernel::chronos::SystemClock::new());
+        let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
+            AuditLogger::new(temp.path().join("audit.jsonl")).unwrap(),
+            SandboxPreference::Forbid,
+            clock.clone(),
+        )
+        .with_approval_gate(Arc::new(AutoApproveGate));
+        let context = ToolContext {
+            approval_authority: Some(fabric::ToolApprovalAuthority {
+                principal_id: fabric::PrincipalId("terminal-event-test".into()),
+                connection_id: fabric::ConnectionId::new(),
+                thread_id: fabric::ThreadId("g2-client-stream".into()),
+                turn_id: fabric::TurnId::new(),
+                call_id: "call-g2-real".into(),
+                workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                    temp.path().to_path_buf(),
+                    vec![],
+                )
+                .unwrap(),
+            }),
+            agent: None,
+            working_dir: temp.path().to_path_buf(),
+            session_id: "g2-client-stream".into(),
+            clock,
+            turn_event_sender: None,
+        };
+        let (mut sink, event_rx) = fabric::tool_event_channel();
+
+        let report = runner
+            .execute_tool_streaming_report(
+                &corpus::tools::bash_exec::BashExecTool,
+                serde_json::json!({
+                    "command": "printf 'alpha\\n'; sleep 0.02; printf 'beta\\n'",
+                    "network_enabled": true
+                }),
+                &context,
+                "g2-turn",
+                &mut sink,
+            )
+            .await;
+        assert!(
+            report.result.is_ok(),
+            "real BashExecTool must settle successfully: {:?}",
+            report.result
+        );
+        drop(sink);
+
+        let (mut turn_stream, turn_sender) =
+            fabric::ipc::TurnEventStream::new(StreamConfig::turn_events(8));
+        let outcome = crate::service::tool_stream_bridge::bridge_tool_stream(
+            event_rx,
+            turn_sender,
+            "bash_exec".into(),
+            "call-g2-real".into(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(outcome.terminal.is_ok());
+        assert!(outcome.progress_emitted > 0);
+
+        let mut visible_text = String::new();
+        while let Some(Ok(event)) = turn_stream.try_recv() {
+            if let Some(ClientEvent::ToolProgress {
+                call_id,
+                tool,
+                kind,
+                payload,
+            }) = turn_event_to_client_event(&event)
+            {
+                assert_eq!(call_id, "call-g2-real");
+                assert_eq!(tool, "bash_exec");
+                assert_eq!(kind, "text");
+                visible_text.push_str(payload.as_str().expect("text progress payload"));
+            }
+        }
+        assert!(visible_text.contains("alpha"));
+        assert!(visible_text.contains("beta"));
+    }
 
     #[test]
     fn failed_react_task_emits_exactly_error_then_turn_done() {
@@ -1000,5 +1360,28 @@ mod terminal_event_tests {
 
         assert_eq!(events.len(), 1);
         assert!(matches!(&events[0], ClientEvent::TurnDone));
+    }
+
+    #[test]
+    fn tool_progress_projects_to_tui_wire_event() {
+        let event = turn_event_to_client_event(&TurnEventV1::ToolProgress {
+            name: "bash_exec".into(),
+            call_id: "call-progress".into(),
+            kind: "text".into(),
+            payload: serde_json::json!("building"),
+        });
+
+        assert!(matches!(
+            event,
+            Some(ClientEvent::ToolProgress {
+                call_id,
+                tool,
+                kind,
+                payload,
+            }) if call_id == "call-progress"
+                && tool == "bash_exec"
+                && kind == "text"
+                && payload == serde_json::json!("building")
+        ));
     }
 }

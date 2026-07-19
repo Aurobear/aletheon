@@ -1,11 +1,40 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
+
+use crate::tools::PermissionLevel;
+
+/// Default per-request timeout in milliseconds (30 seconds).
+pub fn default_request_timeout_ms() -> u64 {
+    30_000
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpConfig {
     pub servers: Vec<McpServerConfig>,
     pub tool_name_prefix: bool,
     pub max_tool_name_length: usize,
-    pub health_check_interval_sec: u64,
+    /// Tool names that are explicitly allowed. If non-empty, only these tools
+    /// are registered — all others from MCP servers are silently skipped.
+    /// Empty = allow all (default for backward compatibility).
+    /// Supports prefix matching: "mcp.github." matches "mcp.github.list_repos".
+    #[serde(default)]
+    pub tool_allowlist: Vec<String>,
+    /// Tool names that are explicitly denied. Takes precedence over allowlist.
+    /// Denied tools are silently skipped during registration.
+    /// Supports prefix matching.
+    #[serde(default)]
+    pub tool_denylist: Vec<String>,
+    /// Per-tool permission overrides. The preferred key is the final registered
+    /// tool name (for example `github__delete_repo` or
+    /// `mcp.github.resource.readme`). Legacy server-name keys remain accepted as
+    /// a lower-precedence fallback.
+    #[serde(default)]
+    pub permission_overrides: HashMap<String, PermissionLevel>,
+    /// Global default per-request timeout in milliseconds.
+    /// Individual servers can override via [`McpServerConfig::request_timeout_ms`].
+    #[serde(default = "default_request_timeout_ms")]
+    pub request_timeout_ms: u64,
 }
 
 impl Default for McpConfig {
@@ -14,35 +43,12 @@ impl Default for McpConfig {
             servers: Vec::new(),
             tool_name_prefix: true,
             max_tool_name_length: 64,
-            health_check_interval_sec: 30,
+            tool_allowlist: Vec::new(),
+            tool_denylist: Vec::new(),
+            permission_overrides: HashMap::new(),
+            request_timeout_ms: default_request_timeout_ms(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpServerConfig {
-    pub name: String,
-    pub transport: McpTransportConfig,
-    pub trust: McpTrustLevel,
-    pub enabled: bool,
-    /// Name of the environment variable that holds the bearer token.
-    ///
-    /// The variable is resolved during connection, not deserialization.
-    /// An absent variable when a name is configured is a connection error.
-    #[serde(default)]
-    pub bearer_token_env: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum McpTransportConfig {
-    Stdio { command: String, args: Vec<String> },
-    StreamableHttp { url: String },
-    Sse { url: String },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum McpTrustLevel {
-    LocalTrusted,
-    RemoteTrusted,
-    Untrusted,
-}
+pub use cognit::config::{McpServerConfig, McpTransportConfig, McpTrustLevel};

@@ -442,6 +442,7 @@ impl SubAgentRuntime for PiRuntime {
                     )
                 })?,
             environment: sandbox_env.into_iter().collect(),
+            policy: None,
         };
         let wrapped = match self.sandbox.wrap_argv(
             &self.config.executable,

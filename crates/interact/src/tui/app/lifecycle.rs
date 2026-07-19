@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::Event;
+use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
 use fabric::Clock;
 use ratatui::Terminal;
 use tokio::net::UnixStream;
@@ -54,7 +55,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     let mut needs_redraw = true;
 
     // Clear daemon session on startup (avoids stale data from previous runs)
-    let clear_msg = serde_json::json!({"jsonrpc": "2.0", "method": "clear", "id": 0});
+    let clear_msg = ClientRpcRequest::Clear.to_json_rpc(Some(0))?;
     use tokio::io::AsyncWriteExt;
     let _ = app
         .stream
@@ -229,54 +230,34 @@ pub async fn simple_line_mode(
             break;
         }
 
-        // Determine JSON-RPC method from slash commands
-        let msg = if trimmed.starts_with('/') {
+        // Select a typed daemon request from slash commands.
+        let request = if trimmed.starts_with('/') {
             let cmd = trimmed.strip_prefix('/').unwrap_or(trimmed);
             let (name, _args) = match cmd.find(' ') {
                 Some(i) => (&cmd[..i], cmd[i + 1..].trim()),
                 None => (cmd, ""),
             };
             match name {
-                "reflect" | "r" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "reflect", "id": 1
-                }),
-                "reflect_now" | "rn" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "reflect_now", "id": 1
-                }),
-                "evolution" | "evo" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "evolution", "id": 1
-                }),
-                "genome" | "gene" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "genome", "id": 1
-                }),
-                "clear" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "clear", "id": 1
-                }),
-                "status" | "st" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "status", "id": 1
-                }),
-                "sessions" | "sess" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "sessions", "id": 1
-                }),
-                "resume" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "resume", "id": 1,
-                    "params": { "session_id": _args }
-                }),
-                "compact" | "cmp" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "compact", "id": 1
-                }),
-                "model" | "m" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "model_list", "id": 1
-                }),
+                "reflect" | "r" => ClientRpcRequest::Reflect,
+                "reflect_now" | "rn" => ClientRpcRequest::ReflectNow,
+                "evolution" | "evo" => ClientRpcRequest::Evolution,
+                "genome" | "gene" => ClientRpcRequest::Genome,
+                "clear" => ClientRpcRequest::Clear,
+                "status" | "st" => ClientRpcRequest::Status,
+                "sessions" | "sess" => ClientRpcRequest::Sessions,
+                "resume" => ClientRpcRequest::resume(_args),
+                "compact" | "cmp" => ClientRpcRequest::Compact,
+                "model" | "m" => ClientRpcRequest::ModelList,
                 "cwd" => {
                     println!("{}", workspace.cwd().display());
                     continue;
                 }
-                _ => crate::tui::chat_request(trimmed, &workspace),
+                _ => ClientRpcRequest::chat(trimmed, &workspace),
             }
         } else {
-            crate::tui::chat_request(trimmed, &workspace)
+            ClientRpcRequest::chat(trimmed, &workspace)
         };
+        let msg = request.to_json_rpc(Some(1))?;
         let payload = serde_json::to_string(&msg)?;
         stream
             .write_all(format!("{}\n", payload).as_bytes())
@@ -324,22 +305,20 @@ pub async fn simple_line_mode(
                                 io::stdout().flush()?;
                                 let mut line = String::new();
                                 let decision = match stdin.read_line(&mut line) {
-                                    Ok(0) | Err(_) => "deny",
+                                    Ok(0) | Err(_) => TransientApprovalDecision::Deny,
                                     Ok(_) => match line.trim().to_lowercase().as_str() {
-                                        "y" | "yes" => "approve",
-                                        "a" | "always" => "approve_for_session",
-                                        _ => "deny",
+                                        "y" | "yes" => TransientApprovalDecision::Approve,
+                                        "a" | "always" => {
+                                            TransientApprovalDecision::ApproveForSession
+                                        }
+                                        _ => TransientApprovalDecision::Deny,
                                     },
                                 };
-                                let resp = serde_json::json!({
-                                    "jsonrpc": "2.0",
-                                    "id": null,
-                                    "method": "approval_response",
-                                    "params": {
-                                        "approval_id": approval_id,
-                                        "decision": decision,
-                                    }
-                                });
+                                let resp = ClientRpcRequest::approval_response(
+                                    approval_id,
+                                    decision,
+                                )
+                                .to_json_rpc(None)?;
                                 let payload = serde_json::to_string(&resp)?;
                                 stream
                                     .write_all(format!("{}\n", payload).as_bytes())

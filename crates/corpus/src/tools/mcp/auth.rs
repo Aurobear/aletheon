@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use fabric::Clock;
+use mnemosyne::credential::EmbeddingCredentialGrant;
 use serde::{Deserialize, Serialize};
 
 pub use super::token_store::{TokenEntry, TokenStore};
@@ -41,7 +42,11 @@ pub trait McpAuth: Send + Sync {
     /// Return HTTP headers to attach to MCP requests.
     ///
     /// For bearer/OAuth this is `{ "Authorization": "Bearer <token>" }`.
-    fn get_headers(&self) -> HashMap<String, String>;
+    ///
+    /// When `target_url` is `Some(url)` and the provider has endpoint-scoping
+    /// (e.g. a credential grant), the headers are only returned when the
+    /// specific URL is approved.
+    fn get_headers(&self, target_url: Option<&str>) -> HashMap<String, String>;
 
     /// Return `true` if the current credentials have expired.
     ///
@@ -64,9 +69,18 @@ pub trait McpAuth: Send + Sync {
 /// time (typically `MCP_BEARER_TOKEN`). The token is resolved lazily on
 /// each call to `header_value()` so that env changes at runtime are picked
 /// up without restarting.
-#[derive(Debug, Clone)]
+///
+/// When an `EmbeddingCredentialGrant` is set (via `with_endpoint_scoping`),
+/// the token is only returned for requests whose target URL is approved by
+/// the grant. Without a grant, the token is returned unconditionally
+/// (backward compatible).
+#[derive(Clone)]
 pub struct BearerTokenAuth {
     env_var: String,
+    grant: Option<EmbeddingCredentialGrant>,
+    additional_grants: Vec<EmbeddingCredentialGrant>,
+    /// Clock for checking grant expiry. `None` when no grant is set.
+    clock: Option<Arc<dyn Clock>>,
 }
 
 impl BearerTokenAuth {
@@ -74,12 +88,40 @@ impl BearerTokenAuth {
     pub fn new(env_var: impl Into<String>) -> Self {
         Self {
             env_var: env_var.into(),
+            grant: None,
+            additional_grants: Vec::new(),
+            clock: None,
         }
     }
 
     /// Create auth reading from the default `MCP_BEARER_TOKEN` env var.
     pub fn from_env() -> Self {
         Self::new("MCP_BEARER_TOKEN")
+    }
+
+    /// Create an auth helper with endpoint-scoping via a credential grant.
+    ///
+    /// The token is only returned for requests whose target URL is approved
+    /// by the grant. Without endpoint-scoping (i.e. no grant), the token is
+    /// returned unconditionally.
+    pub fn with_endpoint_scoping(
+        env_var: impl Into<String>,
+        grant: EmbeddingCredentialGrant,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
+            env_var: env_var.into(),
+            grant: Some(grant),
+            additional_grants: Vec::new(),
+            clock: Some(clock),
+        }
+    }
+
+    /// Add another explicitly authorized endpoint for a transport that uses
+    /// more than one URL (legacy SSE uses both the POST URL and `/sse`).
+    pub fn allow_endpoint(mut self, grant: EmbeddingCredentialGrant) -> Self {
+        self.additional_grants.push(grant);
+        self
     }
 
     /// Read the token from the environment.
@@ -91,17 +133,66 @@ impl BearerTokenAuth {
 
     /// Return the full `Authorization: Bearer <token>` header value.
     ///
-    /// Returns `None` when no token is available.
+    /// When a credential grant is present and `target_url` is `Some`,
+    /// the grant must approve the URL (fail-closed). When no grant is
+    /// present, the token is returned unconditionally. When a grant is
+    /// present but `target_url` is `None`, returns `None` (cannot
+    /// verify without URL).
+    ///
+    /// **Deprecated-preferred**: Use `get_headers(target_url)` instead
+    /// (the `McpAuth` trait method), which gates the header on the
+    /// grant's endpoint-scoping check before exposing the token.
+    pub fn header_value_for(&self, target_url: Option<&str>) -> Option<String> {
+        let token = self.token()?;
+        match (&self.grant, &self.clock, target_url) {
+            // No grant → always allow (backward compatible).
+            (None, _, _) => Some(format!("Bearer {}", token)),
+            // Grant present but no URL → fail-closed.
+            (Some(_), _, None) => None,
+            // Grant present with URL → gate on approved_for.
+            (Some(grant), Some(clock), Some(url)) => {
+                let now = now_epoch_secs(&**clock);
+                if grant.approved_for(url, now)
+                    || self
+                        .additional_grants
+                        .iter()
+                        .any(|additional| additional.approved_for(url, now))
+                {
+                    Some(format!("Bearer {}", token))
+                } else {
+                    None
+                }
+            }
+            // Grant present but clock missing (should not happen).
+            (Some(_), None, Some(_)) => None,
+        }
+    }
+
+    /// Return the full `Authorization: Bearer <token>` header value
+    /// without scoping. Used where the transport does not know the
+    /// target URL (e.g. SSE long-poll setup).
     pub fn header_value(&self) -> Option<String> {
         self.token().map(|t| format!("Bearer {}", t))
     }
 }
 
+impl fmt::Debug for BearerTokenAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let has_token = self.token().is_some();
+        let has_grant = self.grant.is_some();
+        f.debug_struct("BearerTokenAuth")
+            .field("env_var", &self.env_var)
+            .field("has_token", &has_token)
+            .field("has_grant", &has_grant)
+            .finish()
+    }
+}
+
 #[async_trait::async_trait]
 impl McpAuth for BearerTokenAuth {
-    fn get_headers(&self) -> HashMap<String, String> {
+    fn get_headers(&self, target_url: Option<&str>) -> HashMap<String, String> {
         let mut headers = HashMap::new();
-        if let Some(val) = self.header_value() {
+        if let Some(val) = self.header_value_for(target_url) {
             headers.insert("Authorization".to_string(), val);
         }
         headers
@@ -123,6 +214,36 @@ impl fmt::Display for BearerTokenAuth {
         match self.token() {
             Some(_) => write!(f, "BearerTokenAuth(<redacted>)"),
             None => write!(f, "BearerTokenAuth(no token)"),
+        }
+    }
+}
+
+/// Cloneable HTTP authentication handle retained by MCP transports. OAuth
+/// state is shared so callbacks and refreshes update subsequent requests.
+#[derive(Clone)]
+pub enum McpHttpAuth {
+    Bearer(BearerTokenAuth),
+    OAuth(Arc<parking_lot::Mutex<McpOAuthProvider>>),
+}
+
+impl From<BearerTokenAuth> for McpHttpAuth {
+    fn from(value: BearerTokenAuth) -> Self {
+        Self::Bearer(value)
+    }
+}
+
+impl McpHttpAuth {
+    pub fn header_value_for(&self, target_url: Option<&str>) -> Option<String> {
+        match self {
+            Self::Bearer(auth) => auth.header_value_for(target_url),
+            Self::OAuth(auth) => auth.lock().get_headers(target_url).remove("Authorization"),
+        }
+    }
+
+    pub fn oauth_provider(&self) -> Option<Arc<parking_lot::Mutex<McpOAuthProvider>>> {
+        match self {
+            Self::OAuth(provider) => Some(provider.clone()),
+            Self::Bearer(_) => None,
         }
     }
 }
@@ -195,6 +316,7 @@ pub struct McpOAuthProvider {
     pending_states: HashMap<String, OAuthState>,
     clock: Arc<dyn Clock>,
     oauth_client: AsyncOAuthClient,
+    endpoint_grant: Option<EmbeddingCredentialGrant>,
 }
 
 impl McpOAuthProvider {
@@ -216,6 +338,7 @@ impl McpOAuthProvider {
             token_url: endpoints.token_url.clone(),
             revocation_url: None,
             userinfo_url: None,
+            client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
         })
         .expect("static MCP OAuth client configuration must build");
         Self {
@@ -228,7 +351,22 @@ impl McpOAuthProvider {
             pending_states: HashMap::new(),
             clock,
             oauth_client,
+            endpoint_grant: None,
         }
+    }
+
+    /// Restrict token release to the configured MCP endpoint. OAuth tokens are
+    /// fail-closed until this grant is installed.
+    pub fn with_endpoint_scoping(mut self, approved_base_url: &str) -> Self {
+        self.endpoint_grant = Some(EmbeddingCredentialGrant::new(
+            format!("mcp:{}", self.server_id),
+            approved_base_url,
+            self.server_id.clone(),
+            u64::MAX,
+            0,
+            "oauth-token-store-handle",
+        ));
+        self
     }
 
     /// Set the optional client secret (for confidential clients).
@@ -243,9 +381,36 @@ impl McpOAuthProvider {
             token_url: self.endpoints.token_url.clone(),
             revocation_url: None,
             userinfo_url: None,
+            client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
         })
         .expect("static MCP OAuth client configuration must build");
         self
+    }
+
+    pub fn with_client_auth_method(mut self, method: OAuthClientAuthMethod) -> Result<Self> {
+        if method != OAuthClientAuthMethod::None && self.client_secret.is_none() {
+            anyhow::bail!("confidential OAuth client auth requires client_secret_env");
+        }
+        let client_auth_method = match method {
+            OAuthClientAuthMethod::None => crate::tools::google::oauth::OAuthClientAuthMethod::None,
+            OAuthClientAuthMethod::ClientSecretBasic => {
+                crate::tools::google::oauth::OAuthClientAuthMethod::ClientSecretBasic
+            }
+            OAuthClientAuthMethod::ClientSecretPost => {
+                crate::tools::google::oauth::OAuthClientAuthMethod::ClientSecretPost
+            }
+        };
+        self.oauth_client = AsyncOAuthClient::new(OAuthClientConfig {
+            client_id: self.client_id.clone(),
+            client_secret: self.client_secret.clone(),
+            redirect_uri: self.endpoints.redirect_uri.clone(),
+            auth_url: self.endpoints.auth_url.clone(),
+            token_url: self.endpoints.token_url.clone(),
+            revocation_url: None,
+            userinfo_url: None,
+            client_auth_method,
+        })?;
+        Ok(self)
     }
 
     /// Generate an authorization URL and a CSRF state value.
@@ -349,8 +514,17 @@ impl McpOAuthProvider {
 
 #[async_trait::async_trait]
 impl McpAuth for McpOAuthProvider {
-    fn get_headers(&self) -> HashMap<String, String> {
+    fn get_headers(&self, target_url: Option<&str>) -> HashMap<String, String> {
         let mut headers = HashMap::new();
+        let Some(grant) = &self.endpoint_grant else {
+            return headers;
+        };
+        let Some(target_url) = target_url else {
+            return headers;
+        };
+        if !grant.approved_for(target_url, now_epoch_secs(&*self.clock)) {
+            return headers;
+        }
         if let Some(entry) = self.token_store.get(&self.server_id) {
             if !self.is_expired() {
                 let value = format!("{} {}", entry.token_type, entry.access_token);
@@ -381,6 +555,107 @@ impl fmt::Display for McpOAuthProvider {
             self.server_id, self.client_id
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// OAuth Metadata Discovery (RFC 8414)
+// ---------------------------------------------------------------------------
+
+/// OAuth 2.0 Authorization Server Metadata per RFC 8414.
+///
+/// Discovered from `/.well-known/oauth-authorization-server` at the MCP
+/// server's base URL. When the server config includes OAuth settings, the
+/// discovery endpoint is tried first; if it fails, the configured endpoints
+/// are used as a fallback.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthMetadata {
+    pub issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    #[serde(default)]
+    pub token_endpoint_auth_methods_supported: Vec<String>,
+    #[serde(default)]
+    pub scopes_supported: Vec<String>,
+}
+
+/// Discover OAuth 2.0 authorization server metadata per RFC 8414.
+///
+/// Fetches `{base_url}/.well-known/oauth-authorization-server` and parses
+/// the JSON response. Returns an error when the endpoint is unreachable,
+/// returns non-200, or the response fails to parse; callers should fall
+/// back to statically configured endpoints.
+pub async fn discover_oauth_metadata(base_url: &str) -> Result<OAuthMetadata> {
+    let url = format!(
+        "{}/.well-known/oauth-authorization-server",
+        base_url.trim_end_matches('/')
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        // Discovery carries no credential and redirects are still rejected:
+        // accepting metadata from a different origin would silently widen
+        // which authorization server controls the configured MCP endpoint.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .context("failed to build OAuth discovery HTTP client")?;
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("OAuth discovery request failed for {url}"))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("OAuth discovery returned HTTP {status} from {url}: {body}");
+    }
+
+    let metadata = resp.json::<OAuthMetadata>().await.with_context(|| {
+        format!("OAuth discovery response from {url} is not valid RFC 8414 metadata")
+    })?;
+    validate_oauth_metadata(base_url, &metadata)?;
+    Ok(metadata)
+}
+
+fn validate_oauth_metadata(base_url: &str, metadata: &OAuthMetadata) -> Result<()> {
+    let configured_issuer =
+        reqwest::Url::parse(base_url).context("invalid configured OAuth issuer")?;
+    let returned_issuer =
+        reqwest::Url::parse(&metadata.issuer).context("invalid issuer in OAuth metadata")?;
+    anyhow::ensure!(
+        configured_issuer.as_str().trim_end_matches('/')
+            == returned_issuer.as_str().trim_end_matches('/'),
+        "OAuth discovery issuer does not match configured issuer"
+    );
+    for endpoint in [&metadata.authorization_endpoint, &metadata.token_endpoint] {
+        let endpoint = reqwest::Url::parse(endpoint).context("invalid OAuth metadata endpoint")?;
+        anyhow::ensure!(
+            endpoint.scheme() == "https"
+                || endpoint.host_str() == Some("127.0.0.1")
+                || endpoint.host_str() == Some("localhost"),
+            "OAuth metadata endpoint must use HTTPS"
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// OAuth Client Authentication Methods
+// ---------------------------------------------------------------------------
+
+/// Client authentication method for the OAuth token endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthClientAuthMethod {
+    /// No client authentication (public client).
+    #[default]
+    None,
+    /// HTTP Basic Authentication with client_id as username and
+    /// client_secret as password (`Authorization: Basic ...` header).
+    ClientSecretBasic,
+    /// Send client_id and client_secret as POST body parameters.
+    ClientSecretPost,
 }
 
 // ---------------------------------------------------------------------------
@@ -473,7 +748,7 @@ mod tests {
     async fn bearer_trait_get_headers_with_token() {
         std::env::set_var("TEST_BEARER_TRAIT", "abc123");
         let mut auth = BearerTokenAuth::new("TEST_BEARER_TRAIT");
-        let headers = auth.get_headers();
+        let headers = auth.get_headers(None);
         assert_eq!(
             headers.get("Authorization").map(|s| s.as_str()),
             Some("Bearer abc123")
@@ -487,7 +762,7 @@ mod tests {
     fn bearer_trait_get_headers_empty_when_no_token() {
         std::env::remove_var("TEST_BEARER_TRAIT_EMPTY");
         let auth = BearerTokenAuth::new("TEST_BEARER_TRAIT_EMPTY");
-        let headers = auth.get_headers();
+        let headers = auth.get_headers(None);
         assert!(headers.is_empty());
     }
 
@@ -759,9 +1034,17 @@ mod tests {
             "srv",
             store,
             test_clock(),
-        );
+        )
+        .with_endpoint_scoping("https://mcp.example.com/rpc");
 
-        let headers = provider.get_headers();
+        assert!(provider.get_headers(None).is_empty());
+        assert!(provider
+            .get_headers(Some("https://mcp.example.com.evil/rpc"))
+            .is_empty());
+        assert!(provider
+            .get_headers(Some("https://redirected.example.com/rpc"))
+            .is_empty());
+        let headers = provider.get_headers(Some("https://mcp.example.com/rpc"));
         assert_eq!(
             headers.get("Authorization").map(|s| s.as_str()),
             Some("Bearer my_access_token")
@@ -800,10 +1083,47 @@ mod tests {
             "srv",
             store,
             test_clock(),
-        );
+        )
+        .with_endpoint_scoping("https://mcp.example.com/rpc");
 
-        let headers = provider.get_headers();
+        let headers = provider.get_headers(Some("https://mcp.example.com/rpc"));
         assert!(headers.is_empty());
+    }
+
+    #[test]
+    fn confidential_client_auth_rejects_missing_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = McpOAuthProvider::new(
+            "cid",
+            OAuthEndpoints {
+                auth_url: "https://auth.example.test/authorize".into(),
+                token_url: "https://auth.example.test/token".into(),
+                redirect_uri: "http://127.0.0.1/callback".into(),
+            },
+            vec![],
+            "srv",
+            TokenStore::new(dir.path().join("tokens.json")).unwrap(),
+            test_clock(),
+        );
+        assert!(provider
+            .with_client_auth_method(OAuthClientAuthMethod::ClientSecretBasic)
+            .is_err());
+    }
+
+    #[test]
+    fn oauth_metadata_rejects_issuer_mismatch_and_insecure_remote_endpoints() {
+        let valid = OAuthMetadata {
+            issuer: "https://issuer.example.test".into(),
+            authorization_endpoint: "https://issuer.example.test/authorize".into(),
+            token_endpoint: "https://issuer.example.test/token".into(),
+            token_endpoint_auth_methods_supported: vec![],
+            scopes_supported: vec![],
+        };
+        assert!(validate_oauth_metadata("https://other.example.test", &valid).is_err());
+
+        let mut insecure = valid.clone();
+        insecure.authorization_endpoint = "http://issuer.example.test/authorize".into();
+        assert!(validate_oauth_metadata("https://issuer.example.test", &insecure).is_err());
     }
 
     // -- parse_token_response ----------------------------------------------
@@ -867,5 +1187,174 @@ mod tests {
         provider.purge_expired_states();
         // State was just created, should survive purge.
         assert_eq!(provider.pending_states.len(), 1);
+    }
+
+    // -- OAuth discovery (RFC 8414) ---------------------------------------
+
+    #[tokio::test]
+    async fn discover_oauth_metadata_parses_valid_rfc8414_response() {
+        use http_body_util::Full;
+        use hyper::body::Bytes;
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        use hyper_util::rt::TokioIo;
+
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], 0).into();
+        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+        let bound_addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{bound_addr}");
+        let advertised_issuer = base_url.clone();
+
+        let server_task = tokio::spawn(async move {
+            loop {
+                let (stream, _) = match listener.accept().await {
+                    Ok(conn) => conn,
+                    Err(_) => return,
+                };
+                let io = TokioIo::new(stream);
+                let advertised_issuer = advertised_issuer.clone();
+                let svc = service_fn(move |_req: hyper::Request<hyper::body::Incoming>| {
+                    let advertised_issuer = advertised_issuer.clone();
+                    async move {
+                        let body = serde_json::json!({
+                            "issuer": advertised_issuer,
+                            "authorization_endpoint": format!("{advertised_issuer}/authorize"),
+                            "token_endpoint": format!("{advertised_issuer}/token"),
+                            "token_endpoint_auth_methods_supported": [
+                                "client_secret_basic",
+                                "client_secret_post"
+                            ],
+                            "scopes_supported": ["openid", "profile", "email"]
+                        })
+                        .to_string();
+                        Ok::<_, std::convert::Infallible>(
+                            hyper::Response::builder()
+                                .status(200)
+                                .header("content-type", "application/json")
+                                .body(Full::new(Bytes::from(body)))
+                                .unwrap(),
+                        )
+                    }
+                });
+                if http1::Builder::new()
+                    .serve_connection(io, svc)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+
+        let metadata = discover_oauth_metadata(&base_url).await.unwrap();
+        assert_eq!(metadata.issuer, base_url);
+        assert_eq!(
+            metadata.authorization_endpoint,
+            format!("{base_url}/authorize")
+        );
+        assert_eq!(metadata.token_endpoint, format!("{base_url}/token"));
+        assert_eq!(
+            metadata.token_endpoint_auth_methods_supported,
+            vec!["client_secret_basic", "client_secret_post"]
+        );
+        assert_eq!(
+            metadata.scopes_supported,
+            vec!["openid", "profile", "email"]
+        );
+
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn discover_oauth_metadata_404_returns_error_not_panic() {
+        use http_body_util::Full;
+        use hyper::body::Bytes;
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        use hyper_util::rt::TokioIo;
+
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], 0).into();
+        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+        let bound_addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{bound_addr}");
+
+        let server_task = tokio::spawn(async move {
+            loop {
+                let (stream, _) = match listener.accept().await {
+                    Ok(conn) => conn,
+                    Err(_) => return,
+                };
+                let io = TokioIo::new(stream);
+                let svc = service_fn(|_req: hyper::Request<hyper::body::Incoming>| async move {
+                    Ok::<_, std::convert::Infallible>(
+                        hyper::Response::builder()
+                            .status(404)
+                            .body(Full::new(Bytes::from("not found")))
+                            .unwrap(),
+                    )
+                });
+                if http1::Builder::new()
+                    .serve_connection(io, svc)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+
+        let result = discover_oauth_metadata(&base_url).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("404"), "expected 404 in error: {err}");
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn discover_oauth_metadata_rejects_redirects() {
+        use http_body_util::Full;
+        use hyper::body::Bytes;
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        use hyper_util::rt::TokioIo;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let response_target =
+                "https://other.example.test/.well-known/oauth-authorization-server";
+            let service = service_fn(move |_request| async move {
+                Ok::<_, std::convert::Infallible>(
+                    hyper::Response::builder()
+                        .status(302)
+                        .header("location", response_target)
+                        .body(Full::new(Bytes::new()))
+                        .unwrap(),
+                )
+            });
+            let _ = http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await;
+        });
+
+        let error = discover_oauth_metadata(&base_url)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("302"), "unexpected redirect error: {error}");
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn discover_oauth_metadata_connection_refused_returns_error_not_panic() {
+        let unreachable_url = "http://127.0.0.1:1";
+        let result = discover_oauth_metadata(unreachable_url).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains(unreachable_url),
+            "expected error to mention url: {err}"
+        );
     }
 }

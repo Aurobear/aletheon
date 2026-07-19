@@ -116,6 +116,78 @@ impl FactStore {
         Ok(results)
     }
 
+    /// Governed FTS query. The effective scope of a fact is the same one used
+    /// by recall materialization: a non-empty subject is Principal scope;
+    /// otherwise it belongs to the requesting Session. The SQL predicate runs
+    /// before `FactRow` candidates are constructed.
+    pub fn search_facts_prefiltered(
+        &self,
+        query: &str,
+        session_id: &str,
+        min_trust: f64,
+        limit: usize,
+        predicate: &crate::ScopePredicate,
+    ) -> Result<Vec<FactRow>> {
+        if query.trim().is_empty()
+            || !predicate.allows_authority(crate::MemoryAuthority::VerifiedLocalSemantic)
+            || !predicate.allows_sensitivity(crate::MemorySensitivity::Internal)
+        {
+            return Ok(Vec::new());
+        }
+        let session_allowed =
+            predicate.allows_scope(&crate::MemoryScope::Session(session_id.to_string()));
+        let principal_scope_keys = predicate
+            .scope_keys
+            .iter()
+            .filter(|key| key.starts_with("principal:"))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !session_allowed && principal_scope_keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let fts_query = sanitize_fts_query(query);
+        let min_trust = if min_trust <= 0.0 {
+            DEFAULT_MIN_TRUST
+        } else {
+            min_trust
+        };
+        let principal_scope_keys = serde_json::to_string(&principal_scope_keys)?;
+        let mut stmt = self.db.prepare(
+            "SELECT f.fact_id, f.content, f.category, f.tags, f.source_path,
+                    f.trust_score, f.retrieval_count, f.helpful_count,
+                    f.tier, f.ttl_days, f.created_at, f.updated_at,
+                    f.scope, f.source, f.status, f.pinned, f.subject
+             FROM facts f
+             INNER JOIN facts_fts fts ON f.fact_id = fts.rowid
+             WHERE facts_fts MATCH ?1
+               AND f.trust_score >= ?2
+               AND ((f.subject = '' AND ?3 = 1)
+                    OR ('principal:' || f.subject) IN
+                       (SELECT value FROM json_each(?4)))
+             ORDER BY rank
+             LIMIT ?5",
+        )?;
+        let results = stmt
+            .query_map(
+                rusqlite::params![
+                    fts_query,
+                    min_trust,
+                    i64::from(session_allowed),
+                    principal_scope_keys,
+                    limit as i64
+                ],
+                Self::map_fact_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        for fact in &results {
+            self.db.execute(
+                "UPDATE facts SET retrieval_count = retrieval_count + 1 WHERE fact_id = ?1",
+                rusqlite::params![fact.fact_id],
+            )?;
+        }
+        Ok(results)
+    }
+
     /// Record user feedback on a fact.
     pub fn record_feedback(&self, fact_id: i64, helpful: bool) -> Result<FeedbackResult> {
         let old_trust: f64 = self

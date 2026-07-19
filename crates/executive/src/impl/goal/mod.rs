@@ -34,7 +34,7 @@ pub use verification::{
     CodingJobRecoveryRecord, GoalProjectionEvidence, PersistedCodingJob,
     PersistedVerificationReport,
 };
-pub use worker::GoalWorker;
+pub use worker::{goal_progress_from_outcome, GoalWorker};
 
 use anyhow::{Context, Result};
 use fabric::goal::{GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason};

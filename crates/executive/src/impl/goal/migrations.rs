@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 15;
+const CURRENT_VERSION: u32 = 16;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -488,6 +488,18 @@ CREATE TABLE IF NOT EXISTS gmail_report_outbox (
 );
 ";
 
+/// Migration 16 — durable audit trail for approvals not owned by a Goal.
+const MIGRATION_16: &str = "
+CREATE TABLE IF NOT EXISTS external_approval_audit (
+    correlation_id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    requested_at_ms INTEGER NOT NULL,
+    resolved_at_ms INTEGER,
+    decision TEXT CHECK(decision IN ('approve','deny','approve_for_session'))
+);
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -628,6 +640,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
         tx.commit()?;
     }
 
+    if version < 16 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 16 transaction")?;
+        tx.execute_batch(MIGRATION_16)?;
+        tx.pragma_update(None, "user_version", 16)?;
+        tx.commit()?;
+    }
+
     // Verify we're at the expected version.
     let current: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     anyhow::ensure!(
@@ -694,14 +715,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 15);
+        assert_eq!(v1, 16);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 15);
+        assert_eq!(v2, 16);
     }
 
     #[test]
@@ -732,6 +753,7 @@ mod tests {
         assert!(tables.iter().any(|n| n == "gmail_goal_drafts"));
         assert!(tables.iter().any(|n| n == "gmail_goal_draft_revisions"));
         assert!(tables.iter().any(|n| n == "gmail_report_outbox"));
+        assert!(tables.iter().any(|n| n == "external_approval_audit"));
     }
 
     #[test]

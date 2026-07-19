@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use super::agent_settlement::{BackgroundResourceDecl, MAX_BACKGROUND_RESOURCES};
 use super::attempt::{AttemptEvidence, AttemptUsage, RuntimeId};
 use super::operation::{OperationId, ProcessId};
 use super::process::{AgentId, AgentProfileId};
@@ -16,6 +17,47 @@ pub const MAX_ARTIFACTS: usize = 128;
 pub const MAX_LIST_ITEMS: usize = 1000;
 pub const MAX_AGENT_BROADCAST_REFS: usize = 64;
 pub const AGENT_MESSAGE_SCHEMA_V1: u16 = 1;
+
+/// Risk tier for agent profiles. Each tier is cumulative: higher tiers include
+/// lower-tier capabilities but add additional risk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskTier {
+    /// L0 tools only — read-only, no side effects.
+    ReadOnly = 0,
+    /// L0 + L1 tools — sandboxed writes.
+    Sandboxed = 1,
+    /// L0 + L1 + L2 tools — system-level changes.
+    System = 2,
+    /// All tools — L3 destructive operations included.
+    Unrestricted = 3,
+}
+
+/// Per-profile approval policy for agent tool execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentApprovalPolicy {
+    /// Deny without prompting — for restricted profiles.
+    AutoDeny,
+    /// Prompt the user for confirmation.
+    PromptUser,
+    /// Approve without prompting — for fully trusted profiles.
+    AutoApprove,
+}
+
+/// Parent-child profile restriction: the child's capabilities must not exceed
+/// the parent's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParentRestriction {
+    /// Child must use the same profile as the parent.
+    Same,
+    /// Child may use the same-or-safer profile (risk tier ≤ parent's).
+    #[default]
+    SameOrSafer,
+    /// No restriction on child profile.
+    None,
+}
 
 /// Durable task lineage owned by AgentControl. Callers may describe a task,
 /// but may not choose the identifier used for memory authority or recovery.
@@ -92,6 +134,20 @@ pub struct AgentProfile {
     pub max_output_tokens: u64,
     pub max_tool_calls: u32,
     pub max_elapsed_ms: u64,
+
+    // ── Phase 2 profile metadata ──────────────────────────────────────────
+    /// Human-readable name (e.g. "code-agent", "safe-agent").
+    pub profile_name: String,
+    /// Risk tier derived from allowed tools.
+    pub risk_tier: RiskTier,
+    /// Per-profile tool approval policy.
+    pub approval_policy: AgentApprovalPolicy,
+    /// Per-tool-call timeout in milliseconds.
+    pub tool_timeout_ms: u64,
+    /// Whether child agents may inherit this profile.
+    pub inheritable: bool,
+    /// Parent-child profile restriction policy.
+    pub parent_restriction: ParentRestriction,
 }
 
 impl AgentProfile {
@@ -103,6 +159,7 @@ impl AgentProfile {
             "profile system prompt",
         )?;
         ensure_text(&self.model, 512, "profile model")?;
+        ensure_text(&self.profile_name, 512, "profile name")?;
         ensure_count(self.allowed_tools.len(), 256, "profile tools")?;
         for tool in &self.allowed_tools {
             ensure_text(tool, 512, "profile tool")?;
@@ -117,7 +174,29 @@ impl AgentProfile {
                 "Agent profile limits must be nonzero",
             ));
         }
+        if self.tool_timeout_ms == 0 {
+            return Err(AgentControlError::invalid("tool timeout must be nonzero"));
+        }
         Ok(())
+    }
+
+    /// Returns true if the child profile's risk tier does not exceed the parent's.
+    pub fn allows_child(&self, child: &AgentProfile) -> bool {
+        match self.parent_restriction {
+            ParentRestriction::None => true,
+            ParentRestriction::Same => child.id == self.id,
+            ParentRestriction::SameOrSafer => {
+                if child.risk_tier > self.risk_tier {
+                    return false;
+                }
+                for tool in &child.allowed_tools {
+                    if !self.allowed_tools.contains(tool) {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
     }
 }
 
@@ -204,6 +283,10 @@ pub struct AgentSpawnRequest {
     pub broadcast_refs: Vec<AgentBroadcastRef>,
     pub allowed_tools: Vec<String>,
     pub budget: AgentBudget,
+    /// Host-reviewed resource declarations fixed at spawn time. A child may
+    /// not add `survive_child` authorization while it is terminating.
+    #[serde(default)]
+    pub background_decls: Vec<BackgroundResourceDecl>,
 }
 
 impl AgentSpawnRequest {
@@ -216,6 +299,20 @@ impl AgentSpawnRequest {
             ensure_text(tool, 512, "allowed tool")?;
         }
         self.context.validate()?;
+        ensure_count(
+            self.background_decls.len(),
+            MAX_BACKGROUND_RESOURCES,
+            "background resource declarations",
+        )?;
+        let mut resource_ids = std::collections::HashSet::new();
+        for declaration in &self.background_decls {
+            ensure_text(&declaration.resource_id, 1024, "background resource ID")?;
+            if !resource_ids.insert(&declaration.resource_id) {
+                return Err(AgentControlError::invalid(
+                    "background resource declarations contain duplicate resource IDs",
+                ));
+            }
+        }
         ensure_count(
             self.broadcast_refs.len(),
             MAX_AGENT_BROADCAST_REFS,

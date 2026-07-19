@@ -7,6 +7,7 @@
 use anyhow::{Context, Result};
 use fabric::{ExternalIdentityId, IdentityProvider};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -203,6 +204,46 @@ impl TokenStore {
         Self::from_persistence(Box::new(persistence))
     }
 
+    /// Open an isolated encrypted OAuth store below the current user's data
+    /// directory. Isolation prevents two concurrently connected MCP providers
+    /// from replacing each other's in-memory snapshots.
+    pub fn open_mcp_server(server_id: &str) -> Result<Self> {
+        let path = Self::mcp_server_vault_path(server_id)?;
+        let persistence = crate::security::credential_vault::CredentialVault::open(
+            path,
+            &fabric::paths::credential_master_key_path(),
+        )?;
+        Self::from_persistence(Box::new(persistence))
+    }
+
+    /// Return the per-user, per-server MCP OAuth vault path without opening it.
+    /// A digest of the original id prevents sanitized names from aliasing.
+    pub fn mcp_server_vault_path(server_id: &str) -> Result<PathBuf> {
+        anyhow::ensure!(
+            !server_id.trim().is_empty(),
+            "MCP server id must not be empty"
+        );
+        let safe_id: String = server_id
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let digest = Sha256::digest(server_id.as_bytes());
+        let digest_prefix = digest[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        Ok(fabric::paths::xdg_data_dir()
+            .join("mcp")
+            .join("oauth")
+            .join(format!("{safe_id}-{digest_prefix}.vault")))
+    }
+
     /// Legacy plaintext path is exposed only for an explicit one-shot
     /// migration; it is never read by `open_default`.
     pub fn legacy_default_path() -> PathBuf {
@@ -373,5 +414,22 @@ mod tests {
         let rendered = format!("{:?}", entry("access-secret"));
         assert!(!rendered.contains("access-secret"));
         assert!(!rendered.contains("refresh-access-secret"));
+    }
+
+    #[test]
+    fn mcp_oauth_vault_paths_are_per_user_and_per_server() {
+        let first = TokenStore::mcp_server_vault_path("team/search").unwrap();
+        let second = TokenStore::mcp_server_vault_path("team?search").unwrap();
+        assert_ne!(first, second, "sanitized server ids must not alias");
+        assert!(first.starts_with(fabric::paths::xdg_data_dir()));
+        assert_eq!(
+            first.parent().unwrap(),
+            fabric::paths::xdg_data_dir().join("mcp/oauth")
+        );
+        assert_eq!(
+            first.extension().and_then(|value| value.to_str()),
+            Some("vault")
+        );
+        assert!(TokenStore::mcp_server_vault_path("   ").is_err());
     }
 }

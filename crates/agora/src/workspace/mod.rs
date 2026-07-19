@@ -276,6 +276,9 @@ impl Workspace {
                     .get(id)
                     .ok_or_else(|| anyhow::anyhow!("task {id} does not exist"))?;
                 anyhow::ensure!(current.status != desired, "task update is a no-op");
+                self.task_graph
+                    .validate_transition(id, &desired)
+                    .map_err(anyhow::Error::new)?;
             }
             AgoraOperation::EmitObservation { obs } => {
                 anyhow::ensure!(!obs.is_null(), "observation cannot be null");
@@ -303,6 +306,38 @@ impl Workspace {
                     "shared object is not owned by process"
                 );
             }
+            AgoraOperation::UpdateAttention {
+                focus,
+                priorities,
+                selection_ref,
+            } => {
+                anyhow::ensure!(
+                    !selection_ref.trim().is_empty() && selection_ref.len() <= 512,
+                    "attention selection reference is invalid"
+                );
+                anyhow::ensure!(priorities.len() <= 32, "attention priorities exceed limit");
+                let mut unique = std::collections::HashSet::with_capacity(priorities.len());
+                for priority in priorities {
+                    anyhow::ensure!(
+                        !priority.trim().is_empty() && priority.len() <= 256,
+                        "attention priority is invalid"
+                    );
+                    anyhow::ensure!(
+                        unique.insert(priority),
+                        "attention priorities contain duplicates"
+                    );
+                }
+                match focus {
+                    Some(focus) => anyhow::ensure!(
+                        priorities.first() == Some(focus),
+                        "attention focus must be the first priority"
+                    ),
+                    None => anyhow::ensure!(
+                        priorities.is_empty(),
+                        "attention priorities require a focus"
+                    ),
+                }
+            }
         }
         Ok(())
     }
@@ -320,8 +355,10 @@ impl Workspace {
                 // task-graph nodes when the patch carries an "id" field.
                 if let Some(id) = task_patch.get("id").and_then(|v| v.as_str()) {
                     if let Some(status) = task_patch.get("status").and_then(|v| v.as_str()) {
-                        let s = parse_task_status(status)?;
-                        self.task_graph.set_status(id, s);
+                        let status = parse_task_status(status)?;
+                        self.task_graph
+                            .transition(id, status)
+                            .map_err(anyhow::Error::new)?;
                     }
                 }
             }
@@ -343,6 +380,12 @@ impl Workspace {
             }
             AgoraOperation::ReleaseSharedObject { oid } => {
                 self.claims.remove(oid);
+            }
+            AgoraOperation::UpdateAttention {
+                focus, priorities, ..
+            } => {
+                self.attention.focus = focus.clone();
+                self.attention.priorities = priorities.clone();
             }
         }
         Ok(())
@@ -877,6 +920,64 @@ mod tests {
     }
 
     #[test]
+    fn transaction_rejects_terminal_task_regression_without_commit() {
+        let mut workspace = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
+        workspace.task_graph.add("task", "work", Vec::new());
+        workspace
+            .task_graph
+            .transition("task", crate::task_graph::TaskStatus::Done)
+            .unwrap();
+        let proposal = workspace
+            .propose(
+                0,
+                AgoraOperation::UpdateTask {
+                    task_patch: json!({"id": "task", "status": "pending"}),
+                },
+                test_author(),
+            )
+            .unwrap();
+        assert!(workspace.prepare_commit(proposal.id, None).is_err());
+        assert_eq!(workspace.version, 0);
+        assert_eq!(
+            workspace.task_graph.get("task").unwrap().status,
+            crate::task_graph::TaskStatus::Done
+        );
+        assert!(workspace.commits.is_empty());
+    }
+
+    #[test]
+    fn transaction_rejects_running_task_with_unfinished_dependency() {
+        let mut workspace = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
+        workspace.task_graph.add("dependency", "first", Vec::new());
+        workspace
+            .task_graph
+            .add("task", "second", vec!["dependency".into()]);
+        let proposal = workspace
+            .propose(
+                0,
+                AgoraOperation::UpdateTask {
+                    task_patch: json!({"id": "task", "status": "running"}),
+                },
+                test_author(),
+            )
+            .unwrap();
+        let error = workspace.prepare_commit(proposal.id, None).unwrap_err();
+        assert!(error.to_string().contains("dependencies are done"));
+        assert_eq!(workspace.version, 0);
+        assert_eq!(
+            workspace.task_graph.get("task").unwrap().status,
+            crate::task_graph::TaskStatus::Pending
+        );
+        assert!(workspace.commits.is_empty());
+    }
+
+    #[test]
     fn transaction_snapshot_contains_replayable_claim_and_task_state() {
         let mut ws = Workspace::new(
             "s1",
@@ -900,5 +1001,77 @@ mod tests {
         );
         assert!(snapshot["claims"]["object"].is_string());
         assert_eq!(snapshot["commits"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn attention_commit_validates_and_applies_atomically() {
+        let mut ws = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
+        for priorities in [vec!["winner".into(), "winner".into()], vec!["other".into()]] {
+            let proposal = ws
+                .propose(
+                    0,
+                    AgoraOperation::UpdateAttention {
+                        focus: Some("winner".into()),
+                        priorities,
+                        selection_ref: "selection:1".into(),
+                    },
+                    test_author(),
+                )
+                .unwrap();
+            assert!(ws.prepare_commit(proposal.id, None).is_err());
+            assert!(ws.attention.focus.is_none());
+        }
+
+        let proposal = ws
+            .propose(
+                0,
+                AgoraOperation::UpdateAttention {
+                    focus: Some("winner".into()),
+                    priorities: vec!["winner".into(), "runner-up".into()],
+                    selection_ref: "selection:2".into(),
+                },
+                test_author(),
+            )
+            .unwrap();
+        ws.commit(proposal.id).unwrap();
+        assert_eq!(ws.attention.focus.as_deref(), Some("winner"));
+        assert_eq!(ws.attention.priorities, vec!["winner", "runner-up"]);
+    }
+
+    #[test]
+    fn attention_commit_replay_is_idempotent_and_tamper_evident() {
+        let clock = Arc::new(aletheon_kernel::chronos::TestClock::default());
+        let mut source = Workspace::new("s1", clock.clone());
+        let proposal = source
+            .propose(
+                0,
+                AgoraOperation::UpdateAttention {
+                    focus: Some("winner".into()),
+                    priorities: vec!["winner".into()],
+                    selection_ref: "selection:3".into(),
+                },
+                test_author(),
+            )
+            .unwrap();
+        let commit = source.commit(proposal.id).unwrap();
+
+        let mut recovered = Workspace::new("s1", clock);
+        assert!(recovered.apply_commit(commit.clone()).unwrap());
+        assert!(!recovered.apply_commit(commit.clone()).unwrap());
+        assert_eq!(recovered.attention.focus.as_deref(), Some("winner"));
+
+        let mut tampered = commit;
+        if let AgoraOperation::UpdateAttention { priorities, .. } = &mut tampered.operation {
+            priorities.push("injected".into());
+        }
+        let mut clean = Workspace::new(
+            "s1",
+            Arc::new(aletheon_kernel::chronos::TestClock::default()),
+        );
+        assert!(clean.apply_commit(tampered).is_err());
+        assert!(clean.attention.focus.is_none());
     }
 }

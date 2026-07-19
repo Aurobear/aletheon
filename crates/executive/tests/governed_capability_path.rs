@@ -9,7 +9,8 @@ use executive::service::governed_capability::{
 use fabric::types::admission::RiskLevel;
 use fabric::{
     CapabilityAuthority, CapabilityCall, CapabilityInvoker, CapabilityRequest, CapabilityResult,
-    CapabilityScope, InvocationControl, PrincipalId, SandboxRequirement, UsageReport,
+    CapabilityScope, ConsciousArbitrationMode, InvocationControl, PrincipalId, SandboxRequirement,
+    ToolEventSink, ToolProgress, ToolResult, ToolResultMeta, UsageReport,
 };
 
 struct RecordingAuthority {
@@ -55,6 +56,49 @@ struct RecordingInner {
     requests: Arc<Mutex<Vec<CapabilityRequest>>>,
 }
 
+struct StreamingInner {
+    events: Arc<Mutex<Vec<&'static str>>>,
+}
+
+#[async_trait]
+impl CapabilityInvoker for StreamingInner {
+    async fn invoke(&self, request: CapabilityRequest) -> CapabilityResult {
+        self.events.lock().unwrap().push("legacy");
+        CapabilityResult {
+            call_id: request.call.call_id,
+            output: "settled".into(),
+            is_error: false,
+            usage: UsageReport::default(),
+            audit_id: Some(fabric::AuditEventId::new()),
+            patch_delta: None,
+        }
+    }
+
+    async fn invoke_streaming(
+        &self,
+        request: CapabilityRequest,
+        sink: &mut ToolEventSink,
+    ) -> CapabilityResult {
+        self.events.lock().unwrap().push("streaming");
+        assert!(sink.progress(ToolProgress::Text("working".into())));
+        let result = CapabilityResult {
+            call_id: request.call.call_id,
+            output: "settled".into(),
+            is_error: false,
+            usage: UsageReport::default(),
+            audit_id: Some(fabric::AuditEventId::new()),
+            patch_delta: None,
+        };
+        sink.terminal(Ok(ToolResult {
+            content: result.output.clone(),
+            is_error: result.is_error,
+            metadata: ToolResultMeta::default(),
+        }))
+        .await;
+        result
+    }
+}
+
 #[async_trait]
 impl CapabilityInvoker for RecordingInner {
     async fn invoke(&self, request: CapabilityRequest) -> CapabilityResult {
@@ -66,6 +110,7 @@ impl CapabilityInvoker for RecordingInner {
             is_error: false,
             usage: UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 }
@@ -94,7 +139,8 @@ async fn authorization_precedes_inner_and_attaches_trusted_policy() {
             events: events.clone(),
             reject: false,
         }),
-    );
+    )
+    .with_arbitration_mode(ConsciousArbitrationMode::Enforce);
 
     let result = invoker.invoke(call()).await;
     assert!(!result.is_error);
@@ -125,6 +171,42 @@ async fn authorization_rejection_never_reaches_inner() {
     assert!(result.output.contains("policy rejected"));
     assert_eq!(*events.lock().unwrap(), ["authorize"]);
     assert!(requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn streaming_flag_path_forwards_progress_and_preserves_settled_result() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (mut stream, sender) =
+        fabric::ipc::TurnEventStream::new(fabric::ipc::StreamConfig::turn_events(8));
+    let invoker = GovernedCapabilityInvoker::new(
+        Arc::new(StreamingInner {
+            events: events.clone(),
+        }),
+        Arc::new(RecordingAuthority {
+            events: Arc::new(Mutex::new(Vec::new())),
+            reject: false,
+        }),
+    )
+    .with_tool_stream(sender);
+
+    let result = invoker.invoke(call()).await;
+
+    assert!(!result.is_error);
+    assert_eq!(result.output, "settled");
+    assert!(result.audit_id.is_some(), "settlement audit must survive");
+    assert_eq!(*events.lock().unwrap(), ["streaming"]);
+    assert!(matches!(
+        stream.try_recv(),
+        Some(Ok(fabric::ipc::TurnEventV1::ToolProgress {
+            name,
+            call_id,
+            kind,
+            payload,
+        })) if name == "file_write"
+            && call_id == "call-1"
+            && kind == "text"
+            && payload == serde_json::json!("working")
+    ));
 }
 
 #[tokio::test]

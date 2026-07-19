@@ -1,20 +1,47 @@
 //! Bounded daemon scheduler for durable Goals.
 
 use super::{
-    AttemptCoordinator, AttemptRequest, GoalCoordinator, ObjectiveStore, RegistryAttemptExecutor,
-    RetryPolicy,
+    AttemptCoordinationOutcome, AttemptCoordinator, AttemptRequest, GoalCoordinator,
+    ObjectiveStore, RegistryAttemptExecutor, RetryDecision, RetryPolicy,
 };
 use crate::core::runtime_registry::RuntimeRegistry;
-use crate::r#impl::channel::router::GoalProgress;
 use crate::r#impl::storage_quota::StorageQuota;
 use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
 use fabric::{AttemptUsage, Clock, CognitiveRole, GoalState, GoalWaitReason, RuntimeId};
+use gateway::dispatcher::{GoalProgress, GoalProgressKind};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
+
+/// Convert an executive-side [`AttemptCoordinationOutcome`] into the
+/// gateway-neutral [`GoalProgress`] notification. This is the sole point
+/// where the neutral channel engine learns about Goal attempt outcomes,
+/// keeping `gateway` free of executive's Goal types.
+pub fn goal_progress_from_outcome(outcome: &AttemptCoordinationOutcome) -> GoalProgress {
+    match outcome {
+        AttemptCoordinationOutcome::Succeeded { attempt, .. } => GoalProgress {
+            goal_id: attempt.goal_id,
+            attempt_id: attempt.id,
+            kind: GoalProgressKind::Succeeded,
+        },
+        AttemptCoordinationOutcome::Failed {
+            attempt, decision, ..
+        } => GoalProgress {
+            goal_id: attempt.goal_id,
+            attempt_id: attempt.id,
+            kind: match decision {
+                RetryDecision::RetrySame { .. } => GoalProgressKind::RetryBackoff,
+                RetryDecision::Escalate { .. } => GoalProgressKind::Escalated,
+                RetryDecision::AwaitHuman { .. } => GoalProgressKind::AwaitingHuman,
+                RetryDecision::Fail { .. } => GoalProgressKind::Failed,
+                RetryDecision::Cancel => GoalProgressKind::Cancelled,
+            },
+        },
+    }
+}
 
 /// Runs at most one provider attempt per scheduler cycle.
 pub struct GoalWorker {
@@ -167,7 +194,7 @@ impl GoalWorker {
         }
         let _ = self
             .progress_tx
-            .send(GoalProgress::from_outcome(&outcome))
+            .send(goal_progress_from_outcome(&outcome))
             .await;
         Ok(true)
     }

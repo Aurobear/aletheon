@@ -4,6 +4,10 @@ use tokio::fs;
 use tokio::process::Command;
 
 use super::mutation_path::validate_mutation_path;
+use super::structured_patch::{
+    execute_structured_patch, parse_structured_patch, parse_structured_patch_json, PatchOperation,
+    StreamingPatchApplier,
+};
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 pub struct ApplyPatchTool;
@@ -15,7 +19,7 @@ impl Tool for ApplyPatchTool {
     }
 
     fn description(&self) -> &str {
-        "Apply a unified diff patch to files. Supports creating new files, modifying existing files, and deleting files."
+        "Apply a unified diff or structured patch to files. Supports creating, modifying, moving, appending, and deleting files."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -24,14 +28,21 @@ impl Tool for ApplyPatchTool {
             "properties": {
                 "patch": {
                     "type": "string",
-                    "description": "Unified diff patch content (standard diff format)"
+                    "description": "Unified diff or *** Begin Patch structured patch content"
+                },
+                "patch_json": {
+                    "type": "object",
+                    "description": "Structured patch object containing an operations array"
                 },
                 "base_dir": {
                     "type": "string",
                     "description": "Base directory for applying the patch (default: current dir)"
                 }
             },
-            "required": ["patch"]
+            "anyOf": [
+                {"required": ["patch"]},
+                {"required": ["patch_json"]}
+            ]
         })
     }
 
@@ -45,17 +56,19 @@ impl Tool for ApplyPatchTool {
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let patch = input["patch"].as_str().unwrap_or("");
+        let patch_json = input.get("patch_json").filter(|value| !value.is_null());
         let base_dir = input["base_dir"].as_str();
 
         let start = ctx.clock.mono_now();
 
-        if patch.is_empty() {
+        if patch.is_empty() && patch_json.is_none() {
             return ToolResult {
                 content: "Error: empty patch content".to_string(),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             };
         }
@@ -63,7 +76,7 @@ impl Tool for ApplyPatchTool {
         let workspace = match ctx.effective_workspace_policy() {
             Ok(workspace) => workspace,
             Err(error) => {
-                return tool_error(format!("Refused patch workspace: {error}"), start, ctx)
+                return tool_error(format!("Refused patch workspace: {error}"), start, ctx);
             }
         };
         let requested_base = match base_dir {
@@ -85,6 +98,59 @@ impl Tool for ApplyPatchTool {
             Ok(path) => path,
             Err(error) => return tool_error(format!("Refused patch base: {error}"), start, ctx),
         };
+
+        let structured = if let Some(value) = patch_json {
+            parse_structured_patch_json(&value.to_string()).map(Some)
+        } else if patch.trim_start().starts_with("*** Begin Patch") {
+            parse_structured_patch(patch).map(Some)
+        } else {
+            Ok(None)
+        };
+        let structured = match structured {
+            Ok(value) => value,
+            Err(error) => {
+                return tool_error(format!("Invalid structured patch: {error}"), start, ctx);
+            }
+        };
+
+        if let Some(structured) = structured {
+            for operation in &structured.operations {
+                for relative_path in operation_paths(operation) {
+                    if let Err(error) = validate_mutation_path(
+                        &workspace,
+                        workspace.protected_paths(),
+                        &base_path.join(relative_path),
+                    ) {
+                        return tool_error(
+                            format!("Refused structured patch target '{relative_path}': {error}"),
+                            start,
+                            ctx,
+                        );
+                    }
+                }
+            }
+
+            let result = match &ctx.turn_event_sender {
+                Some(sender) => {
+                    StreamingPatchApplier::new(sender.clone())
+                        .apply(&structured.operations, &base_path)
+                        .await
+                }
+                None => execute_structured_patch(&structured, &base_path),
+            };
+            let is_error = !result.failed.is_empty();
+            return ToolResult {
+                content: serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|error| format!("failed to serialize patch result: {error}")),
+                is_error,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                    patch_delta: Some(patch_delta(&result)),
+                },
+            };
+        }
+
         for filename in extract_filenames(patch) {
             if let Err(error) = validate_mutation_path(
                 &workspace,
@@ -109,6 +175,7 @@ impl Tool for ApplyPatchTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 }
             }
@@ -121,6 +188,7 @@ impl Tool for ApplyPatchTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     },
                     Err(native_err) => ToolResult {
@@ -132,10 +200,26 @@ impl Tool for ApplyPatchTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     },
                 }
             }
+        }
+    }
+}
+
+fn operation_paths(operation: &PatchOperation) -> Vec<&str> {
+    match operation {
+        PatchOperation::AddFile { path, .. }
+        | PatchOperation::DeleteFile { path }
+        | PatchOperation::AppendFile { path, .. } => vec![path],
+        PatchOperation::UpdateFile { path, move_to, .. } => {
+            let mut paths = vec![path.as_str()];
+            if let Some(destination) = move_to {
+                paths.push(destination.as_str());
+            }
+            paths
         }
     }
 }
@@ -147,7 +231,45 @@ fn tool_error(message: String, start: fabric::MonoTime, ctx: &ToolContext) -> To
         metadata: ToolResultMeta {
             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
             truncated: false,
+            patch_delta: None,
         },
+    }
+}
+
+fn patch_delta(result: &super::structured_patch::StructuredPatchResult) -> fabric::PatchDelta {
+    fabric::PatchDelta {
+        applied: result
+            .applied
+            .iter()
+            .map(|operation| fabric::PatchDeltaApplied {
+                operation: operation.op_type.clone(),
+                path: operation.path.clone(),
+                hunks_applied: operation.hunks_applied,
+                bytes_written: operation.bytes_written,
+                moved_to: operation.moved_to.clone(),
+            })
+            .collect(),
+        failed: result
+            .failed
+            .iter()
+            .map(|operation| fabric::PatchDeltaFailed {
+                operation: operation.op_type.clone(),
+                path: operation.path.clone(),
+                error: operation.error.clone(),
+                hunks_applied_before_failure: operation.hunks_applied_before_failure,
+            })
+            .collect(),
+        files_changed: result
+            .files_changed
+            .iter()
+            .map(|change| fabric::PatchDeltaFileChange {
+                path: change.path.clone(),
+                change_type: change.change_type.clone(),
+                hunks_applied: change.hunks_applied,
+                bytes_before: change.bytes_before,
+                bytes_after: change.bytes_after,
+            })
+            .collect(),
     }
 }
 
@@ -644,6 +766,7 @@ mod tests {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
 
         let patch = "--- /dev/null\n+++ b/new_file.txt\n@@ -0,0 +1,3 @@\n+line one\n+line two\n+line three\n";
@@ -673,6 +796,7 @@ mod tests {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
 
         let patch = "--- a/existing.txt\n+++ b/existing.txt\n@@ -1,3 +1,3 @@\n line one\n-line two\n+line TWO\n line three\n";
@@ -698,6 +822,7 @@ mod tests {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
 
         let patch = "--- a/doomed.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-delete me\n";
@@ -708,6 +833,40 @@ mod tests {
 
         assert!(!result.is_error, "Expected success: {}", result.content);
         assert!(!file_path.exists(), "File should have been deleted");
+    }
+
+    #[tokio::test]
+    async fn structured_apply_returns_typed_patch_delta_metadata() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+        let result = ApplyPatchTool
+            .execute(
+                json!({
+                    "patch_json": {
+                        "operations": [{
+                            "type": "add",
+                            "path": "delta.txt",
+                            "content": "tracked"
+                        }]
+                    }
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(!result.is_error, "{}", result.content);
+        let delta = result.metadata.patch_delta.expect("structured delta");
+        assert_eq!(delta.applied.len(), 1);
+        assert_eq!(delta.applied[0].operation, "add");
+        assert_eq!(delta.applied[0].path, "delta.txt");
+        assert_eq!(delta.files_changed[0].change_type, "created");
     }
 
     #[test]
@@ -742,11 +901,74 @@ mod tests {
             working_dir: tmp.path().to_path_buf(),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let tool = ApplyPatchTool;
         let input = json!({ "patch": "" });
         let result = tool.execute(input, &ctx).await;
         assert!(result.is_error);
+    }
+
+    #[tokio::test]
+    async fn structured_text_patch_is_applied_without_unified_diff_fallback() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+        let patch = "*** Begin Patch\nAdd File: nested/new.txt\n>>>\nhello\n>>>\n*** End Patch";
+
+        let result = ApplyPatchTool
+            .execute(json!({ "patch": patch }), &ctx)
+            .await;
+
+        assert!(!result.is_error, "Expected success: {}", result.content);
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("nested/new.txt"))
+                .await
+                .unwrap(),
+            "hello"
+        );
+    }
+
+    #[tokio::test]
+    async fn structured_json_patch_is_applied() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "test".to_string(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let result = ApplyPatchTool
+            .execute(
+                json!({
+                    "patch_json": {
+                        "operations": [{
+                            "type": "add",
+                            "path": "json.txt",
+                            "content": "from json"
+                        }]
+                    }
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(!result.is_error, "Expected success: {}", result.content);
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("json.txt"))
+                .await
+                .unwrap(),
+            "from json"
+        );
     }
 
     #[test]
@@ -784,5 +1006,47 @@ mod tests {
         }];
         let result = apply_hunks(original, &hunks).unwrap();
         assert_eq!(result, "line one\nline two\nline three\n");
+    }
+
+    #[tokio::test]
+    async fn tool_path_uses_streaming_applier_when_sender_is_trusted() {
+        let tmp = TempDir::new().unwrap();
+        let (mut events, sender) =
+            fabric::ipc::TurnEventStream::new(fabric::ipc::StreamConfig::turn_events(8));
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "streaming-tool".into(),
+            clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: Some(sender),
+        };
+
+        let result = ApplyPatchTool
+            .execute(
+                json!({
+                    "patch_json": {"operations": [{
+                        "type": "add", "path": "streamed.txt", "content": "done"
+                    }]}
+                }),
+                &ctx,
+            )
+            .await;
+
+        assert!(!result.is_error);
+        assert!(result.metadata.patch_delta.is_some());
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::PatchProgress { status, .. } if status == "started"
+        ));
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::PatchProgress { status, path: Some(path), .. }
+                if status == "file_changed" && path == "streamed.txt"
+        ));
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            fabric::ipc::TurnEventV1::PatchProgress { status, .. } if status == "completed"
+        ));
     }
 }

@@ -147,7 +147,7 @@ impl GbrainPage {
             supersedes: metadata.supersedes.clone(),
             superseded_by: metadata.superseded_by.clone(),
             confidence: metadata.confidence,
-            sensitivity: metadata.sensitivity.clone(),
+            sensitivity: metadata.sensitivity,
         };
         let yaml = serde_yaml::to_string(&frontmatter)?;
         let content = format!(
@@ -222,6 +222,8 @@ impl GbrainPage {
             temporal_state,
             authority: crate::model::MemoryAuthority::AletheonExternal,
             scope: crate::model::MemoryScope::Global,
+            score: 0.0,
+            evidence: None,
         })
     }
 }

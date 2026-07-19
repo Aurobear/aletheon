@@ -14,7 +14,7 @@ fn production_source(path: impl AsRef<Path>) -> String {
 fn domain_ports_retain_only_authoritative_facades() {
     let source = production_source("src/core/domain_ports.rs");
     for contract in [
-        "Arc<dyn AgoraOps>",
+        "Arc<dyn AgoraService>",
         "Arc<dyn metacog::MetacogService>",
         "Arc<dyn corpus::CorpusService>",
         "Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>",
@@ -48,6 +48,7 @@ fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
         "src/impl/daemon/mcp_embedded.rs",
         "src/impl/runtime/provider_worker.rs",
         "src/service/request_use_cases.rs",
+        "src/service/admin_service.rs",
         "src/service/post_turn_projection.rs",
         "src/service/turn_pipeline.rs",
         "src/service/turn_runtime_ports.rs",
@@ -61,6 +62,7 @@ fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
         "MorphogenesisPipeline",
         "cognit::harness::linear",
         "LinearCognitiveSession",
+        "AletheonExecutive",
     ];
     let mut violations = Vec::new();
     for file in files {
@@ -79,11 +81,122 @@ fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
 }
 
 #[test]
+fn admin_and_post_turn_retain_runtime_facades_not_executive() {
+    for (file, contract) in [
+        ("src/service/admin_service.rs", "Arc<dyn AdminRuntimePort>"),
+        (
+            "src/service/post_turn_projection.rs",
+            "Arc<dyn PostTurnRuntimePort>",
+        ),
+    ] {
+        let source = production_source(file);
+        assert!(
+            source.contains(contract),
+            "missing runtime facade in {file}"
+        );
+        assert!(
+            !source.contains("AletheonExecutive"),
+            "{file} retained concrete AletheonExecutive"
+        );
+    }
+}
+
+#[test]
+fn request_use_cases_retain_only_typed_runtime_and_domain_ports() {
+    let source = production_source("src/service/request_use_cases.rs");
+    for contract in [
+        "Arc<dyn ExecutiveRuntimePort>",
+        "Arc<dyn ReflectionMemoryPort>",
+        "Arc<dyn ReflectionEnginePort>",
+        "Arc<dyn SelfStatusPort>",
+        "Arc<dyn SupplementalMemoryStatusPort>",
+        "Arc<dyn RetentionAdminPort>",
+        "Arc<dyn metacog::MetacogService>",
+        "Arc<dyn corpus::CorpusService>",
+    ] {
+        assert!(
+            source.contains(contract),
+            "missing request port: {contract}"
+        );
+    }
+    for concrete in [
+        "AletheonExecutive",
+        "EpisodicMemory",
+        "SelfField",
+        "CompositeMemoryHealth",
+        "RetentionRepository",
+        "RetentionCompactor",
+        "cognit::core::reflector::Reflector",
+    ] {
+        assert!(
+            !source.contains(concrete),
+            "request use cases retained concrete domain state: {concrete}"
+        );
+    }
+}
+
+#[test]
+fn exec_session_crosses_private_corpus_composition() {
+    let source = production_source("src/service/exec_session.rs");
+    assert!(
+        source.contains("compose_exec_corpus"),
+        "exec session does not use private Corpus composition"
+    );
+    for concrete in [
+        "ToolRunnerWithGuard",
+        "CorpusToolExecutor",
+        "DefaultCorpusService",
+        "HookRegistry",
+        "default_tool_registry",
+    ] {
+        assert!(
+            !source.contains(concrete),
+            "exec session retained concrete Corpus ownership: {concrete}"
+        );
+    }
+}
+
+#[test]
+fn turn_runtime_retain_only_typed_use_case_ports() {
+    let source = production_source("src/service/turn_runtime_ports.rs");
+    for contract in [
+        "Arc<dyn SelfPolicyPort>",
+        "Arc<dyn TurnConfigPort>",
+        "Arc<dyn TurnHookPort>",
+        "Arc<dyn StormStatePort>",
+        "Arc<dyn ModelSelectionPort>",
+        "Arc<dyn TurnApprovalPort>",
+        "Arc<dyn GovernedTurnCapabilityPort>",
+        "Arc<dyn TurnSessionStatePort>",
+        "Arc<dyn TurnObservabilityPort>",
+    ] {
+        assert!(source.contains(contract), "missing turn port: {contract}");
+    }
+    for concrete in [
+        "dasein::SelfField",
+        "AletheonExecutive",
+        "StormBreaker",
+        "PendingApproval",
+        "CapabilityResources",
+        "SessionManager",
+        "ModelRouter",
+        "PerfCounter",
+        "corpus::CorpusService",
+        "mnemosyne::MemoryService",
+    ] {
+        assert!(
+            !source.contains(concrete),
+            "turn runtime retained concrete domain state: {concrete}"
+        );
+    }
+}
+
+#[test]
 fn concrete_domain_construction_is_confined_to_composition_or_domain_tests() {
     let root = Path::new("src");
     let allowed = [
         PathBuf::from("src/impl/daemon/bootstrap"),
-        PathBuf::from("src/service/exec_session.rs"),
+        PathBuf::from("src/impl/exec_corpus.rs"),
         PathBuf::from("src/service/harness_factory.rs"),
     ];
     let constructors = [

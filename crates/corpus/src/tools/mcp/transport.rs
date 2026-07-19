@@ -6,7 +6,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
+#[cfg(test)]
 use super::auth::BearerTokenAuth;
+use super::auth::McpHttpAuth;
 
 const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
 
@@ -26,18 +28,21 @@ pub enum McpTransport {
         stdin_tx: mpsc::Sender<String>,
         stdout_rx: mpsc::Receiver<String>,
         _child: Child,
+        request_timeout_ms: u64,
     },
     StreamableHttp {
         client: reqwest::Client,
         base_url: String,
-        auth: Option<BearerTokenAuth>,
+        auth: Option<McpHttpAuth>,
+        request_timeout_ms: u64,
     },
     Sse {
         client: reqwest::Client,
         base_url: String,
-        auth: Option<BearerTokenAuth>,
+        auth: Option<McpHttpAuth>,
         event_rx: mpsc::Receiver<String>,
         _event_handle: tokio::task::JoinHandle<()>,
+        request_timeout_ms: u64,
     },
 }
 
@@ -145,18 +150,22 @@ fn insert_with_numeric_suffix(base: &str, seen: &mut std::collections::HashSet<S
 pub enum McpNotification {
     /// `notifications/tools/list_changed` — the server's tool list changed.
     ToolsListChanged,
+    /// Server-to-client approval request.
+    ElicitationCreate { id: u64, params: Value },
     /// Unknown notification method.
     Unknown(String),
 }
 
 impl McpNotification {
-    /// Parse a JSON-RPC notification (a message with `method` but no `id`).
+    /// Parse a supported inbound notification or server-to-client request.
     pub fn parse(msg: &Value) -> Option<Self> {
-        // Notifications have no "id" field.
-        if msg.get("id").is_some() {
-            return None;
-        }
         let method = msg.get("method")?.as_str()?;
+        if let Some(id) = msg.get("id").and_then(Value::as_u64) {
+            return (method == "elicitation/create").then(|| Self::ElicitationCreate {
+                id,
+                params: msg.get("params").cloned().unwrap_or(Value::Null),
+            });
+        }
         match method {
             "notifications/tools/list_changed" => Some(Self::ToolsListChanged),
             other => Some(Self::Unknown(other.to_string())),
@@ -181,7 +190,12 @@ pub fn is_auth_error(err: &anyhow::Error) -> bool {
 
 impl McpTransport {
     /// Create a stdio transport by spawning a subprocess.
-    pub async fn stdio(command: &str, args: &[String]) -> Result<Self> {
+    pub async fn stdio(
+        command: &str,
+        args: &[String],
+        request_timeout_ms: u64,
+        notification_tx: mpsc::Sender<McpNotification>,
+    ) -> Result<Self> {
         let mut child = Command::new(command)
             .args(args)
             .stdin(std::process::Stdio::piped())
@@ -220,7 +234,14 @@ impl McpTransport {
                 match reader.read_line(&mut line).await {
                     Ok(0) => break,
                     Ok(_) => {
-                        let _ = stdout_tx.send(line.trim().to_string()).await;
+                        let message = line.trim();
+                        if let Ok(value) = serde_json::from_str::<Value>(message) {
+                            if let Some(notification) = McpNotification::parse(&value) {
+                                let _ = notification_tx.send(notification).await;
+                                continue;
+                            }
+                        }
+                        let _ = stdout_tx.send(message.to_string()).await;
                     }
                     Err(_) => break,
                 }
@@ -231,6 +252,7 @@ impl McpTransport {
             stdin_tx,
             stdout_rx,
             _child: child,
+            request_timeout_ms,
         })
     }
 
@@ -239,11 +261,19 @@ impl McpTransport {
     /// Uses HTTP POST to send JSON-RPC requests and reads the response
     /// body (optionally as SSE). Auth token is read from the env var
     /// `MCP_BEARER_TOKEN` (or `None` if unset).
-    pub fn streamable_http(base_url: impl Into<String>, auth: Option<BearerTokenAuth>) -> Self {
+    pub fn streamable_http(
+        base_url: impl Into<String>,
+        auth: Option<McpHttpAuth>,
+        request_timeout_ms: u64,
+    ) -> Self {
         Self::StreamableHttp {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("static MCP HTTP client configuration must build"),
             base_url: base_url.into(),
             auth,
+            request_timeout_ms,
         }
     }
 
@@ -251,14 +281,22 @@ impl McpTransport {
     ///
     /// Opens an HTTP GET long-poll connection to `<base_url>/sse` and
     /// reads events. Requests are sent as HTTP POST to `<base_url>`.
-    pub async fn sse(base_url: impl Into<String>, auth: Option<BearerTokenAuth>) -> Result<Self> {
+    pub async fn sse(
+        base_url: impl Into<String>,
+        auth: Option<McpHttpAuth>,
+        request_timeout_ms: u64,
+        notification_tx: mpsc::Sender<McpNotification>,
+    ) -> Result<Self> {
         let base_url = base_url.into();
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .context("build MCP SSE client")?;
 
         let sse_url = format!("{}/sse", base_url.trim_end_matches('/'));
         let mut req_builder = client.get(&sse_url);
         if let Some(ref a) = auth {
-            if let Some(hv) = a.header_value() {
+            if let Some(hv) = a.header_value_for(Some(&sse_url)) {
                 req_builder = req_builder.header("Authorization", hv);
             }
         }
@@ -290,6 +328,12 @@ impl McpTransport {
                         if let Some(data) = line.strip_prefix("data:") {
                             let data = data.trim();
                             if !data.is_empty() {
+                                if let Ok(value) = serde_json::from_str::<Value>(data) {
+                                    if let Some(notification) = McpNotification::parse(&value) {
+                                        let _ = notification_tx.send(notification).await;
+                                        continue;
+                                    }
+                                }
                                 let _ = event_tx.send(data.to_string()).await;
                             }
                         }
@@ -304,6 +348,7 @@ impl McpTransport {
             auth,
             event_rx,
             _event_handle: handle,
+            request_timeout_ms,
         })
     }
 
@@ -312,7 +357,14 @@ impl McpTransport {
     // -----------------------------------------------------------------------
 
     /// Send a JSON-RPC request and wait for the response.
+    ///
+    /// For HTTP-based transports, transient failures (5xx, connection errors,
+    /// timeouts) are retried up to 2 times with exponential backoff (1s, 2s, 4s).
+    /// Non-retryable errors (4xx except 429) fail immediately.
     pub async fn request(&mut self, id: u64, method: &str, params: Value) -> Result<Value> {
+        let timeout_ms = self.request_timeout_ms();
+        let timeout_dur = std::time::Duration::from_millis(timeout_ms);
+
         let request = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -325,7 +377,7 @@ impl McpTransport {
                 stdin_tx,
                 stdout_rx,
                 ..
-            } => {
+            } => tokio::time::timeout(timeout_dur, async {
                 stdin_tx
                     .send(serde_json::to_string(&request)?)
                     .await
@@ -335,15 +387,20 @@ impl McpTransport {
                     .await
                     .ok_or_else(|| anyhow::anyhow!("Transport closed"))?;
                 Self::parse_response(&response_str)
-            }
+            })
+            .await
+            .map_err(|_elapsed| {
+                anyhow::anyhow!("MCP stdio request timed out after {}ms", timeout_ms)
+            })?,
 
             Self::StreamableHttp {
                 client,
                 base_url,
                 auth,
+                ..
             } => {
                 let url = base_url.trim_end_matches('/').to_string();
-                Self::http_post(client, &url, auth, &request).await
+                Self::http_request_with_retry(client, &url, auth, &request, timeout_ms).await
             }
 
             Self::Sse {
@@ -354,15 +411,8 @@ impl McpTransport {
                 ..
             } => {
                 let url = base_url.trim_end_matches('/').to_string();
-                // Fire the POST request.
-                let _post_result = Self::http_post_no_response(client, &url, auth, &request).await;
-                // Wait for a response event from the SSE stream.
-                // For simplicity we read one event and parse it as JSON-RPC response.
-                let event_str = event_rx
-                    .recv()
+                Self::sse_request_with_retry(client, &url, auth, &request, event_rx, timeout_ms)
                     .await
-                    .ok_or_else(|| anyhow::anyhow!("SSE stream closed"))?;
-                Self::parse_response(&event_str)
             }
         }
     }
@@ -387,6 +437,7 @@ impl McpTransport {
                 client,
                 base_url,
                 auth,
+                ..
             } => {
                 let url = base_url.trim_end_matches('/').to_string();
                 Self::http_post_no_response(client, &url, auth, &notification).await
@@ -403,9 +454,214 @@ impl McpTransport {
         }
     }
 
+    /// Respond to a server-to-client JSON-RPC request.
+    pub async fn send_response(&mut self, id: u64, result: Value) -> Result<()> {
+        let response = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result });
+        match self {
+            Self::Stdio { stdin_tx, .. } => stdin_tx
+                .send(serde_json::to_string(&response)?)
+                .await
+                .map_err(|_| anyhow::anyhow!("Transport stdin closed")),
+            Self::StreamableHttp {
+                client,
+                base_url,
+                auth,
+                ..
+            }
+            | Self::Sse {
+                client,
+                base_url,
+                auth,
+                ..
+            } => {
+                Self::http_post_no_response(client, base_url.trim_end_matches('/'), auth, &response)
+                    .await
+            }
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
+
+    fn request_timeout_ms(&self) -> u64 {
+        match self {
+            Self::Stdio {
+                request_timeout_ms, ..
+            } => *request_timeout_ms,
+            Self::StreamableHttp {
+                request_timeout_ms, ..
+            } => *request_timeout_ms,
+            Self::Sse {
+                request_timeout_ms, ..
+            } => *request_timeout_ms,
+        }
+    }
+
+    /// Returns `true` when the error represents a transient failure that
+    /// should be retried (5xx, 429, connection errors, timeouts).
+    fn is_retryable(err: &anyhow::Error) -> bool {
+        let msg = format!("{:?}", err);
+        // 5xx server errors are retryable
+        if msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504")
+        {
+            return true;
+        }
+        // 429 Too Many Requests is retryable
+        if msg.contains("429") {
+            return true;
+        }
+        // Connection errors are retryable
+        if msg.contains("connection refused")
+            || msg.contains("connection reset")
+            || msg.contains("broken pipe")
+            || msg.contains("tcp connect error")
+            || msg.contains("dns error")
+            || msg.contains("error trying to connect")
+        {
+            return true;
+        }
+        // Timeout errors are retryable
+        if msg.contains("timed out") || msg.contains("timeout") {
+            return true;
+        }
+        // 4xx client errors (except 429) are not retryable
+        false
+    }
+
+    /// Execute an HTTP POST with retry for transient failures.
+    ///
+    /// Retries up to 2 times (3 total attempts) with exponential backoff:
+    /// 100ms then 200ms between attempts, bounded by the per-server timeout.
+    async fn http_request_with_retry(
+        client: &reqwest::Client,
+        url: &str,
+        auth: &Option<McpHttpAuth>,
+        body: &Value,
+        request_timeout_ms: u64,
+    ) -> Result<Value> {
+        const MAX_RETRIES: u32 = 2;
+        let timeout_dur = std::time::Duration::from_millis(request_timeout_ms);
+        let deadline = tokio::time::Instant::now() + timeout_dur;
+        let mut delay_ms: u64 = 100;
+        let mut last_error: Option<anyhow::Error> = None;
+
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_millis(delay_ms);
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if delay >= remaining {
+                    break;
+                }
+                tokio::time::sleep(delay).await;
+                delay_ms = delay_ms.saturating_mul(2);
+            }
+
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let result =
+                tokio::time::timeout(remaining, Self::http_post(client, url, auth, body)).await;
+
+            match result {
+                Ok(Ok(value)) => return Ok(value),
+                Ok(Err(e)) => {
+                    if !Self::is_retryable(&e) {
+                        return Err(e);
+                    }
+                    last_error = Some(e);
+                }
+                Err(_elapsed) => {
+                    last_error = Some(anyhow::anyhow!(
+                        "MCP HTTP request timed out after {}ms",
+                        request_timeout_ms
+                    ));
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("MCP HTTP request failed")))
+    }
+
+    /// Execute an SSE request with retry for transient failures.
+    ///
+    /// Fires a POST (no-body read), then reads the response from the SSE
+    /// event stream. On transient POST failures, retries the POST; if the
+    /// event stream closes, that is not retryable.
+    async fn sse_request_with_retry(
+        client: &reqwest::Client,
+        url: &str,
+        auth: &Option<McpHttpAuth>,
+        body: &Value,
+        event_rx: &mut mpsc::Receiver<String>,
+        request_timeout_ms: u64,
+    ) -> Result<Value> {
+        const MAX_RETRIES: u32 = 2;
+        let timeout_dur = std::time::Duration::from_millis(request_timeout_ms);
+        let deadline = tokio::time::Instant::now() + timeout_dur;
+        let mut delay_ms: u64 = 100;
+        let mut last_error: Option<anyhow::Error> = None;
+
+        for attempt in 0..=MAX_RETRIES {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_millis(delay_ms);
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if delay >= remaining {
+                    break;
+                }
+                tokio::time::sleep(delay).await;
+                delay_ms = delay_ms.saturating_mul(2);
+            }
+
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            // POST the request
+            let post_result = tokio::time::timeout(
+                remaining,
+                Self::http_post_no_response(client, url, auth, body),
+            )
+            .await;
+
+            match post_result {
+                Ok(Ok(())) => {
+                    // POST succeeded — read from the SSE event stream
+                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    let event_result = tokio::time::timeout(remaining, event_rx.recv()).await;
+                    match event_result {
+                        Ok(Some(event_str)) => {
+                            return Self::parse_response(&event_str);
+                        }
+                        Ok(None) => {
+                            return Err(anyhow::anyhow!("SSE stream closed"));
+                        }
+                        Err(_elapsed) => {
+                            last_error = Some(anyhow::anyhow!(
+                                "MCP SSE request timed out after {}ms",
+                                request_timeout_ms
+                            ));
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    if !Self::is_retryable(&e) {
+                        return Err(e);
+                    }
+                    last_error = Some(e);
+                }
+                Err(_elapsed) => {
+                    last_error = Some(anyhow::anyhow!(
+                        "MCP SSE POST timed out after {}ms",
+                        request_timeout_ms
+                    ));
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("MCP SSE request failed")))
+    }
 
     fn parse_response(raw: &str) -> Result<Value> {
         let response: Value =
@@ -419,7 +675,7 @@ impl McpTransport {
     async fn http_post(
         client: &reqwest::Client,
         url: &str,
-        auth: &Option<BearerTokenAuth>,
+        auth: &Option<McpHttpAuth>,
         body: &Value,
     ) -> Result<Value> {
         let mut req = client
@@ -429,7 +685,7 @@ impl McpTransport {
             .json(body);
 
         if let Some(a) = auth {
-            if let Some(hv) = a.header_value() {
+            if let Some(hv) = a.header_value_for(Some(url)) {
                 req = req.header("Authorization", hv);
             }
         }
@@ -493,7 +749,7 @@ impl McpTransport {
     async fn http_post_no_response(
         client: &reqwest::Client,
         url: &str,
-        auth: &Option<BearerTokenAuth>,
+        auth: &Option<McpHttpAuth>,
         body: &Value,
     ) -> Result<()> {
         let mut req = client
@@ -502,7 +758,7 @@ impl McpTransport {
             .json(body);
 
         if let Some(a) = auth {
-            if let Some(hv) = a.header_value() {
+            if let Some(hv) = a.header_value_for(Some(url)) {
                 req = req.header("Authorization", hv);
             }
         }
@@ -525,10 +781,11 @@ impl McpTransport {
 /// immediately without fallback.
 pub async fn connect_with_fallback(
     base_url: &str,
-    auth: Option<BearerTokenAuth>,
+    auth: Option<McpHttpAuth>,
+    request_timeout_ms: u64,
 ) -> Result<McpTransport> {
     // Try StreamableHttp first by sending a probe POST.
-    let transport = McpTransport::streamable_http(base_url, auth.clone());
+    let transport = McpTransport::streamable_http(base_url, auth.clone(), request_timeout_ms);
     if let McpTransport::StreamableHttp { ref client, .. } = transport {
         let probe = serde_json::json!({
             "jsonrpc": "2.0",
@@ -553,7 +810,8 @@ pub async fn connect_with_fallback(
     }
 
     // Fallback to SSE.
-    McpTransport::sse(base_url, auth).await
+    let (notification_tx, _notification_rx) = mpsc::channel(64);
+    McpTransport::sse(base_url, auth, request_timeout_ms, notification_tx).await
 }
 
 // ===========================================================================
@@ -661,6 +919,21 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_unsolicited_elicitation_request() {
+        let params = serde_json::json!({"message": "Approve?", "mode": "once"});
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 41,
+            "method": "elicitation/create",
+            "params": params
+        });
+        assert_eq!(
+            McpNotification::parse(&msg),
+            Some(McpNotification::ElicitationCreate { id: 41, params })
+        );
+    }
+
+    #[test]
     fn test_notification_parse_ignores_requests() {
         // Has "id" -> it's a request, not a notification.
         let msg = serde_json::json!({
@@ -706,7 +979,8 @@ mod tests {
     #[test]
     fn test_streamable_http_config_construction() {
         let auth = BearerTokenAuth::new("TEST_TRANSPORT_TOKEN");
-        let transport = McpTransport::streamable_http("http://localhost:8080/mcp", Some(auth));
+        let transport =
+            McpTransport::streamable_http("http://localhost:8080/mcp", Some(auth.into()), 30_000);
         match &transport {
             McpTransport::StreamableHttp { base_url, .. } => {
                 assert_eq!(base_url, "http://localhost:8080/mcp");
@@ -717,7 +991,7 @@ mod tests {
 
     #[test]
     fn test_streamable_http_no_auth() {
-        let transport = McpTransport::streamable_http("http://localhost:3000", None);
+        let transport = McpTransport::streamable_http("http://localhost:3000", None, 30_000);
         match &transport {
             McpTransport::StreamableHttp { auth, .. } => {
                 assert!(auth.is_none());
@@ -746,5 +1020,77 @@ mod tests {
         assert!(config.enable_prefix);
         assert_eq!(config.max_length, 64);
         assert_eq!(config.collision_strategy, CollisionStrategy::PrefixServer);
+    }
+
+    // -- Retry / timeout helpers -------------------------------------------
+
+    #[test]
+    fn test_is_retryable_5xx() {
+        assert!(McpTransport::is_retryable(&anyhow::anyhow!(
+            "HTTP request failed: 500 Internal Server Error"
+        )));
+        assert!(McpTransport::is_retryable(&anyhow::anyhow!(
+            "HTTP request failed: 502 Bad Gateway"
+        )));
+        assert!(McpTransport::is_retryable(&anyhow::anyhow!(
+            "HTTP request failed: 503 Service Unavailable"
+        )));
+        assert!(McpTransport::is_retryable(&anyhow::anyhow!(
+            "HTTP request failed: 504 Gateway Timeout"
+        )));
+    }
+
+    #[test]
+    fn test_is_retryable_429() {
+        assert!(McpTransport::is_retryable(&anyhow::anyhow!(
+            "HTTP request failed: 429 Too Many Requests"
+        )));
+    }
+
+    #[test]
+    fn test_is_retryable_connection_errors() {
+        assert!(McpTransport::is_retryable(&anyhow::anyhow!(
+            "connection refused"
+        )));
+        assert!(McpTransport::is_retryable(&anyhow::anyhow!(
+            "connection reset"
+        )));
+        assert!(McpTransport::is_retryable(&anyhow::anyhow!(
+            "tcp connect error"
+        )));
+        assert!(McpTransport::is_retryable(&anyhow::anyhow!(
+            "error trying to connect"
+        )));
+    }
+
+    #[test]
+    fn test_is_retryable_4xx_not_retryable() {
+        assert!(!McpTransport::is_retryable(&anyhow::anyhow!(
+            "HTTP request failed: 400 Bad Request"
+        )));
+        assert!(!McpTransport::is_retryable(&anyhow::anyhow!(
+            "HTTP request failed: 401 Unauthorized"
+        )));
+        assert!(!McpTransport::is_retryable(&anyhow::anyhow!(
+            "HTTP request failed: 403 Forbidden"
+        )));
+        assert!(!McpTransport::is_retryable(&anyhow::anyhow!(
+            "HTTP request failed: 404 Not Found"
+        )));
+    }
+
+    #[test]
+    fn test_is_retryable_timeout() {
+        assert!(McpTransport::is_retryable(&anyhow::anyhow!(
+            "MCP HTTP request timed out after 500ms"
+        )));
+    }
+
+    #[test]
+    fn test_default_timeout_is_30_seconds() {
+        assert_eq!(
+            crate::tools::mcp::config::default_request_timeout_ms(),
+            30_000
+        );
     }
 }

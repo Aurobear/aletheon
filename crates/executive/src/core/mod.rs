@@ -1,8 +1,10 @@
 pub mod checkpoint;
 pub mod config;
 pub(crate) mod corpus_group;
+pub mod deploy;
 pub mod domain_ports;
 pub mod evolution_coordinator;
+pub(crate) mod mcp_config;
 pub(crate) mod memory_group;
 pub mod mode_router;
 pub mod orchestrator;

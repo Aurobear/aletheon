@@ -1,4 +1,4 @@
-//! Restart recovery tests for [`ChannelRouter`]: crash boundaries and
+//! Restart recovery tests for [`ChannelDispatcher`]: crash boundaries and
 //! at-least-once delivery semantics.
 //!
 //! These tests simulate crash scenarios to verify that:
@@ -10,14 +10,14 @@
 
 use std::sync::Arc;
 
-use executive::r#impl::channel::router::{
-    ChannelRouter, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
-};
-use executive::r#impl::channel::store::{ChannelStore, InsertOutcome};
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,
 };
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+};
+use gateway::store::{ChannelStore, InsertOutcome};
 use tokio::sync::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ fn owner_text(message_id: &str, correlation_id: &str, text: &str) -> InboundMess
 /// Set up a test fixture: store with bound owner, executor, and transport.
 /// Returns the router, executor, transport, and temp dir.
 async fn setup() -> (
-    ChannelRouter,
+    ChannelDispatcher,
     Arc<FakeTurnExecutor>,
     FakeTransport,
     tempfile::TempDir,
@@ -133,7 +133,7 @@ async fn setup() -> (
     store.bind("telegram", "owner", "owner", "active").unwrap();
     let executor = Arc::new(FakeTurnExecutor::default());
     let transport = FakeTransport::new();
-    let router = ChannelRouter::new(store, executor.clone());
+    let router = ChannelDispatcher::new(store, executor.clone());
     (router, executor, transport, dir)
 }
 
@@ -172,7 +172,7 @@ async fn crash_after_inbox_insert_recover_processes_pending() {
     let store2 = ChannelStore::open(&db_path).unwrap();
     let executor = Arc::new(FakeTurnExecutor::default());
     let transport = FakeTransport::new();
-    let mut router = ChannelRouter::new(store2, executor.clone());
+    let mut router = ChannelDispatcher::new(store2, executor.clone());
 
     let count = router.recover_pending_inbox(&transport, 10).await.unwrap();
     assert_eq!(count, 1, "should recover exactly one pending message");
@@ -219,7 +219,7 @@ async fn crash_after_outbox_commit_flush_sends_without_turn() {
     let store2 = ChannelStore::open(&db_path).unwrap();
     let executor = Arc::new(FakeTurnExecutor::default());
     let transport = FakeTransport::new();
-    let mut router = ChannelRouter::new(store2, executor.clone());
+    let mut router = ChannelDispatcher::new(store2, executor.clone());
 
     let count = router.flush_pending_outbox(&transport, 10).await.unwrap();
     assert_eq!(count, 1, "should flush exactly one pending outbox message");
@@ -247,7 +247,7 @@ async fn do_crash_after_outbox_commit(db_path: &std::path::Path) {
     let executor = Arc::new(FakeTurnExecutor::default());
     let transport = FakeTransport::new();
     transport.set_fail_next(true).await;
-    let mut router = ChannelRouter::new(store, executor.clone());
+    let mut router = ChannelDispatcher::new(store, executor.clone());
 
     let msg = owner_text("99", "corr-crash-outbox", "message before crash");
     let envelope = ProviderEnvelope {
@@ -291,7 +291,7 @@ async fn crash_after_send_before_mark_retry_may_duplicate_outbound() {
     store.bind("telegram", "owner", "owner", "active").unwrap();
     let executor = Arc::new(FakeTurnExecutor::default());
     let transport = FakeTransport::new();
-    let mut router = ChannelRouter::new(store, executor.clone());
+    let mut router = ChannelDispatcher::new(store, executor.clone());
 
     let msg = owner_text("50", "corr-send-then-crash", "at least once");
     let envelope = ProviderEnvelope {
@@ -322,7 +322,7 @@ async fn crash_after_send_before_mark_retry_may_duplicate_outbound() {
     let store2 = ChannelStore::open(&db_path).unwrap();
     let executor2 = Arc::new(FakeTurnExecutor::default());
     let transport2 = FakeTransport::new();
-    let mut router2 = ChannelRouter::new(store2, executor2.clone());
+    let mut router2 = ChannelDispatcher::new(store2, executor2.clone());
 
     let count = router2.flush_pending_outbox(&transport2, 10).await.unwrap();
     assert_eq!(count, 1, "should flush the artificially-pending outbox");
@@ -419,7 +419,7 @@ async fn unknown_sender_recovery_rejected_no_executor() {
     let store2 = ChannelStore::open(&db_path).unwrap();
     let executor = Arc::new(FakeTurnExecutor::default());
     let transport = FakeTransport::new();
-    let mut router = ChannelRouter::new(store2, executor.clone());
+    let mut router = ChannelDispatcher::new(store2, executor.clone());
 
     let count = router.recover_pending_inbox(&transport, 10).await.unwrap();
     assert_eq!(count, 1, "should process the pending message (reject it)");

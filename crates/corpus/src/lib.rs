@@ -12,7 +12,7 @@ pub mod skill;
 pub mod tools;
 
 // Re-export main types
-pub use catalog::ExtensionCatalog;
+pub use catalog::{discover_runtime_extensions, ExtensionCatalog};
 pub use core::AletheonBodyRuntime;
 pub use service::{
     ActivatedCorpusExecutor, ActivationId, ActivationReceipt, ActivationRequest, CorpusError,

@@ -54,6 +54,7 @@ impl Tool for ProcessListTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: lines.len() > 21,
+                        patch_delta: None,
                     },
                 }
             }
@@ -63,6 +64,7 @@ impl Tool for ProcessListTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }

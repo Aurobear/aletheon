@@ -90,6 +90,38 @@ impl AgentProfileRegistry {
             )
         })
     }
+
+    /// Look up a profile by its human-readable name string.
+    pub fn resolve_by_name(&self, name: &str) -> Result<ResolvedAgentProfile, AgentControlError> {
+        self.resolve(&AgentProfileId(name.to_owned()))
+    }
+
+    /// Validate that a child profile is no more capable than the parent.
+    /// Returns `Ok(())` if the child is allowed, or an error describing the
+    /// specific escalation.
+    pub fn validate_child_profile(
+        &self,
+        parent_id: &AgentProfileId,
+        child_id: &AgentProfileId,
+    ) -> Result<(), AgentControlError> {
+        let parent = self.resolve(parent_id)?;
+        let child = self.resolve(child_id)?;
+        if !parent.profile.allows_child(&child.profile) {
+            return Err(control_error(
+                AgentControlErrorKind::Forbidden,
+                format!(
+                    "child profile '{}' (tier {:?}) exceeds parent '{}' (tier {:?})",
+                    child_id.0, child.profile.risk_tier, parent_id.0, parent.profile.risk_tier
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// All registered profile names.
+    pub fn names(&self) -> Vec<String> {
+        self.profiles.read().keys().map(|id| id.0.clone()).collect()
+    }
 }
 
 pub struct NativeCognitRuntimeResources {
@@ -192,7 +224,10 @@ impl NativeCognitRuntime {
                 sandbox: SandboxRequirement::NotRequired,
                 cancel: input.cancellation.clone(),
                 turn_count: 0,
+                repo_hooks_trusted: principal_context.repo_hooks_trusted,
                 action_loop,
+                streaming_tools: false,
+                turn_event_sender: None,
             },
             cancellation: input.cancellation.clone(),
             evidence: evidence.clone(),
@@ -447,6 +482,7 @@ impl TurnServices for NativeTurnServices {
                 is_error: true,
                 usage: fabric::UsageReport::default(),
                 audit_id: None,
+                patch_delta: None,
             };
             self.record_tool_result(&name, &result).await;
             return result;
@@ -458,6 +494,7 @@ impl TurnServices for NativeTurnServices {
                 is_error: true,
                 usage: fabric::UsageReport::default(),
                 audit_id: None,
+                patch_delta: None,
             },
             result = self.capabilities.invoke(
                 Some(self.execution.clone()),

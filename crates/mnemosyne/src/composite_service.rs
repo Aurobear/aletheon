@@ -244,4 +244,11 @@ impl MemoryService for CompositeMemoryService {
         // supplemental worker propagates that durable outbox asynchronously.
         self.local.forget(policy).await
     }
+
+    async fn synthesize(
+        &self,
+        request: crate::service::SynthesisRequest,
+    ) -> anyhow::Result<crate::service::SynthesisResult> {
+        self.local.synthesize(request).await
+    }
 }

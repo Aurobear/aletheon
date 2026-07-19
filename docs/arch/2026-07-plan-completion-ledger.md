@@ -16,7 +16,7 @@ acceptance evidence are present. Active and partial plans remain indexed in
 |---|---|---|
 | E02 | Complete | Governed execution and fail-closed permit validation: `crates/corpus/src/tools/capability_executor.rs:118-186`. |
 | E03 | Complete | Single governed turn surface and shared graph: `crates/executive/src/service/governed_capability.rs:103-216`. |
-| F01 | Complete | Domain facade gate: `crates/executive/tests/domain_facade_authority.rs:20-76`; production deletion gate: `scripts/architecture-check.sh:124-160`. |
+| F01 | Reopened / Partial | The static gate exists at `crates/executive/tests/domain_facade_authority.rs:20-76`, but production services still retain concrete domain state in `crates/executive/src/service/request_use_cases.rs:70-101`, `crates/executive/src/service/exec_session.rs:16-23`, and `crates/executive/src/service/turn_runtime_ports.rs:105-128`. The active implementation contract is restored at `docs/plans/2026-07-15-f01-domain-facade-authority.md`. |
 | Q01 | Complete | Executive configuration projection: `crates/executive/src/core/config/mod.rs:37-68`; scoped extension service: `crates/executive/src/service/extension_service.rs:98-150`. |
 | R01 | Complete | Append-only event spine: `crates/fabric/src/events/spine.rs:154-166`; repository acceptance: `crates/executive/tests/event_spine_repository.rs:1-190`. |
 | R02 | Complete | Projection restart and poison isolation: `crates/executive/tests/event_projection_contract.rs:84-170`; byte-stable replay: `crates/executive/tests/event_projection_replay.rs:1-80`. |

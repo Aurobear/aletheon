@@ -27,6 +27,10 @@ pub struct UserRuntimeConfig {
     model_aliases: HashMap<String, String>,
     goal_runtime: cognit::config::GoalRuntimeConfig,
     pi_runtime: cognit::config::PiRuntimeConfig,
+    grok_hardening: crate::core::config::GrokHardeningConfig,
+    sandbox_profiles: fabric::SandboxProfiles,
+    network_policy: fabric::network_policy::NetworkPolicy,
+    agent_profiles: crate::core::config::AgentProfilesConfig,
 }
 
 impl UserRuntimeConfig {
@@ -35,8 +39,12 @@ impl UserRuntimeConfig {
         paths: UserRuntimePaths,
         socket: PathBuf,
         enable_evolution: bool,
+        enable_exec_server: bool,
     ) -> anyhow::Result<Self> {
-        let app = crate::core::config::load_for_host(None, config_path)?.value;
+        let mut app = crate::core::config::load_for_host(None, config_path)?.value;
+        // CLI activation is additive: an absent flag preserves the layered
+        // config value, while `--exec-server` can only enable the backend.
+        apply_exec_server_override(&mut app.grok_hardening, enable_exec_server);
         let crate::core::config::AppConfig {
             memory: crate::core::config::MemoryConfig { gbrain, .. },
             ..
@@ -69,33 +77,15 @@ impl UserRuntimeConfig {
             data_dir: paths.state_root.to_string_lossy().into_owned(),
             system_prompt: app.agent.system_prompt.clone(),
             sandbox_preference: "auto".into(),
+            conscious_arbitration_mode: crate::r#impl::daemon::conscious_arbitration_mode_from_env(
+            )?,
             enable_evolution,
-            mcp_servers: app
-                .mcp_servers
-                .iter()
-                .map(|server| corpus::tools::mcp::config::McpServerConfig {
-                    name: server.name.clone(),
-                    transport: match server.transport.as_str() {
-                        "http" => corpus::tools::mcp::config::McpTransportConfig::StreamableHttp {
-                            url: server.url.clone().unwrap_or_default(),
-                        },
-                        "sse" => corpus::tools::mcp::config::McpTransportConfig::Sse {
-                            url: server.url.clone().unwrap_or_default(),
-                        },
-                        _ => corpus::tools::mcp::config::McpTransportConfig::Stdio {
-                            command: server.command.clone().unwrap_or_default(),
-                            args: Vec::new(),
-                        },
-                    },
-                    trust: corpus::tools::mcp::config::McpTrustLevel::LocalTrusted,
-                    enabled: true,
-                    bearer_token_env: server.bearer_token_env.clone(),
-                })
-                .collect(),
+            mcp_servers: crate::core::mcp_config::convert_mcp_servers(&app.mcp_servers),
             hooks: app.hooks.clone(),
             telegram: app.telegram.clone(),
             gbrain_memory: gbrain.clone(),
             deployment,
+            backpressure: app.backpressure.clone(),
             agent_admission: app.agent.admission.clone(),
         };
         Ok(Self {
@@ -106,6 +96,10 @@ impl UserRuntimeConfig {
             model_aliases: app.model_aliases,
             goal_runtime: app.goal_runtime.unwrap_or_default(),
             pi_runtime: app.pi_runtime,
+            grok_hardening: app.grok_hardening,
+            sandbox_profiles: app.sandbox_profiles,
+            network_policy: app.network_policy,
+            agent_profiles: app.agent_profiles,
         })
     }
 
@@ -122,17 +116,51 @@ impl UserRuntimeConfig {
             cache_root: root.join("cache"),
         };
         let socket = paths.runtime_root.join("aletheon.sock");
-        let mut config = Self::load(None, paths, socket, false)
+        let mut config = Self::load(None, paths, socket, false, false)
             .expect("default user runtime fixture config must load");
         config.request.mcp_servers.clear();
         config.request.telegram.enabled = false;
         config.request.gbrain_memory.enabled = false;
+
+        // Populate the agents directory so that RequestHandler::new can
+        // resolve at least one agent profile (required since the profile
+        // authority enforcement landed).  Copy the checked-in Markdown
+        // definitions; the legacy TOML mirrors are intentionally skipped
+        // because the loader only consumes *.md.
+        let repo_agents = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agents");
+        let state_agents = config.paths.state_root.join("agents");
+        if !state_agents.exists() {
+            std::fs::create_dir_all(&state_agents).expect("create agents dir in fixture");
+            if repo_agents.is_dir() {
+                for entry in std::fs::read_dir(&repo_agents)
+                    .expect("read repo agents dir")
+                    .flatten()
+                {
+                    let src = entry.path();
+                    if src
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+                    {
+                        let dst = state_agents.join(src.file_name().unwrap());
+                        std::fs::copy(&src, &dst).expect("copy agent profile into fixture");
+                    }
+                }
+            }
+        }
+
         config
     }
 
     pub fn paths(&self) -> &UserRuntimePaths {
         &self.paths
     }
+}
+
+fn apply_exec_server_override(
+    config: &mut crate::core::config::GrokHardeningConfig,
+    cli_enabled: bool,
+) {
+    config.exec_server |= cli_enabled;
 }
 
 pub struct UserRuntime {
@@ -156,6 +184,10 @@ impl UserRuntime {
             config.model_aliases,
             config.goal_runtime,
             config.pi_runtime,
+            config.grok_hardening,
+            config.sandbox_profiles.clone(),
+            config.network_policy.clone(),
+            config.agent_profiles.clone(),
             config.request.enable_evolution,
             None,
             cancel.clone(),
@@ -227,4 +259,26 @@ impl UserRuntime {
 
 fn tempfile_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{label}-{}", uuid::Uuid::new_v4()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_exec_server_override;
+    use crate::core::config::GrokHardeningConfig;
+
+    #[test]
+    fn exec_server_cli_override_is_additive_over_layered_config() {
+        let mut off = GrokHardeningConfig::default();
+        apply_exec_server_override(&mut off, false);
+        assert!(!off.exec_server);
+        apply_exec_server_override(&mut off, true);
+        assert!(off.exec_server);
+
+        let mut configured = GrokHardeningConfig {
+            exec_server: true,
+            ..Default::default()
+        };
+        apply_exec_server_override(&mut configured, false);
+        assert!(configured.exec_server);
+    }
 }

@@ -299,6 +299,7 @@ impl Tool for PluginTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: elapsed,
                         truncated: false,
+                        patch_delta: None,
                     },
                 }
             }
@@ -315,6 +316,7 @@ impl Tool for PluginTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: elapsed,
                         truncated: false,
+                        patch_delta: None,
                     },
                 }
             }

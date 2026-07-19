@@ -39,6 +39,8 @@ pub(crate) fn messages(rows: Vec<RecallEntry>, request: &RecallRequest) -> Vec<R
                 temporal_state: TemporalState::Current,
                 authority: MemoryAuthority::RawExperience,
                 scope: MemoryScope::Session(request.session.clone()),
+                score: 0.0,
+                evidence: None,
             }
         })
         .collect()
@@ -105,6 +107,8 @@ pub(crate) fn facts(
                 temporal_state,
                 authority: MemoryAuthority::VerifiedLocalSemantic,
                 scope,
+                score: 0.0,
+                evidence: None,
             })
         })
         .collect()
@@ -144,6 +148,8 @@ pub(crate) fn reflections(rows: Vec<ReflectionEntry>, request: &RecallRequest) -
             temporal_state: TemporalState::Current,
             authority: MemoryAuthority::LocalEpisode,
             scope: MemoryScope::Session(request.session.clone()),
+            score: 0.0,
+            evidence: None,
         })
         .collect()
 }
@@ -186,6 +192,8 @@ pub(crate) fn core(
             temporal_state: TemporalState::Current,
             authority: MemoryAuthority::ApprovedCore,
             scope: MemoryScope::Global,
+            score: 0.0,
+            evidence: None,
         })
         .collect()
 }

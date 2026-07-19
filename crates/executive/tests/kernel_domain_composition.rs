@@ -27,7 +27,7 @@ fn kernel_and_domain_composition_are_separate() {
     assert!(bootstrap.contains("let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock"));
     assert!(bootstrap.contains("let domains ="));
     assert!(bootstrap.contains("crate::core::DomainPorts::new"));
-    assert!(domain_ports.contains("agora: Arc<dyn AgoraOps>"));
+    assert!(domain_ports.contains("agora: Arc<dyn AgoraService>"));
 }
 
 #[test]

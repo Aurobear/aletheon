@@ -52,7 +52,8 @@ impl IdentityLayer {
     }
 
     /// Apply a mutation. The previous identity is pushed to history.
-    pub fn mutate(
+    #[cfg(test)]
+    pub(crate) fn mutate(
         &self,
         new_name: Option<String>,
         new_description: Option<String>,

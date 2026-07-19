@@ -89,12 +89,43 @@ impl BubblewrapBackend {
             "--die-with-parent".into(),
             "--unshare-pid".into(),
             "--unshare-ipc".into(),
-            "--unshare-net".into(), // Default: no network
-            "--clearenv".into(),
         ];
 
-        let policy = FilesystemPolicy::from_workspace(&config.workspace);
-        append_mount_plan(&mut args, &policy);
+        // S1 D1-T5: network isolation is controlled by the resolved policy.
+        // Default to unshared; a policy with `restrict_network: false` explicitly
+        // opts out so the process can reach the network.
+        let restrict_network = config
+            .policy
+            .as_ref()
+            .map(|p| p.restrict_network)
+            .unwrap_or(true);
+        if restrict_network {
+            args.push("--unshare-net".into());
+        }
+        args.push("--clearenv".into());
+
+        // S1 D1-T5: filesystem mount plan. When the resolved policy specifies
+        // explicit `read_only_roots`, use those instead of the default
+        // workspace-driven `--ro-bind / /`. Additional `read_write_roots` from
+        // the policy are added as `--bind` mounts (skipping duplicates of
+        // workspace writable roots).
+        if let Some(resolved) = &config.policy {
+            if !resolved.read_only_roots.is_empty() {
+                push_policy_fs_mounts(&mut args, resolved, &config.workspace);
+            } else {
+                // Policy exists but has empty read_only_roots → fall back to
+                // the workspace-driven mount plan (backward-compatible path).
+                let policy = FilesystemPolicy::from_workspace(&config.workspace);
+                append_mount_plan(&mut args, &policy);
+            }
+            // S1 T10: enforce the resolved sandbox profile's exact deny set.
+            // Later bwrap mounts override earlier ones, so this must come after
+            // the workspace mount plan.
+            push_policy_denies(&mut args, resolved);
+        } else {
+            let policy = FilesystemPolicy::from_workspace(&config.workspace);
+            append_mount_plan(&mut args, &policy);
+        }
 
         // Fresh devtmpfs and proc on top of the read-only root
         args.push("--dev".into());
@@ -123,6 +154,84 @@ impl BubblewrapBackend {
         args.extend(command_args.iter().cloned());
 
         args
+    }
+}
+
+/// Append bwrap args for the filesystem mount plan driven by a resolved policy's
+/// `read_only_roots` and `read_write_roots` (S1 D1-T5).
+///
+/// Each read-only root gets a `--ro-bind <root> <root>`. Each read-write root
+/// gets a `--bind <root> <root>` *unless* it is already a workspace writable
+/// root (those are handled separately by `append_mount_plan`).
+///
+/// Protected metadata directories (`.git`, `.aletheon`) inside writable roots
+/// are rebound read-only on top, matching the workspace-driven convention.
+fn push_policy_fs_mounts(
+    args: &mut Vec<String>,
+    policy: &fabric::ResolvedSandboxPolicy,
+    workspace: &fabric::WorkspacePolicy,
+) {
+    let workspace_writable: std::collections::HashSet<PathBuf> =
+        workspace.writable_roots().iter().cloned().collect();
+
+    // Mount read-only roots.
+    for root in &policy.read_only_roots {
+        args.push("--ro-bind".into());
+        args.push(root.to_string_lossy().into_owned());
+        args.push(root.to_string_lossy().into_owned());
+    }
+
+    // Mount read-write roots (skip duplicates of workspace writable roots).
+    for root in &policy.read_write_roots {
+        if workspace_writable.contains(root) {
+            continue;
+        }
+        args.push("--bind".into());
+        args.push(root.to_string_lossy().into_owned());
+        args.push(root.to_string_lossy().into_owned());
+    }
+
+    // Re-protect metadata inside every writable root (both policy-supplied and
+    // workspace-supplied).
+    let all_writable: std::collections::HashSet<PathBuf> = {
+        let mut set = workspace_writable;
+        for root in &policy.read_write_roots {
+            set.insert(root.clone());
+        }
+        set
+    };
+    for root in &all_writable {
+        for name in &[".git", ".aletheon"] {
+            let sub = root.join(name);
+            if sub.exists() {
+                args.push("--ro-bind".into());
+                args.push(sub.to_string_lossy().into_owned());
+                args.push(sub.to_string_lossy().into_owned());
+            }
+        }
+    }
+}
+
+/// Append bwrap args that mask a resolved profile's exact deny paths (S1 T10).
+///
+/// Files and symlinks are bound over with `/dev/null` (reads fail); directories
+/// get an empty `--tmpfs` overlay so their real contents are hidden. Paths that
+/// do not exist need no masking. `deny_globs` are left to the assembly layer,
+/// which expands them fail-closed before execution (T13).
+fn push_policy_denies(args: &mut Vec<String>, policy: &fabric::ResolvedSandboxPolicy) {
+    for path in &policy.deny_exact {
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) if meta.is_dir() => {
+                args.push("--tmpfs".into());
+                args.push(path.to_string_lossy().into_owned());
+            }
+            Ok(_) => {
+                args.push("--ro-bind".into());
+                args.push("/dev/null".into());
+                args.push(path.to_string_lossy().into_owned());
+            }
+            Err(_) => {}
+        }
     }
 }
 
@@ -212,6 +321,28 @@ impl SandboxBackend for BubblewrapBackend {
             }),
         }
     }
+
+    async fn execute_streaming(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        timeout: Duration,
+        sink: &fabric::ToolEventSink,
+    ) -> Result<SandboxResult> {
+        let mut command = tokio::process::Command::new(&self.bwrap_path);
+        command
+            .args(self.build_args(cmd, config))
+            .current_dir(config.working_dir());
+        super::streaming::execute_command_streaming(
+            command,
+            timeout,
+            "bubblewrap",
+            IsolationLevel::Namespace,
+            self.clock.clone(),
+            sink,
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -233,6 +364,7 @@ mod tests {
             )
             .unwrap(),
             environment: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
+            policy: None,
         };
         let wrapped = backend
             .wrap_argv(
@@ -272,6 +404,7 @@ mod tests {
         let config = SandboxConfig {
             workspace: fabric::WorkspacePolicy::from_resolved_roots(work.clone(), vec![]).unwrap(),
             environment: Default::default(),
+            policy: None,
         };
         let args = backend.build_argv_args(Path::new("/bin/true"), &[], &config);
         let working_dir = config.working_dir().to_string_lossy().into_owned();
@@ -285,5 +418,168 @@ mod tests {
             .position(|items| items[0] == "--ro-bind" && items[1] == git)
             .unwrap();
         assert!(protected > writable);
+    }
+
+    fn resolved_policy(deny_exact: Vec<PathBuf>) -> fabric::ResolvedSandboxPolicy {
+        fabric::ResolvedSandboxPolicy {
+            name: "test".into(),
+            read_only_roots: vec![PathBuf::from("/")],
+            read_write_roots: vec![],
+            deny_exact,
+            deny_globs: vec![],
+            restrict_network: true,
+        }
+    }
+
+    #[test]
+    fn deny_exact_file_is_masked_with_devnull() {
+        let temp = tempfile::tempdir().unwrap();
+        let secret = temp.path().join("id_rsa");
+        std::fs::write(&secret, b"KEY").unwrap();
+        let backend = BubblewrapBackend {
+            bwrap_path: "/usr/bin/bwrap".into(),
+            clock: Arc::new(TestClock::default()),
+        };
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                temp.path().to_path_buf(),
+                vec![],
+            )
+            .unwrap(),
+            environment: Default::default(),
+            policy: Some(resolved_policy(vec![secret.clone()])),
+        };
+        let args = backend.build_argv_args(Path::new("/bin/true"), &[], &config);
+        let secret_str = secret.to_string_lossy().into_owned();
+        assert!(
+            args.windows(3)
+                .any(|w| w[0] == "--ro-bind" && w[1] == "/dev/null" && w[2] == secret_str),
+            "expected deny file masked with /dev/null: {args:?}"
+        );
+    }
+
+    #[test]
+    fn deny_exact_directory_is_masked_with_tmpfs() {
+        let temp = tempfile::tempdir().unwrap();
+        let ssh = temp.path().join(".ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        let backend = BubblewrapBackend {
+            bwrap_path: "/usr/bin/bwrap".into(),
+            clock: Arc::new(TestClock::default()),
+        };
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                temp.path().to_path_buf(),
+                vec![],
+            )
+            .unwrap(),
+            environment: Default::default(),
+            policy: Some(resolved_policy(vec![ssh.clone()])),
+        };
+        let args = backend.build_argv_args(Path::new("/bin/true"), &[], &config);
+        let ssh_str = ssh.to_string_lossy().into_owned();
+        assert!(
+            args.windows(2)
+                .any(|w| w[0] == "--tmpfs" && w[1] == ssh_str),
+            "expected deny directory hidden with tmpfs: {args:?}"
+        );
+    }
+
+    #[test]
+    fn none_policy_adds_no_deny_masks() {
+        let backend = BubblewrapBackend {
+            bwrap_path: "/usr/bin/bwrap".into(),
+            clock: Arc::new(TestClock::default()),
+        };
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp/work".into(), vec![])
+                .unwrap(),
+            environment: Default::default(),
+            policy: None,
+        };
+        let args = backend.build_argv_args(Path::new("/bin/true"), &[], &config);
+        // No profile → no /dev/null read-only masks and no tmpfs overlays.
+        assert_eq!(
+            args.windows(3)
+                .filter(|w| w[0] == "--ro-bind" && w[1] == "/dev/null")
+                .count(),
+            0
+        );
+        assert!(!args.iter().any(|a| a == "--tmpfs"));
+    }
+
+    /// Process-level coverage for S1 T10. The argv tests above protect mount
+    /// ordering; this test proves that bubblewrap actually applies those mounts.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn denied_file_content_is_hidden_while_permitted_file_is_readable() {
+        let Some(backend) = BubblewrapBackend::probe(Arc::new(TestClock::default())) else {
+            return;
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let denied = temp.path().join("denied.txt");
+        let permitted = temp.path().join("permitted.txt");
+        std::fs::write(&denied, "DENIED_SECRET").unwrap();
+        std::fs::write(&permitted, "PERMITTED_VALUE").unwrap();
+        let config = SandboxConfig {
+            workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                temp.path().to_path_buf(),
+                vec![],
+            )
+            .unwrap(),
+            environment: BTreeMap::from([
+                ("DENIED_PATH".into(), denied.to_string_lossy().into_owned()),
+                (
+                    "PERMITTED_PATH".into(),
+                    permitted.to_string_lossy().into_owned(),
+                ),
+            ]),
+            policy: Some(resolved_policy(vec![denied.clone()])),
+        };
+
+        // A present bwrap binary can still be unusable when the host disables
+        // unprivileged user namespaces. Skip only that backend-reported case.
+        let probe = backend
+            .execute("true", &config, Duration::from_secs(5))
+            .await
+            .expect("bubblewrap probe must launch");
+        if probe.exit_code != 0
+            && [
+                "operation not permitted",
+                "permission denied",
+                "no permissions to create new namespace",
+                "creating new namespace failed",
+            ]
+            .iter()
+            .any(|message| probe.stderr.to_ascii_lowercase().contains(message))
+        {
+            return;
+        }
+        assert_eq!(
+            probe.exit_code, 0,
+            "bubblewrap probe failed: {}",
+            probe.stderr
+        );
+
+        let allowed = backend
+            .execute(
+                "cat -- \"$PERMITTED_PATH\"",
+                &config,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            allowed.exit_code, 0,
+            "permitted read failed: {}",
+            allowed.stderr
+        );
+        assert_eq!(allowed.stdout, "PERMITTED_VALUE");
+
+        let blocked = backend
+            .execute("cat -- \"$DENIED_PATH\"", &config, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_ne!(blocked.stdout, "DENIED_SECRET");
     }
 }

@@ -8,7 +8,7 @@ pub mod budget;
 pub mod lease;
 pub mod production;
 
-pub use budget::InMemoryBudgetController;
+pub use budget::{DurableBudgetController, InMemoryBudgetController};
 pub use lease::InMemoryResourceLeaseManager;
 pub use production::ProductionAdmissionController;
 

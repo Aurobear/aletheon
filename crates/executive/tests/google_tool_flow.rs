@@ -139,6 +139,7 @@ fn context(owner: &PrincipalId, clock: Arc<TestClock>) -> ToolContext {
         working_dir: std::env::temp_dir(),
         session_id: owner.0.clone(),
         clock,
+        turn_event_sender: None,
     }
 }
 

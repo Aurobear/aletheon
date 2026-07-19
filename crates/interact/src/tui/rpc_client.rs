@@ -29,30 +29,3 @@ pub(crate) async fn send_rpc(
 
     Ok(resp)
 }
-
-/// Send a versioned typed request and reject incompatible daemon responses.
-pub async fn send_typed_rpc<T, R>(
-    socket: &Path,
-    method: &str,
-    id: u64,
-    request: fabric::protocol::client::ClientMessage<T>,
-) -> Result<R>
-where
-    T: serde::Serialize,
-    R: serde::de::DeserializeOwned,
-{
-    let response = send_rpc(
-        socket,
-        &serde_json::json!({
-            "jsonrpc": "2.0", "id": id, "method": method, "params": request,
-        }),
-    )
-    .await?;
-    let result = response
-        .get("result")
-        .cloned()
-        .context("typed RPC response omitted result")?;
-    let message: fabric::protocol::client::ClientMessage<R> =
-        serde_json::from_value(result).context("decode typed RPC response")?;
-    message.into_v1().map_err(anyhow::Error::new)
-}

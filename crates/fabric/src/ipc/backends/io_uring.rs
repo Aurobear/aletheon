@@ -2,43 +2,21 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tracing::debug;
-#[cfg(feature = "io_uring")]
-use tracing::info;
 
 use crate::ipc::ipc_types::{AgentMessage, IpcBackend, IpcProbeError};
 
-/// Real io_uring IPC backend.
+/// Compatibility placeholder for the retired experimental io_uring backend.
 ///
-/// Uses io_uring for zero-copy message passing between agents.
-/// Falls back to simulated mode if io_uring is not available.
+/// No external io_uring implementation is linked. Runtime selection therefore
+/// fails probing explicitly and falls back to a supported transport.
 pub struct IoUringBackend {
     available: bool,
     kernel_version: String,
-    /// io_uring ring — reserved for future zero-copy IPC implementation.
-    #[allow(dead_code)]
-    ring: Option<Mutex<IoUringRing>>,
-    /// Pre-allocated receive buffer for io_uring completions.
-    #[allow(dead_code)]
-    recv_buffer: Vec<u8>,
     /// Optional clock for deterministic simulated-latency sleep in tests.
     clock: Option<Arc<dyn crate::Clock>>,
 }
-
-struct IoUringRing {
-    #[cfg(feature = "io_uring")]
-    ring: io_uring::IoUring,
-    /// Event file descriptor for io_uring notification — reserved for future use.
-    #[allow(dead_code)]
-    eventfd: i32,
-}
-
-// SAFETY: IoUringRing is only accessed through the Mutex
-#[cfg(feature = "io_uring")]
-unsafe impl Send for IoUringRing {}
-#[cfg(feature = "io_uring")]
-unsafe impl Sync for IoUringRing {}
 
 impl Default for IoUringBackend {
     fn default() -> Self {
@@ -49,13 +27,11 @@ impl Default for IoUringBackend {
 impl IoUringBackend {
     pub fn new() -> Self {
         let kernel_version = Self::get_kernel_version();
-        let available = Self::check_kernel_support(&kernel_version);
+        let available = false;
 
         Self {
             available,
             kernel_version,
-            ring: None,
-            recv_buffer: Vec::with_capacity(65536),
             clock: None,
         }
     }
@@ -70,6 +46,7 @@ impl IoUringBackend {
             .unwrap_or_else(|| "unknown".to_string())
     }
 
+    #[cfg(test)]
     fn check_kernel_support(version: &str) -> bool {
         // io_uring requires kernel >= 5.1
         let parts: Vec<u32> = version
@@ -92,32 +69,9 @@ impl IoUringBackend {
 
     /// Probe whether io_uring is available on this system.
     pub fn probe() -> bool {
-        let version = Self::get_kernel_version();
-        Self::check_kernel_support(&version)
+        false
     }
 
-    #[cfg(feature = "io_uring")]
-    fn init_ring(&mut self) -> Result<(), IpcProbeError> {
-        use io_uring::IoUring;
-
-        let ring = IoUring::new(256)
-            .map_err(|e| IpcProbeError::Other(format!("io_uring setup failed: {}", e)))?;
-
-        // Create eventfd for async notification
-        let eventfd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK) };
-        if eventfd < 0 {
-            return Err(IpcProbeError::Other("eventfd creation failed".to_string()));
-        }
-
-        self.ring = Some(Mutex::new(IoUringRing { ring, eventfd }));
-        info!(
-            "io_uring backend initialized (kernel {})",
-            self.kernel_version
-        );
-        Ok(())
-    }
-
-    #[cfg(not(feature = "io_uring"))]
     fn init_ring(&mut self) -> Result<(), IpcProbeError> {
         Err(IpcProbeError::NotSupported)
     }
@@ -146,38 +100,6 @@ impl IpcBackend for IoUringBackend {
         let data = bincode::serialize(message)
             .map_err(|e| IpcProbeError::Other(format!("Serialization failed: {}", e)))?;
 
-        #[cfg(feature = "io_uring")]
-        if let Some(ref ring_mutex) = self.ring {
-            use io_uring::{opcode, types};
-
-            let mut ring_data = ring_mutex
-                .lock()
-                .map_err(|e| IpcProbeError::Other(format!("Ring lock poisoned: {}", e)))?;
-
-            let buf = data.as_ptr();
-            let len = data.len();
-            let eventfd = ring_data.eventfd;
-
-            unsafe {
-                let mut ring_guard = ring_data.ring.submission();
-                let fd = types::Fd(eventfd);
-                let sqe = opcode::Write::new(fd, buf, len as u32)
-                    .build()
-                    .user_data(0x42);
-                ring_guard
-                    .push(&sqe)
-                    .map_err(|e| IpcProbeError::Other(format!("SQE push failed: {}", e)))?;
-            }
-
-            ring_data
-                .ring
-                .submit_and_wait(1)
-                .map_err(|e| IpcProbeError::Other(format!("io_uring submit failed: {}", e)))?;
-
-            debug!("io_uring send: {} bytes", data.len());
-            return Ok(());
-        }
-
         // Fallback: simulated latency
         tokio::time::sleep(std::time::Duration::from_micros(10)).await;
         debug!("io_uring send (simulated): {} bytes", data.len());
@@ -185,66 +107,11 @@ impl IpcBackend for IoUringBackend {
     }
 
     async fn recv(&self) -> Result<AgentMessage, IpcProbeError> {
-        #[cfg(feature = "io_uring")]
-        if let Some(ref ring_mutex) = self.ring {
-            use io_uring::{opcode, types};
-
-            let mut ring_data = ring_mutex
-                .lock()
-                .map_err(|e| IpcProbeError::Other(format!("Ring lock poisoned: {}", e)))?;
-
-            let mut buf = vec![0u8; 65536];
-            let buf_ptr = buf.as_mut_ptr();
-            let eventfd = ring_data.eventfd;
-
-            unsafe {
-                let mut ring_guard = ring_data.ring.submission();
-                let fd = types::Fd(eventfd);
-                let sqe = opcode::Read::new(fd, buf_ptr, buf.len() as u32)
-                    .build()
-                    .user_data(0x43);
-                ring_guard
-                    .push(&sqe)
-                    .map_err(|e| IpcProbeError::Other(format!("SQE push failed: {}", e)))?;
-            }
-
-            ring_data
-                .ring
-                .submit_and_wait(1)
-                .map_err(|e| IpcProbeError::Other(format!("io_uring submit failed: {}", e)))?;
-
-            // Process completion
-            let mut cq = ring_data.ring.completion();
-            if let Some(cqe) = cq.next() {
-                let n = cqe.result() as usize;
-                if n > 0 {
-                    return bincode::deserialize(&buf[..n]).map_err(|e| {
-                        IpcProbeError::Other(format!("Deserialization failed: {}", e))
-                    });
-                }
-            }
-        }
-
         // Fallback: block forever (same as stub behavior)
         std::future::pending().await
     }
 
     async fn try_recv(&self) -> Option<AgentMessage> {
-        #[cfg(feature = "io_uring")]
-        if let Some(ref ring_mutex) = self.ring {
-            if let Ok(mut ring_data) = ring_mutex.lock() {
-                let mut cq = ring_data.ring.completion();
-                if let Some(cqe) = cq.next() {
-                    let n = cqe.result() as usize;
-                    if n > 0 && n <= self.recv_buffer.len() {
-                        // TODO: copy from CQE buffer
-                        return None;
-                    }
-                }
-            }
-            return None;
-        }
-
         None
     }
 

@@ -5,7 +5,9 @@ use fabric::Timer;
 use serde_json::{json, Value};
 use tracing::info;
 
-use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use super::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,
+};
 
 pub struct ModuleLoadTool;
 
@@ -47,6 +49,10 @@ impl Tool for ModuleLoadTool {
         PermissionLevel::L3 // destructive: kernel module loading
     }
 
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        Some(ToolExecutionDescriptor::ModuleLoad)
+    }
+
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(ModuleLoadTool)
     }
@@ -63,6 +69,7 @@ impl Tool for ModuleLoadTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -81,6 +88,7 @@ impl Tool for ModuleLoadTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     };
                 }
@@ -124,6 +132,7 @@ impl Tool for ModuleLoadTool {
                                         .0
                                         .saturating_sub(start.0),
                                     truncated: false,
+                                    patch_delta: None,
                                 },
                             }
                         } else {
@@ -138,6 +147,7 @@ impl Tool for ModuleLoadTool {
                                         .0
                                         .saturating_sub(start.0),
                                     truncated: false,
+                                    patch_delta: None,
                                 },
                             }
                         }
@@ -148,6 +158,7 @@ impl Tool for ModuleLoadTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     },
                 }
@@ -178,6 +189,7 @@ impl Tool for ModuleLoadTool {
                                         .0
                                         .saturating_sub(start.0),
                                     truncated: false,
+                                    patch_delta: None,
                                 },
                             }
                         } else {
@@ -192,6 +204,7 @@ impl Tool for ModuleLoadTool {
                                         .0
                                         .saturating_sub(start.0),
                                     truncated: false,
+                                    patch_delta: None,
                                 },
                             }
                         }
@@ -202,6 +215,7 @@ impl Tool for ModuleLoadTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     },
                 }
@@ -234,6 +248,7 @@ impl Tool for ModuleLoadTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -284,6 +299,7 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool
             .execute(json!({"ko_path": "/nonexistent.ko"}), &ctx)

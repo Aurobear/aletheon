@@ -133,6 +133,30 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
     }
 }
 
+/// Project the terminal status carried by the canonical client event. This is
+/// intentionally transport-neutral and is shared by TUI acceptance fixtures
+/// with the ACP projection.
+pub fn reduce_terminal(
+    state: &mut AppState,
+    event: &fabric::protocol::client::ClientEvent,
+) -> bool {
+    let status = match event {
+        fabric::protocol::client::ClientEvent::TurnCompleted { status, stop, .. } => status
+            .as_ref()
+            .copied()
+            .unwrap_or_else(|| fabric::TurnTerminalStatus::from(stop.clone())),
+        fabric::protocol::client::ClientEvent::TurnStopped { reason, .. } => {
+            fabric::TurnTerminalStatus::from(reason.clone())
+        }
+        fabric::protocol::client::ClientEvent::Failed { .. } => fabric::TurnTerminalStatus::Failed,
+        _ => return false,
+    };
+    state.last_terminal_status = Some(status);
+    state.streaming = false;
+    state.turn_active = false;
+    true
+}
+
 fn advance(state: &mut AppState, cursor: &EventCursor) -> bool {
     if cursor.sequence <= state.cursor.sequence {
         return false;

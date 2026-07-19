@@ -118,6 +118,7 @@ fn input_with_inbox(
         context: AgentContextFork::None,
         broadcast_refs: vec![],
         allowed_tools: vec![],
+        background_decls: vec![],
         budget: AgentBudget {
             max_input_tokens: 100,
             max_output_tokens: 100,
@@ -152,6 +153,9 @@ fn input_with_inbox(
         root_process_id: process,
         inbox,
         cancellation: CancellationToken::new(),
+        background_cancellations: std::collections::HashMap::new(),
+        background_registrations: std::collections::HashMap::new(),
+        background_notification_targets: std::collections::HashMap::new(),
     };
     (sender, input)
 }

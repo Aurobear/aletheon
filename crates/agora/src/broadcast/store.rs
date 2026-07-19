@@ -1,8 +1,8 @@
 use fabric::dasein::SelfVersion;
 use fabric::{
     AgoraSpaceId, BroadcastAck, BroadcastEpoch, BroadcastIntegrationReceipt,
-    ConsciousContextProjection, ProcessorContext, ProcessorResponse, SelectionResult, WallTime,
-    WorkspaceBroadcast,
+    ConsciousContextProjection, ConsciousTraceEvent, ProcessorContext, ProcessorResponse,
+    SelectionResult, WallTime, WorkspaceBroadcast,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
@@ -71,6 +71,14 @@ impl SqliteBroadcastStore {
                 checksum TEXT NOT NULL,
                 PRIMARY KEY(space, epoch),
                 FOREIGN KEY(space, epoch) REFERENCES conscious_integrations(space, epoch)
+             );
+             CREATE TABLE IF NOT EXISTS conscious_field_modulations (
+                space TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                call_id TEXT NOT NULL,
+                event_json BLOB NOT NULL,
+                checksum TEXT NOT NULL,
+                PRIMARY KEY(space, operation_id, call_id)
              );",
         )?;
         Ok(Self {
@@ -382,6 +390,93 @@ impl SqliteBroadcastStore {
                 Ok(projection)
             })
             .transpose()
+    }
+
+    /// Persist one bounded, pre-execution field-modulation event.
+    ///
+    /// Operation and call identity make retries idempotent. A retry that changes
+    /// the evidence is rejected rather than silently replacing audit history.
+    pub fn save_field_modulation(
+        &self,
+        space: &AgoraSpaceId,
+        event: &ConsciousTraceEvent,
+    ) -> anyhow::Result<()> {
+        let ConsciousTraceEvent::FieldModulation {
+            operation_id,
+            call_id,
+            metric_ref,
+            ..
+        } = event
+        else {
+            anyhow::bail!("only field-modulation trace events are durable here");
+        };
+        for (value, label) in [
+            (operation_id.as_str(), "modulation operation ID"),
+            (call_id.as_str(), "modulation call ID"),
+            (metric_ref.as_str(), "modulation metric reference"),
+        ] {
+            anyhow::ensure!(
+                !value.trim().is_empty() && value.len() <= 4096,
+                "{label} is empty or exceeds 4096 bytes"
+            );
+        }
+        let json = serde_json::to_vec(event)?;
+        let digest = checksum(&json);
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("broadcast store lock poisoned"))?;
+        connection.execute(
+            "INSERT INTO conscious_field_modulations
+             (space, operation_id, call_id, event_json, checksum)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(space, operation_id, call_id) DO NOTHING",
+            params![space.0, operation_id, call_id, json, digest],
+        )?;
+        let stored: (Vec<u8>, String) = connection.query_row(
+            "SELECT event_json, checksum FROM conscious_field_modulations
+             WHERE space = ?1 AND operation_id = ?2 AND call_id = ?3",
+            params![space.0, operation_id, call_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        anyhow::ensure!(
+            checksum(&stored.0) == stored.1 && stored.0 == serde_json::to_vec(event)?,
+            "field-modulation evidence changed for an existing call"
+        );
+        Ok(())
+    }
+
+    /// Read checksum-verified modulation evidence in insertion order.
+    pub fn field_modulations(
+        &self,
+        space: &AgoraSpaceId,
+    ) -> anyhow::Result<Vec<ConsciousTraceEvent>> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("broadcast store lock poisoned"))?;
+        let mut statement = connection.prepare(
+            "SELECT event_json, checksum FROM conscious_field_modulations
+             WHERE space = ?1 ORDER BY rowid",
+        )?;
+        let rows = statement.query_map(params![space.0], |row| {
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut events = Vec::new();
+        for row in rows {
+            let (json, stored_checksum) = row?;
+            anyhow::ensure!(
+                checksum(&json) == stored_checksum,
+                "field-modulation checksum mismatch"
+            );
+            let event: ConsciousTraceEvent = serde_json::from_slice(&json)?;
+            anyhow::ensure!(
+                matches!(event, ConsciousTraceEvent::FieldModulation { .. }),
+                "stored trace event is not a field modulation"
+            );
+            events.push(event);
+        }
+        Ok(events)
     }
 
     pub fn replay(&self, space: &AgoraSpaceId) -> anyhow::Result<Vec<BroadcastReplay>> {

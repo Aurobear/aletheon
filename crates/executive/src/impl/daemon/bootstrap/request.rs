@@ -1,16 +1,4 @@
-//! Handler initialization and construction.
-//!
-//! Contains the `RequestHandler::new()` constructor and setup-related methods
-//! (`set_notify_channel`, `create_notify_channel`, `tools`, `debug_handler`).
-
-use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
-
-use aletheon_kernel::chronos::SystemClock;
-use anyhow::Context;
-use fabric::Clock;
-use tokio_util::sync::CancellationToken;
+//! Handler initialization, construction, and setup-related methods.
 
 use super::super::model_router::{ModelRouter, TaskType};
 use super::super::prefix_builder::PrefixBuilder;
@@ -21,14 +9,19 @@ use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonExecutive;
 use crate::r#impl::daemon::handler::RequestHandler;
 use crate::session::store::SessionStore;
+use aletheon_kernel::chronos::SystemClock;
+use anyhow::Context;
+
+use super::approval_gate::{bootstrap_workspace_trust_resolver, DurableSocketApprovalGate};
 use cognit::core::reflector::Reflector;
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
-use corpus::security::sandbox::executor::{create_default_executor, SandboxPreference};
+use corpus::security::sandbox::executor::{create_executor_with_front_backend, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
 use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
-use fabric::CommunicationBus;
+use fabric::CanonicalEventBus;
+use fabric::Clock;
 use fabric::LlmProvider;
 use fabric::Registry;
 use fabric::Version;
@@ -38,9 +31,12 @@ use mnemosyne::episodic::EpisodicMemory;
 use mnemosyne::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
 use mnemosyne::CoreMemory;
 use mnemosyne::RecallMemory;
-use serde_json::json;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
@@ -59,19 +55,12 @@ use mnemosyne::FactStore;
 
 use super::super::debug_handler::DebugHandler;
 use crate::core::session_gateway::gateway::SessionStateRef;
-use crate::core::session_gateway::{ParamRegistry, SessionGateway};
+use crate::core::session_gateway::ParamRegistry;
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
-async fn initialize_self_field(self_field: &mut SelfField, data_dir: &Path) -> anyhow::Result<()> {
-    self_field
-        .init(&SubsystemContext {
-            name: "self_field".into(),
-            working_dir: data_dir.to_path_buf(),
-            config: serde_json::Value::Null,
-            bus: None,
-        })
-        .await
-}
+use super::request_ports::{
+    admin_runtime_port, initialize_self_field, retention_admin_port, RequestFacadePorts,
+};
 
 impl RequestHandler {
     pub async fn new(
@@ -81,8 +70,12 @@ impl RequestHandler {
         model_aliases: HashMap<String, String>,
         goal_runtime: cognit::config::GoalRuntimeConfig,
         pi_runtime: cognit::config::PiRuntimeConfig,
+        grok_hardening: crate::core::config::GrokHardeningConfig,
+        sandbox_profiles: fabric::SandboxProfiles,
+        network_policy: fabric::network_policy::NetworkPolicy,
+        agent_profiles: crate::core::config::AgentProfilesConfig,
         evolution_enabled: bool,
-        event_bus: Option<Arc<CommunicationBus>>,
+        event_bus: Option<Arc<CanonicalEventBus>>,
         cancel_token: CancellationToken,
     ) -> anyhow::Result<Self> {
         let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::new(
@@ -92,21 +85,26 @@ impl RequestHandler {
         info!(provider = llm.name(), "LLM provider initialized");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
 
-        // Create session and journal
         let session_id = uuid::Uuid::new_v4().to_string();
         let data_dir = PathBuf::from(&config.data_dir);
         let data_dir_for_telegram = data_dir.clone();
         std::fs::create_dir_all(&data_dir)
             .with_context(|| format!("creating data dir: {}", data_dir.display()))?;
+        crate::service::durable_write::configure_writer_health(&data_dir);
         let session_store = SessionStore::new(&data_dir)?;
         session_store.create_session(&session_id)?;
 
         info!(session_id = %session_id, "Created new session");
 
-        // Create SelfField for genome reads and policy engine
+        // SelfField is constructed before the recurrent workspace registry.
+        // Inject a once-bound reader now and bind it after registry creation.
+        let conscious_context =
+            Arc::new(crate::service::conscious_context_slot::ConsciousContextSlot::default());
+
         let self_field_config = SelfFieldConfig {
             db_path: Some(data_dir.join("self_field.db")),
             clock: Some(clock.clone()),
+            conscious_context: Some(conscious_context.clone()),
             ..Default::default()
         };
         let mut self_field = SelfField::new(self_field_config);
@@ -122,13 +120,12 @@ impl RequestHandler {
         }
         let self_field = Arc::new(Mutex::new(self_field));
 
-        // Wire DaseinEventBridge to CommunicationBus if available
+        // Wire DaseinEventBridge to canonical events if available.
         if let Some(ref bus) = event_bus {
             let sf = self_field.lock().await;
             sf.wire_dasein_event_bridge(bus).await?;
         }
 
-        // Create memory instances
         let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
         let recall_db_path = data_dir.join("recall_memory.db");
         let recall_clock: Arc<dyn fabric::Clock> = Arc::new(SystemClock::new());
@@ -137,7 +134,6 @@ impl RequestHandler {
             recall_clock,
         )?));
 
-        // FactStore
         // Every durable user-runtime store is rooted in the injected state
         // directory. Never rediscover HOME or a machine deployment path here.
         let aletheon_dir = data_dir.clone();
@@ -149,7 +145,6 @@ impl RequestHandler {
             FactStore::open(&fact_root.join("fact_store.db")).context("opening fact store")?;
         let fact_store = Arc::new(Mutex::new(fact_store));
 
-        // ObjectiveStore
         let objective_root = data_dir.join("goals");
         std::fs::create_dir_all(&objective_root)?;
         let objective_db_path = objective_root.join("objectives.db");
@@ -302,7 +297,7 @@ impl RequestHandler {
         let active_connections = Arc::new(AtomicUsize::new(0));
 
         // Register tools
-        let mut tools = ToolRegistry::default();
+        let mut tools = ToolRegistry::with_network_policy(network_policy);
         let _ = tools.register(Arc::new(CoreMemoryAppendTool {
             memory: core_memory.clone(),
             clock: clock.clone(),
@@ -358,7 +353,11 @@ impl RequestHandler {
                 notifications,
             );
             if let Some(ingress) = gmail_ingress {
-                event_router = event_router.with_mail_ingress(ingress);
+                event_router = event_router.with_mail_ingress(Arc::new(
+                    crate::r#impl::channel::handlers::gmail_ingest::GmailIngestHandler::new(
+                        ingress,
+                    ),
+                ));
             }
             let sink = Arc::new(event_router);
             let dispatcher = crate::r#impl::google::GoogleEventDispatcher::new(
@@ -385,59 +384,127 @@ impl RequestHandler {
             });
         }
 
+        // One approval gate is shared by guarded tools and MCP elicitation.
+        let (socket_approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
+        let approval_gate: Arc<dyn corpus::security::approval::ApprovalGate> =
+            Arc::new(DurableSocketApprovalGate {
+                socket: Arc::new(socket_approval_gate),
+                repository: approval_repository.clone(),
+                clock: clock.clone(),
+            });
+
         // MCP servers. Keep the manager alive: gbrain recall/capture calls the
         // same authenticated connections after startup tool registration.
-        let mut retained_mcp = None;
-        {
+        let (mcp_registry_tx, mut mcp_registry_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let mut mcp_registration_ids = Vec::new();
+        let retained_mcp = {
             let mcp_config = corpus::tools::mcp::config::McpConfig {
                 servers: config.mcp_servers.clone(),
                 ..Default::default()
             };
             let mut mcp = corpus::tools::mcp::manager::McpManager::new(mcp_config);
+            mcp.set_registry_change_sender(mcp_registry_tx);
             if let Err(e) = mcp.connect_all().await {
                 tracing::warn!(error = %e, "MCP connect_all failed; continuing without MCP tools");
             }
+            mcp.set_elicitation_approval_gate(approval_gate.clone());
             let mcp_count = mcp.connected_count();
             if mcp_count > 0 {
                 info!(servers = mcp_count, "MCP servers connected");
             }
             for wrapper in mcp.tool_wrappers() {
                 let name = wrapper.name().to_string();
-                if let Err(e) = tools.register(Arc::from(wrapper)) {
-                    tracing::warn!(tool = %name, error = %e, "skip MCP tool (name clash?)");
-                } else {
-                    info!(tool = %name, "Registered MCP tool");
+                match tools.register(Arc::from(wrapper)) {
+                    Err(e) => {
+                        tracing::warn!(tool = %name, error = %e, "skip MCP tool (name clash?)");
+                    }
+                    Ok(id) => {
+                        mcp_registration_ids.push(id);
+                        info!(tool = %name, "Registered MCP tool");
+                    }
                 }
             }
-            if config.gbrain_memory.enabled {
-                if mcp
+            for wrapper in mcp.resource_wrappers() {
+                let name = wrapper.name().to_string();
+                match tools.register(Arc::from(wrapper)) {
+                    Err(e) => {
+                        tracing::warn!(tool = %name, error = %e, "skip MCP resource (name clash?)")
+                    }
+                    Ok(id) => {
+                        mcp_registration_ids.push(id);
+                        info!(tool = %name, "Registered MCP resource");
+                    }
+                }
+            }
+            if config.gbrain_memory.enabled
+                && mcp
                     .server_tools(&config.gbrain_memory.server_name)
-                    .is_some()
-                {
-                    retained_mcp = Some(Arc::new(mcp));
-                } else {
-                    tracing::warn!(
-                        server = %config.gbrain_memory.server_name,
-                        "GBrain server unavailable; local memory remains active"
-                    );
-                }
+                    .is_none()
+            {
+                tracing::warn!(
+                    server = %config.gbrain_memory.server_name,
+                    "GBrain server unavailable; local memory remains active"
+                );
             }
-        }
+            Some(Arc::new(mcp))
+        };
 
         // Security
         let sandbox_pref = SandboxPreference::from_str(&config.sandbox_preference);
-        let sandbox = create_default_executor(sandbox_pref, clock.clone());
+        let mut structured_exec_backend: Option<Arc<dyn corpus::security::StructuredToolSandbox>> =
+            None;
+        let exec_backend: Option<Box<dyn fabric::SandboxBackend>> = if grok_hardening.exec_server {
+            let binary_path = std::env::var_os("ALETHEON_EXEC_SERVER_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::env::current_exe()
+                        .ok()
+                        .and_then(|path| path.parent().map(|parent| parent.join("exec-server")))
+                        .unwrap_or_else(|| std::path::PathBuf::from("exec-server"))
+                });
+            let workspace = std::path::PathBuf::from(&config.working_dir)
+                .canonicalize()
+                .context("canonicalize exec-server workspace root")?;
+            let backend = crate::r#impl::channel::exec_server_client::ExecServerSandboxBackend::new(
+                crate::r#impl::channel::exec_server_client::ExecServerConfig {
+                    binary_path: binary_path.to_string_lossy().into_owned(),
+                    shared_secret: format!(
+                        "{}{}",
+                        uuid::Uuid::new_v4().simple(),
+                        uuid::Uuid::new_v4().simple()
+                    ),
+                    startup_timeout: std::time::Duration::from_secs(5),
+                    request_timeout: std::time::Duration::from_secs(30),
+                    workspace_roots: vec![workspace],
+                },
+            );
+            structured_exec_backend = Some(Arc::new(backend.clone()));
+            Some(Box::new(backend))
+        } else {
+            None
+        };
+        let sandbox = create_executor_with_front_backend(sandbox_pref, clock.clone(), exec_backend);
         let audit_path = data_dir.join("audit.jsonl");
         let audit_logger = AuditLogger::new(audit_path)?;
-        let (approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
-        let tool_runner = Arc::new(Mutex::new(
-            ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
-                .with_approval_gate(Arc::new(approval_gate)),
-        ));
+        let mut runner = ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
+            .with_approval_gate(approval_gate);
+        if let Some(structured) = structured_exec_backend {
+            runner = runner.with_structured_sandbox(structured);
+        }
+        if grok_hardening.sandbox_profiles {
+            runner = runner.with_sandbox_profiles(sandbox_profiles);
+        }
+        if let Some(bus) = event_bus.as_ref() {
+            runner = runner.with_event_bus(bus.clone());
+        }
+        let tool_runner = Arc::new(Mutex::new(runner));
 
         let runtime_config = ExecutiveConfig {
             session_id: session_id.clone(),
             context_window_tokens: context_window,
+            conscious_arbitration_mode: config.conscious_arbitration_mode,
+            compaction_v2: grok_hardening.compaction_v2,
+            streaming_tools: grok_hardening.streaming_tools,
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
@@ -448,7 +515,8 @@ impl RequestHandler {
                         &runtime_config_snapshot,
                     ),
                     clock.clone(),
-                ),
+                )
+                .with_evicted_memory(recall_memory.clone()),
             );
 
         let mut runtime = AletheonExecutive::new(runtime_config);
@@ -497,7 +565,7 @@ impl RequestHandler {
         }
 
         // Hooks
-        let mut hook_registry = HookRegistry::new(clock.clone());
+        let mut hook_registry = HookRegistry::new(clock.clone()).with_event_bus(event_bus.clone());
         audit_hook::register_audit_hook(&mut hook_registry);
         let hooks_dir = aletheon_dir.join("hooks");
         let hook_loader = corpus::hook::loader::HookLoader::new(hooks_dir);
@@ -508,29 +576,44 @@ impl RequestHandler {
         for plugin in skill_loader.plugins() {
             register_skill(plugin, &mut tools, &mut hook_registry);
         }
+        super::turn_runtime::register_configured_hooks(&mut hook_registry, &config.hooks);
+        let runtime_extensions =
+            super::extensions::index_runtime_extensions(&skill_loader, &hook_registry)?;
         let hook_registry = Arc::new(Mutex::new(hook_registry));
 
         // Cache-stable prefix
         let cached_prefix = PrefixBuilder::build(&config.system_prompt, skill_loader.skills());
         info!(len = cached_prefix.len(), "Cache-stable prefix built");
 
-        // CommunicationBus
-        let bus = Arc::new(CommunicationBus::new());
-        {
-            let sf_module = crate::r#impl::engine::modules::self_field_module::SelfFieldModule::new(
-                self_field.clone(),
-            );
-            let bus_clone = bus.clone();
-            tokio::spawn(async move { sf_module.run(bus_clone).await });
-        }
         let tools = Arc::new(Mutex::new(tools));
-        {
-            let body_module =
-                crate::r#impl::engine::modules::body_module::BodyModule::new(tools.clone());
-            let bus_clone = bus.clone();
-            tokio::spawn(async move { body_module.run(bus_clone).await });
+        if let Some(mcp) = retained_mcp.clone() {
+            let registry = tools.clone();
+            let registrations = Arc::new(Mutex::new(mcp_registration_ids));
+            let cancel = cancel_token.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        changed = mcp_registry_rx.recv() => {
+                            let Some(server) = changed else { break };
+                            let mut registry = registry.lock().await;
+                            let mut ids = registrations.lock().await;
+                            for id in ids.drain(..) {
+                                let _ = registry.unregister(id);
+                            }
+                            for wrapper in mcp.tool_wrappers().into_iter().chain(mcp.resource_wrappers()) {
+                                let name = wrapper.name().to_string();
+                                match registry.register(Arc::from(wrapper)) {
+                                    Ok(id) => ids.push(id),
+                                    Err(error) => tracing::warn!(%server, tool = %name, %error, "failed to refresh MCP registry entry"),
+                                }
+                            }
+                            tracing::info!(%server, count = ids.len(), "refreshed MCP ToolRegistry");
+                        }
+                    }
+                }
+            });
         }
-        info!("CommunicationBus created with SelfField and Body module handlers");
 
         // StormBreaker, CheckpointStore, SkillRouter, AgentLoader
         let storm_breaker = Arc::new(Mutex::new(StormBreaker::new(
@@ -552,7 +635,6 @@ impl RequestHandler {
             }
         }
         let skill_router = Arc::new(Mutex::new(skill_router));
-        let hooks_config = config.hooks.clone();
 
         // ModelRouter
         let model_router = Arc::new(ModelRouter::new(model_routing.clone(), inference.clone()));
@@ -590,21 +672,6 @@ impl RequestHandler {
             goal_tracker: cognit::harness::linear::goal_tracker::GoalTracker::new(clock.clone()),
         }));
         let gw_started_at = clock.mono_now();
-        let session_gateway = Arc::new(SessionGateway::new(
-            param_registry.clone(),
-            debug_handler.clone(),
-            session_id.clone(),
-            gw_state.clone(),
-            initial_session.clone(),
-            gw_started_at,
-            runtime_config_snapshot.clone(),
-            core_memory.clone(),
-            recall_memory.clone(),
-            self_field.clone(),
-            llm.clone(),
-            clock.clone(),
-        ));
-
         let consolidation_repository =
             Arc::new(mnemosyne::consolidation::ConsolidationRepository::open(
                 data_dir.join("memory_consolidation.db"),
@@ -620,6 +687,7 @@ impl RequestHandler {
                 episodic_memory.clone(),
                 clock.clone(),
             )
+            .with_memory_hybrid(grok_hardening.memory_hybrid)
             .with_consolidation_repository(consolidation_repository)
             .with_retention_repository(retention_repository.clone()),
         );
@@ -636,7 +704,7 @@ impl RequestHandler {
         > = Arc::new(
             crate::service::request_use_cases::ProductionMemoryAdminUseCases::new(
                 gbrain_runtime.memory_service.clone(),
-                retention_repository,
+                retention_admin_port(retention_repository),
                 fabric::LOCAL_OWNER_PRINCIPAL.to_string(),
             ),
         );
@@ -651,7 +719,16 @@ impl RequestHandler {
             .await;
         });
 
-        let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock(clock.clone()));
+        let durable_budget = Arc::new(
+            aletheon_kernel::admission::DurableBudgetController::open_durable(
+                data_dir.join("budget-controller-v1.json"),
+            )
+            .context("opening durable budget controller")?,
+        );
+        let kernel = Arc::new(aletheon_kernel::KernelRuntime::with_clock_and_budget(
+            clock.clone(),
+            durable_budget,
+        ));
         let fact_use_cases: Arc<dyn mnemosyne::FactUseCases> =
             Arc::new(mnemosyne::DefaultFactUseCases::new(fact_store.clone()));
         let goal_use_cases: Arc<dyn crate::service::GoalUseCases> =
@@ -674,8 +751,10 @@ impl RequestHandler {
             .await
             .dasein_handle()
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
+        let agora_service: Arc<dyn fabric::AgoraService> =
+            Arc::new(agora::AgoraRegistry::new(kernel.clock()));
         let conscious_registry = Arc::new(
-            crate::service::conscious_workspace::ConsciousWorkspaceRegistry::production(
+            crate::service::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_tools_and_agora(
                 data_dir.join("conscious_workspace.db"),
                 Arc::new(
                     crate::service::dasein_workspace_adapter::DaseinWorkspaceAdapter::new(
@@ -687,13 +766,17 @@ impl RequestHandler {
                 clock.clone(),
                 gbrain_runtime.memory_service.clone(),
                 skill_loader.clone(),
+                tools.clone(),
+                agora_service.clone(),
+                config.conscious_arbitration_mode,
             )?,
         );
+        conscious_context.bind(conscious_registry.clone())?;
         let context_source = Arc::new(crate::service::context_assembler::ProductionContextSource {
             cached_prefix: cached_prefix.clone(),
             skill_loader: skill_loader.clone(),
             skill_router: skill_router.clone(),
-            conscious: conscious_registry.clone(),
+            conscious: conscious_context.clone(),
         });
         let context_assembler = Arc::new(crate::service::context_assembler::ContextAssembler::new(
             context_source,
@@ -715,7 +798,6 @@ impl RequestHandler {
         let corpus_group = crate::core::CorpusGroup {
             tools,
             hook_registry,
-            hooks_config,
         };
         let corpus_executor = Arc::new(corpus::CorpusToolExecutor::new(
             corpus_group.tools.clone(),
@@ -723,11 +805,20 @@ impl RequestHandler {
             clock.clone(),
         ));
         let corpus: Arc<dyn corpus::CorpusService> =
-            Arc::new(corpus::DefaultCorpusService::from_runtime(
+            Arc::new(corpus::DefaultCorpusService::from_runtime_with_extensions(
                 corpus_group.tools.clone(),
                 corpus_executor,
                 corpus_group.hook_registry.clone(),
+                runtime_extensions.catalog,
             ));
+        let extension_decisions = super::extensions::activate_runtime_extensions(
+            corpus.clone(),
+            runtime_extensions.ids,
+            runtime_extensions.capabilities,
+            &data_dir,
+            &session_id,
+        )
+        .await?;
         let granted_capabilities = Arc::new(tokio::sync::RwLock::new(
             corpus::discover_tool_extensions(&corpus_group.tools)
                 .await?
@@ -736,9 +827,9 @@ impl RequestHandler {
                 .collect(),
         ));
         let domains = crate::core::DomainPorts::new(
-            Arc::new(agora::AgoraRegistry::new(kernel.clock())),
+            agora_service,
             metacog,
-            corpus,
+            corpus.clone(),
             cognitive_sessions,
         );
         let session_group = crate::core::SessionGroup {
@@ -760,17 +851,7 @@ impl RequestHandler {
                 approvals: security_group.session_approvals.clone(),
                 perf: debug_perf.clone(),
                 self_field: self_field.clone(),
-                extension_decisions: Arc::new(
-                    crate::service::extension_service::SpineExtensionDecisionSink::new(Arc::new(
-                        crate::r#impl::events::SqliteEventSpine::open(
-                            data_dir.join("extension-events.db"),
-                        )
-                        .unwrap_or_else(|_| {
-                            crate::r#impl::events::SqliteEventSpine::open(":memory:")
-                                .expect("in-memory extension decision spine")
-                        }),
-                    )),
-                ),
+                extension_decisions,
             };
         let capability_service: Arc<dyn CapabilityService> = Arc::new(
             crate::r#impl::daemon::handler::tool_executor::ProductionCapabilityService::new(
@@ -780,6 +861,7 @@ impl RequestHandler {
         let agent_runtimes =
             Arc::new(crate::service::agent_control::AgentRuntimeRegistry::default());
         let agent_profiles_for_tools;
+        let agent_profile_registry;
 
         // Ordinary child Agents use one Cognit session runtime. Goal worker
         // and reviewer attempts remain explicit ProviderWorkerRuntime routes.
@@ -791,8 +873,10 @@ impl RequestHandler {
                 llm.clone(),
                 &definitions,
                 &runtime_config_snapshot,
+                &agent_profiles,
             )?;
             agent_profiles_for_tools = tool_profiles;
+            agent_profile_registry = profiles.clone();
             let native = Arc::new(crate::r#impl::runtime::NativeCognitRuntime::new(
                 crate::r#impl::runtime::NativeCognitRuntimeResources {
                     sessions: domains.cognition(),
@@ -808,6 +892,22 @@ impl RequestHandler {
                 native,
             )?;
         }
+        let active_profile_name = if !agent_profiles.default.trim().is_empty() {
+            agent_profiles.default.clone()
+        } else if agent_profile_registry.resolve_by_name("code-agent").is_ok() {
+            "code-agent".to_owned()
+        } else {
+            let mut names = agent_profile_registry.names();
+            names.sort();
+            names
+                .into_iter()
+                .next()
+                .context("no Agent profile is available for the main turn")?
+        };
+        agent_profile_registry
+            .resolve_by_name(&active_profile_name)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let active_profile = Arc::new(Mutex::new(active_profile_name));
 
         // Goal worker/reviewer runtimes are opt-in and strictly alias-resolved.
         // Missing routes fail startup only when Goal execution is enabled.
@@ -893,240 +993,72 @@ impl RequestHandler {
             None
         };
 
-        // Clone clock for later daemon services.
         let clock_2 = clock.clone();
-
-        let agent_state_root = data_dir.join("agents");
-        std::fs::create_dir_all(&agent_state_root)?;
-        let agent_repository = Arc::new(
-            crate::service::agent_control::SqliteAgentRunRepository::open(
-                agent_state_root.join("agent_control.db"),
-            )
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        );
-        let canonical_event_spine = Arc::new(
-            crate::r#impl::events::SqliteEventSpine::open(
-                data_dir.join("events.db"),
-            )
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "canonical event spine unavailable; using process-local fallback");
-                crate::r#impl::events::SqliteEventSpine::open(":memory:")
-                    .expect("in-memory event spine")
-            }),
-        );
-        let event_projections = Arc::new(
-            crate::r#impl::events::DefaultEventProjectionSet::open(
-                data_dir.join("event-projections.db"),
-            )
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "event projections unavailable; using process-local fallback");
-                crate::r#impl::events::DefaultEventProjectionSet::in_memory()
-            }),
-        );
-        let agent_control_service = Arc::new(
-            crate::service::agent_control::AgentControlService::new(
-                kernel.clone(),
-                clock.clone(),
-                agent_repository.clone(),
-                Arc::new(
-                    crate::service::agent_control::BoundedAgentAdmission::with_budget(
-                        config.agent_admission.clone(),
-                        kernel.budget_controller(),
-                    )
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-                ),
-                agent_runtimes,
-            )
-            .with_event_spine(canonical_event_spine.clone())
-            .with_event_projections(event_projections.clone())
-            .with_memory_vault(Arc::new(
-                mnemosyne::AgentMemoryVault::open(agent_state_root.join("agent_memory.db"))
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-            )),
-        );
-        let agent_recovery = agent_control_service
-            .reconcile_startup(&format!("daemon:{}", uuid::Uuid::new_v4()))
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if !agent_recovery.ready() {
-            anyhow::bail!(
-                "Agent recovery left {} failed and {} unreconciled rows",
-                agent_recovery.recovery_failed,
-                agent_recovery.unreconciled
-            );
-        }
-        info!(
-            open = agent_recovery.open_rows,
-            interrupted = agent_recovery.interrupted,
-            resumed = agent_recovery.resumed,
-            finalized = agent_recovery.finalized,
-            "Agent restart recovery completed before spawn admission"
-        );
-        let agent_cleanup = crate::service::agent_control::AgentCleanupCoordinator::new(
-            agent_repository.clone(),
-            Arc::new(
-                crate::r#impl::runtime::worktree_recovery::VerifiedAgentWorktreeReclaimer::default(
-                ),
-            ),
-        )
-        .reclaim_expired(clock.wall_now().0)
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        info!(
-            examined = agent_cleanup.examined,
-            reclaimed = agent_cleanup.reclaimed,
-            retained_unsafe = agent_cleanup.retained_unsafe,
-            failures = agent_cleanup.failures,
-            compacted = agent_cleanup.compacted_rows,
-            "Agent terminal resource cleanup completed"
-        );
-        let agent_control: Arc<dyn fabric::AgentControlPort> = agent_control_service.clone();
-        let agent_shutdown_cancel = cancel_token.clone();
-        tokio::spawn(async move {
-            agent_shutdown_cancel.cancelled().await;
-            agent_control_service.shutdown().await;
-        });
-
-        super::runtime::register_agent_tools(
+        let agent_svc = super::services::build_agent_services(
+            &data_dir,
+            kernel.clone(),
+            clock.clone(),
+            cancel_token.clone(),
+            config,
+            &grok_hardening,
+            domains.corpus(),
+            agent_runtimes,
             corpus_group.tools.clone(),
-            agent_control.clone(),
             agent_profiles_for_tools,
+            granted_capabilities.clone(),
         )
-        .await;
-        *granted_capabilities.write().await = corpus::discover_tool_extensions(&corpus_group.tools)
-            .await?
-            .into_iter()
-            .flat_map(|entry| entry.capabilities)
-            .collect();
+        .await?;
+        let canonical_event_spine = agent_svc.canonical_event_spine;
+        let agent_recovery = agent_svc.agent_recovery;
+        let agent_repository = agent_svc.agent_repository;
+        let turn_svc = super::services::build_turn_services(
+            &data_dir,
+            kernel.clone(),
+            clock.clone(),
+            cancel_token.clone(),
+            event_bus.clone(),
+            config,
+            grok_hardening.clone(),
+            &pi_runtime,
+            pi_work_allowed,
+            sessions.clone(),
+            &session_id,
+            initial_session.clone(),
+            gw_state.clone(),
+            gw_started_at,
+            runtime_config_snapshot,
+            core_memory.clone(),
+            recall_memory.clone(),
+            self_field.clone(),
+            llm.clone(),
+            debug_handler.clone(),
+            debug_perf.clone(),
+            model_router.clone(),
+            &domains,
+            &security_group,
+            &memory_group,
+            &session_group,
+            capability_resources,
+            conscious_registry.clone(),
+            context_assembler,
+            apply_objective_store,
+            param_registry.clone(),
+            agent_svc.agent_live_runs,
+            canonical_event_spine.clone(),
+            agent_svc.event_projections,
+            agent_profile_registry.clone(),
+            active_profile.clone(),
+            runtime.clone(),
+            turn_token.clone(),
+            main_agent_process_id.clone(),
+        )
+        .await?;
+        let session_input = turn_svc.session_input;
+        let session_gateway = turn_svc.session_gateway;
+        let turn_orchestrator = turn_svc.turn_orchestrator;
+        let approved_apply = turn_svc.approved_apply;
+        let lifecycle_registry = turn_svc.lifecycle_registry;
 
-        let shared_notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>> = Arc::new(Mutex::new(None));
-        let session_db = data_dir.join("sessions-v1.db");
-        if let Some(parent) = session_db.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let canonical_store =
-            crate::r#impl::session::canonical_store::CanonicalSessionStore::open(&session_db)
-                .unwrap_or_else(|error| {
-                    tracing::warn!(%error, path = %session_db.display(), "canonical session store unavailable; using process-local fallback");
-                    crate::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
-                        .expect("in-memory canonical session store")
-                });
-        let session_recovery =
-            crate::r#impl::session::event_sourced_store::reconcile_committed_session_events(
-                canonical_event_spine.as_ref(),
-                event_projections.as_ref(),
-                &canonical_store,
-            )
-            .await
-            .context("reconcile committed Session events during daemon startup")?;
-        info!(
-            scanned = session_recovery.scanned,
-            materialized = session_recovery.materialized,
-            "Session event-spine recovery completed before turn admission"
-        );
-        let coordinator = Arc::new(
-            crate::service::turn_coordinator::TurnCoordinator::with_event_spine(
-                kernel.clone(),
-                Arc::new(canonical_store),
-                canonical_event_spine.clone(),
-            )
-            .with_event_projections(event_projections.clone()),
-        );
-        let session_service = Arc::new(crate::service::session_service::SessionService::new(
-            coordinator.store(),
-            coordinator.active_index(),
-        ));
-        let projection: Arc<dyn crate::service::post_turn_projection::PostTurnProjection> =
-            Arc::new(
-                crate::service::post_turn_projection::ProductionPostTurnProjection::new(
-                    crate::service::post_turn_projection::PostTurnProjectionResources {
-                        corpus: domains.corpus(),
-                        executive: runtime.clone(),
-                        evolution: domains.metacog(),
-                    },
-                ),
-            );
-        let runtime_ports = Arc::new(
-            crate::service::turn_runtime_ports::TurnRuntimePorts::production(
-                crate::service::turn_runtime_ports::TurnRuntimeResources {
-                    corpus: domains.corpus(),
-                    pre_turn_scripts: corpus_group.hooks_config.pre_turn.clone(),
-                    storm: security_group.storm_breaker.clone(),
-                    model_router: model_router.clone(),
-                    default_llm: llm.clone(),
-                    self_field: self_field.clone(),
-                    approval_rx: security_group.approval_rx.clone(),
-                    pending_approvals: security_group.pending_approvals.clone(),
-                    capabilities: capability_resources,
-                    admission: kernel.admission(),
-                    sessions: sessions.clone(),
-                    default_session_id: session_group.default_session_id.clone(),
-                    session_created_at: session_group.session_created_at.clone(),
-                    data_dir: session_group.data_dir.clone(),
-                    context_window: session_group.context_window,
-                    clock: clock.clone(),
-                    memory: memory_group.memory_service.clone(),
-                    executive: runtime.clone(),
-                    performance: debug_perf.clone(),
-                },
-            ),
-        );
-        let pipeline = Arc::new(crate::service::TurnPipeline::new(
-            crate::service::turn_pipeline::TurnPipelineResources {
-                session_gateway: session_gateway.clone(),
-                notify: shared_notify_tx.clone(),
-                clock: clock.clone(),
-                agora: Some(domains.agora()),
-                kernel: kernel.clone(),
-                current_scope: Arc::new(Mutex::new(None)),
-                daemon_cancel: Some(cancel_token.clone()),
-                context: context_assembler,
-                canonical_sessions: session_service.clone(),
-                projection,
-                runtime: runtime_ports,
-                cognitive_sessions: domains.cognition(),
-                conscious_core: Some(conscious_registry),
-            },
-        ));
-        let turn_orchestrator = Arc::new(crate::service::DaemonTurnOrchestrator::new(
-            crate::service::daemon_turn::DaemonTurnResources {
-                kernel: kernel.clone(),
-                notify: shared_notify_tx.clone(),
-                default_session_id: session_group.default_session_id.clone(),
-                main_agent_process_id: main_agent_process_id.clone(),
-                turn_token: turn_token.clone(),
-                pipeline,
-                coordinator,
-                session_service,
-            },
-        ));
-
-        let approved_apply = if pi_runtime.enabled && pi_work_allowed {
-            Some(Arc::new(
-                crate::r#impl::approval::ApplyCoordinator::new(
-                    apply_objective_store,
-                    memory_group.approval_repository.clone(),
-                    kernel.clone(),
-                    clock.clone(),
-                    crate::r#impl::approval::ApplyCoordinatorConfig {
-                        worktree_base: pi_runtime.worktree_base.clone(),
-                        timeout: std::time::Duration::from_secs(60),
-                    },
-                    Arc::new(crate::r#impl::approval::GitManagedWorktreeCleaner),
-                )?
-                .with_memory_projection(
-                    crate::r#impl::memory_projection::MemoryProjection::new(
-                        canonical_event_spine.clone(),
-                        event_projections.clone(),
-                    ),
-                ),
-            ))
-        } else {
-            None
-        };
-
-        // Clone these before they are moved into the handler struct
-        // so they are available for Telegram channel initialization.
         let _turn_orch_for_telegram = turn_orchestrator.clone();
         let _cancel_for_telegram = cancel_token.clone();
         let (goal_progress_tx, goal_progress_rx) = mpsc::channel(64);
@@ -1173,7 +1105,7 @@ impl RequestHandler {
             ));
         let admin_use_cases: Arc<dyn crate::service::AdminUseCases> = Arc::new(
             crate::service::AdminService::new(crate::service::admin_service::AdminResources {
-                orchestrator: admin_runtime,
+                runtime: admin_runtime_port(admin_runtime),
                 skills: Arc::new(crate::service::admin_service::DefaultSkillAdmin::new(
                     admin_skill_loader,
                     admin_cached_prefix,
@@ -1201,7 +1133,7 @@ impl RequestHandler {
                             .collect()
                     })
                 }),
-                pending_approvals: admin_pending_approvals,
+                pending_approvals: admin_pending_approvals.clone(),
                 session_approvals: admin_session_approvals,
                 daemon_cancel: cancel_token.clone(),
                 google_sync: google_sync.clone(),
@@ -1225,6 +1157,20 @@ impl RequestHandler {
                 }),
                 memory_admin: Some(memory_admin_use_cases),
                 agent_runs: Some(agent_repository),
+                agent_profiles: Some(agent_profile_registry),
+                current_profile: Some(active_profile),
+                profile_switch_events: Arc::new(
+                    crate::service::admin_service::SpineProfileSwitchEventSink::new(
+                        canonical_event_spine.clone(),
+                    ),
+                ),
+                deployment_rollback: Some(Arc::new(
+                    crate::core::deploy::DeploymentRollbackService::filesystem(
+                        std::env::var_os("ALETHEON_DEPLOYMENT_MANIFEST")
+                            .map(std::path::PathBuf::from)
+                            .unwrap_or_else(|| data_dir.join("deployment-manifest.json")),
+                    ),
+                )),
             }),
         );
         let legacy_sessions: Arc<
@@ -1233,7 +1179,6 @@ impl RequestHandler {
             crate::service::legacy_session_service::LegacySessionService::new(
                 crate::service::legacy_session_service::LegacySessionResources {
                     registry: sessions.clone(),
-                    default_id: default_session_id,
                     created_at: session_created_at,
                     data_dir: data_dir.clone(),
                     context_window,
@@ -1246,23 +1191,33 @@ impl RequestHandler {
         let started_at = clock_2.mono_now();
         let health_registry = Arc::new(crate::r#impl::health::HealthRegistry::production_ready());
         let telegram_task = Arc::new(Mutex::new(None));
+        let request_facades = RequestFacadePorts::new(
+            runtime.clone(),
+            memory_group.episodic_memory.clone(),
+            self_field.clone(),
+            memory_group.supplemental_memory_health.clone(),
+            grok_hardening.clone(),
+        );
         let session_lifecycle: Arc<
             dyn crate::service::request_use_cases::SessionLifecycleUseCases,
         > = Arc::new(
             crate::service::request_use_cases::ProductionSessionLifecycle::new(
                 domains.corpus(),
-                corpus_group.hooks_config.clone(),
                 security_group.session_approvals.clone(),
                 turn_token.clone(),
-            ),
+                lifecycle_registry,
+                grok_hardening.lifecycle_contributors,
+            )
+            .with_event_bus(event_bus.clone())
+            .with_session_service(turn_orchestrator.session_service.clone()),
         );
         let health_use_cases: Arc<dyn crate::service::request_use_cases::HealthUseCases> = Arc::new(
             crate::service::request_use_cases::ProductionHealthUseCases::new(
                 crate::service::request_use_cases::ProductionHealthResources {
-                    executive: runtime.clone(),
-                    episodic: memory_group.episodic_memory.clone(),
-                    self_field: self_field.clone(),
-                    supplemental: memory_group.supplemental_memory_health.clone(),
+                    runtime_port: request_facades.runtime_port.clone(),
+                    reflections: request_facades.reflections.clone(),
+                    self_status: request_facades.self_status,
+                    supplemental: request_facades.supplemental,
                     data_root: data_dir.clone(),
                     registry: health_registry,
                     clock: clock.clone(),
@@ -1279,10 +1234,10 @@ impl RequestHandler {
         let reflection_use_cases: Arc<dyn crate::service::request_use_cases::ReflectionUseCases> =
             Arc::new(
                 crate::service::request_use_cases::ProductionReflectionUseCases::new(
-                    runtime.clone(),
-                    memory_group.episodic_memory.clone(),
+                    request_facades.runtime_port.clone(),
+                    request_facades.reflections,
                     domains.metacog(),
-                    reflector.clone(),
+                    super::request_ports::reflection_engine_port(reflector.clone()),
                 ),
             );
         let google_use_cases: Arc<dyn crate::service::request_use_cases::GoogleUseCases> = Arc::new(
@@ -1302,7 +1257,7 @@ impl RequestHandler {
         let turn_use_cases: Arc<dyn crate::service::request_use_cases::TurnUseCases> = Arc::new(
             crate::service::request_use_cases::ProductionTurnUseCases::new(
                 turn_orchestrator.clone(),
-                runtime.clone(),
+                request_facades.runtime_port,
                 turn_token.clone(),
                 turn_orchestrator.session_service.clone(),
             ),
@@ -1324,6 +1279,8 @@ impl RequestHandler {
             clock: clock.clone(),
         });
         let handler_ports = Arc::new(crate::r#impl::daemon::handler::ports::HandlerPorts::new(
+            kernel.clone(),
+            admin_pending_approvals.clone(),
             fact_use_cases,
             goal_use_cases,
             approval_use_cases,
@@ -1335,10 +1292,14 @@ impl RequestHandler {
             google_use_cases,
             workflow_use_cases,
             turn_use_cases,
+            session_input,
+            conscious_registry,
             debug_use_cases,
             session_gateway,
             transport_ports,
         ));
+        let workspace_trust =
+            bootstrap_workspace_trust_resolver(&data_dir, grok_hardening.folder_trust, event_bus);
         let composition = super::DaemonComposition {
             request: handler_ports,
             active_connections,
@@ -1347,76 +1308,27 @@ impl RequestHandler {
                     data_dir.join("thread-authority"),
                 ),
             ),
+            grok_hardening,
+            workspace_trust,
         };
         let handler = composition.into_handler();
 
-        // Register initial params
-        {
-            let data_dir_clone = data_dir.clone();
-            let started_at = clock_2.mono_now();
-            param_registry
-                .declare(
-                    "session.uptime_secs",
-                    "session",
-                    "Daemon uptime in seconds",
-                    move || {
-                        let elapsed_ms = clock_2.mono_now().0.saturating_sub(started_at.0);
-                        json!(elapsed_ms / 1000)
-                    },
-                )
-                .await;
-            param_registry
-                .declare(
-                    "session.data_dir",
-                    "session",
-                    "Data directory path",
-                    move || json!(data_dir_clone.to_string_lossy()),
-                )
-                .await;
-            let model = config.model.clone();
-            param_registry
-                .declare("llm.model", "llm", "Current LLM model in use", move || {
-                    json!(model)
-                })
-                .await;
-            let provider_name = llm.name().to_string();
-            param_registry
-                .declare(
-                    "llm.provider",
-                    "llm",
-                    "Current LLM provider name",
-                    move || json!(provider_name),
-                )
-                .await;
-            let sandbox_pref = config.sandbox_preference.clone();
-            param_registry
-                .declare(
-                    "sandbox.preference",
-                    "sandbox",
-                    "Current sandbox mode",
-                    move || json!(sandbox_pref),
-                )
-                .await;
-            param_registry
-                .declare("session.rss_kb", "session", "Resident memory in KB", || {
-                    let status = std::fs::read_to_string("/proc/self/status").ok();
-                    let rss = status.and_then(|s| {
-                        s.lines()
-                            .find(|l| l.starts_with("VmRSS:"))
-                            .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
-                    });
-                    json!(rss.unwrap_or(0))
-                })
-                .await;
-            info!("Registered {} initial params", 6);
-        }
+        super::params::register_initial_params(
+            &param_registry,
+            clock_2.clone(),
+            data_dir.clone(),
+            config.model.clone(),
+            llm.clone(),
+            config.sandbox_preference.clone(),
+        )
+        .await;
 
         // Fire OnSessionStart hook
         handler
             .ports
             .session_lifecycle
             .start(session_id.clone(), false)
-            .await;
+            .await?;
 
         // -- Telegram channel initialization (M1) -------------------------------
         let telegram_cfg = &config.telegram;
@@ -1444,55 +1356,5 @@ impl RequestHandler {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use fabric::dasein::{OutcomeStatus, SelfVersion};
-
-    #[tokio::test]
-    async fn daemon_self_field_bootstrap_replays_before_new_transitions() {
-        let root = tempfile::tempdir().unwrap();
-        let database = root.path().join("self_field.db");
-
-        let mut first = SelfField::new(SelfFieldConfig {
-            db_path: Some(database.clone()),
-            clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::new(100, 0))),
-            ..Default::default()
-        });
-        initialize_self_field(&mut first, root.path())
-            .await
-            .unwrap();
-        first
-            .dasein()
-            .unwrap()
-            .record_outcome("first boot", OutcomeStatus::Succeeded, "daemon-bootstrap")
-            .await
-            .unwrap();
-        first.shutdown().await.unwrap();
-
-        let mut restarted = SelfField::new(SelfFieldConfig {
-            db_path: Some(database),
-            clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::new(5_100, 0))),
-            ..Default::default()
-        });
-        initialize_self_field(&mut restarted, root.path())
-            .await
-            .unwrap();
-        assert!(matches!(
-            restarted.health().await,
-            fabric::SubsystemHealth::Healthy
-        ));
-        let dasein = restarted.dasein_handle().unwrap();
-        assert_eq!(dasein.self_version().await, SelfVersion(2));
-        let receipt = dasein
-            .record_outcome(
-                "first turn after restart",
-                OutcomeStatus::Succeeded,
-                "daemon-bootstrap",
-            )
-            .await
-            .unwrap();
-        assert_eq!(receipt.previous_version, SelfVersion(2));
-        assert_eq!(receipt.current_version, SelfVersion(3));
-        restarted.shutdown().await.unwrap();
-    }
-}
+#[path = "request_tests.rs"]
+mod tests;

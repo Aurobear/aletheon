@@ -6,4 +6,5 @@ pub mod token_store;
 pub mod transport;
 pub mod wrapper;
 
+pub use client::{ElicitationHandler, McpElicitationHandler};
 pub use manager::McpManager;

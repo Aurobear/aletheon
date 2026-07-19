@@ -46,6 +46,7 @@ fn self_view() -> StructuredSelfView {
         version: SelfVersion(4),
         mood: Stimmung::Gelassenheit,
         concerns: vec![],
+        care_concerns: vec![],
         projection: None,
         protentions: vec![],
     }
@@ -100,6 +101,8 @@ fn recalled() -> RecallSet {
             temporal_state: TemporalState::Current,
             authority: MemoryAuthority::VerifiedLocalSemantic,
             scope: MemoryScope::Session("session-1".into()),
+            score: 0.0,
+            evidence: None,
         }],
         degraded_sources: vec![],
     }

@@ -7,7 +7,10 @@ use fabric::dasein::{
     DaseinOps, ExperienceProvenance, ExperienceSource, InterpretedExperience, SelfEventId,
     SelfTransitionRequest, Stimmung,
 };
-use fabric::{Clock, SalienceVector, StructuredSelfView, WorkspaceBroadcast, WorkspaceCandidate};
+use fabric::{
+    CareConcernFrame, Clock, SalienceVector, StructuredSelfView, WorkspaceBroadcast,
+    WorkspaceCandidate,
+};
 
 use super::conscious_core_ports::{DaseinIntegration, DaseinWorkspacePort};
 
@@ -26,15 +29,23 @@ impl DaseinWorkspaceAdapter {
     fn snapshot_self_view(&self, version: fabric::dasein::SelfVersion) -> StructuredSelfView {
         let temporality = self.dasein.temporality_snapshot();
         let care = self.dasein.care_snapshot();
+        let care_concerns = care
+            .concerns
+            .into_iter()
+            .take(fabric::MAX_SELF_VIEW_ITEMS)
+            .map(|concern| CareConcernFrame {
+                purpose: concern.purpose,
+                urgency: concern.urgency as f32,
+            })
+            .collect::<Vec<_>>();
         StructuredSelfView {
             version,
             mood: self.dasein.mood(),
-            concerns: care
-                .concerns
-                .into_iter()
-                .take(fabric::MAX_SELF_VIEW_ITEMS)
-                .map(|concern| concern.purpose)
+            concerns: care_concerns
+                .iter()
+                .map(|concern| concern.purpose.clone())
                 .collect(),
+            care_concerns,
             projection: care.projection,
             protentions: temporality
                 .protentions

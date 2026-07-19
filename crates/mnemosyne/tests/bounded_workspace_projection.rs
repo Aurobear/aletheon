@@ -39,6 +39,8 @@ fn item(
         temporal_state: TemporalState::Current,
         authority,
         scope: MemoryScope::Session("session-1".into()),
+        score: 0.0,
+        evidence: None,
     }
 }
 

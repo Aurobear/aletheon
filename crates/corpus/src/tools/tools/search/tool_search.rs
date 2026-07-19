@@ -145,6 +145,7 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool
             .execute(json!({"query": "read file", "limit": 5}), &ctx)
@@ -162,6 +163,7 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool
             .execute(json!({"query": "internal system", "limit": 5}), &ctx)
@@ -179,6 +181,7 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool
             .execute(json!({"query": "zzzznonexistent", "limit": 5}), &ctx)

@@ -1,12 +1,13 @@
 use async_trait::async_trait;
 use executive::r#impl::approval::{ApprovalCreate, ApprovalRepository};
-use executive::r#impl::channel::router::{
-    ChannelRouter, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
-};
-use executive::r#impl::channel::store::ChannelStore;
+use executive::r#impl::channel::daemon_adapter::ApprovalRepositoryPort;
 use executive::r#impl::goal::ObjectiveStore;
 use fabric::channel::*;
 use fabric::*;
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+};
+use gateway::store::ChannelStore;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -116,12 +117,13 @@ impl Fixture {
     fn channel_path(&self) -> PathBuf {
         self.channels.path().join("channels.db")
     }
-    fn router(&self) -> ChannelRouter {
+    fn router(&self) -> ChannelDispatcher {
         let store = ChannelStore::open(&self.channel_path()).unwrap();
         store
             .bind("telegram", "telegram:7", "owner", "active")
             .unwrap();
-        ChannelRouter::new(store, Arc::new(NoTurn)).with_approval_repository(self.repo.clone())
+        ChannelDispatcher::new(store, Arc::new(NoTurn))
+            .with_approval_port(Arc::new(ApprovalRepositoryPort::new(self.repo.clone())))
     }
     fn callback(&self, message: &str, sender: &str, action: String, time: i64) -> ProviderEnvelope {
         ProviderEnvelope {

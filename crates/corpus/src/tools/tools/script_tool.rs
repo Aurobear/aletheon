@@ -13,7 +13,10 @@ use serde_json::{json, Value};
 use tokio::process::Command;
 use tracing::warn;
 
-use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolExposure, ToolResult, ToolResultMeta};
+use fabric::tool::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolExposure, ToolResult,
+    ToolResultMeta,
+};
 
 /// A tool backed by an external executable script.
 #[derive(Debug, Clone)]
@@ -78,6 +81,15 @@ impl Tool for ScriptTool {
         self.permission
     }
 
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        // Canonicalization is performed against the host-registered path, not
+        // model input. Missing/unresolvable paths do not acquire an execution
+        // identity and therefore cannot be dispatched as a trusted script.
+        std::fs::canonicalize(&self.script_path)
+            .ok()
+            .map(|canonical_path| ToolExecutionDescriptor::Script { canonical_path })
+    }
+
     fn exposure(&self) -> ToolExposure {
         self.exposure
     }
@@ -130,6 +142,7 @@ impl Tool for ScriptTool {
                                 metadata: ToolResultMeta {
                                     execution_time_ms: elapsed,
                                     truncated: false,
+                                    patch_delta: None,
                                 },
                             };
                         }
@@ -141,6 +154,7 @@ impl Tool for ScriptTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: elapsed,
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 } else {
@@ -156,6 +170,7 @@ impl Tool for ScriptTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: elapsed,
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 }
@@ -168,6 +183,7 @@ impl Tool for ScriptTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: elapsed,
                         truncated: false,
+                        patch_delta: None,
                     },
                 }
             }
@@ -219,6 +235,26 @@ mod tests {
         assert_eq!(tool.exposure(), ToolExposure::Deferred);
     }
 
+    #[test]
+    fn script_descriptor_uses_host_canonical_path_only() {
+        let dir = TempDir::new().unwrap();
+        let script_path = dir.path().join("trusted.sh");
+        std::fs::write(&script_path, "#!/bin/sh\n").unwrap();
+        let tool = ScriptTool::new(
+            "trusted".into(),
+            "trusted host script".into(),
+            script_path.clone(),
+            PermissionLevel::L1,
+        );
+
+        assert_eq!(
+            tool.execution_descriptor(),
+            Some(ToolExecutionDescriptor::Script {
+                canonical_path: std::fs::canonicalize(script_path).unwrap(),
+            })
+        );
+    }
+
     #[tokio::test]
     async fn script_tool_execute_missing_script() {
         let tool = ScriptTool::new(
@@ -233,6 +269,7 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(result.is_error);
@@ -262,6 +299,7 @@ mod tests {
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(!result.is_error);
@@ -291,6 +329,7 @@ mod tests {
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(result.is_error);
@@ -323,6 +362,7 @@ mod tests {
             working_dir: dir.path().to_path_buf(),
             session_id: "test".into(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({}), &ctx).await;
         assert!(!result.is_error);

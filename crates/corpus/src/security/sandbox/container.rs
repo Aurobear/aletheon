@@ -307,6 +307,7 @@ mod tests {
             workspace: fabric::WorkspacePolicy::from_resolved_roots("/workspace".into(), vec![])
                 .unwrap(),
             environment: BTreeMap::new(),
+            policy: None,
         }
     }
 

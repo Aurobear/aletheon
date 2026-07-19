@@ -24,6 +24,10 @@ pub struct VectorStoreConfig {
     pub lance_path: String,
     pub collection: String,
     pub dimension: usize,
+    /// Optional endpoint-scoped authorization. The raw key is never serialized
+    /// into configuration; callers may reveal it only after `approved_for`.
+    #[serde(skip)]
+    pub embedding_grant: Option<crate::credential::EmbeddingCredentialGrant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -47,8 +51,30 @@ impl Default for VectorStoreConfig {
                 .to_string(),
             collection: "archival_memory".to_string(),
             dimension: 384,
+            embedding_grant: None,
         }
     }
+}
+
+impl VectorStoreConfig {
+    /// Return a credential only for this exact configured endpoint. Redirected
+    /// requests must call this again with the new origin and will fail closed.
+    pub fn credential_for_endpoint(&self, request_url: &str, now_unix: u64) -> Option<&str> {
+        self.embedding_grant
+            .as_ref()
+            .and_then(|grant| grant.secret_if_approved(request_url, now_unix))
+    }
+}
+
+/// Translate the governed recall predicate into backend metadata constraints.
+/// Vector implementations must attach this filter to KNN rather than filter
+/// materialized results after search.
+pub fn scope_predicate_filter(predicate: &crate::ScopePredicate) -> Value {
+    serde_json::json!({
+        "scope_key": { "$in": predicate.scope_keys },
+        "sensitivity_ord": { "$lte": predicate.max_sensitivity_ord },
+        "authority": { "$in": predicate.allowed_authorities },
+    })
 }
 
 /// Trait for vector storage backends.
@@ -76,49 +102,74 @@ pub trait VectorStore: Send + Sync {
 
 #[cfg(feature = "vector-qdrant")]
 pub struct QdrantVectorStore {
-    client: qdrant_client::Qdrant,
+    client: reqwest::Client,
+    base_url: String,
     collection: String,
-    dimension: usize,
+}
+
+/// Convert the backend-neutral governed filter into Qdrant's filter DSL.
+/// Unknown/malformed clauses fail closed instead of silently widening search.
+#[cfg(any(feature = "vector-qdrant", test))]
+fn qdrant_filter(filter: &Value) -> Result<Value> {
+    let object = filter
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("vector filter must be an object"))?;
+    let mut must = Vec::with_capacity(object.len());
+    for (key, clause) in object {
+        let clause = clause
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("vector filter clause '{}' must be an object", key))?;
+        if let Some(values) = clause.get("$in").and_then(Value::as_array) {
+            must.push(serde_json::json!({
+                "key": key,
+                "match": { "any": values }
+            }));
+        } else if let Some(lte) = clause.get("$lte") {
+            let number = lte.as_f64().ok_or_else(|| {
+                anyhow::anyhow!("vector filter '$lte' for '{}' must be numeric", key)
+            })?;
+            must.push(serde_json::json!({
+                "key": key,
+                "range": { "lte": number }
+            }));
+        } else {
+            anyhow::bail!("unsupported vector filter operator for '{}'", key);
+        }
+    }
+    Ok(serde_json::json!({ "must": must }))
 }
 
 #[cfg(feature = "vector-qdrant")]
 impl QdrantVectorStore {
     pub async fn new(config: &VectorStoreConfig) -> Result<Self> {
-        use qdrant_client::prelude::*;
-        use qdrant_client::qdrant::{
-            vectors_config::Config, CreateCollection, Distance, VectorParams, VectorsConfig,
-        };
-
-        let client = Qdrant::from_url(&config.qdrant_url).build()?;
-
-        // Create collection if it doesn't exist
-        let collections = client.list_collections().await?;
-        let exists = collections
-            .collections
-            .iter()
-            .any(|c| c.name == config.collection);
-
-        if !exists {
-            client
-                .create_collection(&CreateCollection {
-                    collection_name: config.collection.clone(),
-                    vectors_config: Some(VectorsConfig {
-                        config: Some(Config::Params(VectorParams {
-                            size: config.dimension as u64,
-                            distance: Distance::Cosine.into(),
-                            ..Default::default()
-                        })),
-                    }),
-                    ..Default::default()
-                })
-                .await?;
-        }
-
-        Ok(Self {
-            client,
+        let store = Self {
+            client: reqwest::Client::new(),
+            base_url: config.qdrant_url.trim_end_matches('/').to_string(),
             collection: config.collection.clone(),
-            dimension: config.dimension,
-        })
+        };
+        let collection_url = format!("{}/collections/{}", store.base_url, store.collection);
+        let response = store.client.get(&collection_url).send().await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            store
+                .client
+                .put(&collection_url)
+                .json(&serde_json::json!({
+                    "vectors": { "size": config.dimension, "distance": "Cosine" }
+                }))
+                .send()
+                .await?
+                .error_for_status()?;
+        } else {
+            response.error_for_status()?;
+        }
+        Ok(store)
+    }
+
+    fn points_url(&self, suffix: &str) -> String {
+        format!(
+            "{}/collections/{}/points{}",
+            self.base_url, self.collection, suffix
+        )
     }
 }
 
@@ -126,19 +177,14 @@ impl QdrantVectorStore {
 #[async_trait]
 impl VectorStore for QdrantVectorStore {
     async fn upsert(&self, id: &str, embedding: &[f32], metadata: Value) -> Result<()> {
-        use qdrant_client::prelude::*;
-        use qdrant_client::qdrant::{PointStruct, Vectors};
-
-        let point = PointStruct::new(
-            id.to_string(),
-            Vectors::from(embedding.to_vec()),
-            serde_json::from_value(metadata)?,
-        );
-
         self.client
-            .upsert_points(&self.collection, vec![point], None)
-            .await?;
-
+            .put(format!("{}?wait=true", self.points_url("")))
+            .json(&serde_json::json!({
+                "points": [{ "id": id, "vector": embedding, "payload": metadata }]
+            }))
+            .send()
+            .await?
+            .error_for_status()?;
         Ok(())
     }
 
@@ -146,60 +192,70 @@ impl VectorStore for QdrantVectorStore {
         &self,
         query: &[f32],
         top_k: usize,
-        _filter: Option<Value>,
+        filter: Option<Value>,
     ) -> Result<Vec<ScoredEntry>> {
-        use qdrant_client::prelude::*;
-        use qdrant_client::qdrant::{SearchPoints, WithPayloadSelector};
-
-        let search = SearchPoints {
-            collection_name: self.collection.clone(),
-            vector: query.to_vec(),
-            limit: top_k as u64,
-            with_payload: Some(WithPayloadSelector {
-                selector_options: Some(
-                    qdrant_client::qdrant::with_payload_selector::SelectorOptions::Enable(true),
-                ),
-            }),
-            ..Default::default()
-        };
-
-        let result = self.client.search_points(&search).await?;
-
-        Ok(result
-            .result
+        let filter = filter.as_ref().map(qdrant_filter).transpose()?;
+        let response: Value = self
+            .client
+            .post(self.points_url("/search"))
+            .json(&serde_json::json!({
+                "vector": query,
+                "limit": top_k,
+                "with_payload": true,
+                "filter": filter
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(response
+            .get("result")
+            .and_then(Value::as_array)
             .into_iter()
+            .flatten()
             .map(|point| ScoredEntry {
-                id: point.id.map(|id| id.to_string()).unwrap_or_default(),
-                score: point.score,
-                metadata: serde_json::to_value(point.payload).unwrap_or_default(),
+                id: point
+                    .get("id")
+                    .map(|id| {
+                        id.as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| id.to_string())
+                    })
+                    .unwrap_or_default(),
+                score: point
+                    .get("score")
+                    .and_then(Value::as_f64)
+                    .unwrap_or_default() as f32,
+                metadata: point.get("payload").cloned().unwrap_or(Value::Null),
             })
             .collect())
     }
 
     async fn delete(&self, id: &str) -> Result<()> {
-        use qdrant_client::prelude::*;
-        use qdrant_client::qdrant::{
-            points_selector::PointsSelectorOneOf, PointId, PointsSelector,
-        };
-
         self.client
-            .delete_points(
-                &self.collection,
-                &PointsSelector {
-                    points_selector_one_of: Some(PointsSelectorOneOf::Points(PointIdsList {
-                        ids: vec![PointId::from(id.to_string())],
-                    })),
-                },
-                None,
-            )
-            .await?;
-
+            .post(format!("{}?wait=true", self.points_url("/delete")))
+            .json(&serde_json::json!({ "points": [id] }))
+            .send()
+            .await?
+            .error_for_status()?;
         Ok(())
     }
 
     async fn count(&self) -> Result<usize> {
-        let info = self.client.collection_info(&self.collection).await?;
-        Ok(info.result.and_then(|i| i.points_count).unwrap_or(0) as usize)
+        let response: Value = self
+            .client
+            .post(self.points_url("/count"))
+            .json(&serde_json::json!({ "exact": true }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(response
+            .pointer("/result/count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize)
     }
 }
 
@@ -272,42 +328,69 @@ pub trait Embedder: Send + Sync {
 /// OpenAI-compatible embedding API.
 pub struct OpenAIEmbedder {
     client: reqwest::Client,
-    api_key: String,
+    grant: crate::credential::EmbeddingCredentialGrant,
     base_url: String,
     model: String,
     dim: usize,
 }
 
 impl OpenAIEmbedder {
-    pub fn new(api_key: String, model: String, dimension: usize) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            api_key,
-            base_url: "https://api.openai.com/v1".to_string(),
-            model,
-            dim: dimension,
+    /// Construct an embedder whose credential is explicitly scoped to the
+    /// exact provider base URL. Unscoped raw-key construction is intentionally
+    /// unsupported.
+    pub fn new_scoped(
+        grant: crate::credential::EmbeddingCredentialGrant,
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+        dimension: usize,
+    ) -> Result<Self> {
+        let base_url = base_url.into().trim_end_matches('/').to_string();
+        let now = epoch_seconds();
+        if !grant.approved_for(&base_url, now) {
+            anyhow::bail!("embedding credential is not approved for configured endpoint");
         }
+        Ok(Self {
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()?,
+            grant,
+            base_url,
+            model: model.into(),
+            dim: dimension,
+        })
     }
 
-    pub fn with_base_url(mut self, url: String) -> Self {
-        self.base_url = url;
-        self
+    fn authorization_value(&self, now_unix: u64) -> Result<String> {
+        let secret = self
+            .grant
+            .secret_if_approved(&self.base_url, now_unix)
+            .ok_or_else(|| anyhow::anyhow!("embedding endpoint credential rejected"))?;
+        Ok(format!("Bearer {}", secret))
     }
+}
+
+fn epoch_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[async_trait]
 impl Embedder for OpenAIEmbedder {
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        let authorization = self.authorization_value(epoch_seconds())?;
         let resp = self
             .client
             .post(format!("{}/embeddings", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", authorization)
             .json(&serde_json::json!({
                 "input": text,
                 "model": self.model,
             }))
             .send()
             .await?
+            .error_for_status()?
             .json::<serde_json::Value>()
             .await?;
 
@@ -388,5 +471,104 @@ mod tests {
         let deserialized: ScoredEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, "test-1");
         assert!((deserialized.score - 0.95).abs() < 0.001);
+    }
+
+    #[test]
+    fn governed_filter_translates_to_qdrant_must_conditions() {
+        let neutral = serde_json::json!({
+            "scope_key": { "$in": ["principal:p", "session:s"] },
+            "sensitivity_ord": { "$lte": 1 },
+            "authority": { "$in": ["UserExplicit", "Observed"] }
+        });
+        let filter = qdrant_filter(&neutral).unwrap();
+        let must = filter["must"].as_array().unwrap();
+        assert_eq!(must.len(), 3);
+        assert!(must.iter().any(|condition| {
+            condition["key"] == "scope_key"
+                && condition["match"]["any"] == serde_json::json!(["principal:p", "session:s"])
+        }));
+        assert!(must.iter().any(|condition| {
+            condition["key"] == "sensitivity_ord" && condition["range"]["lte"] == 1.0
+        }));
+    }
+
+    #[test]
+    fn malformed_or_unknown_filter_operator_fails_closed() {
+        assert!(qdrant_filter(&serde_json::json!({
+            "scope_key": { "$contains": "principal:p" }
+        }))
+        .is_err());
+        assert!(qdrant_filter(&serde_json::json!(["not", "an", "object"])).is_err());
+    }
+
+    fn scoped_grant(base_url: &str) -> crate::credential::EmbeddingCredentialGrant {
+        crate::credential::EmbeddingCredentialGrant::new(
+            "test-principal",
+            base_url,
+            "test-embedding",
+            epoch_seconds() + 3600,
+            1,
+            "super-secret-key",
+        )
+    }
+
+    #[test]
+    fn openai_embedder_requires_exact_explicit_scope() {
+        let base = "https://embedding.example/v1";
+        let embedder = OpenAIEmbedder::new_scoped(scoped_grant(base), base, "model", 3).unwrap();
+        assert_eq!(
+            embedder.authorization_value(epoch_seconds()).unwrap(),
+            "Bearer super-secret-key"
+        );
+        assert!(OpenAIEmbedder::new_scoped(
+            scoped_grant(base),
+            "https://embedding.example.evil/v1",
+            "model",
+            3,
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn openai_embedder_does_not_follow_redirect_with_credential() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let destination = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let destination_addr = destination.local_addr().unwrap();
+        let source = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let source_addr = source.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = source.accept().await.unwrap();
+            let mut request = vec![0_u8; 4096];
+            let size = stream.read(&mut request).await.unwrap();
+            assert!(String::from_utf8_lossy(&request[..size])
+                .to_ascii_lowercase()
+                .contains("authorization: bearer redirect-secret"));
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://{}/stolen\r\nContent-Length: 0\r\n\r\n",
+                        destination_addr
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let base = format!("http://{}", source_addr);
+        let grant = crate::credential::EmbeddingCredentialGrant::new(
+            "test-principal",
+            &base,
+            "test-embedding",
+            epoch_seconds() + 3600,
+            1,
+            "redirect-secret",
+        );
+        let embedder = OpenAIEmbedder::new_scoped(grant, base, "model", 3).unwrap();
+        assert!(embedder.embed("hello").await.is_err());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), destination.accept())
+                .await
+                .is_err()
+        );
     }
 }

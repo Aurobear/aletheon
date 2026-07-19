@@ -6,11 +6,11 @@ use fabric::{ExternalEventEnvelope, ExternalEventId};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
-use crate::r#impl::channel::router::ChannelRouter;
-use crate::r#impl::channel::store::ChannelStore;
 use crate::r#impl::goal::GoalCoordinator;
 use fabric::channel::{MessageContent, OutboundMessage};
 use fabric::{ConversationId, GoogleEvent};
+use gateway::registry::{EventCapabilityHandler, EventCapabilityRegistry, IntentKind};
+use gateway::store::ChannelStore;
 use std::path::Path;
 
 #[async_trait]
@@ -134,50 +134,12 @@ pub trait GoogleMemoryProposalSink: Send + Sync {
     ) -> Result<(), String>;
 }
 
-#[async_trait]
-pub trait GoogleMailIngressSink: Send + Sync {
-    async fn ingest_mail(
-        &self,
-        event: &ExternalEventEnvelope,
-        cancel: &CancellationToken,
-    ) -> Result<(), String>;
-}
-
-#[async_trait]
-impl GoogleMailIngressSink for crate::r#impl::channel::gmail::GmailGoalEventIngress {
-    async fn ingest_mail(
-        &self,
-        event: &ExternalEventEnvelope,
-        cancel: &CancellationToken,
-    ) -> Result<(), String> {
-        self.ingest(event, cancel).await.map(|_| ())
-    }
-}
-
 pub trait GoogleNotificationSink: Send + Sync {
     fn enqueue(
         &self,
         conversation_id: ConversationId,
         event: &ExternalEventEnvelope,
     ) -> Result<bool, String>;
-}
-
-struct ChannelRouterNotificationSink {
-    router: Arc<Mutex<ChannelRouter>>,
-}
-
-impl GoogleNotificationSink for ChannelRouterNotificationSink {
-    fn enqueue(
-        &self,
-        conversation_id: ConversationId,
-        event: &ExternalEventEnvelope,
-    ) -> Result<bool, String> {
-        self.router
-            .lock()
-            .unwrap()
-            .enqueue_google_notification(conversation_id, event)
-            .map_err(|error| error.to_string())
-    }
 }
 
 /// Production notification sink that persists directly into the shared channel
@@ -224,27 +186,17 @@ pub struct GoogleEventRouter {
     store: Arc<Mutex<GoogleSyncStore>>,
     goals: Arc<GoalCoordinator>,
     notifications: Arc<dyn GoogleNotificationSink>,
-    mail_ingress: Option<Arc<dyn GoogleMailIngressSink>>,
+    /// Event capabilities keyed by [`IntentKind`] (currently only
+    /// [`IntentKind::GmailIngest`]) — the channel-registry seam that
+    /// replaced the former hardcoded mail-ingress branch. Gmail's own
+    /// stores/idempotency/security remain entirely inside the registered
+    /// handler; this router only decides *whether* to invoke it.
+    event_capabilities: EventCapabilityRegistry,
     current_tasks: Option<Arc<dyn GoogleCurrentTaskProjection>>,
     memory_proposals: Option<Arc<dyn GoogleMemoryProposalSink>>,
 }
 
 impl GoogleEventRouter {
-    pub fn new(
-        store: Arc<Mutex<GoogleSyncStore>>,
-        goals: Arc<GoalCoordinator>,
-        channels: Arc<Mutex<ChannelRouter>>,
-    ) -> Self {
-        Self {
-            store,
-            goals,
-            notifications: Arc::new(ChannelRouterNotificationSink { router: channels }),
-            mail_ingress: None,
-            current_tasks: None,
-            memory_proposals: None,
-        }
-    }
-
     pub fn new_with_notifications(
         store: Arc<Mutex<GoogleSyncStore>>,
         goals: Arc<GoalCoordinator>,
@@ -254,7 +206,7 @@ impl GoogleEventRouter {
             store,
             goals,
             notifications,
-            mail_ingress: None,
+            event_capabilities: EventCapabilityRegistry::new(),
             current_tasks: None,
             memory_proposals: None,
         }
@@ -265,8 +217,11 @@ impl GoogleEventRouter {
         self
     }
 
-    pub fn with_mail_ingress(mut self, sink: Arc<dyn GoogleMailIngressSink>) -> Self {
-        self.mail_ingress = Some(sink);
+    /// Register an [`EventCapabilityHandler`] (e.g. Gmail's `GmailIngestHandler`,
+    /// keyed by [`IntentKind::GmailIngest`]) that `deliver` invokes directly
+    /// for matching events — bypassing duplex `ChannelDispatcher::process`.
+    pub fn with_mail_ingress(mut self, handler: Arc<dyn EventCapabilityHandler>) -> Self {
+        self.event_capabilities.register(handler);
         self
     }
 
@@ -306,8 +261,11 @@ impl GoogleEventSink for GoogleEventRouter {
                 .map_err(|error| error.to_string())?
         };
         if matches!(event.event, GoogleEvent::MailReceived(_)) {
-            if let Some(ingress) = &self.mail_ingress {
-                ingress.ingest_mail(event, cancel).await?;
+            if let Some(handler) = self.event_capabilities.get(IntentKind::GmailIngest) {
+                handler
+                    .handle(event, cancel)
+                    .await
+                    .map_err(|error| error.to_string())?;
             }
         }
         for subscription in subscriptions {

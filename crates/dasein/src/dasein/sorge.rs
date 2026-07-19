@@ -1,7 +1,5 @@
 use super::reducer::DaseinStateEngine;
-use aletheon_kernel::chronos::SystemTimer;
 use fabric::dasein::{DaseinEvent, ExperienceSource, InterpretedExperience};
-use fabric::Timer;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -13,13 +11,17 @@ pub trait SorgeTimer: Send + Sync {
     async fn sleep(&self, duration: Duration);
 }
 
+/// Compatibility wall-clock adapter for callers that do not inject a timer.
+///
+/// Sorge itself only depends on [`SorgeTimer`]; composition roots can replace
+/// this adapter without giving Dasein a dependency on Kernel mechanisms.
 #[derive(Debug, Default)]
 pub struct SystemSorgeTimer;
 
 #[async_trait::async_trait]
 impl SorgeTimer for SystemSorgeTimer {
     async fn sleep(&self, duration: Duration) {
-        SystemTimer.sleep(duration).await;
+        tokio::time::sleep(duration).await;
     }
 }
 

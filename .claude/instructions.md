@@ -166,9 +166,25 @@ Before approving any design or plan that adds a new subsystem, verify:
 ## Test discipline
 
 - Kernel timeout/deadline tests MUST use `TestClock`. No real `sleep`.
-- `cargo test --workspace` MUST pass with no failures before any commit.
 - New behavior MUST have a test. Refactors without new tests are OK only if
   `cargo check --workspace --all-targets` + existing tests pass.
+
+### Test scope by phase
+
+Full `cargo test --workspace` is too slow for iterative development (10+ minutes).
+Scale test scope to the risk of the change:
+
+| Phase | Scope | Command |
+|-------|-------|---------|
+| **Feature work** (per-commit) | Affected crate only | `cargo test -p <crate> --lib --no-fail-fast` |
+| **Cross-crate change** | Affected crates | `cargo test -p <crate1> -p <crate2> --lib --no-fail-fast` |
+| **New integration test** | Specific test file | `cargo test -p <crate> --test <name> --no-fail-fast` |
+| **Pre-PR to dev** | Affected crates all targets | `cargo test -p <crate> --all-targets --no-fail-fast` |
+| **Merge to dev** | Full workspace | `cargo test --workspace --no-fail-fast` (only on PR to dev) |
+
+**Rule**: Do NOT run `cargo test --workspace` during feature-branch development.
+Only run it when the PR targets `dev`. Before that, test only the crates you touched.
+A `cargo check --workspace --all-targets` is sufficient to catch cross-crate breakage.
 
 ## Commit conventions
 

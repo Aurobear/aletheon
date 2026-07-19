@@ -6,41 +6,18 @@ pub use fabric::protocol::client::{
 };
 
 pub fn request_to_json(request: ClientRequest, id: u64) -> serde_json::Value {
-    let method = match request {
-        ClientRequest::Initialize(_) => "initialize",
-        ClientRequest::Initialized => "initialized",
-        ClientRequest::Snapshot(_) => "session.snapshot",
-        ClientRequest::Subscribe(_) => "session.subscribe",
-    };
-    serde_json::json!({
-        "jsonrpc": "2.0", "id": id, "method": method,
-        "params": ClientMessage::v1(request),
-    })
+    request
+        .to_json_rpc(id)
+        .expect("typed session request serializes")
 }
 
 // Compatibility adapters for the pre-Q02 session methods. Their payload value
 // types remain Fabric-owned; new snapshot/subscription clients use ClientRequest.
-use fabric::{ItemRecord, SessionId, SessionNotification};
-use serde::Serialize;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ResumeParams {
-    pub session_id: SessionId,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct ForkParams {
-    pub session_id: SessionId,
-    pub through_sequence: u64,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct InterruptParams {
-    pub session_id: SessionId,
-}
-#[derive(Debug, Clone, Serialize)]
-pub struct ReplayParams {
-    pub session_id: SessionId,
-    pub after_sequence: Option<u64>,
-}
+pub use fabric::protocol::client::{
+    ResumeParams, SessionForkParams as ForkParams, SessionInterruptParams as InterruptParams,
+    SessionReplayParams as ReplayParams,
+};
+use fabric::{ItemRecord, SessionNotification};
 
 #[derive(Debug, Clone)]
 pub enum SessionRpcRequest {
@@ -51,14 +28,23 @@ pub enum SessionRpcRequest {
 }
 impl SessionRpcRequest {
     pub fn to_json(&self, id: u64) -> serde_json::Value {
-        let (method, params) = match self {
-            Self::Resume(value) => ("session.resume", serde_json::to_value(value)),
-            Self::Fork(value) => ("session.fork", serde_json::to_value(value)),
-            Self::Interrupt(value) => ("session.interrupt", serde_json::to_value(value)),
-            Self::Replay(value) => ("session.replay", serde_json::to_value(value)),
+        let request = match self {
+            Self::Resume(value) => {
+                fabric::protocol::client::ClientRpcRequest::SessionResume(value.clone())
+            }
+            Self::Fork(value) => {
+                fabric::protocol::client::ClientRpcRequest::SessionFork(value.clone())
+            }
+            Self::Interrupt(value) => {
+                fabric::protocol::client::ClientRpcRequest::SessionInterrupt(value.clone())
+            }
+            Self::Replay(value) => {
+                fabric::protocol::client::ClientRpcRequest::SessionReplay(value.clone())
+            }
         };
-        serde_json::json!({"jsonrpc":"2.0", "id":id, "method":method,
-            "params":params.expect("typed compatibility params serialize")})
+        request
+            .to_json_rpc(Some(id))
+            .expect("typed compatibility request serializes")
     }
 }
 
@@ -72,7 +58,7 @@ impl SessionClientNotification {
         })
     }
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({"jsonrpc":"2.0", "method":"session.notification",
-            "params":serde_json::to_value(&self.0).expect("typed notification serializes")})
+        fabric::protocol::client::session_notification_to_json(&self.0)
+            .expect("typed notification serializes")
     }
 }

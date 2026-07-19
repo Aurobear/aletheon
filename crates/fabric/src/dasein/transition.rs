@@ -87,6 +87,11 @@ pub enum InterpretedExperience {
         summary: String,
         status: OutcomeStatus,
     },
+    ConcernObserved {
+        id: String,
+        purpose: String,
+        urgency: f64,
+    },
     KnowledgeAsserted {
         assertions: Vec<String>,
         confidence: f64,
@@ -133,6 +138,18 @@ impl InterpretedExperience {
                 validate_optional_text("lived perception", perception)?;
             }
             Self::Outcome { summary, .. } => validate_text("outcome summary", summary, false)?,
+            Self::ConcernObserved {
+                id,
+                purpose,
+                urgency,
+            } => {
+                validate_text("concern ID", id, false)?;
+                validate_text("concern purpose", purpose, false)?;
+                anyhow::ensure!(
+                    urgency.is_finite() && (0.0..=1.0).contains(urgency),
+                    "concern urgency must be finite and between 0 and 1"
+                );
+            }
             Self::KnowledgeAsserted {
                 assertions,
                 confidence,

@@ -24,7 +24,10 @@ impl PermitId {
 
 impl Default for PermitId {
     fn default() -> Self {
-        Self::new()
+        // The default usage report represents work that never received an
+        // execution permit. Real permits must be created explicitly with
+        // `PermitId::new()`.
+        Self(Uuid::nil())
     }
 }
 
@@ -166,6 +169,15 @@ pub struct BudgetReservationReceipt {
     pub scope_id: BudgetScopeId,
     pub parent_scope_id: BudgetScopeId,
     pub request: BudgetRequest,
+}
+
+/// Immutable proof that one live parent reservation atomically accepted the
+/// unused capacity of a closing child reservation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BudgetTransferReceipt {
+    pub child_reservation_id: BudgetReservationId,
+    pub parent_reservation_id: BudgetReservationId,
+    pub accepted: BudgetRequest,
 }
 
 impl Default for BudgetReservationId {

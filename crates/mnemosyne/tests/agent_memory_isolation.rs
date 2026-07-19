@@ -89,6 +89,8 @@ fn parent_projection_is_bounded_receipted_and_read_only() {
                 temporal_state: TemporalState::Current,
                 authority: MemoryAuthority::VerifiedLocalSemantic,
                 scope: MemoryScope::Session("root-session".into()),
+                score: 0.0,
+                evidence: None,
             })
             .collect(),
         degraded_sources: vec![],

@@ -8,15 +8,21 @@ use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
 use crate::events::subscription::{AsyncEnvelopeHandler, EnvelopeHandler, SubscriptionRegistry};
-use crate::{EnvelopeV2, SchemaId, SubscriptionId};
+use crate::{
+    EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, NamespaceId, SchemaId, SubscriptionId,
+};
 
-pub struct KernelEventBus {
+/// Canonical, schema-filtered event transport.
+///
+/// Unlike the legacy [`super::communication_bus::CommunicationBus`], this
+/// transport accepts only versioned [`EnvelopeV2`] values.
+pub struct CanonicalEventBus {
     subscriptions: SubscriptionRegistry,
     channels: RwLock<HashMap<SchemaId, broadcast::Sender<EnvelopeV2>>>,
     channel_capacity: usize,
 }
 
-impl KernelEventBus {
+impl CanonicalEventBus {
     pub fn new(channel_capacity: usize) -> Self {
         Self {
             subscriptions: SubscriptionRegistry::new(),
@@ -34,6 +40,24 @@ impl KernelEventBus {
             let _ = channel.send(envelope);
         }
         Ok(())
+    }
+
+    /// Publish a JSON payload under an explicit, versioned schema.
+    pub async fn publish_event(
+        &self,
+        schema: SchemaId,
+        source: impl Into<String>,
+        payload: serde_json::Value,
+    ) -> Result<()> {
+        self.publish(EnvelopeV2::new(
+            schema,
+            EnvelopeV2Target(source.into()),
+            EnvelopeV2Target("broadcast".into()),
+            EnvelopeV2Delivery::FanOut,
+            NamespaceId("default".into()),
+            payload,
+        ))
+        .await
     }
 
     pub fn subscribe_channel(&self, schema: SchemaId) -> broadcast::Receiver<EnvelopeV2> {
@@ -86,3 +110,12 @@ impl KernelEventBus {
         self.subscriptions.has_subscribers(schema)
     }
 }
+
+impl Default for CanonicalEventBus {
+    fn default() -> Self {
+        Self::new(1024)
+    }
+}
+
+/// Compatibility name for Fabric's internal legacy transport adapters.
+pub type KernelEventBus = CanonicalEventBus;

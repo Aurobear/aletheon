@@ -1,10 +1,11 @@
 //! Operation identifiers and records shared by turn/kernel contracts.
 
 use crate::types::time::{MonoDeadline, MonoTime};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct OperationId(pub Uuid);
 
 impl OperationId {

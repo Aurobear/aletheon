@@ -4,7 +4,10 @@
 //! merges, validates, and reports application layers.
 
 mod agent;
+pub mod backpressure;
+pub mod diagnostics;
 mod genome;
+mod grok_hardening;
 mod infra;
 mod provenance;
 mod provider;
@@ -14,13 +17,16 @@ pub use agent::{
     AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, ExecutiveConfig,
     HooksConfig, PerceptionConfig,
 };
+pub use backpressure::BackpressureConfig;
 pub use cognit::config::{
     AgentAdmissionConfig, BackupMode, CognitConfig, DeploymentBackupConfig, DeploymentConfig,
     DeploymentHealthConfig, DeploymentIntegrationsConfig, DeploymentMode, DeploymentPathsConfig,
-    DeploymentQuotaConfig, DeploymentSecretFilesConfig, GbrainMemoryConfig, GoalRuntimeConfig,
+    DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig, McpMemoryConfig,
     PiRuntimeConfig, RoleRuntimeConfig,
 };
+pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
 pub use genome::GenomeConfig;
+pub use grok_hardening::GrokHardeningConfig;
 pub use infra::{
     DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig, TelegramConfig,
 };
@@ -33,6 +39,27 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+/// Agent profile configuration with optional per-profile overrides.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentProfilesConfig {
+    /// Default profile name for new sessions (e.g. "code-agent").
+    pub default: String,
+    /// Per-profile overrides applied during profile construction.
+    pub overrides: HashMap<String, ProfileOverride>,
+}
+
+/// Per-profile override values. All fields are optional; only the provided
+/// values replace the profile's declared defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProfileOverride {
+    pub max_iterations: Option<usize>,
+    pub max_tool_calls: Option<u32>,
+    pub tool_timeout_ms: Option<u64>,
+    pub approval_policy: Option<fabric::AgentApprovalPolicy>,
+}
 
 /// The one application root schema. Its fields are typed domain inputs; it does
 /// not grant any domain permission to discover files or environment variables.
@@ -55,6 +82,18 @@ pub struct AppConfig {
     pub goal_runtime: Option<GoalRuntimeConfig>,
     pub pi_runtime: PiRuntimeConfig,
     pub deployment: DeploymentConfig,
+    pub grok_hardening: GrokHardeningConfig,
+    /// D2-M5-T2: overload/backpressure limits (default unlimited).
+    #[serde(default)]
+    pub backpressure: BackpressureConfig,
+    /// S1 sandbox profiles (from trusted daemon config, never from repo).
+    #[serde(default)]
+    pub sandbox_profiles: fabric::SandboxProfiles,
+    /// Host-owned outbound network authority for built-in tools.
+    #[serde(default)]
+    pub network_policy: fabric::network_policy::NetworkPolicy,
+    #[serde(default)]
+    pub agent_profiles: AgentProfilesConfig,
 }
 
 impl AppConfig {
@@ -139,9 +178,77 @@ pub fn merge_layers(layers: impl IntoIterator<Item = ConfigLayer>) -> Result<Loa
     let mut provenance = ConfigProvenance::default();
     provenance::record_leaves(&merged, "", &ConfigSource::defaults(), &mut provenance);
 
-    for layer in layers {
-        provenance::record_leaves(&layer.value, "", &layer.source, &mut provenance);
+    for mut layer in layers {
+        // Project configuration is the only lower-trust profile source. It may
+        // add names, but cannot hollow out a daemon/system/user profile by
+        // redefining the same name. Environment and CLI remain trusted daemon
+        // operator boundaries and retain their normal precedence.
+        let project_profiles = if layer.source.kind == ConfigSourceKind::Project {
+            layer
+                .value
+                .get("sandbox_profiles")
+                .cloned()
+                .map(|value| value.try_into::<fabric::SandboxProfiles>())
+                .transpose()
+                .context("validate project sandbox profiles")?
+        } else {
+            None
+        };
+        let lower_profiles = project_profiles.as_ref().map(|_| {
+            merged
+                .get("sandbox_profiles")
+                .cloned()
+                .unwrap_or_else(|| toml::Value::Table(Default::default()))
+                .try_into::<fabric::SandboxProfiles>()
+                .expect("effective lower sandbox profiles remain typed")
+        });
+        let mut provenance_value = layer.value.clone();
+        if layer.source.kind == ConfigSourceKind::Project {
+            // Network authority is host-owned. Repository configuration cannot
+            // grant itself outbound access.
+            if let Some(table) = layer.value.as_table_mut() {
+                if table.remove("network_policy").is_some() {
+                    tracing::warn!(
+                        source = %layer.source.locator,
+                        "project network_policy ignored; outbound authority is host-owned"
+                    );
+                }
+            }
+            if let Some(table) = provenance_value.as_table_mut() {
+                table.remove("network_policy");
+            }
+        }
+        if project_profiles.is_some() {
+            // Ignored same-name definitions must never appear authoritative in
+            // diagnostics. Profile authority is enforced by the typed merge;
+            // this prevents ignored project leaves from impersonating the
+            // trusted lower source in diagnostics.
+            if let Some(table) = provenance_value.as_table_mut() {
+                table.remove("sandbox_profiles");
+            }
+        }
+        provenance::record_leaves(&provenance_value, "", &layer.source, &mut provenance);
         merge_value(&mut merged, layer.value);
+        if let (Some(mut lower), Some(project)) = (lower_profiles, project_profiles) {
+            for name in project
+                .profiles
+                .keys()
+                .filter(|name| lower.profiles.contains_key(*name))
+            {
+                tracing::warn!(
+                    profile = %name,
+                    source = %layer.source.locator,
+                    "project sandbox profile cannot override trusted same-name profile"
+                );
+            }
+            lower.merge_project_additive(project);
+            let encoded = toml::Value::try_from(lower)
+                .context("serialize additively merged project sandbox profiles")?;
+            merged
+                .as_table_mut()
+                .expect("AppConfig root is a TOML table")
+                .insert("sandbox_profiles".into(), encoded);
+        }
     }
     let value = merged
         .try_into::<AppConfig>()

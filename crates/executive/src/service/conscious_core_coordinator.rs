@@ -12,12 +12,15 @@ use aletheon_kernel::KernelRuntime;
 use async_trait::async_trait;
 use fabric::dasein::SelfTransitionReceipt;
 use fabric::{
-    AgoraSpaceId, BroadcastEpoch, BroadcastIntegrationReceipt, CareConcernFrame, Clock,
-    ConsciousContextProjection, ConsciousProcessor, ContentId, ContextProjectionReceipt, GoalFrame,
-    MonoDeadline, MonoTime, OperationKind, OperationRequest, PredictionErrorFrame, PredictionFrame,
-    ProcessId, ProcessorContext, ProcessorHealth, ProcessorId, ProcessorResponse, SalienceVector,
-    SchemaId, SelectionExplanation, SelectionResult, VisibilityScope, WorkspaceBroadcast,
-    WorkspaceCandidate, WorkspaceContent, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
+    AgoraOperation, AgoraProposal, AgoraService, AgoraSpaceId, AgoraViewRequest, BroadcastEpoch,
+    BroadcastIntegrationReceipt, Clock, ConsciousArbitrationMode, ConsciousContextProjection,
+    ConsciousFieldReadout, ConsciousProcessor, ConsciousTraceEvent, ContentId,
+    ContextProjectionReceipt, FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot,
+    GoalFrame, LatestConsciousContextPort, MonoDeadline, MonoTime, OperationKind, OperationRequest,
+    PredictionErrorFrame, PredictionFrame, ProcessId, ProcessorContext, ProcessorHealth,
+    ProcessorId, ProcessorResponse, SalienceVector, SchemaId, SelectionExplanation,
+    SelectionResult, VisibilityScope, WorkspaceBroadcast, WorkspaceCandidate, WorkspaceContent,
+    WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
 };
 use parking_lot::RwLock;
 use tokio::sync::{Mutex, Semaphore};
@@ -26,11 +29,12 @@ use tokio::task::JoinSet;
 use super::conscious_core_ports::{
     CandidateAdmissionStatus, CandidateCause, CandidateSubmission, CandidateSubmissionReceipt,
     ConsciousCandidatePort, ConsciousCycleReceipt, DaseinIntegration, DaseinWorkspacePort,
-    LatestConsciousContextPort, ProcessorCycleStatus,
+    ProcessorCycleStatus,
 };
 
 #[derive(Debug, Clone)]
 pub struct ConsciousCoreConfig {
+    pub arbitration_mode: ConsciousArbitrationMode,
     pub max_processors: usize,
     pub max_processor_concurrency: usize,
     pub max_candidates_per_processor: usize,
@@ -43,6 +47,7 @@ pub struct ConsciousCoreConfig {
 impl Default for ConsciousCoreConfig {
     fn default() -> Self {
         Self {
+            arbitration_mode: ConsciousArbitrationMode::Observe,
             max_processors: 16,
             max_processor_concurrency: 4,
             max_candidates_per_processor: 8,
@@ -116,8 +121,9 @@ pub struct ConsciousCoreCoordinator {
     clock: Arc<dyn Clock>,
     config: ConsciousCoreConfig,
     processors: RwLock<BTreeMap<String, RegisteredProcessor>>,
-    next_workspace_version: Mutex<u64>,
+    agora: Arc<dyn AgoraService>,
     predictions: Mutex<HashMap<ContentId, PredictionFrame>>,
+    field_metrics: RwLock<FieldMetricHistory>,
     cycle: Mutex<()>,
 }
 
@@ -147,6 +153,34 @@ impl ConsciousCoreCoordinator {
             }))
     }
 
+    /// Return the current content-free field indicators without exposing the
+    /// coordinator's mutable history.
+    pub fn field_metric_indicators(&self) -> FieldMetricIndicators {
+        self.field_metrics.read().indicators()
+    }
+
+    /// Return a read-only copy of the bounded numeric snapshots for audit and
+    /// acceptance evidence.
+    pub fn field_metric_snapshots(&self) -> Vec<FieldMetricSnapshot> {
+        self.field_metrics
+            .read()
+            .entries()
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Append pre-execution conscious modulation evidence to the workspace's
+    /// checksum-protected store.
+    pub fn record_field_modulation(&self, event: &ConsciousTraceEvent) -> anyhow::Result<()> {
+        self.store.save_field_modulation(&self.space, event)
+    }
+
+    /// Return durable modulation evidence for audit and acceptance projections.
+    pub fn field_modulations(&self) -> anyhow::Result<Vec<ConsciousTraceEvent>> {
+        self.store.field_modulations(&self.space)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         space: AgoraSpaceId,
@@ -156,14 +190,11 @@ impl ConsciousCoreCoordinator {
         dasein: Arc<dyn DaseinWorkspacePort>,
         dasein_source: ProcessId,
         kernel: Arc<KernelRuntime>,
+        agora: Arc<dyn AgoraService>,
         config: ConsciousCoreConfig,
     ) -> anyhow::Result<Self> {
         config.validate()?;
-        let replay = store.replay(&space)?;
-        let next_workspace_version = replay
-            .last()
-            .map(|entry| entry.broadcast.workspace_version.saturating_add(1))
-            .unwrap_or(1);
+        let _ = store.replay(&space)?;
         Ok(Self {
             pool: Mutex::new(CandidatePool::new(space.clone(), pool_config)?),
             space,
@@ -175,10 +206,52 @@ impl ConsciousCoreCoordinator {
             kernel,
             config,
             processors: RwLock::new(BTreeMap::new()),
-            next_workspace_version: Mutex::new(next_workspace_version),
+            agora,
             predictions: Mutex::new(HashMap::new()),
+            field_metrics: RwLock::new(FieldMetricHistory::default()),
             cycle: Mutex::new(()),
         })
+    }
+
+    async fn commit_attention(
+        &self,
+        selection: &SelectionResult,
+        operation_id: fabric::OperationId,
+    ) -> anyhow::Result<u64> {
+        anyhow::ensure!(
+            !selection.selected.is_empty(),
+            "attention selection is empty"
+        );
+        let view = self
+            .agora
+            .view(AgoraViewRequest {
+                space: self.space.clone(),
+            })
+            .await?;
+        let priorities = selection
+            .selected
+            .iter()
+            .map(|candidate| candidate.id.0.to_string())
+            .collect::<Vec<_>>();
+        let deadline = self.clock.wall_now().0.saturating_add(5_000);
+        let proposal = AgoraProposal {
+            id: uuid::Uuid::new_v4(),
+            space: self.space.clone(),
+            author: self.dasein_source,
+            base_version: view.version,
+            operation: AgoraOperation::UpdateAttention {
+                focus: priorities.first().cloned(),
+                priorities,
+                selection_ref: format!("conscious-cycle:{}", operation_id.0),
+            },
+            evidence: vec![format!("operation:{}", operation_id.0)],
+            confidence: 1.0,
+            expires_at_ms: Some(deadline),
+        };
+        let permit = fabric::WorkspaceCommitPermit::issue_for(&proposal, deadline)?;
+        let proposal_id = self.agora.propose(proposal).await?;
+        let receipt = self.agora.commit(proposal_id, permit).await?;
+        Ok(receipt.commit.version)
     }
 
     pub fn register_processor(
@@ -309,8 +382,10 @@ impl ConsciousCoreCoordinator {
             });
         }
         self.ensure_before(deadline)?;
-        let mut version = self.next_workspace_version.lock().await;
-        let workspace_version = *version;
+        // Attention is committed through the authoritative transactional Agora
+        // before any broadcast becomes visible. A failed commit aborts the
+        // cycle and leaves the selected candidates unpublished.
+        let workspace_version = self.commit_attention(&selection, operation_id).await?;
         let broadcast = self
             .broadcast
             .broadcast_selection(
@@ -322,8 +397,6 @@ impl ConsciousCoreCoordinator {
                 self.clock.wall_now(),
             )
             .await?;
-        *version = version.saturating_add(1);
-        drop(version);
         drop(pool);
 
         self.ensure_before(deadline)?;
@@ -363,6 +436,7 @@ impl ConsciousCoreCoordinator {
         };
         projection.validate()?;
         self.store.save_context_projection(&projection)?;
+        self.record_field_metric(&projection, &durable_integration.broadcast_checksum)?;
 
         Ok(ConsciousCycleReceipt {
             operation_id,
@@ -372,6 +446,67 @@ impl ConsciousCoreCoordinator {
             dasein_transition: Some(integration.transition),
             processors,
         })
+    }
+
+    fn record_field_metric(
+        &self,
+        projection: &ConsciousContextProjection,
+        broadcast_checksum: &str,
+    ) -> anyhow::Result<()> {
+        let readout = ConsciousFieldReadout::from_projection(projection)?
+            .ok_or_else(|| anyhow::anyhow!("completed broadcast has no field readout"))?;
+        let broadcast = projection
+            .latest_broadcast
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("completed projection has no broadcast"))?;
+        let protention = broadcast
+            .selected
+            .iter()
+            .filter(|candidate| matches!(&candidate.content, WorkspaceContent::Prediction(_)))
+            .max_by(|left, right| {
+                left.salience
+                    .confidence
+                    .partial_cmp(&right.salience.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        let protention_salience = protention
+            .map(|candidate| salience_values(candidate.salience))
+            .unwrap_or([0.0; 8]);
+        let protention_horizon_ms = protention.and_then(|candidate| match &candidate.content {
+            WorkspaceContent::Prediction(prediction) => Some(prediction.horizon_ms),
+            _ => None,
+        });
+        let action_salience = broadcast
+            .selected
+            .iter()
+            .filter(|candidate| matches!(&candidate.content, WorkspaceContent::ActionProposal(_)))
+            .max_by(|left, right| {
+                left.salience
+                    .confidence
+                    .partial_cmp(&right.salience.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|candidate| salience_values(candidate.salience))
+            .unwrap_or([0.0; 8]);
+        let snapshot = FieldMetricSnapshot {
+            broadcast_epoch: broadcast.epoch.0,
+            dasein_version: projection.self_view.version.0,
+            salience: salience_values(readout.salience),
+            care_action: readout.care_action,
+            concern_urgency: f64::from(readout.concern_urgency),
+            update_delta: 0.0,
+            protention_salience,
+            protention_horizon_ms,
+            action_salience,
+            temporally_decayed_update: 0.0,
+            temporality_decay_weight: None,
+            prior_protention_action_alignment: None,
+            trace_event_id: format!(
+                "broadcast:{}:{}:{broadcast_checksum}",
+                self.space.0, broadcast.epoch.0
+            ),
+        };
+        self.field_metrics.write().push(snapshot)
     }
 
     async fn remodulate_pending(&self) -> anyhow::Result<()> {
@@ -408,12 +543,14 @@ impl ConsciousCoreCoordinator {
             .cloned()
             .map(WorkspaceContent::Concern)
             .collect::<Vec<_>>();
-        contents.extend(integration.self_view.concerns.iter().map(|purpose| {
-            WorkspaceContent::CareConcern(CareConcernFrame {
-                purpose: purpose.clone(),
-                urgency: 0.7,
-            })
-        }));
+        contents.extend(
+            integration
+                .self_view
+                .care_concerns
+                .iter()
+                .cloned()
+                .map(WorkspaceContent::CareConcern),
+        );
         if let Some(projection) = &integration.self_view.projection {
             contents.push(WorkspaceContent::Goal(GoalFrame {
                 id: format!("dasein-projection-v{}", integration.self_view.version.0),
@@ -870,6 +1007,10 @@ fn baseline_salience(confidence: f32) -> SalienceVector {
         affect_intensity: 0.0,
         social_relevance: 0.0,
     }
+}
+
+fn salience_values(salience: SalienceVector) -> [f64; 8] {
+    salience.values().map(f64::from)
 }
 
 fn deterministic_content_id(material: &str) -> ContentId {

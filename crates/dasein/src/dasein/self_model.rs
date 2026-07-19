@@ -90,7 +90,7 @@ impl MutableSelfModel {
     }
 
     /// Add an assertion.
-    pub fn assert(&self, assertion: SelfAssertion) {
+    pub(crate) fn assert(&self, assertion: SelfAssertion) {
         let mut current = self.current.write();
         // Replace if same content exists
         if let Some(existing) = current.iter_mut().find(|a| a.content == assertion.content) {
@@ -111,7 +111,7 @@ impl MutableSelfModel {
     }
 
     /// Negate an assertion — move it from current to negated.
-    pub fn negate(
+    pub(crate) fn negate(
         &self,
         content: &str,
         reason: NegationReason,
@@ -165,7 +165,7 @@ impl MutableSelfModel {
     }
 
     /// Add a possibility.
-    pub fn add_possibility(&self, poss: SelfPossibility) {
+    pub(crate) fn add_possibility(&self, poss: SelfPossibility) {
         let mut possibilities = self.possibilities.write();
         possibilities.push(poss);
     }

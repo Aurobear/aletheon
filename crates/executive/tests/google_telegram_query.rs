@@ -3,17 +3,20 @@ use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
 use corpus::tools::google::oauth::{GoogleOAuthProvider, OAuthClientConfig};
 use corpus::tools::mcp::token_store::{TokenEntry, TokenKey, TokenStore};
-use executive::r#impl::channel::router::{
-    ChannelRouter, ChannelTransport, ChannelTurnExecutor, GoogleChannelAccountDirectory,
-    ProviderEnvelope,
-};
-use executive::r#impl::channel::store::ChannelStore;
 use executive::r#impl::external::{ExternalIdentityRepository, GoogleIntegration};
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,
 };
 use fabric::{ExternalIdentityId, ExternalScope, IdentityProvider, PrincipalId};
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+};
+use gateway::handlers::chat::ChatHandler;
+use gateway::handlers::google_read::{GoogleChannelAccountDirectory, GoogleReadPreprocessor};
+use gateway::handlers::greeting::GreetingHandler;
+use gateway::registry::CapabilityRegistry;
+use gateway::store::ChannelStore;
 use http_body_util::Full;
 use hyper::body::Bytes;
 use hyper::service::service_fn;
@@ -90,12 +93,20 @@ fn inbound(id: &str, sender: &str, text: &str) -> ProviderEnvelope {
     }
 }
 
-fn router(path: &std::path::Path, turn: Arc<Turn>, accounts: Vec<String>) -> ChannelRouter {
+fn router(path: &std::path::Path, turn: Arc<Turn>, accounts: Vec<String>) -> ChannelDispatcher {
     let store = ChannelStore::open(path).unwrap();
     store
         .bind("telegram", "telegram:7", "principal-7", "active")
         .unwrap();
-    ChannelRouter::new(store, turn).with_google_accounts(Arc::new(Accounts(accounts)))
+    let mut registry = CapabilityRegistry::new();
+    registry.register(Arc::new(ChatHandler::new(
+        turn,
+        Some(Arc::new(GoogleReadPreprocessor::new(Arc::new(Accounts(
+            accounts,
+        ))))),
+    )));
+    registry.register(Arc::new(GreetingHandler));
+    ChannelDispatcher::with_registry(store, registry)
 }
 
 #[tokio::test]
@@ -248,6 +259,7 @@ async fn expired_token_refresh_is_singleflight_and_transcript_safe() {
             token_url: format!("{endpoint}/token"),
             revocation_url: Some(format!("{endpoint}/revoke")),
             userinfo_url: Some(format!("{endpoint}/userinfo")),
+            client_auth_method: corpus::tools::google::oauth::OAuthClientAuthMethod::None,
         },
         vec![ExternalScope::GmailReadonly],
         tokens,
@@ -302,6 +314,7 @@ async fn refresh_failure_returns_only_reauthorization_status() {
             token_url: format!("{endpoint}/token"),
             revocation_url: None,
             userinfo_url: None,
+            client_auth_method: corpus::tools::google::oauth::OAuthClientAuthMethod::None,
         },
         vec![ExternalScope::GmailReadonly],
         tokens,

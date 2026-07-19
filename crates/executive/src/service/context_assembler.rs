@@ -1,11 +1,10 @@
 //! Deterministic, bounded turn context assembly.
 
-use crate::service::conscious_core_ports::LatestConsciousContextPort;
 use crate::service::daemon_turn::helpers::{bounded_text_history, build_request_messages};
 use async_trait::async_trait;
 use fabric::{
-    AgoraSpaceId, ConsciousContextProjection, ContextProjectionReceipt, Message, TurnRequest,
-    WorkspaceContent,
+    AgoraSpaceId, ConsciousContextProjection, ContextProjectionReceipt, LatestConsciousContextPort,
+    Message, TurnRequest, WorkspaceContent,
 };
 use serde::Serialize;
 use std::sync::Arc;

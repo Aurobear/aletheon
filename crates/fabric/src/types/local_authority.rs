@@ -1,5 +1,6 @@
 //! Authenticated local principal and workspace authority contracts.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -26,7 +27,7 @@ impl Default for ConnectionId {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct ThreadId(pub String);
 
@@ -285,6 +286,9 @@ pub struct PrincipalContext {
     pub workspace: WorkspacePolicy,
     pub permission_profile: PermissionProfileId,
     pub approval_policy: ApprovalPolicy,
+    /// Host-minted G1 decision for repository command hooks.
+    #[serde(default)]
+    pub repo_hooks_trusted: bool,
 }
 
 impl PrincipalContext {
@@ -306,6 +310,7 @@ impl PrincipalContext {
             workspace,
             permission_profile,
             approval_policy,
+            repo_hooks_trusted: false,
         }
     }
 }

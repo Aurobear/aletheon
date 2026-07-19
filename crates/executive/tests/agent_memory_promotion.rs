@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use executive::service::agent_control::{MemoryRecordingAgentEventSink, NoopAgentEventSink};
 use fabric::{
     AgentId, AgentTaskId, BroadcastEpoch, ContentId, OperationId, PrincipalId, ProcessId,
 };
@@ -11,7 +10,7 @@ use tempfile::tempdir;
 fn root_selection_and_parent_review_are_required_and_restart_idempotent() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("agent-memory.db");
-    let vault = Arc::new(AgentMemoryVault::open(&path).unwrap());
+    let vault = AgentMemoryVault::open(&path).unwrap();
     let process = ProcessId::new();
     let agent = AgentId::new();
     let context = AgentMemoryContext::verified(
@@ -34,22 +33,22 @@ fn root_selection_and_parent_review_are_required_and_restart_idempotent() {
             },
         )
         .unwrap();
-    let sink = MemoryRecordingAgentEventSink::new(Arc::new(NoopAgentEventSink), vault, context);
     let root_content = ContentId::new();
     let selected = ContentId::new();
-    let first = sink
-        .promote_reviewed(
-            source.id.clone(),
+    let first = vault
+        .promote(&mnemosyne::MemoryPromotionRequest {
+            source_record: source.id.clone(),
+            child: context,
             root_content,
-            BroadcastEpoch(11),
-            selected,
-            "selection:epoch-11".into(),
-            PrincipalId("parent".into()),
-            "review:approved".into(),
-            MemoryScope::Session("root-session".into()),
-        )
+            broadcast: BroadcastEpoch(11),
+            selected_candidate: selected,
+            selection_receipt: "selection:epoch-11".into(),
+            reviewer: PrincipalId("parent".into()),
+            review_receipt: "review:approved".into(),
+            target_scope: MemoryScope::Session("root-session".into()),
+        })
         .unwrap();
-    drop(sink);
+    drop(vault);
 
     let reopened = Arc::new(AgentMemoryVault::open(&path).unwrap());
     let promoted = reopened

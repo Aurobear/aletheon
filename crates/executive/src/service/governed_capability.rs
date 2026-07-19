@@ -12,9 +12,11 @@ use async_trait::async_trait;
 use fabric::types::admission::RiskLevel;
 use fabric::{
     AdmissionController, BroadcastEpoch, CapabilityAuthority, CapabilityCall, CapabilityInvoker,
-    CapabilityResult, CapabilityScope, ContentId, InvocationControl, PrincipalId, ProcessId,
+    CapabilityResult, CapabilityScope, ConsciousArbitrationMode, ContentId, FieldDecisionKind,
+    FieldDecisionReason, InvocationControl, PrincipalId, ProcessId, SalienceVector,
     SandboxRequirement, UsageReport, WorkspaceAttribution,
 };
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 /// Trusted execution context attached by Executive, never by model input.
@@ -33,7 +35,11 @@ pub struct CapabilityExecutionContext {
     pub sandbox: SandboxRequirement,
     pub cancel: CancellationToken,
     pub turn_count: usize,
+    pub repo_hooks_trusted: bool,
     pub action_loop: Option<Arc<dyn GovernedActionLoop>>,
+    /// G2 additive progress path. Both fields are required to activate it.
+    pub streaming_tools: bool,
+    pub turn_event_sender: Option<fabric::ipc::TurnEventSender>,
 }
 
 #[async_trait]
@@ -67,13 +73,64 @@ pub struct AuthorizedInvocation {
     pub control: InvocationControl,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectedActionContext {
     pub candidate_id: ContentId,
     pub broadcast_epoch: BroadcastEpoch,
     pub operation_id: fabric::OperationId,
     pub source_process: ProcessId,
     pub attribution: WorkspaceAttribution,
+}
+
+/// Bounded pre-execution evidence for a conscious action decision.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActionModulationSnapshot {
+    pub decision: FieldDecisionKind,
+    pub reason: FieldDecisionReason,
+    pub broadcast_epoch: BroadcastEpoch,
+    pub confidence: f32,
+    pub salience: SalienceVector,
+    pub metric_ref: String,
+}
+
+impl ActionModulationSnapshot {
+    pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.confidence.is_finite() && (0.0..=1.0).contains(&self.confidence),
+            "action modulation confidence must be finite and in [0,1]"
+        );
+        self.salience.validate()?;
+        anyhow::ensure!(
+            matches!(
+                (self.decision, self.reason),
+                (FieldDecisionKind::Proceed, FieldDecisionReason::Selected)
+                    | (FieldDecisionKind::Reorder, FieldDecisionReason::Selected)
+                    | (
+                        FieldDecisionKind::WouldDefer | FieldDecisionKind::Defer,
+                        FieldDecisionReason::Negated | FieldDecisionReason::LostCompetition
+                    )
+            ),
+            "action modulation decision and reason are inconsistent"
+        );
+        anyhow::ensure!(
+            !self.metric_ref.trim().is_empty() && self.metric_ref.len() <= 32 * 1024,
+            "action modulation metric reference is invalid"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GovernedActionDecision {
+    Proceed {
+        selected: SelectedActionContext,
+        modulation: Option<ActionModulationSnapshot>,
+    },
+    Defer {
+        reason: FieldDecisionReason,
+        retryable: bool,
+        modulation: ActionModulationSnapshot,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,7 +142,18 @@ pub struct SelectedActionOutcomeReceipt {
 
 #[async_trait]
 pub trait GovernedActionLoop: Send + Sync {
-    async fn select_action(&self, call: &CapabilityCall) -> Result<SelectedActionContext>;
+    fn arbitration_mode(&self) -> ConsciousArbitrationMode {
+        ConsciousArbitrationMode::Observe
+    }
+
+    async fn select_action(&self, call: &CapabilityCall) -> Result<GovernedActionDecision>;
+
+    async fn observe_modulation(
+        &self,
+        mode: ConsciousArbitrationMode,
+        call: &CapabilityCall,
+        modulation: &ActionModulationSnapshot,
+    ) -> Result<()>;
 
     async fn observe_outcome(
         &self,
@@ -110,6 +178,9 @@ pub struct GovernedCapabilityInvoker {
     inner: Arc<dyn CapabilityInvoker>,
     authority: Arc<dyn TurnAuthorityProvider>,
     action_loop: Option<Arc<dyn GovernedActionLoop>>,
+    arbitration_mode: ConsciousArbitrationMode,
+    stream_events: Option<fabric::ipc::TurnEventSender>,
+    notification_observer: Option<crate::service::tool_stream_bridge::ToolNotificationObserver>,
 }
 
 impl GovernedCapabilityInvoker {
@@ -121,13 +192,44 @@ impl GovernedCapabilityInvoker {
             inner,
             authority,
             action_loop: None,
+            arbitration_mode: ConsciousArbitrationMode::Observe,
+            stream_events: None,
+            notification_observer: None,
         }
     }
 
     pub fn with_action_loop(mut self, action_loop: Arc<dyn GovernedActionLoop>) -> Self {
+        self.arbitration_mode = action_loop.arbitration_mode();
         self.action_loop = Some(action_loop);
         self
     }
+
+    /// Override conscious arbitration for an explicitly configured runtime.
+    pub fn with_arbitration_mode(mut self, mode: ConsciousArbitrationMode) -> Self {
+        self.arbitration_mode = mode;
+        self
+    }
+
+    pub fn with_tool_stream(mut self, sender: fabric::ipc::TurnEventSender) -> Self {
+        self.stream_events = Some(sender);
+        self
+    }
+
+    pub fn with_notification_observer(
+        mut self,
+        observer: crate::service::tool_stream_bridge::ToolNotificationObserver,
+    ) -> Self {
+        self.notification_observer = Some(observer);
+        self
+    }
+}
+
+#[derive(Serialize)]
+struct ConsciousDeferredPayload {
+    code: &'static str,
+    retryable: bool,
+    reason: FieldDecisionReason,
+    epoch: u64,
 }
 
 #[async_trait]
@@ -142,12 +244,103 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                     is_error: true,
                     usage: UsageReport::default(),
                     audit_id: None,
+                    patch_delta: None,
                 };
             }
         };
         let selected = if let Some(action_loop) = &self.action_loop {
             match action_loop.select_action(&call).await {
-                Ok(selected) => Some(selected),
+                Ok(GovernedActionDecision::Proceed {
+                    selected,
+                    modulation,
+                }) => {
+                    if let Some(modulation) = modulation.as_ref() {
+                        if let Err(error) = action_loop
+                            .observe_modulation(self.arbitration_mode, &call, modulation)
+                            .await
+                        {
+                            if self.arbitration_mode == ConsciousArbitrationMode::Enforce {
+                                return CapabilityResult {
+                                    call_id: call.call_id,
+                                    output: format!(
+                                        "capability action modulation observation failed: {error}"
+                                    ),
+                                    is_error: true,
+                                    usage: UsageReport::default(),
+                                    audit_id: None,
+                                    patch_delta: None,
+                                };
+                            }
+                            tracing::warn!(
+                                error = %error,
+                                "conscious action modulation observation failed in observe mode"
+                            );
+                        }
+                    }
+                    Some(selected)
+                }
+                Ok(GovernedActionDecision::Defer {
+                    reason,
+                    retryable,
+                    mut modulation,
+                }) => {
+                    modulation.decision = match self.arbitration_mode {
+                        ConsciousArbitrationMode::Observe => FieldDecisionKind::WouldDefer,
+                        ConsciousArbitrationMode::Enforce => FieldDecisionKind::Defer,
+                    };
+                    modulation.reason = reason;
+                    if let Err(error) = modulation.validate() {
+                        return CapabilityResult {
+                            call_id: call.call_id,
+                            output: format!("capability action modulation is invalid: {error}"),
+                            is_error: true,
+                            usage: UsageReport::default(),
+                            audit_id: None,
+                            patch_delta: None,
+                        };
+                    }
+                    if let Err(error) = action_loop
+                        .observe_modulation(self.arbitration_mode, &call, &modulation)
+                        .await
+                    {
+                        if self.arbitration_mode == ConsciousArbitrationMode::Enforce {
+                            return CapabilityResult {
+                                call_id: call.call_id,
+                                output: format!(
+                                    "capability action modulation observation failed: {error}"
+                                ),
+                                is_error: true,
+                                usage: UsageReport::default(),
+                                audit_id: None,
+                                patch_delta: None,
+                            };
+                        }
+                        tracing::warn!(
+                            error = %error,
+                            "conscious would-defer observation failed in observe mode"
+                        );
+                    }
+                    if self.arbitration_mode == ConsciousArbitrationMode::Enforce {
+                        let payload = ConsciousDeferredPayload {
+                            code: "consciousness_deferred",
+                            retryable,
+                            reason,
+                            epoch: modulation.broadcast_epoch.0,
+                        };
+                        let output = serde_json::to_string(&payload).unwrap_or_else(|_| {
+                            r#"{"code":"consciousness_deferred","retryable":false,"reason":"serialization_error","epoch":0}"#.into()
+                        });
+                        return CapabilityResult {
+                            call_id: call.call_id,
+                            output,
+                            is_error: true,
+                            usage: UsageReport::default(),
+                            audit_id: None,
+                            patch_delta: None,
+                        };
+                    }
+                    None
+                }
                 Err(error) => {
                     return CapabilityResult {
                         call_id: call.call_id,
@@ -155,6 +348,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                         is_error: true,
                         usage: UsageReport::default(),
                         audit_id: None,
+                        patch_delta: None,
                     };
                 }
             }
@@ -162,14 +356,37 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
             None
         };
         let observed_call = call.clone();
-        let result = self
-            .inner
-            .invoke(fabric::CapabilityRequest {
-                call,
-                authority: authorized.authority,
-                control: authorized.control,
-            })
-            .await;
+        let request = fabric::CapabilityRequest {
+            call,
+            authority: authorized.authority,
+            control: authorized.control,
+        };
+        let result = if let Some(turn_events) = &self.stream_events {
+            let tool_name = request.call.name.clone();
+            let call_id = request.call.call_id.clone();
+            let cancel = request.control.cancel.clone();
+            let (mut sink, event_rx) = fabric::tool_event_channel_for_call(call_id.clone());
+            let inner = self.inner.clone();
+            let invoke = async move { inner.invoke_streaming(request, &mut sink).await };
+            let bridge = crate::service::tool_stream_bridge::bridge_bound_tool_stream_observed(
+                event_rx,
+                turn_events.clone(),
+                tool_name,
+                call_id,
+                cancel,
+                self.notification_observer.clone(),
+            );
+            let (mut result, outcome) = tokio::join!(invoke, bridge);
+            if let Err(error) = outcome.terminal {
+                if !result.is_error {
+                    result.output = format!("streaming tool execution failed: {error}");
+                    result.is_error = true;
+                }
+            }
+            result
+        } else {
+            self.inner.invoke(request).await
+        };
         if let (Some(action_loop), Some(selected)) = (&self.action_loop, selected.as_ref()) {
             if let Err(error) = action_loop
                 .observe_outcome(selected, &observed_call, &result)
@@ -183,6 +400,7 @@ impl TurnCapabilityInvoker for GovernedCapabilityInvoker {
                     is_error: true,
                     usage: result.usage,
                     audit_id: result.audit_id,
+                    patch_delta: None,
                 };
             }
         }
@@ -214,6 +432,27 @@ impl CapabilityRuntimeFactory {
             Arc::new(DefaultCapabilityInvoker::new(admission, executor));
         Arc::new(GovernedCapabilityInvoker::new(kernel, authority).with_action_loop(action_loop))
     }
+
+    pub fn build_streaming(
+        admission: Arc<dyn AdmissionController>,
+        executor: Arc<dyn ToolExecutor>,
+        authority: Arc<dyn TurnAuthorityProvider>,
+        action_loop: Option<Arc<dyn GovernedActionLoop>>,
+        sender: fabric::ipc::TurnEventSender,
+        notification_observer: Option<crate::service::tool_stream_bridge::ToolNotificationObserver>,
+    ) -> Arc<dyn TurnCapabilityInvoker> {
+        let kernel: Arc<dyn CapabilityInvoker> =
+            Arc::new(DefaultCapabilityInvoker::new(admission, executor));
+        let mut governed =
+            GovernedCapabilityInvoker::new(kernel, authority).with_tool_stream(sender);
+        if let Some(observer) = notification_observer {
+            governed = governed.with_notification_observer(observer);
+        }
+        if let Some(action_loop) = action_loop {
+            governed = governed.with_action_loop(action_loop);
+        }
+        Arc::new(governed)
+    }
 }
 
 /// Registry-backed policy adapter. Unknown tools are rejected before admission;
@@ -230,6 +469,7 @@ pub struct RegistryAuthorityProvider {
     working_dir: PathBuf,
     sandbox: SandboxRequirement,
     cancel: CancellationToken,
+    turn_event_sender: Option<fabric::ipc::TurnEventSender>,
 }
 
 impl RegistryAuthorityProvider {
@@ -258,11 +498,17 @@ impl RegistryAuthorityProvider {
             working_dir,
             sandbox,
             cancel,
+            turn_event_sender: None,
         }
     }
 
     pub fn with_agent_context(mut self, agent: Option<fabric::AgentToolContext>) -> Self {
         self.agent = agent;
+        self
+    }
+
+    pub fn with_turn_event_sender(mut self, sender: Option<fabric::ipc::TurnEventSender>) -> Self {
+        self.turn_event_sender = sender;
         self
     }
 }
@@ -293,6 +539,7 @@ impl TurnAuthorityProvider for RegistryAuthorityProvider {
             },
             control: InvocationControl {
                 cancel: self.cancel.clone(),
+                turn_event_sender: self.turn_event_sender.clone(),
             },
         })
     }

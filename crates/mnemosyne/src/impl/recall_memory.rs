@@ -155,6 +155,93 @@ impl RecallMemory {
         Ok(entries)
     }
 
+    /// FTS search with authority, scope and sensitivity constrained in SQL
+    /// before a `MemoryEntry` candidate is materialized.
+    pub fn search_in_session_prefiltered(
+        &self,
+        session_id: &str,
+        query: &str,
+        limit: usize,
+        predicate: &crate::ScopePredicate,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let scope = crate::MemoryScope::Session(session_id.to_string());
+        if query.trim().is_empty()
+            || session_id.trim().is_empty()
+            || !predicate.allows_scope(&scope)
+            || !predicate.allows_authority(crate::MemoryAuthority::RawExperience)
+        {
+            return Ok(Vec::new());
+        }
+        let fts_query = sanitize_fts_query(query);
+        let mut stmt = self.db.prepare(
+            "SELECT r.id, r.timestamp, r.session_id, r.entry_type, r.content, r.metadata
+             FROM recall_memory r
+             INNER JOIN recall_memory_fts fts ON r.id = fts.rowid
+             WHERE recall_memory_fts MATCH ?1
+               AND r.session_id = ?2
+               AND (CASE
+                    WHEN json_valid(r.metadata) THEN CASE json_extract(r.metadata, '$.sensitivity')
+                        WHEN 'public' THEN 0 WHEN 'internal' THEN 1
+                        WHEN 'confidential' THEN 2 WHEN 'restricted' THEN 3 ELSE 1 END
+                    ELSE 1 END) <= ?3
+             ORDER BY rank
+             LIMIT ?4",
+        )?;
+        let entries = stmt
+            .query_map(
+                rusqlite::params![
+                    fts_query,
+                    session_id,
+                    predicate.max_sensitivity_ord,
+                    limit as i64
+                ],
+                row_to_entry,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        if entries.is_empty() {
+            return self.search_like_in_session_prefiltered(
+                session_id,
+                query,
+                limit,
+                predicate.max_sensitivity_ord,
+            );
+        }
+        Ok(entries)
+    }
+
+    fn search_like_in_session_prefiltered(
+        &self,
+        session_id: &str,
+        query: &str,
+        limit: usize,
+        max_sensitivity_ord: u8,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let mut stmt = self.db.prepare(
+            "SELECT id, timestamp, session_id, entry_type, content, metadata
+             FROM recall_memory
+             WHERE session_id = ?1 AND content LIKE ?2
+               AND (CASE
+                    WHEN json_valid(metadata) THEN CASE json_extract(metadata, '$.sensitivity')
+                        WHEN 'public' THEN 0 WHEN 'internal' THEN 1
+                        WHEN 'confidential' THEN 2 WHEN 'restricted' THEN 3 ELSE 1 END
+                    ELSE 1 END) <= ?3
+             ORDER BY timestamp DESC
+             LIMIT ?4",
+        )?;
+        let entries = stmt
+            .query_map(
+                rusqlite::params![
+                    session_id,
+                    format!("%{query}%"),
+                    max_sensitivity_ord,
+                    limit as i64
+                ],
+                row_to_entry,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(entries)
+    }
+
     fn search_like_in_session(
         &self,
         session_id: &str,
@@ -379,6 +466,45 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].session_id, "session-a");
+    }
+
+    #[test]
+    fn prefiltered_fts_excludes_scope_and_sensitivity_before_rows_return() {
+        let (recall, _tmp) = setup_recall();
+        let mut restricted = crate::MemoryMetadata::local(
+            "restricted",
+            "restricted",
+            chrono::DateTime::<Utc>::UNIX_EPOCH,
+        );
+        restricted.sensitivity = crate::MemorySensitivity::Restricted;
+        recall
+            .store("allowed", "user", "shared governed marker public", None)
+            .unwrap();
+        recall
+            .store(
+                "allowed",
+                "user",
+                "shared governed marker restricted",
+                Some(&serde_json::to_string(&restricted).unwrap()),
+            )
+            .unwrap();
+        recall
+            .store("other", "user", "shared governed marker other scope", None)
+            .unwrap();
+        let predicate = crate::RecallPreFilter {
+            ancestry: crate::ScopeAncestry {
+                session_id: Some("allowed".into()),
+                ..Default::default()
+            },
+            max_sensitivity: crate::MemorySensitivity::Internal,
+            allowed_authorities: vec![crate::MemoryAuthority::RawExperience],
+        }
+        .to_scope_predicate();
+        let rows = recall
+            .search_in_session_prefiltered("allowed", "governed marker", 10, &predicate)
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].content.ends_with("public"));
     }
 
     #[test]

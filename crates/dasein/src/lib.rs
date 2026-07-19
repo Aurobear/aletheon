@@ -1,7 +1,9 @@
 //! # Aletheon SelfField
 //!
-//! The policy engine that reviews intents, enforces boundaries, resolves conflicts,
-//! and maintains identity continuity. Like Linux kernel's LSM / SELinux.
+//! The policy facade that reviews intents, enforces constitutional boundaries,
+//! and exposes read projections. Versioned lived-self mutation is owned by
+//! `DaseinModule::transition`; the legacy policy layers are not a second
+//! self-evolution authority.
 //!
 //! ## First Principle
 //!
@@ -26,7 +28,7 @@
 //!
 //! ## Architecture
 //!
-//! 8 internal layers wired into a `SelfField` struct that implements `SelfFieldOps`:
+//! Policy/read-model layers wired into a `SelfField` implementation:
 //!
 //! - **Boundary** — pattern-matching rules engine (fast gate)
 //! - **Identity** — current self-model + mutation history

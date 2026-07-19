@@ -178,6 +178,12 @@ async fn build_adapter(state: FakeState, timeout: Duration) -> (GbrainMcpAdapter
             trust: McpTrustLevel::RemoteTrusted,
             enabled: true,
             bearer_token_env: None,
+            oauth: None,
+            request_timeout_ms: None,
+            health_check_interval_sec: 0,
+            allowlist: Vec::new(),
+            denylist: Vec::new(),
+            permission_overrides: std::collections::HashMap::new(),
         }],
         ..Default::default()
     });

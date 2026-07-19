@@ -112,6 +112,7 @@ impl CorpusToolExecutor {
                 ..Default::default()
             },
             audit_id: Some(audit_id),
+            patch_delta: None,
         }
     }
 
@@ -171,6 +172,7 @@ impl ToolExecutor for CorpusToolExecutor {
             working_dir: request.authority.working_dir.clone(),
             session_id: request.authority.session_id.clone(),
             clock: self.clock.clone(),
+            turn_event_sender: request.control.turn_event_sender.clone(),
         };
         let started = self.clock.mono_now();
         let report = self
@@ -205,6 +207,85 @@ impl ToolExecutor for CorpusToolExecutor {
                         ..Default::default()
                     },
                     audit_id: Some(report.audit_id),
+                    patch_delta: result.metadata.patch_delta,
+                }
+            }
+            Err(error) => Self::error_result(request, permit, error.to_string(), report.audit_id),
+        }
+    }
+
+    async fn execute_streaming_with_permit(
+        &self,
+        request: &CapabilityRequest,
+        permit: &ExecutionPermit,
+        sink: &mut fabric::ToolEventSink,
+    ) -> CapabilityResult {
+        if let Err(error) = Self::validate(request, permit, self.clock.mono_now()) {
+            return Self::error_result(request, permit, error.to_string(), AuditEventId::new());
+        }
+
+        let tool = {
+            let registry = self.registry.lock().await;
+            registry.get(&request.call.name).cloned()
+        };
+        let Some(tool) = tool else {
+            return Self::error_result(
+                request,
+                permit,
+                format!("tool not found: {}", request.call.name),
+                AuditEventId::new(),
+            );
+        };
+
+        let context = ToolContext {
+            agent: request.authority.agent,
+            approval_authority: Some(fabric::ToolApprovalAuthority {
+                principal_id: request.authority.principal.clone(),
+                connection_id: request.authority.connection_id.clone(),
+                thread_id: request.authority.thread_id.clone(),
+                turn_id: request.authority.turn_id,
+                call_id: request.call.call_id.clone(),
+                workspace: request.authority.workspace.clone(),
+            }),
+            working_dir: request.authority.working_dir.clone(),
+            session_id: request.authority.session_id.clone(),
+            clock: self.clock.clone(),
+            turn_event_sender: request.control.turn_event_sender.clone(),
+        };
+        let started = self.clock.mono_now();
+        let report = self
+            .runner
+            .lock()
+            .await
+            .execute_tool_streaming_report(
+                tool.as_ref(),
+                request.call.input.clone(),
+                &context,
+                &request.authority.turn_id.0.to_string(),
+                sink,
+            )
+            .await;
+
+        match report.result {
+            Ok(result) => {
+                let wall_time_ms = if result.metadata.execution_time_ms == 0 {
+                    self.clock.mono_now().0.saturating_sub(started.0)
+                } else {
+                    result.metadata.execution_time_ms
+                };
+                CapabilityResult {
+                    call_id: request.call.call_id.clone(),
+                    output: result.content.clone(),
+                    is_error: result.is_error,
+                    usage: UsageReport {
+                        permit_id: permit.id,
+                        wall_time_ms,
+                        output_bytes: result.content.len() as u64,
+                        exit_code: Some(if result.is_error { 1 } else { 0 }),
+                        ..Default::default()
+                    },
+                    audit_id: Some(report.audit_id),
+                    patch_delta: result.metadata.patch_delta,
                 }
             }
             Err(error) => Self::error_result(request, permit, error.to_string(), report.audit_id),

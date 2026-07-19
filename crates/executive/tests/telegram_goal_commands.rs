@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use executive::r#impl::channel::daemon_adapter::DaemonChannelGoalExecutor;
-use executive::r#impl::channel::router::{
-    ChannelRouter, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
-};
-use executive::r#impl::channel::store::ChannelStore;
 use executive::r#impl::goal::ObjectiveStore;
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,
 };
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+};
+use gateway::store::ChannelStore;
 use tokio::sync::Mutex;
 
 struct NoTurn;
@@ -58,7 +58,7 @@ fn command(id: &str, sender: &str, name: &str, args: &str) -> ProviderEnvelope {
 }
 
 async fn setup() -> (
-    ChannelRouter,
+    ChannelDispatcher,
     CaptureTransport,
     Arc<Mutex<ObjectiveStore>>,
     tempfile::TempDir,
@@ -74,7 +74,7 @@ async fn setup() -> (
     let goals = Arc::new(Mutex::new(
         ObjectiveStore::open(&dir.path().join("objectives.db")).unwrap(),
     ));
-    let router = ChannelRouter::new(channels, Arc::new(NoTurn))
+    let router = ChannelDispatcher::new(channels, Arc::new(NoTurn))
         .with_goal_executor(Arc::new(DaemonChannelGoalExecutor::new(goals.clone())));
     (router, CaptureTransport::default(), goals, dir)
 }

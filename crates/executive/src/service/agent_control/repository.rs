@@ -141,6 +141,13 @@ pub trait AgentRunRepository: Send + Sync {
         limit: usize,
     ) -> Result<Vec<AgentResourceLease>, AgentControlError>;
 
+    /// Bounded durable ownership view used by startup settlement recovery.
+    async fn list_agent_resource_leases(
+        &self,
+        agent: AgentId,
+        limit: usize,
+    ) -> Result<Vec<AgentResourceLease>, AgentControlError>;
+
     async fn delete_resource_lease(
         &self,
         lease_key: &str,

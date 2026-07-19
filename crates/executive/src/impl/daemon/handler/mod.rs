@@ -14,42 +14,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-pub(crate) async fn run_hook_scripts(scripts: &[String], input_json: &str) {
-    for script_path in scripts {
-        let path = format::expand_tilde(script_path);
-        if !std::path::Path::new(&path).exists() {
-            tracing::warn!(path = %path, "Hook script not found, skipping");
-            continue;
-        }
-        let spawn_result = tokio::process::Command::new(&path)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-        let mut child = match spawn_result {
-            Ok(child) => child,
-            Err(error) => {
-                tracing::warn!(path = %path, %error, "Failed to spawn hook script");
-                continue;
-            }
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            use tokio::io::AsyncWriteExt;
-            let _ = stdin.write_all(input_json.as_bytes()).await;
-        }
-        match tokio::time::timeout(std::time::Duration::from_secs(30), child.wait()).await {
-            Ok(Ok(status)) if status.success() => {}
-            Ok(Ok(status)) => {
-                tracing::warn!(path = %path, code = status.code(), "Hook script failed")
-            }
-            Ok(Err(error)) => tracing::warn!(path = %path, %error, "Hook script I/O error"),
-            Err(_) => {
-                tracing::warn!(path = %path, "Hook script timed out");
-                let _ = child.kill().await;
-            }
-        }
-    }
-}
+use crate::core::config::GrokHardeningConfig;
 
 #[derive(Clone)]
 pub struct RequestHandler {
@@ -61,9 +26,174 @@ pub struct RequestHandler {
     pub(crate) active_connections: Arc<AtomicUsize>,
     /// User-state-root-scoped immutable thread authority records.
     pub(crate) thread_authority: Arc<crate::service::thread_authority::ThreadAuthorityStore>,
+    /// Feature flags for Grok-hardening mechanisms (folder_trust, etc.).
+    pub(crate) grok_hardening: GrokHardeningConfig,
+    /// Principal-scoped gate for repository-provided executable configuration.
+    pub(crate) workspace_trust: Arc<crate::service::workspace_trust::WorkspaceTrustResolver>,
 }
 
 impl RequestHandler {
+    pub(crate) async fn resolve_versioned_approval(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::client::ApprovalRequest,
+    ) -> anyhow::Result<fabric::ApprovalSnapshot> {
+        self.ports
+            .turn
+            .verify_active(
+                connection.principal_id.clone(),
+                request.thread_id.0,
+                request.turn_id,
+                request.operation_id,
+            )
+            .await?;
+        let decision = match request.decision {
+            fabric::protocol::client::ApprovalDecisionRequest::Approve => {
+                crate::r#impl::approval::ApprovalDecision::Approve
+            }
+            fabric::protocol::client::ApprovalDecisionRequest::Reject => {
+                crate::r#impl::approval::ApprovalDecision::Reject {
+                    reason: request.reason,
+                }
+            }
+        };
+        self.ports
+            .approvals
+            .resolve(crate::service::approval_service::ResolveApprovalRequest {
+                context: crate::service::approval_service::ApprovalContext {
+                    principal_id: connection.principal_id.clone(),
+                    channel: "versioned_local_rpc".into(),
+                },
+                approval_id: request.approval_id,
+                version: request.version,
+                decision,
+            })
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    pub(crate) async fn cancel_versioned_turn(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::client::CancelRequest,
+    ) -> anyhow::Result<()> {
+        self.ports
+            .turn
+            .cancel_by_key(
+                connection.principal_id.clone(),
+                request.thread_id.0,
+                request.turn_id,
+                request.operation_id,
+            )
+            .await
+    }
+
+    pub(crate) async fn protocol_snapshot(
+        &self,
+        session_id: &fabric::SessionId,
+    ) -> anyhow::Result<fabric::protocol::client::UiSnapshot> {
+        self.ports
+            .session_gateway
+            .protocol_snapshot(session_id)
+            .await
+    }
+
+    pub(crate) async fn protocol_events_after(
+        &self,
+        session_id: &fabric::SessionId,
+        after: &fabric::protocol::client::EventCursor,
+    ) -> anyhow::Result<Vec<fabric::protocol::client::ClientEvent>> {
+        self.ports
+            .session_gateway
+            .protocol_events_after(session_id, after)
+            .await
+    }
+
+    pub(crate) async fn cleanup_disconnected_connection(
+        &self,
+        connection_id: &fabric::ConnectionId,
+    ) -> anyhow::Result<Vec<fabric::ProcessId>> {
+        self.ports
+            .pending_approvals
+            .cancel_connection(connection_id)
+            .await;
+        self.ports
+            .kernel
+            .cleanup_disconnected_connection(connection_id)
+            .await
+    }
+    async fn handle_workspace_trust_evaluate(
+        &self,
+        connection: &super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let workspace = match resolve_requested_workspace(&request["params"]) {
+            Ok(workspace) => workspace,
+            Err(error) => return rpc_error(id, -32602, error),
+        };
+        let decision = self
+            .workspace_trust
+            .evaluate(
+                connection.principal_id.clone(),
+                crate::service::workspace_trust::workspace_identity(workspace.cwd()),
+                fabric::workspace_trust::ClientMode::Interactive,
+                crate::service::workspace_trust::is_broad_unrecordable_root(workspace.cwd()),
+                unix_now(),
+            )
+            .await;
+        let result = match decision {
+            fabric::workspace_trust::WorkspaceTrustDecision::Trusted { granted } => {
+                serde_json::json!({"decision":"trusted","sources":granted})
+            }
+            fabric::workspace_trust::WorkspaceTrustDecision::Restricted { blocked } => {
+                serde_json::json!({"decision":"restricted","sources":blocked})
+            }
+            fabric::workspace_trust::WorkspaceTrustDecision::PromptRequired { findings } => {
+                serde_json::json!({"decision":"prompt_required","sources":findings})
+            }
+        };
+        serde_json::json!({"jsonrpc":"2.0","id":id,"result":result})
+    }
+
+    async fn handle_workspace_trust_grant(
+        &self,
+        connection: &super::server::ConnectionContext,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let workspace = match resolve_requested_workspace(&request["params"]) {
+            Ok(workspace) => workspace,
+            Err(error) => return rpc_error(id, -32602, error),
+        };
+        let granted = match serde_json::from_value::<
+            Vec<fabric::workspace_trust::ExecutableConfigSource>,
+        >(request["params"]["granted"].clone())
+        {
+            Ok(granted) => granted,
+            Err(error) => {
+                return rpc_error(id, -32602, format!("invalid granted sources: {error}"))
+            }
+        };
+        match self
+            .workspace_trust
+            .grant_current(
+                connection.principal_id.clone(),
+                crate::service::workspace_trust::workspace_identity(workspace.cwd()),
+                granted,
+                connection.connection_id.0.to_string(),
+                unix_now(),
+            )
+            .await
+        {
+            Ok(receipt) => serde_json::json!({"jsonrpc":"2.0","id":id,"result":{
+                "decision":"trusted", "granted":receipt.granted,
+                "updated_at_unix":receipt.updated_at_unix
+            }}),
+            Err(error) => rpc_error(id, -32040, error),
+        }
+    }
+
     /// Complete daemon-owned subsystem shutdown after transports stop accepting work.
     pub async fn shutdown_runtime(&self) -> anyhow::Result<()> {
         self.ports
@@ -183,7 +313,24 @@ impl RequestHandler {
                 })
             }
         };
-        let context = fabric::PrincipalContext::new(
+        self.execute_explicit_chat(connection, id, message.to_owned(), thread_id, workspace)
+            .await
+    }
+
+    /// Versioned chat boundary. `thread_id` is protocol data in its own right;
+    /// unlike the legacy adapter it is never selected from the workspace cwd.
+    pub(crate) async fn execute_explicit_chat(
+        &self,
+        connection: &super::server::ConnectionContext,
+        id: serde_json::Value,
+        message: String,
+        thread_id: fabric::ThreadId,
+        workspace: fabric::WorkspacePolicy,
+    ) -> serde_json::Value {
+        if thread_id.0.trim().is_empty() || message.trim().is_empty() {
+            return rpc_error(&id, -32602, "thread_id and message are required");
+        }
+        let mut context = fabric::PrincipalContext::new(
             connection.principal_id.clone(),
             connection.os_principal,
             connection.connection_id.clone(),
@@ -199,17 +346,41 @@ impl RequestHandler {
                 "error": { "code": -32602, "message": error.to_string() }
             });
         }
-        tracing::info!(message = %message, "Chat request received");
-        self.ports
-            .turn
-            .execute(id, message.to_owned(), context)
-            .await
+        let trust_decision = self
+            .workspace_trust
+            .evaluate(
+                context.principal_id.clone(),
+                crate::service::workspace_trust::workspace_identity(context.workspace.cwd()),
+                fabric::workspace_trust::ClientMode::Headless,
+                crate::service::workspace_trust::is_broad_unrecordable_root(
+                    context.workspace.cwd(),
+                ),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            )
+            .await;
+        context.repo_hooks_trusted = crate::service::workspace_trust::source_is_granted(
+            &trust_decision,
+            fabric::workspace_trust::ExecutableConfigSource::RepoHooks,
+        );
+        tracing::debug!(
+            principal = %context.principal_id.0,
+            workspace = %context.workspace.cwd().display(),
+            decision = ?trust_decision,
+            "evaluated repository executable configuration trust"
+        );
+        tracing::info!(message = %message, thread_id = %context.thread_id.0, "Chat request received");
+        self.ports.turn.execute(id, message, context).await
     }
 
     /// Keep local conversation history scoped to its canonical workspace.
     /// Without this, a TUI launched in one checkout inherits tool paths from
     /// the last TUI that happened to use the daemon's global default session.
-    async fn select_workspace_session(
+    /// Select the authoritative workspace-scoped Session/Thread for protocol
+    /// composition roots (Unix JSON-RPC, ACP, and future edge adapters).
+    pub async fn select_workspace_session(
         &self,
         working_dir: &Path,
     ) -> anyhow::Result<fabric::ThreadId> {
@@ -232,6 +403,17 @@ impl RequestHandler {
         self.thread_authority
             .bind_or_verify(&key, &ThreadSettings::from_context(context, model_policy))
     }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn rpc_error(id: &serde_json::Value, code: i64, message: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message.into()}})
 }
 
 /// M0 bridge from the legacy workspace/session router to explicit turn authority.

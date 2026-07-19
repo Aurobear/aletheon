@@ -114,6 +114,7 @@ impl PiRpcRuntime {
         let sandbox_config = SandboxConfig {
             workspace: workspace.clone(),
             environment: self.credential_environment.clone(),
+            policy: None,
         };
         let wrapped = self
             .sandbox

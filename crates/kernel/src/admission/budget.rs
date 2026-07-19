@@ -10,13 +10,15 @@
 use async_trait::async_trait;
 use fabric::{
     AdmissionError, BudgetController, BudgetRequest, BudgetReservationId, BudgetReservationReceipt,
-    BudgetScope, BudgetScopeId, BudgetScopeKind, OperationId, PermitId, UsageReport,
-    BUDGET_SCOPE_SCHEMA_VERSION,
+    BudgetScope, BudgetScopeId, BudgetScopeKind, BudgetTransferReceipt, OperationId, PermitId,
+    UsageReport, BUDGET_SCOPE_SCHEMA_VERSION,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use tokio::sync::Mutex;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct Amount {
     tokens: Option<u64>,
     cost_micro: Option<u64>,
@@ -71,7 +73,7 @@ impl Amount {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ScopeState {
     view: BudgetScope,
     remaining: Amount,
@@ -79,19 +81,26 @@ struct ScopeState {
     closed: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct BudgetState {
     scopes: HashMap<BudgetScopeId, ScopeState>,
     reservations: HashMap<BudgetReservationId, BudgetScopeId>,
     principal_roots: HashMap<String, BudgetScopeId>,
     legacy_chains: HashMap<BudgetReservationId, Vec<BudgetReservationId>>,
     operation_scopes: HashMap<OperationId, BudgetScopeId>,
+    transfers: HashMap<BudgetReservationId, BudgetTransferReceipt>,
 }
 
 /// Thread-safe owner of all rollout budget hierarchies.
 pub struct InMemoryBudgetController {
     state: Mutex<BudgetState>,
+    durable_path: Option<PathBuf>,
 }
+
+/// Persistence-capable budget implementation used by daemon bootstrap. The
+/// alias preserves the existing in-memory API while making durable intent
+/// explicit at construction sites through `open_durable`.
+pub type DurableBudgetController = InMemoryBudgetController;
 
 impl std::fmt::Debug for InMemoryBudgetController {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -104,7 +113,53 @@ impl InMemoryBudgetController {
     pub fn new() -> Self {
         Self {
             state: Mutex::new(BudgetState::default()),
+            durable_path: None,
         }
+    }
+
+    /// Open a crash-durable controller. Every reservation/close/transfer is
+    /// atomically persisted before its method returns.
+    pub fn open_durable(path: impl AsRef<Path>) -> std::io::Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        let state = match std::fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => BudgetState::default(),
+            Err(error) => return Err(error),
+        };
+        Ok(Self {
+            state: Mutex::new(state),
+            durable_path: Some(path),
+        })
+    }
+
+    fn persist(&self, state: &BudgetState) -> Result<(), AdmissionError> {
+        let Some(path) = &self.durable_path else {
+            return Ok(());
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(durable_error)?;
+        }
+        let bytes = serde_json::to_vec(state).map_err(durable_error)?;
+        let temporary = path.with_extension("tmp");
+        {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&temporary)
+                .map_err(durable_error)?;
+            file.write_all(&bytes).map_err(durable_error)?;
+            file.sync_all().map_err(durable_error)?;
+        }
+        std::fs::rename(&temporary, path).map_err(durable_error)?;
+        if let Some(parent) = path.parent() {
+            std::fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(durable_error)?;
+        }
+        Ok(())
     }
 
     /// Create a versioned rollout root. Root identifiers are never inferred
@@ -115,7 +170,10 @@ impl InMemoryBudgetController {
         limit: BudgetRequest,
     ) -> BudgetScopeId {
         let mut state = self.state.lock().await;
-        Self::create_root_locked(&mut state, owner.into(), limit)
+        let id = Self::create_root_locked(&mut state, owner.into(), limit);
+        self.persist(&state)
+            .expect("durable budget root persistence must succeed before publication");
+        id
     }
 
     fn create_root_locked(
@@ -152,7 +210,13 @@ impl InMemoryBudgetController {
         request: BudgetRequest,
     ) -> Result<BudgetReservationReceipt, AdmissionError> {
         let mut state = self.state.lock().await;
-        Self::reserve_child_locked(&mut state, parent, kind, owner.into(), request)
+        let before = state.clone();
+        let receipt = Self::reserve_child_locked(&mut state, parent, kind, owner.into(), request)?;
+        if let Err(error) = self.persist(&state) {
+            *state = before;
+            return Err(error);
+        }
+        Ok(receipt)
     }
 
     fn reserve_child_locked(
@@ -230,7 +294,84 @@ impl InMemoryBudgetController {
         usage: &UsageReport,
     ) -> Result<(), AdmissionError> {
         let mut state = self.state.lock().await;
-        Self::close_locked(&mut state, reservation, Some(usage))
+        let before = state.clone();
+        Self::close_locked(&mut state, reservation, Some(usage))?;
+        if let Err(error) = self.persist(&state) {
+            *state = before;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub async fn transfer_remaining_reservation(
+        &self,
+        child: BudgetReservationId,
+        parent: BudgetReservationId,
+        usage: &UsageReport,
+    ) -> Result<BudgetTransferReceipt, AdmissionError> {
+        let mut state = self.state.lock().await;
+        let before = state.clone();
+        if let Some(receipt) = state.transfers.get(&child) {
+            return if receipt.parent_reservation_id == parent {
+                Ok(receipt.clone())
+            } else {
+                Err(AdmissionError::BudgetExceeded)
+            };
+        }
+        let child_scope_id = *state
+            .reservations
+            .get(&child)
+            .ok_or(AdmissionError::AlreadySettled)?;
+        let parent_scope_id = *state
+            .reservations
+            .get(&parent)
+            .ok_or(AdmissionError::AlreadySettled)?;
+        let (child_parent, accepted) = {
+            let scope = state
+                .scopes
+                .get(&child_scope_id)
+                .ok_or(AdmissionError::AlreadySettled)?;
+            if scope.closed {
+                return Err(AdmissionError::AlreadySettled);
+            }
+            (
+                scope.view.parent,
+                Amount::from_request(&scope.view.limit).unused(usage),
+            )
+        };
+        let parent_state = state
+            .scopes
+            .get(&parent_scope_id)
+            .ok_or(AdmissionError::AlreadySettled)?;
+        if parent_state.closed || child == parent || parent_state.view.parent != child_parent {
+            return Err(AdmissionError::BudgetExceeded);
+        }
+        state
+            .scopes
+            .get_mut(&child_scope_id)
+            .expect("checked child scope")
+            .closed = true;
+        state
+            .scopes
+            .get_mut(&parent_scope_id)
+            .expect("checked parent scope")
+            .remaining
+            .add(accepted);
+        state.reservations.remove(&child);
+        let receipt = BudgetTransferReceipt {
+            child_reservation_id: child,
+            parent_reservation_id: parent,
+            accepted: BudgetRequest {
+                max_tokens: accepted.tokens,
+                max_cost_micro: accepted.cost_micro,
+            },
+        };
+        state.transfers.insert(child, receipt.clone());
+        if let Err(error) = self.persist(&state) {
+            *state = before;
+            return Err(error);
+        }
+        Ok(receipt)
     }
 
     pub async fn revoke_reservation(
@@ -238,7 +379,13 @@ impl InMemoryBudgetController {
         reservation: BudgetReservationId,
     ) -> Result<(), AdmissionError> {
         let mut state = self.state.lock().await;
-        Self::close_locked(&mut state, reservation, None)
+        let before = state.clone();
+        Self::close_locked(&mut state, reservation, None)?;
+        if let Err(error) = self.persist(&state) {
+            *state = before;
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Revoke a scope and every live descendant in post-order. Repeating the
@@ -512,6 +659,15 @@ impl BudgetController for InMemoryBudgetController {
         InMemoryBudgetController::settle_reservation(self, reservation, usage).await
     }
 
+    async fn transfer_remaining_reservation(
+        &self,
+        child: BudgetReservationId,
+        parent: BudgetReservationId,
+        usage: &UsageReport,
+    ) -> Result<BudgetTransferReceipt, AdmissionError> {
+        InMemoryBudgetController::transfer_remaining_reservation(self, child, parent, usage).await
+    }
+
     async fn revoke_reservation(
         &self,
         reservation: BudgetReservationId,
@@ -526,6 +682,23 @@ impl BudgetController for InMemoryBudgetController {
     async fn active_reservation_count(&self) -> usize {
         InMemoryBudgetController::active_reservation_count(self).await
     }
+
+    async fn reservation_for_owner(&self, owner: &str) -> Option<BudgetReservationId> {
+        self.state
+            .lock()
+            .await
+            .scopes
+            .values()
+            .find(|scope| scope.view.owner == owner)
+            .and_then(|scope| scope.reservation_id)
+    }
+
+    async fn transfer_for_child(
+        &self,
+        child: BudgetReservationId,
+    ) -> Option<BudgetTransferReceipt> {
+        self.state.lock().await.transfers.get(&child).cloned()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -535,6 +708,170 @@ impl BudgetController for InMemoryBudgetController {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn durable_transfer_survives_crash_windows_and_replays_after_reopen() {
+        let path = std::env::temp_dir().join(format!(
+            "aletheon-budget-transfer-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let (child, parent, usage, first) = {
+            let controller = InMemoryBudgetController::open_durable(&path).unwrap();
+            let root = controller
+                .create_root(
+                    "root",
+                    BudgetRequest {
+                        max_tokens: Some(100),
+                        max_cost_micro: Some(100),
+                    },
+                )
+                .await;
+            let parent = controller
+                .reserve_child(
+                    root,
+                    BudgetScopeKind::Process,
+                    "parent",
+                    BudgetRequest {
+                        max_tokens: Some(40),
+                        max_cost_micro: Some(40),
+                    },
+                )
+                .await
+                .unwrap();
+            let child = controller
+                .reserve_child(
+                    root,
+                    BudgetScopeKind::Process,
+                    "child",
+                    BudgetRequest {
+                        max_tokens: Some(30),
+                        max_cost_micro: Some(30),
+                    },
+                )
+                .await
+                .unwrap();
+            let usage = UsageReport {
+                tokens_used: 10,
+                cost_micro: 5,
+                ..Default::default()
+            };
+            let first = controller
+                .transfer_remaining_reservation(child.reservation_id, parent.reservation_id, &usage)
+                .await
+                .unwrap();
+            (child, parent, usage, first)
+        };
+        let reopened = InMemoryBudgetController::open_durable(&path).unwrap();
+        let replay = reopened
+            .transfer_remaining_reservation(child.reservation_id, parent.reservation_id, &usage)
+            .await
+            .unwrap();
+        assert_eq!(replay, first);
+        assert_eq!(reopened.active_reservation_count().await, 1);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn durable_untransferred_reservation_is_reclaimed_after_reopen() {
+        let path = std::env::temp_dir().join(format!(
+            "aletheon-budget-reclaim-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let reservation = {
+            let controller = InMemoryBudgetController::open_durable(&path).unwrap();
+            let root = controller
+                .create_root(
+                    "root",
+                    BudgetRequest {
+                        max_tokens: Some(100),
+                        max_cost_micro: Some(100),
+                    },
+                )
+                .await;
+            controller
+                .reserve_child(
+                    root,
+                    BudgetScopeKind::Process,
+                    "agent:recover",
+                    BudgetRequest {
+                        max_tokens: Some(30),
+                        max_cost_micro: Some(30),
+                    },
+                )
+                .await
+                .unwrap()
+                .reservation_id
+        };
+        let reopened = InMemoryBudgetController::open_durable(&path).unwrap();
+        assert_eq!(
+            BudgetController::reservation_for_owner(&reopened, "agent:recover").await,
+            Some(reservation)
+        );
+        reopened.revoke_reservation(reservation).await.unwrap();
+        drop(reopened);
+        let replay = InMemoryBudgetController::open_durable(&path).unwrap();
+        assert_eq!(replay.active_reservation_count().await, 0);
+        assert_eq!(
+            replay.revoke_reservation(reservation).await,
+            Err(AdmissionError::AlreadySettled)
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn remaining_reservation_transfer_is_atomic_and_replay_stable() {
+        let ctrl = InMemoryBudgetController::new();
+        let root = ctrl
+            .create_root(
+                "root",
+                BudgetRequest {
+                    max_tokens: Some(100),
+                    max_cost_micro: Some(100),
+                },
+            )
+            .await;
+        let parent = ctrl
+            .reserve_child(
+                root,
+                BudgetScopeKind::Process,
+                "parent",
+                BudgetRequest {
+                    max_tokens: Some(40),
+                    max_cost_micro: Some(40),
+                },
+            )
+            .await
+            .unwrap();
+        let child = ctrl
+            .reserve_child(
+                root,
+                BudgetScopeKind::Process,
+                "child",
+                BudgetRequest {
+                    max_tokens: Some(30),
+                    max_cost_micro: Some(30),
+                },
+            )
+            .await
+            .unwrap();
+        let usage = UsageReport {
+            tokens_used: 10,
+            cost_micro: 5,
+            ..Default::default()
+        };
+        let first = ctrl
+            .transfer_remaining_reservation(child.reservation_id, parent.reservation_id, &usage)
+            .await
+            .unwrap();
+        let replay = ctrl
+            .transfer_remaining_reservation(child.reservation_id, parent.reservation_id, &usage)
+            .await
+            .unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(first.accepted.max_tokens, Some(20));
+        assert_eq!(first.accepted.max_cost_micro, Some(25));
+        assert_eq!(ctrl.active_reservation_count().await, 1);
+    }
 
     #[tokio::test]
     async fn unlimited_account_always_approves() {
@@ -665,5 +1002,11 @@ mod tests {
         };
         let err = ctrl.reserve("agent-1", &req).await.unwrap_err();
         assert!(matches!(err, AdmissionError::BudgetExceeded));
+    }
+}
+
+fn durable_error(error: impl std::fmt::Display) -> AdmissionError {
+    AdmissionError::Denied {
+        reason: format!("durable budget persistence failed: {error}"),
     }
 }

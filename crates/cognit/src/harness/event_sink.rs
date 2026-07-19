@@ -3,7 +3,7 @@
 //! All frontends observe the same event stream. Each frontend
 //! implements `EventSink` to receive events.
 
-use fabric::tool::ToolResult;
+use fabric::{ipc::TurnEventV1, tool::ToolResult};
 
 /// Lifecycle events emitted by the agent.
 #[derive(Debug, Clone)]
@@ -116,6 +116,157 @@ pub enum Event {
         threshold: usize,
         reason: String,
     },
+    /// Rich guarded compaction result (C1).
+    CompactionOutcome {
+        strategy: String,
+        applied: bool,
+        tokens_before: usize,
+        tokens_after: usize,
+        evicted_messages: usize,
+        failure: Option<String>,
+    },
+}
+
+/// Project Cognit's internal lifecycle vocabulary onto the canonical turn
+/// event schema owned by Fabric.
+///
+/// Keeping this projection beside the source vocabulary prevents Executive
+/// from owning a cross-domain compatibility bridge. Events that are useful
+/// only inside the cognitive harness deliberately become an opaque generic
+/// event rather than extending the public turn protocol implicitly.
+impl From<Event> for TurnEventV1 {
+    fn from(event: Event) -> Self {
+        match event {
+            Event::TurnStarted { iteration } => Self::TurnStarted { iteration },
+            Event::TextDelta { delta } => Self::TextDelta { delta },
+            Event::ToolCallStart { name, call_id } => Self::ToolCallStart { name, call_id },
+            Event::ToolCallComplete {
+                call_id,
+                name,
+                args,
+            } => Self::ToolCallComplete {
+                call_id,
+                name,
+                args,
+            },
+            Event::ToolResult {
+                name,
+                call_id,
+                result,
+            } => Self::ToolResult {
+                name,
+                call_id,
+                content: result.content,
+                is_error: result.is_error,
+                execution_time_ms: result.execution_time_ms,
+            },
+            Event::Usage {
+                tokens_in,
+                tokens_out,
+                cache_hit_tokens,
+                cache_miss_tokens,
+            } => Self::Usage {
+                tokens_in,
+                tokens_out,
+                cache_hit_tokens,
+                cache_miss_tokens,
+            },
+            Event::TurnDone { result } => Self::TurnDone {
+                result: Some(match result {
+                    Ok(text) => text,
+                    Err(error) => format!("error: {error}"),
+                }),
+            },
+            Event::Error { message } => Self::Error { message },
+            Event::AwarenessChanged { level, context } => Self::AwarenessChanged { level, context },
+            Event::ModeChanged { mode } => Self::ModeChanged { mode },
+            Event::SubAgentStatusChanged {
+                agent_id,
+                status,
+                task,
+            } => Self::SubAgentStatusChanged {
+                agent_id,
+                status,
+                task,
+            },
+            Event::PlanUpdate {
+                version,
+                plan,
+                critique,
+                ready_for_approval,
+            } => Self::PlanUpdate {
+                version,
+                plan,
+                critique,
+                ready_for_approval,
+            },
+            Event::Interrupted { reason } => Self::Interrupted { reason },
+            Event::ContextUpdate {
+                used_tokens,
+                max_tokens,
+            } => Self::ContextUpdate {
+                used_tokens,
+                max_tokens,
+            },
+            Event::ModelSwitch { model_name } => Self::ModelSwitch { model_name },
+            Event::GoalSet { goal, sub_goals } => Self::GoalSet { goal, sub_goals },
+            Event::Reflection {
+                summary,
+                recommendation,
+            } => Self::Reflection {
+                summary,
+                recommendation,
+            },
+            Event::BudgetExceeded { used, max } => Self::BudgetExceeded { used, max },
+            Event::CircuitBreakerTripped { reason } => Self::CircuitBreakerTripped { reason },
+            Event::CompactionTriggered {
+                used_tokens,
+                threshold,
+                reason,
+            } => Self::CompactionTriggered {
+                used_tokens,
+                threshold,
+                reason,
+            },
+            Event::CompactionOutcome {
+                strategy,
+                applied,
+                tokens_before,
+                tokens_after,
+                evicted_messages,
+                failure,
+            } => Self::CompactionOutcome {
+                strategy,
+                applied,
+                tokens_before,
+                tokens_after,
+                evicted_messages,
+                failure,
+            },
+            Event::ApprovalRequest {
+                id,
+                tool,
+                args,
+                reason,
+            } => Self::Approval {
+                id,
+                tool,
+                args,
+                reason,
+            },
+            Event::Text { .. }
+            | Event::Reasoning { .. }
+            | Event::ToolDispatch { .. }
+            | Event::AskRequest { .. }
+            | Event::CompactionStarted
+            | Event::CompactionDone { .. }
+            | Event::MemoryUpdated { .. }
+            | Event::PlanModeChanged { .. }
+            | Event::CacheDiagnostics { .. } => Self::Generic {
+                payload: serde_json::Value::Null,
+            },
+        }
+    }
 }
 
 /// Simplified tool result for events.
@@ -133,6 +284,30 @@ impl From<&ToolResult> for ToolResultEvent {
             is_error: tr.is_error,
             execution_time_ms: tr.metadata.execution_time_ms,
         }
+    }
+}
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+
+    #[test]
+    fn compaction_outcome_projects_to_canonical_turn_event() {
+        let event: TurnEventV1 = Event::CompactionOutcome {
+            strategy: "fullreplace".into(),
+            applied: true,
+            tokens_before: 900,
+            tokens_after: 300,
+            evicted_messages: 4,
+            failure: None,
+        }
+        .into();
+        let encoded = serde_json::to_value(event).unwrap();
+        assert_eq!(encoded["type"], "compaction_outcome");
+        assert_eq!(encoded["strategy"], "fullreplace");
+        assert_eq!(encoded["tokens_before"], 900);
+        assert_eq!(encoded["evicted_messages"], 4);
+        assert!(encoded["failure"].is_null());
     }
 }
 
@@ -201,6 +376,7 @@ mod tests {
             metadata: fabric::tool::ToolResultMeta {
                 execution_time_ms: 50,
                 truncated: false,
+                patch_delta: None,
             },
         };
         let event = ToolResultEvent::from(&tr);
@@ -216,6 +392,7 @@ mod tests {
             metadata: fabric::tool::ToolResultMeta {
                 execution_time_ms: 10,
                 truncated: false,
+                patch_delta: None,
             },
         };
         let event = ToolResultEvent::from(&tr);
@@ -393,6 +570,40 @@ mod tests {
             cloned,
             Event::ToolCallStart { name, call_id }
             if name == "edit" && call_id == "abc"
+        ));
+    }
+
+    #[test]
+    fn canonical_turn_projection_preserves_public_event_fields() {
+        let event = Event::ToolResult {
+            name: "shell".into(),
+            call_id: "call-7".into(),
+            result: ToolResultEvent {
+                content: "done".into(),
+                is_error: false,
+                execution_time_ms: 17,
+            },
+        };
+
+        assert!(matches!(
+            TurnEventV1::from(event),
+            TurnEventV1::ToolResult {
+                name,
+                call_id,
+                content,
+                is_error: false,
+                execution_time_ms: 17,
+            } if name == "shell" && call_id == "call-7" && content == "done"
+        ));
+    }
+
+    #[test]
+    fn canonical_turn_projection_keeps_internal_events_opaque() {
+        assert!(matches!(
+            TurnEventV1::from(Event::Reasoning {
+                text: "private chain".into(),
+            }),
+            TurnEventV1::Generic { payload } if payload.is_null()
         ));
     }
 

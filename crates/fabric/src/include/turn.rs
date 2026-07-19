@@ -4,6 +4,7 @@ use crate::types::admission::{
     AuditEventId, BudgetRequest, CapabilityScope, LeaseRequest, PrincipalId, RiskLevel,
     SandboxRequirement, UsageReport,
 };
+use crate::types::conscious_arbitration::CapabilityBatchPlan;
 use crate::types::llm_types::{LlmProvider, ToolDefinition};
 use crate::types::local_authority::{ConnectionId, ThreadId, WorkspacePolicy};
 use crate::types::message::Message;
@@ -69,12 +70,14 @@ pub struct CapabilityAuthority {
 #[derive(Debug, Clone)]
 pub struct InvocationControl {
     pub cancel: CancellationToken,
+    pub turn_event_sender: Option<crate::ipc::TurnEventSender>,
 }
 
 impl Default for InvocationControl {
     fn default() -> Self {
         Self {
             cancel: CancellationToken::new(),
+            turn_event_sender: None,
         }
     }
 }
@@ -93,6 +96,8 @@ pub struct CapabilityResult {
     pub is_error: bool,
     pub usage: UsageReport,
     pub audit_id: Option<AuditEventId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_delta: Option<crate::PatchDelta>,
 }
 
 #[async_trait]
@@ -106,6 +111,20 @@ pub trait TurnServices: Send + Sync {
     async fn dasein_view(&self, process: ProcessId) -> Result<DaseinView>;
     async fn agora_view(&self, session_id: &str) -> Result<AgoraView>;
     async fn invoke(&self, call: CapabilityCall) -> CapabilityResult;
+
+    async fn plan_capability_batch(
+        &self,
+        calls: Vec<CapabilityCall>,
+    ) -> anyhow::Result<CapabilityBatchPlan> {
+        Ok(CapabilityBatchPlan::identity(&calls))
+    }
+
+    /// Drain mid-turn user interjections at a Cognit-declared safe point.
+    /// Implementations return independent messages in FIFO order. The default
+    /// preserves legacy behavior for services without G3 queue wiring.
+    async fn drain_interjections(&self) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
 
     fn llm_provider(&self) -> Option<&dyn LlmProvider> {
         None
@@ -151,6 +170,7 @@ impl TurnServices for StubTurnServices {
             is_error: true,
             usage: UsageReport::default(),
             audit_id: None,
+            patch_delta: None,
         }
     }
 }

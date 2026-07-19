@@ -41,22 +41,27 @@ pub enum LegacySessionError {
 #[async_trait]
 pub trait LegacySessionUseCases: Send + Sync {
     async fn create(&self) -> Result<LegacySessionView, LegacySessionError>;
-    async fn create_and_switch(&self) -> Result<LegacySessionTransition, LegacySessionError>;
+    async fn create_and_switch(
+        &self,
+        previous_thread_id: &str,
+    ) -> Result<LegacySessionTransition, LegacySessionError>;
     async fn list(&self) -> Result<Vec<LegacySessionView>, LegacySessionError>;
     async fn list_available(&self) -> Result<Vec<String>, LegacySessionError>;
     async fn switch(&self, session_id: String) -> Result<String, LegacySessionError>;
     async fn resume(&self, session_id: String)
         -> Result<LegacySessionSnapshot, LegacySessionError>;
     async fn load_recent(&self) -> Result<LegacySessionSnapshot, LegacySessionError>;
-    async fn clear(&self) -> Result<LegacySessionTransition, LegacySessionError>;
-    async fn compact(&self) -> Result<Option<LegacySessionTransition>, LegacySessionError>;
-    async fn current(&self) -> Result<LegacySessionSnapshot, LegacySessionError>;
+    async fn clear(&self, thread_id: &str) -> Result<LegacySessionTransition, LegacySessionError>;
+    async fn compact(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<LegacySessionTransition>, LegacySessionError>;
+    async fn current(&self, thread_id: &str) -> Result<LegacySessionSnapshot, LegacySessionError>;
     async fn route_workspace(&self, working_dir: PathBuf) -> Result<String, LegacySessionError>;
 }
 
 pub struct LegacySessionService {
     registry: Arc<Mutex<HashMap<String, Arc<Mutex<SessionManager>>>>>,
-    default_id: Arc<Mutex<String>>,
     created_at: Arc<Mutex<HashMap<String, fabric::MonoTime>>>,
     workspace_sessions: Mutex<HashMap<PathBuf, String>>,
     data_dir: PathBuf,
@@ -68,7 +73,6 @@ pub struct LegacySessionService {
 
 pub struct LegacySessionResources {
     pub registry: Arc<Mutex<HashMap<String, Arc<Mutex<SessionManager>>>>>,
-    pub default_id: Arc<Mutex<String>>,
     pub created_at: Arc<Mutex<HashMap<String, fabric::MonoTime>>>,
     pub data_dir: PathBuf,
     pub context_window: usize,
@@ -77,11 +81,13 @@ pub struct LegacySessionResources {
     pub canonical: Arc<SessionService>,
 }
 
+// Note: default_id has been removed from LegacySessionResources.
+// Callers must pass explicit session_id to all trait methods.
+
 impl LegacySessionService {
     pub fn new(resources: LegacySessionResources) -> Self {
         Self {
             registry: resources.registry,
-            default_id: resources.default_id,
             created_at: resources.created_at,
             workspace_sessions: Mutex::new(HashMap::new()),
             data_dir: resources.data_dir,
@@ -107,6 +113,15 @@ impl LegacySessionService {
         )
         .await
         .map_err(operation_error)?;
+        let mut manager = manager;
+        if let Some(replay) = self
+            .canonical
+            .try_resume(&SessionId(session_id.to_owned()))
+            .await
+            .map_err(operation_error)?
+        {
+            manager.restore_messages(replay.messages);
+        }
         let manager = Arc::new(Mutex::new(manager));
         self.registry
             .lock()
@@ -146,14 +161,9 @@ impl LegacySessionService {
             .map_err(operation_error)
     }
 
-    async fn set_default(&self, session_id: &str) {
-        *self.default_id.lock().await = session_id.to_owned();
-    }
-
     async fn create_with_messages(
         &self,
         messages: &[Message],
-        make_default: bool,
     ) -> Result<LegacySessionView, LegacySessionError> {
         let session_id = uuid::Uuid::new_v4().to_string();
         SessionStore::new(&self.data_dir)
@@ -184,9 +194,6 @@ impl LegacySessionService {
             .await
             .insert(session_id.clone(), self.clock.mono_now());
         self.project(&snapshot).await?;
-        if make_default {
-            self.set_default(&session_id).await;
-        }
         Ok(LegacySessionView {
             session_id,
             message_count: snapshot.messages.len(),
@@ -206,12 +213,15 @@ impl LegacySessionService {
 #[async_trait]
 impl LegacySessionUseCases for LegacySessionService {
     async fn create(&self) -> Result<LegacySessionView, LegacySessionError> {
-        self.create_with_messages(&[], false).await
+        self.create_with_messages(&[]).await
     }
 
-    async fn create_and_switch(&self) -> Result<LegacySessionTransition, LegacySessionError> {
-        let previous = self.current().await?;
-        let current = self.create_with_messages(&[], true).await?;
+    async fn create_and_switch(
+        &self,
+        previous_thread_id: &str,
+    ) -> Result<LegacySessionTransition, LegacySessionError> {
+        let previous = self.current(previous_thread_id).await?;
+        let current = self.create_with_messages(&[]).await?;
         self.remap_default_workspace(&previous.session_id, &current.session_id)
             .await;
         Ok(LegacySessionTransition { previous, current })
@@ -262,7 +272,6 @@ impl LegacySessionUseCases for LegacySessionService {
         }
         let snapshot = self.snapshot(&session_id).await?;
         self.project(&snapshot).await?;
-        self.set_default(&session_id).await;
         Ok(session_id)
     }
 
@@ -270,8 +279,12 @@ impl LegacySessionUseCases for LegacySessionService {
         &self,
         session_id: String,
     ) -> Result<LegacySessionSnapshot, LegacySessionError> {
-        let recovered = SessionManager::recover(&self.data_dir, &session_id).await;
-        if recovered.is_none()
+        let canonical = self
+            .canonical
+            .try_resume(&SessionId(session_id.clone()))
+            .await
+            .map_err(operation_error)?;
+        if canonical.is_none()
             && SessionStore::new(&self.data_dir)
                 .and_then(|store| store.load(&session_id))
                 .map_err(operation_error)?
@@ -279,9 +292,15 @@ impl LegacySessionUseCases for LegacySessionService {
         {
             return Err(LegacySessionError::NotFound(session_id));
         }
+        if let Some(replay) = canonical {
+            self.manager(&session_id)
+                .await?
+                .lock()
+                .await
+                .restore_messages(replay.messages);
+        }
         let snapshot = self.snapshot(&session_id).await?;
         self.project(&snapshot).await?;
-        self.set_default(&session_id).await;
         Ok(snapshot)
     }
 
@@ -292,14 +311,14 @@ impl LegacySessionUseCases for LegacySessionService {
         match recent {
             Some(session_id) => self.resume(session_id).await,
             None => {
-                let current = self.create_with_messages(&[], true).await?;
+                let current = self.create_with_messages(&[]).await?;
                 self.snapshot(&current.session_id).await
             }
         }
     }
 
-    async fn clear(&self) -> Result<LegacySessionTransition, LegacySessionError> {
-        let previous = self.current().await?;
+    async fn clear(&self, thread_id: &str) -> Result<LegacySessionTransition, LegacySessionError> {
+        let previous = self.current(thread_id).await?;
         self.manager(&previous.session_id)
             .await?
             .lock()
@@ -307,14 +326,17 @@ impl LegacySessionUseCases for LegacySessionService {
             .clear_history()
             .await
             .map_err(operation_error)?;
-        let current = self.create_with_messages(&[], true).await?;
+        let current = self.create_with_messages(&[]).await?;
         self.remap_default_workspace(&previous.session_id, &current.session_id)
             .await;
         Ok(LegacySessionTransition { previous, current })
     }
 
-    async fn compact(&self) -> Result<Option<LegacySessionTransition>, LegacySessionError> {
-        let previous = self.current().await?;
+    async fn compact(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<LegacySessionTransition>, LegacySessionError> {
+        let previous = self.current(thread_id).await?;
         let manager = self.manager(&previous.session_id).await?;
         let messages = {
             let mut manager = manager.lock().await;
@@ -329,15 +351,14 @@ impl LegacySessionUseCases for LegacySessionService {
         };
         // Canonical history is immutable. Materialize the compacted view as a
         // new session rather than silently rewriting durable Session/Turn/Item truth.
-        let current = self.create_with_messages(&messages, true).await?;
+        let current = self.create_with_messages(&messages).await?;
         self.remap_default_workspace(&previous.session_id, &current.session_id)
             .await;
         Ok(Some(LegacySessionTransition { previous, current }))
     }
 
-    async fn current(&self) -> Result<LegacySessionSnapshot, LegacySessionError> {
-        let session_id = self.default_id.lock().await.clone();
-        self.snapshot(&session_id).await
+    async fn current(&self, thread_id: &str) -> Result<LegacySessionSnapshot, LegacySessionError> {
+        self.snapshot(thread_id).await
     }
 
     async fn route_workspace(&self, working_dir: PathBuf) -> Result<String, LegacySessionError> {
@@ -351,7 +372,7 @@ impl LegacySessionUseCases for LegacySessionService {
             self.switch(session_id.clone()).await?;
             return Ok(session_id);
         }
-        let current = self.create_with_messages(&[], true).await?;
+        let current = self.create_with_messages(&[]).await?;
         self.workspace_sessions
             .lock()
             .await

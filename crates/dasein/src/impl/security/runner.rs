@@ -200,6 +200,7 @@ impl ToolRunnerWithGuard {
                 )
                 .map_err(|reason| ToolError::PolicyDenied { reason })?,
                 environment: std::collections::BTreeMap::new(),
+                policy: None,
             };
 
             match self
@@ -215,6 +216,7 @@ impl ToolRunnerWithGuard {
                     metadata: ToolResultMeta {
                         execution_time_ms: sandbox_result.elapsed_ms,
                         truncated: false,
+                        patch_delta: None,
                     },
                 },
                 Err(e) => ToolResult {
@@ -223,6 +225,7 @@ impl ToolRunnerWithGuard {
                     metadata: ToolResultMeta {
                         execution_time_ms: 0,
                         truncated: false,
+                        patch_delta: None,
                     },
                 },
             }

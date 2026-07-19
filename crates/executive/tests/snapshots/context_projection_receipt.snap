@@ -1,0 +1,10 @@
+{
+  "space": "snapshot-space",
+  "broadcast_epoch": 7,
+  "workspace_version": 11,
+  "dasein_version": 5,
+  "content_ids": [
+    "00000000-0000-0000-0000-000000000001",
+    "00000000-0000-0000-0000-000000000002"
+  ]
+}

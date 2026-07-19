@@ -200,4 +200,11 @@ impl TurnServices for RecordingTurnServices {
         seed.extend(self.canonical_seed.clone());
         seed
     }
+
+    async fn plan_capability_batch(
+        &self,
+        calls: Vec<CapabilityCall>,
+    ) -> anyhow::Result<fabric::CapabilityBatchPlan> {
+        self.inner.plan_capability_batch(calls).await
+    }
 }

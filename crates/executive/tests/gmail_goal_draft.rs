@@ -1,7 +1,9 @@
 use corpus::tools::google::oauth::GoogleBinding;
 use executive::r#impl::approval::{ApprovalDecision, ApprovalResolutionContext};
 use executive::r#impl::artifact::{ArtifactRecord, ArtifactScanStatus};
-use executive::r#impl::channel::daemon_adapter::DaemonGmailDraftApprovalExecutor;
+use executive::r#impl::channel::daemon_adapter::{
+    ApprovalRepositoryPort, DaemonGmailDraftApprovalExecutor,
+};
 use executive::r#impl::channel::gmail::ingest::{
     GmailIngestResult, GmailOriginalReference, IngestedAttachment,
 };
@@ -11,13 +13,16 @@ use executive::r#impl::channel::gmail::sender_policy::{
 use executive::r#impl::channel::gmail::{
     GmailChannelMessage, GmailChannelStore, GmailGoalDraftCoordinator,
 };
-use executive::r#impl::channel::router::{
-    ChannelRouter, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
-};
-use executive::r#impl::channel::store::ChannelStore;
 use executive::r#impl::external::ExternalIdentityRepository;
 use executive::r#impl::goal::ObjectiveStore;
-use fabric::{ApprovalStatus, ExternalIdentityId, ExternalScope, GoalState, PrincipalId};
+use fabric::{
+    ApprovalCategory, ApprovalStatus, ExternalIdentityId, ExternalScope, GoalState, PrincipalId,
+};
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+};
+use gateway::registry::ApprovalResolver;
+use gateway::store::ChannelStore;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -440,9 +445,11 @@ async fn telegram_review_has_confirm_edit_reject_and_replayed_confirm_is_idempot
         .bind("telegram", "telegram:7", "owner", "active")
         .unwrap();
     let approval_repo = coordinator.lock().unwrap().approval_repository();
-    let mut router = ChannelRouter::new(channels, Arc::new(NoTurn))
-        .with_approval_repository(approval_repo)
-        .with_gmail_draft_executor(Arc::new(DaemonGmailDraftApprovalExecutor::new(coordinator)));
+    let gmail_resolver: Arc<dyn ApprovalResolver> =
+        Arc::new(DaemonGmailDraftApprovalExecutor::new(coordinator));
+    let mut router = ChannelDispatcher::new(channels, Arc::new(NoTurn))
+        .with_approval_port(Arc::new(ApprovalRepositoryPort::new(approval_repo)))
+        .with_approval_resolver(ApprovalCategory::ActivateGoal, gmail_resolver);
     let transport = CaptureTransport::default();
     assert!(router
         .notify_approval(

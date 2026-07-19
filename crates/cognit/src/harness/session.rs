@@ -2,7 +2,7 @@
 
 use crate::harness::config::HarnessConfig;
 use crate::harness::linear::DynLlmRef;
-use crate::harness::linear::{CompactorTrait, ReActLoop};
+use crate::harness::linear::{BatchPlanner, CompactorTrait, ReActLoop};
 use async_trait::async_trait;
 use fabric::{
     CapabilityCall, Message, TurnEvent, TurnEventSink, TurnMetrics as FabricTurnMetrics,
@@ -22,6 +22,24 @@ pub trait CognitiveStreamSink: Send + Sync {
 
 pub struct ChannelCognitiveStreamSink {
     tx: tokio::sync::mpsc::Sender<CognitiveStreamEvent>,
+}
+
+/// Production sink that writes Cognit lifecycle events directly onto the
+/// canonical Fabric turn stream.
+pub struct CanonicalTurnEventSink {
+    sender: fabric::ipc::TurnEventSender,
+}
+
+impl CanonicalTurnEventSink {
+    pub fn new(sender: fabric::ipc::TurnEventSender) -> Self {
+        Self { sender }
+    }
+}
+
+impl CognitiveStreamSink for CanonicalTurnEventSink {
+    fn emit(&self, event: CognitiveStreamEvent) {
+        let _ = self.sender.send(&event.into());
+    }
 }
 
 impl ChannelCognitiveStreamSink {
@@ -104,6 +122,10 @@ pub struct CognitiveSessionDependencies {
     pub clock: Arc<dyn fabric::Clock>,
     pub cancellation: CancellationToken,
     pub compactor: Option<Box<dyn CompactorTrait>>,
+    pub batch_planner: Option<Arc<dyn BatchPlanner>>,
+    /// Optional production bridge for messages evicted by guarded compaction.
+    /// Absence is an explicit no-op; compaction metrics still record eviction.
+    pub evicted_callback: Option<Arc<dyn Fn(Vec<Message>) + Send + Sync>>,
 }
 
 struct NoopCompressor;
@@ -184,8 +206,15 @@ impl LinearCognitiveSession {
         let compactor = dependencies
             .compactor
             .unwrap_or_else(|| Box::new(NoopCompressor));
+        let mut inner = ReActLoop::new_with_clock(config, compactor, dependencies.clock);
+        if let Some(planner) = dependencies.batch_planner.as_ref() {
+            inner.set_batch_planner(Arc::clone(planner));
+        }
+        if let Some(callback) = dependencies.evicted_callback {
+            inner.set_evicted_callback(callback);
+        }
         Self {
-            inner: ReActLoop::new_with_clock(config, compactor, dependencies.clock),
+            inner,
             cancellation: dependencies.cancellation,
         }
     }
@@ -383,6 +412,7 @@ impl CognitiveSession for LinearCognitiveSession {
                     (result.output, result.is_error)
                 }
             },
+            || services.drain_interjections(),
             &sink,
         );
         let (output, metrics) = tokio::select! {

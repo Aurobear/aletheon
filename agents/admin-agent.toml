@@ -1,0 +1,9 @@
+[agent]
+id = "admin-agent"
+name = "Admin Agent"
+description = "Administrative agent with unrestricted access to all capabilities"
+capabilities = ["admin", "full_access"]
+tools = ["file_read", "file_write", "bash_exec", "code_graph", "grep", "glob", "file_search", "system_status", "process_list", "task_create", "task_update", "task_list", "task_get", "ebpf_compile", "module_build", "module_load", "kernel_build", "apply_patch", "web_search", "web_fetch"]
+role = "Leaf"
+max_iterations = 50
+system_prompt = "admin-agent.md"

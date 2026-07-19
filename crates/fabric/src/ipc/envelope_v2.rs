@@ -319,6 +319,19 @@ impl SchemaId {
     pub const EVENT_MEMORY_CANDIDATE_V1: &'static str = "aletheon.event.memory_candidate/v1";
     pub const EVENT_AGORA_BROADCAST_V1: &'static str = "aletheon.event.agora_broadcast/v1";
     pub const EVENT_RUNTIME_RESTART_V1: &'static str = "aletheon.event.runtime_restart/v1";
+    pub const EVENT_SANDBOX_PROFILE_APPLIED_V1: &'static str =
+        "aletheon.event.sandbox_profile_applied/v1";
+    pub const EVENT_SANDBOX_VIOLATION_V1: &'static str = "aletheon.event.sandbox_violation/v1";
+    pub const EVENT_PROMPT_ENQUEUED_V1: &'static str = "aletheon.event.prompt_enqueued/v1";
+    pub const EVENT_PROMPT_EDITED_V1: &'static str = "aletheon.event.prompt_edited/v1";
+    pub const EVENT_PROMPT_CANCELLED_V1: &'static str = "aletheon.event.prompt_cancelled/v1";
+    pub const EVENT_INTERJECTION_CONSUMED_V1: &'static str =
+        "aletheon.event.interjection_consumed/v1";
+    pub const EVENT_WORKSPACE_CHECKPOINT_BEGAN_V1: &'static str =
+        "aletheon.event.workspace_checkpoint_began/v1";
+    pub const EVENT_WORKSPACE_CHECKPOINT_FINALIZED_V1: &'static str =
+        "aletheon.event.workspace_checkpoint_finalized/v1";
+    pub const EVENT_WORKSPACE_REWOUND_V1: &'static str = "aletheon.event.workspace_rewound/v1";
 
     pub fn supported_cross_process() -> &'static [&'static str] {
         &[

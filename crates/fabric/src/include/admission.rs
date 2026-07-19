@@ -7,8 +7,8 @@
 
 use crate::types::admission::{
     AdmissionError, AdmissionRequest, BudgetRequest, BudgetReservationId, BudgetReservationReceipt,
-    BudgetScope, BudgetScopeId, BudgetScopeKind, ExecutionPermit, LeaseRequest, PermitId,
-    ResourceLeaseId, RevokeReason, UsageReport,
+    BudgetScope, BudgetScopeId, BudgetScopeKind, BudgetTransferReceipt, ExecutionPermit,
+    LeaseRequest, PermitId, ResourceLeaseId, RevokeReason, UsageReport,
 };
 use async_trait::async_trait;
 
@@ -77,6 +77,16 @@ pub trait BudgetController: Send + Sync {
         usage: &UsageReport,
     ) -> Result<(), AdmissionError>;
 
+    /// Atomically charge child usage, close the child reservation, and move
+    /// its unused capacity into a live parent reservation. Replays return the
+    /// same immutable receipt.
+    async fn transfer_remaining_reservation(
+        &self,
+        child: BudgetReservationId,
+        parent: BudgetReservationId,
+        usage: &UsageReport,
+    ) -> Result<BudgetTransferReceipt, AdmissionError>;
+
     /// Close a reservation, returning unused capacity to its parent. Repeating
     /// the call on an already-closed reservation is a successful no-op.
     async fn revoke_reservation(
@@ -89,6 +99,15 @@ pub trait BudgetController: Send + Sync {
 
     /// Count the reservations currently held open (for lifecycle inspection).
     async fn active_reservation_count(&self) -> usize;
+
+    /// Durable lookup used by crash recovery; includes closed reservations so
+    /// a transfer receipt can be replayed after restart.
+    async fn reservation_for_owner(&self, owner: &str) -> Option<BudgetReservationId>;
+
+    /// Return the immutable transfer receipt when the child reservation was
+    /// already transferred before a crash.
+    async fn transfer_for_child(&self, child: BudgetReservationId)
+        -> Option<BudgetTransferReceipt>;
 }
 
 /// Time-limited exclusive lease manager for named resources (e.g. "gpu",

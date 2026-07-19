@@ -247,6 +247,20 @@ pub enum ClientEvent {
         is_error: bool,
         elapsed_ms: u64,
     },
+    ToolProgress {
+        call_id: String,
+        tool: String,
+        kind: String,
+        payload: serde_json::Value,
+    },
+    PatchProgress {
+        status: String,
+        path: Option<String>,
+        operation: Option<String>,
+        error: Option<String>,
+        applied_count: Option<usize>,
+        failed_count: Option<usize>,
+    },
 
     // ── Bookkeeping ──
     Usage {
@@ -299,6 +313,14 @@ pub enum ClientEvent {
     },
 }
 
+impl ClientEvent {
+    /// Forward-compatible client decoding: unknown additive event variants are
+    /// ignored rather than terminating the socket/TUI event loop.
+    pub fn decode_if_known(value: serde_json::Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+}
+
 #[cfg(test)]
 mod subagent_state_tests {
     use super::SubAgentState;
@@ -343,5 +365,19 @@ mod subagent_state_tests {
             !Destroyed.can_transition_to(&Destroyed),
             "no self-loop on Destroyed"
         );
+    }
+}
+
+#[cfg(test)]
+mod client_event_compatibility_tests {
+    use super::ClientEvent;
+
+    #[test]
+    fn unknown_additive_event_is_ignored_without_panic() {
+        assert!(ClientEvent::decode_if_known(serde_json::json!({
+            "type": "future_progress_shape",
+            "payload": {"pct": 50}
+        }))
+        .is_none());
     }
 }

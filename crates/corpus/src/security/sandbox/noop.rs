@@ -80,4 +80,28 @@ impl SandboxBackend for NoopBackend {
             elapsed_ms: elapsed,
         })
     }
+
+    async fn execute_streaming(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        timeout: Duration,
+        sink: &fabric::ToolEventSink,
+    ) -> Result<SandboxResult> {
+        let mut command = tokio::process::Command::new("bash");
+        command
+            .arg("-c")
+            .arg(cmd)
+            .current_dir(config.working_dir())
+            .envs(&config.environment);
+        super::streaming::execute_command_streaming(
+            command,
+            timeout,
+            "noop",
+            IsolationLevel::None,
+            self.clock.clone(),
+            sink,
+        )
+        .await
+    }
 }

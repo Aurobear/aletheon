@@ -59,6 +59,7 @@ pub use types::agent_control;
 pub use types::attempt;
 pub use types::capability;
 pub use types::channel;
+pub use types::conscious_arbitration;
 pub use types::conscious_core;
 pub use types::context;
 pub use types::evidence;
@@ -73,6 +74,7 @@ pub use types::hook;
 pub use types::hook_ext;
 pub use types::llm_types;
 pub use types::message;
+pub use types::network_policy;
 pub use types::objective;
 pub use types::paths;
 pub use types::permission;
@@ -82,9 +84,14 @@ pub use types::session;
 pub use types::tool;
 pub use types::vision;
 pub use types::workspace;
+pub use types::workspace_trust;
 
 pub use protocol::conscious_core::{
     CandidateDisposition, ConsciousCoreSnapshot, InspectorProcessorAck,
+};
+pub use types::conscious_arbitration::{
+    CapabilityBatchDecision, CapabilityBatchPlan, ConsciousArbitrationMode, ConsciousFieldReadout,
+    FieldDecisionKind, FieldDecisionReason, LatestConsciousContextPort,
 };
 pub use types::conscious_core::{
     BroadcastIntegrationReceipt, ConsciousContextProjection, ConsciousProcessor,
@@ -95,6 +102,15 @@ pub use types::conscious_core::{
 pub use types::conscious_core_trace::{
     AcceptanceEvidence, ConsciousCoreTrace, ConsciousTraceEvent, IndicatorResult,
     CONSCIOUS_CORE_TRACE_SCHEMA_V1,
+};
+pub use types::conscious_field_metrics::{
+    quantize, FieldMetricHistory, FieldMetricIndicators, FieldMetricSnapshot,
+    MAX_FIELD_METRIC_HISTORY, QUIET_CONVERGENCE_WINDOW,
+};
+pub use types::prompt_queue::{
+    evaluate_cancel, evaluate_edit, truncate_prompt_content, PromptEnvelope, PromptId, PromptKind,
+    PromptState, QueueOpResult, QueueSnapshot, MAX_INTERJECTION_BYTES, MAX_PROMPT_BYTES,
+    MAX_QUEUE_LEN,
 };
 pub use types::workspace::{
     ActionProposalFrame, BroadcastAck, BroadcastAckStatus, BroadcastDelivery, BroadcastEpoch,
@@ -174,18 +190,28 @@ pub use include::turn::{
 // Shared types (from types/)
 pub use types::admission::{
     AdmissionError, AdmissionRequest, AuditEventId, BudgetRequest, BudgetReservationId,
-    BudgetReservationReceipt, BudgetScope, BudgetScopeId, BudgetScopeKind, CapabilityId,
-    CapabilityScope, ExecutionPermit, LeaseRequest, PermitId, PrincipalId, ResourceLeaseId,
-    RevokeReason, SandboxDecision, SandboxRequirement, UsageReport, BUDGET_SCOPE_SCHEMA_VERSION,
+    BudgetReservationReceipt, BudgetScope, BudgetScopeId, BudgetScopeKind, BudgetTransferReceipt,
+    CapabilityId, CapabilityScope, ExecutionPermit, LeaseRequest, PermitId, PrincipalId,
+    ResourceLeaseId, RevokeReason, SandboxDecision, SandboxRequirement, UsageReport,
+    BUDGET_SCOPE_SCHEMA_VERSION,
 };
 pub use types::agent::Pid;
 pub use types::agent_control::{
-    AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork, AgentControlError,
-    AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle, AgentListRequest,
-    AgentMessageDeliveryState, AgentMessageKind, AgentMessagePayload, AgentMessageReceipt,
-    AgentProfile, AgentRecoveryDecision, AgentRecoveryReceipt, AgentResult, AgentRunStatus,
-    AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentTaskId, AgentWaitRequest,
-    RuntimeResumability, AGENT_MESSAGE_SCHEMA_V1,
+    AgentApprovalPolicy, AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork,
+    AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
+    AgentListRequest, AgentMessageDeliveryState, AgentMessageKind, AgentMessagePayload,
+    AgentMessageReceipt, AgentProfile, AgentRecoveryDecision, AgentRecoveryReceipt, AgentResult,
+    AgentRunStatus, AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentTaskId,
+    AgentWaitRequest, ParentRestriction, RiskTier, RuntimeResumability, AGENT_MESSAGE_SCHEMA_V1,
+};
+pub use types::agent_profile_event::{
+    AgentProfileSwitchDecision, AgentProfileSwitchEventV1, AGENT_PROFILE_SWITCH_EVENT_SCHEMA_V1,
+};
+pub use types::agent_settlement::{
+    authorize_background_disposition, can_reparent, settlement_idempotency_key, AgentResourceClass,
+    BackgroundDisposition, BackgroundResourceDecl, HostDispositionAuthorization, ReparentContext,
+    ReparentReceipt, SettlementPhase, SettlementReceipt, SettlementTerminal,
+    MAX_BACKGROUND_RESOURCES,
 };
 pub use types::approval::{
     ApprovalArtifactRef, ApprovalCategory, ApprovalContractError, ApprovalId, ApprovalResolution,
@@ -248,14 +274,17 @@ pub use types::permission::{
 };
 pub use types::process::{
     AgentId, AgentProfileId, ExitReason, ExitStatus, MailboxId, NamespaceId, OsProcessId,
-    ProcessIdentity, ProcessRecord, ProcessSignal, ProcessSnapshot, ProcessState, SpaceId,
-    SpawnSpec,
+    ProcessIdentity, ProcessOwnership, ProcessRecord, ProcessSignal, ProcessSnapshot, ProcessState,
+    SpaceId, SpawnSpec,
 };
 pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
-    IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
-    SandboxExecutor, SandboxPreference, SandboxResult,
+    resolve_profile, IsolationLevel, ProfileName, ProfileResolveError, ResolvedSandboxPolicy,
+    SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig, SandboxExecutor,
+    SandboxPreference, SandboxProfileConfig, SandboxProfiles, SandboxResult, DENY_GLOB_MAX_DEPTH,
+    DENY_GLOB_MAX_ENTRIES, DENY_GLOB_MAX_MATCHES,
 };
+pub use types::sandbox_glob::expand_deny_globs;
 pub use types::session::{
     AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
     SessionForkedEvent, SessionNotification, SessionProtocolV1, SessionRecord, SessionStatus,
@@ -267,8 +296,14 @@ pub use types::space::{
 };
 pub use types::time::{wall_to_datetime, MonoDeadline, MonoTime, WallTime};
 pub use types::tool::{
-    AgentToolContext, ApprovalOwner, PendingApprovalKey, PermissionLevel as ToolPermissionLevel,
+    AgentToolContext, ApprovalOwner, PatchDelta, PatchDeltaApplied, PatchDeltaFailed,
+    PatchDeltaFileChange, PendingApprovalKey, PermissionLevel as ToolPermissionLevel,
     ThreadGrantKey, Tool, ToolApprovalAuthority, ToolContext, ToolResult, ToolResultMeta,
+};
+pub use types::tool_stream::{
+    tool_event_channel, tool_event_channel_for_call, BoundToolEventReceiver, ToolEventSink,
+    ToolExecutionError, ToolExecutionEvent, ToolNotification, ToolNotificationKind, ToolProgress,
+    TOOL_PROGRESS_CHANNEL_CAP,
 };
 pub use types::turn::{
     TurnEvent, TurnMetrics, TurnRequest, TurnResult, TurnStop, TurnTerminalStatus,
@@ -289,7 +324,7 @@ pub use events::ui_event::{
 
 // IPC types (from ipc/)
 pub use ipc::bus::communication_bus::{BusConfig, CommunicationBus};
-pub use ipc::bus::kernel_bus::KernelEventBus;
+pub use ipc::bus::kernel_bus::{CanonicalEventBus, KernelEventBus};
 pub use ipc::envelope::{Endpoint, Envelope, EnvelopeId, ModuleId, Pattern, Payload, Target};
 pub use ipc::envelope_v2::{
     DeliveryPattern as EnvelopeV2Delivery, EnvelopeV2, MessageId, SchemaId,
@@ -333,4 +368,8 @@ pub use primitives::{
 };
 
 // Compaction (shared context-compaction interface + pruning helpers)
-pub use include::compaction::{prune_tool_outputs, truncate_utf8_bytes, CompactorTrait};
+pub use include::compaction::{
+    is_degenerate_summary, prune_tool_outputs, safe_tail_cut, truncate_utf8_bytes,
+    CompactionFailure, CompactionOutcome, CompactionStrategy, CompactorTrait,
+    MIN_SUMMARY_SEED_CHARS,
+};

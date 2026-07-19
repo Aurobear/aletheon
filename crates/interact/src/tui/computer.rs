@@ -1,12 +1,7 @@
 //! Typed computer host requests. Interact never constructs or executes Corpus drivers.
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ComputerHostRequest {
-    pub operation: String,
-    pub arguments: Vec<String>,
-}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComputerHostRequest(pub fabric::protocol::client::ComputerHostParams);
 
 impl ComputerHostRequest {
     pub fn parse(input: &str) -> anyhow::Result<Self> {
@@ -14,13 +9,15 @@ impl ComputerHostRequest {
         let operation = parts
             .next()
             .ok_or_else(|| anyhow::anyhow!("computer operation is required"))?;
-        Ok(Self {
+        Ok(Self(fabric::protocol::client::ComputerHostParams {
             operation: operation.into(),
             arguments: parts.map(str::to_string).collect(),
-        })
+        }))
     }
 
     pub fn to_rpc(&self, id: u64) -> serde_json::Value {
-        serde_json::json!({"jsonrpc":"2.0", "id":id, "method":"host.computer", "params":self})
+        fabric::protocol::client::ClientRpcRequest::HostComputer(self.0.clone())
+            .to_json_rpc(Some(id))
+            .expect("typed computer request serializes")
     }
 }

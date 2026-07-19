@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tracing::info;
 
-use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use super::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,
+};
 
 pub struct KernelBuildTool;
 
@@ -60,6 +62,10 @@ impl Tool for KernelBuildTool {
         PermissionLevel::L3 // destructive: kernel install modifies bootloader
     }
 
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        Some(ToolExecutionDescriptor::KernelBuild)
+    }
+
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(KernelBuildTool)
     }
@@ -76,6 +82,7 @@ impl Tool for KernelBuildTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -106,6 +113,7 @@ impl Tool for KernelBuildTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -142,6 +150,7 @@ impl KernelBuildTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             };
         }
@@ -168,6 +177,7 @@ impl KernelBuildTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 } else {
@@ -178,6 +188,7 @@ impl KernelBuildTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 }
@@ -188,6 +199,7 @@ impl KernelBuildTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -217,6 +229,7 @@ impl KernelBuildTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             };
         }
@@ -242,6 +255,7 @@ impl KernelBuildTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 } else {
@@ -252,6 +266,7 @@ impl KernelBuildTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 }
@@ -262,6 +277,7 @@ impl KernelBuildTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -316,6 +332,7 @@ impl KernelBuildTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 } else {
@@ -339,6 +356,7 @@ impl KernelBuildTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: true,
+                            patch_delta: None,
                         },
                     }
                 }
@@ -349,6 +367,7 @@ impl KernelBuildTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -379,6 +398,7 @@ impl KernelBuildTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -389,6 +409,7 @@ impl KernelBuildTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -412,6 +433,7 @@ impl KernelBuildTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -422,6 +444,7 @@ impl KernelBuildTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -453,6 +476,7 @@ impl KernelBuildTool {
             metadata: ToolResultMeta {
                 execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
+                patch_delta: None,
             },
         }
     }
@@ -518,6 +542,7 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({"action": "invalid"}), &ctx).await;
         assert!(result.is_error);
@@ -533,6 +558,7 @@ mod tests {
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
             clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         // /tmp exists, so clone should fail
         let result = tool

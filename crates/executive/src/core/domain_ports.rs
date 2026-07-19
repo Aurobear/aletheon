@@ -1,12 +1,12 @@
 //! Executive-owned cognitive domain composition.
 
-use fabric::AgoraOps;
+use fabric::AgoraService;
 use std::sync::Arc;
 
 /// Cognitive domain ports are intentionally separate from KernelRuntime.
 #[derive(Clone)]
 pub struct DomainPorts {
-    agora: Arc<dyn AgoraOps>,
+    agora: Arc<dyn AgoraService>,
     metacog: Arc<dyn metacog::MetacogService>,
     corpus: Arc<dyn corpus::CorpusService>,
     cognition: Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
@@ -14,7 +14,7 @@ pub struct DomainPorts {
 
 impl DomainPorts {
     pub fn new(
-        agora: Arc<dyn AgoraOps>,
+        agora: Arc<dyn AgoraService>,
         metacog: Arc<dyn metacog::MetacogService>,
         corpus: Arc<dyn corpus::CorpusService>,
         cognition: Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
@@ -27,7 +27,7 @@ impl DomainPorts {
         }
     }
 
-    pub fn agora(&self) -> Arc<dyn AgoraOps> {
+    pub fn agora(&self) -> Arc<dyn AgoraService> {
         self.agora.clone()
     }
 

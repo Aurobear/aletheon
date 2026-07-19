@@ -464,6 +464,34 @@ impl AgentRunRepository for SqliteAgentRunRepository {
         rows.collect::<Result<Vec<_>, _>>().map_err(persistence)
     }
 
+    async fn list_agent_resource_leases(
+        &self,
+        agent: AgentId,
+        limit: usize,
+    ) -> Result<Vec<AgentResourceLease>, AgentControlError> {
+        if limit == 0 || limit > MAX_LIST_ITEMS {
+            return Err(AgentControlError::invalid(
+                "resource lease recovery limit is invalid",
+            ));
+        }
+        let connection = self.connection.lock();
+        let mut statement = connection
+            .prepare(
+                "SELECT lease_key, agent_id, kind, owner, expires_at_ms,
+                        worktree_root, worktree_path, expected_head
+                 FROM agent_resource_leases WHERE agent_id=?1
+                 ORDER BY lease_key ASC LIMIT ?2",
+            )
+            .map_err(persistence)?;
+        let rows = statement
+            .query_map(
+                rusqlite::params![agent.0.to_string(), limit as i64],
+                map_resource_lease,
+            )
+            .map_err(persistence)?;
+        rows.map(|row| row.map_err(persistence)).collect()
+    }
+
     async fn delete_resource_lease(
         &self,
         lease_key: &str,

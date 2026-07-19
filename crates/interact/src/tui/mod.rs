@@ -42,16 +42,9 @@ pub use cli::run;
 /// Build the local chat envelope. Keeping this in one place prevents the TUI,
 /// line mode, and `-m` mode from silently diverging.
 pub fn chat_request(message: &str, workspace: &fabric::WorkspacePolicy) -> serde_json::Value {
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "chat",
-        "id": 1,
-        "params": {
-            "message": message,
-            "working_dir": workspace.cwd(),
-            "workspace_roots": workspace.writable_roots(),
-        }
-    })
+    fabric::protocol::client::ClientRpcRequest::chat(message, workspace)
+        .to_json_rpc(Some(1))
+        .expect("typed chat request serializes")
 }
 
 /// Restore terminal to normal state.

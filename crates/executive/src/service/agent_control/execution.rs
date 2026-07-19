@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -196,6 +198,144 @@ pub struct AgentRuntimeInput {
     pub memory_context: mnemosyne::AgentMemoryContext,
     pub inbox: AgentRuntimeInbox,
     pub cancellation: CancellationToken,
+    /// Per-declaration cancellation authority for background command
+    /// producers. Producers must select by the reviewed resource ID instead
+    /// of deriving an unmanaged token from the whole agent scope.
+    pub background_cancellations: HashMap<String, CancellationToken>,
+    /// Host-only producer registrations keyed by the reviewed declaration ID.
+    /// This binds a real cancellation-aware future to settlement; it does not
+    /// expose command text or declaration mutation to the model runtime.
+    pub background_registrations: HashMap<String, BackgroundResourceRegistration>,
+    /// Mutable host-owned notification destinations. A producer reads the
+    /// current target for each emission; settlement may atomically switch it
+    /// from the child mailbox to its parent mailbox.
+    pub background_notification_targets:
+        HashMap<String, Arc<tokio::sync::RwLock<fabric::EnvelopeV2Target>>>,
+}
+
+impl AgentRuntimeInput {
+    pub fn background_cancellation(&self, resource_id: &str) -> Option<CancellationToken> {
+        self.background_cancellations.get(resource_id).cloned()
+    }
+
+    /// Bind exactly one host-created producer future to a reviewed resource.
+    pub fn register_background_producer<F, Fut>(
+        &self,
+        resource_id: &str,
+        producer: F,
+    ) -> Result<(), AgentControlError>
+    where
+        F: FnOnce(CancellationToken) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let registration = self
+            .background_registrations
+            .get(resource_id)
+            .ok_or_else(|| {
+                runtime_error("background producer has no reviewed resource declaration")
+            })?;
+        registration.bind(producer)
+    }
+
+    pub async fn background_notification_target(
+        &self,
+        resource_id: &str,
+    ) -> Option<fabric::EnvelopeV2Target> {
+        let target = self.background_notification_targets.get(resource_id)?;
+        Some(target.read().await.clone())
+    }
+}
+
+const REGISTRATION_UNBOUND: u8 = 0;
+const REGISTRATION_RUNNING: u8 = 1;
+const REGISTRATION_STOPPED: u8 = 2;
+
+#[derive(Clone, Debug)]
+pub struct BackgroundResourceRegistration {
+    token: CancellationToken,
+    state: Arc<AtomicU8>,
+    stopped: Arc<tokio::sync::Notify>,
+}
+
+impl BackgroundResourceRegistration {
+    pub(crate) fn new(token: CancellationToken) -> Self {
+        Self {
+            token,
+            state: Arc::new(AtomicU8::new(REGISTRATION_UNBOUND)),
+            stopped: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    pub fn cancellation(&self) -> CancellationToken {
+        self.token.clone()
+    }
+
+    pub fn bind<F, Fut>(&self, producer: F) -> Result<(), AgentControlError>
+    where
+        F: FnOnce(CancellationToken) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        self.state
+            .compare_exchange(
+                REGISTRATION_UNBOUND,
+                REGISTRATION_RUNNING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .map_err(|_| runtime_error("background producer is already registered"))?;
+        let runtime = tokio::runtime::Handle::try_current().map_err(|_| {
+            self.state.store(REGISTRATION_UNBOUND, Ordering::Release);
+            runtime_error("background producer registration requires a Tokio runtime")
+        })?;
+        let token = self.token.clone();
+        let producer_token = token.clone();
+        let state = self.state.clone();
+        let stopped = self.stopped.clone();
+        runtime.spawn(async move {
+            let producer = producer(producer_token);
+            tokio::pin!(producer);
+            tokio::select! {
+                _ = &mut producer => {}
+                _ = token.cancelled() => {
+                    // Give the cancellation-aware producer a bounded grace
+                    // period to reap its child/process resources itself.
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        &mut producer,
+                    ).await;
+                }
+            }
+            state.store(REGISTRATION_STOPPED, Ordering::Release);
+            stopped.notify_waiters();
+        });
+        Ok(())
+    }
+
+    pub(crate) async fn cancel_and_wait(&self) {
+        self.token.cancel();
+        self.wait_stopped().await;
+    }
+
+    pub async fn wait_stopped(&self) {
+        loop {
+            let notified = self.stopped.notified();
+            if self.state.load(Ordering::Acquire) != REGISTRATION_RUNNING {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.state.load(Ordering::Acquire) == REGISTRATION_STOPPED
+    }
+}
+
+fn runtime_error(message: &str) -> AgentControlError {
+    AgentControlError {
+        kind: AgentControlErrorKind::Runtime,
+        message: message.into(),
+    }
 }
 
 #[derive(Debug, Clone)]

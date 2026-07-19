@@ -1,18 +1,19 @@
 use async_trait::async_trait;
 use executive::kernel::chronos::TestClock;
-use executive::r#impl::channel::router::{
-    ChannelRouter, ChannelTransport, ChannelTurnExecutor, GoalProgress, ProviderEnvelope,
-};
-use executive::r#impl::channel::store::ChannelStore;
 use executive::r#impl::goal::{
-    AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
-    AttemptRequest, GoalCoordinator, ObjectiveStore, RetryDecision, RetryPolicy,
+    goal_progress_from_outcome, AttemptCoordinationOutcome, AttemptCoordinator,
+    AttemptCoordinatorError, AttemptExecutor, AttemptRequest, GoalCoordinator, ObjectiveStore,
+    RetryDecision, RetryPolicy,
 };
 use fabric::channel::{ConversationId, OutboundMessage};
 use fabric::{
     AttemptEvidence, AttemptUsage, CognitiveRole, FailureClass, GoalBudget, GoalId, GoalSpec,
     GoalState, PrincipalId, RuntimeFailure, RuntimeId, RuntimeResult,
 };
+use gateway::dispatcher::{
+    ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
+};
+use gateway::store::ChannelStore;
 use rusqlite::Connection;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -115,7 +116,7 @@ struct Harness {
     goal: GoalCoordinator,
     attempts: AttemptCoordinator,
     executor: Arc<QueueExecutor>,
-    router: ChannelRouter,
+    router: ChannelDispatcher,
     transport: InspectingTransport,
     goal_id: GoalId,
 }
@@ -169,7 +170,7 @@ fn harness(outcomes: Vec<Result<RuntimeResult, RuntimeFailure>>) -> Harness {
 
     let channel_dir = tempfile::tempdir().unwrap();
     let channel_path = channel_dir.path().join("channels.db");
-    let router = ChannelRouter::new(
+    let router = ChannelDispatcher::new(
         ChannelStore::open(&channel_path).unwrap(),
         Arc::new(NoopTurn),
     );
@@ -234,7 +235,7 @@ fn failure(class: FailureClass, retryable: bool) -> RuntimeFailure {
 }
 
 async fn notify(h: &Harness, outcome: &AttemptCoordinationOutcome) {
-    let progress = GoalProgress::from_outcome(outcome);
+    let progress = goal_progress_from_outcome(outcome);
     assert!(h
         .router
         .notify_goal_progress(&h.transport, ConversationId("owner-chat".into()), &progress,)

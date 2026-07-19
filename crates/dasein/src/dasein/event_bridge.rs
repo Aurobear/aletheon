@@ -1,16 +1,16 @@
-//! DaseinEventBridge — bridges CommunicationBus topic events to DaseinModule.
+//! DaseinEventBridge — bridges canonical events to DaseinModule.
 //!
 //! DaseinModule must perceive real system events to exist meaningfully.
-//! This bridge subscribes to CommunicationBus topics (via SchemaId from EventType)
+//! This bridge subscribes to canonical schemas
 //! and translates system events into DaseinEvent messages on the DaseinModule's channel.
 
 use fabric::ipc::envelope_v2::SchemaId;
-use fabric::CommunicationBus;
+use fabric::CanonicalEventBus;
 use tokio::sync::mpsc;
 
 use fabric::dasein::DaseinEvent;
 
-/// Bridges CommunicationBus topic events to DaseinModule's internal event channel.
+/// Bridges canonical events to DaseinModule's internal event channel.
 ///
 /// DaseinModule "perceives" the system through this bridge --
 /// tool executions, memory storage, evolution triggers, and session
@@ -24,7 +24,7 @@ impl DaseinEventBridge {
         Self { dasein_tx }
     }
 
-    /// Register topic subscriptions on the CommunicationBus to forward system
+    /// Register schema subscriptions on the canonical event bus to forward system
     /// events to the DaseinModule.
     ///
     /// Subscribes to:
@@ -32,16 +32,16 @@ impl DaseinEventBridge {
     /// - `aletheon.event.memory_stored/v1` -- memory events sediment into bewandtnis relations
     /// - `aletheon.event.evolution_triggered/v1` -- evolution events trigger negativity checks
     /// - `aletheon.event.agent_started/v1` -- session/lifecycle events update the temporal stream
-    pub async fn subscribe(&self, communication_bus: &CommunicationBus) -> anyhow::Result<()> {
+    pub async fn subscribe(&self, event_bus: &CanonicalEventBus) -> anyhow::Result<()> {
         // Helper: subscribe to a topic and spawn a background task that forwards
         // JSON payload data into a DaseinEvent via the provided mapping closure.
         fn spawn_topic_subscriber(
-            bus: &CommunicationBus,
+            bus: &CanonicalEventBus,
             schema: SchemaId,
             tx: mpsc::Sender<DaseinEvent>,
             map: fn(serde_json::Value) -> DaseinEvent,
         ) {
-            let mut rx = bus.subscribe_envelope_v2(schema);
+            let mut rx = bus.subscribe_channel(schema);
             tokio::spawn(async move {
                 while let Ok(envelope) = rx.recv().await {
                     let json = envelope.payload;
@@ -57,7 +57,7 @@ impl DaseinEventBridge {
         {
             let tx = self.dasein_tx.clone();
             spawn_topic_subscriber(
-                communication_bus,
+                event_bus,
                 SchemaId(SchemaId::EVENT_TOOL_OBSERVATION_V1.into()),
                 tx,
                 |json| {
@@ -81,7 +81,7 @@ impl DaseinEventBridge {
         {
             let tx = self.dasein_tx.clone();
             spawn_topic_subscriber(
-                communication_bus,
+                event_bus,
                 SchemaId(SchemaId::EVENT_MEMORY_STORED_V1.into()),
                 tx,
                 |json| {
@@ -102,7 +102,7 @@ impl DaseinEventBridge {
         {
             let tx = self.dasein_tx.clone();
             spawn_topic_subscriber(
-                communication_bus,
+                event_bus,
                 SchemaId(SchemaId::EVENT_EVOLUTION_TRIGGERED_V1.into()),
                 tx,
                 |json| {
@@ -122,7 +122,7 @@ impl DaseinEventBridge {
         {
             let tx = self.dasein_tx.clone();
             spawn_topic_subscriber(
-                communication_bus,
+                event_bus,
                 SchemaId(SchemaId::EVENT_AGENT_STARTED_V1.into()),
                 tx,
                 |_json| DaseinEvent::SystemEvent {
@@ -132,7 +132,7 @@ impl DaseinEventBridge {
             );
         }
 
-        tracing::info!("DaseinEventBridge subscribed to CommunicationBus topic events");
+        tracing::info!("DaseinEventBridge subscribed to canonical event schemas");
         Ok(())
     }
 }

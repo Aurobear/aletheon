@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use cognit::config::GbrainMemoryConfig;
+use cognit::config::McpMemoryConfig;
 use corpus::tools::mcp::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use corpus::tools::mcp::manager::McpManager;
 use executive::r#impl::gbrain::build_gbrain_memory_runtime;
@@ -125,6 +125,8 @@ fn item(record_id: &str, source_id: &str, content: &str, observed: i64) -> Recal
         temporal_state: TemporalState::Current,
         authority: mnemosyne::MemoryAuthority::AletheonExternal,
         scope: mnemosyne::MemoryScope::Session("s".into()),
+        score: 0.0,
+        evidence: None,
     }
 }
 
@@ -155,7 +157,7 @@ async fn disabled_and_unavailable_startup_keep_local_memory_operational() {
     let runtime = build_gbrain_memory_runtime(
         local.clone(),
         None,
-        &GbrainMemoryConfig::default(),
+        &McpMemoryConfig::default(),
         Arc::new(aletheon_kernel::chronos::TestClock::default()),
         &cancel,
     );
@@ -163,7 +165,7 @@ async fn disabled_and_unavailable_startup_keep_local_memory_operational() {
     runtime.memory_service.record(decision("d1")).await.unwrap();
     assert_eq!(local.records.lock().unwrap().len(), 1);
 
-    let config = GbrainMemoryConfig {
+    let config = McpMemoryConfig {
         enabled: true,
         ..Default::default()
     };
@@ -342,7 +344,7 @@ async fn slow_or_malformed_supplemental_recall_falls_back_to_local_with_health()
 #[tokio::test]
 async fn schema_drift_is_local_only_and_marked_degraded() {
     let manager = Arc::new(McpManager::new(McpConfig::default()));
-    let config = GbrainMemoryConfig {
+    let config = McpMemoryConfig {
         enabled: true,
         ..Default::default()
     };
@@ -368,7 +370,7 @@ async fn healthy_http_bootstrap_and_shutdown_leave_committed_queue_durable() {
     let dir = tempfile::tempdir().unwrap();
     let cancel = CancellationToken::new();
     cancel.cancel();
-    let config = GbrainMemoryConfig {
+    let config = McpMemoryConfig {
         enabled: true,
         projection_enabled: true,
         spool_path: dir.path().join("spool.db").to_string_lossy().into_owned(),
@@ -406,7 +408,7 @@ async fn healthy_http_bootstrap_and_shutdown_leave_committed_queue_durable() {
 
 #[tokio::test]
 async fn legacy_config_and_json_outbox_migrate_before_worker_start() {
-    let parsed: GbrainMemoryConfig = toml::from_str(
+    let parsed: McpMemoryConfig = toml::from_str(
         r#"
 enabled = true
 source = "aletheon"
@@ -437,7 +439,7 @@ outbox_dir = "/tmp/overridden-below"
         .to_string(),
     )
     .unwrap();
-    let config = GbrainMemoryConfig {
+    let config = McpMemoryConfig {
         spool_path: dir.path().join("spool.db").to_string_lossy().into_owned(),
         legacy_outbox_dir: legacy.to_string_lossy().into_owned(),
         ..parsed
@@ -512,6 +514,12 @@ async fn connected_manager(state: HttpState) -> McpManager {
             trust: McpTrustLevel::RemoteTrusted,
             enabled: true,
             bearer_token_env: None,
+            oauth: None,
+            request_timeout_ms: None,
+            health_check_interval_sec: 0,
+            allowlist: Vec::new(),
+            denylist: Vec::new(),
+            permission_overrides: std::collections::HashMap::new(),
         }],
         ..Default::default()
     });
