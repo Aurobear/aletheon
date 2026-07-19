@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use super::mutation_path::validate_mutation_path;
@@ -28,6 +29,10 @@ impl Tool for FileWriteTool {
                 "content": {
                     "type": "string",
                     "description": "Content to write"
+                },
+                "expected_sha256": {
+                    "type": "string",
+                    "description": "Optional: expected hash of current file. Write refused if mismatch (stale workspace view)."
                 }
             },
             "required": ["path", "content"]
@@ -92,6 +97,20 @@ impl Tool for FileWriteTool {
                         patch_delta: None,
                     },
                 };
+            }
+        }
+
+        // Optimistic concurrency: refuse write if file changed since last read.
+        if let Some(expected) = input.get("expected_sha256").and_then(|v| v.as_str()) {
+            if let Ok(existing) = fs::read_to_string(&full_path).await {
+                let actual = format!("{:x}", Sha256::digest(existing.as_bytes()));
+                if actual != expected {
+                    return ToolResult {
+                        content: format!("StaleWorkspaceView: expected sha256 {expected}, actual {actual}. Re-read the file before editing."),
+                        is_error: true,
+                        metadata: ToolResultMeta { execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0), truncated: false, patch_delta: None },
+                    };
+                }
             }
         }
 
