@@ -4,7 +4,7 @@ use crate::error::HostError;
 use crate::receipt::HostReceipt;
 use async_trait::async_trait;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ProcessId(pub u32);
 
 #[derive(Clone, Debug)]
