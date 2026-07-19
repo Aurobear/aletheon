@@ -90,21 +90,21 @@ impl Tool for FileSearchTool {
 
         // Strategy 1: Try ripgrep
         if let Some(result) =
-            try_ripgrep(&query, &path, include.as_deref(), max_results, &*ctx.clock).await
+            try_ripgrep(&query, &path, include.as_deref(), max_results, &*ctx.clock, &ctx.working_dir).await
         {
             return result;
         }
 
         // Strategy 2: Fallback to grep -r
         if let Some(result) =
-            try_grep(&query, &path, include.as_deref(), max_results, &*ctx.clock).await
+            try_grep(&query, &path, include.as_deref(), max_results, &*ctx.clock, &ctx.working_dir).await
         {
             return result;
         }
 
         // Strategy 3: Fallback to find + grep
         if let Some(result) =
-            try_find_grep(&query, &path, include.as_deref(), max_results, &*ctx.clock).await
+            try_find_grep(&query, &path, include.as_deref(), max_results, &*ctx.clock, &ctx.working_dir).await
         {
             return result;
         }
@@ -128,6 +128,7 @@ async fn try_ripgrep(
     include: Option<&str>,
     max_results: usize,
     clock: &dyn fabric::Clock,
+    working_dir: &std::path::Path,
 ) -> Option<ToolResult> {
     let start = clock.mono_now();
     let mut cmd = tokio::process::Command::new("rg");
@@ -137,7 +138,8 @@ async fn try_ripgrep(
         .arg(max_results.to_string())
         .arg("--color=never")
         .arg(query)
-        .arg(path);
+        .arg(path)
+        .current_dir(working_dir);
 
     if let Some(glob) = include {
         cmd.arg("--glob").arg(glob);
@@ -151,8 +153,8 @@ async fn try_ripgrep(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-    let truncated = lines.len() >= max_results;
+    let lines: Vec<&str> = stdout.lines().take(max_results).collect();
+    let truncated = stdout.lines().count() > max_results;
 
     if lines.is_empty() {
         return Some(ToolResult {
@@ -194,6 +196,7 @@ async fn try_grep(
     include: Option<&str>,
     max_results: usize,
     clock: &dyn fabric::Clock,
+    working_dir: &std::path::Path,
 ) -> Option<ToolResult> {
     let start = clock.mono_now();
     let mut cmd = tokio::process::Command::new("grep");
@@ -203,7 +206,7 @@ async fn try_grep(
         cmd.arg("--include").arg(glob);
     }
 
-    cmd.arg(query).arg(path);
+    cmd.arg(query).arg(path).current_dir(working_dir);
 
     let output = cmd.output().await.ok()?;
     if !output.status.success() && output.stdout.is_empty() {
@@ -254,6 +257,7 @@ async fn try_find_grep(
     include: Option<&str>,
     max_results: usize,
     clock: &dyn fabric::Clock,
+    working_dir: &std::path::Path,
 ) -> Option<ToolResult> {
     let start = clock.mono_now();
 
@@ -281,6 +285,7 @@ async fn try_find_grep(
         .arg(query)
         .arg("{}")
         .arg(";");
+    cmd.current_dir(working_dir);
 
     let output = cmd.output().await.ok()?;
     if !output.status.success() && output.stdout.is_empty() {
@@ -429,6 +434,39 @@ mod tests {
 
         assert!(result.is_error);
         assert!(result.content.contains("required"));
+    }
+
+    #[tokio::test]
+    async fn test_file_search_relative_path_uses_working_dir() {
+        // Regression: path="." must resolve against ctx.working_dir, not daemon cwd.
+        let tmp = tempfile::tempdir().unwrap();
+        let file_path = tmp.path().join("marker.rs");
+        let mut f = std::fs::File::create(&file_path).unwrap();
+        writeln!(f, "fn unique_marker_zzz() {{}}").unwrap();
+
+        let tool = FileSearchTool;
+        let input = json!({ "query": "unique_marker_zzz", "path": "." });
+
+        let result = tool
+            .execute(
+                input,
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(aletheon_kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
+                },
+            )
+            .await;
+
+        assert!(!result.is_error, "got: {}", result.content);
+        assert!(
+            result.content.contains("unique_marker_zzz"),
+            "relative search did not use working_dir: {}",
+            result.content
+        );
     }
 
     #[test]
