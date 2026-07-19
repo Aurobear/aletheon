@@ -869,7 +869,13 @@ impl RequestHandler {
         // Ordinary child Agents use one Cognit session runtime. Goal worker
         // and reviewer attempts remain explicit ProviderWorkerRuntime routes.
         {
-            let definitions = corpus_group.tools.lock().await.definitions();
+            // Stable agent control definitions must be visible to
+            // load_agent_profiles so profiles can list them in `allowed_tools`
+            // before the AgentControlService runtime is constructed.
+            let mut definitions = corpus_group.tools.lock().await.definitions();
+            definitions.extend(
+                corpus::tools::tools::agent_control::AgentControlTools::definitions(),
+            );
             let (profiles, tool_profiles) = super::runtime::load_agent_profiles(
                 &aletheon_dir.join("agents"),
                 inference.clone(),

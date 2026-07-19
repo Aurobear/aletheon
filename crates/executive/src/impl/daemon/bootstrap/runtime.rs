@@ -513,6 +513,72 @@ mod goal_runtime_tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn agent_tool_registration_profile_can_reference_agent_spawn() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("orchestrator.md"),
+            "---\nname: orchestrator\ndescription: orch\ntools: [file_read, agent_spawn]\n---\nI orchestrate.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+
+        let mut definitions: Vec<fabric::ToolDefinition> = vec![fabric::ToolDefinition {
+            name: "file_read".into(),
+            description: "read".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        definitions.extend(
+            corpus::tools::tools::agent_control::AgentControlTools::definitions(),
+        );
+
+        let (registry, profiles) = super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &definitions,
+            &crate::core::config::ExecutiveConfig::default(),
+            &crate::core::config::AgentProfilesConfig::default(),
+        )
+        .unwrap();
+
+        let profile = profiles.get("orchestrator").unwrap();
+        assert_eq!(profile.allowed_tools.len(), 2);
+        assert!(profile.allowed_tools.contains(&"file_read".to_string()));
+        assert!(profile.allowed_tools.contains(&"agent_spawn".to_string()));
+        assert!(registry.resolve(&profile.id).is_ok());
+    }
+
+    #[test]
+    fn agent_tool_registration_unknown_tool_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("bad.md"),
+            "---\nname: bad\ndescription: bad\ntools: [file_read, not_a_tool]\n---\nBad profile.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let definitions: Vec<fabric::ToolDefinition> = vec![fabric::ToolDefinition {
+            name: "file_read".into(),
+            description: "read".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+
+        let result = super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &definitions,
+            &crate::core::config::ExecutiveConfig::default(),
+            &crate::core::config::AgentProfilesConfig::default(),
+        );
+        assert!(result.is_err());
+    }
 }
 
 #[cfg(test)]
