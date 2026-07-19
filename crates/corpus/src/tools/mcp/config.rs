@@ -51,4 +51,6 @@ impl Default for McpConfig {
     }
 }
 
+// Wave 2B: type definitions live in mcp-types crate (future migration target).
+// Currently re-exported from cognit until serde wire adapters are migrated.
 pub use cognit::config::{McpServerConfig, McpTransportConfig, McpTrustLevel};

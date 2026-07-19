@@ -25,6 +25,7 @@ members = [
     "crates/runtime-verifier",
     "crates/hardware-api",
     "crates/hardware-sim",
+    "crates/mcp-types",
     "crates/state-authority",
     "crates/coding-bench",
     "examples/basic-agent",
