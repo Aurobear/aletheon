@@ -577,3 +577,65 @@ fn accumulate_usage(value: Option<&Value>, usage: &mut AttemptUsage) {
         usage.cost_usd = Some(usage.cost_usd.unwrap_or_default() + cost);
     }
 }
+
+// ── CapabilityRuntime impl (Wave 3) ─────────────────────────────────────
+use std::collections::BTreeSet;
+
+static PI_MANIFEST: std::sync::OnceLock<runtime_api::RuntimeManifest> = std::sync::OnceLock::new();
+
+fn pi_manifest() -> &'static runtime_api::RuntimeManifest {
+    PI_MANIFEST.get_or_init(|| runtime_api::RuntimeManifest {
+        id: PI_RPC_RUNTIME_ID.into(),
+        aliases: vec!["pi".into()],
+        display_name: "Pi Coding Runtime (RPC)".into(),
+        capabilities: BTreeSet::from([
+            runtime_api::RuntimeCapability::CodeRead,
+            runtime_api::RuntimeCapability::CodeSearch,
+            runtime_api::RuntimeCapability::CodeEdit,
+            runtime_api::RuntimeCapability::Shell,
+            runtime_api::RuntimeCapability::Test,
+        ]),
+        interaction_modes: BTreeSet::from([
+            runtime_api::InteractionMode::Resident,
+            runtime_api::InteractionMode::Steering,
+            runtime_api::InteractionMode::FollowUp,
+        ]),
+        workspace_mode: runtime_api::WorkspaceMode::Shared,
+        tool_governance: runtime_api::ToolGovernance::Observed,
+    })
+}
+
+#[async_trait]
+impl runtime_api::CapabilityRuntime for PiRpcRuntime {
+    fn manifest(&self) -> &runtime_api::RuntimeManifest {
+        pi_manifest()
+    }
+
+    async fn prepare(&self, _order: runtime_api::WorkOrder) -> Result<runtime_api::PreparedRuntime, String> {
+        Ok(runtime_api::PreparedRuntime {
+            session_id: uuid::Uuid::new_v4().to_string(),
+        })
+    }
+
+    async fn start(
+        &self,
+        prepared: runtime_api::PreparedRuntime,
+        _events: Arc<dyn runtime_api::RuntimeEventSink>,
+    ) -> Result<runtime_api::RuntimeHandle, String> {
+        Ok(runtime_api::RuntimeHandle { id: prepared.session_id })
+    }
+
+    async fn cancel(&self, _handle: runtime_api::RuntimeHandle) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn settle(&self, _handle: runtime_api::RuntimeHandle) -> Result<runtime_api::RuntimeReceipt, String> {
+        Ok(runtime_api::RuntimeReceipt {
+            status: runtime_api::CompletionStatus::SucceededUnverified,
+            output: String::new(),
+            usage: runtime_api::RuntimeUsage { tokens_in: 0, tokens_out: 0, elapsed_ms: 0 },
+            workspace_diff: None,
+            errors: vec![],
+        })
+    }
+}

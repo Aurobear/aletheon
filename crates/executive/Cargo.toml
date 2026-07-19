@@ -14,6 +14,7 @@ agora = { path = "../agora" }
 cognit = { path = "../cognit" }
 corpus = { path = "../corpus" }
 mnemosyne = { path = "../mnemosyne" }
+runtime-api = { path = "../runtime-api" }
 dasein = { path = "../dasein" }
 metacog = { path = "../metacog" }
 anyhow = "1"

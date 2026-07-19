@@ -519,7 +519,10 @@ impl RequestHandler {
                     ),
                     clock.clone(),
                 )
-                .with_evicted_memory(recall_memory.clone()),
+                .with_evicted_memory(recall_memory.clone())
+                .with_verifier(std::sync::Arc::new(
+                    crate::service::verifier::CodingVerifier::new(),
+                )),
             );
 
         let mut runtime = AletheonExecutive::new(runtime_config);

@@ -126,6 +126,9 @@ pub struct CognitiveSessionDependencies {
     /// Optional production bridge for messages evicted by guarded compaction.
     /// Absence is an explicit no-op; compaction metrics still record eviction.
     pub evicted_callback: Option<Arc<dyn Fn(Vec<Message>) + Send + Sync>>,
+    /// Optional coding verifier (Wave 3). When set, ReActLoop validates the
+    /// model's final answer before accepting it as complete.
+    pub verifier: Option<Arc<dyn fabric::policy::verifier::Verifier>>,
 }
 
 struct NoopCompressor;
@@ -191,6 +194,9 @@ impl LinearCognitiveSession {
         }
         if let Some(callback) = dependencies.evicted_callback {
             inner.set_evicted_callback(callback);
+        }
+        if let Some(verifier) = dependencies.verifier {
+            inner.set_verifier(verifier);
         }
         Self {
             inner,

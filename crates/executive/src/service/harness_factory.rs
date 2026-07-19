@@ -43,6 +43,7 @@ pub struct LinearCognitiveSessionFactory {
     config: HarnessConfig,
     clock: std::sync::Arc<dyn fabric::Clock>,
     evicted_memory: Option<std::sync::Arc<tokio::sync::Mutex<mnemosyne::RecallMemory>>>,
+    verifier: Option<std::sync::Arc<dyn fabric::policy::verifier::Verifier>>,
 }
 
 impl LinearCognitiveSessionFactory {
@@ -51,7 +52,13 @@ impl LinearCognitiveSessionFactory {
             config,
             clock,
             evicted_memory: None,
+            verifier: None,
         }
+    }
+
+    pub fn with_verifier(mut self, verifier: std::sync::Arc<dyn fabric::policy::verifier::Verifier>) -> Self {
+        self.verifier = Some(verifier);
+        self
     }
 
     pub fn with_evicted_memory(
@@ -79,6 +86,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 compactor: Some(compactor(&self.config)),
                 batch_planner: None,
                 evicted_callback: evicted_callback(self.evicted_memory.clone(), session),
+                verifier: self.verifier.clone(),
             },
         )))
     }
@@ -99,6 +107,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 compactor: Some(compactor),
                 batch_planner: None,
                 evicted_callback: evicted_callback(self.evicted_memory.clone(), session),
+                verifier: self.verifier.clone(),
             },
         )))
     }
@@ -120,6 +129,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 compactor: Some(compactor),
                 batch_planner,
                 evicted_callback: evicted_callback(self.evicted_memory.clone(), session),
+                verifier: self.verifier.clone(),
             },
         )))
     }
