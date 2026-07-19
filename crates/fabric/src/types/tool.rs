@@ -152,6 +152,18 @@ pub struct ToolResultMeta {
     /// Fabric owns this neutral DTO so it does not depend on Corpus patch types.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patch_delta: Option<PatchDelta>,
+    /// SHA-256 of the file content (file_read).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_sha256: Option<String>,
+    /// Total lines in the file (file_read).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_lines: Option<u64>,
+    /// Reference to an artifact with the full output, when truncated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_ref: Option<String>,
+    /// Original byte count before truncation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub truncated_bytes: Option<u64>,
 }
 
 /// Visibility tier for tools.

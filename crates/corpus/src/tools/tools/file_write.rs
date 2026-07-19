@@ -28,6 +28,10 @@ impl Tool for FileWriteTool {
                 "content": {
                     "type": "string",
                     "description": "Content to write"
+                },
+                "expected_sha256": {
+                    "type": "string",
+                    "description": "Optional: expected hash of current file content. If supplied and the file has changed, the write is refused (stale workspace view)."
                 }
             },
             "required": ["path", "content"]
@@ -92,6 +96,29 @@ impl Tool for FileWriteTool {
                         patch_delta: None,
                     },
                 };
+            }
+        }
+
+        // Optimistic concurrency: if caller supplies an expected hash, verify
+        // the file hasn't been modified by another agent or user since last read.
+        let expected_sha256 = input.get("expected_sha256").and_then(|v| v.as_str());
+        if let Some(expected) = expected_sha256 {
+            if let Ok(existing) = fs::read_to_string(&full_path).await {
+                let actual = format!("{:x}", sha2::Sha256::digest(existing.as_bytes()));
+                if actual != expected {
+                    return ToolResult {
+                        content: format!(
+                            "StaleWorkspaceView: expected sha256 {expected}, actual {actual}. \
+                             Re-read the file before editing.",
+                        ),
+                        is_error: true,
+                        metadata: ToolResultMeta {
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                            truncated: false,
+                            ..Default::default()
+                        },
+                    };
+                }
             }
         }
 
