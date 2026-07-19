@@ -121,6 +121,33 @@ impl UserRuntimeConfig {
         config.request.mcp_servers.clear();
         config.request.telegram.enabled = false;
         config.request.gbrain_memory.enabled = false;
+
+        // Populate the agents directory so that RequestHandler::new can
+        // resolve at least one agent profile (required since the profile
+        // authority enforcement landed).  Copy the checked-in Markdown
+        // definitions; the legacy TOML mirrors are intentionally skipped
+        // because the loader only consumes *.md.
+        let repo_agents = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agents");
+        let state_agents = config.paths.state_root.join("agents");
+        if !state_agents.exists() {
+            std::fs::create_dir_all(&state_agents).expect("create agents dir in fixture");
+            if repo_agents.is_dir() {
+                for entry in std::fs::read_dir(&repo_agents)
+                    .expect("read repo agents dir")
+                    .flatten()
+                {
+                    let src = entry.path();
+                    if src
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+                    {
+                        let dst = state_agents.join(src.file_name().unwrap());
+                        std::fs::copy(&src, &dst).expect("copy agent profile into fixture");
+                    }
+                }
+            }
+        }
+
         config
     }
 
