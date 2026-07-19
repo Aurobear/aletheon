@@ -469,13 +469,13 @@ target_removal_wave = 2
 
 # 冻结基线：fabric 根级 pub use 数量（防止继续膨胀）。
 [freeze]
-fabric_root_reexports_max = 72
+fabric_root_reexports_max = 132
 ```
 
 - [ ] **Step 2: 校验 fabric 根重导出基线数值**
 
 Run: `grep -c '^pub use' crates/fabric/src/lib.rs`
-Expected: 输出一个整数 N（当前约 72）。把 `fabric_root_reexports_max` 设为该实测值（若与 72 不同，以实测为准，此值即冻结上限）。
+Expected: 输出一个整数 N（实测 132）。把 `fabric_root_reexports_max` 设为该实测值（此值即冻结上限）。
 
 - [ ] **Step 3: Commit**
 
