@@ -51,14 +51,4 @@ impl Default for McpConfig {
     }
 }
 
-// Wave 2B: explicit type-path imports replace blanket re-export.
-// Full dependency inversion (moving ownership out of cognit) requires
-// breaking the circular dependency cognit ↔ corpus via a shared crate.
-use cognit::config::{
-    McpOAuthClientAuthMethod, McpOAuthConfig, McpPermissionLevel, McpServerConfig,
-    McpTransportConfig, McpTrustLevel,
-};
-pub use cognit::config::{
-    McpOAuthClientAuthMethod, McpOAuthConfig, McpPermissionLevel, McpServerConfig,
-    McpTransportConfig, McpTrustLevel,
-};
+pub use cognit::config::{McpServerConfig, McpTransportConfig, McpTrustLevel};

@@ -69,10 +69,8 @@ impl Tool for FileReadTool {
                     .map(|(i, line)| format!("{:>5}\t{}", offset + i + 1, line))
                     .collect();
 
-                let total = lines.len() as u64;
-                let truncated = total > (offset + limit) as u64;
+                let truncated = lines.len() > offset + limit;
                 let result = selected.join("\n");
-                let hash = format!("{:x}", sha2::Sha256::digest(content.as_bytes()));
 
                 ToolResult {
                     content: result,
@@ -81,9 +79,6 @@ impl Tool for FileReadTool {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated,
                         patch_delta: None,
-                        content_sha256: Some(hash),
-                        total_lines: Some(total),
-                        ..Default::default()
                     },
                 }
             }
