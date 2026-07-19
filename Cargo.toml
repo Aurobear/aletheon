@@ -15,6 +15,7 @@ members = [
     "crates/executive",
     "crates/exec-server",
     "crates/platform-api",
+    "crates/platform-host",
     "examples/basic-agent",
     "examples/self-evolution-loop",
 ]
