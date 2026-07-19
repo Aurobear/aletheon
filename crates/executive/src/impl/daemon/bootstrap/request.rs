@@ -11,7 +11,8 @@ use crate::r#impl::daemon::handler::RequestHandler;
 use crate::session::store::SessionStore;
 use aletheon_kernel::chronos::SystemClock;
 use anyhow::Context;
-use async_trait::async_trait;
+
+use super::approval_gate::{bootstrap_workspace_trust_resolver, DurableSocketApprovalGate};
 use cognit::core::reflector::Reflector;
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
@@ -30,7 +31,6 @@ use mnemosyne::episodic::EpisodicMemory;
 use mnemosyne::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
 use mnemosyne::CoreMemory;
 use mnemosyne::RecallMemory;
-use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
@@ -55,91 +55,11 @@ use mnemosyne::FactStore;
 
 use super::super::debug_handler::DebugHandler;
 use crate::core::session_gateway::gateway::SessionStateRef;
-use crate::core::session_gateway::{ParamRegistry, SessionGateway};
+use crate::core::session_gateway::ParamRegistry;
 use fabric::kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 
-fn bootstrap_workspace_trust_resolver(
-    data_dir: &std::path::Path,
-    folder_trust_enabled: bool,
-    event_bus: Option<Arc<CanonicalEventBus>>,
-) -> Arc<crate::service::workspace_trust::WorkspaceTrustResolver> {
-    let mut resolver = crate::service::workspace_trust::WorkspaceTrustResolver::new(
-        Arc::new(crate::service::workspace_trust::FileTrustStore::new(
-            data_dir.join("workspace-trust-receipts.json"),
-        )),
-        Arc::new(crate::service::workspace_trust::KnownConfigDiscoverer::default()),
-        folder_trust_enabled,
-    );
-    if let Some(bus) = event_bus {
-        resolver = resolver.with_event_bus(bus);
-    }
-    Arc::new(resolver)
-}
-
-struct DurableSocketApprovalGate {
-    socket: Arc<SocketApprovalGate>,
-    repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
-    clock: Arc<dyn Clock>,
-}
-
-#[async_trait]
-impl corpus::security::approval::ApprovalGate for DurableSocketApprovalGate {
-    async fn request(
-        &self,
-        request: &corpus::security::approval::ApprovalRequest,
-    ) -> corpus::security::approval::ApprovalDecision {
-        let requested_at_ms = self.clock.wall_now().0;
-        if self
-            .repository
-            .lock()
-            .ok()
-            .and_then(|repository| {
-                repository
-                    .record_external_request(
-                        &request.call_id,
-                        &request.tool,
-                        &request.action_summary,
-                        requested_at_ms,
-                    )
-                    .ok()
-            })
-            .is_none()
-        {
-            return corpus::security::approval::ApprovalDecision::Deny;
-        }
-
-        let decision = self.socket.request(request).await;
-        let decision_wire = match decision {
-            corpus::security::approval::ApprovalDecision::Approve => "approve",
-            corpus::security::approval::ApprovalDecision::Deny => "deny",
-            corpus::security::approval::ApprovalDecision::ApproveForSession => {
-                "approve_for_session"
-            }
-        };
-        if self
-            .repository
-            .lock()
-            .ok()
-            .and_then(|repository| {
-                repository
-                    .record_external_resolution(
-                        &request.call_id,
-                        decision_wire,
-                        self.clock.wall_now().0,
-                    )
-                    .ok()
-            })
-            .is_none()
-        {
-            return corpus::security::approval::ApprovalDecision::Deny;
-        }
-        decision
-    }
-}
-
 use super::request_ports::{
-    admin_runtime_port, initialize_self_field, post_turn_runtime_port, retention_admin_port,
-    RequestFacadePorts, TurnRuntimeFacadePorts,
+    admin_runtime_port, initialize_self_field, retention_admin_port, RequestFacadePorts,
 };
 
 impl RequestHandler {
@@ -1073,347 +993,74 @@ impl RequestHandler {
             None
         };
 
-        // Clone clock for later daemon services.
         let clock_2 = clock.clone();
-
-        let agent_state_root = data_dir.join("agents");
-        std::fs::create_dir_all(&agent_state_root)?;
-        let agent_repository = Arc::new(
-            crate::service::agent_control::SqliteAgentRunRepository::open(
-                agent_state_root.join("agent_control.db"),
-            )
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        );
-        let canonical_event_spine = Arc::new(
-            crate::r#impl::events::SqliteEventSpine::open(
-                data_dir.join("events.db"),
-            )
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "canonical event spine unavailable; using process-local fallback");
-                crate::r#impl::events::SqliteEventSpine::open(":memory:")
-                    .expect("in-memory event spine")
-            }),
-        );
-        let event_projections = Arc::new(
-            crate::r#impl::events::DefaultEventProjectionSet::open(
-                data_dir.join("event-projections.db"),
-            )
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "event projections unavailable; using process-local fallback");
-                crate::r#impl::events::DefaultEventProjectionSet::in_memory()
-            }),
-        );
-        let agent_daemon_generation = format!("daemon:{}", uuid::Uuid::new_v4());
-        let settlement_receipts = Arc::new(
-            crate::service::agent_control::SqliteSettlementReceiptStore::open(
-                agent_state_root.join("agent_settlement.db"),
-            )
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-        );
-        let agent_control_service = Arc::new(
-            crate::service::agent_control::AgentControlService::new(
-                kernel.clone(),
-                clock.clone(),
-                agent_repository.clone(),
-                Arc::new(
-                    crate::service::agent_control::BoundedAgentAdmission::with_budget(
-                        config.agent_admission.clone(),
-                        kernel.budget_controller(),
-                    )
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-                ),
-                agent_runtimes,
-            )
-            .with_budget_controller(kernel.budget_controller())
-            .with_event_spine(canonical_event_spine.clone())
-            .with_event_projections(event_projections.clone())
-            .with_lifecycle_hooks(Arc::new(
-                crate::service::agent_control::CorpusAgentLifecycleHookSink(corpus.clone()),
-            ))
-            .with_memory_vault(Arc::new(
-                mnemosyne::AgentMemoryVault::open(agent_state_root.join("agent_memory.db"))
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-            ))
-            .with_subagent_settlement(
-                grok_hardening.subagent_settlement,
-                agent_daemon_generation.clone(),
-                settlement_receipts,
-            ),
-        );
-        let agent_recovery = agent_control_service
-            .reconcile_startup(&agent_daemon_generation)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if !agent_recovery.ready() {
-            anyhow::bail!(
-                "Agent recovery left {} failed and {} unreconciled rows",
-                agent_recovery.recovery_failed,
-                agent_recovery.unreconciled
-            );
-        }
-        info!(
-            open = agent_recovery.open_rows,
-            interrupted = agent_recovery.interrupted,
-            resumed = agent_recovery.resumed,
-            finalized = agent_recovery.finalized,
-            "Agent restart recovery completed before spawn admission"
-        );
-        let agent_cleanup = crate::service::agent_control::AgentCleanupCoordinator::new(
-            agent_repository.clone(),
-            Arc::new(
-                crate::r#impl::runtime::worktree_recovery::VerifiedAgentWorktreeReclaimer::default(
-                ),
-            ),
-        )
-        .reclaim_expired(clock.wall_now().0)
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        info!(
-            examined = agent_cleanup.examined,
-            reclaimed = agent_cleanup.reclaimed,
-            retained_unsafe = agent_cleanup.retained_unsafe,
-            failures = agent_cleanup.failures,
-            compacted = agent_cleanup.compacted_rows,
-            "Agent terminal resource cleanup completed"
-        );
-        let agent_control: Arc<dyn fabric::AgentControlPort> = agent_control_service.clone();
-        let agent_live_runs = agent_control_service.live_runs();
-        let agent_shutdown_cancel = cancel_token.clone();
-        tokio::spawn(async move {
-            agent_shutdown_cancel.cancelled().await;
-            agent_control_service.shutdown().await;
-        });
-
-        super::runtime::register_agent_tools(
+        let agent_svc = super::services::build_agent_services(
+            &data_dir,
+            kernel.clone(),
+            clock.clone(),
+            cancel_token.clone(),
+            config,
+            &grok_hardening,
+            domains.corpus(),
+            agent_runtimes,
             corpus_group.tools.clone(),
-            agent_control.clone(),
             agent_profiles_for_tools,
+            granted_capabilities.clone(),
         )
-        .await;
-        *granted_capabilities.write().await = corpus::discover_tool_extensions(&corpus_group.tools)
-            .await?
-            .into_iter()
-            .flat_map(|entry| entry.capabilities)
-            .collect();
-
-        let shared_notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>> = Arc::new(Mutex::new(None));
-        let session_db = data_dir.join("sessions-v1.db");
-        if let Some(parent) = session_db.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let canonical_store =
-            crate::r#impl::session::canonical_store::CanonicalSessionStore::open(&session_db)
-                .unwrap_or_else(|error| {
-                    tracing::warn!(%error, path = %session_db.display(), "canonical session store unavailable; using process-local fallback");
-                    crate::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
-                        .expect("in-memory canonical session store")
-                });
-        let session_recovery =
-            crate::r#impl::session::event_sourced_store::reconcile_committed_session_events(
-                canonical_event_spine.as_ref(),
-                event_projections.as_ref(),
-                &canonical_store,
-            )
-            .await
-            .context("reconcile committed Session events during daemon startup")?;
-        info!(
-            scanned = session_recovery.scanned,
-            materialized = session_recovery.materialized,
-            "Session event-spine recovery completed before turn admission"
-        );
-
-        // M4-T2: scan for incomplete turns (start boundary without terminal).
-        // Runs once at daemon bootstrap when compaction_v2 is enabled.
-        let turn_recovery_report =
-            crate::service::turn_recovery::scan_incomplete_turns(&canonical_store, &grok_hardening)
-                .await
-                .context("incomplete-turn recovery scan during daemon startup")?;
-        crate::service::turn_recovery::persist_recovery_health(&data_dir, &turn_recovery_report)
-            .context("persist turn recovery health")?;
-        if !turn_recovery_report.incomplete_turns.is_empty() {
-            for turn in &turn_recovery_report.incomplete_turns {
-                info!(
-                    session = %turn.session_id,
-                    turn = %turn.turn_id,
-                    classification = ?turn.classification,
-                    items = turn.item_count,
-                    "Recovered incomplete turn at startup"
-                );
-            }
-        }
-
-        let session_input = if grok_hardening.prompt_queue {
-            let coordinator =
-                crate::service::session_input::SessionInputCoordinator::new(Arc::new(
-                    crate::r#impl::session::prompt_queue_sqlite::SqlitePromptQueueStore::open(
-                        data_dir.join("prompt-queue.sqlite"),
-                    )?,
-                ))
-                .with_event_spine(canonical_event_spine.clone());
-            Arc::new(if let Some(bus) = event_bus.as_ref() {
-                coordinator.with_event_bus(bus.clone())
-            } else {
-                coordinator
-            })
-        } else {
-            Arc::new(crate::service::session_input::SessionInputCoordinator::in_memory())
-        };
-        let coordinator = Arc::new(
-            crate::service::turn_coordinator::TurnCoordinator::with_event_spine_and_grok(
-                kernel.clone(),
-                Arc::new(canonical_store),
-                canonical_event_spine.clone(),
-                grok_hardening.clone(),
-            )
-            .with_event_projections(event_projections.clone())
-            .with_backpressure(config.backpressure.clone())
-            .with_session_input(session_input.clone()),
-        );
-        let workspace_checkpoint = Arc::new(
-            crate::service::workspace_checkpoint::WorkspaceCheckpointService::new(
-                Arc::new(
-                    crate::r#impl::session::checkpoint_store_sqlite::SqliteCheckpointStore::open(
-                        data_dir.join("workspace-checkpoints.sqlite"),
-                    )?,
-                ),
-                kernel.lease_manager(),
-                grok_hardening.workspace_checkpoint,
-            )
-            .with_disk_quota(config.deployment.quotas.sessions_bytes)
-            .with_safety_guard(agent_live_runs)
-            .with_events(event_bus.clone(), Some(canonical_event_spine.clone())),
-        );
-        let session_service = Arc::new(
-            crate::service::session_service::SessionService::with_protocol_journal(
-                coordinator.store(),
-                coordinator.active_index(),
-                data_dir.join("protocol-events-v1.db"),
-            )?,
-        );
-        if let Some(replay) = session_service
-            .try_resume(&fabric::SessionId(session_id.clone()))
-            .await?
-        {
-            initial_session
-                .lock()
-                .await
-                .restore_messages(replay.messages);
-        }
-        let session_gateway = Arc::new(SessionGateway::new(
-            param_registry.clone(),
-            debug_handler.clone(),
-            session_id.clone(),
-            gw_state.clone(),
+        .await?;
+        let canonical_event_spine = agent_svc.canonical_event_spine;
+        let agent_recovery = agent_svc.agent_recovery;
+        let agent_repository = agent_svc.agent_repository;
+        let turn_svc = super::services::build_turn_services(
+            &data_dir,
+            kernel.clone(),
+            clock.clone(),
+            cancel_token.clone(),
+            event_bus.clone(),
+            config,
+            grok_hardening.clone(),
+            &pi_runtime,
+            pi_work_allowed,
+            sessions.clone(),
+            default_session_id.clone(),
+            &session_id,
+            session_created_at.clone(),
             initial_session.clone(),
-            session_service.clone(),
+            gw_state.clone(),
             gw_started_at,
-            runtime_config_snapshot.clone(),
+            runtime_config_snapshot,
             core_memory.clone(),
             recall_memory.clone(),
             self_field.clone(),
             llm.clone(),
-            clock.clone(),
-        ));
-        let projection: Arc<dyn crate::service::post_turn_projection::PostTurnProjection> =
-            Arc::new(
-                crate::service::post_turn_projection::ProductionPostTurnProjection::new(
-                    crate::service::post_turn_projection::PostTurnProjectionResources {
-                        corpus: domains.corpus(),
-                        runtime: post_turn_runtime_port(runtime.clone(), domains.metacog()),
-                    },
-                ),
-            );
-        let turn_runtime_facades = TurnRuntimeFacadePorts::new(runtime.clone(), self_field.clone());
-        let runtime_ports = Arc::new(super::turn_runtime::compose_turn_runtime(
-            super::turn_runtime::TurnRuntimeResources {
-                corpus: domains.corpus(),
-                storm: security_group.storm_breaker.clone(),
-                model_router: model_router.clone(),
-                default_llm: llm.clone(),
-                self_policy: turn_runtime_facades.self_policy,
-                approval_rx: security_group.approval_rx.clone(),
-                pending_approvals: security_group.pending_approvals.clone(),
-                capabilities: capability_resources,
-                admission: kernel.admission(),
-                sessions: sessions.clone(),
-                default_session_id: session_group.default_session_id.clone(),
-                session_created_at: session_group.session_created_at.clone(),
-                data_dir: session_group.data_dir.clone(),
-                context_window: session_group.context_window,
-                clock: clock.clone(),
-                memory: memory_group.memory_service.clone(),
-                config: turn_runtime_facades.config,
-                performance: debug_perf.clone(),
-                active_profile: Arc::new(super::turn_runtime::ProductionActiveAgentProfile::new(
-                    active_profile.clone(),
-                    agent_profile_registry.clone(),
-                )),
-            },
-        ));
-        let lifecycle_registry =
-            Arc::new(crate::service::lifecycle_contributors::LifecycleRegistry::default());
-        let pipeline = Arc::new(crate::service::TurnPipeline::new(
-            crate::service::turn_pipeline::TurnPipelineResources {
-                session_gateway: session_gateway.clone(),
-                notify: shared_notify_tx.clone(),
-                clock: clock.clone(),
-                agora: Some(domains.agora()),
-                kernel: kernel.clone(),
-                current_scope: Arc::new(Mutex::new(None)),
-                daemon_cancel: Some(cancel_token.clone()),
-                context: context_assembler,
-                canonical_sessions: session_service.clone(),
-                projection,
-                runtime: runtime_ports,
-                cognitive_sessions: domains.cognition(),
-                conscious_core: Some(conscious_registry.clone()),
-                session_input: session_input.clone(),
-                prompt_queue_enabled: grok_hardening.prompt_queue,
-                workspace_checkpoint,
-                lifecycle: lifecycle_registry.clone(),
-                lifecycle_enabled: grok_hardening.lifecycle_contributors,
-                event_bus: event_bus.clone(),
-            },
-        ));
-        let turn_orchestrator = Arc::new(crate::service::DaemonTurnOrchestrator::new(
-            crate::service::daemon_turn::DaemonTurnResources {
-                kernel: kernel.clone(),
-                notify: shared_notify_tx.clone(),
-                main_agent_process_id: main_agent_process_id.clone(),
-                turn_token: turn_token.clone(),
-                pipeline,
-                coordinator,
-                session_service,
-                grok_hardening: grok_hardening.clone(),
-            },
-        ));
+            debug_handler.clone(),
+            debug_perf.clone(),
+            model_router.clone(),
+            &domains,
+            &security_group,
+            &memory_group,
+            &session_group,
+            capability_resources,
+            conscious_registry.clone(),
+            context_assembler,
+            apply_objective_store,
+            param_registry.clone(),
+            agent_svc.agent_live_runs,
+            canonical_event_spine.clone(),
+            agent_svc.event_projections,
+            agent_profile_registry.clone(),
+            active_profile.clone(),
+            runtime.clone(),
+            turn_token.clone(),
+            main_agent_process_id.clone(),
+        )
+        .await?;
+        let session_input = turn_svc.session_input;
+        let session_gateway = turn_svc.session_gateway;
+        let turn_orchestrator = turn_svc.turn_orchestrator;
+        let approved_apply = turn_svc.approved_apply;
+        let lifecycle_registry = turn_svc.lifecycle_registry;
 
-        let approved_apply = if pi_runtime.enabled && pi_work_allowed {
-            Some(Arc::new(
-                crate::r#impl::approval::ApplyCoordinator::new(
-                    apply_objective_store,
-                    memory_group.approval_repository.clone(),
-                    kernel.clone(),
-                    clock.clone(),
-                    crate::r#impl::approval::ApplyCoordinatorConfig {
-                        worktree_base: pi_runtime.worktree_base.clone(),
-                        timeout: std::time::Duration::from_secs(60),
-                    },
-                    Arc::new(crate::r#impl::approval::GitManagedWorktreeCleaner),
-                )?
-                .with_memory_projection(
-                    crate::r#impl::memory_projection::MemoryProjection::new(
-                        canonical_event_spine.clone(),
-                        event_projections.clone(),
-                    ),
-                ),
-            ))
-        } else {
-            None
-        };
-
-        // Clone these before they are moved into the handler struct
-        // so they are available for Telegram channel initialization.
         let _turn_orch_for_telegram = turn_orchestrator.clone();
         let _cancel_for_telegram = cancel_token.clone();
         let (goal_progress_tx, goal_progress_rx) = mpsc::channel(64);
@@ -1668,66 +1315,15 @@ impl RequestHandler {
         };
         let handler = composition.into_handler();
 
-        // Register initial params
-        {
-            let data_dir_clone = data_dir.clone();
-            let started_at = clock_2.mono_now();
-            param_registry
-                .declare(
-                    "session.uptime_secs",
-                    "session",
-                    "Daemon uptime in seconds",
-                    move || {
-                        let elapsed_ms = clock_2.mono_now().0.saturating_sub(started_at.0);
-                        json!(elapsed_ms / 1000)
-                    },
-                )
-                .await;
-            param_registry
-                .declare(
-                    "session.data_dir",
-                    "session",
-                    "Data directory path",
-                    move || json!(data_dir_clone.to_string_lossy()),
-                )
-                .await;
-            let model = config.model.clone();
-            param_registry
-                .declare("llm.model", "llm", "Current LLM model in use", move || {
-                    json!(model)
-                })
-                .await;
-            let provider_name = llm.name().to_string();
-            param_registry
-                .declare(
-                    "llm.provider",
-                    "llm",
-                    "Current LLM provider name",
-                    move || json!(provider_name),
-                )
-                .await;
-            let sandbox_pref = config.sandbox_preference.clone();
-            param_registry
-                .declare(
-                    "sandbox.preference",
-                    "sandbox",
-                    "Current sandbox mode",
-                    move || json!(sandbox_pref),
-                )
-                .await;
-            param_registry
-                .declare("session.rss_kb", "session", "Resident memory in KB", || {
-                    let status = std::fs::read_to_string("/proc/self/status").ok();
-                    let rss = status.and_then(|s| {
-                        s.lines()
-                            .find(|l| l.starts_with("VmRSS:"))
-                            .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
-                    });
-                    json!(rss.unwrap_or(0))
-                })
-                .await;
-            info!("Registered {} initial params", 6);
-        }
+        super::params::register_initial_params(
+            &param_registry,
+            clock_2.clone(),
+            data_dir.clone(),
+            config.model.clone(),
+            llm.clone(),
+            config.sandbox_preference.clone(),
+        )
+        .await;
 
         // Fire OnSessionStart hook
         handler
@@ -1762,154 +1358,5 @@ impl RequestHandler {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use fabric::dasein::{OutcomeStatus, SelfVersion};
-
-    #[tokio::test]
-    async fn daemon_bootstrap_keeps_untrusted_repo_files_usable_without_loading_executable_config()
-    {
-        use fabric::workspace_trust::{ClientMode, ExecutableConfigSource, WorkspaceTrustDecision};
-
-        let root = tempfile::tempdir().unwrap();
-        let repository = root.path().join("untrusted-repository");
-        let data_dir = root.path().join("daemon-state");
-        std::fs::create_dir_all(repository.join(".git")).unwrap();
-        std::fs::write(
-            repository.join(".git/config"),
-            "[remote \"origin\"]\nurl = https://example.test/untrusted.git\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(repository.join(".grok/hooks")).unwrap();
-        std::fs::create_dir_all(repository.join("agents")).unwrap();
-        let sentinel = repository.join("executable-config-ran");
-        let hook = repository.join(".grok/hooks/pre-turn");
-        std::fs::write(
-            &hook,
-            format!("#!/bin/sh\nprintf ran > '{}'\n", sentinel.display()),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        std::fs::write(
-            repository.join(".grok/mcp.json"),
-            format!(
-                r#"{{"command":"/bin/sh","args":["-c","touch {}"]}}"#,
-                sentinel.display()
-            ),
-        )
-        .unwrap();
-        std::fs::write(
-            repository.join("agents/sentinel.toml"),
-            format!("command = \"touch {}\"\n", sentinel.display()),
-        )
-        .unwrap();
-        std::fs::write(
-            repository.join(".envrc"),
-            format!("touch '{}'\n", sentinel.display()),
-        )
-        .unwrap();
-
-        let canonical = std::fs::canonicalize(&repository).unwrap();
-        assert_ne!(canonical, std::path::Path::new("/"));
-        let workspace = fabric::WorkspacePolicy::from_resolved_roots(canonical.clone(), vec![])
-            .expect("a non-root repository is a valid daemon workspace");
-        let resolver = bootstrap_workspace_trust_resolver(&data_dir, true, None);
-        let decision = resolver
-            .evaluate(
-                fabric::PrincipalId("headless-daemon".into()),
-                crate::service::workspace_trust::workspace_identity(workspace.cwd()),
-                ClientMode::Headless,
-                crate::service::workspace_trust::is_broad_unrecordable_root(workspace.cwd()),
-                1,
-            )
-            .await;
-        let WorkspaceTrustDecision::Restricted { blocked } = &decision else {
-            panic!("headless bootstrap must restrict an unrecorded repository: {decision:?}");
-        };
-        for source in [
-            ExecutableConfigSource::RepoHooks,
-            ExecutableConfigSource::RepoMcpServer,
-            ExecutableConfigSource::EnvrcLoader,
-            ExecutableConfigSource::RepoAgentCommand,
-        ] {
-            assert!(
-                blocked.contains(&source),
-                "missing blocked source {source:?}"
-            );
-        }
-
-        // Production loaders consume only granted categories. This stub is a
-        // sentinel for every executable loader boundary and must remain idle.
-        let mut loader_calls = Vec::new();
-        for source in ExecutableConfigSource::all() {
-            if crate::service::workspace_trust::source_is_granted(&decision, source) {
-                loader_calls.push(source);
-                std::fs::write(&sentinel, "ran").unwrap();
-            }
-        }
-        assert!(loader_calls.is_empty());
-        assert!(!sentinel.exists());
-
-        // Folder trust gates executable configuration, not ordinary workspace
-        // authority: normal reads and writes remain available after bootstrap.
-        let ordinary = workspace.cwd().join("ordinary.txt");
-        std::fs::write(&ordinary, "ordinary workspace data").unwrap();
-        assert_eq!(
-            std::fs::read_to_string(ordinary).unwrap(),
-            "ordinary workspace data"
-        );
-        assert!(!sentinel.exists());
-    }
-
-    #[tokio::test]
-    async fn daemon_self_field_bootstrap_replays_before_new_transitions() {
-        let root = tempfile::tempdir().unwrap();
-        let database = root.path().join("self_field.db");
-
-        let mut first = SelfField::new(SelfFieldConfig {
-            db_path: Some(database.clone()),
-            clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::new(100, 0))),
-            ..Default::default()
-        });
-        initialize_self_field(&mut first, root.path())
-            .await
-            .unwrap();
-        first
-            .dasein()
-            .unwrap()
-            .record_outcome("first boot", OutcomeStatus::Succeeded, "daemon-bootstrap")
-            .await
-            .unwrap();
-        first.shutdown().await.unwrap();
-
-        let mut restarted = SelfField::new(SelfFieldConfig {
-            db_path: Some(database),
-            clock: Some(Arc::new(aletheon_kernel::chronos::TestClock::new(5_100, 0))),
-            ..Default::default()
-        });
-        initialize_self_field(&mut restarted, root.path())
-            .await
-            .unwrap();
-        assert!(matches!(
-            restarted.health().await,
-            fabric::SubsystemHealth::Healthy
-        ));
-        let dasein = restarted.dasein_handle().unwrap();
-        assert_eq!(dasein.self_version().await, SelfVersion(2));
-        let receipt = dasein
-            .record_outcome(
-                "first turn after restart",
-                OutcomeStatus::Succeeded,
-                "daemon-bootstrap",
-            )
-            .await
-            .unwrap();
-        assert_eq!(receipt.previous_version, SelfVersion(2));
-        assert_eq!(receipt.current_version, SelfVersion(3));
-        restarted.shutdown().await.unwrap();
-    }
-}
+#[path = "request_tests.rs"]
+mod tests;
