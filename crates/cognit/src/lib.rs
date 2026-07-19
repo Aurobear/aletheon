@@ -42,8 +42,8 @@ pub use harness::config::HarnessConfig;
 pub use harness::{
     CanonicalTurnEventSink, ChannelCognitiveStreamSink, CognitError, CognitErrorKind,
     CognitRetryDisposition, CognitiveSession, CognitiveSessionDependencies,
-    CognitiveSessionFactory, CognitiveStreamEvent, CognitiveStreamSink,
-    DefaultCognitiveSessionFactory, HarnessKind,
+    CognitiveStreamEvent, CognitiveStreamSink,
+    HarnessKind,
 };
 pub use r#impl::inference;
 pub use r#impl::learning;

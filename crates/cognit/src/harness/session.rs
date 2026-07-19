@@ -175,27 +175,6 @@ pub trait CognitiveSession: Send {
     }
 }
 
-pub trait CognitiveSessionFactory: Send + Sync {
-    fn create(
-        &self,
-        config: HarnessConfig,
-        dependencies: CognitiveSessionDependencies,
-    ) -> Result<Box<dyn CognitiveSession>, CognitError>;
-}
-
-#[derive(Default)]
-pub struct DefaultCognitiveSessionFactory;
-
-impl CognitiveSessionFactory for DefaultCognitiveSessionFactory {
-    fn create(
-        &self,
-        config: HarnessConfig,
-        dependencies: CognitiveSessionDependencies,
-    ) -> Result<Box<dyn CognitiveSession>, CognitError> {
-        Ok(Box::new(LinearCognitiveSession::new(config, dependencies)))
-    }
-}
-
 pub struct LinearCognitiveSession {
     inner: ReActLoop,
     cancellation: CancellationToken,

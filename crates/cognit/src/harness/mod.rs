@@ -20,8 +20,8 @@ pub use linear::{BatchPlanner, CompactorTrait, ReActLoop};
 pub use session::{
     CanonicalTurnEventSink, ChannelCognitiveStreamSink, CognitError, CognitErrorKind,
     CognitRetryDisposition, CognitiveSession, CognitiveSessionDependencies,
-    CognitiveSessionFactory, CognitiveStreamEvent, CognitiveStreamSink,
-    DefaultCognitiveSessionFactory, LinearCognitiveSession,
+    CognitiveStreamEvent, CognitiveStreamSink,
+    LinearCognitiveSession,
 };
 
 /// Selects which concrete harness implementation `build_harness` constructs.

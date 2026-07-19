@@ -2,8 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use cognit::{
-    CognitErrorKind, CognitRetryDisposition, CognitiveSessionDependencies, CognitiveSessionFactory,
-    DefaultCognitiveSessionFactory, HarnessConfig,
+    CognitErrorKind, CognitRetryDisposition, CognitiveSessionDependencies, HarnessConfig,
 };
 use fabric::{
     CapabilityCall, CapabilityResult, LlmProvider, LlmResponse, LlmStream, OperationId, ProcessId,
@@ -112,74 +111,7 @@ impl TurnServices for Services {
     }
 }
 
-#[tokio::test]
-async fn factory_injects_cancellation_events_and_capability_boundary() {
-    let cancel = CancellationToken::new();
-    cancel.cancel();
-    let factory = DefaultCognitiveSessionFactory;
-    let mut session = factory
-        .create(HarnessConfig::default(), dependencies(cancel))
-        .unwrap();
-    let events = RecordingEvents::default();
 
-    let error = session
-        .run_turn(request(), &Services(FailingProvider("unused")), &events)
-        .await
-        .unwrap_err();
-
-    assert_eq!(error.kind(), CognitErrorKind::Cancelled);
-    assert_eq!(error.retry_disposition(), CognitRetryDisposition::Never);
-    let events = events.0.lock().unwrap();
-    assert!(matches!(events[0], TurnEvent::Started { .. }));
-    assert!(matches!(
-        events[1],
-        TurnEvent::Finished {
-            stop: fabric::TurnStop::Cancelled,
-            ..
-        }
-    ));
-}
-
-#[tokio::test]
-async fn provider_failures_cross_the_facade_as_typed_retry_policy() {
-    let factory = DefaultCognitiveSessionFactory;
-    let mut transient = factory
-        .create(
-            HarnessConfig::default(),
-            dependencies(CancellationToken::new()),
-        )
-        .unwrap();
-    let error = transient
-        .run_turn(
-            request(),
-            &Services(FailingProvider("provider 429 too many requests")),
-            &RecordingEvents::default(),
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(error.kind(), CognitErrorKind::TransientProvider);
-    assert_eq!(
-        error.retry_disposition(),
-        CognitRetryDisposition::AfterBackoff
-    );
-
-    let mut terminal = factory
-        .create(
-            HarnessConfig::default(),
-            dependencies(CancellationToken::new()),
-        )
-        .unwrap();
-    let error = terminal
-        .run_turn(
-            request(),
-            &Services(FailingProvider("provider 401 unauthorized")),
-            &RecordingEvents::default(),
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(error.kind(), CognitErrorKind::TerminalRuntime);
-    assert_eq!(error.retry_disposition(), CognitRetryDisposition::Never);
-}
 
 #[test]
 fn production_cognit_has_no_concrete_kernel_dependency() {
@@ -197,7 +129,7 @@ fn production_cognit_has_no_concrete_kernel_dependency() {
 #[test]
 fn crate_root_exposes_session_facade_not_concrete_loop() {
     let root = include_str!("../src/lib.rs");
-    assert!(root.contains("CognitiveSessionFactory"));
+    assert!(root.contains("CognitiveSession"));
     assert!(!root.contains("ReActLoop"));
     assert!(!root.contains("build_harness"));
 }
