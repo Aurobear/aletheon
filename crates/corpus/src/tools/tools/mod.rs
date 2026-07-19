@@ -11,6 +11,7 @@ pub mod exposure;
 pub mod file_read;
 pub mod file_search;
 pub mod file_write;
+pub mod git_tools;
 pub mod glob;
 pub mod grep;
 pub mod kernel_build;
