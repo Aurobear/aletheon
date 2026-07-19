@@ -19,7 +19,7 @@
 
 | 工作项 | 提交 | 文件证据 | 复核命令 |
 |---|---|---|---|
-| `max_iterations=0` 无限语义 | `419ffaa0` | `crates/executive/src/impl/daemon/bootstrap/runtime.rs` | `bash scripts/cargo-agent.sh test -p executive max_iterations` |
+| `max_iterations=0` 无限语义 | `419ffaa0` | `crates/executive/src/impl/daemon/bootstrap/runtime.rs` | `bash scripts/cargo-agent.sh test -p executive combine_limits` |
 | `file_search` cwd 与全局上限 | `b488fcbe` | `crates/corpus/src/tools/tools/file_search.rs` | `bash scripts/cargo-agent.sh test -p corpus file_search` |
 | ripgrep 全局上限 | `5d8fc9d6` | `crates/corpus/src/tools/tools/grep.rs` | `bash scripts/cargo-agent.sh test -p corpus grep` |
 | 架构账本 | `49905483` | `architecture-status.toml` | `test -s architecture-status.toml` |
