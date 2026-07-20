@@ -16,7 +16,7 @@
 - Modify: `.github/workflows/ci.yml`
 - Create: `tests/coding/workflow_static_test.py`
 
-- [ ] **Step 1: Write the failing workflow contract test**
+- [x] **Step 1: Write the failing workflow contract test**
 
 Create a standard-library Python test which loads `.github/workflows/ci.yml` as text and asserts:
 
@@ -25,13 +25,13 @@ Create a standard-library Python test which loads `.github/workflows/ci.yml` as 
 - the Platform job invokes `bash scripts/cargo-agent.sh test -p platform --test contract_suite`;
 - ordinary CI does not reference `LEJU_API_KEY`.
 
-- [ ] **Step 2: Run the test and confirm it fails**
+- [x] **Step 2: Run the test and confirm it fails**
 
 Run: `python3 tests/coding/workflow_static_test.py`
 
 Expected: failure because the two jobs are absent.
 
-- [ ] **Step 3: Add the two CI jobs**
+- [x] **Step 3: Add the two CI jobs**
 
 Add independent jobs to `.github/workflows/ci.yml`:
 
@@ -40,7 +40,7 @@ Add independent jobs to `.github/workflows/ci.yml`:
 
 Keep these jobs independent so GitHub reports deterministic coding evidence and Linux confinement separately. Do not modify architecture baseline policy.
 
-- [ ] **Step 4: Verify the new gates locally**
+- [x] **Step 4: Verify the new gates locally**
 
 Run:
 
@@ -53,7 +53,7 @@ bash scripts/cargo-agent.sh test -p platform --test contract_suite
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Stage only `.github/workflows/ci.yml` and `tests/coding/workflow_static_test.py`, inspect the staged diff, and commit as `ci(coding): enforce deterministic receipt gates` with a problem/solution body and concrete file bullets.
 
@@ -64,7 +64,7 @@ Stage only `.github/workflows/ci.yml` and `tests/coding/workflow_static_test.py`
 - Modify: `tests/coding/workflow_static_test.py`
 - Modify: `tests/coding/README.md`
 
-- [ ] **Step 1: Extend the workflow contract test first**
+- [x] **Step 1: Extend the workflow contract test first**
 
 Assert that the new workflow:
 
@@ -74,13 +74,13 @@ Assert that the new workflow:
 - runs `rust_bugfix`, `rust_multifile`, and `rust_diagnosis` sequentially;
 - uploads artifacts with `if: always()`.
 
-- [ ] **Step 2: Run the test and confirm it fails**
+- [x] **Step 2: Run the test and confirm it fails**
 
 Run: `python3 tests/coding/workflow_static_test.py`
 
 Expected: failure because `.github/workflows/coding-e2e.yml` is absent.
 
-- [ ] **Step 3: Implement the real evaluation workflow**
+- [x] **Step 3: Implement the real evaluation workflow**
 
 Create `.github/workflows/coding-e2e.yml` with these fixed environment values:
 
@@ -105,11 +105,11 @@ The workflow must:
 
 Uploaded paths must exclude the temporary config and temporary HOME.
 
-- [ ] **Step 4: Document operation and failure classes**
+- [x] **Step 4: Document operation and failure classes**
 
 Update `tests/coding/README.md` with the manual workflow name, required `LEJU_API_KEY` repository secret, pinned provider/model, artifact contents, and the distinction between infrastructure failure and acceptance failure.
 
-- [ ] **Step 5: Verify the workflow contract**
+- [x] **Step 5: Verify the workflow contract**
 
 Run:
 
@@ -120,7 +120,7 @@ git diff --check
 
 Expected: pass without invoking an external model.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Inspect the staged diff and commit as `ci(coding): add manual Leju evaluation` with a full message body.
 
@@ -129,25 +129,25 @@ Inspect the staged diff and commit as `ci(coding): add manual Leju evaluation` w
 **Files:**
 - Modify: `crates/platform/tests/contract_suite.rs`
 
-- [ ] **Step 1: Add the adversarial contract test**
+- [x] **Step 1: Add the adversarial contract test**
 
 On Unix, create an admitted root, a moved-root destination, and an outside directory containing a sentinel. Construct the scoped filesystem host first, rename the admitted root, and replace its former pathname with a symlink to the outside directory.
 
 Attempt atomic write, read, and remove operations through the already-created host. Each operation may either continue through the pinned root descriptor or return its documented typed error, but it must never affect the outside sentinel or create a temporary file outside.
 
-- [ ] **Step 2: Run the narrow test**
+- [x] **Step 2: Run the narrow test**
 
 Run: `bash scripts/cargo-agent.sh test -p platform --test contract_suite root_replacement -- --nocapture`
 
 Expected: pass on Linux; non-Linux compilation remains protected by `cfg` attributes.
 
-- [ ] **Step 3: Run the full contract target**
+- [x] **Step 3: Run the full contract target**
 
 Run: `bash scripts/cargo-agent.sh test -p platform --test contract_suite`
 
 Expected: pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Inspect the staged diff and commit as `test(platform): cover scoped-root replacement` with a full message body.
 
@@ -156,13 +156,13 @@ Inspect the staged diff and commit as `test(platform): cover scoped-root replace
 **Files:**
 - Modify: `crates/platform/tests/contract_suite.rs`
 
-- [ ] **Step 1: Add the pressure test**
+- [x] **Step 1: Add the pressure test**
 
 Create a worker thread that repeatedly swaps a workspace parent entry between an admitted directory and a symlink to an outside directory. Concurrently perform a bounded series of atomic writes through the scoped host.
 
 Typed operation failures are acceptable during the race. After joining the worker, assert that the outside sentinel is unchanged and that no escaped `.tmp` file exists.
 
-- [ ] **Step 2: Run the test repeatedly but sequentially**
+- [x] **Step 2: Run the test repeatedly but sequentially**
 
 Run:
 
@@ -174,13 +174,13 @@ done
 
 Expected: five passes without launching concurrent Cargo builds.
 
-- [ ] **Step 3: Run the full contract target**
+- [x] **Step 3: Run the full contract target**
 
 Run: `bash scripts/cargo-agent.sh test -p platform --test contract_suite`
 
 Expected: pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Inspect the staged diff and commit as `test(platform): exercise parent swap pressure` with a full message body.
 
@@ -189,13 +189,13 @@ Inspect the staged diff and commit as `test(platform): exercise parent swap pres
 **Files:**
 - Modify: `crates/platform/src/backend/linux/filesystem_host.rs`
 
-- [ ] **Step 1: Add a private test-only syscall seam**
+- [x] **Step 1: Add a private test-only syscall seam**
 
 Add a `#[cfg(test)]` `AtomicBool` named for forced `openat2` unavailability. At the start of the private `open_beneath` path, return an error derived from `ENOSYS` whose detail states that `openat2` is unavailable and the scoped filesystem fails closed.
 
 The production branch must continue to call `libc::SYS_openat2` directly. Do not expose the seam through the Platform trait or public API and do not add a canonicalization fallback.
 
-- [ ] **Step 2: Add a serialized module test**
+- [x] **Step 2: Add a serialized module test**
 
 Within the same module, protect the global injection flag with a static mutex and reset it through an RAII guard. Construct the scoped host before enabling the flag, attempt a read, and assert:
 
@@ -203,7 +203,7 @@ Within the same module, protect the global injection flag with a static mutex an
 - the detail contains `fails closed`;
 - the source file is unchanged.
 
-- [ ] **Step 3: Run focused and package tests**
+- [x] **Step 3: Run focused and package tests**
 
 Run:
 
@@ -214,7 +214,7 @@ bash scripts/cargo-agent.sh test -p platform
 
 Expected: pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Inspect the staged diff and commit as `test(platform): verify openat2 fail-closed behavior` with a full message body.
 
@@ -223,7 +223,7 @@ Inspect the staged diff and commit as `test(platform): verify openat2 fail-close
 **Files:**
 - Modify: `docs/plans/2026-07-20-production-gates-implementation.md`
 
-- [ ] **Step 1: Run deterministic local validation sequentially**
+- [x] **Step 1: Run deterministic local validation sequentially**
 
 ```bash
 bash scripts/cargo-agent.sh test -p platform
@@ -237,9 +237,22 @@ git diff --check
 
 Expected: every command passes. Do not overlap the Platform and architecture builds.
 
-- [ ] **Step 2: Record completion in this plan**
+- [x] **Step 2: Record completion in this plan**
 
 Mark completed checkboxes and add a short verification-results section containing commands and outcomes. Commit this documentation-only update with a full conventional commit message.
+
+## Local verification results
+
+Completed on 2026-07-20:
+
+- `bash scripts/cargo-agent.sh test -p platform` — passed: 27 unit tests, 21 contract tests, and doc tests.
+- `python3 tests/coding/workflow_static_test.py` — passed: 6 workflow contract tests.
+- `python3 tests/coding/replay_test.py` — passed: receipt replay and tamper rejection.
+- `bash tests/coding/static_test.sh` — passed: task schema and harness invariants.
+- `bash scripts/architecture-check.sh` — passed: 28 findings, 38 dependencies, 4 paths, no additions.
+- `bash scripts/cargo-agent.sh fmt --all -- --check` — passed after applying repository formatting.
+- `git diff --check` — passed.
+- `.github/workflows/coding-e2e.yml` — parsed successfully as YAML and its evaluation shell block passed `bash -n`; no external model was invoked locally.
 
 - [ ] **Step 3: Publish the feature branch and open a PR to `dev`**
 
