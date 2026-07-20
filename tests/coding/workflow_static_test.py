@@ -29,5 +29,30 @@ class OrdinaryCiWorkflowTest(unittest.TestCase):
         self.assertNotIn("LEJU_API_KEY", self.workflow)
 
 
+class RealEvaluationWorkflowTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.workflow = (ROOT / ".github/workflows/coding-e2e.yml").read_text()
+
+    def test_is_manual_only(self) -> None:
+        self.assertIn("  workflow_dispatch:", self.workflow)
+        self.assertNotIn("  push:", self.workflow)
+        self.assertNotIn("  pull_request:", self.workflow)
+        self.assertNotIn("  schedule:", self.workflow)
+
+    def test_pins_provider_model_and_secret_source(self) -> None:
+        self.assertIn("ALETHEON_PROVIDER: leju", self.workflow)
+        self.assertIn("ALETHEON_MODEL: deepseek/deepseek-v4-pro", self.workflow)
+        self.assertIn("LEJU_API_KEY: ${{ secrets.LEJU_API_KEY }}", self.workflow)
+        self.assertNotIn("echo $LEJU_API_KEY", self.workflow)
+        self.assertNotIn("echo \"$LEJU_API_KEY\"", self.workflow)
+
+    def test_runs_all_fixtures_and_preserves_artifacts(self) -> None:
+        for task in ("rust_bugfix", "rust_multifile", "rust_diagnosis"):
+            self.assertIn(task, self.workflow)
+        self.assertIn("actions/upload-artifact@v4", self.workflow)
+        self.assertIn("if: always()", self.workflow)
+
+
 if __name__ == "__main__":
     unittest.main()
