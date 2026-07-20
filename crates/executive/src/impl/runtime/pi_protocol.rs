@@ -44,6 +44,7 @@ pub fn parse_job_jsonl(input: &str, expected_version: u32) -> Result<ParsedPiOut
 
     let mut started = false;
     let mut ended = false;
+    let mut settled = false;
     let mut final_text = None;
     let mut usage = AttemptUsage::default();
     let mut message_usage_seen = false;
@@ -56,12 +57,16 @@ pub fn parse_job_jsonl(input: &str, expected_version: u32) -> Result<ParsedPiOut
         if raw.is_empty() {
             bail!("blank record inside Pi JSON stream");
         }
-        if ended {
-            bail!("Pi JSON stream contains records after agent_end");
-        }
         let event: Value = serde_json::from_str(raw)
             .with_context(|| format!("invalid Pi JSON event at record {}", offset + 2))?;
-        match string_field(&event, "type")? {
+        let event_type = string_field(&event, "type")?;
+        if settled {
+            bail!("Pi JSON stream contains records after agent_settled");
+        }
+        if ended && event_type != "agent_settled" {
+            bail!("Pi JSON stream contains records between agent_end and agent_settled");
+        }
+        match event_type {
             "agent_start" => {
                 if started {
                     bail!("Pi JSON stream contains duplicate agent_start");
@@ -74,6 +79,12 @@ pub fn parse_job_jsonl(input: &str, expected_version: u32) -> Result<ParsedPiOut
                 }
                 final_text = final_text.or_else(|| last_assistant_text(event.get("messages")));
                 ended = true;
+            }
+            "agent_settled" => {
+                if !ended {
+                    bail!("Pi agent_settled precedes agent_end");
+                }
+                settled = true;
             }
             "message_end" => {
                 if let Some(message) = event.get("message") {
@@ -135,7 +146,7 @@ pub fn parse_job_jsonl(input: &str, expected_version: u32) -> Result<ParsedPiOut
         }
     }
 
-    if !started || !ended {
+    if !started || !ended || !settled {
         bail!("truncated Pi JSON stream: missing agent lifecycle terminator");
     }
     let final_text = final_text
@@ -357,6 +368,7 @@ mod tests {
                 r#"{"type":"tool_execution_end","toolCallId":"t1","toolName":"bash","result":{"text":"ok"},"isError":false}"#,
                 r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"inputTokens":11,"outputTokens":7,"cost":{"total":0.02}}}}"#,
                 r#"{"type":"agent_end","messages":[]}"#,
+                r#"{"type":"agent_settled"}"#,
             ]),
             3,
         )
@@ -377,6 +389,7 @@ mod tests {
                 r#"{"type":"message_end","message":{"role":"assistant","content":"done","usage":{"inputTokens":11,"outputTokens":7}}}"#,
                 r#"{"type":"turn_end","message":{"role":"assistant","content":"done","usage":{"inputTokens":11,"outputTokens":7}}}"#,
                 r#"{"type":"agent_end","messages":[]}"#,
+                r#"{"type":"agent_settled"}"#,
             ]),
             3,
         )
