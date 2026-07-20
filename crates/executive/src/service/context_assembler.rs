@@ -100,18 +100,28 @@ impl ContextSource for ProductionContextSource {
             .filter(|item| !item.is_empty())
             .collect::<Vec<_>>()
             .join("\n");
-        let conscious = self
+        // A conscious workspace that has not yet observed a turn — e.g. the
+        // first turn on a freshly deployed daemon with no durable state — is
+        // non-fatal. The recurrent-workspace projection is an enhancement, so
+        // its absence must degrade to "no conscious context" rather than fail
+        // the whole turn (downstream already treats this field as optional).
+        let conscious = match self
             .conscious
             .latest_context(&AgoraSpaceId(request.context.thread_id.0.clone()))
             .await
-            .map_err(|error| ContextAssemblyError::Source(error.to_string()))?;
-        conscious
-            .validate()
-            .map_err(|error| ContextAssemblyError::Source(error.to_string()))?;
+        {
+            Ok(projection) => {
+                projection
+                    .validate()
+                    .map_err(|error| ContextAssemblyError::Source(error.to_string()))?;
+                Some(projection)
+            }
+            Err(_) => None,
+        };
         Ok(ContextFragments {
             system_prefix,
             skills,
-            conscious: Some(conscious),
+            conscious,
         })
     }
 }
