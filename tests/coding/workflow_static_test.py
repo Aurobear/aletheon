@@ -57,6 +57,9 @@ class RealEvaluationWorkflowTest(unittest.TestCase):
         self.assertIn('export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"', self.workflow)
         self.assertIn('export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"', self.workflow)
 
+    def test_disables_unusable_runner_sandbox_only_for_manual_evaluation(self) -> None:
+        self.assertIn("ALETHEON_CODING_SANDBOX: forbid", self.workflow)
+
     def test_completed_operations_are_classified_by_verification(self) -> None:
         self.assertNotIn("or executive_exit != 0", self.workflow)
         self.assertIn('if not receipt.get("operation_id"):', self.workflow)

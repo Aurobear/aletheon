@@ -14,6 +14,7 @@ jobs:
     env:
       ALETHEON_PROVIDER: leju
       ALETHEON_MODEL: deepseek/deepseek-v4-pro
+      ALETHEON_CODING_SANDBOX: forbid
       LEJU_API_KEY: ${{ secrets.LEJU_API_KEY }}
       CARGO_BUILD_JOBS: "1"
       CARGO_TARGET_DIR: ${{ github.workspace }}/target

@@ -24,6 +24,12 @@ through manual dispatch. It uses the repository secret `LEJU_API_KEY` with the p
 `leju` provider and `deepseek/deepseek-v4-pro` model, starts one inference core, and runs
 `rust_bugfix`, `rust_multifile`, and `rust_diagnosis` sequentially.
 
+The manual workflow sets `ALETHEON_CODING_SANDBOX=forbid` because GitHub-hosted
+runners can expose a bubblewrap binary while denying the namespace operations it
+requires. This exception applies only to disposable fixture copies inside the ephemeral
+runner; local harness runs remain `auto`, and independent acceptance still decides the
+result.
+
 Every run uploads one receipt per fixture and `core.log` as the
 `coding-e2e-<run-id>` artifact, including when the evaluation fails. The generated
 credential-bearing configuration and temporary HOME are never uploaded and are removed

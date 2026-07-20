@@ -16,6 +16,8 @@ done
 # Harness invariants: real binary, process-group timeout cleanup, independent
 # acceptance, operation correlation, bounded output, and integrity sealing.
 grep -Fq 'ALETHEON_BIN' "$root/tests/coding/harness/run.py"
+grep -Fq 'ALETHEON_CODING_SANDBOX' "$root/tests/coding/harness/run.py"
+grep -Fq '"--sandbox"' "$root/tests/coding/harness/run.py"
 grep -Fq 'start_new_session=True' "$root/tests/coding/harness/run.py"
 grep -Fq 'os.killpg' "$root/tests/coding/harness/run.py"
 grep -Fq 'acceptance_commands' "$root/tests/coding/harness/run.py"

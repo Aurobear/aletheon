@@ -42,6 +42,8 @@ def main():
     task=tomllib.loads(task_path.read_text()); fixture=ROOT/"tests/coding/fixtures"/task["fixture"]
     binary=pathlib.Path(os.environ.get("ALETHEON_BIN", ROOT/"target/debug/aletheon")).resolve()
     if not binary.is_file(): raise SystemExit(f"missing real aletheon binary: {binary}; build it with scripts/cargo-agent.sh")
+    sandbox=os.environ.get("ALETHEON_CODING_SANDBOX", "auto")
+    if sandbox not in {"auto", "require", "forbid"}: raise SystemExit(f"invalid ALETHEON_CODING_SANDBOX: {sandbox}")
     with tempfile.TemporaryDirectory(prefix=f"aletheon-coding-{task['id']}-") as td:
         root=pathlib.Path(td); workspace=root/"workspace"; shutil.copytree(fixture, workspace)
         subprocess.run(["git","init","-q"],cwd=workspace,check=True)
@@ -52,7 +54,7 @@ def main():
         protected={p:digest((workspace/p).read_bytes()) for p in task["forbidden_paths"] if (workspace/p).is_file()}
         home=root/"home"; runtime_dir=root/"run"; config=root/"config"; home.mkdir(); runtime_dir.mkdir(); config.mkdir()
         env=os.environ.copy(); env.update({"HOME":str(home),"XDG_RUNTIME_DIR":str(runtime_dir),"XDG_CONFIG_HOME":str(config)})
-        command=[str(binary),"--cd",str(workspace),"exec","--prompt",task["prompt"],"--output","json"]
+        command=[str(binary),"--cd",str(workspace),"exec","--prompt",task["prompt"],"--sandbox",sandbox,"--output","json"]
         execution=run_bounded(command, workspace, env, int(task["timeout_secs"]))
         try: executive=json.loads(execution["stdout"])
         except json.JSONDecodeError: executive={"success":False,"operation_id":"","response":execution["stdout"]}
