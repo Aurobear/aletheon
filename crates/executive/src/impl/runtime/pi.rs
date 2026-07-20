@@ -285,8 +285,19 @@ pub(super) fn pi_sandbox_policy(
     workspace: &WorkspacePolicy,
     network_enabled: bool,
 ) -> Result<ResolvedSandboxPolicy> {
-    let mut policy = resolve_profile(&ProfileName::Strict, workspace, &SandboxProfiles::default())
-        .context("resolving strict Pi sandbox profile")?;
+    let mut policy = resolve_profile(
+        &ProfileName::Workspace,
+        workspace,
+        &SandboxProfiles::default(),
+    )
+    .context("resolving Pi workspace sandbox profile")?;
+    // Empty mount roots deliberately select Bubblewrap's established
+    // workspace-driven plan: host root read-only, declared worktree writable,
+    // and protected metadata re-bound read-only. The resolved deny set remains
+    // attached and is applied after that plan.
+    policy.name = "pi-workspace".into();
+    policy.read_only_roots.clear();
+    policy.read_write_roots.clear();
     policy.restrict_network = !network_enabled;
     Ok(policy)
 }
@@ -921,8 +932,9 @@ mod tests {
 
         let enabled = pi_sandbox_policy(&workspace, true).unwrap();
         assert!(!enabled.restrict_network);
-        assert_eq!(enabled.name, "strict");
-        assert_eq!(enabled.read_write_roots, workspace.writable_roots());
+        assert_eq!(enabled.name, "pi-workspace");
+        assert!(enabled.read_only_roots.is_empty());
+        assert!(enabled.read_write_roots.is_empty());
         assert_eq!(enabled.deny_exact, restricted.deny_exact);
         assert_eq!(enabled.deny_globs, restricted.deny_globs);
     }
