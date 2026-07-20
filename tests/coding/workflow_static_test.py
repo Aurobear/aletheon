@@ -57,6 +57,11 @@ class RealEvaluationWorkflowTest(unittest.TestCase):
         self.assertIn('export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"', self.workflow)
         self.assertIn('export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"', self.workflow)
 
+    def test_completed_operations_are_classified_by_verification(self) -> None:
+        self.assertNotIn("or executive_exit != 0", self.workflow)
+        self.assertIn('if not receipt.get("operation_id"):', self.workflow)
+        self.assertIn('elif not receipt.get("verification", {}).get("passed"):', self.workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

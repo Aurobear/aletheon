@@ -116,9 +116,7 @@ jobs:
           import sys
 
           receipt = json.load(open(sys.argv[1], encoding="utf-8"))
-          events = receipt.get("events", [])
-          executive_exit = events[0].get("exit_code") if events else None
-          if not receipt.get("operation_id") or executive_exit != 0:
+          if not receipt.get("operation_id"):
               print("infrastructure")
           elif not receipt.get("verification", {}).get("passed"):
               print("verification")
