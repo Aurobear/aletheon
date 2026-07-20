@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use chrono::Utc;
+use std::sync::Arc;
+
+use fabric::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;
@@ -8,18 +10,22 @@ use crate::r#impl::perception::event::*;
 pub struct ProcSource {
     last_load: Option<(f64, f64, f64)>,
     last_mem: Option<(u64, u64)>,
+    /// Reserved for future per-core-CPU threshold gating; threshold
+    /// is set at construction but not yet referenced by `poll()`.
     #[allow(dead_code)]
     high_cpu_threshold: f64,
     event_id_counter: u64,
+    clock: Arc<dyn Clock>,
 }
 
 impl ProcSource {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             last_load: None,
             last_mem: None,
             high_cpu_threshold: 80.0,
             event_id_counter: 0,
+            clock,
         }
     }
 
@@ -36,7 +42,7 @@ impl ProcSource {
     ) -> PerceptionEvent {
         PerceptionEvent {
             id: self.next_id(),
-            timestamp: Utc::now(),
+            timestamp: self.clock.wall_now(),
             source: EventSource::Proc,
             category,
             priority,
@@ -45,9 +51,10 @@ impl ProcSource {
     }
 }
 
+#[cfg(test)]
 impl Default for ProcSource {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 }
 

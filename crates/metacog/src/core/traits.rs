@@ -4,12 +4,12 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use base::{
-    Evaluation, Genome, MetaRuntimeOps, MigrationResult, MutationIntent, RuntimeCandidate,
+use fabric::{
+    Clock, Evaluation, Genome, MetaRuntimeOps, MigrationResult, MutationIntent, RuntimeCandidate,
     Subsystem, SubsystemContext, SubsystemHealth, TestResult, Version,
 };
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::r#impl::genome::loader::GenomeLoader;
 use crate::r#impl::meta_runtime::evaluator::Evaluator;
@@ -51,14 +51,14 @@ pub struct DefaultMetaRuntime {
 }
 
 impl DefaultMetaRuntime {
-    pub fn new(version: Version) -> Self {
+    pub fn new(version: Version, clock: Arc<dyn Clock>) -> Self {
         Self {
             version,
             self_reader: SelfReader::new(),
-            candidate_gen: CandidateGenerator::new(),
-            sandbox_runner: SandboxRunner::new(),
+            candidate_gen: CandidateGenerator::new(clock.clone()),
+            sandbox_runner: SandboxRunner::new(clock.clone()),
             evaluator: Evaluator::new(),
-            migration_mgr: MigrationManager::new(),
+            migration_mgr: MigrationManager::new(clock.clone()),
             rollback_mgr: RollbackManager::new(),
             current_genome: Mutex::new(None),
             genome_path: None,
@@ -73,8 +73,8 @@ impl DefaultMetaRuntime {
     }
 
     /// Create with a custom working directory for sandbox tests.
-    pub fn with_work_dir(mut self, dir: PathBuf) -> Self {
-        self.sandbox_runner = SandboxRunner::with_work_dir(dir);
+    pub fn with_work_dir(mut self, dir: PathBuf, clock: Arc<dyn Clock>) -> Self {
+        self.sandbox_runner = SandboxRunner::with_work_dir(dir, clock);
         self
     }
 
@@ -82,8 +82,8 @@ impl DefaultMetaRuntime {
     ///
     /// If the file exists, its entries are loaded on construction.
     /// New migrations are appended to the file.
-    pub fn with_lineage_path(self, path: PathBuf) -> anyhow::Result<Self> {
-        let tracker = LineageTracker::with_path(path)?;
+    pub fn with_lineage_path(self, path: PathBuf, clock: Arc<dyn Clock>) -> anyhow::Result<Self> {
+        let tracker = LineageTracker::with_path(path, clock)?;
         Ok(Self {
             migration_mgr: MigrationManager::with_lineage(tracker),
             ..self

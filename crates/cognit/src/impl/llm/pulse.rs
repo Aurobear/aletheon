@@ -1,20 +1,19 @@
 //! LlmPulse — the heart of the system.
 //!
-//! Periodically broadcasts cognitive energy to EventBus.
+//! Periodically broadcasts cognitive energy to the event bus.
 //! Agents consume this energy to think and act.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use chrono::Utc;
+use fabric::Clock;
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use base::evolution::CognitivePulseEvent;
-use base::CommunicationBus;
-use base::ConcreteEvent;
-use base::{EventType, Priority};
+use fabric::evolution::CognitivePulseEvent;
+use fabric::CanonicalEventBus;
+use fabric::SchemaId;
 
 use super::scheduler::LlmScheduler;
 
@@ -36,23 +35,26 @@ impl Default for PulseConfig {
     }
 }
 
-/// The heart — periodically broadcasts cognitive energy to EventBus.
+/// The heart — periodically broadcasts cognitive energy to the event bus.
 pub struct LlmPulse {
     scheduler: Arc<LlmScheduler>,
-    bus: Arc<CommunicationBus>,
+    bus: Arc<CanonicalEventBus>,
     config: PulseConfig,
+    clock: Arc<dyn Clock>,
 }
 
 impl LlmPulse {
     pub fn new(
         scheduler: Arc<LlmScheduler>,
-        bus: Arc<CommunicationBus>,
+        bus: Arc<CanonicalEventBus>,
         config: PulseConfig,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             scheduler,
             bus,
             config,
+            clock,
         }
     }
 
@@ -82,21 +84,20 @@ impl LlmPulse {
 
         let event = CognitivePulseEvent {
             pulse_id: Uuid::new_v4(),
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: fabric::wall_to_datetime(self.clock.wall_now()).to_rfc3339(),
             available_tokens: self.config.token_budget_per_pulse,
             provider_health: health,
         };
 
         let json_payload = serde_json::to_value(&event)?;
 
-        let concrete = ConcreteEvent::new(
-            EventType::CognitivePulse,
-            Priority::High,
-            "llm_pulse".to_string(),
-            Box::new(json_payload),
-        );
-
-        self.bus.publish_event(Box::new(concrete)).await
+        self.bus
+            .publish_event(
+                SchemaId(SchemaId::EVENT_COGNITIVE_PULSE_V1.into()),
+                "llm_pulse",
+                json_payload,
+            )
+            .await
     }
 
     /// Emit a single pulse (for testing).

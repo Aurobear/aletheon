@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use tracing::debug;
 
 use crate::sandbox::glob_scanner::GlobScanner;
-use crate::sandbox::policy::{FilesystemPolicy, FsDefault};
+use crate::sandbox::policy::FilesystemPolicy;
 use crate::sandbox::SandboxConfig;
 
 /// Advanced bubblewrap argument builder driven by a [`FilesystemPolicy`].
@@ -41,43 +41,20 @@ impl BwrapBuilder {
         // -- Step 1: Base isolation flags --
         self.push_base_flags(&mut args);
 
-        // -- Step 2: Full filesystem root (must come BEFORE dev/proc) --
-        self.push_root_bind(&mut args);
+        // -- Step 2: One ordered root/writable/protected/masked plan --
+        append_mount_plan(&mut args, &self.policy);
 
         // -- Step 3: Device and proc (fresh devtmpfs on top of RO root) --
         self.push_dev_and_proc(&mut args);
 
-        // -- Step 4: Mask unreadable ancestors of writable roots --
-        self.push_ancestor_masks(&mut args);
-
-        // -- Step 5: Bind writable roots --
-        self.push_writable_roots(&mut args);
-
-        // -- Step 6: Re-protect metadata sub-paths --
-        self.push_protected_metadata(&mut args);
-
-        // -- Step 7: Mask unreadable globs --
-        self.push_unreadable_masks(&mut args);
-
-        // -- Step 8: Tmpfs for /tmp --
-        args.push("--tmpfs".into());
-        args.push("/tmp".into());
-
-        // -- Step 9: Writable working directory (always bind) --
-        if !config.working_dir.is_empty() {
-            args.push("--bind".into());
-            args.push(config.working_dir.clone());
-            args.push(config.working_dir.clone());
-        }
-
-        // -- Step 10: Environment variables --
-        for (key, value) in &config.env_vars {
+        // -- Step 4: Environment variables --
+        for (key, value) in &config.environment {
             args.push("--setenv".into());
             args.push(key.clone());
             args.push(value.clone());
         }
 
-        // -- Step 11: Command --
+        // -- Step 5: Command --
         args.push("--".into());
         args.push("/bin/bash".into());
         args.push("-c".into());
@@ -100,96 +77,59 @@ impl BwrapBuilder {
         args.push("--unshare-net".into());
     }
 
-    fn push_root_bind(&self, args: &mut Vec<String>) {
-        match self.policy.default {
-            FsDefault::ReadOnly => {
-                args.push("--ro-bind".into());
-                args.push("/".into());
-                args.push("/".into());
-            }
-            FsDefault::Writable => {
-                // In writable-default mode we still bind the root read-only
-                // and then make specific roots writable.  A fully writable
-                // root is extremely permissive; the explicit writable_roots
-                // list is the intended escape hatch.
-                args.push("--ro-bind".into());
-                args.push("/".into());
-                args.push("/".into());
-            }
-        }
-    }
-
     fn push_dev_and_proc(&self, args: &mut Vec<String>) {
         args.push("--dev".into());
         args.push("/dev".into());
         args.push("--proc".into());
         args.push("/proc".into());
     }
+}
 
-    /// For every writable root, mask its parent directory entries that the
-    /// sandbox should not be able to read (using the unreadable globs to
-    /// discover files inside the root that must be hidden).
-    fn push_ancestor_masks(&self, args: &mut Vec<String>) {
-        for root in &self.policy.writable_roots {
-            // Ensure the root's parent exists and is visible.
-            // If the root path itself does not exist on the host we skip it —
-            // bwrap would fail to mount anyway.
-            if !root.path.exists() {
-                debug!(path = %root.path.display(), "Writable root does not exist, skipping ancestor mask");
-                continue;
-            }
-            // Nothing extra to mask at the ancestor level for now — the
-            // unreadable glob masking in step 7 handles individual files.
-            // This step is a placeholder for future expansion (e.g. masking
-            // sibling directories of the writable root).
-            let _ = args; // suppress unused warning
+/// Append the mount overrides shared by the policy builder and production
+/// bubblewrap backend. Ordering is security-sensitive: writable roots must be
+/// installed before their protected subpaths are rebound read-only.
+pub(crate) fn append_mount_plan(args: &mut Vec<String>, policy: &FilesystemPolicy) {
+    // Even the legacy writable-default variant is fail-closed: callers must
+    // enumerate explicit writable roots rather than expose the host root.
+    let _ = policy.default;
+    push_triplet(args, "--ro-bind", Path::new("/"), Path::new("/"));
+
+    for root in &policy.writable_roots {
+        debug!(path = %root.path.display(), "Binding writable root");
+        push_triplet(args, "--bind", &root.path, &root.path);
+    }
+
+    for root in &policy.writable_roots {
+        for relative in &root.read_only_subpaths {
+            push_ro_bind_if_exists(args, &root.path.join(relative));
+        }
+        for name in &policy.protected_metadata {
+            push_ro_bind_if_exists(args, &root.path.join(name));
         }
     }
 
-    fn push_writable_roots(&self, args: &mut Vec<String>) {
-        for root in &self.policy.writable_roots {
-            debug!(path = %root.path.display(), "Binding writable root");
-            args.push("--bind".into());
-            args.push(root.path.to_string_lossy().to_string());
-            args.push(root.path.to_string_lossy().to_string());
-        }
-    }
-
-    fn push_protected_metadata(&self, args: &mut Vec<String>) {
-        if self.policy.protected_metadata.is_empty() {
-            return;
-        }
-
-        for root in &self.policy.writable_roots {
-            for meta_name in &self.policy.protected_metadata {
-                let meta_path = root.path.join(meta_name);
-                if meta_path.exists() {
-                    debug!(path = %meta_path.display(), "Re-protecting metadata");
-                    args.push("--ro-bind".into());
-                    args.push(meta_path.to_string_lossy().to_string());
-                    args.push(meta_path.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-
-    fn push_unreadable_masks(&self, args: &mut Vec<String>) {
-        if self.policy.unreadable_globs.is_empty() {
-            return;
-        }
-
+    if !policy.unreadable_globs.is_empty() {
         let scanner = GlobScanner::default();
-
-        for root in &self.policy.writable_roots {
-            let matches = scanner.scan(&self.policy.unreadable_globs, &root.path);
-            for path in matches {
+        for root in &policy.writable_roots {
+            for path in scanner.scan(&policy.unreadable_globs, &root.path) {
                 debug!(path = %path.display(), "Masking unreadable path");
-                args.push("--ro-bind".into());
-                args.push("/dev/null".into());
-                args.push(path.to_string_lossy().to_string());
+                push_triplet(args, "--ro-bind", Path::new("/dev/null"), &path);
             }
         }
     }
+}
+
+fn push_ro_bind_if_exists(args: &mut Vec<String>, path: &Path) {
+    if path.exists() {
+        debug!(path = %path.display(), "Re-protecting workspace path");
+        push_triplet(args, "--ro-bind", path, path);
+    }
+}
+
+fn push_triplet(args: &mut Vec<String>, flag: &str, source: &Path, target: &Path) {
+    args.push(flag.to_owned());
+    args.push(source.to_string_lossy().into_owned());
+    args.push(target.to_string_lossy().into_owned());
 }
 
 /// Mask an individual path by binding `/dev/null` over it.
@@ -228,8 +168,10 @@ mod tests {
 
     fn default_config() -> SandboxConfig {
         SandboxConfig {
-            working_dir: "/tmp/work".into(),
-            env_vars: Default::default(),
+            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp/work".into(), vec![])
+                .unwrap(),
+            environment: Default::default(),
+            policy: None,
         }
     }
 
@@ -333,11 +275,13 @@ mod tests {
 
     #[test]
     fn test_env_vars_propagated() {
-        let mut env = std::collections::HashMap::new();
+        let mut env = std::collections::BTreeMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
         let config = SandboxConfig {
-            working_dir: "/tmp/work".into(),
-            env_vars: env,
+            workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp/work".into(), vec![])
+                .unwrap(),
+            environment: env,
+            policy: None,
         };
         let policy = FilesystemPolicy::new(FsDefault::ReadOnly);
         let builder = BwrapBuilder::new(policy);

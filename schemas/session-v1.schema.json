@@ -1,0 +1,481 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionProtocolV1",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/SessionRecord"
+        },
+        "type": {
+          "type": "string",
+          "const": "session"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/TurnRecord"
+        },
+        "type": {
+          "type": "string",
+          "const": "turn"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/ItemRecord"
+        },
+        "type": {
+          "type": "string",
+          "const": "item"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/SessionNotification"
+        },
+        "type": {
+          "type": "string",
+          "const": "notification"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ]
+    }
+  ],
+  "$defs": {
+    "ItemPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "user_message"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "assistant_message"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "call_id": {
+                  "type": "string"
+                },
+                "input": true,
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "call_id",
+                "name",
+                "input"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "tool_call"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "audit_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                },
+                "call_id": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "is_error": {
+                  "type": "boolean"
+                },
+                "permit_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                }
+              },
+              "required": [
+                "call_id",
+                "content",
+                "is_error"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "tool_result"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "broadcast_epoch": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "content_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "dasein_version": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "space": {
+                  "type": "string"
+                },
+                "workspace_version": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "space",
+                "dasein_version",
+                "content_ids"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "context_projection"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "system_notice"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        }
+      ]
+    },
+    "ItemRecord": {
+      "type": "object",
+      "properties": {
+        "created_at_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/ItemPayload"
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "session_id",
+        "turn_id",
+        "sequence",
+        "created_at_ms",
+        "payload"
+      ]
+    },
+    "SessionFork": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "through_sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "session_id",
+        "through_sequence"
+      ]
+    },
+    "SessionNotification": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "$ref": "#/$defs/ItemRecord"
+                },
+                "schema_version": {
+                  "type": "integer",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "schema_version",
+                "item"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "item_appended"
+            }
+          },
+          "required": [
+            "type",
+            "data"
+          ]
+        }
+      ]
+    },
+    "SessionRecord": {
+      "type": "object",
+      "properties": {
+        "created_at_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "id": {
+          "type": "string"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionFork"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "created_at_ms",
+        "status"
+      ]
+    },
+    "SessionStatus": {
+      "type": "string",
+      "enum": [
+        "active",
+        "interrupted",
+        "completed",
+        "failed"
+      ]
+    },
+    "TurnRecord": {
+      "type": "object",
+      "properties": {
+        "completed_at_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "operation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "started_at_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnStop"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "session_id",
+        "operation_id",
+        "started_at_ms"
+      ]
+    },
+    "TurnStop": {
+      "type": "string",
+      "enum": [
+        "Completed",
+        "Blocked",
+        "Cancelled",
+        "Failed"
+      ]
+    }
+  }
+}

@@ -6,7 +6,7 @@
 
 use crate::core::types::{EvaluationResult, Genome, GenomeMeta};
 use anyhow::Result;
-use base::{meta::Recommendation, Evaluation, RuntimeCandidate, TestResult};
+use fabric::{meta::Recommendation, Evaluation, RuntimeCandidate, TestResult};
 
 /// Safety threshold below which a candidate is rejected.
 const SAFETY_THRESHOLD: f64 = 0.8;

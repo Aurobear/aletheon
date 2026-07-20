@@ -4,18 +4,20 @@
 //!   (none)       TUI client (auto-starts daemon if not running)
 //!   daemon       Start daemon (auto-detects systemd/container/foreground)
 //!   exec         Non-interactive execution
+//!   config       Inspect effective configuration or layers
+//!   doctor       Run diagnostics and print a health report
 //!   -m `msg`      Send single message to daemon
 //!   version      Print version + git commit
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
+use aletheon::workspace::WorkspaceArgs;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use runtime::host::RuntimeHost;
-use tracing::info;
+use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+
+#[cfg(feature = "acp")]
+mod acp;
 
 #[derive(Parser)]
 #[command(name = "aletheon", about = "AI agent with sandbox, multi-agent, IPC")]
@@ -23,17 +25,54 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
+    /// Run the feature-gated ACP stdio gateway.
+    #[cfg(feature = "acp")]
+    #[arg(long)]
+    acp: bool,
+
     /// Send a single message to the daemon
     #[arg(short = 'm', long = "message", value_name = "MSG")]
     message: Option<String>,
 
-    /// Socket path (default: /run/aletheon/aletheon.sock)
-    #[arg(short, long, default_value = "/run/aletheon/aletheon.sock")]
-    socket: PathBuf,
+    /// Socket path (default: $XDG_RUNTIME_DIR/aletheon/aletheon.sock)
+    #[arg(short, long)]
+    socket: Option<PathBuf>,
+
+    #[command(flatten)]
+    workspace: WorkspaceArgs,
+
+    /// Path to write TUI frame snapshots (test instrumentation)
+    #[arg(long, hide = true)]
+    record_frames: Option<PathBuf>,
+
+    /// Path to write daemon-to-TUI events (test instrumentation)
+    #[arg(long, hide = true)]
+    record_events: Option<PathBuf>,
+
+    /// Path containing one TUI input per line (test instrumentation)
+    #[arg(long, hide = true)]
+    test_input: Option<PathBuf>,
+
+    /// Automatically submit test input lines
+    #[arg(long, hide = true)]
+    auto_submit: bool,
+
+    /// TUI test timeout in seconds
+    #[arg(long, default_value_t = 120, hide = true)]
+    test_timeout: u64,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Start the machine-scoped inference core
+    Core {
+        /// Path to machine configuration
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Group-authorized internal inference socket
+        #[arg(long, default_value = "/run/aletheon/core.sock")]
+        socket: PathBuf,
+    },
     /// Start daemon (auto-detects systemd/container/foreground)
     Daemon {
         /// Path to config file
@@ -54,6 +93,9 @@ enum Commands {
         /// Enable self-evolution loop (HIGH-risk autonomy -- OFF by default)
         #[arg(long, default_value_t = false)]
         enable_evolution: bool,
+        /// Enable the isolated execd tool backend (OFF by default)
+        #[arg(long = "execd", default_value_t = false)]
+        execd: bool,
     },
     /// Non-interactive execution
     Exec {
@@ -69,9 +111,6 @@ enum Commands {
         /// Sandbox preference: auto, require, or forbid
         #[arg(long, default_value = "auto")]
         sandbox: String,
-        /// Working directory for tool execution
-        #[arg(short = 'd', long, default_value = ".")]
-        working_dir: PathBuf,
         /// Path to config file
         #[arg(short, long)]
         config: Option<PathBuf>,
@@ -81,14 +120,76 @@ enum Commands {
     },
     /// Print version
     Version,
+    /// Restore terminal modes after an interrupted TUI session
+    RestoreTerminal,
+    /// Inspect effective configuration (merged layers)
+    Config {
+        #[command(subcommand)]
+        sub: ConfigSub,
+    },
+    /// Run diagnostics and print a health report
+    Doctor {
+        /// Output as JSON schema-stable report
+        #[arg(long)]
+        json: bool,
+        /// Path to a specific config file to validate
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Project directory for layered config discovery
+        #[arg(short = 'd', long)]
+        project_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigSub {
+    /// Print the fully merged effective configuration (secrets redacted)
+    Effective {
+        /// Path to a specific config file
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Project directory for layered config discovery
+        #[arg(short = 'd', long)]
+        project_dir: Option<PathBuf>,
+    },
+    /// Show each config layer source and its overrides
+    Layers {
+        /// Path to a specific config file
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+        /// Project directory for layered config discovery
+        #[arg(short = 'd', long)]
+        project_dir: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-
+    #[cfg(feature = "acp")]
+    if cli.acp {
+        anyhow::ensure!(
+            cli.command.is_none() && cli.message.is_none(),
+            "--acp cannot be combined with a subcommand or --message"
+        );
+        init_tracing("aletheon::acp");
+        return acp::run(cli.workspace.executive_launch()).await;
+    }
+    if matches!(&cli.command, Some(Commands::Core { .. }))
+        && (cli.workspace.cwd.is_some() || !cli.workspace.add_dirs.is_empty())
+    {
+        anyhow::bail!("aletheon core does not accept workspace authority");
+    }
     match (&cli.command, &cli.message) {
         // Subcommand-driven paths
+        (Some(Commands::Core { config, socket }), _) => {
+            init_tracing("aletheon::core");
+            executive::host::launcher::run_core(executive::host::launcher::CoreLaunch {
+                config: config.clone(),
+                socket: socket.clone(),
+            })
+            .await
+        }
         (
             Some(Commands::Daemon {
                 config,
@@ -97,49 +198,22 @@ async fn main() -> Result<()> {
                 container,
                 image,
                 enable_evolution,
+                execd,
             }),
             _,
         ) => {
-            init_tracing(
-                "aletheon::daemon",
-                Some(Path::new("/var/lib/aletheon/aletheon.log")),
-            );
-            let socket_path = socket.clone().unwrap_or(cli.socket);
-            let daemon_mode = detect_daemon_mode(container);
-
-            match daemon_mode {
-                DaemonMode::Systemd => {
-                    let mut host = runtime::host::systemd::SystemdHost::new(
-                        config.clone(),
-                        env.clone(),
-                        socket_path,
-                        *enable_evolution,
-                    );
-                    host.init().await?;
-                    Box::new(host).serve().await
-                }
-                DaemonMode::Container { runtime_name } => {
-                    let mut host = runtime::host::container::ContainerHost::new(
-                        config.clone(),
-                        env.clone(),
-                        runtime_name,
-                        image.clone(),
-                        *enable_evolution,
-                    );
-                    host.init().await?;
-                    Box::new(host).serve().await
-                }
-                DaemonMode::Foreground => {
-                    let mut host = runtime::host::DaemonHost::new(
-                        config.clone(),
-                        env.clone(),
-                        socket_path,
-                        *enable_evolution,
-                    );
-                    host.init().await?;
-                    Box::new(host).serve().await
-                }
-            }
+            init_tracing("aletheon::daemon");
+            executive::host::launcher::run_daemon(executive::host::launcher::DaemonLaunch {
+                config: config.clone(),
+                env: env.clone(),
+                command_socket: socket.clone(),
+                parent_socket: cli.socket.clone(),
+                container: container.clone(),
+                image: image.clone(),
+                enable_evolution: *enable_evolution,
+                enable_execd: *execd,
+            })
+            .await
         }
         (
             Some(Commands::Exec {
@@ -147,64 +221,191 @@ async fn main() -> Result<()> {
                 model,
                 max_turns,
                 sandbox,
-                working_dir,
                 config,
                 output,
             }),
             _,
         ) => {
-            init_tracing("aletheon::exec", None);
-            run_exec(
-                prompt,
-                model,
-                *max_turns,
-                sandbox,
-                working_dir,
-                config,
-                output,
-            )
-            .await
+            init_tracing("aletheon::exec");
+            let outcome =
+                executive::host::launcher::run_exec(executive::host::launcher::ExecLaunch {
+                    prompt: prompt.clone(),
+                    model: model.clone(),
+                    max_turns: *max_turns,
+                    sandbox: sandbox.clone(),
+                    workspace: cli.workspace.executive_launch(),
+                    config: config.clone(),
+                    json: output == "json",
+                })
+                .await?;
+            println!("{}", outcome.rendered);
+            if outcome.success {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("exec host failed"))
+            }
         }
         (Some(Commands::Version), _) => {
             println!("aletheon {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
+        (Some(Commands::Config { sub }), _) => {
+            init_tracing("aletheon::config");
+            handle_config(sub).await
+        }
+        (
+            Some(Commands::Doctor {
+                json,
+                config,
+                project_dir,
+            }),
+            _,
+        ) => {
+            init_tracing("aletheon::doctor");
+            handle_doctor(*json, config.as_deref(), project_dir.as_deref()).await
+        }
+        (Some(Commands::RestoreTerminal), _) => {
+            interact::tui::restore_terminal();
+            println!("Terminal restored to normal state.");
+            Ok(())
+        }
         // -m flag: single message to daemon
-        (None, Some(msg)) => interact::cli::single_message(&cli.socket, msg).await,
-        // No subcommand, no -m: TUI mode (interact crate handles arg parsing)
-        (None, None) => interact::cli::run().await,
+        (None, Some(msg)) => {
+            interact::host::run_single_message(interact::host::MessageLaunch {
+                socket: cli.socket.clone(),
+                workspace: cli.workspace.interact_launch(),
+                message: msg.clone(),
+            })
+            .await
+        }
+        // No subcommand, no -m: TUI mode. The unified binary owns argument
+        // parsing, so pass instrumentation through instead of parsing twice.
+        (None, None) => {
+            let config = interact::tui::TestConfig {
+                test_input: cli.test_input,
+                record_frames: cli.record_frames,
+                record_events: cli.record_events,
+                auto_submit: cli.auto_submit,
+                test_timeout: cli.test_timeout,
+            };
+            interact::host::run_tui(
+                interact::host::TuiLaunch {
+                    socket: cli.socket.clone(),
+                    workspace: cli.workspace.interact_launch(),
+                },
+                config,
+            )
+            .await
+        }
     }
 }
 
-// ── Daemon mode detection ──────────────────────────────────────────────────
+// ── Config & Doctor handlers ────────────────────────────────────────────────
 
-enum DaemonMode {
-    Systemd,
-    Container { runtime_name: String },
-    Foreground,
+async fn handle_config(sub: &ConfigSub) -> Result<()> {
+    use executive::core::config;
+    match sub {
+        ConfigSub::Effective {
+            config,
+            project_dir,
+        } => {
+            let loaded = if let Some(path) = config {
+                let txt = std::fs::read_to_string(path)?;
+                let layer = config::ConfigLayer::from_toml(
+                    config::ConfigSource::new(
+                        config::ConfigSourceKind::Cli,
+                        path.display().to_string(),
+                    ),
+                    &txt,
+                )?;
+                config::merge_layers([layer])?
+            } else {
+                config::diagnostics::load_config_diagnostics(project_dir.as_deref())?
+            };
+            let view = loaded.effective_view();
+            println!("{}", serde_json::to_string_pretty(&view.config)?);
+        }
+        ConfigSub::Layers {
+            config,
+            project_dir,
+        } => {
+            let loaded = if let Some(path) = config {
+                let txt = std::fs::read_to_string(path)?;
+                let layer = config::ConfigLayer::from_toml(
+                    config::ConfigSource::new(
+                        config::ConfigSourceKind::Cli,
+                        path.display().to_string(),
+                    ),
+                    &txt,
+                )?;
+                config::merge_layers([layer])?
+            } else {
+                config::diagnostics::load_config_diagnostics(project_dir.as_deref())?
+            };
+            let view = loaded.layers_view();
+            println!("{}", serde_json::to_string_pretty(&view)?);
+        }
+    }
+    Ok(())
 }
 
-fn detect_daemon_mode(container_override: &Option<String>) -> DaemonMode {
-    if let Some(rt) = container_override {
-        return DaemonMode::Container {
-            runtime_name: rt.clone(),
-        };
+async fn handle_doctor(
+    json: bool,
+    config_path: Option<&std::path::Path>,
+    project_dir: Option<&std::path::Path>,
+) -> Result<()> {
+    use executive::core::config;
+    use executive::r#impl::doctor::DoctorReport;
+    let loaded = if let Some(path) = config_path {
+        let txt = std::fs::read_to_string(path)?;
+        let layer = config::ConfigLayer::from_toml(
+            config::ConfigSource::new(config::ConfigSourceKind::Cli, path.display().to_string()),
+            &txt,
+        )?;
+        config::merge_layers([layer])?
+    } else {
+        config::diagnostics::load_config_diagnostics(project_dir)?
+    };
+    let report = DoctorReport::standalone(&loaded);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("aletheon doctor — v{}", report.daemon_version);
+        println!("  status:    {}", report.status);
+        println!(
+            "  config:    {} ({} leaves)",
+            report.config.validity, report.config.leaf_count
+        );
+        println!(
+            "  deploy:    sha={} (core_compat={})",
+            report.deployment.installed_sha,
+            report
+                .deployment
+                .runtime_versions_compatible
+                .map_or("unknown".to_string(), |c| c.to_string())
+        );
+        println!(
+            "  MCP:       {} servers configured",
+            report.mcp_servers.len()
+        );
+        println!("  sandbox:   {}", report.sandbox.status);
+        println!("  writer:    {}", report.writer_health.status);
+        println!(
+            "  recovery:  {} sessions / {} turns / {} recovered",
+            report.turn_recovery.sessions_scanned,
+            report.turn_recovery.turns_scanned,
+            report.turn_recovery.incomplete_turns_recovered
+        );
+        for warning in &report.warnings {
+            println!("  WARNING:   {warning}");
+        }
     }
-    if std::env::var("NOTIFY_SOCKET").is_ok() {
-        return DaemonMode::Systemd;
-    }
-    if std::env::var("CONTAINER").is_ok() || std::path::Path::new("/.dockerenv").exists() {
-        return DaemonMode::Container {
-            runtime_name: "docker".to_string(),
-        };
-    }
-    DaemonMode::Foreground
+    Ok(())
 }
 
 // ── Tracing ─────────────────────────────────────────────────────────────────
 
-fn init_tracing(target: &str, log_file: Option<&Path>) {
-    use std::fs;
+fn init_tracing(target: &str) {
     let env_filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
     } else {
@@ -215,247 +416,46 @@ fn init_tracing(target: &str, log_file: Option<&Path>) {
         ))
     };
 
-    let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .json()
+        .flatten_event(true)
+        .with_current_span(false)
+        .with_span_list(false)
+        .with_writer(std::io::stderr);
 
-    let subscriber = tracing_subscriber::registry()
+    tracing_subscriber::registry()
         .with(env_filter)
-        .with(stderr_layer);
-
-    if let Some(path) = log_file {
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let log_path = path.to_path_buf();
-        // Test that the file is writable before adding the layer
-        match fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-        {
-            Ok(_) => {
-                let file_layer = tracing_subscriber::fmt::layer()
-                    .with_ansi(false)
-                    .with_writer(move || {
-                        fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&log_path)
-                            .expect("failed to open log file for append")
-                    });
-                subscriber.with(file_layer).init();
-                return;
-            }
-            Err(e) => {
-                eprintln!(
-                    "Warning: could not open log file {}: {}",
-                    log_path.display(),
-                    e
-                );
-            }
-        }
-    }
-
-    subscriber.init();
+        .with(stderr_layer)
+        .init();
 }
 
-// ── Exec ────────────────────────────────────────────────────────────────────
+#[cfg(all(test, feature = "acp"))]
+mod acp_cli_tests {
+    use super::*;
 
-use base::{ContentBlock, Message, Role};
-use cognit::r#impl::llm::LlmProvider;
-use cognit::r#impl::llm::StopReason;
-use cognit::r#impl::provider_registry::ProviderRegistry;
-use corpus::security::sandbox::executor::SandboxPreference;
-use corpus::security::security::approval::{ApprovalGate, TerminalApprovalGate};
-use corpus::security::security::audit::AuditLogger;
-use corpus::security::security::runner::ToolRunnerWithGuard;
-use corpus::tools::tools::{ToolContext, ToolRegistry};
-
-/// Non-interactive exec logic — mirrors the old aletheon-exec binary.
-async fn run_exec(
-    prompt: &str,
-    model: &str,
-    max_turns: usize,
-    sandbox: &str,
-    working_dir: &Path,
-    config: &Option<PathBuf>,
-    output: &str,
-) -> Result<()> {
-    // Load ~/.aletheon/.env so provider API keys resolve.
-    if let Some(home) = std::env::var_os("HOME") {
-        runtime::host::load_dotenv(&PathBuf::from(home).join(".aletheon").join(".env"));
+    #[test]
+    fn acp_flag_is_exposed_only_in_acp_feature_build() {
+        let cli = Cli::try_parse_from(["aletheon", "--acp"]).unwrap();
+        assert!(cli.acp);
     }
+}
 
-    let working_dir = working_dir
-        .canonicalize()
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
+#[cfg(test)]
+mod daemon_cli_tests {
+    use super::*;
 
-    // Load config
-    let app_config = if let Some(ref path) = config {
-        cognit::config::AppConfig::load_or_default(path)
-    } else {
-        cognit::config::AppConfig::load_layered(None)
-    };
+    #[test]
+    fn execd_flag_defaults_off_and_enables_additively() {
+        let default_cli = Cli::try_parse_from(["aletheon", "daemon"]).unwrap();
+        assert!(matches!(
+            default_cli.command,
+            Some(Commands::Daemon { execd: false, .. })
+        ));
 
-    // Build provider registry
-    let registry = ProviderRegistry::from_config(&app_config)?;
-
-    // Create LLM provider
-    let llm: Arc<dyn LlmProvider> = Arc::from(registry.resolve_and_create(model)?);
-    info!(provider = llm.name(), model = %model, "LLM provider initialized");
-
-    // Create tool registry with default tools
-    let tool_registry = ToolRegistry::default();
-
-    // Guarded runner with terminal approval for risky (L2+) tools.
-    let audit_path = working_dir.join(".aletheon-audit.jsonl");
-    let approval: Arc<dyn ApprovalGate> = Arc::new(TerminalApprovalGate);
-    let sandbox_preference = SandboxPreference::from_str(sandbox);
-    info!(preference = ?sandbox_preference, "sandbox configured");
-    let mut runner = ToolRunnerWithGuard::with_sandbox_preference(
-        AuditLogger::new(audit_path)?,
-        sandbox_preference,
-    )
-    .with_approval_gate(approval);
-    let turn_id = uuid::Uuid::new_v4().to_string();
-    runner.on_new_turn(&turn_id);
-
-    // Build tool definitions for LLM
-    let tool_defs = tool_registry.definitions();
-    info!(tool_count = tool_defs.len(), "Tools registered");
-
-    // Build system prompt
-    let system_prompt = format!(
-        "You are Aletheon, an AI agent executing a task non-interactively. \
-         You have access to tools. Complete the user's request and provide a final response. \
-         Working directory: {}",
-        working_dir.display()
-    );
-
-    // Initialize conversation
-    let mut messages: Vec<Message> = vec![Message::system(&system_prompt), Message::user(prompt)];
-
-    // Tool execution context
-    let tool_ctx = ToolContext {
-        working_dir: working_dir.clone(),
-        session_id: uuid::Uuid::new_v4().to_string(),
-    };
-
-    // Agent loop
-    let mut turns_used = 0;
-    let mut total_input_tokens = 0u32;
-    let mut total_output_tokens = 0u32;
-    let final_response;
-
-    loop {
-        if turns_used >= max_turns {
-            tracing::warn!(max_turns, "Max turns reached");
-            final_response = format!(
-                "Max turns ({}) reached without completing the task.",
-                max_turns
-            );
-            break;
-        }
-
-        info!(turn = turns_used + 1, "Starting turn");
-
-        // Call LLM
-        let response = llm.complete(&messages, &tool_defs).await?;
-        total_input_tokens += response.usage.input_tokens;
-        total_output_tokens += response.usage.output_tokens;
-
-        match response.stop_reason {
-            StopReason::EndTurn | StopReason::MaxTokens => {
-                // LLM is done, extract final text response
-                final_response = response
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        ContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("");
-
-                // Add assistant message to history
-                messages.push(Message {
-                    role: Role::Assistant,
-                    content: response.content.clone(),
-                });
-                break;
-            }
-            StopReason::ToolUse => {
-                // LLM wants to call tools
-                let assistant_content = response.content.clone();
-                let mut tool_results = Vec::new();
-
-                for block in &response.content {
-                    if let ContentBlock::ToolUse { id, name, input } = block {
-                        info!(tool = %name, "Executing tool");
-                        let tool_result = if let Some(tool) = tool_registry.get(name) {
-                            let result = runner
-                                .run(tool.as_ref(), input.clone(), &tool_ctx, &turn_id)
-                                .await;
-                            if result.is_error {
-                                tracing::warn!(tool = %name, error = %result.content, "Tool failed/denied");
-                            } else {
-                                info!(tool = %name, "Tool succeeded");
-                            }
-                            ContentBlock::ToolResult {
-                                tool_use_id: id.clone(),
-                                content: result.content,
-                                is_error: result.is_error,
-                            }
-                        } else {
-                            tracing::warn!(tool = %name, "Unknown tool");
-                            ContentBlock::ToolResult {
-                                tool_use_id: id.clone(),
-                                content: format!("Error: Unknown tool '{}'", name),
-                                is_error: true,
-                            }
-                        };
-                        tool_results.push(tool_result);
-                    }
-                }
-
-                // Add assistant message (with tool_use) and tool results to history
-                messages.push(Message {
-                    role: Role::Assistant,
-                    content: assistant_content,
-                });
-                messages.push(Message {
-                    role: Role::User,
-                    content: tool_results,
-                });
-
-                turns_used += 1;
-            }
-        }
+        let enabled_cli = Cli::try_parse_from(["aletheon", "daemon", "--execd"]).unwrap();
+        assert!(matches!(
+            enabled_cli.command,
+            Some(Commands::Daemon { execd: true, .. })
+        ));
     }
-
-    let success = turns_used < max_turns;
-    info!(
-        turns = turns_used,
-        input_tokens = total_input_tokens,
-        output_tokens = total_output_tokens,
-        success = success,
-        "Execution complete"
-    );
-
-    if output == "json" {
-        let result = serde_json::json!({
-            "success": success,
-            "response": final_response,
-            "turns_used": turns_used,
-            "total_input_tokens": total_input_tokens,
-            "total_output_tokens": total_output_tokens,
-        });
-        println!("{}", serde_json::to_string_pretty(&result)?);
-    } else {
-        println!("{}", final_response);
-    }
-
-    if !success {
-        std::process::exit(1);
-    }
-    Ok(())
 }

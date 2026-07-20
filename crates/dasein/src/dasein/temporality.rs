@@ -5,7 +5,7 @@
 //! Not clock time, but lived time.
 
 use super::types::*;
-use base::dasein::{
+use fabric::dasein::{
     AffectTone, AngstSource, BoredomDepth, PresentSnapshot, ProtentionSnapshot, RentionalSnapshot,
     Stimmung, TemporalStreamSnapshot,
 };
@@ -423,7 +423,7 @@ impl TemporalStream {
     }
 
     /// Ingest a new experience — the temporal flow advances.
-    pub fn ingest(&self, content: ExperientialContent, mood: Stimmung) {
+    pub(crate) fn ingest(&self, content: ExperientialContent, mood: Stimmung) {
         let mut pos = self.position.write();
         let current = *pos;
         *pos = pos.next();
@@ -456,14 +456,14 @@ impl TemporalStream {
 
     /// Run passive synthesis (called periodically).
     /// Returns detected temporal patterns.
-    pub fn passive_synthesize(&self) -> Vec<TemporalPattern> {
+    pub(crate) fn passive_synthesize(&self) -> Vec<TemporalPattern> {
         let vivid = self.retention.vivid_moments(0.3);
         let mut synth = self.synthesizer.write();
         synth.synthesize(&vivid)
     }
 
     /// Feed detected patterns into the protention field to close the prediction loop.
-    pub fn update_protentions_from_patterns(&self, patterns: &[TemporalPattern]) {
+    pub(crate) fn update_protentions_from_patterns(&self, patterns: &[TemporalPattern]) {
         self.protention.write().update_from_patterns(patterns);
     }
 

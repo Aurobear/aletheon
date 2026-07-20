@@ -1,4 +1,5 @@
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::warn;
 
 use super::audit::{AuditLogger, AuditRecord};
@@ -6,8 +7,8 @@ use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
 use super::output_guardrail::OutputGuardrail;
 use super::policy::{PolicyEngine, PolicyVerdict};
 use super::risk_classifier::RiskClassifier;
-use base::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
-use corpus::security::sandbox::{SandboxConfig, SandboxExecutor};
+use fabric::sandbox::{SandboxConfig, SandboxExecutor, SandboxPreference};
+use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 #[derive(Debug)]
 pub enum ToolError {
@@ -41,10 +42,15 @@ pub struct ToolRunnerWithGuard {
     output_guardrail: OutputGuardrail,
     audit_logger: AuditLogger,
     risk_classifier: RiskClassifier,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl ToolRunnerWithGuard {
-    pub fn new(sandbox: SandboxExecutor, audit_logger: AuditLogger) -> Self {
+    pub fn new(
+        sandbox: SandboxExecutor,
+        audit_logger: AuditLogger,
+        clock: Arc<dyn fabric::Clock>,
+    ) -> Self {
         Self {
             sandbox,
             loop_detector: LoopDetector::new(LoopDetectorConfig::default()),
@@ -52,13 +58,21 @@ impl ToolRunnerWithGuard {
             policy_engine: PolicyEngine::with_defaults(),
             audit_logger,
             risk_classifier: RiskClassifier::with_defaults(),
+            clock,
         }
     }
 
-    /// Create with default sandbox (Auto preference).
-    pub fn with_default_sandbox(audit_logger: AuditLogger) -> Self {
-        use corpus::security::sandbox::SandboxPreference;
-        Self::new(SandboxExecutor::new(SandboxPreference::Auto), audit_logger)
+    /// Create with a sandbox executor using Auto preference and the given backends.
+    pub fn with_default_sandbox(
+        audit_logger: AuditLogger,
+        clock: Arc<dyn fabric::Clock>,
+        backends: Vec<Box<dyn fabric::sandbox::SandboxBackend>>,
+    ) -> Self {
+        Self::new(
+            SandboxExecutor::new(backends, SandboxPreference::Auto),
+            audit_logger,
+            clock,
+        )
     }
 
     pub fn on_new_turn(&mut self, turn_id: &str) {
@@ -79,7 +93,7 @@ impl ToolRunnerWithGuard {
         turn_id: &str,
     ) -> std::result::Result<ToolResult, ToolError> {
         let tool_name = tool.name();
-        let start = Instant::now();
+        let start = self.clock.mono_now();
 
         // 1. Policy check
         let policy_verdict = self.policy_engine.check(tool_name, &input);
@@ -180,8 +194,13 @@ impl ToolRunnerWithGuard {
             let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
 
             let sandbox_config = SandboxConfig {
-                working_dir: ctx.working_dir.to_string_lossy().to_string(),
-                env_vars: std::collections::HashMap::new(),
+                workspace: fabric::WorkspacePolicy::from_resolved_roots(
+                    ctx.working_dir.clone(),
+                    vec![],
+                )
+                .map_err(|reason| ToolError::PolicyDenied { reason })?,
+                environment: std::collections::BTreeMap::new(),
+                policy: None,
             };
 
             match self
@@ -197,6 +216,7 @@ impl ToolRunnerWithGuard {
                     metadata: ToolResultMeta {
                         execution_time_ms: sandbox_result.elapsed_ms,
                         truncated: false,
+                        patch_delta: None,
                     },
                 },
                 Err(e) => ToolResult {
@@ -205,6 +225,7 @@ impl ToolRunnerWithGuard {
                     metadata: ToolResultMeta {
                         execution_time_ms: 0,
                         truncated: false,
+                        patch_delta: None,
                     },
                 },
             }
@@ -278,12 +299,13 @@ impl ToolRunnerWithGuard {
         level: PermissionLevel,
         turn_id: &str,
         result: Option<&ToolResult>,
-        start: &Instant,
+        start: &fabric::MonoTime,
         verdict: &str,
     ) {
         let category = self.risk_classifier.classify(tool_name);
         let record = AuditRecord {
-            timestamp: chrono::Utc::now(),
+            audit_id: fabric::AuditEventId::new(),
+            timestamp: self.clock.wall_now(),
             session_id: String::new(), // Will be filled by caller or context
             turn_id: turn_id.to_string(),
             tool_name: tool_name.to_string(),
@@ -294,7 +316,7 @@ impl ToolRunnerWithGuard {
             result_summary: result.map(|r| r.content.chars().take(200).collect()),
             is_error: result.map(|r| r.is_error).unwrap_or(false),
             sandbox_backend: None,
-            elapsed_ms: start.elapsed().as_millis() as u64,
+            elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
         };
         let _ = self.audit_logger.log(record).await;
     }

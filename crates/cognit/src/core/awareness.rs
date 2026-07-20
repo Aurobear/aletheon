@@ -7,11 +7,11 @@
 //! Philosophical basis: Spinoza's idea ideae — the mind's awareness
 //! of its own ideas is not a second act, but inherent in every idea.
 
-use base::{AwarenessExtension, AwarenessGrowthSuggestion, SelfAwareness, SelfState};
+use fabric::{AwarenessExtension, AwarenessGrowthSuggestion, SelfAwareness, SelfState};
 
 /// System prompt for generating self-awareness.
 ///
-/// This is injected into BrainCore's reasoning prompt.
+/// This is injected into CognitCore's reasoning prompt.
 /// It guides the LLM to produce awareness naturally,
 /// not as an afterthought.
 pub const SELF_AWARENESS_PROMPT: &str = r#"
@@ -28,7 +28,7 @@ pub const SELF_AWARENESS_PROMPT: &str = r#"
 - reflexive: 你对自己觉知的觉知
 "#;
 
-/// Generates SelfAwareness during BrainCore reasoning.
+/// Generates SelfAwareness during CognitCore reasoning.
 ///
 /// The generator has two modes:
 /// 1. Minimal: produces just the core (action + aware)
@@ -137,7 +137,7 @@ impl AwarenessGenerator {
 
     /// Update growth suggestions.
     ///
-    /// Called by BrainCore when AwarenessGrowthAnalyzer
+    /// Called by CognitCore when AwarenessGrowthAnalyzer
     /// produces new suggestions.
     pub fn update_suggestions(&mut self, suggestions: Vec<AwarenessGrowthSuggestion>) {
         self.suggestions = suggestions;

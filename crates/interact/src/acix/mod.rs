@@ -1,18 +1,4 @@
-//! Agent-Computer Interface (ACIX) — high-level perception, action, experience, and task management.
+//! Compatibility namespace for transport-neutral ACIX value contracts.
 //!
-//! Agent-Computer Interface (ACIX) — high-level perception, action, experience, and task management.
-
-pub mod aci;
-pub mod experience;
-pub mod grounding;
-pub mod task;
-pub mod tools;
-
-pub use aci::Aci;
-pub use experience::{
-    ActionRecord, Embedder, Experience, ExperienceLevel, ExperienceMemory, MockEmbedder,
-};
-pub use grounding::{GroundingProvider, GroundingResult, MockGroundingProvider};
-pub use task::{
-    TaskAction, TaskDecomposer, TaskGraph, TaskManager, TaskNode, TaskStatus, TaskWorker,
-};
+//! Concrete computer drivers and tool execution are Corpus/host responsibilities.
+pub use fabric::grounding::{GroundingProvider, GroundingResult, MockGroundingProvider};

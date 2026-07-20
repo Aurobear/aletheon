@@ -1,10 +1,12 @@
 use super::config::{OutputConfig, TurnBudgetConfig};
 use super::persistence::{process_result, ProcessedOutput};
+use fabric::Clock;
 
 pub async fn enforce_turn_budget(
     results: &mut [(String, ProcessedOutput)],
     output_config: &OutputConfig,
     budget_config: &TurnBudgetConfig,
+    clock: &dyn Clock,
 ) -> anyhow::Result<()> {
     let total_inline: usize = results
         .iter()
@@ -44,7 +46,7 @@ pub async fn enforce_turn_budget(
             let content = content.clone();
             let original_bytes = *original_bytes;
 
-            let new_result = process_result(&tool_name, &content, output_config).await?;
+            let new_result = process_result(&tool_name, &content, output_config, clock).await?;
             let saved = match &new_result {
                 ProcessedOutput::Inline { content, .. } => content.len(),
                 ProcessedOutput::Overflow { summary, .. } => summary.len(),
@@ -61,10 +63,12 @@ pub async fn enforce_turn_budget(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::chronos::TestClock;
     use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_no_enforcement_when_under_budget() {
+        let clock = TestClock::default();
         let tmp = TempDir::new().unwrap();
         let output_config = OutputConfig {
             overflow_dir: tmp.path().to_path_buf(),
@@ -83,7 +87,7 @@ mod tests {
             },
         )];
 
-        enforce_turn_budget(&mut results, &output_config, &budget_config)
+        enforce_turn_budget(&mut results, &output_config, &budget_config, &clock)
             .await
             .unwrap();
         assert!(matches!(&results[0].1, ProcessedOutput::Inline { .. }));
@@ -91,6 +95,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_persists_largest_result_first() {
+        let clock = TestClock::default();
         let tmp = TempDir::new().unwrap();
         let output_config = OutputConfig {
             max_output_chars: 50,
@@ -119,7 +124,7 @@ mod tests {
             ),
         ];
 
-        enforce_turn_budget(&mut results, &output_config, &budget_config)
+        enforce_turn_budget(&mut results, &output_config, &budget_config, &clock)
             .await
             .unwrap();
         assert!(results[0].1.was_truncated());

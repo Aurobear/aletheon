@@ -1,6 +1,8 @@
 use async_trait::async_trait;
-use chrono::Utc;
+use std::sync::Arc;
 use tokio::sync::mpsc;
+
+use fabric::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;
@@ -12,16 +14,18 @@ pub struct JournaldSource {
     #[allow(dead_code)]
     event_id_counter: u64,
     min_priority: u8, // 0=emerg .. 7=debug, lower = more important
+    clock: Arc<dyn Clock>,
 }
 
 impl JournaldSource {
-    pub fn new(min_priority: u8) -> Self {
+    pub fn new(min_priority: u8, clock: Arc<dyn Clock>) -> Self {
         let (tx, rx) = mpsc::channel(256);
         Self {
             rx,
             tx,
             event_id_counter: 0,
             min_priority,
+            clock,
         }
     }
 
@@ -29,6 +33,7 @@ impl JournaldSource {
     pub async fn start(&self) -> anyhow::Result<()> {
         let tx = self.tx.clone();
         let min_priority = self.min_priority;
+        let clock = self.clock.clone();
 
         tokio::spawn(async move {
             // Use journalctl --follow to stream journal entries
@@ -83,7 +88,7 @@ impl JournaldSource {
                     let _ = tx
                         .send(PerceptionEvent {
                             id,
-                            timestamp: Utc::now(),
+                            timestamp: clock.wall_now(),
                             source: EventSource::Journald,
                             category: EventCategory::Service,
                             priority: match priority {

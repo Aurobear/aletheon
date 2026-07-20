@@ -1,7 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+#[cfg(test)]
+use fabric::Timer;
+use fabric::{Clock, MonoTime};
+#[cfg(test)]
+use kernel::chronos::SystemTimer;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
@@ -13,39 +18,42 @@ pub struct HeartbeatLayer {
     tx: watch::Sender<()>,
     #[allow(dead_code)]
     rx: watch::Receiver<()>,
-    last_beat: Arc<std::sync::Mutex<Instant>>,
+    last_beat: Arc<std::sync::Mutex<MonoTime>>,
     alive: Arc<AtomicBool>,
+    clock: Arc<dyn Clock>,
 }
 
 impl HeartbeatLayer {
-    pub fn new(name: &'static str, timeout: Duration) -> Self {
+    pub fn new(name: &'static str, timeout: Duration, clock: Arc<dyn Clock>) -> Self {
         let (tx, rx) = watch::channel(());
+        let now = clock.mono_now();
         Self {
             name,
             timeout,
             tx,
             rx,
-            last_beat: Arc::new(std::sync::Mutex::new(Instant::now())),
+            last_beat: Arc::new(std::sync::Mutex::new(now)),
             alive: Arc::new(AtomicBool::new(true)),
+            clock,
         }
     }
 
     /// Send a heartbeat signal from the monitored task.
     pub fn beat(&self) {
         if let Ok(mut t) = self.last_beat.lock() {
-            *t = Instant::now();
+            *t = self.clock.mono_now();
         }
         let _ = self.tx.send(());
     }
 
     /// Returns `true` if the last heartbeat was within the timeout window.
     pub fn is_alive(&self) -> bool {
-        let elapsed = self
+        let elapsed_ms = self
             .last_beat
             .lock()
-            .map(|t| t.elapsed())
-            .unwrap_or(Duration::MAX);
-        let alive = elapsed <= self.timeout;
+            .map(|t| self.clock.mono_now().0.saturating_sub(t.0))
+            .unwrap_or(u64::MAX);
+        let alive = elapsed_ms <= self.timeout.as_millis() as u64;
         self.alive.store(alive, Ordering::SeqCst);
         alive
     }
@@ -54,7 +62,7 @@ impl HeartbeatLayer {
     pub fn elapsed(&self) -> Duration {
         self.last_beat
             .lock()
-            .map(|t| t.elapsed())
+            .map(|t| Duration::from_millis(self.clock.mono_now().0.saturating_sub(t.0)))
             .unwrap_or(Duration::MAX)
     }
 
@@ -67,7 +75,7 @@ impl HeartbeatLayer {
 ///
 /// - **L1 systemd** — 30 s timeout (external, coarse)
 /// - **L2 tokio runtime** — 10 s timeout (runtime-level)
-/// - **L3 reasoning loop** — 5 min timeout (application-level)
+/// - **L3 reasoning** — 5 min timeout (application-level)
 ///
 /// Each layer has its own heartbeat sender and timeout checker.
 pub struct WatchdogTimer {
@@ -77,11 +85,11 @@ pub struct WatchdogTimer {
 }
 
 impl WatchdogTimer {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
-            l1_systemd: HeartbeatLayer::new("L1-systemd", Duration::from_secs(30)),
-            l2_runtime: HeartbeatLayer::new("L2-runtime", Duration::from_secs(10)),
-            l3_reasoning: HeartbeatLayer::new("L3-reasoning", Duration::from_secs(300)),
+            l1_systemd: HeartbeatLayer::new("L1-systemd", Duration::from_secs(30), clock.clone()),
+            l2_runtime: HeartbeatLayer::new("L2-runtime", Duration::from_secs(10), clock.clone()),
+            l3_reasoning: HeartbeatLayer::new("L3-reasoning", Duration::from_secs(300), clock),
         }
     }
 
@@ -125,30 +133,41 @@ impl WatchdogTimer {
     }
 }
 
+#[cfg(test)]
 impl Default for WatchdogTimer {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn Clock> {
+        // Start at mono=600_000 (10 min) so MonoTime(0) is convincingly expired
+        // for all watchdog layers (L2=10s, L3=5min).
+        Arc::new(TestClock::new(0, 600_000))
+    }
 
     #[test]
     fn test_heartbeat_basics() {
-        let layer = HeartbeatLayer::new("test", Duration::from_secs(1));
+        let layer = HeartbeatLayer::new("test", Duration::from_secs(1), test_clock());
         assert!(layer.is_alive());
         assert_eq!(layer.name(), "test");
     }
 
     #[test]
     fn test_heartbeat_timeout() {
-        let layer = HeartbeatLayer::new("test", Duration::from_millis(50));
+        let layer = HeartbeatLayer::new("test", Duration::from_millis(50), test_clock());
         // Immediately alive
         assert!(layer.is_alive());
-        // Sleep past the timeout
-        std::thread::sleep(Duration::from_millis(80));
+        // Artificially expire by setting last_beat far in the past
+        {
+            let mut t = layer.last_beat.lock().unwrap_or_else(|e| e.into_inner());
+            *t = MonoTime(0);
+        }
         assert!(!layer.is_alive());
         // Beat resets the timer
         layer.beat();
@@ -157,18 +176,22 @@ mod tests {
 
     #[test]
     fn test_watchdog_all_alive_initially() {
-        let wd = WatchdogTimer::new();
+        let wd = WatchdogTimer::new(test_clock());
         assert!(wd.all_alive());
         assert!(wd.expired_layers().is_empty());
     }
 
     #[test]
     fn test_watchdog_expired_layers() {
-        let wd = WatchdogTimer::new();
+        let wd = WatchdogTimer::new(test_clock());
         // Artificially expire L2 by setting its last_beat far in the past.
         {
-            let mut t = wd.l2_runtime.last_beat.lock().unwrap();
-            *t = Instant::now() - Duration::from_secs(60);
+            let mut t = wd
+                .l2_runtime
+                .last_beat
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *t = MonoTime(0);
         }
         let expired = wd.expired_layers();
         assert!(expired.contains(&"L2-runtime"));
@@ -177,10 +200,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_checker_no_panic() {
-        let wd = Arc::new(WatchdogTimer::new());
+        let wd = Arc::new(WatchdogTimer::new(test_clock()));
         let handle = wd.spawn_checker();
         // Let it tick a couple of times
-        tokio::time::sleep(Duration::from_millis(1200)).await;
+        SystemTimer.sleep(Duration::from_millis(1200)).await;
         handle.abort();
         assert!(handle.await.unwrap_err().is_cancelled());
     }

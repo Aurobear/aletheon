@@ -1,6 +1,6 @@
 pub mod tool_search;
 
-use base::tool::ToolExposure;
+use fabric::tool::ToolExposure;
 
 /// A single entry in the BM25 search catalog.
 #[derive(Debug, Clone)]

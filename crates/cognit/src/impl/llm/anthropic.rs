@@ -2,9 +2,11 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use super::provider::*;
-use base::message::{ContentBlock, Message, Role};
+use crate::config::ProviderTimeoutConfig;
+use fabric::message::{ContentBlock, Message, Role};
 
 pub struct AnthropicProvider {
     client: Client,
@@ -13,18 +15,40 @@ pub struct AnthropicProvider {
     base_url: String,
     max_context: usize,
     max_tokens: u32,
+    request_timeout: Duration,
+    stream_idle_timeout: Duration,
 }
 
 impl AnthropicProvider {
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        let timeouts = ProviderTimeoutConfig::default();
         Self {
-            client: Client::new(),
+            client: Self::client(&timeouts),
             api_key: api_key.into(),
             model: model.into(),
             base_url: "https://api.anthropic.com".to_string(),
             max_context: 200_000,
             max_tokens: 4096,
+            request_timeout: Duration::from_millis(timeouts.request_timeout_ms),
+            stream_idle_timeout: Duration::from_millis(timeouts.stream_idle_timeout_ms),
         }
+    }
+
+    fn client(timeouts: &ProviderTimeoutConfig) -> Client {
+        Client::builder()
+            .connect_timeout(Duration::from_millis(timeouts.connect_timeout_ms))
+            .build()
+            .expect("reqwest client configuration is valid")
+    }
+
+    pub fn with_timeouts(mut self, timeouts: ProviderTimeoutConfig) -> Self {
+        timeouts
+            .validate()
+            .expect("provider timeout configuration must be validated");
+        self.client = Self::client(&timeouts);
+        self.request_timeout = Duration::from_millis(timeouts.request_timeout_ms);
+        self.stream_idle_timeout = Duration::from_millis(timeouts.stream_idle_timeout_ms);
+        self
     }
 
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
@@ -40,6 +64,18 @@ impl AnthropicProvider {
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = max_tokens;
         self
+    }
+}
+
+fn provider_timeout() -> anyhow::Error {
+    anyhow::anyhow!("provider_timeout")
+}
+
+fn provider_request_error(error: reqwest::Error) -> anyhow::Error {
+    if error.is_timeout() {
+        provider_timeout()
+    } else {
+        anyhow::anyhow!("provider_request_failed")
     }
 }
 
@@ -250,23 +286,25 @@ impl LlmProvider for AnthropicProvider {
             }
         }
 
-        let response = self
-            .client
-            .post(format!("{}/v1/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&request)
-            .send()
-            .await?;
+        let api_resp: ApiResponse = tokio::time::timeout(self.request_timeout, async {
+            let response = self
+                .client
+                .post(format!("{}/v1/messages", self.base_url))
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&request)
+                .send()
+                .await
+                .map_err(provider_request_error)?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API error {}: {}", status, body);
-        }
-
-        let api_resp: ApiResponse = response.json().await?;
+            if !response.status().is_success() {
+                anyhow::bail!("Anthropic API error {}", response.status());
+            }
+            response.json().await.map_err(provider_request_error)
+        })
+        .await
+        .map_err(|_| provider_timeout())??;
 
         let content: Vec<ContentBlock> = api_resp
             .content
@@ -337,20 +375,22 @@ impl LlmProvider for AnthropicProvider {
             }
         }
 
-        let response = self
-            .client
-            .post(format!("{}/v1/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&request)
-            .send()
-            .await?;
+        let response = tokio::time::timeout(
+            self.request_timeout,
+            self.client
+                .post(format!("{}/v1/messages", self.base_url))
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&request)
+                .send(),
+        )
+        .await
+        .map_err(|_| provider_timeout())?
+        .map_err(provider_request_error)?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API error {}: {}", status, body);
+            anyhow::bail!("Anthropic API error {}", response.status());
         }
 
         let byte_stream = response.bytes_stream().map(|r| r.map(|b| b.to_vec()));
@@ -362,6 +402,7 @@ impl LlmProvider for AnthropicProvider {
                 tool_state: AnthropicToolState::default(),
                 usage: Usage::default(),
                 stop_reason: StopReason::EndTurn,
+                stream_idle_timeout: self.stream_idle_timeout,
             },
             |mut state| async move {
                 loop {
@@ -527,21 +568,22 @@ impl LlmProvider for AnthropicProvider {
                         }
                     } else {
                         // Need more data from the stream
-                        match state.byte_stream.next().await {
-                            Some(Ok(bytes)) => {
+                        let stream_idle_timeout = state.stream_idle_timeout;
+                        match tokio::time::timeout(stream_idle_timeout, state.byte_stream.next())
+                            .await
+                        {
+                            Err(_) => return Some((Err(provider_timeout()), state)),
+                            Ok(Some(Ok(bytes))) => {
                                 let text = String::from_utf8_lossy(&bytes);
                                 state.buffer.push_str(&text);
                             }
-                            Some(Err(e)) => {
-                                return Some((
-                                    Err(anyhow::anyhow!("Stream read error: {}", e)),
-                                    state,
-                                ));
+                            Ok(Some(Err(e))) => {
+                                return Some((Err(provider_request_error(e)), state));
                             }
-                            None => {
+                            Ok(None) => {
                                 // Stream ended
                                 if !state.buffer.trim().is_empty() {
-                                    tracing::warn!(remaining = %state.buffer, "Stream ended with unprocessed data");
+                                    tracing::warn!("Stream ended with unprocessed data");
                                 }
                                 return Some((
                                     Ok(StreamChunk::Done {
@@ -576,6 +618,7 @@ struct AnthropicStreamState {
     tool_state: AnthropicToolState,
     usage: Usage,
     stop_reason: StopReason,
+    stream_idle_timeout: Duration,
 }
 
 /// Tracks in-flight tool use blocks during Anthropic streaming.

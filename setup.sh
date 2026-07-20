@@ -399,8 +399,16 @@ setup_systemd() {
         # Add the real user (SUDO_USER or current user) to aletheon group.
         local real_user="${SUDO_USER:-$USER}"
         if [[ "$real_user" != "root" ]] && [[ "$real_user" != "aletheon" ]]; then
-            usermod -a -G aletheon "$real_user" 2>/dev/null || true
-            log "Added $real_user to aletheon group"
+            if usermod -a -G aletheon "$real_user"; then
+                log "Added $real_user to aletheon group"
+                warn "The current login session may not have the aletheon group active yet."
+                echo "  Verify in your login shell: id -nG | grep -w aletheon"
+                echo "  Activate permanently: log out and log back in"
+                echo "  Activate a subshell now: newgrp aletheon"
+                echo "  One-off TUI command: sg aletheon -c 'aletheon'"
+            else
+                warn "Failed to add $real_user to the aletheon group"
+            fi
         fi
 
         # Ensure /etc/aletheon/.env exists for API keys.
@@ -435,18 +443,18 @@ setup_systemd() {
         echo "    journalctl -u aletheon -f        # follow logs"
     else
         mkdir -p "$(dirname "$SYS_SVC")"
-        sed "s|ExecStart=/usr/bin/aletheon daemon|ExecStart=$BIN_DIR/aletheon daemon|" \
+        sed "s|ExecStart=%h/.local/bin/aletheon daemon|ExecStart=$BIN_DIR/aletheon daemon|" \
             "$SCRIPT_DIR/config/aletheon.user.service" > "$SYS_SVC"
+        cp "$SCRIPT_DIR/config/aletheon.user.socket" \
+            "$(dirname "$SYS_SVC")/aletheon.socket"
         systemctl --user daemon-reload
-        systemctl --user enable aletheon.service
-        log "Systemd user service installed: $SYS_SVC"
-        # Auto-start daemon now
-        systemctl --user start aletheon.service
-        log "Daemon started"
+        systemctl --user enable --now aletheon.socket
+        log "Systemd user socket installed and enabled: $(dirname "$SYS_SVC")/aletheon.socket"
         echo ""
         echo "  Commands:"
-        echo "    systemctl --user start aletheon    # start daemon"
-        echo "    systemctl --user status aletheon   # check status"
+        echo "    systemctl --user start aletheon.socket  # accept client connections"
+        echo "    systemctl --user status aletheon.socket # check socket status"
+        echo "    systemctl --user status aletheon.service # check runtime status"
         echo "    journalctl --user -u aletheon -f   # follow logs"
     fi
 }
@@ -473,7 +481,7 @@ if [[ "$MODE" == "system" ]]; then
     echo "    aletheon exec -p 'hello'     # non-interactive run"
 else
     echo "  Quick start:"
-    echo "    systemctl --user start aletheon"
+    echo "    systemctl --user start aletheon.socket"
     echo "    aletheon                     # launch TUI"
     echo "    aletheon daemon              # foreground debug"
     echo "    aletheon exec -p 'hello'     # non-interactive run"

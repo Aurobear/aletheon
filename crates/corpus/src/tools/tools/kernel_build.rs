@@ -5,10 +5,11 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::time::Instant;
 use tracing::info;
 
-use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use super::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,
+};
 
 pub struct KernelBuildTool;
 
@@ -61,12 +62,16 @@ impl Tool for KernelBuildTool {
         PermissionLevel::L3 // destructive: kernel install modifies bootloader
     }
 
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        Some(ToolExecutionDescriptor::KernelBuild)
+    }
+
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(KernelBuildTool)
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
-        let start = Instant::now();
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let action = match input["action"].as_str() {
             Some(a) => a,
@@ -75,8 +80,9 @@ impl Tool for KernelBuildTool {
                     content: "Missing required parameter: action".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -88,10 +94,16 @@ impl Tool for KernelBuildTool {
             .to_string();
 
         match action {
-            "clone" => self.action_clone(&input, &source_dir, start).await,
-            "config" => self.action_config(&source_dir, start).await,
-            "build" => self.action_build(&input, &source_dir, start).await,
-            "install" => self.action_install(&source_dir, start).await,
+            "clone" => {
+                self.action_clone(&input, &source_dir, &*ctx.clock, start)
+                    .await
+            }
+            "config" => self.action_config(&source_dir, &*ctx.clock, start).await,
+            "build" => {
+                self.action_build(&input, &source_dir, &*ctx.clock, start)
+                    .await
+            }
+            "install" => self.action_install(&source_dir, &*ctx.clock, start).await,
             _ => ToolResult {
                 content: format!(
                     "Unknown action: {}. Valid actions: clone, config, build, install",
@@ -99,8 +111,9 @@ impl Tool for KernelBuildTool {
                 ),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -108,7 +121,13 @@ impl Tool for KernelBuildTool {
 }
 
 impl KernelBuildTool {
-    async fn action_clone(&self, input: &Value, source_dir: &str, start: Instant) -> ToolResult {
+    async fn action_clone(
+        &self,
+        input: &Value,
+        source_dir: &str,
+        clock: &dyn fabric::Clock,
+        start: fabric::MonoTime,
+    ) -> ToolResult {
         let repo_url = input["repo_url"]
             .as_str()
             .unwrap_or("https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git");
@@ -129,8 +148,9 @@ impl KernelBuildTool {
                 ),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             };
         }
@@ -155,8 +175,9 @@ impl KernelBuildTool {
                         ),
                         is_error: false,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 } else {
@@ -165,8 +186,9 @@ impl KernelBuildTool {
                         content: format!("git clone failed:\n{}", stderr),
                         is_error: true,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 }
@@ -175,14 +197,20 @@ impl KernelBuildTool {
                 content: format!("Failed to run git: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
     }
 
-    async fn action_config(&self, source_dir: &str, start: Instant) -> ToolResult {
+    async fn action_config(
+        &self,
+        source_dir: &str,
+        clock: &dyn fabric::Clock,
+        start: fabric::MonoTime,
+    ) -> ToolResult {
         info!("Preparing kernel config from running kernel");
 
         // Step 1: Copy running kernel config
@@ -199,8 +227,9 @@ impl KernelBuildTool {
                 content: format!("Failed to copy kernel config: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             };
         }
@@ -224,8 +253,9 @@ impl KernelBuildTool {
                         ),
                         is_error: false,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 } else {
@@ -234,8 +264,9 @@ impl KernelBuildTool {
                         content: format!("make olddefconfig failed:\n{}", stderr),
                         is_error: true,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 }
@@ -244,14 +275,21 @@ impl KernelBuildTool {
                 content: format!("Failed to run make: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
     }
 
-    async fn action_build(&self, input: &Value, source_dir: &str, start: Instant) -> ToolResult {
+    async fn action_build(
+        &self,
+        input: &Value,
+        source_dir: &str,
+        clock: &dyn fabric::Clock,
+        start: fabric::MonoTime,
+    ) -> ToolResult {
         let jobs = input["jobs"]
             .as_u64()
             .map(|j| j.to_string())
@@ -288,12 +326,13 @@ impl KernelBuildTool {
                             jobs,
                             image_path,
                             if image_exists { "found" } else { "not found" },
-                            start.elapsed().as_secs()
+                            clock.mono_now().0.saturating_sub(start.0) / 1000
                         ),
                         is_error: false,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 } else {
@@ -315,8 +354,9 @@ impl KernelBuildTool {
                         ),
                         is_error: true,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                             truncated: true,
+                            patch_delta: None,
                         },
                     }
                 }
@@ -325,14 +365,20 @@ impl KernelBuildTool {
                 content: format!("Failed to run make: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
     }
 
-    async fn action_install(&self, source_dir: &str, start: Instant) -> ToolResult {
+    async fn action_install(
+        &self,
+        source_dir: &str,
+        clock: &dyn fabric::Clock,
+        start: fabric::MonoTime,
+    ) -> ToolResult {
         info!("Installing kernel from {}", source_dir);
 
         // Step 1: make modules_install
@@ -350,8 +396,9 @@ impl KernelBuildTool {
                     ),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -360,8 +407,9 @@ impl KernelBuildTool {
                     content: format!("Failed to run make modules_install: {}", e),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -383,8 +431,9 @@ impl KernelBuildTool {
                     ),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -393,8 +442,9 @@ impl KernelBuildTool {
                     content: format!("Failed to run make install: {}", e),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -424,8 +474,9 @@ impl KernelBuildTool {
             ),
             is_error: false,
             metadata: ToolResultMeta {
-                execution_time_ms: start.elapsed().as_millis() as u64,
+                execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
+                patch_delta: None,
             },
         }
     }
@@ -486,8 +537,12 @@ mod tests {
     async fn test_kernel_build_invalid_action() {
         let tool = KernelBuildTool;
         let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool.execute(json!({"action": "invalid"}), &ctx).await;
         assert!(result.is_error);
@@ -498,8 +553,12 @@ mod tests {
     async fn test_kernel_build_clone_existing_dir() {
         let tool = KernelBuildTool;
         let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         // /tmp exists, so clone should fail
         let result = tool

@@ -1,8 +1,10 @@
 //! TUI interface — interactive terminal UI and CLI entry point.
 
 pub mod app;
+pub mod reducer;
 pub mod render;
 pub mod response;
+pub mod session_protocol;
 pub mod test_infra;
 
 pub mod approval_dialog;
@@ -11,9 +13,11 @@ pub mod chat;
 pub mod command;
 pub mod completion;
 pub mod computer;
+pub mod conscious_core;
 
 pub mod help_overlay;
 pub mod history_search;
+pub mod host_time;
 pub mod input;
 pub mod markdown;
 pub mod pager;
@@ -29,11 +33,19 @@ pub mod term_compat;
 pub mod cli;
 pub mod debug;
 pub mod goal;
-pub(crate) mod rpc_client;
+pub mod rpc_client;
 pub mod workflow;
 
 // Re-export the main entry point
 pub use cli::run;
+
+/// Build the local chat envelope. Keeping this in one place prevents the TUI,
+/// line mode, and `-m` mode from silently diverging.
+pub fn chat_request(message: &str, workspace: &fabric::WorkspacePolicy) -> serde_json::Value {
+    fabric::protocol::client::ClientRpcRequest::chat(message, workspace)
+        .to_json_rpc(Some(1))
+        .expect("typed chat request serializes")
+}
 
 /// Restore terminal to normal state.
 /// Useful when the terminal is stuck in raw mode or mouse capture mode.
@@ -50,7 +62,7 @@ pub fn restore_terminal() {
 }
 
 use std::io;
-use std::time::Instant;
+use std::sync::Arc;
 
 use crossterm::{
     event::{
@@ -60,6 +72,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use fabric::Clock;
 use ratatui::{
     backend::{CrosstermBackend, TestBackend},
     Terminal,
@@ -79,7 +92,7 @@ use self::streaming::StreamController;
 use self::term_compat::TermCaps;
 pub use self::test_infra::TestConfig;
 
-use base::ui_event::SubAgentHandle;
+use fabric::ui_event::SubAgentHandle;
 
 /// Run the full TUI with raw mode, alternate screen, and IME-aware input.
 /// This is the original entry point (no test config).
@@ -89,7 +102,18 @@ pub async fn run_tui(socket_path: &str) -> anyhow::Result<()> {
 
 /// Run the full TUI with optional test configuration.
 pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let workspace = fabric::WorkspaceSelection::default().resolve(&cwd)?;
+    run_with_workspace_config(socket_path, test_config, workspace).await
+}
+
+pub async fn run_with_workspace_config(
+    socket_path: &str,
+    test_config: TestConfig,
+    workspace: fabric::WorkspacePolicy,
+) -> anyhow::Result<()> {
     let caps = TermCaps::detect();
+    let clock: Arc<dyn Clock> = Arc::new(self::host_time::ClientClock::new());
 
     let stream = match UnixStream::connect(socket_path).await {
         Ok(s) => s,
@@ -104,7 +128,7 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
 
     let model = std::env::var("OS_AGENT_MODEL").unwrap_or_default();
     let model_name = if model.is_empty() {
-        "mimo-v2.5-pro".to_string()
+        "default".to_string()
     } else {
         model
     };
@@ -113,7 +137,7 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
     if (!atty::is(atty::Stream::Stdin) || !atty::is(atty::Stream::Stdout))
         && test_config.test_input.is_none()
     {
-        return simple_line_mode(stream, caps, model_name).await;
+        return simple_line_mode(stream, caps, model_name, clock, workspace).await;
     }
 
     // Check if we're in test mode (no TTY needed)
@@ -123,7 +147,17 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
         // In test mode, use a test backend (no real terminal)
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend)?;
-        run_app(&mut terminal, stream, caps, model_name, test_config, true).await
+        run_app(
+            &mut terminal,
+            stream,
+            caps,
+            model_name,
+            test_config,
+            true,
+            clock,
+            workspace.clone(),
+        )
+        .await
     } else {
         // RAII guard that restores terminal state on drop.
         // Handles normal exit, panic, and signal-driven exit.
@@ -190,7 +224,17 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
         })
         .expect("Error setting Ctrl-C handler");
 
-        let result = run_app(&mut terminal, stream, caps, model_name, test_config, false).await;
+        let result = run_app(
+            &mut terminal,
+            stream,
+            caps,
+            model_name,
+            test_config,
+            false,
+            clock,
+            workspace,
+        )
+        .await;
 
         // TerminalGuard::drop() handles terminal cleanup.
         // Explicitly drop the guard before returning to ensure clean state.
@@ -204,6 +248,7 @@ pub async fn run_with_config(socket_path: &str, test_config: TestConfig) -> anyh
 
 /// Main TUI application state.
 struct App {
+    workspace: fabric::WorkspacePolicy,
     chat: ChatWidget,
     input_buf: String,
     /// Cursor position in input_buf (byte index).
@@ -224,11 +269,11 @@ struct App {
     model_name: String,
     status: StatusBar,
     /// Last Ctrl+C press time (for double-press detection).
-    last_ctrl_c: Option<Instant>,
+    last_ctrl_c: Option<fabric::MonoTime>,
     /// Whether input has CJK characters (affects Enter behavior).
     has_cjk: bool,
     /// Pending submit (delayed for IME composition).
-    pending_submit: Option<Instant>,
+    pending_submit: Option<fabric::MonoTime>,
     /// First render flag.
     first_render: bool,
     /// Pending approval dialog (shown as modal overlay).
@@ -255,10 +300,18 @@ struct App {
     sub_agents: Vec<SubAgentHandle>,
     /// Current ReAct loop iteration (0 = first call, 1+ = after tool calls).
     current_iteration: usize,
+    /// Clock for time-based operations (injectable for testing).
+    pub clock: Arc<dyn Clock>,
 }
 
 impl App {
-    fn new(stream: UnixStream, caps: TermCaps, model_name: String) -> Self {
+    fn new(
+        stream: UnixStream,
+        caps: TermCaps,
+        model_name: String,
+        clock: Arc<dyn Clock>,
+        workspace: fabric::WorkspacePolicy,
+    ) -> Self {
         let mut skill_loader = SkillLoader::new(SkillLoader::default_dir());
         if let Err(e) = skill_loader.load_all() {
             eprintln!("Warning: failed to load skills: {}", e);
@@ -268,6 +321,7 @@ impl App {
         status.model_name = model_name.clone();
 
         Self {
+            workspace,
             chat: ChatWidget::new(caps.clone()),
             input_buf: String::new(),
             cursor: 0,
@@ -286,7 +340,7 @@ impl App {
             pending_submit: None,
             first_render: true,
             pending_approval: None,
-            stream_ctrl: StreamController::new(),
+            stream_ctrl: StreamController::new(Arc::clone(&clock)),
             turn_tokens: None,
             total_tokens: 0,
             history: CommandHistory::new(),
@@ -297,6 +351,7 @@ impl App {
             plan_view: PlanViewState::default(),
             sub_agents: Vec::new(),
             current_iteration: 0,
+            clock,
         }
     }
 
@@ -312,5 +367,24 @@ impl App {
                 || (0x3040..=0x309F).contains(&cp)  // Hiragana
                 || (0x30A0..=0x30FF).contains(&cp) // Katakana
         });
+    }
+}
+
+#[cfg(test)]
+mod working_dir_tests {
+    #[test]
+    fn chat_request_contains_the_resolved_workspace() {
+        let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+            "/tmp/project".into(),
+            vec!["/tmp/shared".into()],
+        )
+        .unwrap();
+        let request = super::chat_request("inspect this project", &workspace);
+        assert_eq!(request["params"]["message"], "inspect this project");
+        assert_eq!(request["params"]["working_dir"], "/tmp/project");
+        assert_eq!(
+            request["params"]["workspace_roots"],
+            serde_json::json!(["/tmp/project", "/tmp/shared"])
+        );
     }
 }

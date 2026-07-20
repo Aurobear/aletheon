@@ -9,42 +9,56 @@ default:
 
 # 快速增量编译（debug 模式，日常开发用）
 dev:
-    cargo build -p aletheon
+    bash scripts/cargo-agent.sh build -p aletheon
 
 # 编译 + 测试 + lint 全部通过后才 build release
 build: test lint
-    cargo build -p aletheon --release
+    bash scripts/cargo-agent.sh build -p aletheon --release
 
 # 查看各 crate 编译耗时
 timings:
-    cargo build --timings
+    bash scripts/cargo-agent.sh build --timings
 
 # ── 验证 ───────────────────────────────────────────────────────────────
 
 # 运行所有测试
 test:
-    cargo test --workspace
+    bash scripts/cargo-agent.sh test --workspace
 
 # clippy 严格模式
 lint:
-    cargo clippy --workspace --all-targets -- -D warnings
+    bash scripts/cargo-agent.sh clippy --workspace --all-targets -- -D warnings
 
 # 格式化检查
 fmt:
-    cargo fmt --all -- --check
+    bash scripts/cargo-agent.sh fmt --all -- --check
 
 # 自动修复格式 + clippy 建议
 fix:
-    cargo fmt --all
-    cargo clippy --workspace --all-targets --fix --allow-dirty --allow-no-vcs
+    bash scripts/cargo-agent.sh fmt --all
+    bash scripts/cargo-agent.sh clippy --workspace --all-targets --fix --allow-dirty --allow-no-vcs
 
 # 生成文档
 doc:
-    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+    RUSTDOCFLAGS="-D warnings" bash scripts/cargo-agent.sh doc --workspace --no-deps
 
 # CI 级全量验证 (fmt + test + lint + doc)
 check: fmt test lint doc
     @echo "=== ALL CHECKS PASSED ==="
+
+# 架构依赖、遗留路径和绕过调用只能减少，不能新增
+architecture-check:
+    bash scripts/cargo-agent.sh test -p executive --test layered_config_contract checked_in_schema_is_deterministic
+    bash tests/architecture_check.sh
+    bash tests/architecture_path_inventory.sh
+    bash scripts/architecture-check.sh
+
+# Deterministic cross-domain causal, isolation, replay and ablation evidence.
+acceptance: architecture-check
+    python3 tools/acceptance_report.py --check
+    CARGO_INCREMENTAL=0 bash scripts/cargo-agent.sh test -j1 -p executive --test cross_domain_acceptance
+    CARGO_INCREMENTAL=0 bash scripts/cargo-agent.sh test -j1 -p executive --test functional_indicators
+    python3 tools/acceptance_report.py
 
 # ── 部署 ───────────────────────────────────────────────────────────────
 
@@ -56,7 +70,7 @@ install: build
 
 # 删除编译缓存
 clean:
-    cargo clean
+    bash scripts/cleanup-cargo-target.sh
 
 # ── 加速（可选） ────────────────────────────────────────────────────────
 
@@ -69,3 +83,9 @@ setup-sccache:
         echo 'rustc-wrapper = "sccache"' >> .cargo/config.toml; \
     fi
     @echo "sccache configured in .cargo/config.toml"
+
+# V02: installed-host production migration, scenario, failure and rollback gate.
+# This invokes V01 through scripts/release-acceptance.sh and fails closed when
+# the disposable host, release binary, live credentials or operator are absent.
+release-acceptance:
+    bash scripts/release-acceptance.sh

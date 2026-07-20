@@ -4,7 +4,7 @@
 //! risk, efficiency, consistency, and reversibility. Produces Critique
 //! items with severity levels and actionable suggestions.
 
-use base::brain::{CriticismDimension, CriticismSeverity, Critique, Plan};
+use fabric::cognit::{CriticismDimension, CriticismSeverity, Critique, Plan};
 
 /// The critic component.
 ///
@@ -89,7 +89,7 @@ impl Critic {
             }
         }
 
-        if plan.risk_level >= base::self_field::RiskLevel::High {
+        if plan.risk_level >= fabric::self_field::AwarenessRiskLevel::High {
             critiques.push(Critique {
                 dimension: CriticismDimension::Risk,
                 severity: CriticismSeverity::Warning,
@@ -279,9 +279,9 @@ impl Default for Critic {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::body::Action;
-    use base::brain::{CostEstimate, PlanStep};
-    use base::self_field::RiskLevel;
+    use fabric::body::Action;
+    use fabric::cognit::{CostEstimate, PlanStep};
+    use fabric::self_field::AwarenessRiskLevel;
     use uuid::Uuid;
 
     fn make_action(name: &str) -> Action {
@@ -298,7 +298,7 @@ mod tests {
             id: Uuid::new_v4(),
             steps,
             estimated_cost: CostEstimate::default(),
-            risk_level: RiskLevel::Low,
+            risk_level: AwarenessRiskLevel::Low,
             reasoning: "test".to_string(),
             alternatives: vec![],
         }

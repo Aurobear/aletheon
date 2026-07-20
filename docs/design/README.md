@@ -16,7 +16,7 @@
 
 | Subsystem | Implemented | Partial | Planned | Not Started |
 |-----------|-------------|---------|---------|-------------|
-| **Core (cognitive-engine, memory, session)** | ReAct loop, ContentBlock, CoreMemory, RecallMemory, SessionStore, EventJournal, Context compaction, Streaming, MemoryScope (Global/Session/Agent), Memory Pipeline | ArchivalMemory, Session recovery | InterruptManager, ProactiveGoal, IdleScheduler | — |
+| **Core (cognitive-engine, memory, session)** | Harness-driven cognitive loop (linear ReAct harness via factory), ContentBlock, CoreMemory, RecallMemory, SessionStore, EventJournal, Context compaction, Streaming, MemoryScope (Global/Session/Agent), Memory Pipeline | ArchivalMemory, Session recovery | InterruptManager, ProactiveGoal, IdleScheduler | — |
 | **Execution (tool, sandbox, IPC, MCP)** | Tool trait, 9 built-in tools, OutputManager, BubblewrapBackend, ProcessBackend, NoopBackend, SplitSandbox, ContainerSandbox, UnixSocket, PriorityQueue, IpcManager, MCP stdio/StreamableHTTP/SSE transports, BM25+TF-IDF tool search, parallel execution (RwLock+PathConflictDetector) | IoUringBackend (feature gate), SharedMemBackend (stub) | Tool exposure layers | — |
 | **Security** | PolicyEngine, LoopDetector, CircuitBreaker, RiskClassifier, OutputGuardrail, Audit, ToolRunnerWithGuard, RollbackEngine, WritableRoot, IntegrityMonitor, SelfProtection, ErrorHandling | — | File-level rollback, NetworkSandboxPolicy | — |
 | **Orchestration** | Agent trait, Registry, DelegateTool, Selector, Handoff, DiGraph, Termination, Budget | — | — | — |
@@ -25,7 +25,7 @@
 | **Platform** | PlatformAdapter (Linux+Android), Boot, Agent Awareness | — | Multi-Device | Kernel IPC module (agent_ipc.ko) |
 | **Resilience** | Error handling, Panic recovery | — | Rate limiting | — |
 | **Observability** | EventJournal, Observability modules | — | Durable/Ephemeral split, Prometheus metrics, Debug CLI | — |
-| **Testing** | 614 unit tests, Mock infrastructure (MockLlm, MockSandbox, MockMemory, MockPerception) | Integration tests (inline) | CI pipeline (GitHub Actions), E2E tests, Performance benchmarks | — |
+| **Testing** | 614 unit tests, Mock infrastructure (MockLlm, MockMemory, MockPerception) | Integration tests (inline) | CI pipeline (GitHub Actions), E2E tests, Performance benchmarks | — |
 | **Automation** | Automation system | — | — | — |
 | **MCP** | MCP OAuth 2.0, StreamableHTTP + SSE transports | — | — | — |
 
@@ -44,27 +44,27 @@
 
 | Crate | 目录 | 核心内容 |
 |-------|------|----------|
-| `base` | [abi/](abi/), [comm/](comm/) | 共享类型定义、Trait 接口、ABI 契约、IPC 层（EventBus、Unix Socket、消息路由） |
-| `memory` | [memory/](memory/) | 记忆系统：episodic/semantic/procedural/self-memory |
-| `corpus` | [body/](body/) | 执行层：工具、沙箱、MCP、感知、平台、驱动、UI |
-| `dasein` | [self/](self/) | SelfField：身份、边界、关切、叙事、Hook、安全、容错 |
-| `cognit` | [brain/](brain/) | 认知引擎：推理、规划、反思、学习、推理路由 |
-| `runtime` | [runtime/](runtime/) | 运行时：ReAct 循环、会话、编排、可观测、插件、自动化 |
-| `metacog` | [meta/](meta/) | MetaRuntime：自我更新、形态演化、基因组 |
-| `aletheond` | [daemon/](daemon/) | 守护进程 (runtime crate binary)，Unix Socket 服务 |
-| `interact` | [cli/](cli/) | CLI/TUI 客户端（逻辑在 corpus crate，thin re-export） |
+| `fabric` | [fabric/](fabric/) | 共享类型定义、Trait 接口、ABI 契约、IPC 层（CommunicationBus、Unix Socket、消息路由） |
+| `mnemosyne` | [mnemosyne/](mnemosyne/) | 记忆系统：episodic/semantic/procedural/self-memory |
+| `agora` | [agora/](agora/) | 共享认知工作区（黑板/注意力/任务图/推理轨迹/scratchpad），会话隔离 |
+| `corpus` | [corpus/](corpus/) | 执行层：工具、沙箱、MCP、平台、驱动 |
+| `dasein` | [dasein/](dasein/) | SelfField：身份、边界、关切、叙事、感知、安全、容错 |
+| `cognit` | [cognit/](cognit/) | 认知引擎：推理、规划、反思、学习、推理路由 |
+| `executive` | [executive/](executive/) | 运行时：Harness（当前 linear ReAct）、会话、编排、可观测、插件、自动化、守护进程 |
+| `metacog` | [metacog/](metacog/) | MetaRuntime：自我更新、形态演化、基因组 |
+| `interact` | [interact/](interact/) | CLI/TUI 客户端（aletheon binary） |
 
 **按关注点查阅：**
 
 | 关注点 | 目录 | 核心内容 |
 |--------|------|----------|
-| 核心循环 | [runtime/react-loop.md](runtime/react-loop.md) | ReAct 循环、ContentBlock 协议 |
-| 记忆系统 | [memory/memory-system.md](memory/memory-system.md) | 三级记忆、自学习循环、上下文预算 |
-| 工具与沙箱 | [body/tools.md](body/tools.md), [body/sandbox.md](body/sandbox.md) | Tool trait、沙箱执行 |
-| 安全 | [body/security.md](body/security.md), [self/](self/) | 权限、策略、自我保护、循环检测 |
-| 感知 | [body/perception.md](body/perception.md) | eBPF、事件聚合、背压控制 |
-| 编排 | [runtime/orchestration.md](runtime/orchestration.md) | 多 Agent 编排、Selector/Handoff/DiGraph |
-| 自我演化 | [meta/](meta/) | MetaRuntime、Morphogenesis、Genome |
+| 核心循环 | [executive/react-loop.md](executive/react-loop.md) | ReAct 循环、ContentBlock 协议 |
+| 记忆系统 | [mnemosyne/memory-system.md](mnemosyne/memory-system.md) | 三级记忆、自学习循环、上下文预算 |
+| 工具与沙箱 | [corpus/tools.md](corpus/tools.md), [corpus/sandbox.md](corpus/sandbox.md) | Tool trait、沙箱执行 |
+| 安全 | [corpus/security.md](corpus/security.md), [dasein/](dasein/) | 权限、策略、自我保护、循环检测 |
+| 感知 | [dasein/perception.md](dasein/perception.md) | eBPF、事件聚合、背压控制 |
+| 编排 | [executive/orchestration.md](executive/orchestration.md) | 多 Agent 编排、Selector/Handoff/DiGraph |
+| 自我演化 | [metacog/](metacog/) | MetaRuntime、Morphogenesis、Genome |
 | 测试 | [testing/](testing/) | 测试策略、Mock、CI |
 | 路线图 | [roadmap/](roadmap/) | 6 Phase 路线图、开放问题 |
 
@@ -73,45 +73,34 @@
 ## 整体架构
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Aletheon System                           │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │              runtime (Orchestrator)           │  │
-│  │                                                       │  │
-│  │  ┌─────────────┐ ┌──────────────┐ ┌───────────────┐  │  │
-│  │  │ ReAct Loop  │ │ Memory       │ │ Orchestration │  │  │
-│  │  │ Engine      │ │ L1+L2+L3     │ │ Selector      │  │  │
-│  │  │             │ │ Compressor   │ │ Handoff       │  │  │
-│  │  └──────┬──────┘ └──────┬───────┘ └───────┬───────┘  │  │
-│  │         │               │                 │           │  │
-│  │  ┌──────┴───────────────┴─────────────────┴────────┐  │  │
-│  │  │              EventBus (base)            │  │  │
-│  │  └──────┬───────────────┬─────────────────┬────────┘  │  │
-│  └─────────┼───────────────┼─────────────────┼──────────┘  │
-│            │               │                 │              │
-│  ┌─────────┴──────┐ ┌──────┴───────┐ ┌──────┴───────────┐  │
-│  │ corpus  │ │ dasein│ │ cognit   │  │
-│  │                │ │              │ │                  │  │
-│  │ Tools/Sandbox  │ │ Identity     │ │ Reasoning        │  │
-│  │ MCP/Perception │ │ Boundary     │ │ Planning         │  │
-│  │ Platform/UI    │ │ Care/Hook    │ │ Reflection       │  │
-│  │ Driver/ACIX    │ │ Security     │ │ Learning         │  │
-│  └────────────────┘ │ Resilience   │ │ Inference        │  │
-│                     └──────────────┘ └──────────────────┘  │
-│                                                             │
-│  ┌──────────────────────┐  ┌────────────────────────────┐  │
-│  │ memory      │  │ base               │  │
-│  │ episodic/semantic/   │  │ Shared types, traits,      │  │
-│  │ procedural/self      │  │ message, tool, sandbox     │  │
-│  └──────────────────────┘  └────────────────────────────┘  │
-│                                                             │
-│  ┌──────────────────────┐  ┌────────────────────────────┐  │
-│  │ metacog        │  │ Entry Points               │  │
-│  │ MetaRuntime          │  │ aletheond (daemon)         │  │
-│  │ Morphogenesis        │  │ interact (CLI/TUI)     │  │
-│  └──────────────────────┘  └────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                        Aletheon System                          │
+├────────────────────────────────────────────────────────────────┤
+│ Entry points:  bin (aletheond daemon)  ·  interact (CLI/TUI)    │
+├────────────────────────────────────────────────────────────────┤
+│ executive — Orchestrator (NOT cognition)                        │
+│   Lifecycle · Scheduler · Supervisor · Resource · Authority     │
+│   daemon, sessions, multi-agent orchestration                   │
+│      │ drives subsystems via fabric::include traits             │
+├────────────────────────────────────────────────────────────────┤
+│ Subsystems (each owns its state; no cross-mutation):            │
+│   dasein     self-field: identity, boundary, care, narrative    │
+│   cognit     reasoning, planning, reflection, learning;         │
+│              harness (linear ReAct, pluggable via factory)      │
+│   agora      shared working memory: blackboard, attention,      │
+│              task-graph, trace, scratchpad (session-scoped)     │
+│   corpus     tools, skills, hooks, sandbox, MCP, drivers        │
+│   mnemosyne  episodic/semantic/procedural/self memory;          │
+│              recall, association, consolidation                 │
+│   metacog    self-evolution: meta-runtime, morphogenesis        │
+│                                                                 │
+│   reasoning layering (RFC-014):                                 │
+│     Executive ↓ Dasein ↓ Cognit ↓ Agora ↓ Corpus ↓ Mnemosyne   │
+├────────────────────────────────────────────────────────────────┤
+│ fabric — ABI layer (zero business logic)                        │
+│   primitives (cognitive objects + Command/Query/Event/Stream),  │
+│   ops traits, Envelope, CommunicationBus, LlmProvider              │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -175,15 +164,22 @@ aletheon/
 ├── Cargo.toml                  # workspace 根
 │
 ├── crates/
-│   ├── base/           # ABI 类型: IPC, tool, message, sandbox, LLM types
-│   ├── base/              # ABI 层: 共享类型、Trait 接口、IPC 层
-│   ├── memory/        # 记忆系统: self-memory, episodic/semantic
-│   ├── dasein/          # SelfField: identity, boundary, care, narrative
-│   ├── cognit/         # BrainCore: reasoning, planning, reflection
-│   ├── corpus/          # BodyRuntime: tools, sandbox, perception, MCP, TUI
-│   ├── runtime/       # Runtime engine: cognitive loop, orchestration, daemon (aletheond binary)
-│   ├── metacog/          # MetaRuntime: self-update, self-generation
-│   └── interact/           # CLI + TUI 客户端 (aletheon binary)
+│   ├── aletheon/          # 用户入口: CLI, daemon, exec, TUI/ACP 装配
+│   ├── executive/         # composition root: Turn, Session, Goal, Agent 编排与最终验证
+│   ├── kernel/            # Operation, Process, Admission, Chronos, Space, Supervision
+│   ├── runtime/           # 外部执行器 lifecycle, manifest, receipt, registry
+│   ├── cognit/            # 推理、规划、反思与 cognitive harness
+│   ├── corpus/            # 工具、能力治理、MCP 与 provider adapter
+│   ├── platform/          # Host OS contract 与 Linux/Windows/macOS backend
+│   ├── execd/             # 隔离文件/进程副作用 daemon
+│   ├── hardware/          # 设备 contract 与 simulator（experimental）
+│   ├── fabric/            # 跨领域协议、共享 ID 与兼容基础设施
+│   ├── mnemosyne/         # 记忆与经验
+│   ├── agora/             # 共享认知工作区
+│   ├── dasein/            # identity, care, continuity
+│   ├── metacog/           # 受治理评估与演化
+│   ├── gateway/           # 外部 channel/request adapter
+│   └── interact/          # TUI 与交互 adapter
 │
 ├── agents/                     # Agent 定义文件 (TOML + .md)
 │   ├── fs-agent.md
@@ -211,38 +207,39 @@ aletheon/
 
 | Crate | 设计文档 | 核心内容 |
 |-------|---------|----------|
-| **base** | [abi/types.md](abi/types.md) | 共享类型、Trait 定义、接口规范 |
-| **base** | [comm/ipc.md](comm/ipc.md) | Unix Socket、io_uring、优先队列、消息路由 |
-| **memory** | [memory/memory-system.md](memory/memory-system.md) | 三级记忆、上下文预算、记忆管道、向量存储 |
-| **corpus** | [body/tools.md](body/tools.md) | Tool trait、并行执行、分层暴露 |
-| | [body/sandbox.md](body/sandbox.md) | bubblewrap、seccomp、cgroups |
-| | [body/mcp.md](body/mcp.md) | MCP 集成、OAuth、工具转换 |
-| | [body/perception.md](body/perception.md) | eBPF、事件聚合、背压控制 |
-| | [body/fuse.md](body/fuse.md) | FUSE 虚拟文件系统接口 |
-| | [body/platform.md](body/platform.md) | 平台适配、启动集成、内核 IPC、多设备 |
-| | [body/security.md](body/security.md) | 策略引擎、风险分类、审计、回滚 |
-| | [body/driver.md](body/driver.md) | 显示/输入/OCR/无障碍驱动 |
-| | [body/ui.md](body/ui.md) | TUI 终端界面 |
-| | [body/acix.md](body/acix.md) | Agent-Computer 交互体验 |
-| **dasein** | [self/self-field.md](self/self-field.md) | SelfField 架构：身份/边界/关切/叙事/冲突/注意力/连续性/变异 |
-| | [self/hook-system.md](self/hook-system.md) | 21 事件类型，3 层配置，命令钩子 |
-| | [self/loop-detector.md](self/loop-detector.md) | 循环检测、熔断器 |
-| | [self/self-protection.md](self/self-protection.md) | 注入防御、资源治理、紧急停止 |
-| | [self/writable-root.md](self/writable-root.md) | 可写根路径隔离 |
-| | [self/resilience.md](self/resilience.md) | 错误处理、限流、panic 恢复 |
-| | [self/perception-sources.md](self/perception-sources.md) | eBPF、inotify、journald、/proc |
-| **cognit** | [brain/cognitive-engine.md](brain/cognitive-engine.md) | 推理、规划、批判、反思、学习 |
-| | [brain/inference.md](brain/inference.md) | 推理路由、Provider 管理 |
-| **runtime** | [runtime/react-loop.md](runtime/react-loop.md) | ReAct 循环、ContentBlock 协议 |
-| | [runtime/session.md](runtime/session.md) | 会话持久化、崩溃恢复 |
-| | [runtime/orchestration.md](runtime/orchestration.md) | Selector、Handoff、DiGraph |
-| | [runtime/observability.md](runtime/observability.md) | Metrics、Tracing、健康检查 |
-| | [runtime/plugin.md](runtime/plugin.md) | 插件系统 |
-| | [runtime/automation.md](runtime/automation.md) | Cron、Webhook、脚本 |
-| **metacog** | [meta/meta-runtime.md](meta/meta-runtime.md) | 自我读取、修改、回滚、迁移 |
-| | [meta/morphogenesis.md](meta/morphogenesis.md) | 形态演化、Genome、候选生成 |
-| **aletheond** | [daemon/README.md](daemon/README.md) | 守护进程（runtime crate binary） |
-| **interact** | [cli/README.md](cli/README.md) | CLI/TUI、三种运行模式（aletheon binary） |
+| **fabric** | [fabric/types.md](fabric/types.md) | 共享类型、Trait 定义、接口规范 |
+| **fabric** | [fabric/ipc.md](fabric/ipc.md) | Unix Socket、io_uring、优先队列、消息路由 |
+| **mnemosyne** | [mnemosyne/memory-system.md](mnemosyne/memory-system.md) | 三级记忆、上下文预算、记忆管道、向量存储 |
+| **agora** | [agora/README.md](agora/README.md) | 共享认知工作区：blackboard/attention/task_graph/trace/scratchpad，`AgoraOps`（session 隔离，非持久） |
+| **corpus** | [corpus/tools.md](corpus/tools.md) | Tool trait、并行执行、分层暴露 |
+| | [corpus/sandbox.md](corpus/sandbox.md) | bubblewrap、seccomp、cgroups |
+| | [corpus/mcp.md](corpus/mcp.md) | MCP 集成、OAuth、工具转换 |
+| | [corpus/fuse.md](corpus/fuse.md) | FUSE 虚拟文件系统接口 |
+| | [corpus/platform.md](corpus/platform.md) | 平台适配、启动集成、内核 IPC、多设备 |
+| | [corpus/security.md](corpus/security.md) | 策略引擎、风险分类、审计、回滚 |
+| | [corpus/driver.md](corpus/driver.md) | 显示/输入/OCR/无障碍驱动 |
+| | [corpus/loop-detector.md](corpus/loop-detector.md) | 循环检测、熔断器 |
+| **dasein** | [dasein/self-field.md](dasein/self-field.md) | SelfField 架构：身份/边界/关切/叙事/冲突/注意力/连续性/变异 |
+| | [dasein/perception.md](dasein/perception.md) | eBPF、事件聚合、背压控制 |
+| | [dasein/perception-sources.md](dasein/perception-sources.md) | eBPF、inotify、journald、/proc |
+| | [dasein/resilience.md](dasein/resilience.md) | 错误处理、限流、panic 恢复 |
+| | [dasein/self-protection.md](dasein/self-protection.md) | 注入防御、资源治理、紧急停止 |
+| | [dasein/writable-root.md](dasein/writable-root.md) | 可写根路径隔离 |
+| **interact** | [interact/ui.md](interact/ui.md) | TUI 终端界面 |
+| | [interact/acix.md](interact/acix.md) | Agent-Computer 交互体验 |
+| | [interact/README.md](interact/README.md) | CLI/TUI、三种运行模式 |
+| **cognit** | [cognit/cognitive-engine.md](cognit/cognitive-engine.md) | 推理、规划、批判、反思、学习 |
+| | [cognit/inference.md](cognit/inference.md) | 推理路由、Provider 管理 |
+| **executive** | [executive/react-loop.md](executive/react-loop.md) | ReAct 循环、ContentBlock 协议 |
+| | [executive/session.md](executive/session.md) | 会话持久化、崩溃恢复 |
+| | [executive/orchestration.md](executive/orchestration.md) | Selector、Handoff、DiGraph |
+| | [executive/observability.md](executive/observability.md) | Metrics、Tracing、健康检查 |
+| | [executive/plugin.md](executive/plugin.md) | 插件系统 |
+| | [executive/automation.md](executive/automation.md) | Cron、Webhook、脚本 |
+| | [executive/daemon.md](executive/daemon.md) | 守护进程 |
+| | [executive/hook-system.md](executive/hook-system.md) | 21 事件类型，3 层配置，命令钩子 |
+| **metacog** | [metacog/meta-runtime.md](metacog/meta-runtime.md) | 自我读取、修改、回滚、迁移 |
+| | [metacog/morphogenesis.md](metacog/morphogenesis.md) | 形态演化、Genome、候选生成 |
 
 ### 跨 Crate 文档
 
@@ -250,8 +247,6 @@ aletheon/
 |------|------|
 | [architecture-overview.md](architecture-overview.md) | 整体架构、数据流、演化路线 |
 | [testing/test-strategy.md](testing/test-strategy.md) | 测试策略 |
-| [testing/mock-strategy.md](testing/mock-strategy.md) | Mock 基础设施 |
-| [testing/ci-pipeline.md](testing/ci-pipeline.md) | CI 流水线 |
 | [roadmap/phases.md](roadmap/phases.md) | 6 Phase 路线图 |
 | [roadmap/open-questions.md](roadmap/open-questions.md) | 开放问题 |
 
@@ -277,5 +272,5 @@ crates/*/
 
 ---
 
-*文档版本: 3.0.0*
-*最后更新: 2026-06-14*
+*文档版本: 3.1.0*
+*最后更新: 2026-07-11 (RFC-018 重构反映: 依赖解耦、trait 归位、命名对齐、handle_chat 分解)*

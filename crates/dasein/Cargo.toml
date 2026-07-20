@@ -7,10 +7,8 @@ license.workspace = true
 description = "Aletheon Self-evolution - reflection, behavior evolution, and genome generation"
 
 [dependencies]
-base = { path = "../base" }
-corpus = { path = "../corpus" }
-cognit = { path = "../cognit" }
-memory = { path = "../memory" }
+fabric = { path = "../fabric" }
+kernel = { path = "../kernel" }
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
@@ -24,6 +22,7 @@ glob = "0.3"
 toml = "0.8"
 dirs = "5"
 regex = "1"
+sha2 = { workspace = true }
 libc = "0.2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 

@@ -1,0 +1,78 @@
+# Aletheon daemon config -- example with safe defaults.
+#
+# Copy to ~/.aletheon/config.toml and fill in at least one provider.
+# Secrets (api_key, tokens) belong in environment variables, never in this file.
+
+[agent]
+default_provider = "anthropic"
+default_model = "claude-sonnet-4-5"
+max_iterations = 0
+
+[agent.provider_timeouts]
+# Remote inference must fail closed before the interactive turn deadline.
+connect_timeout_ms = 10000
+request_timeout_ms = 90000
+stream_idle_timeout_ms = 30000
+
+[[providers]]
+name = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key = ""
+transport = "anthropic"
+models = ["claude-sonnet-4-5"]
+
+[sandbox]
+preference = "auto"
+
+# High-risk execution features are independently gated and default off.
+# `aletheon daemon --execd` additively enables only execd for that
+# launch; streaming_tools controls G2 progress projection, not backend choice.
+[grok_hardening]
+execd = false
+streaming_tools = false
+
+[plugins]
+directories = []
+
+[memory]
+backend = "sqlite"
+data_dir = "~/.aletheon/memory"
+
+# gbrain shared memory integration -- disabled by default.
+# When enabled, the daemon connects to a gbrain MCP server and injects
+# recalled historical content into dynamic turns.
+#
+# Required environment variable when enabled:
+#   GBRAIN_TOKEN -- bearer token. It needs read scope for recall and write
+#                   scope when capture_enabled=true.
+#
+# The gbrain server must be registered as an MCP server in the daemon
+# config (see [[mcp_servers]] below).
+[memory.gbrain]
+enabled = false
+server_name = "gbrain"
+source = "aletheon"
+general_source = "general"
+timeout_ms = 1200
+max_results = 4
+max_chars = 6000
+capture_enabled = false
+outbox_dir = "~/.aletheon/gbrain-outbox"
+
+# get_page and put_page are scoped by this bearer token's gbrain source.
+# `query` may additionally select source_id for read-only cross-source recall.
+[[mcp_servers]]
+name = "gbrain"
+transport = "http"
+url = "http://127.0.0.1:9020/mcp"
+bearer_token_env = "GBRAIN_TOKEN"
+
+[daemon]
+socket_path = "/var/run/aletheon/aletheon.sock"
+log_level = "info"
+
+[perception]
+enabled = false
+
+[evolution]
+enabled = false

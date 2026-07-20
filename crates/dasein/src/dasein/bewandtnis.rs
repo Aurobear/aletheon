@@ -1,5 +1,5 @@
 use super::types::*;
-use base::dasein::{
+use fabric::dasein::{
     BewandtnisSnapshot, EntitySnapshot, ReadinessState as AbiReadinessState, Stimmung,
 };
 use parking_lot::RwLock;
@@ -37,13 +37,14 @@ impl Bewandtnisganzheit {
     }
 
     /// Add an entity to the network.
-    pub fn add_entity(&self, node: BewandtnisNode) {
+    pub(crate) fn add_entity(&self, node: BewandtnisNode) {
         let mut nodes = self.nodes.write();
         nodes.insert(node.id.clone(), node);
     }
 
     /// Remove an entity from the network.
-    pub fn remove_entity(&self, id: &EntityId) -> Option<BewandtnisNode> {
+    #[cfg(test)]
+    pub(crate) fn remove_entity(&self, id: &EntityId) -> Option<BewandtnisNode> {
         let mut nodes = self.nodes.write();
         let mut edges = self.edges.write();
         edges.retain(|e| e.from != *id && e.to != *id);
@@ -51,7 +52,8 @@ impl Bewandtnisganzheit {
     }
 
     /// Add a relationship between entities.
-    pub fn add_edge(&self, edge: BewandtnisEdge) {
+    #[cfg(test)]
+    pub(crate) fn add_edge(&self, edge: BewandtnisEdge) {
         // Verify both endpoints exist
         let nodes = self.nodes.read();
         if nodes.contains_key(&edge.from) && nodes.contains_key(&edge.to) {
@@ -62,7 +64,8 @@ impl Bewandtnisganzheit {
     }
 
     /// Update the readiness state of an entity.
-    pub fn update_readiness(
+    #[cfg(test)]
+    pub(crate) fn update_readiness(
         &self,
         id: &EntityId,
         new_state: ReadinessState,
@@ -74,6 +77,41 @@ impl Bewandtnisganzheit {
         } else {
             None
         }
+    }
+
+    /// Compare-and-set readiness for reducer transitions.
+    pub(crate) fn update_readiness_if(
+        &self,
+        id: &EntityId,
+        expected: &ReadinessState,
+        new_state: ReadinessState,
+    ) -> anyhow::Result<()> {
+        let mut nodes = self.nodes.write();
+        let node = nodes
+            .get_mut(id)
+            .ok_or_else(|| anyhow::anyhow!("unknown Dasein world entity {id}"))?;
+        anyhow::ensure!(
+            node.readiness == *expected,
+            "Dasein readiness conflict for {id}"
+        );
+        node.readiness = new_state;
+        Ok(())
+    }
+
+    pub fn validate_readiness(
+        &self,
+        id: &EntityId,
+        expected: &ReadinessState,
+    ) -> anyhow::Result<()> {
+        let nodes = self.nodes.read();
+        let node = nodes
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("unknown Dasein world entity {id}"))?;
+        anyhow::ensure!(
+            node.readiness == *expected,
+            "Dasein readiness conflict for {id}"
+        );
+        Ok(())
     }
 
     /// Get all entities with a given readiness state.
@@ -115,7 +153,8 @@ impl Bewandtnisganzheit {
     }
 
     /// Set the ultimate concern of the whole network.
-    pub fn set_ultimate_concern(&self, concern: Option<String>) {
+    #[cfg(test)]
+    pub(crate) fn set_ultimate_concern(&self, concern: Option<String>) {
         let mut uc = self.ultimate_concern.write();
         *uc = concern;
     }
@@ -132,7 +171,7 @@ impl Bewandtnisganzheit {
 
         if broken_count >= 3 {
             return Some(Stimmung::Angst {
-                facing: base::dasein::AngstSource::Nothingness,
+                facing: fabric::dasein::AngstSource::Nothingness,
             });
         }
 
@@ -150,7 +189,8 @@ impl Bewandtnisganzheit {
     }
 
     /// Adjust mood influence on the world.
-    pub fn adjust_for_mood(&self, mood: &Stimmung) {
+    #[cfg(test)]
+    pub(crate) fn adjust_for_mood(&self, mood: &Stimmung) {
         // In Angst, things that were transparent become noticed
         if let Stimmung::Angst { .. } = mood {
             let mut nodes = self.nodes.write();
@@ -232,6 +272,9 @@ impl Bewandtnisganzheit {
                 }
             }
         }
+        ready.sort_by(|left, right| left.id.cmp(&right.id));
+        present.sort_by(|left, right| left.id.cmp(&right.id));
+        unavailable.sort_by(|left, right| left.id.cmp(&right.id));
 
         BewandtnisSnapshot {
             ready_to_hand: ready,
@@ -391,7 +434,7 @@ mod tests {
 
         // Angst makes everything present-at-hand
         world.adjust_for_mood(&Stimmung::Angst {
-            facing: base::dasein::AngstSource::Nothingness,
+            facing: fabric::dasein::AngstSource::Nothingness,
         });
 
         let ready = world.entities_by_readiness(&ReadinessState::ReadyToHand);

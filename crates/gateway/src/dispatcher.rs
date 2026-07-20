@@ -1,0 +1,708 @@
+//! Channel dispatching boundaries.
+//!
+//! Defines the minimal transport and turn-execution traits that decouple
+//! the channel dispatcher from the daemon runtime, plus a thin dispatcher
+//! that classifies inbound messages and hands them to a
+//! [`CapabilityRegistry`] of typed handlers (`handlers/`).
+
+use std::sync::Arc;
+
+use fabric::channel::{ConversationId, InboundMessage, MessageContent, MessageId, OutboundMessage};
+use fabric::{ApprovalCategory, ApprovalSnapshot, ApprovalStatus, AttemptId, GoalId, GoalSnapshot};
+
+use super::effect::OutboundEffect;
+use super::handlers::approval::ApprovalExecutor;
+use super::handlers::chat::ChatHandler;
+use super::handlers::goal::GoalHandler;
+use super::handlers::greeting::GreetingHandler;
+use super::intent::{classify_intent, Intent};
+use super::notify::render_approval_notification;
+use super::ports::ChannelApprovalPort;
+use super::registry::{
+    ApprovalResolver, ApprovalResolverRegistry, CapabilityHandler, CapabilityRegistry,
+    HandlerContext,
+};
+use super::store::{ChannelStore, InsertOutcome};
+
+// ---------------------------------------------------------------------------
+// Transport trait
+// ---------------------------------------------------------------------------
+
+/// Minimal channel transport abstraction.
+///
+/// Implementations read from a provider inbox (cursor-based) and write
+/// outbound messages back to the provider.
+#[async_trait::async_trait]
+pub trait ChannelTransport: Send + Sync {
+    /// Stable identifier for this channel (e.g. `"telegram"`).
+    fn channel_id(&self) -> &str;
+
+    /// Receive pending messages since `cursor`, or from the start when
+    /// `cursor` is `None`.
+    async fn receive(&self, cursor: Option<String>) -> anyhow::Result<Vec<ProviderEnvelope>>;
+
+    /// Send an outbound message. Returns the provider-assigned message id.
+    async fn send(&self, message: &OutboundMessage) -> anyhow::Result<String>;
+}
+
+/// A provider message bundled with the cursor to use for the next
+/// receive window.
+#[derive(Debug)]
+pub struct ProviderEnvelope {
+    pub message: InboundMessage,
+    pub next_cursor: String,
+}
+
+// ---------------------------------------------------------------------------
+// Capability-facing traits
+// ---------------------------------------------------------------------------
+
+/// Minimal contract for executing a single turn.
+///
+/// This prevents dispatcher tests from needing the entire daemon stack.
+/// The production adapter calls `DaemonTurnOrchestrator::execute_turn()`
+/// and extracts either the `result` text or a stable error.
+#[async_trait::async_trait]
+pub trait ChannelTurnExecutor: Send + Sync {
+    /// Execute a turn given the text input and a correlation id.
+    ///
+    /// Returns the result text on success or a stable error string on
+    /// failure.
+    async fn execute(
+        &self,
+        principal: &str,
+        message: &str,
+        correlation_id: &str,
+    ) -> anyhow::Result<String>;
+}
+
+#[async_trait::async_trait]
+pub trait ChannelGoalExecutor: Send + Sync {
+    async fn create_draft(&self, owner: &str, intent: &str) -> anyhow::Result<GoalSnapshot>;
+    async fn list(&self, owner: &str) -> anyhow::Result<Vec<GoalSnapshot>>;
+    async fn show(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
+    async fn pause(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
+    async fn resume(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
+    async fn cancel(&self, owner: &str, id: GoalId) -> anyhow::Result<GoalSnapshot>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalProgressKind {
+    Succeeded,
+    RetryBackoff,
+    Escalated,
+    AwaitingHuman,
+    Failed,
+    Cancelled,
+}
+
+impl GoalProgressKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::RetryBackoff => "retry_backoff",
+            Self::Escalated => "escalated",
+            Self::AwaitingHuman => "awaiting_human",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// Bounded proactive Goal notification. Raw provider output and errors are
+/// deliberately absent from this contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoalProgress {
+    pub goal_id: GoalId,
+    pub attempt_id: AttemptId,
+    pub kind: GoalProgressKind,
+}
+
+impl GoalProgress {
+    fn text(&self) -> String {
+        let status = match self.kind {
+            GoalProgressKind::Succeeded => "completed successfully",
+            GoalProgressKind::RetryBackoff => "will retry after bounded backoff",
+            GoalProgressKind::Escalated => "escalated to reviewer",
+            GoalProgressKind::AwaitingHuman => "is awaiting human input",
+            GoalProgressKind::Failed => "failed",
+            GoalProgressKind::Cancelled => "was cancelled",
+        };
+        format!(
+            "Goal {} attempt {} {status}.",
+            self.goal_id.0, self.attempt_id.0
+        )
+    }
+
+    fn correlation_id(&self) -> String {
+        format!(
+            "goal:{}:attempt:{}:{}",
+            self.goal_id.0,
+            self.attempt_id.0,
+            self.kind.as_str()
+        )
+    }
+
+    fn outbound(&self, conversation_id: ConversationId) -> OutboundMessage {
+        OutboundMessage {
+            conversation_id,
+            content: MessageContent::Text { text: self.text() },
+            actions: vec![],
+            reply_to: None,
+            correlation_id: self.correlation_id(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Channel dispatcher
+// ---------------------------------------------------------------------------
+
+/// Durable owner-only channel message dispatcher.
+///
+/// Owns a [`ChannelStore`] for persistence and delegates capability
+/// handling to a [`CapabilityRegistry`]. Rejection-check happens before any
+/// handler runs, and turn outcomes are persisted before the network send so
+/// that a send failure retries only the outbox — never the LLM turn.
+pub struct ChannelDispatcher {
+    store: ChannelStore,
+    registry: CapabilityRegistry,
+    approval_port: Option<Arc<dyn ChannelApprovalPort>>,
+    approval_resolvers: Arc<ApprovalResolverRegistry>,
+}
+
+impl ChannelDispatcher {
+    /// Create a new dispatcher that owns `store` and answers `Chat`/
+    /// `Greeting` intents using `turn_executor`. No goal/approval/google
+    /// capability is registered — use [`Self::with_registry`] or the
+    /// `with_*` builders to add more.
+    pub fn new(store: ChannelStore, turn_executor: Arc<dyn ChannelTurnExecutor>) -> Self {
+        let mut registry = CapabilityRegistry::new();
+        registry.register(Arc::new(ChatHandler::new(turn_executor, None)));
+        registry.register(Arc::new(GreetingHandler));
+        Self::with_registry(store, registry)
+    }
+
+    /// Create a dispatcher from an already-assembled [`CapabilityRegistry`]
+    /// (e.g. a `ChatHandler` wired with Google account support).
+    pub fn with_registry(store: ChannelStore, registry: CapabilityRegistry) -> Self {
+        Self {
+            store,
+            registry,
+            approval_port: None,
+            approval_resolvers: Arc::new(ApprovalResolverRegistry::new()),
+        }
+    }
+
+    /// Register (or replace) a capability handler.
+    pub fn with_capability(mut self, handler: Arc<dyn CapabilityHandler>) -> Self {
+        self.registry.register(handler);
+        self
+    }
+
+    /// Register the Goal-command capability, sharing this dispatcher's
+    /// approval resolver registry so `/edit` can reach the `ActivateGoal`
+    /// resolver regardless of registration order.
+    pub fn with_goal_executor(self, executor: Arc<dyn ChannelGoalExecutor>) -> Self {
+        let resolvers = self.approval_resolvers.clone();
+        self.with_capability(Arc::new(GoalHandler::new(executor, resolvers)))
+    }
+
+    pub fn with_approval_port(mut self, port: Arc<dyn ChannelApprovalPort>) -> Self {
+        self.approval_port = Some(port);
+        self
+    }
+
+    /// Register an [`ApprovalResolver`] for a specific [`ApprovalCategory`]
+    /// (e.g. Gmail registers its `ActivateGoal` resolver here).
+    pub fn with_approval_resolver(
+        self,
+        category: ApprovalCategory,
+        resolver: Arc<dyn ApprovalResolver>,
+    ) -> Self {
+        self.approval_resolvers.register(category, resolver);
+        self
+    }
+
+    /// Register the default approval resolver used for categories without
+    /// a dedicated resolver (replaces the old generic `ChannelApprovalExecutor`).
+    pub fn with_default_approval_resolver(self, resolver: Arc<dyn ApprovalResolver>) -> Self {
+        self.approval_resolvers.set_default(resolver);
+        self
+    }
+
+    /// Persist an approval notification before network delivery. Message text
+    /// contains only bounded summaries and trusted artifact references.
+    pub async fn notify_approval(
+        &mut self,
+        transport: &dyn ChannelTransport,
+        conversation_id: ConversationId,
+        approval: &ApprovalSnapshot,
+        now_ms: i64,
+    ) -> anyhow::Result<bool> {
+        if approval.status != ApprovalStatus::Pending {
+            anyhow::bail!("only pending approvals can be delivered");
+        }
+        let port = self
+            .approval_port
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("approval repository is not configured"))?;
+        let outbound = render_approval_notification(conversation_id, approval);
+        let enqueued = self
+            .store
+            .enqueue_outbound(transport.channel_id(), &outbound)?;
+        port.record_delivery_pending(
+            approval.id,
+            transport.channel_id(),
+            &outbound.conversation_id.0,
+            &outbound.correlation_id,
+            now_ms,
+        )?;
+        if !enqueued {
+            return Ok(false);
+        }
+        match transport.send(&outbound).await {
+            Ok(provider_id) => {
+                self.store
+                    .mark_outbound_sent(&outbound.correlation_id, &provider_id)?;
+                port.record_delivery_sent(&outbound.correlation_id, &provider_id, now_ms)?;
+                Ok(true)
+            }
+            Err(error) => {
+                self.store
+                    .mark_outbound_failed(&outbound.correlation_id, &error.to_string())?;
+                port.record_delivery_failed(&outbound.correlation_id, &error.to_string(), now_ms)?;
+                Ok(false)
+            }
+        }
+    }
+
+    /// Persist a proactive Goal progress notification, then attempt delivery.
+    /// The caller can only construct `progress` from an already-persisted
+    /// AttemptCoordinator outcome, preserving Goal-event-before-send ordering.
+    pub async fn notify_goal_progress(
+        &self,
+        transport: &dyn ChannelTransport,
+        conversation_id: ConversationId,
+        progress: &GoalProgress,
+    ) -> anyhow::Result<bool> {
+        let outbound = progress.outbound(conversation_id);
+        if !self
+            .store
+            .enqueue_outbound(transport.channel_id(), &outbound)?
+        {
+            return Ok(false);
+        }
+        match transport.send(&outbound).await {
+            Ok(provider_id) => {
+                self.store
+                    .mark_outbound_sent(&outbound.correlation_id, &provider_id)?;
+                Ok(true)
+            }
+            Err(error) => {
+                self.store
+                    .mark_outbound_failed(&outbound.correlation_id, &error.to_string())?;
+                Ok(false)
+            }
+        }
+    }
+
+    /// Persist a progress notification for the poll loop to deliver.
+    pub fn queue_goal_progress(
+        &mut self,
+        channel_id: &str,
+        conversation_id: ConversationId,
+        progress: &GoalProgress,
+    ) -> anyhow::Result<bool> {
+        self.store
+            .enqueue_outbound(channel_id, &progress.outbound(conversation_id))
+    }
+
+    /// Resolve an approval callback via the durable repository, executing
+    /// the matching [`ApprovalResolver`] side effect for resolved approvals.
+    async fn execute_approval_action(
+        &mut self,
+        principal: &str,
+        action_data: &str,
+        now_ms: i64,
+    ) -> anyhow::Result<String> {
+        let port = self
+            .approval_port
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("durable approvals are not configured"))?;
+        ApprovalExecutor::new(port, self.approval_resolvers.clone())
+            .execute_approval_action(principal, action_data, now_ms)
+            .await
+    }
+
+    /// Process a single provider message envelope.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Insert into inbox; skip if duplicate.
+    /// 2. Resolve the sender's active binding to a principal.
+    /// 3. Unknown senders are marked rejected and cursor is advanced
+    ///    (no capability invocation, no outbox).
+    /// 4. Resolve any approval callback via the durable repository.
+    /// 5. Normalize content via [`classify_intent`].
+    /// 6. Dispatch the classified intent to the [`CapabilityRegistry`] for
+    ///    non-callback messages.
+    /// 7. Build an outbound DTO from the routed input and optional reply.
+    /// 8. Persist inbox-completed + outbox + cursor in one transaction.
+    /// 9. Send the outbound message through the transport.
+    /// 10. Mark the outbox row as sent or failed (never rolls back the
+    ///     completed turn).
+    pub async fn process(
+        &mut self,
+        transport: &dyn ChannelTransport,
+        envelope: ProviderEnvelope,
+    ) -> anyhow::Result<()> {
+        let message = &envelope.message;
+        let channel = message.channel_id.0.as_str();
+
+        // 1. Insert into inbox; duplicate messages are silently skipped.
+        match self.store.insert_inbound(message)? {
+            InsertOutcome::Duplicate => return Ok(()),
+            InsertOutcome::Inserted => { /* continue processing */ }
+        }
+
+        // 2. Resolve the active principal binding for this sender.
+        let principal = self
+            .store
+            .resolve_principal(channel, &message.sender_id.0)?;
+
+        // 3. Unknown sender: mark rejected, advance cursor, no handler.
+        let Some(principal) = principal else {
+            self.reject_inbound(channel, &message.message_id.0, &envelope.next_cursor)?;
+            return Ok(());
+        };
+
+        // 4. Resolve approval callbacks from authoritative repository state;
+        // callback payload contains no subject details.
+        let approval_reply = if let Some(action) = message.reply_to_action.as_deref() {
+            Some(
+                self.execute_approval_action(&principal, action, message.timestamp_ms)
+                    .await,
+            )
+        } else {
+            None
+        };
+
+        // 5. Normalize ordinary message content through command routing.
+        let routed = classify_intent(&message.content);
+
+        let mut ai_reply: Option<String> = approval_reply.map(|result| match result {
+            Ok(reply) => reply,
+            Err(error) => error.to_string(),
+        });
+
+        // 6. Dispatch to the capability registry for non-callback messages.
+        if message.reply_to_action.is_none() {
+            let ctx = HandlerContext {
+                channel: channel.to_string(),
+                principal,
+                conversation_id: message.conversation_id.clone(),
+                message_id: message.message_id.clone(),
+                correlation_id: message.correlation_id.clone(),
+                timestamp_ms: message.timestamp_ms,
+            };
+            match self.registry.dispatch(&ctx, message, &routed).await {
+                Ok(Some(effects)) => {
+                    if let Some(text) = reply_text(&effects) {
+                        ai_reply = Some(text);
+                    }
+                }
+                Ok(None) => { /* no capability registered for this intent */ }
+                Err(e) => match &routed {
+                    Intent::Chat(_) => {
+                        // Chat failure: mark inbox failed so it stays
+                        // retryable, do NOT advance the cursor.
+                        self.fail_inbound(channel, &message.message_id.0, &e.to_string())?;
+                        return Err(e);
+                    }
+                    _ => {
+                        // Goal-command (and any other) errors are swallowed
+                        // into the visible reply text.
+                        ai_reply = Some(e.to_string());
+                    }
+                },
+            }
+        }
+
+        // 7. Build the outbound message DTO.
+        let outbound = build_outbound(
+            &routed,
+            &message.conversation_id,
+            &message.message_id,
+            &message.correlation_id,
+            ai_reply.as_deref(),
+        );
+
+        // 8. Persist inbox+outbox+cursor in one atomic transaction.
+        self.store.complete_inbound(
+            channel,
+            &message.message_id.0,
+            &envelope.next_cursor,
+            &outbound,
+        )?;
+
+        // 9. Attempt the network send.
+        match transport.send(&outbound).await {
+            Ok(_provider_msg_id) => {
+                // 10a. Mark outbox row as sent.
+                self.store.db.execute(
+                    "UPDATE channel_outbox SET status = 'sent', updated_at = datetime('now')
+                     WHERE correlation_id = ?1",
+                    rusqlite::params![message.correlation_id],
+                )?;
+            }
+            Err(e) => {
+                // 10b. Mark outbox row as failed so it can be retried
+                //     independently of the already-completed inbox turn.
+                self.store.db.execute(
+                    "UPDATE channel_outbox SET status = 'failed', last_error = ?1, updated_at = datetime('now')
+                     WHERE correlation_id = ?2",
+                    rusqlite::params![e.to_string(), message.correlation_id],
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Mark an inbox message as rejected and advance the cursor.
+    ///
+    /// No outbox row is created — rejected senders receive no reply.
+    fn reject_inbound(
+        &mut self,
+        channel: &str,
+        message_id: &str,
+        next_cursor: &str,
+    ) -> anyhow::Result<()> {
+        let tx = self.store.db.transaction()?;
+
+        tx.execute(
+            "UPDATE channel_inbox SET status = 'rejected', result_json = '{\"reason\":\"unknown sender\"}', updated_at = datetime('now')
+             WHERE channel_id = ?1 AND message_id = ?2",
+            rusqlite::params![channel, message_id],
+        )?;
+
+        tx.execute(
+            "INSERT INTO channel_cursor (channel_id, cursor, updated_at)
+             VALUES (?1, ?2, datetime('now'))
+             ON CONFLICT(channel_id) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at",
+            rusqlite::params![channel, next_cursor],
+        )?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Mark an inbox message as failed (leaving it retryable) without
+    /// advancing the cursor.
+    fn fail_inbound(&mut self, channel: &str, message_id: &str, error: &str) -> anyhow::Result<()> {
+        self.store.db.execute(
+            "UPDATE channel_inbox SET status = 'failed', result_json = ?3,
+             attempt_count = attempt_count + 1, updated_at = datetime('now')
+             WHERE channel_id = ?1 AND message_id = ?2",
+            rusqlite::params![channel, message_id, format!(r#"{{"error":"{}"}}"#, error)],
+        )?;
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Restart recovery
+    // -----------------------------------------------------------------------
+
+    /// Recover pending inbox messages after a restart.
+    pub async fn recover_pending_inbox(
+        &mut self,
+        transport: &dyn ChannelTransport,
+        limit: usize,
+    ) -> anyhow::Result<usize> {
+        let channel = transport.channel_id();
+        let pending = self.store.pending_inbound(channel, limit)?;
+        let mut count = 0usize;
+
+        for msg in &pending {
+            let channel_str = msg.channel_id.0.as_str();
+            let principal = self
+                .store
+                .resolve_principal(channel_str, &msg.sender_id.0)?;
+            let Some(principal) = principal else {
+                self.reject_inbound(channel_str, &msg.message_id.0, &msg.message_id.0)?;
+                count += 1;
+                continue;
+            };
+            let routed = classify_intent(&msg.content);
+            let mut ai_reply: Option<String> = None;
+
+            let ctx = HandlerContext {
+                channel: channel_str.to_string(),
+                principal,
+                conversation_id: msg.conversation_id.clone(),
+                message_id: msg.message_id.clone(),
+                correlation_id: msg.correlation_id.clone(),
+                timestamp_ms: msg.timestamp_ms,
+            };
+            match self.registry.dispatch(&ctx, msg, &routed).await {
+                Ok(Some(effects)) => {
+                    if let Some(text) = reply_text(&effects) {
+                        ai_reply = Some(text);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => match &routed {
+                    Intent::Chat(_) => {
+                        self.fail_inbound(channel_str, &msg.message_id.0, &e.to_string())?;
+                        return Err(e);
+                    }
+                    _ => {
+                        ai_reply = Some(e.to_string());
+                    }
+                },
+            }
+
+            let outbound = build_outbound(
+                &routed,
+                &msg.conversation_id,
+                &msg.message_id,
+                &msg.correlation_id,
+                ai_reply.as_deref(),
+            );
+            self.store.complete_inbound(
+                channel_str,
+                &msg.message_id.0,
+                &msg.message_id.0,
+                &outbound,
+            )?;
+            match transport.send(&outbound).await {
+                Ok(_) => {
+                    self.store.db.execute(
+                        "UPDATE channel_outbox SET status = 'sent', updated_at = datetime('now')
+                         WHERE correlation_id = ?1",
+                        rusqlite::params![msg.correlation_id],
+                    )?;
+                }
+                Err(e) => {
+                    self.store.db.execute(
+                        "UPDATE channel_outbox SET status = 'failed', last_error = ?1, updated_at = datetime('now')
+                         WHERE correlation_id = ?2",
+                        rusqlite::params![e.to_string(), msg.correlation_id],
+                    )?;
+                }
+            }
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Flush pending and failed outbox messages after a restart.
+    ///
+    /// # At-least-once boundary
+    ///
+    /// If the original `transport.send()` succeeded but the outbox-status
+    /// update crashed, this method will re-send the same outbound message.
+    /// The provider may deliver the same reply twice. The LLM turn is never
+    /// re-executed because inbox completion and outbox insertion happen
+    /// atomically before the send.
+    pub async fn flush_pending_outbox(
+        &mut self,
+        transport: &dyn ChannelTransport,
+        limit: usize,
+    ) -> anyhow::Result<usize> {
+        let channel = transport.channel_id();
+        let pending = self.store.pending_outbox(channel, limit)?;
+        let mut count = 0usize;
+        for outbound in &pending {
+            match transport.send(outbound).await {
+                Ok(provider_id) => {
+                    self.store.db.execute(
+                        "UPDATE channel_outbox SET status = 'sent', updated_at = datetime('now')
+                         WHERE correlation_id = ?1",
+                        rusqlite::params![outbound.correlation_id],
+                    )?;
+                    if outbound.correlation_id.starts_with("approval:") {
+                        if let Some(port) = &self.approval_port {
+                            port.record_delivery_sent(
+                                &outbound.correlation_id,
+                                &provider_id,
+                                chrono::Utc::now().timestamp_millis(),
+                            )?;
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.store.db.execute(
+                        "UPDATE channel_outbox SET status = 'failed', last_error = ?1, updated_at = datetime('now')
+                         WHERE correlation_id = ?2",
+                        rusqlite::params![e.to_string(), outbound.correlation_id],
+                    )?;
+                    if outbound.correlation_id.starts_with("approval:") {
+                        if let Some(port) = &self.approval_port {
+                            port.record_delivery_failed(
+                                &outbound.correlation_id,
+                                &e.to_string(),
+                                chrono::Utc::now().timestamp_millis(),
+                            )?;
+                        }
+                    }
+                }
+            }
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Expose the store for tests to inspect state.
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn store(&self) -> &ChannelStore {
+        &self.store
+    }
+}
+
+/// Extract the first `Reply` effect's text, if any.
+fn reply_text(effects: &[OutboundEffect]) -> Option<String> {
+    effects.iter().find_map(|effect| match effect {
+        OutboundEffect::Reply(msg) => match &msg.content {
+            MessageContent::Text { text } => Some(text.clone()),
+            MessageContent::Command { .. } => None,
+        },
+        OutboundEffect::Enqueue(_) | OutboundEffect::None => None,
+    })
+}
+
+/// Build an [`OutboundMessage`] from a routed input and optional reply.
+fn build_outbound(
+    routed: &Intent,
+    conversation_id: &ConversationId,
+    message_id: &MessageId,
+    correlation_id: &str,
+    ai_reply: Option<&str>,
+) -> OutboundMessage {
+    let content = match routed {
+        Intent::Chat(_) => MessageContent::Text {
+            text: ai_reply.unwrap_or_default().to_string(),
+        },
+        Intent::Greeting => MessageContent::Text {
+            text: "Hello! I am Aletheon. How can I help you today?".into(),
+        },
+        Intent::GoalCommand { .. } => MessageContent::Text {
+            text: ai_reply
+                .unwrap_or("Goal runtime is not configured")
+                .to_string(),
+        },
+        Intent::Unsupported(_) => MessageContent::Text {
+            text: ai_reply.unwrap_or("Unsupported channel input.").to_string(),
+        },
+    };
+
+    OutboundMessage {
+        conversation_id: conversation_id.clone(),
+        content,
+        actions: vec![],
+        reply_to: Some(message_id.clone()),
+        correlation_id: correlation_id.to_string(),
+    }
+}

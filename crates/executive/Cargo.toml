@@ -1,0 +1,56 @@
+[package]
+name = "executive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Aletheon Runtime - core agent runtime and orchestration"
+
+[dependencies]
+fabric = { path = "../fabric" }
+gateway = { path = "../gateway" }
+kernel = { path = "../kernel" }
+agora = { path = "../agora" }
+cognit = { path = "../cognit" }
+corpus = { path = "../corpus" }
+mnemosyne = { path = "../mnemosyne" }
+runtime = { path = "../runtime" }
+dasein = { path = "../dasein" }
+metacog = { path = "../metacog" }
+anyhow = "1"
+thiserror = "2"
+serde_yaml = "0.9"
+async-trait = "0.1"
+futures = "0.3"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { workspace = true }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "v5"] }
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { workspace = true }
+parking_lot = "0.12"
+toml = "0.8"
+reqwest = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+urlencoding = { workspace = true }
+dirs = "5"
+nix = { workspace = true }
+libc = { workspace = true }
+regex = { workspace = true }
+which = "7"
+
+[dev-dependencies]
+hardware = { path = "../hardware" }
+tokio-test = "0.4"
+tempfile = "3"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
+http-body-util = "0.1"
+proptest = "1.11.0"
+[lints]
+workspace = true

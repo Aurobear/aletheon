@@ -1,0 +1,9 @@
+# Aletheon project-level Codex config.
+# Secrets, API keys, personal paths belong in config.local.toml (gitignored).
+
+[project]
+name = "aletheon"
+integration_branch = "dev"
+
+[workflow]
+delete_merged_branches = true

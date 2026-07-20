@@ -1,5 +1,5 @@
 use super::types::*;
-use base::dasein::{CareStructureSnapshot, ConcernSnapshot, Stimmung};
+use fabric::dasein::{CareStructureSnapshot, ConcernSnapshot, Stimmung};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -133,7 +133,7 @@ pub struct CareStructure {
     thrownness: RwLock<Thrownness>,
     fallenness: RwLock<Fallenness>,
     concerns: RwLock<BTreeMap<String, Concern>>,
-    pub rhythm: RwLock<CareRhythm>,
+    pub(crate) rhythm: RwLock<CareRhythm>,
 }
 
 impl CareStructure {
@@ -159,15 +159,9 @@ impl CareStructure {
     }
 
     /// Add or update a concern.
-    pub fn add_concern(&self, concern: Concern) {
+    pub(crate) fn add_concern(&self, concern: Concern) {
         let mut concerns = self.concerns.write();
         concerns.insert(concern.id.clone(), concern);
-    }
-
-    /// Remove a concern.
-    pub fn remove_concern(&self, id: &str) {
-        let mut concerns = self.concerns.write();
-        concerns.remove(id);
     }
 
     /// Get urgent concerns.
@@ -213,22 +207,11 @@ impl CareStructure {
     }
 
     /// Update fallenness state.
-    pub fn update_fallenness(&self, absorbed: Option<String>, depth: f64) {
+    #[cfg(test)]
+    pub(crate) fn update_fallenness(&self, absorbed: Option<String>, depth: f64) {
         let mut fallenness = self.fallenness.write();
         fallenness.absorbed_in = absorbed;
         fallenness.depth = depth;
-    }
-
-    /// Update projection.
-    pub fn update_projection(&self, possibilities: Vec<ProjectedPossibility>) {
-        let mut proj = self.projection.write();
-        proj.possibilities = possibilities;
-    }
-
-    /// Choose a projection.
-    pub fn choose_projection(&self, description: &str) {
-        let mut proj = self.projection.write();
-        proj.chosen = Some(description.to_string());
     }
 
     /// Determine mood from care state.
@@ -250,7 +233,7 @@ impl CareStructure {
 
         if urgent_count >= 3 {
             return Some(Stimmung::Angst {
-                facing: base::dasein::AngstSource::Responsibility,
+                facing: fabric::dasein::AngstSource::Responsibility,
             });
         }
 
@@ -349,7 +332,7 @@ mod tests {
         // Angst -> faster rhythm
         care.rhythm.write().adapt(
             &Stimmung::Angst {
-                facing: base::dasein::AngstSource::Freedom,
+                facing: fabric::dasein::AngstSource::Freedom,
             },
             2,
         );

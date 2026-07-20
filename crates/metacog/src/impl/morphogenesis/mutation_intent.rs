@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 
-use base::brain::{ReflectionEntry, ReflectionOutcome};
-use base::MutationIntent;
+use fabric::cognit::{ReflectionEntry, ReflectionOutcome};
+use fabric::MutationIntent;
 
 /// Generate mutation intents from reflection and experience.
 #[derive(Default)]
@@ -287,8 +287,14 @@ fn success_rate(entries: &[ReflectionEntry]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::brain::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
-    use chrono::Utc;
+    use fabric::cognit::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
+    use fabric::wall_to_datetime;
+    use fabric::Clock;
+    use kernel::chronos::TestClock;
+
+    fn test_clock() -> TestClock {
+        TestClock::default()
+    }
 
     fn make_entry(outcome: ReflectionOutcome, what_failed: Vec<String>) -> ReflectionEntry {
         make_entry_full(outcome, what_failed, vec![], vec![])
@@ -302,7 +308,7 @@ mod tests {
     ) -> ReflectionEntry {
         ReflectionEntry {
             id: uuid::Uuid::new_v4().to_string(),
-            timestamp: Utc::now(),
+            timestamp: wall_to_datetime(test_clock().wall_now()),
             trigger: ReflectionTrigger::TaskComplete,
             task_summary: "test task".to_string(),
             outcome,

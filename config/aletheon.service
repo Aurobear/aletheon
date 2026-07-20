@@ -1,22 +1,56 @@
+# Compatibility unit for installations that still refer to aletheon.service.
+# Keep this core-only definition in sync with aletheon-core.service. New
+# installations enable aletheon-core.service directly.
 [Unit]
-Description=Aletheon Agent Daemon
+Description=Aletheon system inference core (compatibility name)
+Documentation=file:/usr/share/doc/aletheon/systemd.md
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=exec
 User=aletheon
 Group=aletheon
-ExecStartPre=/usr/bin/mkdir -p /var/lib/aletheon /run/aletheon
-ExecStart=/usr/bin/aletheon daemon --socket /run/aletheon/aletheon.sock
-ExecStop=/bin/kill -TERM $MAINPID
-Restart=on-failure
-RestartSec=2
-NoNewPrivileges=yes
-EnvironmentFile=-/etc/aletheon/.env
-StateDirectory=aletheon
+UMask=0027
 RuntimeDirectory=aletheon
+RuntimeDirectoryMode=0750
+StateDirectory=aletheon
+StateDirectoryMode=0750
+CacheDirectory=aletheon
+CacheDirectoryMode=0750
+ExecStart=/usr/bin/aletheon core --config /etc/aletheon/config.toml --socket /run/aletheon/core.sock
+Restart=on-failure
+RestartSec=5
 LimitNOFILE=65536
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aletheon-core
+
+EnvironmentFile=-/etc/aletheon/credentials/provider.env
+Environment=ALETHEON_DATA_ROOT=/var/lib/aletheon
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/aletheon /var/lib/aletheon /var/cache/aletheon
+ReadOnlyPaths=/etc/aletheon
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,943 @@
+//! Executive orchestration for G1 workspace trust decisions.
+//!
+//! Discovery is deliberately read-only: it hashes a bounded set of known
+//! repository-provided executable configuration files without parsing or
+//! executing any of them.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use fabric::ipc::bus::kernel_bus::CanonicalEventBus;
+use fabric::workspace_trust::{
+    decide, ClientMode, DiscoveredConfigDigest, ExecutableConfigSource, TrustEvaluationInput,
+    TrustReceipt, WorkspaceIdentity, WorkspaceTrustDecision,
+};
+use fabric::{PrincipalId, SchemaId};
+use sha2::{Digest, Sha256};
+use tokio::sync::{Mutex, RwLock};
+
+const MAX_GIT_CONFIG_BYTES: u64 = 1024 * 1024;
+
+/// Build the canonical trust identity without executing repository-provided
+/// commands. Git identity is derived by bounded, read-only parsing of git
+/// metadata; hooks, aliases and config includes are never interpreted.
+pub fn workspace_identity(canonical_path: &Path) -> WorkspaceIdentity {
+    WorkspaceIdentity {
+        canonical_path: canonical_path.to_path_buf(),
+        repo_fingerprint: repository_fingerprint(canonical_path),
+    }
+}
+
+/// Broad roots cannot receive durable trust. Besides the user's home, any
+/// filesystem root is broad by construction.
+pub fn is_broad_unrecordable_root(canonical_path: &Path) -> bool {
+    canonical_path.parent().is_none()
+        || dirs::home_dir().is_some_and(|home| {
+            let home = std::fs::canonicalize(&home).unwrap_or(home);
+            canonical_path == home
+        })
+}
+
+fn repository_fingerprint(workspace: &Path) -> Option<String> {
+    let config = git_config_path(workspace)?;
+    let metadata = std::fs::symlink_metadata(&config).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_GIT_CONFIG_BYTES {
+        return None;
+    }
+    let content = std::fs::read_to_string(config).ok()?;
+    let mut remotes = parse_remote_urls(&content)
+        .into_iter()
+        .filter_map(|remote| normalize_remote_url(&remote))
+        .collect::<Vec<_>>();
+    remotes.sort();
+    remotes.dedup();
+    if remotes.is_empty() {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    for remote in remotes {
+        hasher.update(remote.as_bytes());
+        hasher.update([0]);
+    }
+    Some(format!("sha256:{:x}", hasher.finalize()))
+}
+
+fn git_config_path(workspace: &Path) -> Option<PathBuf> {
+    for ancestor in workspace.ancestors() {
+        let dot_git = ancestor.join(".git");
+        let Ok(metadata) = std::fs::symlink_metadata(&dot_git) else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() {
+            return None;
+        }
+        if metadata.is_dir() {
+            return Some(dot_git.join("config"));
+        }
+        if metadata.is_file() && metadata.len() <= 4096 {
+            let pointer = std::fs::read_to_string(&dot_git).ok()?;
+            let git_dir = pointer.trim().strip_prefix("gitdir:")?.trim();
+            let git_dir = if Path::new(git_dir).is_absolute() {
+                PathBuf::from(git_dir)
+            } else {
+                ancestor.join(git_dir)
+            };
+            let common_dir_file = git_dir.join("commondir");
+            if std::fs::metadata(&common_dir_file).is_ok_and(|metadata| metadata.len() <= 4096) {
+                if let Ok(common_dir) = std::fs::read_to_string(common_dir_file) {
+                    let common_dir = common_dir.trim();
+                    let common_dir = if Path::new(common_dir).is_absolute() {
+                        PathBuf::from(common_dir)
+                    } else {
+                        git_dir.join(common_dir)
+                    };
+                    return Some(common_dir.join("config"));
+                }
+            }
+            return Some(git_dir.join("config"));
+        }
+    }
+    None
+}
+
+fn parse_remote_urls(config: &str) -> Vec<String> {
+    let mut in_remote = false;
+    let mut urls = Vec::new();
+    for raw in config.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            in_remote = line
+                .strip_prefix('[')
+                .and_then(|line| line.strip_suffix(']'))
+                .is_some_and(|section| {
+                    section
+                        .trim_start()
+                        .to_ascii_lowercase()
+                        .starts_with("remote \"")
+                });
+            continue;
+        }
+        if !in_remote || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            if key.trim().eq_ignore_ascii_case("url") {
+                let value = value.trim();
+                if !value.is_empty() {
+                    urls.push(value.to_string());
+                }
+            }
+        }
+    }
+    urls
+}
+
+fn normalize_remote_url(remote: &str) -> Option<String> {
+    let remote = remote.trim();
+    if let Ok(mut url) = reqwest::Url::parse(remote) {
+        if !matches!(url.scheme(), "http" | "https" | "ssh" | "git" | "file") {
+            return None;
+        }
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        url.set_query(None);
+        url.set_fragment(None);
+        let path = url.path().trim_end_matches('/').trim_end_matches(".git");
+        let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+        let port = url
+            .port()
+            .map(|port| format!(":{port}"))
+            .unwrap_or_default();
+        return Some(format!(
+            "{}://{host}{port}{path}",
+            url.scheme().to_ascii_lowercase()
+        ));
+    }
+    // Git's SCP-like syntax: [user@]host:path. Drop the user and normalize
+    // only host/path; this parser never shells out to git.
+    let (authority, path) = remote.split_once(':')?;
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if host.is_empty() || path.is_empty() || host.contains('/') || host.contains('\\') {
+        return None;
+    }
+    Some(format!(
+        "ssh://{}/{}",
+        host.to_ascii_lowercase(),
+        path.trim_start_matches('/')
+            .trim_end_matches('/')
+            .trim_end_matches(".git")
+    ))
+}
+
+#[async_trait]
+pub trait TrustStore: Send + Sync {
+    async fn get(
+        &self,
+        principal: &PrincipalId,
+        workspace: &WorkspaceIdentity,
+    ) -> Option<TrustReceipt>;
+
+    async fn put(&self, receipt: TrustReceipt);
+}
+
+#[async_trait]
+pub trait ConfigDiscoverer: Send + Sync {
+    async fn discover(&self, workspace_cwd: &Path) -> DiscoveredConfigDigest;
+}
+
+pub struct WorkspaceTrustResolver {
+    store: Arc<dyn TrustStore>,
+    discoverer: Arc<dyn ConfigDiscoverer>,
+    feature_enabled: bool,
+    event_bus: Option<Arc<CanonicalEventBus>>,
+}
+
+impl WorkspaceTrustResolver {
+    pub fn new(
+        store: Arc<dyn TrustStore>,
+        discoverer: Arc<dyn ConfigDiscoverer>,
+        feature_enabled: bool,
+    ) -> Self {
+        Self {
+            store,
+            discoverer,
+            feature_enabled,
+            event_bus: None,
+        }
+    }
+
+    pub fn with_event_bus(mut self, event_bus: Arc<CanonicalEventBus>) -> Self {
+        self.event_bus = Some(event_bus);
+        self
+    }
+
+    pub async fn evaluate(
+        &self,
+        principal_id: PrincipalId,
+        workspace: WorkspaceIdentity,
+        client_mode: ClientMode,
+        is_broad_unrecordable_root: bool,
+        now_unix: u64,
+    ) -> WorkspaceTrustDecision {
+        if !self.feature_enabled {
+            return WorkspaceTrustDecision::Trusted {
+                granted: ExecutableConfigSource::all(),
+            };
+        }
+
+        let discovered = self.discoverer.discover(&workspace.canonical_path).await;
+        let existing_receipt = self.store.get(&principal_id, &workspace).await;
+        let granting_client = existing_receipt
+            .as_ref()
+            .map(|receipt| receipt.granting_client.clone());
+        let decision = decide(&TrustEvaluationInput {
+            principal_id: principal_id.clone(),
+            workspace: workspace.clone(),
+            discovered,
+            client_mode,
+            feature_enabled: true,
+            existing_receipt,
+            is_broad_unrecordable_root,
+            now_unix,
+        });
+        if let Some(event_bus) = &self.event_bus {
+            let (decision_name, sources) = decision_event_fields(&decision);
+            let _ = event_bus
+                .publish_event(
+                    SchemaId::from("aletheon.event.workspace_trust_decided/v1"),
+                    "executive:workspace-trust",
+                    serde_json::json!({
+                        "principal_id": principal_id.0,
+                        "workspace": workspace.canonical_path,
+                        "decision": decision_name,
+                        "sources": sources,
+                        "granting_client": granting_client,
+                    }),
+                )
+                .await;
+        }
+        decision
+    }
+
+    pub async fn record_grant(&self, receipt: TrustReceipt) {
+        self.store.put(receipt).await;
+    }
+
+    /// Record an authenticated interactive grant. The caller supplies only
+    /// the authenticated principal/client and requested categories; workspace
+    /// identity and the current digest are recomputed at this trust boundary.
+    pub async fn grant_current(
+        &self,
+        principal_id: PrincipalId,
+        workspace: WorkspaceIdentity,
+        granted: Vec<ExecutableConfigSource>,
+        granting_client: String,
+        now_unix: u64,
+    ) -> Result<TrustReceipt, String> {
+        if is_broad_unrecordable_root(&workspace.canonical_path) {
+            return Err("persistent trust cannot be granted for a broad workspace root".into());
+        }
+        let discovered = self.discoverer.discover(&workspace.canonical_path).await;
+        if granted
+            .iter()
+            .any(|source| !discovered.0.contains_key(source))
+        {
+            return Err(
+                "grant contains an executable configuration source not currently discovered".into(),
+            );
+        }
+        let existing = self.store.get(&principal_id, &workspace).await;
+        let receipt = TrustReceipt {
+            principal_id,
+            workspace,
+            digest: discovered,
+            granted,
+            created_at_unix: existing
+                .as_ref()
+                .map_or(now_unix, |receipt| receipt.created_at_unix),
+            updated_at_unix: now_unix,
+            expires_at_unix: None,
+            granting_client,
+        };
+        self.store.put(receipt.clone()).await;
+        Ok(receipt)
+    }
+}
+
+fn decision_event_fields(
+    decision: &WorkspaceTrustDecision,
+) -> (&'static str, Vec<ExecutableConfigSource>) {
+    match decision {
+        WorkspaceTrustDecision::Trusted { granted } => ("trusted", granted.clone()),
+        WorkspaceTrustDecision::Restricted { blocked } => ("restricted", blocked.clone()),
+        WorkspaceTrustDecision::PromptRequired { findings } => {
+            ("prompt_required", findings.clone())
+        }
+    }
+}
+
+/// Query whether a specific repository executable source may be loaded.
+/// Normal workspace file access is intentionally outside this decision.
+pub fn source_is_granted(
+    decision: &WorkspaceTrustDecision,
+    source: ExecutableConfigSource,
+) -> bool {
+    matches!(
+        decision,
+        WorkspaceTrustDecision::Trusted { granted } if granted.contains(&source)
+    )
+}
+
+/// Deterministic in-memory store used by integration tests and ephemeral hosts.
+#[derive(Default)]
+pub struct InMemoryTrustStore {
+    receipts: RwLock<BTreeMap<String, TrustReceipt>>,
+}
+
+fn receipt_key(principal: &PrincipalId, workspace: &WorkspaceIdentity) -> String {
+    format!(
+        "{}\0{}\0{}",
+        principal.0,
+        workspace.canonical_path.display(),
+        workspace.repo_fingerprint.as_deref().unwrap_or("")
+    )
+}
+
+#[async_trait]
+impl TrustStore for InMemoryTrustStore {
+    async fn get(
+        &self,
+        principal: &PrincipalId,
+        workspace: &WorkspaceIdentity,
+    ) -> Option<TrustReceipt> {
+        self.receipts
+            .read()
+            .await
+            .get(&receipt_key(principal, workspace))
+            .cloned()
+    }
+
+    async fn put(&self, receipt: TrustReceipt) {
+        let key = receipt_key(&receipt.principal_id, &receipt.workspace);
+        self.receipts.write().await.insert(key, receipt);
+    }
+}
+
+/// Durable JSON trust store with atomic replacement.
+///
+/// Read or decode failures fail closed through the `TrustStore` contract by
+/// returning no receipt. Writes are serialized and replace the file only after
+/// the complete new state has been flushed.
+pub struct FileTrustStore {
+    path: PathBuf,
+    write_lock: Mutex<()>,
+}
+
+impl FileTrustStore {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            write_lock: Mutex::new(()),
+        }
+    }
+
+    async fn read_all(&self) -> BTreeMap<String, TrustReceipt> {
+        let Ok(bytes) = tokio::fs::read(&self.path).await else {
+            return BTreeMap::new();
+        };
+        serde_json::from_slice(&bytes).unwrap_or_default()
+    }
+}
+
+#[async_trait]
+impl TrustStore for FileTrustStore {
+    async fn get(
+        &self,
+        principal: &PrincipalId,
+        workspace: &WorkspaceIdentity,
+    ) -> Option<TrustReceipt> {
+        self.read_all()
+            .await
+            .remove(&receipt_key(principal, workspace))
+    }
+
+    async fn put(&self, receipt: TrustReceipt) {
+        let _guard = self.write_lock.lock().await;
+        let mut receipts = self.read_all().await;
+        receipts.insert(
+            receipt_key(&receipt.principal_id, &receipt.workspace),
+            receipt,
+        );
+        let Ok(encoded) = serde_json::to_vec_pretty(&receipts) else {
+            return;
+        };
+        if let Some(parent) = self.path.parent() {
+            if tokio::fs::create_dir_all(parent).await.is_err() {
+                return;
+            }
+        }
+        let temporary = self.path.with_extension("tmp");
+        if tokio::fs::write(&temporary, encoded).await.is_ok() {
+            let _ = tokio::fs::rename(temporary, &self.path).await;
+        }
+    }
+}
+
+/// Bounded, read-only discovery of known executable configuration paths.
+#[derive(Debug, Clone)]
+pub struct KnownConfigDiscoverer {
+    max_files: usize,
+    max_file_bytes: u64,
+}
+
+impl Default for KnownConfigDiscoverer {
+    fn default() -> Self {
+        Self {
+            max_files: 256,
+            max_file_bytes: 1024 * 1024,
+        }
+    }
+}
+
+impl KnownConfigDiscoverer {
+    fn candidates(workspace: &Path) -> [(ExecutableConfigSource, PathBuf); 6] {
+        [
+            (
+                ExecutableConfigSource::RepoHooks,
+                workspace.join(".grok/hooks"),
+            ),
+            (
+                ExecutableConfigSource::RepoMcpServer,
+                workspace.join(".grok/mcp.json"),
+            ),
+            (
+                ExecutableConfigSource::RepoPlugin,
+                workspace.join(".aletheon/plugins"),
+            ),
+            (
+                ExecutableConfigSource::EnvrcLoader,
+                workspace.join(".envrc"),
+            ),
+            (
+                ExecutableConfigSource::LspServer,
+                workspace.join(".grok/lsp.json"),
+            ),
+            (
+                ExecutableConfigSource::RepoAgentCommand,
+                workspace.join("agents"),
+            ),
+        ]
+    }
+
+    fn collect_files(&self, candidate: &Path) -> Vec<PathBuf> {
+        if candidate.is_file() {
+            return vec![candidate.to_path_buf()];
+        }
+        if !candidate.is_dir() {
+            return Vec::new();
+        }
+
+        let mut files = Vec::new();
+        let mut pending = vec![candidate.to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            let Ok(entries) = std::fs::read_dir(directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                if kind.is_symlink() {
+                    continue;
+                }
+                if kind.is_dir() {
+                    pending.push(path);
+                } else if kind.is_file() {
+                    files.push(path);
+                    if files.len() >= self.max_files {
+                        break;
+                    }
+                }
+            }
+            if files.len() >= self.max_files {
+                break;
+            }
+        }
+        files.sort();
+        files
+    }
+
+    fn digest_source(&self, workspace: &Path, candidate: &Path) -> Option<String> {
+        let files = self.collect_files(candidate);
+        if files.is_empty() {
+            return None;
+        }
+        let mut hasher = Sha256::new();
+        for path in files {
+            let Ok(metadata) = std::fs::metadata(&path) else {
+                continue;
+            };
+            if metadata.len() > self.max_file_bytes {
+                continue;
+            }
+            let Ok(content) = std::fs::read(&path) else {
+                continue;
+            };
+            let relative = path.strip_prefix(workspace).unwrap_or(&path);
+            hasher.update(relative.to_string_lossy().as_bytes());
+            hasher.update([0]);
+            hasher.update(content);
+            hasher.update([0xff]);
+        }
+        Some(format!("sha256:{:x}", hasher.finalize()))
+    }
+}
+
+#[async_trait]
+impl ConfigDiscoverer for KnownConfigDiscoverer {
+    async fn discover(&self, workspace_cwd: &Path) -> DiscoveredConfigDigest {
+        let mut digest = BTreeMap::new();
+        for (source, candidate) in Self::candidates(workspace_cwd) {
+            if let Some(value) = self.digest_source(workspace_cwd, &candidate) {
+                digest.insert(source, value);
+            }
+        }
+        DiscoveredConfigDigest(digest)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    fn identity(path: &Path) -> WorkspaceIdentity {
+        WorkspaceIdentity {
+            canonical_path: path.to_path_buf(),
+            repo_fingerprint: None,
+        }
+    }
+
+    #[test]
+    fn filesystem_root_is_broad_but_project_directory_is_not() {
+        assert!(is_broad_unrecordable_root(Path::new("/")));
+        if let Some(home) = dirs::home_dir() {
+            assert!(is_broad_unrecordable_root(&home));
+        }
+        assert!(!is_broad_unrecordable_root(Path::new(
+            "/tmp/aletheon-trust-project"
+        )));
+    }
+
+    #[test]
+    fn workspace_identity_hashes_normalized_remote_without_executing_git_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let git = temp.path().join(".git");
+        let forbidden_marker = temp.path().join("must-not-run");
+        std::fs::create_dir(&git).unwrap();
+        let config = git.join("config");
+        std::fs::write(
+            &config,
+            format!(
+                r#"
+[remote "origin"]
+    url = git@GitHub.COM:Example/Project.git
+[alias]
+    dangerous = !touch {}
+[core]
+    hooksPath = /tmp/untrusted-hooks
+"#,
+                forbidden_marker.display()
+            ),
+        )
+        .unwrap();
+
+        let first = workspace_identity(temp.path());
+        assert!(first.repo_fingerprint.is_some());
+        assert!(!forbidden_marker.exists());
+
+        // Equivalent URL spelling and unrelated executable git configuration
+        // do not change repository identity.
+        std::fs::write(
+            &config,
+            format!(
+                r#"
+[core]
+    hooksPath = /another/untrusted-hook
+[remote "origin"]
+    url = ssh://user@github.com/Example/Project.git/
+[alias]
+    dangerous = !touch {}
+"#,
+                forbidden_marker.display()
+            ),
+        )
+        .unwrap();
+        let equivalent = workspace_identity(temp.path());
+        assert_eq!(first.repo_fingerprint, equivalent.repo_fingerprint);
+        assert!(!forbidden_marker.exists());
+
+        std::fs::write(
+            config,
+            "[remote \"origin\"]\nurl = https://github.com/example/other.git\n",
+        )
+        .unwrap();
+        assert_ne!(
+            first.repo_fingerprint,
+            workspace_identity(temp.path()).repo_fingerprint
+        );
+    }
+
+    #[test]
+    fn workspace_identity_reads_worktree_common_config_without_git_process() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = temp.path().join("checkout");
+        let common = temp.path().join("repository.git");
+        let worktree_git_dir = common.join("worktrees/checkout");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::create_dir_all(&worktree_git_dir).unwrap();
+        std::fs::write(
+            checkout.join(".git"),
+            format!("gitdir: {}\n", worktree_git_dir.display()),
+        )
+        .unwrap();
+        std::fs::write(worktree_git_dir.join("commondir"), "../..\n").unwrap();
+        std::fs::write(
+            common.join("config"),
+            "[remote \"origin\"]\nurl = https://example.com/team/project.git\n",
+        )
+        .unwrap();
+
+        assert!(workspace_identity(&checkout).repo_fingerprint.is_some());
+    }
+
+    fn receipt(
+        principal: &PrincipalId,
+        workspace: &WorkspaceIdentity,
+        digest: DiscoveredConfigDigest,
+        updated_at_unix: u64,
+    ) -> TrustReceipt {
+        TrustReceipt {
+            principal_id: principal.clone(),
+            workspace: workspace.clone(),
+            digest,
+            granted: vec![ExecutableConfigSource::RepoHooks],
+            created_at_unix: 1,
+            updated_at_unix,
+            expires_at_unix: None,
+            granting_client: "test".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_store_upsert_replaces_same_scope() {
+        let store = InMemoryTrustStore::default();
+        let principal = PrincipalId("alice".into());
+        let workspace = identity(Path::new("/tmp/project"));
+        store
+            .put(receipt(
+                &principal,
+                &workspace,
+                DiscoveredConfigDigest::default(),
+                1,
+            ))
+            .await;
+        store
+            .put(receipt(
+                &principal,
+                &workspace,
+                DiscoveredConfigDigest::default(),
+                2,
+            ))
+            .await;
+
+        assert_eq!(
+            store
+                .get(&principal, &workspace)
+                .await
+                .unwrap()
+                .updated_at_unix,
+            2
+        );
+        assert_eq!(store.receipts.read().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn file_store_survives_reopen_and_upserts_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("trust/receipts.json");
+        let principal = PrincipalId("alice".into());
+        let workspace = identity(temp.path());
+        {
+            let store = FileTrustStore::new(path.clone());
+            store
+                .put(receipt(
+                    &principal,
+                    &workspace,
+                    DiscoveredConfigDigest::default(),
+                    1,
+                ))
+                .await;
+            store
+                .put(receipt(
+                    &principal,
+                    &workspace,
+                    DiscoveredConfigDigest::default(),
+                    2,
+                ))
+                .await;
+        }
+
+        let reopened = FileTrustStore::new(path);
+        assert_eq!(
+            reopened
+                .get(&principal, &workspace)
+                .await
+                .unwrap()
+                .updated_at_unix,
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn corrupt_file_store_fails_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("receipts.json");
+        std::fs::write(&path, b"not-json").unwrap();
+        let store = FileTrustStore::new(path);
+
+        assert!(store
+            .get(&PrincipalId("alice".into()), &identity(temp.path()))
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn resolver_prompts_then_accepts_recorded_grant() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join(".grok/hooks")).unwrap();
+        std::fs::write(temp.path().join(".grok/hooks/pre.sh"), "echo safe").unwrap();
+        let store = Arc::new(InMemoryTrustStore::default());
+        let discoverer = Arc::new(KnownConfigDiscoverer::default());
+        let resolver = WorkspaceTrustResolver::new(store.clone(), discoverer.clone(), true);
+        let principal = PrincipalId("alice".into());
+        let workspace = identity(temp.path());
+
+        assert!(matches!(
+            resolver
+                .evaluate(
+                    principal.clone(),
+                    workspace.clone(),
+                    ClientMode::Interactive,
+                    false,
+                    10,
+                )
+                .await,
+            WorkspaceTrustDecision::PromptRequired { .. }
+        ));
+        resolver
+            .grant_current(
+                principal.clone(),
+                workspace.clone(),
+                vec![ExecutableConfigSource::RepoHooks],
+                "authenticated:test-client".into(),
+                10,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            resolver
+                .evaluate(principal, workspace, ClientMode::Interactive, false, 11,)
+                .await,
+            WorkspaceTrustDecision::Trusted { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn authenticated_grant_rejects_undiscovered_source() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join(".envrc"), "export SAFE=1").unwrap();
+        let resolver = WorkspaceTrustResolver::new(
+            Arc::new(InMemoryTrustStore::default()),
+            Arc::new(KnownConfigDiscoverer::default()),
+            true,
+        );
+        let result = resolver
+            .grant_current(
+                PrincipalId("alice".into()),
+                identity(temp.path()),
+                vec![ExecutableConfigSource::RepoMcpServer],
+                "authenticated:test-client".into(),
+                10,
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn discovery_is_stable_and_changes_with_content_without_writing() {
+        let temp = tempfile::tempdir().unwrap();
+        let hooks = temp.path().join(".grok/hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let hook = hooks.join("pre.sh");
+        std::fs::write(&hook, "echo one").unwrap();
+        let discoverer = KnownConfigDiscoverer::default();
+        let before_entries = std::fs::read_dir(&hooks).unwrap().count();
+
+        let first = discoverer.discover(temp.path()).await;
+        let same = discoverer.discover(temp.path()).await;
+        assert_eq!(first, same);
+        assert_eq!(std::fs::read_dir(&hooks).unwrap().count(), before_entries);
+
+        std::fs::write(hook, "echo two").unwrap();
+        assert_ne!(first, discoverer.discover(temp.path()).await);
+    }
+
+    struct CountingDiscoverer(AtomicUsize);
+
+    #[async_trait]
+    impl ConfigDiscoverer for CountingDiscoverer {
+        async fn discover(&self, _workspace_cwd: &Path) -> DiscoveredConfigDigest {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            DiscoveredConfigDigest::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn feature_off_is_a_strict_discovery_bypass() {
+        let discoverer = Arc::new(CountingDiscoverer(AtomicUsize::new(0)));
+        let resolver = WorkspaceTrustResolver::new(
+            Arc::new(InMemoryTrustStore::default()),
+            discoverer.clone(),
+            false,
+        );
+        let decision = resolver
+            .evaluate(
+                PrincipalId("alice".into()),
+                identity(Path::new("/tmp/project")),
+                ClientMode::Headless,
+                false,
+                0,
+            )
+            .await;
+
+        assert_eq!(discoverer.0.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            decision,
+            WorkspaceTrustDecision::Trusted {
+                granted: ExecutableConfigSource::all()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluation_publishes_scoped_decision_event() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join(".envrc"), "export SAFE=1").unwrap();
+        let bus = Arc::new(CanonicalEventBus::new(16));
+        let mut events =
+            bus.subscribe_channel(SchemaId::from("aletheon.event.workspace_trust_decided/v1"));
+        let resolver = WorkspaceTrustResolver::new(
+            Arc::new(InMemoryTrustStore::default()),
+            Arc::new(KnownConfigDiscoverer::default()),
+            true,
+        )
+        .with_event_bus(bus);
+
+        let decision = resolver
+            .evaluate(
+                PrincipalId("alice".into()),
+                identity(temp.path()),
+                ClientMode::Headless,
+                false,
+                1,
+            )
+            .await;
+        assert!(matches!(
+            decision,
+            WorkspaceTrustDecision::Restricted { .. }
+        ));
+        let event = events.recv().await.unwrap();
+        assert_eq!(event.payload["principal_id"], "alice");
+        assert_eq!(event.payload["decision"], "restricted");
+        assert_eq!(
+            event.payload["workspace"],
+            temp.path().to_string_lossy().as_ref()
+        );
+    }
+
+    #[tokio::test]
+    async fn headless_untrusted_repo_blocks_loader_but_keeps_normal_files_usable() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join(".envrc"), "run-untrusted-command").unwrap();
+        let resolver = WorkspaceTrustResolver::new(
+            Arc::new(InMemoryTrustStore::default()),
+            Arc::new(KnownConfigDiscoverer::default()),
+            true,
+        );
+
+        let decision = resolver
+            .evaluate(
+                PrincipalId("headless-user".into()),
+                identity(temp.path()),
+                ClientMode::Headless,
+                false,
+                1,
+            )
+            .await;
+        assert!(!source_is_granted(
+            &decision,
+            ExecutableConfigSource::EnvrcLoader
+        ));
+
+        let ordinary = temp.path().join("ordinary.txt");
+        std::fs::write(&ordinary, "still writable").unwrap();
+        assert_eq!(std::fs::read_to_string(ordinary).unwrap(), "still writable");
+    }
+}

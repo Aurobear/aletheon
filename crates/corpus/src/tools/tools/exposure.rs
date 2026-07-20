@@ -1,3 +1,3 @@
-//! Re-export `ToolExposure` from the canonical definition in aletheon-abi.
+//! Re-export `ToolExposure` from the canonical definition in fabric.
 
-pub use base::tool::ToolExposure;
+pub use fabric::tool::ToolExposure;

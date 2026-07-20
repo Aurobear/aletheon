@@ -4,8 +4,8 @@
 //! Priority: User > Body(risk>=High) > Brain(confidence>=0.8) > Memory > Self_.
 //! Body Critical risk always wins (safety overrides everything).
 
-use base::self_field::{ConflictSource, RiskLevel};
-use base::{Conflict, Resolution};
+use fabric::self_field::{AwarenessRiskLevel, ConflictSource};
+use fabric::{Conflict, Resolution};
 
 /// ConflictLayer — stateless conflict arbitration.
 pub struct ConflictLayer;
@@ -57,7 +57,7 @@ impl ConflictLayer {
     fn source_priority(&self, source: &ConflictSource) -> u8 {
         match source {
             ConflictSource::User { .. } => 100,
-            ConflictSource::Body { risk, .. } if *risk >= RiskLevel::High => 90,
+            ConflictSource::Body { risk, .. } if *risk >= AwarenessRiskLevel::High => 90,
             ConflictSource::Brain { confidence, .. } if *confidence >= 0.8 => 80,
             ConflictSource::Memory { .. } => 50,
             ConflictSource::Self_ { .. } => 30,
@@ -68,7 +68,7 @@ impl ConflictLayer {
     }
 
     fn is_critical_body(&self, source: &ConflictSource) -> bool {
-        matches!(source, ConflictSource::Body { risk, .. } if *risk == RiskLevel::Critical)
+        matches!(source, ConflictSource::Body { risk, .. } if *risk == AwarenessRiskLevel::Critical)
     }
 
     fn source_name(&self, source: &ConflictSource) -> &str {
@@ -91,7 +91,7 @@ impl Default for ConflictLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::Context;
+    use fabric::Context;
     use std::path::PathBuf;
 
     fn test_ctx() -> Context {
@@ -124,7 +124,7 @@ mod tests {
             },
             source_b: ConflictSource::Body {
                 objection: "motor overheating".to_string(),
-                risk: RiskLevel::Critical,
+                risk: AwarenessRiskLevel::Critical,
             },
             context: test_ctx(),
         };
@@ -173,7 +173,7 @@ mod tests {
         let conflict = Conflict {
             source_a: ConflictSource::Body {
                 objection: "joint limit reached".to_string(),
-                risk: RiskLevel::High,
+                risk: AwarenessRiskLevel::High,
             },
             source_b: ConflictSource::Brain {
                 proposal: "try harder".to_string(),

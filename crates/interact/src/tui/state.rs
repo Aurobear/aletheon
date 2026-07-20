@@ -3,15 +3,18 @@
 //! Extracts state fields from the monolithic App struct in mod.rs
 //! into a focused module for clarity and testability.
 
-use base::ui_event::{AwarenessLevel, CollaborationMode};
-use std::time::Instant;
+use fabric::protocol::client::EventCursor;
+use fabric::ui_event::{AwarenessLevel, CollaborationMode};
+use fabric::{AgentSnapshot, ApprovalSnapshot, MonoTime, TurnTerminalStatus};
+use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// Tracks the current awareness level from brain signals.
 #[derive(Debug, Clone)]
 pub struct AwarenessState {
     pub level: AwarenessLevel,
     pub context: String,
-    pub changed_at: Instant,
+    pub changed_at: MonoTime,
 }
 
 impl Default for AwarenessState {
@@ -19,21 +22,22 @@ impl Default for AwarenessState {
         Self {
             level: AwarenessLevel::Confident,
             context: String::new(),
-            changed_at: Instant::now(),
+            changed_at: MonoTime(0),
         }
     }
 }
 
 impl AwarenessState {
-    pub fn update(&mut self, level: AwarenessLevel, context: String) {
+    pub fn update(&mut self, level: AwarenessLevel, context: String, now: MonoTime) {
         self.level = level;
         self.context = context;
-        self.changed_at = Instant::now();
+        self.changed_at = now;
     }
 
     /// Whether to show an inline message (transitions to notable states).
-    pub fn should_show_inline(&self) -> bool {
-        self.level.is_notable() && self.changed_at.elapsed().as_secs() < 5
+    pub fn should_show_inline(&self, now: MonoTime) -> bool {
+        let elapsed_ms = now.0.saturating_sub(self.changed_at.0);
+        self.level.is_notable() && elapsed_ms < 5000
     }
 }
 
@@ -70,6 +74,37 @@ impl ContextDisplay {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiItemStatus {
+    Streaming,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UiItem {
+    pub id: String,
+    pub sequence: u64,
+    pub kind: String,
+    pub content: String,
+    pub status: UiItemStatus,
+    pub collapsed: bool,
+}
+
+impl UiItem {
+    pub fn streaming(id: String) -> Self {
+        Self {
+            id,
+            sequence: 0,
+            kind: "assistant".into(),
+            content: String::new(),
+            status: UiItemStatus::Streaming,
+            collapsed: false,
+        }
+    }
+}
+
 /// Centralized application state.
 #[derive(Debug)]
 pub struct AppState {
@@ -91,6 +126,18 @@ pub struct AppState {
     pub turn_active: bool,
     /// Current ReAct loop iteration (0 = first call, 1+ = after tool calls).
     pub current_iteration: usize,
+    /// Last protocol event included in this state.
+    pub cursor: EventCursor,
+    pub session_id: Option<String>,
+    pub provider_name: Option<String>,
+    pub items: BTreeMap<String, UiItem>,
+    pub approvals: BTreeMap<String, ApprovalSnapshot>,
+    pub agents: BTreeMap<String, AgentSnapshot>,
+    pub last_error: Option<String>,
+    /// Semantic terminal projected from the canonical versioned turn stream.
+    /// ACP and TUI derive this from the same `ClientEvent`, rather than from
+    /// transport-specific success heuristics.
+    pub last_terminal_status: Option<TurnTerminalStatus>,
 }
 
 impl Default for AppState {
@@ -105,6 +152,14 @@ impl Default for AppState {
             streaming: false,
             turn_active: false,
             current_iteration: 0,
+            cursor: EventCursor::origin(),
+            session_id: None,
+            provider_name: None,
+            items: BTreeMap::new(),
+            approvals: BTreeMap::new(),
+            agents: BTreeMap::new(),
+            last_error: None,
+            last_terminal_status: None,
         }
     }
 }

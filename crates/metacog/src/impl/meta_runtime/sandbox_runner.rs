@@ -4,29 +4,25 @@
 //! a TestResult with pass/fail counts and failure details.
 
 use anyhow::{Context, Result};
-use base::{RuntimeCandidate, TestResult};
-use std::process::Command;
+use fabric::{Clock, RuntimeCandidate, TestResult};
+use std::sync::Arc;
 
 pub struct SandboxRunner {
     /// Working directory for running tests (defaults to current dir).
     work_dir: std::path::PathBuf,
-}
-
-impl Default for SandboxRunner {
-    fn default() -> Self {
-        Self::new()
-    }
+    clock: Arc<dyn Clock>,
 }
 
 impl SandboxRunner {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             work_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            clock,
         }
     }
 
-    pub fn with_work_dir(work_dir: std::path::PathBuf) -> Self {
-        Self { work_dir }
+    pub fn with_work_dir(work_dir: std::path::PathBuf, clock: Arc<dyn Clock>) -> Self {
+        Self { work_dir, clock }
     }
 
     /// Run sandbox tests on a candidate runtime.
@@ -34,15 +30,16 @@ impl SandboxRunner {
     /// Runs `cargo test --workspace --message-format=json` and parses
     /// the JSON output to extract test results.
     pub async fn run_tests(&self, _candidate: &RuntimeCandidate) -> Result<TestResult> {
-        let start = std::time::Instant::now();
+        let start = self.clock.mono_now();
 
-        let output = Command::new("cargo")
+        let output = tokio::process::Command::new("cargo")
             .args(["test", "--workspace", "--message-format=json"])
             .current_dir(&self.work_dir)
             .output()
+            .await
             .context("Failed to run cargo test")?;
 
-        let elapsed_ms = start.elapsed().as_millis() as u64;
+        let elapsed_ms = self.clock.mono_now().0 - start.0;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
 

@@ -1,42 +1,49 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
+use std::time::Duration;
+
+use fabric::{Clock, MonoTime};
 
 use super::event::*;
 
 /// Aggregates, deduplicates, and rate-limits perception events.
 pub struct EventAggregator {
     /// Content hash dedup — same hash within window = skip
-    seen_hashes: HashMap<u64, std::time::Instant>,
-    dedup_window: std::time::Duration,
+    seen_hashes: HashMap<u64, MonoTime>,
+    dedup_window: Duration,
 
     /// Rate limiting per source
-    source_counts: HashMap<EventSource, VecDeque<std::time::Instant>>,
+    source_counts: HashMap<EventSource, VecDeque<MonoTime>>,
     max_per_source_per_second: usize,
 
     /// Priority boost for repeated events
     boost_counts: HashMap<String, u32>,
+
+    clock: std::sync::Arc<dyn Clock>,
 }
 
 impl EventAggregator {
-    pub fn new() -> Self {
+    pub fn new(clock: std::sync::Arc<dyn Clock>) -> Self {
         Self {
             seen_hashes: HashMap::new(),
-            dedup_window: std::time::Duration::from_secs(10),
+            dedup_window: Duration::from_secs(10),
             source_counts: HashMap::new(),
             max_per_source_per_second: 50,
             boost_counts: HashMap::new(),
+            clock,
         }
     }
 
     /// Process a batch of events: deduplicate, rate-limit, boost priority.
     pub fn aggregate(&mut self, events: Vec<PerceptionEvent>) -> Vec<PerceptionEvent> {
-        let now = std::time::Instant::now();
+        let now = self.clock.mono_now();
         let mut result = Vec::new();
 
         // Clean old hashes
+        let dedup_window_ms = self.dedup_window.as_millis() as u64;
         self.seen_hashes
-            .retain(|_, t| now.duration_since(*t) < self.dedup_window);
+            .retain(|_, t| now.0.saturating_sub(t.0) < dedup_window_ms);
 
         for mut event in events {
             // Content hash dedup
@@ -51,7 +58,7 @@ impl EventAggregator {
 
             // Remove old entries
             while let Some(front) = source_queue.front() {
-                if now.duration_since(*front) > std::time::Duration::from_secs(1) {
+                if now.0.saturating_sub(front.0) > 1000 {
                     source_queue.pop_front();
                 } else {
                     break;
@@ -94,8 +101,9 @@ impl EventAggregator {
     }
 }
 
+#[cfg(test)]
 impl Default for EventAggregator {
     fn default() -> Self {
-        Self::new()
+        Self::new(std::sync::Arc::new(kernel::chronos::TestClock::default()))
     }
 }

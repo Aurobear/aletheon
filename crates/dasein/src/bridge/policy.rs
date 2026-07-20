@@ -1,5 +1,5 @@
 use crate::r#impl::security::{PolicyEngine, PolicyVerdict};
-use base::self_field::{RiskLevel, Verdict};
+use fabric::self_field::{AwarenessRiskLevel, Verdict};
 use serde_json::Value;
 
 /// Bridges PolicyEngine into SelfField's Verdict system
@@ -15,14 +15,14 @@ impl PolicyBridge {
     }
 
     /// Check a tool call against the policy engine
-    /// Maps PolicyVerdict → base::Verdict
+    /// Maps PolicyVerdict → fabric::Verdict
     pub fn check(&self, tool_name: &str, input: &Value) -> Option<Verdict> {
         match self.engine.check(tool_name, input) {
             PolicyVerdict::Allow => None, // No verdict needed, continue to other checks
             PolicyVerdict::Deny { reason } => Some(Verdict::Deny { reason }),
             PolicyVerdict::RequireApproval { reason } => Some(Verdict::RequireConfirmation {
                 reason,
-                risk_level: RiskLevel::High,
+                risk_level: AwarenessRiskLevel::High,
             }),
         }
     }

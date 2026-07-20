@@ -1,0 +1,83 @@
+name: aletheon-gbrain
+
+services:
+  gbrain:
+    # Deployment requires an immutable content digest, never a mutable tag.
+    image: ${GBRAIN_IMAGE_REPOSITORY:-gbrain}@${GBRAIN_IMAGE_DIGEST:?set pinned sha256 digest}
+    command: ["bun", "run", "src/cli.ts", "serve", "--http", "--port", "9020"]
+    user: "${GBRAIN_UID:-10001}:${GBRAIN_GID:-10001}"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: ${GBRAIN_PIDS_LIMIT:-256}
+    environment:
+      HOME: /var/lib/gbrain
+      GBRAIN_READ_TOKEN_FILE: /run/secrets/gbrain_read_token
+      GBRAIN_WRITE_TOKEN_FILE: /run/secrets/gbrain_write_token
+    ports:
+      - "127.0.0.1:${GBRAIN_PORT:-9020}:9020"
+    volumes:
+      - gbrain_brain:/var/lib/gbrain/brain
+      - gbrain_database:/var/lib/gbrain/database
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+      - /var/lib/gbrain/.cache:rw,noexec,nosuid,nodev,size=128m,mode=0700,uid=${GBRAIN_UID:-10001},gid=${GBRAIN_GID:-10001}
+    secrets:
+      - source: gbrain_read_token
+        target: gbrain_read_token
+        mode: 0400
+      - source: gbrain_write_token
+        target: gbrain_write_token
+        mode: 0400
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - >-
+          const r=await fetch('http://127.0.0.1:9020/mcp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{}}})});if(!r.ok)process.exit(1)
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "${GBRAIN_CPU_LIMIT:-2.0}"
+          memory: ${GBRAIN_MEMORY_LIMIT:-2G}
+        reservations:
+          memory: ${GBRAIN_MEMORY_RESERVATION:-256M}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks: [memory]
+
+networks:
+  memory:
+    internal: true
+
+volumes:
+  gbrain_brain:
+    name: aletheon-gbrain-brain
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GBRAIN_BRAIN_DIR:-/var/lib/aletheon/gbrain/brain}
+  gbrain_database:
+    name: aletheon-gbrain-database
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GBRAIN_DATABASE_DIR:-/var/lib/aletheon/gbrain/database}
+
+secrets:
+  gbrain_read_token:
+    file: ${GBRAIN_READ_TOKEN_FILE:-/etc/aletheon/credentials/gbrain-read.token}
+  gbrain_write_token:
+    file: ${GBRAIN_WRITE_TOKEN_FILE:-/etc/aletheon/credentials/gbrain-write.token}

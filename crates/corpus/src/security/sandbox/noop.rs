@@ -1,6 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use std::time::{Duration, Instant};
+use fabric::Clock;
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::warn;
 
 use crate::sandbox::{
@@ -9,7 +11,9 @@ use crate::sandbox::{
 
 /// No-op sandbox backend — executes commands directly with no isolation.
 /// Always available. Used as last-resort fallback.
-pub struct NoopBackend;
+pub struct NoopBackend {
+    pub clock: Arc<dyn Clock>,
+}
 
 #[async_trait]
 impl SandboxBackend for NoopBackend {
@@ -22,7 +26,11 @@ impl SandboxBackend for NoopBackend {
     }
 
     fn is_available(&self) -> bool {
-        true
+        // NoopBackend executes commands with zero isolation.
+        // It should never be selected automatically as an available backend.
+        // The Forbid preference in SandboxExecutor.select_backend() selects
+        // it by name (not via is_available()), so Forbid still works.
+        false
     }
 
     fn capabilities(&self) -> SandboxCapabilities {
@@ -51,17 +59,17 @@ impl SandboxBackend for NoopBackend {
             "Executing command WITHOUT sandbox (noop backend)"
         );
 
-        let start = Instant::now();
+        let start = self.clock.mono_now();
 
         let output = tokio::process::Command::new("bash")
             .arg("-c")
             .arg(cmd)
-            .current_dir(&config.working_dir)
-            .envs(&config.env_vars)
+            .current_dir(config.working_dir())
+            .envs(&config.environment)
             .output()
             .await?;
 
-        let elapsed = start.elapsed();
+        let elapsed = self.clock.mono_now().0.saturating_sub(start.0);
 
         Ok(SandboxResult {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -69,7 +77,31 @@ impl SandboxBackend for NoopBackend {
             exit_code: output.status.code().unwrap_or(-1),
             backend_used: "noop".to_string(),
             isolation_level: IsolationLevel::None,
-            elapsed_ms: elapsed.as_millis() as u64,
+            elapsed_ms: elapsed,
         })
+    }
+
+    async fn execute_streaming(
+        &self,
+        cmd: &str,
+        config: &SandboxConfig,
+        timeout: Duration,
+        sink: &fabric::ToolEventSink,
+    ) -> Result<SandboxResult> {
+        let mut command = tokio::process::Command::new("bash");
+        command
+            .arg("-c")
+            .arg(cmd)
+            .current_dir(config.working_dir())
+            .envs(&config.environment);
+        super::streaming::execute_command_streaming(
+            command,
+            timeout,
+            "noop",
+            IsolationLevel::None,
+            self.clock.clone(),
+            sink,
+        )
+        .await
     }
 }

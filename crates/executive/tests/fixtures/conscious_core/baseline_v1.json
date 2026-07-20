@@ -1,0 +1,20 @@
+{
+  "fixture_version": 1,
+  "input": "summarize the last seven days of mail",
+  "expected_processors": [
+    "agent",
+    "cognit",
+    "corpus",
+    "dasein",
+    "metacog",
+    "mnemosyne"
+  ],
+  "expected_replay_entries": 6,
+  "expected_projection_names": [
+    "agent_tree",
+    "debug",
+    "memory_jobs",
+    "metrics",
+    "session"
+  ]
+}

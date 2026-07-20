@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Re-export ABI Genome types for convenience
-pub use base::genome::{
+pub use fabric::genome::{
     BoundaryRuleSpec, BoundarySpec, CarePriority, CareSpec, Genome, IdentitySpec, LifecycleSpec,
     MemorySpec, MutationSpec, SubsystemSpec, SubsystemType, Topology,
 };

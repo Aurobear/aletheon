@@ -1,5 +1,13 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
+
+use fabric::MonoTime;
+
+/// Helper: compute elapsed Duration between two MonoTime values.
+fn mono_elapsed(now: MonoTime, earlier: MonoTime) -> Duration {
+    Duration::from_millis(now.0.saturating_sub(earlier.0))
+}
 
 /// Signals the system can emit to throttle upstream producers.
 #[derive(Debug, Clone, PartialEq)]
@@ -15,7 +23,7 @@ pub enum BackpressureSignal {
 /// A single tracked source's pressure state.
 struct SourceState {
     /// Sliding window of event timestamps.
-    events: Vec<Instant>,
+    events: Vec<MonoTime>,
     /// How many consecutive over-threshold readings.
     over_count: u32,
 }
@@ -31,6 +39,7 @@ pub struct BackpressureManager {
     slow_down_threshold: u32,
     drop_threshold: u32,
     pause_threshold: u32,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl BackpressureManager {
@@ -39,6 +48,7 @@ impl BackpressureManager {
         slow_down_threshold: u32,
         drop_threshold: u32,
         pause_threshold: u32,
+        clock: Arc<dyn fabric::Clock>,
     ) -> Self {
         assert!(
             slow_down_threshold <= drop_threshold && drop_threshold <= pause_threshold,
@@ -50,16 +60,17 @@ impl BackpressureManager {
             slow_down_threshold,
             drop_threshold,
             pause_threshold,
+            clock,
         }
     }
 
-    fn evict(state: &mut SourceState, now: Instant, window: Duration) {
-        state.events.retain(|&t| now.duration_since(t) <= window);
+    fn evict(state: &mut SourceState, now: MonoTime, window: Duration) {
+        state.events.retain(|&t| mono_elapsed(now, t) <= window);
     }
 
     /// Record an event from `source` and return a signal if pressure is high.
     pub fn record(&mut self, source: &str) -> Option<BackpressureSignal> {
-        let now = Instant::now();
+        let now = self.clock.mono_now();
         let state = self
             .sources
             .entry(source.to_string())
@@ -89,7 +100,7 @@ impl BackpressureManager {
 
     /// Query the current event count for a source.
     pub fn source_count(&mut self, source: &str) -> u32 {
-        let now = Instant::now();
+        let now = self.clock.mono_now();
         self.sources
             .get_mut(source)
             .map(|s| {
@@ -108,10 +119,19 @@ impl BackpressureManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
+
+    fn test_mgr(window: Duration, slow: u32, drop: u32, pause: u32) -> BackpressureManager {
+        BackpressureManager::new(window, slow, drop, pause, test_clock())
+    }
 
     #[test]
     fn no_signal_below_slow_down() {
-        let mut mgr = BackpressureManager::new(Duration::from_secs(1), 5, 10, 20);
+        let mut mgr = test_mgr(Duration::from_secs(1), 5, 10, 20);
         for _ in 0..4 {
             assert_eq!(mgr.record("src"), None);
         }
@@ -119,7 +139,7 @@ mod tests {
 
     #[test]
     fn slow_down_signal() {
-        let mut mgr = BackpressureManager::new(Duration::from_secs(1), 3, 10, 20);
+        let mut mgr = test_mgr(Duration::from_secs(1), 3, 10, 20);
         mgr.record("src");
         mgr.record("src");
         assert_eq!(mgr.record("src"), Some(BackpressureSignal::SlowDown));
@@ -127,7 +147,7 @@ mod tests {
 
     #[test]
     fn drop_low_priority_signal() {
-        let mut mgr = BackpressureManager::new(Duration::from_secs(1), 3, 5, 20);
+        let mut mgr = test_mgr(Duration::from_secs(1), 3, 5, 20);
         for _ in 0..4 {
             mgr.record("src");
         }
@@ -136,7 +156,7 @@ mod tests {
 
     #[test]
     fn pause_source_signal() {
-        let mut mgr = BackpressureManager::new(Duration::from_secs(1), 3, 5, 7);
+        let mut mgr = test_mgr(Duration::from_secs(1), 3, 5, 7);
         for _ in 0..6 {
             mgr.record("src");
         }
@@ -145,7 +165,7 @@ mod tests {
 
     #[test]
     fn reset_source_clears_pressure() {
-        let mut mgr = BackpressureManager::new(Duration::from_secs(1), 2, 5, 10);
+        let mut mgr = test_mgr(Duration::from_secs(1), 2, 5, 10);
         mgr.record("src");
         mgr.record("src");
         assert!(mgr.record("src").is_some());

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use fabric::Clock;
 use std::path::PathBuf;
 use tracing::debug;
 
@@ -36,6 +37,7 @@ pub async fn process_result(
     tool_name: &str,
     content: &str,
     config: &OutputConfig,
+    clock: &dyn Clock,
 ) -> Result<ProcessedOutput> {
     // Check pinned threshold — never persist for these tools
     if let Some(&pinned) = config.pinned_thresholds.get(tool_name) {
@@ -62,11 +64,7 @@ pub async fn process_result(
 
     // Overflow to file
     tokio::fs::create_dir_all(&config.overflow_dir).await?;
-    let filename = format!(
-        "tool_output_{}_{}.txt",
-        tool_name,
-        chrono::Utc::now().timestamp_millis()
-    );
+    let filename = format!("tool_output_{}_{}.txt", tool_name, clock.wall_now().0);
     let path = config.overflow_dir.join(&filename);
     tokio::fs::write(&path, content).await?;
 
@@ -93,9 +91,10 @@ pub async fn process_result(
     })
 }
 
-pub async fn cleanup_overflow_dir(config: &OutputConfig) -> Result<usize> {
+pub async fn cleanup_overflow_dir(config: &OutputConfig, clock: &dyn Clock) -> Result<usize> {
     let mut removed = 0;
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(config.retention_days as i64);
+    let cutoff = fabric::wall_to_datetime(clock.wall_now())
+        - chrono::Duration::days(config.retention_days as i64);
 
     let mut entries = tokio::fs::read_dir(&config.overflow_dir).await?;
     while let Some(entry) = entries.next_entry().await? {
@@ -116,17 +115,23 @@ pub async fn cleanup_overflow_dir(config: &OutputConfig) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::chronos::TestClock;
     use tempfile::TempDir;
+
+    fn test_clock() -> TestClock {
+        TestClock::default()
+    }
 
     #[tokio::test]
     async fn test_inline_when_under_threshold() {
         let tmp = TempDir::new().unwrap();
+        let clock = test_clock();
         let config = OutputConfig {
             max_output_chars: 1000,
             overflow_dir: tmp.path().to_path_buf(),
             ..Default::default()
         };
-        let result = process_result("bash_exec", "short output", &config)
+        let result = process_result("bash_exec", "short output", &config, &clock)
             .await
             .unwrap();
         assert!(matches!(result, ProcessedOutput::Inline { .. }));
@@ -135,13 +140,14 @@ mod tests {
     #[tokio::test]
     async fn test_overflow_when_over_threshold() {
         let tmp = TempDir::new().unwrap();
+        let clock = test_clock();
         let config = OutputConfig {
             max_output_chars: 100,
             overflow_dir: tmp.path().to_path_buf(),
             ..Default::default()
         };
         let long_output = "x".repeat(200);
-        let result = process_result("bash_exec", &long_output, &config)
+        let result = process_result("bash_exec", &long_output, &config, &clock)
             .await
             .unwrap();
         assert!(matches!(result, ProcessedOutput::Overflow { .. }));
@@ -152,13 +158,14 @@ mod tests {
     #[tokio::test]
     async fn test_pinned_threshold_never_persists() {
         let tmp = TempDir::new().unwrap();
+        let clock = test_clock();
         let config = OutputConfig {
             max_output_chars: 100,
             overflow_dir: tmp.path().to_path_buf(),
             ..Default::default()
         };
         let long_output = "x".repeat(200);
-        let result = process_result("file_read", &long_output, &config)
+        let result = process_result("file_read", &long_output, &config, &clock)
             .await
             .unwrap();
         assert!(matches!(result, ProcessedOutput::Inline { .. }));

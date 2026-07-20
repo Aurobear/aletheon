@@ -1,11 +1,9 @@
 //! End-to-end integration test for the self-evolution persistence loop.
 //!
-//! Tests the complete cycle: create layers, mutate state, save to SQLite,
-//! load fresh layers from store, verify all state preserved. Then repeat
-//! a second cycle to verify accumulated evolution.
+//! Tests persistence of SelfField's constitutional/read-model layers. Lived
+//! self evolution is covered by the versioned Dasein transition/ledger tests;
+//! these legacy layers intentionally expose no public raw mutation setters.
 
-use base::self_field::RiskLevel;
-use base::{MutationIntent, Verdict};
 use chrono::Duration;
 use dasein::core::attention::AttentionLayer;
 use dasein::core::boundary::{BoundaryAction, BoundaryLayer, BoundaryRule};
@@ -15,8 +13,15 @@ use dasein::core::identity::IdentityLayer;
 use dasein::core::mutation::MutationLayer;
 use dasein::core::narrative::NarrativeLayer;
 use dasein::core::store::SelfFieldStore;
+use fabric::self_field::AwarenessRiskLevel;
+use fabric::{MutationIntent, Verdict};
 use serde_json::json;
+use std::sync::Arc;
 use tempfile::NamedTempFile;
+
+fn test_clock() -> Arc<dyn fabric::Clock> {
+    Arc::new(kernel::chronos::TestClock::default())
+}
 
 /// Approximate f64 comparison for test assertions.
 fn approx_eq(a: f64, b: f64) -> bool {
@@ -39,7 +44,7 @@ fn cycle1_narrative_roundtrip() {
     let (_tmp, store) = temp_store();
 
     // -- Phase 1: create and populate --
-    let narrative = NarrativeLayer::new(1000);
+    let narrative = NarrativeLayer::new(1000, test_clock());
     narrative.narrate("task_started", "user requested file analysis");
     narrative.narrate("boundary_check", "allowed: no matching rule");
     narrative.narrate("task_completed", "analysis finished");
@@ -47,7 +52,7 @@ fn cycle1_narrative_roundtrip() {
     narrative.save_to_store(&store).expect("save narrative");
 
     // -- Phase 2: simulate restart --
-    let mut loaded = NarrativeLayer::new(1000);
+    let mut loaded = NarrativeLayer::new(1000, test_clock());
     loaded.load_from_store(&store).expect("load narrative");
 
     assert_eq!(loaded.len(), 3);
@@ -63,13 +68,13 @@ fn cycle1_narrative_roundtrip() {
 fn cycle1_attention_roundtrip() {
     let (_tmp, store) = temp_store();
 
-    let attention = AttentionLayer::new(0.0); // no decay for deterministic test
+    let attention = AttentionLayer::new(0.0, test_clock()); // no decay for deterministic test
     attention.attend("code_review", 0.9);
     attention.attend("bug_triage", 0.6);
 
     attention.save_to_store(&store).expect("save attention");
 
-    let mut loaded = AttentionLayer::new(0.0);
+    let mut loaded = AttentionLayer::new(0.0, test_clock());
     loaded.load_from_store(&store).expect("load attention");
 
     let topics = loaded.all_topics();
@@ -85,17 +90,12 @@ fn cycle1_attention_roundtrip() {
 }
 
 #[test]
-fn cycle1_care_weight_adjustment_roundtrip() {
+fn cycle1_constitutional_care_roundtrip() {
     let (_tmp, store) = temp_store();
 
     let care = CareLayer::new();
     // Default: safety=1.0, user_intent=0.8, efficiency=0.5, learning=0.3
     assert_eq!(care.weight_of("efficiency"), Some(0.5));
-
-    // Adjust efficiency weight upward
-    let result = care.adjust_weight("efficiency", 0.2);
-    assert_eq!(result, Some((0.5, 0.7)));
-    assert_eq!(care.weight_of("efficiency"), Some(0.7));
 
     care.save_to_store(&store).expect("save care");
 
@@ -103,9 +103,8 @@ fn cycle1_care_weight_adjustment_roundtrip() {
     let mut loaded = CareLayer::new(); // starts with defaults again
     loaded.load_from_store(&store).expect("load care");
 
-    // Verify the adjusted weight persisted
-    assert!(approx_eq(loaded.weight_of("efficiency").unwrap(), 0.7));
-    // Other defaults should also be present
+    // The immutable constitutional defaults survive restart.
+    assert!(approx_eq(loaded.weight_of("efficiency").unwrap(), 0.5));
     assert!(approx_eq(loaded.weight_of("safety").unwrap(), 1.0));
     assert!(approx_eq(loaded.weight_of("user_intent").unwrap(), 0.8));
     assert!(approx_eq(loaded.weight_of("learning").unwrap(), 0.3));
@@ -120,7 +119,7 @@ fn cycle1_boundary_rule_roundtrip() {
         action_pattern: "deploy.*".to_string(),
         source_filter: None,
         action: BoundaryAction::Sandbox,
-        risk_level: RiskLevel::High,
+        risk_level: AwarenessRiskLevel::High,
         description: "sandbox all deploys".to_string(),
         immutable: false,
     });
@@ -128,7 +127,7 @@ fn cycle1_boundary_rule_roundtrip() {
         action_pattern: "rm *".to_string(),
         source_filter: None,
         action: BoundaryAction::Deny,
-        risk_level: RiskLevel::Critical,
+        risk_level: AwarenessRiskLevel::Critical,
         description: "no rm allowed".to_string(),
         immutable: true,
     });
@@ -143,20 +142,20 @@ fn cycle1_boundary_rule_roundtrip() {
     assert_eq!(loaded.rule_count(), 2);
 
     // Verify deploy rule is Sandbox (mutable)
-    let intent_deploy = base::Intent {
+    let intent_deploy = fabric::Intent {
         action: "deploy.prod".to_string(),
         parameters: json!({}),
-        source: base::IntentSource::User,
+        source: fabric::IntentSource::User,
         description: "deploy to production".to_string(),
     };
     let verdict = loaded.check(&intent_deploy);
     assert!(matches!(verdict, Some(Verdict::SandboxFirst { .. })));
 
     // Verify rm rule is Deny (immutable)
-    let intent_rm = base::Intent {
+    let intent_rm = fabric::Intent {
         action: "rm -rf /".to_string(),
         parameters: json!({}),
-        source: base::IntentSource::User,
+        source: fabric::IntentSource::User,
         description: "delete everything".to_string(),
     };
     let verdict = loaded.check(&intent_rm);
@@ -167,48 +166,41 @@ fn cycle1_boundary_rule_roundtrip() {
 fn cycle1_identity_roundtrip() {
     let (_tmp, store) = temp_store();
 
-    let identity = IdentityLayer::new("aletheon", "persistent self-evolving runtime", "0.1.0");
-
-    // Apply a mutation to build history
-    identity.mutate(
-        None,
-        Some("enhanced runtime with persistence".to_string()),
-        Some("0.2.0".to_string()),
-        "added persistence layer",
+    let identity = IdentityLayer::new(
+        "aletheon",
+        "persistent self-evolving runtime",
+        "0.1.0",
+        test_clock(),
     );
 
     let current = identity.current();
     assert_eq!(current.name, "aletheon");
-    assert_eq!(current.version, "0.2.0");
-    assert_eq!(identity.mutation_count(), 1);
+    assert_eq!(current.version, "0.1.0");
+    assert_eq!(identity.mutation_count(), 0);
 
     identity.save_to_store(&store).expect("save identity");
 
     // Simulate restart
-    let mut loaded = IdentityLayer::new("temp", "temp", "0.0.0");
+    let mut loaded = IdentityLayer::new("temp", "temp", "0.0.0", test_clock());
     loaded.load_from_store(&store).expect("load identity");
 
     let loaded_current = loaded.current();
     assert_eq!(loaded_current.name, "aletheon");
     assert_eq!(
         loaded_current.description,
-        "enhanced runtime with persistence"
+        "persistent self-evolving runtime"
     );
-    assert_eq!(loaded_current.version, "0.2.0");
-    assert!(loaded_current.last_mutation.is_some());
-    assert_eq!(loaded.mutation_count(), 1);
-
-    let history = loaded.history();
-    assert_eq!(history[0].identity.name, "aletheon");
-    assert_eq!(history[0].identity.version, "0.1.0");
-    assert_eq!(history[0].reason, "added persistence layer");
+    assert_eq!(loaded_current.version, "0.1.0");
+    assert!(loaded_current.last_mutation.is_none());
+    assert_eq!(loaded.mutation_count(), 0);
+    assert!(loaded.history().is_empty());
 }
 
 #[test]
 fn cycle1_mutation_records_roundtrip() {
     let (_tmp, store) = temp_store();
 
-    let mutation = MutationLayer::new();
+    let mutation = MutationLayer::new(test_clock());
 
     // Review a reversible mutation (auto-approved)
     let m1 = MutationIntent {
@@ -235,7 +227,7 @@ fn cycle1_mutation_records_roundtrip() {
     mutation.save_to_store(&store).expect("save mutation");
 
     // Simulate restart
-    let mut loaded = MutationLayer::new();
+    let mut loaded = MutationLayer::new(test_clock());
     loaded.load_from_store(&store).expect("load mutation");
 
     let records = loaded.records();
@@ -258,7 +250,7 @@ fn cycle1_mutation_records_roundtrip() {
 fn cycle1_continuity_roundtrip() {
     let (_tmp, store) = temp_store();
 
-    let continuity = ContinuityLayer::new(Duration::hours(24));
+    let continuity = ContinuityLayer::new(Duration::hours(24), test_clock());
     continuity.record("aletheon", "0.1.0", "initialized");
     continuity.record("aletheon", "0.1.0", "first_task_completed");
 
@@ -268,7 +260,7 @@ fn cycle1_continuity_roundtrip() {
     continuity.save_to_store(&store).expect("save continuity");
 
     // Simulate restart
-    let mut loaded = ContinuityLayer::new(Duration::hours(24));
+    let mut loaded = ContinuityLayer::new(Duration::hours(24), test_clock());
     loaded.load_from_store(&store).expect("load continuity");
 
     assert_eq!(loaded.len(), 2);
@@ -292,19 +284,17 @@ fn full_e2e_two_cycles() {
     // ================================================================
 
     // -- Narrative: record task decisions --
-    let narrative = NarrativeLayer::new(1000);
+    let narrative = NarrativeLayer::new(1000, test_clock());
     narrative.narrate("task_started", "analyze codebase structure");
     narrative.narrate("review", "allowed: care_score=0.35");
 
     // -- Attention: focus on code review --
-    let attention = AttentionLayer::new(0.0);
+    let attention = AttentionLayer::new(0.0, test_clock());
     attention.attend("code_review", 0.9);
     attention.attend("refactoring", 0.5);
 
-    // -- Care: adjust efficiency weight --
+    // -- Care: immutable constitutional defaults --
     let care = CareLayer::new();
-    care.adjust_weight("efficiency", 0.2); // 0.5 -> 0.7
-    care.adjust_weight("learning", 0.15); // 0.3 -> 0.45
 
     // -- Boundary: add a rule (Deny, so we can relax it in cycle 2) --
     let mut boundary = BoundaryLayer::new();
@@ -312,16 +302,16 @@ fn full_e2e_two_cycles() {
         action_pattern: "deploy.*".to_string(),
         source_filter: None,
         action: BoundaryAction::Deny,
-        risk_level: RiskLevel::High,
+        risk_level: AwarenessRiskLevel::High,
         description: "deny deploys".to_string(),
         immutable: false,
     });
 
     // -- Identity: initial state --
-    let identity = IdentityLayer::new("aletheon", "persistent runtime", "0.1.0");
+    let identity = IdentityLayer::new("aletheon", "persistent runtime", "0.1.0", test_clock());
 
     // -- Mutation: record a reversible mutation review --
-    let mutation = MutationLayer::new();
+    let mutation = MutationLayer::new(test_clock());
     mutation.review(&MutationIntent {
         target: "care_priorities".to_string(),
         change: json!({"efficiency": 0.7}),
@@ -330,7 +320,7 @@ fn full_e2e_two_cycles() {
     });
 
     // -- Continuity: record lineage --
-    let continuity = ContinuityLayer::new(Duration::hours(24));
+    let continuity = ContinuityLayer::new(Duration::hours(24), test_clock());
     continuity.record("aletheon", "0.1.0", "initialized");
     continuity.record("aletheon", "0.1.0", "cycle_1_complete");
 
@@ -347,13 +337,13 @@ fn full_e2e_two_cycles() {
     // SIMULATE RESTART: load all layers fresh from store
     // ================================================================
 
-    let mut narrative2 = NarrativeLayer::new(1000);
-    let mut attention2 = AttentionLayer::new(0.0);
+    let mut narrative2 = NarrativeLayer::new(1000, test_clock());
+    let mut attention2 = AttentionLayer::new(0.0, test_clock());
     let mut care2 = CareLayer::new();
     let mut boundary2 = BoundaryLayer::new();
-    let mut identity2 = IdentityLayer::new("temp", "temp", "0.0.0");
-    let mut mutation2 = MutationLayer::new();
-    let mut continuity2 = ContinuityLayer::new(Duration::hours(24));
+    let mut identity2 = IdentityLayer::new("temp", "temp", "0.0.0", test_clock());
+    let mut mutation2 = MutationLayer::new(test_clock());
+    let mut continuity2 = ContinuityLayer::new(Duration::hours(24), test_clock());
 
     narrative2.load_from_store(&store).unwrap();
     attention2.load_from_store(&store).unwrap();
@@ -370,15 +360,15 @@ fn full_e2e_two_cycles() {
     assert_eq!(attention2.all_topics().len(), 2);
     assert_eq!(attention2.current_focus().unwrap().topic, "code_review");
 
-    assert!(approx_eq(care2.weight_of("efficiency").unwrap(), 0.7));
-    assert!(approx_eq(care2.weight_of("learning").unwrap(), 0.45));
+    assert!(approx_eq(care2.weight_of("efficiency").unwrap(), 0.5));
+    assert!(approx_eq(care2.weight_of("learning").unwrap(), 0.3));
     assert!(approx_eq(care2.weight_of("safety").unwrap(), 1.0));
 
     assert_eq!(boundary2.rule_count(), 1);
-    let deploy_intent = base::Intent {
+    let deploy_intent = fabric::Intent {
         action: "deploy.prod".to_string(),
         parameters: json!({}),
-        source: base::IntentSource::User,
+        source: fabric::IntentSource::User,
         description: "deploy to production".to_string(),
     };
     assert!(matches!(
@@ -410,10 +400,6 @@ fn full_e2e_two_cycles() {
     // -- Add new attention topic --
     attention2.attend("evolution_tracking", 0.7);
 
-    // -- Adjust care weights again --
-    care2.adjust_weight("learning", 0.1); // 0.45 -> 0.55
-    care2.adjust_weight("safety", -0.1); // 1.0 -> 0.9 (safety floor = 0.8)
-
     // -- Relax the deploy boundary rule --
     assert!(boundary2.relax_rule("deploy.*"));
     // It should now be Sandbox (already was, but let's also add a new rule)
@@ -421,18 +407,10 @@ fn full_e2e_two_cycles() {
         action_pattern: "delete_*".to_string(),
         source_filter: None,
         action: BoundaryAction::RequireConfirmation,
-        risk_level: RiskLevel::Medium,
+        risk_level: AwarenessRiskLevel::Medium,
         description: "confirm deletes".to_string(),
         immutable: false,
     });
-
-    // -- Mutate identity --
-    identity2.mutate(
-        None,
-        Some("evolved persistent runtime".to_string()),
-        Some("0.2.0".to_string()),
-        "cycle 2 evolution",
-    );
 
     // -- Record another mutation review --
     mutation2.review(&MutationIntent {
@@ -443,7 +421,7 @@ fn full_e2e_two_cycles() {
     });
 
     // -- Extend continuity --
-    continuity2.record("aletheon", "0.2.0", "cycle_2_complete");
+    continuity2.record("aletheon", "0.1.0", "cycle_2_complete");
 
     // -- Save everything again --
     narrative2.save_to_store(&store).unwrap();
@@ -458,13 +436,13 @@ fn full_e2e_two_cycles() {
     // SIMULATE SECOND RESTART: verify accumulated evolution
     // ================================================================
 
-    let mut narrative3 = NarrativeLayer::new(1000);
-    let mut attention3 = AttentionLayer::new(0.0);
+    let mut narrative3 = NarrativeLayer::new(1000, test_clock());
+    let mut attention3 = AttentionLayer::new(0.0, test_clock());
     let mut care3 = CareLayer::new();
     let mut boundary3 = BoundaryLayer::new();
-    let mut identity3 = IdentityLayer::new("temp", "temp", "0.0.0");
-    let mut mutation3 = MutationLayer::new();
-    let mut continuity3 = ContinuityLayer::new(Duration::hours(24));
+    let mut identity3 = IdentityLayer::new("temp", "temp", "0.0.0", test_clock());
+    let mut mutation3 = MutationLayer::new(test_clock());
+    let mut continuity3 = ContinuityLayer::new(Duration::hours(24), test_clock());
 
     narrative3.load_from_store(&store).unwrap();
     attention3.load_from_store(&store).unwrap();
@@ -493,11 +471,11 @@ fn full_e2e_two_cycles() {
     assert!(topic_names.contains(&"refactoring".to_string()));
     assert!(topic_names.contains(&"evolution_tracking".to_string()));
 
-    // -- Care: accumulated adjustments --
-    assert!(approx_eq(care3.weight_of("efficiency").unwrap(), 0.7)); // unchanged from cycle 1
-    assert!(approx_eq(care3.weight_of("learning").unwrap(), 0.55)); // 0.45 + 0.1
-    assert!(approx_eq(care3.weight_of("safety").unwrap(), 0.9)); // 1.0 - 0.1
-    assert!(approx_eq(care3.weight_of("user_intent").unwrap(), 0.8)); // default, never touched
+    // -- Care: constitutional defaults remain unchanged --
+    assert!(approx_eq(care3.weight_of("efficiency").unwrap(), 0.5));
+    assert!(approx_eq(care3.weight_of("learning").unwrap(), 0.3));
+    assert!(approx_eq(care3.weight_of("safety").unwrap(), 1.0));
+    assert!(approx_eq(care3.weight_of("user_intent").unwrap(), 0.8));
 
     // -- Boundary: 2 rules now --
     assert_eq!(boundary3.rule_count(), 2);
@@ -509,10 +487,10 @@ fn full_e2e_two_cycles() {
     ));
 
     // delete rule should require confirmation
-    let delete_intent = base::Intent {
+    let delete_intent = fabric::Intent {
         action: "delete_user_data".to_string(),
         parameters: json!({}),
-        source: base::IntentSource::User,
+        source: fabric::IntentSource::User,
         description: "delete user data".to_string(),
     };
     assert!(matches!(
@@ -520,17 +498,12 @@ fn full_e2e_two_cycles() {
         Some(Verdict::RequireConfirmation { .. })
     ));
 
-    // -- Identity: evolved --
+    // -- Identity: constitutional identity remains unchanged --
     assert_eq!(identity3.current().name, "aletheon");
-    assert_eq!(identity3.current().version, "0.2.0");
-    assert_eq!(
-        identity3.current().description,
-        "evolved persistent runtime"
-    );
-    assert_eq!(identity3.mutation_count(), 1);
-    let history = identity3.history();
-    assert_eq!(history[0].identity.version, "0.1.0");
-    assert_eq!(history[0].reason, "cycle 2 evolution");
+    assert_eq!(identity3.current().version, "0.1.0");
+    assert_eq!(identity3.current().description, "persistent runtime");
+    assert_eq!(identity3.mutation_count(), 0);
+    assert!(identity3.history().is_empty());
 
     // -- Mutation: 2 records --
     assert_eq!(mutation3.records().len(), 2);
@@ -551,5 +524,5 @@ fn full_e2e_two_cycles() {
     assert_eq!(cont_records[0].event, "initialized");
     assert_eq!(cont_records[1].event, "cycle_1_complete");
     assert_eq!(cont_records[2].event, "cycle_2_complete");
-    assert_eq!(cont_records[2].identity_version, "0.2.0");
+    assert_eq!(cont_records[2].identity_version, "0.1.0");
 }

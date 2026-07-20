@@ -28,6 +28,10 @@ impl Tool for GlobTool {
                 "root": {
                     "type": "string",
                     "description": "Root directory to search from (default: current working directory)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum results (default: 200). Values above 2000 are capped."
                 }
             },
             "required": ["pattern"]
@@ -47,7 +51,7 @@ impl Tool for GlobTool {
     }
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = ctx.clock.mono_now();
 
         let pattern = match input.get("pattern").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
@@ -56,8 +60,9 @@ impl Tool for GlobTool {
                     content: "Error: 'pattern' parameter is required".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -69,7 +74,11 @@ impl Tool for GlobTool {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| ctx.working_dir.clone());
 
-        let max_results = 1000usize;
+        let max_results = input
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(200)
+            .min(2000) as usize;
 
         // Use walkdir + manual glob matching
         let glob_pattern = match GlobPattern::new(&pattern) {
@@ -79,8 +88,9 @@ impl Tool for GlobTool {
                     content: format!("Error: invalid glob pattern '{}': {}", pattern, e),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -122,8 +132,9 @@ impl Tool for GlobTool {
                 ),
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             }
         } else {
@@ -132,8 +143,9 @@ impl Tool for GlobTool {
                 content,
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated,
+                    patch_delta: None,
                 },
             }
         }
@@ -253,8 +265,12 @@ mod tests {
             .execute(
                 input,
                 &ToolContext {
+                    approval_authority: None,
+                    agent: None,
                     working_dir: root.to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
@@ -296,8 +312,12 @@ mod tests {
             .execute(
                 input,
                 &ToolContext {
+                    approval_authority: None,
+                    agent: None,
                     working_dir: root.to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
@@ -323,8 +343,12 @@ mod tests {
             .execute(
                 input,
                 &ToolContext {
+                    approval_authority: None,
+                    agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
@@ -343,8 +367,12 @@ mod tests {
             .execute(
                 input,
                 &ToolContext {
+                    approval_authority: None,
+                    agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;

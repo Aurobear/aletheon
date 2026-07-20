@@ -1,8 +1,13 @@
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::Utc;
+use fabric::Timer;
+use kernel::chronos::SystemTimer;
 use tokio::sync::mpsc;
+
+use fabric::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;
@@ -14,16 +19,18 @@ pub struct InotifySource {
     tx: mpsc::Sender<PerceptionEvent>,
     #[allow(dead_code)]
     event_id_counter: u64,
+    clock: Arc<dyn Clock>,
 }
 
 impl InotifySource {
-    pub fn new(watch_paths: Vec<PathBuf>) -> Self {
+    pub fn new(watch_paths: Vec<PathBuf>, clock: Arc<dyn Clock>) -> Self {
         let (tx, rx) = mpsc::channel(256);
         Self {
             watch_paths,
             rx,
             tx,
             event_id_counter: 0,
+            clock,
         }
     }
 
@@ -44,13 +51,14 @@ impl InotifySource {
             let tx = self.tx.clone();
             let watch_path = path.clone();
             let start_id = self.event_id_counter;
+            let clock = self.clock.clone();
 
             tokio::spawn(async move {
                 // Use a simple polling approach for now (inotify crate integration later)
                 let mut last_modified = std::collections::HashMap::new();
 
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    SystemTimer.sleep(Duration::from_secs(2)).await;
 
                     if let Ok(entries) = tokio::fs::read_dir(&watch_path).await {
                         let mut entries = entries;
@@ -70,7 +78,7 @@ impl InotifySource {
                                     let _ = tx
                                         .send(PerceptionEvent {
                                             id: start_id + last_modified.len() as u64,
-                                            timestamp: Utc::now(),
+                                            timestamp: clock.wall_now(),
                                             source: EventSource::Inotify,
                                             category: EventCategory::File,
                                             priority: Priority::Low,
@@ -81,7 +89,7 @@ impl InotifySource {
                                     let _ = tx
                                         .send(PerceptionEvent {
                                             id: start_id + last_modified.len() as u64 + 1000,
-                                            timestamp: Utc::now(),
+                                            timestamp: clock.wall_now(),
                                             source: EventSource::Inotify,
                                             category: EventCategory::File,
                                             priority: Priority::Low,

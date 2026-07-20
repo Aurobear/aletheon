@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use fabric::protocol::client::ClientRpcRequest;
 
 use super::cli::GoalAction;
 use super::rpc_client::send_rpc;
@@ -13,31 +14,14 @@ use super::rpc_client::send_rpc;
 /// Entry point dispatched from `handle_command`.
 pub async fn run(socket: &PathBuf, action: GoalAction) -> Result<()> {
     let req = match &action {
-        GoalAction::Set { description, scope } => serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "goal.set",
-            "params": { "description": description, "scope": scope }
-        }),
-        GoalAction::Show { id } => serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "goal.show",
-            "params": { "id": id }
-        }),
-        GoalAction::Status { id, state, filter } => serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "goal.status",
-            "params": { "id": id, "status": state, "filter": filter }
-        }),
-        GoalAction::Resume => serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "goal.resume",
-            "params": {}
-        }),
-    };
+        GoalAction::Set { description, scope } => ClientRpcRequest::goal_set(description, scope),
+        GoalAction::Show { id } => ClientRpcRequest::goal_show(*id),
+        GoalAction::Status { id, state, filter } => {
+            ClientRpcRequest::goal_status(*id, state.clone(), filter.clone())
+        }
+        GoalAction::Resume => ClientRpcRequest::GoalResume,
+    }
+    .to_json_rpc(Some(1))?;
 
     let resp = send_rpc(socket, &req).await?;
 

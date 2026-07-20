@@ -4,7 +4,7 @@
 //! core invariants (identity immutability, safety floors, weight ranges).
 //! Provides snapshot/compare/rollback for safe experimentation.
 
-use base::brain::BehaviorAdjustment;
+use fabric::cognit::BehaviorAdjustment;
 use serde::{Deserialize, Serialize};
 
 use crate::core::attention::FocusTopic;
@@ -209,7 +209,8 @@ impl EvolutionValidator {
     /// Apply a batch of adjustments to SelfField, validating each one.
     ///
     /// Only Approved and Modified adjustments are applied.
-    pub fn apply_adjustments(
+    #[cfg(test)]
+    pub(crate) fn apply_adjustments(
         &self,
         adjustments: &[BehaviorAdjustment],
         self_field: &mut SelfField,
@@ -238,6 +239,7 @@ impl EvolutionValidator {
     }
 
     /// Apply a single (already validated) adjustment to SelfField.
+    #[cfg(test)]
     fn apply_single(&self, adjustment: &BehaviorAdjustment, self_field: &mut SelfField) {
         if adjustment.target.starts_with("care.") {
             let parts: Vec<&str> = adjustment.target.split('.').collect();
@@ -274,7 +276,7 @@ impl EvolutionValidator {
 
         let boundary_rule_count = self_field.boundary().rule_count();
 
-        let attention_focus = self_field.attention().all_topics();
+        let attention_focus = self_field.attention_topics();
 
         BaselineSnapshot {
             care_weights,
@@ -320,7 +322,8 @@ impl EvolutionValidator {
     ///
     /// Restores care weights and boundary rule count. Attention focus
     /// is not rolled back as it represents real-time state.
-    pub fn rollback(&self, baseline: &BaselineSnapshot, self_field: &mut SelfField) {
+    #[cfg(test)]
+    pub(crate) fn rollback(&self, baseline: &BaselineSnapshot, self_field: &mut SelfField) {
         // Restore care weights
         for (topic, target_weight) in &baseline.care_weights {
             if let Some(current_weight) = self_field.care().weight_of(topic) {
@@ -352,10 +355,13 @@ mod tests {
     use super::*;
     use crate::core::boundary::{BoundaryAction, BoundaryRule};
     use crate::core::{SelfField, SelfFieldConfig};
-    use base::self_field::RiskLevel;
+    use fabric::self_field::AwarenessRiskLevel;
 
     fn make_self_field() -> SelfField {
-        SelfField::new(SelfFieldConfig::default())
+        SelfField::new(SelfFieldConfig {
+            clock: Some(std::sync::Arc::new(kernel::chronos::TestClock::default())),
+            ..SelfFieldConfig::default()
+        })
     }
 
     fn make_adjustment(
@@ -423,7 +429,7 @@ mod tests {
             action_pattern: "rm *".to_string(),
             source_filter: None,
             action: BoundaryAction::Deny,
-            risk_level: RiskLevel::Critical,
+            risk_level: AwarenessRiskLevel::Critical,
             description: "no rm".to_string(),
             immutable: true,
         });
@@ -557,7 +563,7 @@ mod tests {
             action_pattern: "test.*".to_string(),
             source_filter: None,
             action: BoundaryAction::Deny,
-            risk_level: RiskLevel::Low,
+            risk_level: AwarenessRiskLevel::Low,
             description: "test rule".to_string(),
             immutable: false,
         });

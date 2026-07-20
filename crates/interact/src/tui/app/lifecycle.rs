@@ -1,12 +1,17 @@
 use std::io;
 use std::io::Write;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use crossterm::event::Event;
+use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
+use fabric::Clock;
 use ratatui::Terminal;
 use tokio::net::UnixStream;
 
-use super::super::chat::Role as ChatRole;
+use crate::tui::host_time::ClientTimer;
+use fabric::Timer;
+
 use super::super::response::{
     format_evolution, format_genome, format_models, format_reflections, format_sessions,
     format_status, try_read_socket_with_recorder,
@@ -24,8 +29,10 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     model_name: String,
     test_config: TestConfig,
     is_test_mode: bool,
+    clock: Arc<dyn Clock>,
+    workspace: fabric::WorkspacePolicy,
 ) -> anyhow::Result<()> {
-    let mut app = App::new(stream, caps, model_name.clone());
+    let mut app = App::new(stream, caps, model_name.clone(), clock, workspace);
 
     // ── Test infrastructure setup ──
     let mut frame_recorder: Option<FrameRecorder> = test_config
@@ -43,11 +50,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         .as_ref()
         .and_then(|p| TestInputReader::new(p, test_config.auto_submit).ok());
 
-    let test_start = Instant::now();
+    let test_start = app.clock.mono_now();
     let test_timeout = Duration::from_secs(test_config.test_timeout);
+    let mut needs_redraw = true;
 
     // Clear daemon session on startup (avoids stale data from previous runs)
-    let clear_msg = serde_json::json!({"jsonrpc": "2.0", "method": "clear", "id": 0});
+    let clear_msg = ClientRpcRequest::Clear.to_json_rpc(Some(0))?;
     use tokio::io::AsyncWriteExt;
     let _ = app
         .stream
@@ -55,14 +63,8 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         .await;
     let _ = app.stream.flush().await;
     // Read and discard the clear response so it doesn't pollute the socket buffer
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    ClientTimer.sleep(Duration::from_millis(50)).await;
     let _ = app.stream.try_read(&mut app.read_buf);
-
-    // Welcome message
-    app.chat.add_text(
-        ChatRole::System,
-        "Welcome to aletheon! Type a message to get started.\nShift+Enter 换行 │ Enter 发送 │ Ctrl+C 清空/退出 │ /copy 复制 │ /help 帮助".to_string(),
-    );
 
     // If test mode with auto_submit, submit the first line immediately
     if let Some(ref mut reader) = test_input {
@@ -75,7 +77,9 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
     while app.running {
         // Test timeout check
-        if test_input.is_some() && test_start.elapsed() >= test_timeout {
+        if test_input.is_some()
+            && (app.clock.mono_now().0 - test_start.0) >= test_timeout.as_millis() as u64
+        {
             app.running = false;
             break;
         }
@@ -85,13 +89,22 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             app.chat.set_width(size.width);
         }
 
-        // Draw (and optionally record frame)
-        super::super::render::draw::draw_with_recorder(terminal, &mut app, &mut frame_recorder)?;
+        // Redraw only when state changed. This keeps idle and scroll handling
+        // cheap instead of rebuilding the complete terminal frame on a timer.
+        if needs_redraw {
+            super::super::render::draw::draw_with_recorder(
+                terminal,
+                &mut app,
+                &mut frame_recorder,
+            )?;
+            needs_redraw = false;
+        }
 
         // Check pending submit (IME delay)
         if let Some(pending_time) = app.pending_submit {
-            if pending_time.elapsed() > Duration::from_millis(100) {
+            if (app.clock.mono_now().0 - pending_time.0) > 100 {
                 app.pending_submit = None;
+                needs_redraw = true;
                 let text = app.input_buf.trim().to_string();
                 if !text.is_empty() {
                     app.input_buf.clear();
@@ -115,6 +128,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                 match crossterm::event::read()? {
                     Event::Key(key) => {
                         handle_key(&mut app, key).await;
+                        needs_redraw = true;
                     }
                     Event::Paste(text) => {
                         // Paste: insert at cursor
@@ -123,12 +137,15 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                             app.cursor += ch.len_utf8();
                         }
                         app.check_cjk();
+                        needs_redraw = true;
                     }
                     Event::Resize(w, _h) => {
                         app.chat.set_width(w);
+                        needs_redraw = true;
                     }
                     Event::Mouse(mouse) => {
                         handle_mouse(&mut app, mouse).await;
+                        needs_redraw = true;
                     }
                     _ => {}
                 }
@@ -144,12 +161,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                         break;
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+                _ = ClientTimer.sleep(Duration::from_millis(200)) => {}
             }
         }
 
         // Try reading daemon response (with optional event recording)
-        try_read_socket_with_recorder(&mut app, &mut event_recorder);
+        needs_redraw |= try_read_socket_with_recorder(&mut app, &mut event_recorder);
 
         // Check if a turn just completed and we should auto-submit next line
         if let Some(ref mut reader) = test_input {
@@ -159,7 +176,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             if !app.turn_active && !reader.is_exhausted() {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    ClientTimer.sleep(Duration::from_millis(100)).await;
                     submit_message(&mut app, next).await;
                 }
             }
@@ -171,6 +188,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
         if app.streaming {
             app.status.tick_spinner();
+            needs_redraw = true;
         }
     }
 
@@ -182,6 +200,8 @@ pub async fn simple_line_mode(
     mut stream: UnixStream,
     _caps: TermCaps,
     model_name: String,
+    _clock: Arc<dyn Clock>,
+    workspace: fabric::WorkspacePolicy,
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
 
@@ -210,56 +230,34 @@ pub async fn simple_line_mode(
             break;
         }
 
-        // Determine JSON-RPC method from slash commands
-        let msg = if trimmed.starts_with('/') {
+        // Select a typed daemon request from slash commands.
+        let request = if trimmed.starts_with('/') {
             let cmd = trimmed.strip_prefix('/').unwrap_or(trimmed);
             let (name, _args) = match cmd.find(' ') {
                 Some(i) => (&cmd[..i], cmd[i + 1..].trim()),
                 None => (cmd, ""),
             };
             match name {
-                "reflect" | "r" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "reflect", "id": 1
-                }),
-                "reflect_now" | "rn" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "reflect_now", "id": 1
-                }),
-                "evolution" | "evo" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "evolution", "id": 1
-                }),
-                "genome" | "gene" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "genome", "id": 1
-                }),
-                "clear" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "clear", "id": 1
-                }),
-                "status" | "st" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "status", "id": 1
-                }),
-                "sessions" | "sess" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "sessions", "id": 1
-                }),
-                "resume" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "resume", "id": 1,
-                    "params": { "session_id": _args }
-                }),
-                "compact" | "cmp" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "compact", "id": 1
-                }),
-                "model" | "m" => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "model_list", "id": 1
-                }),
-                _ => serde_json::json!({
-                    "jsonrpc": "2.0", "method": "chat", "id": 1,
-                    "params": { "message": trimmed }
-                }),
+                "reflect" | "r" => ClientRpcRequest::Reflect,
+                "reflect_now" | "rn" => ClientRpcRequest::ReflectNow,
+                "evolution" | "evo" => ClientRpcRequest::Evolution,
+                "genome" | "gene" => ClientRpcRequest::Genome,
+                "clear" => ClientRpcRequest::Clear,
+                "status" | "st" => ClientRpcRequest::Status,
+                "sessions" | "sess" => ClientRpcRequest::Sessions,
+                "resume" => ClientRpcRequest::resume(_args),
+                "compact" | "cmp" => ClientRpcRequest::Compact,
+                "model" | "m" => ClientRpcRequest::ModelList,
+                "cwd" => {
+                    println!("{}", workspace.cwd().display());
+                    continue;
+                }
+                _ => ClientRpcRequest::chat(trimmed, &workspace),
             }
         } else {
-            serde_json::json!({
-                "jsonrpc": "2.0", "method": "chat", "id": 1,
-                "params": { "message": trimmed }
-            })
+            ClientRpcRequest::chat(trimmed, &workspace)
         };
+        let msg = request.to_json_rpc(Some(1))?;
         let payload = serde_json::to_string(&msg)?;
         stream
             .write_all(format!("{}\n", payload).as_bytes())
@@ -268,10 +266,10 @@ pub async fn simple_line_mode(
 
         // Wait for response — drain out-of-band notifications until we get
         // the actual JSON-RPC response (identified by having "id" + "result"/"error").
-        // Use tokio::time::timeout for clean timeout handling.
+        // Use Timer::timeout for clean timeout handling.
         let timeout_duration = Duration::from_secs(120);
 
-        let result = tokio::time::timeout(timeout_duration, async {
+        let result = ClientTimer.timeout(timeout_duration, async {
             loop {
                 // Wait for stream to be readable
                 match stream.readable().await {
@@ -307,22 +305,20 @@ pub async fn simple_line_mode(
                                 io::stdout().flush()?;
                                 let mut line = String::new();
                                 let decision = match stdin.read_line(&mut line) {
-                                    Ok(0) | Err(_) => "deny",
+                                    Ok(0) | Err(_) => TransientApprovalDecision::Deny,
                                     Ok(_) => match line.trim().to_lowercase().as_str() {
-                                        "y" | "yes" => "approve",
-                                        "a" | "always" => "approve_for_session",
-                                        _ => "deny",
+                                        "y" | "yes" => TransientApprovalDecision::Approve,
+                                        "a" | "always" => {
+                                            TransientApprovalDecision::ApproveForSession
+                                        }
+                                        _ => TransientApprovalDecision::Deny,
                                     },
                                 };
-                                let resp = serde_json::json!({
-                                    "jsonrpc": "2.0",
-                                    "id": null,
-                                    "method": "approval_response",
-                                    "params": {
-                                        "approval_id": approval_id,
-                                        "decision": decision,
-                                    }
-                                });
+                                let resp = ClientRpcRequest::approval_response(
+                                    approval_id,
+                                    decision,
+                                )
+                                .to_json_rpc(None)?;
                                 let payload = serde_json::to_string(&resp)?;
                                 stream
                                     .write_all(format!("{}\n", payload).as_bytes())
@@ -389,7 +385,7 @@ pub async fn simple_line_mode(
                         }
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        ClientTimer.sleep(Duration::from_millis(50)).await;
                     }
                     Err(_) => return Ok(()),
                 }

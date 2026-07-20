@@ -3,8 +3,8 @@
 //! Wraps an `Arc<dyn LlmProvider>` behind a purpose-based interface.
 
 use anyhow::Result;
-use base::message::Message;
-use cognit::llm::provider::{LlmProvider, LlmResponse};
+use fabric::message::Message;
+use fabric::{LlmProvider, LlmResponse};
 use std::sync::Arc;
 
 pub struct LlmBridge {

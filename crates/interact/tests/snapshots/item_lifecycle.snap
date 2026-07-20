@@ -1,0 +1,34 @@
+{
+  "cursor": 3,
+  "provider": "openai",
+  "model": "gpt-5",
+  "items": [
+    {
+      "id": "00000000-0000-0000-0000-00000000000c",
+      "sequence": 2,
+      "kind": "tool_result",
+      "content": "42 lines",
+      "status": "completed",
+      "collapsed": true
+    },
+    {
+      "id": "assistant-stream",
+      "sequence": 0,
+      "kind": "assistant",
+      "content": "hello",
+      "status": "streaming",
+      "collapsed": false
+    },
+    {
+      "id": "failed",
+      "sequence": 0,
+      "kind": "assistant",
+      "content": "tool denied",
+      "status": "failed",
+      "collapsed": false
+    }
+  ],
+  "approvals": [],
+  "agents": [],
+  "error": null
+}

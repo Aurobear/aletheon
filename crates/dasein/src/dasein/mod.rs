@@ -9,14 +9,16 @@ pub mod bewandtnis;
 pub mod care_structure;
 pub mod context_injection;
 pub mod event_bridge;
+pub mod ledger;
 pub mod negativity;
 pub mod persistence;
+pub mod reducer;
 pub mod self_model;
 pub mod sorge;
 pub mod temporality;
 pub mod types;
 
-pub use base::dasein::*;
+pub use fabric::dasein::*;
 
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -26,9 +28,10 @@ use bewandtnis::Bewandtnisganzheit;
 use care_structure::CareStructure;
 use context_injection::format_dasein_context;
 pub use event_bridge::DaseinEventBridge;
-use negativity::NegativityEngine;
+use ledger::SelfLedger;
+use reducer::DaseinStateEngine;
 use self_model::MutableSelfModel;
-use sorge::SorgeLoop;
+use sorge::{SorgeLoop, SorgeTimer, SystemSorgeTimer};
 use temporality::TemporalStream;
 
 /// DaseinModule — the existential substrate of SelfField.
@@ -45,53 +48,116 @@ pub struct DaseinModule {
     world: Arc<Bewandtnisganzheit>,
     self_model: Arc<MutableSelfModel>,
     care: Arc<CareStructure>,
-    negativity: Arc<NegativityEngine>,
+    engine: Arc<DaseinStateEngine>,
 
     // Runtime
     sorge: SorgeLoop,
     event_tx: mpsc::Sender<DaseinEvent>,
+    #[allow(dead_code)]
+    clock: Arc<dyn fabric::Clock>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DaseinRuntimeConfig {
+    pub retention_depth: usize,
+    pub decay_rate: f64,
+    pub event_buffer: usize,
+}
+
+impl Default for DaseinRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            retention_depth: 50,
+            decay_rate: 0.8,
+            event_buffer: 256,
+        }
+    }
+}
+
+impl DaseinRuntimeConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.retention_depth > 0,
+            "Dasein retention depth must be nonzero"
+        );
+        anyhow::ensure!(
+            self.decay_rate.is_finite() && (0.0..=1.0).contains(&self.decay_rate),
+            "Dasein decay rate must be between 0 and 1"
+        );
+        anyhow::ensure!(self.event_buffer > 0, "Dasein event buffer must be nonzero");
+        Ok(())
+    }
 }
 
 impl DaseinModule {
-    pub fn new() -> (Self, mpsc::Sender<DaseinEvent>) {
-        let (sorge, event_tx) = SorgeLoop::new(256);
+    pub fn new(clock: Arc<dyn fabric::Clock>) -> (Self, mpsc::Sender<DaseinEvent>) {
+        Self::with_runtime(
+            clock,
+            Arc::new(SystemSorgeTimer),
+            DaseinRuntimeConfig::default(),
+        )
+        .expect("default Dasein runtime config is valid")
+    }
+
+    pub fn with_runtime(
+        clock: Arc<dyn fabric::Clock>,
+        timer: Arc<dyn SorgeTimer>,
+        config: DaseinRuntimeConfig,
+    ) -> anyhow::Result<(Self, mpsc::Sender<DaseinEvent>)> {
+        Self::with_runtime_and_ledger(clock, timer, config, None)
+    }
+
+    pub fn with_runtime_and_ledger(
+        clock: Arc<dyn fabric::Clock>,
+        timer: Arc<dyn SorgeTimer>,
+        config: DaseinRuntimeConfig,
+        ledger: Option<Arc<SelfLedger>>,
+    ) -> anyhow::Result<(Self, mpsc::Sender<DaseinEvent>)> {
+        config.validate()?;
+        let (sorge, event_tx) = SorgeLoop::new(config.event_buffer, clock.clone(), timer);
         let external_tx = event_tx.clone();
 
-        let temporality = Arc::new(TemporalStream::new(50, 0.8));
+        let temporality = Arc::new(TemporalStream::new(
+            config.retention_depth,
+            config.decay_rate,
+        ));
         let world = Arc::new(Bewandtnisganzheit::new());
         let self_model = Arc::new(MutableSelfModel::new());
         let care = Arc::new(CareStructure::new());
-        let negativity = Arc::new(NegativityEngine::default());
+        let mood = Arc::new(RwLock::new(Stimmung::Gelassenheit));
+        let engine = Arc::new(DaseinStateEngine::new(
+            temporality.clone(),
+            world.clone(),
+            self_model.clone(),
+            care.clone(),
+            mood.clone(),
+            clock.clone(),
+            ledger,
+        ));
 
         let module = Self {
-            mood: Arc::new(RwLock::new(Stimmung::Gelassenheit)),
+            mood,
             temporality,
             world,
             self_model,
             care,
-            negativity,
+            engine,
             sorge,
             event_tx,
+            clock,
         };
 
-        (module, external_tx)
+        Ok((module, external_tx))
     }
 
     /// Start the sorge loop.
-    pub fn start_sorge_loop(&self) -> Option<tokio::task::JoinHandle<()>> {
-        self.sorge.start(
-            self.temporality.clone(),
-            self.world.clone(),
-            self.self_model.clone(),
-            self.care.clone(),
-            self.negativity.clone(),
-            self.mood.clone(),
-        )
+    pub fn start_sorge_loop(&self) -> bool {
+        self.sorge.start(self.engine.clone())
     }
 
     /// Stop the sorge loop.
-    pub fn stop_sorge_loop(&self) {
-        self.sorge.stop();
+    pub async fn stop_sorge_loop(&self) {
+        self.sorge.stop().await;
     }
 
     /// Check if the sorge loop is alive.
@@ -104,14 +170,78 @@ impl DaseinModule {
         self.mood.read().clone()
     }
 
-    /// Get raw mood RwLock for persistence.
-    pub fn mood_raw(&self) -> &parking_lot::RwLock<Stimmung> {
-        &self.mood
-    }
-
     /// Get the event sender for external events.
     pub fn event_sender(&self) -> mpsc::Sender<DaseinEvent> {
         self.event_tx.clone()
+    }
+
+    pub async fn transition(
+        &self,
+        request: SelfTransitionRequest,
+    ) -> anyhow::Result<SelfTransitionReceipt> {
+        self.engine.transition(request).await
+    }
+
+    pub async fn self_version(&self) -> SelfVersion {
+        self.engine.version().await
+    }
+
+    pub async fn narrative_reference_count(&self) -> usize {
+        self.engine.narrative_len().await
+    }
+
+    pub async fn record_outcome(
+        &self,
+        summary: impl Into<String>,
+        status: OutcomeStatus,
+        producer: &str,
+    ) -> anyhow::Result<SelfTransitionReceipt> {
+        self.engine
+            .transition_current(
+                ExperienceSource::Runtime,
+                producer,
+                InterpretedExperience::Outcome {
+                    summary: summary.into(),
+                    status,
+                },
+            )
+            .await
+    }
+
+    pub(crate) async fn transition_current_for_restore(
+        &self,
+        source: ExperienceSource,
+        producer: &str,
+        content: InterpretedExperience,
+    ) -> anyhow::Result<SelfTransitionReceipt> {
+        self.engine
+            .transition_current(source, producer, content)
+            .await
+    }
+
+    pub async fn replay_durable_state(&self) -> anyhow::Result<usize> {
+        self.engine.replay().await
+    }
+
+    pub async fn record_resumption_after_replay(
+        &self,
+    ) -> anyhow::Result<Option<SelfTransitionReceipt>> {
+        let Some(last_observed) = self.engine.last_durable_observed_at()? else {
+            return Ok(None);
+        };
+        let elapsed_ms = self.clock.wall_now().0.saturating_sub(last_observed.0) as u64;
+        self.engine
+            .transition_current(
+                ExperienceSource::Dasein,
+                "dasein-restart",
+                InterpretedExperience::ResumedAfterInterval { elapsed_ms },
+            )
+            .await
+            .map(Some)
+    }
+
+    pub fn checkpoint_durable_state(&self) -> anyhow::Result<()> {
+        self.engine.checkpoint()
     }
 
     /// Generate context injection for LLM.
@@ -131,10 +261,11 @@ impl DaseinModule {
         format_dasein_context(&ctx)
     }
 
-    /// Fast-path mood update based on turn text content.
-    /// Uses keyword matching for quick transitions without deep analysis.
+    /// Legacy keyword adapter. It never mutates state directly; when Sorge is
+    /// running, the inferred observation is queued through the reducer.
+    #[deprecated(note = "use record_outcome with an explicit OutcomeStatus")]
     pub fn quick_mood_update(&self, turn_text: &str) -> Stimmung {
-        let mut mood = self.mood.write();
+        let mood = self.mood.read().clone();
         let new_mood = if turn_text.contains("error") || turn_text.contains("failed") {
             Stimmung::Geknickt {
                 because: "turn had errors".to_string(),
@@ -146,14 +277,12 @@ impl DaseinModule {
         } else {
             mood.clone()
         };
-        let changed = std::mem::discriminant(&*mood) != std::mem::discriminant(&new_mood);
+        let changed = std::mem::discriminant(&mood) != std::mem::discriminant(&new_mood);
         if changed {
-            let old = mood.clone();
-            *mood = new_mood.clone();
             let _ = self.event_tx.try_send(DaseinEvent::MoodShift {
-                from: old,
+                from: mood,
                 to: new_mood.clone(),
-                reason: "quick_update_after_turn".to_string(),
+                reason: "legacy keyword compatibility adapter".to_string(),
             });
         }
         new_mood
@@ -177,9 +306,10 @@ impl DaseinModule {
     }
 }
 
+#[cfg(test)]
 impl Default for DaseinModule {
     fn default() -> Self {
-        Self::new().0
+        Self::new(Arc::new(kernel::chronos::TestClock::default())).0
     }
 }
 
@@ -209,20 +339,30 @@ impl DaseinOps for DaseinModule {
         self.to_context_injection()
     }
 
-    async fn handle_event(&self, event: DaseinEvent) -> anyhow::Result<()> {
-        self.event_tx
-            .send(event)
+    async fn transition(
+        &self,
+        request: SelfTransitionRequest,
+    ) -> anyhow::Result<SelfTransitionReceipt> {
+        DaseinModule::transition(self, request).await
+    }
+
+    async fn self_version(&self) -> SelfVersion {
+        DaseinModule::self_version(self).await
+    }
+
+    async fn handle_event(&self, event: DaseinEvent) -> anyhow::Result<SelfTransitionReceipt> {
+        self.engine
+            .apply_compat_event(event, "dasein-ops-compatibility")
             .await
-            .map_err(|e| anyhow::anyhow!("failed to send event: {}", e))
     }
 
     async fn start_sorge_loop(&self) -> anyhow::Result<()> {
-        self.start_sorge_loop();
+        DaseinModule::start_sorge_loop(self);
         Ok(())
     }
 
     async fn stop_sorge_loop(&self) -> anyhow::Result<()> {
-        self.stop_sorge_loop();
+        DaseinModule::stop_sorge_loop(self).await;
         Ok(())
     }
 
@@ -235,16 +375,20 @@ impl DaseinOps for DaseinModule {
 mod tests {
     use super::*;
 
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(kernel::chronos::TestClock::default())
+    }
+
     #[test]
     fn test_dasein_module_creation() {
-        let (module, _tx) = DaseinModule::new();
+        let (module, _tx) = DaseinModule::new(test_clock());
         assert_eq!(module.mood(), Stimmung::Gelassenheit);
         assert!(!module.is_alive()); // sorge not started yet
     }
 
     #[test]
     fn test_context_injection() {
-        let (module, _tx) = DaseinModule::new();
+        let (module, _tx) = DaseinModule::new(test_clock());
 
         // Add some state
         module.self_model().assert(self_model::SelfAssertion {
@@ -265,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_format_context_not_empty() {
-        let (module, _tx) = DaseinModule::new();
+        let (module, _tx) = DaseinModule::new(test_clock());
         let formatted = module.format_context();
         assert!(!formatted.is_empty());
         assert!(formatted.contains("Existential State"));
@@ -279,7 +423,7 @@ mod tests {
 
     #[test]
     fn test_snapshots() {
-        let (module, _tx) = DaseinModule::new();
+        let (module, _tx) = DaseinModule::new(test_clock());
 
         let temporal = module.temporality_snapshot();
         assert_eq!(temporal.tempo, 1.0);
@@ -296,21 +440,21 @@ mod tests {
 
     #[test]
     fn test_event_sender_available() {
-        let (module, _tx) = DaseinModule::new();
+        let (module, _tx) = DaseinModule::new(test_clock());
         let _sender = module.event_sender();
         // Just verify we can get a sender without panicking
     }
 
     #[test]
     fn test_quick_mood_update_error() {
-        let (module, _rx) = DaseinModule::new();
+        let (module, _rx) = DaseinModule::new(test_clock());
         let mood = module.quick_mood_update("operation failed with error");
         assert!(matches!(mood, Stimmung::Geknickt { .. }));
     }
 
     #[test]
     fn test_quick_mood_update_success() {
-        let (module, _rx) = DaseinModule::new();
+        let (module, _rx) = DaseinModule::new(test_clock());
         let mood = module.quick_mood_update("task completed successfully");
         assert!(matches!(mood, Stimmung::Gelaunt { .. }));
     }

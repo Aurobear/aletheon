@@ -76,6 +76,35 @@ impl FilesystemPolicy {
         }
     }
 
+    /// Materialize the exact canonical workspace authority used by structured
+    /// mutation tools. Only contract-defined metadata and explicitly supplied
+    /// credential paths are re-protected.
+    pub fn from_workspace(workspace: &fabric::WorkspacePolicy) -> Self {
+        let writable_roots = workspace
+            .writable_roots()
+            .iter()
+            .map(|root| {
+                let mut writable = WritableRoot::new(root.clone())
+                    .with_read_only(".git")
+                    .with_read_only(".aletheon");
+                for credential in workspace.protected_paths().credential_paths() {
+                    if let Ok(relative) = credential.strip_prefix(root) {
+                        if !relative.as_os_str().is_empty() {
+                            writable = writable.with_read_only(relative);
+                        }
+                    }
+                }
+                writable
+            })
+            .collect();
+        Self {
+            default: FsDefault::ReadOnly,
+            writable_roots,
+            protected_metadata: Vec::new(),
+            unreadable_globs: Vec::new(),
+        }
+    }
+
     /// Returns `true` if the default mode is read-only.
     pub fn is_read_only_default(&self) -> bool {
         self.default == FsDefault::ReadOnly

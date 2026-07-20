@@ -3,20 +3,28 @@
 //! Detects behavioral patterns (repeated topics, repeated failures, success strategies)
 //! and generates behavior adjustment suggestions.
 
-use base::brain::{BehaviorAdjustment, EvolutionLogEntry, ReflectionEntry, ReflectionOutcome};
+use fabric::cognit::{BehaviorAdjustment, EvolutionLogEntry, ReflectionEntry, ReflectionOutcome};
+use fabric::Clock;
+use std::sync::Arc;
 
 /// ExperienceSummarizer — analyzes accumulated reflections and produces evolution log entries.
 ///
 /// Detects behavioral patterns (repeated topics, repeated failures, success strategies)
 /// and generates behavior adjustment suggestions.
-pub struct ExperienceSummarizer;
+pub struct ExperienceSummarizer {
+    clock: Arc<dyn Clock>,
+}
 
 impl ExperienceSummarizer {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self { clock }
+    }
+
     /// Analyze a batch of reflections and produce an EvolutionLogEntry.
     ///
     /// Returns `None` if no patterns are detected (fewer than 2 reflections
     /// and no significant signal).
-    pub fn summarize(reflections: &[ReflectionEntry]) -> Option<EvolutionLogEntry> {
+    pub fn summarize(&self, reflections: &[ReflectionEntry]) -> Option<EvolutionLogEntry> {
         if reflections.is_empty() {
             return None;
         }
@@ -129,7 +137,7 @@ impl ExperienceSummarizer {
 
         Some(EvolutionLogEntry {
             id: format!("evo-{}", uuid::Uuid::new_v4()),
-            timestamp: chrono::Utc::now(),
+            timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
             trigger: "periodic_review".to_string(),
             basis,
             patterns_detected: patterns,

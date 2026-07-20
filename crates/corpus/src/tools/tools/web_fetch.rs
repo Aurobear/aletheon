@@ -1,5 +1,7 @@
 //! Web fetch tool — HTTP requests with response capping.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -7,7 +9,28 @@ use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024; // 1 MB
 
-pub struct WebFetchTool;
+pub struct WebFetchTool {
+    network_policy: Arc<fabric::network_policy::NetworkPolicy>,
+}
+
+impl WebFetchTool {
+    pub fn new() -> Self {
+        Self {
+            network_policy: Arc::new(fabric::network_policy::NetworkPolicy::default()),
+        }
+    }
+
+    pub fn with_network_policy(mut self, policy: fabric::network_policy::NetworkPolicy) -> Self {
+        self.network_policy = Arc::new(policy);
+        self
+    }
+}
+
+impl Default for WebFetchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl Tool for WebFetchTool {
@@ -46,11 +69,13 @@ impl Tool for WebFetchTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        Box::new(WebFetchTool)
+        Box::new(Self {
+            network_policy: self.network_policy.clone(),
+        })
     }
 
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let url = match input.get("url").and_then(|v| v.as_str()) {
             Some(u) => u.to_string(),
@@ -59,12 +84,28 @@ impl Tool for WebFetchTool {
                     content: "Error: 'url' parameter is required".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
         };
+
+        // Validate against network policy before making the request.
+        {
+            if let Err(reason) = self.network_policy.allows_url(&url) {
+                return ToolResult {
+                    content: format!("Error: Network policy blocked URL: {}", reason),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                        truncated: false,
+                        patch_delta: None,
+                    },
+                };
+            }
+        }
 
         let method = input
             .get("method")
@@ -95,14 +136,15 @@ impl Tool for WebFetchTool {
                     content: format!("Error: unsupported method '{}'. Use GET or POST.", method),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
         };
 
-        let elapsed = start.elapsed().as_millis() as u64;
+        let elapsed = ctx.clock.mono_now().0.saturating_sub(start.0);
 
         match request.send().await {
             Ok(response) => {
@@ -144,6 +186,7 @@ impl Tool for WebFetchTool {
                             metadata: ToolResultMeta {
                                 execution_time_ms: elapsed,
                                 truncated,
+                                patch_delta: None,
                             },
                         }
                     }
@@ -153,6 +196,7 @@ impl Tool for WebFetchTool {
                         metadata: ToolResultMeta {
                             execution_time_ms: elapsed,
                             truncated: false,
+                            patch_delta: None,
                         },
                     },
                 }
@@ -163,6 +207,7 @@ impl Tool for WebFetchTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -172,17 +217,18 @@ impl Tool for WebFetchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fabric::network_policy::NetworkPolicy;
 
     #[test]
     fn test_tool_metadata() {
-        let tool = WebFetchTool;
+        let tool = WebFetchTool::new();
         assert_eq!(tool.name(), "web_fetch");
         assert_eq!(tool.permission_level(), PermissionLevel::L1);
     }
 
     #[test]
     fn test_input_schema() {
-        let tool = WebFetchTool;
+        let tool = WebFetchTool::new();
         let schema = tool.input_schema();
 
         // Verify required fields
@@ -198,7 +244,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_url() {
-        let tool = WebFetchTool;
+        let tool = WebFetchTool::new();
         let input = json!({});
         let tmp = tempfile::tempdir().unwrap();
 
@@ -206,8 +252,12 @@ mod tests {
             .execute(
                 input,
                 &ToolContext {
+                    approval_authority: None,
+                    agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
@@ -218,7 +268,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_unsupported_method() {
-        let tool = WebFetchTool;
+        let tool = WebFetchTool::new().with_network_policy(NetworkPolicy {
+            default_action: fabric::network_policy::NetworkDefaultAction::Allow,
+            allow_dns: true,
+            ..Default::default()
+        });
         let input = json!({
             "url": "http://example.com",
             "method": "DELETE"
@@ -229,13 +283,116 @@ mod tests {
             .execute(
                 input,
                 &ToolContext {
+                    approval_authority: None,
+                    agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
 
         assert!(result.is_error);
         assert!(result.content.contains("unsupported method"));
+    }
+
+    #[tokio::test]
+    async fn test_network_policy_blocks_denied_host() {
+        let policy = NetworkPolicy {
+            deny_hosts: vec!["evil.com".into()],
+            allow_dns: true,
+            ..Default::default()
+        };
+        let tool = WebFetchTool::new().with_network_policy(policy);
+        let input = json!({
+            "url": "https://evil.com/path",
+            "method": "GET"
+        });
+        let tmp = tempfile::tempdir().unwrap();
+
+        let result = tool
+            .execute(
+                input,
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
+                },
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert!(result.content.contains("Network policy blocked URL"));
+    }
+
+    #[tokio::test]
+    async fn test_network_policy_allows_clearn_url() {
+        let policy = NetworkPolicy {
+            allow_hosts: vec!["httpbin.org".into()],
+            allow_dns: true,
+            ..Default::default()
+        };
+        let tool = WebFetchTool::new().with_network_policy(policy);
+        let input = json!({
+            "url": "http://httpbin.org/get",
+            "method": "GET"
+        });
+        let tmp = tempfile::tempdir().unwrap();
+
+        let result = tool
+            .execute(
+                input,
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
+                },
+            )
+            .await;
+
+        // Should not be a network policy error — it should either make the request
+        // (possibly failing due to DNS/network) or succeed. The key is it's not blocked.
+        assert!(
+            !result.content.contains("Network policy blocked URL"),
+            "allowed URL was blocked by policy: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_default_network_policy_denies_all() {
+        let tool = WebFetchTool::new();
+        let input = json!({
+            "url": "https://some-random-site-12345.example",
+            "method": "GET"
+        });
+        let tmp = tempfile::tempdir().unwrap();
+
+        let result = tool
+            .execute(
+                input,
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
+                },
+            )
+            .await;
+
+        assert!(
+            result.content.contains("Network policy blocked"),
+            "default policy should block: {}",
+            result.content
+        );
     }
 }

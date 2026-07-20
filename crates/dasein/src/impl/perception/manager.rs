@@ -1,6 +1,9 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+
+use fabric::Clock;
 
 use super::aggregator::EventAggregator;
 use super::event::*;
@@ -24,24 +27,25 @@ impl PerceptionManager {
         event_tx: mpsc::Sender<PerceptionEvent>,
         watch_paths: Vec<PathBuf>,
         enable_journald: bool,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         let inotify = if !watch_paths.is_empty() {
-            Some(InotifySource::new(watch_paths))
+            Some(InotifySource::new(watch_paths, clock.clone()))
         } else {
             None
         };
 
         let journald = if enable_journald {
-            Some(JournaldSource::new(4)) // warning and above
+            Some(JournaldSource::new(4, clock.clone())) // warning and above
         } else {
             None
         };
 
         Self {
-            proc_source: ProcSource::new(),
+            proc_source: ProcSource::new(clock.clone()),
             inotify_source: inotify,
             journald_source: journald,
-            aggregator: EventAggregator::new(),
+            aggregator: EventAggregator::new(clock),
             event_tx,
             poll_interval: std::time::Duration::from_secs(5),
         }

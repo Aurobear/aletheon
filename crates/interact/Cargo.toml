@@ -7,8 +7,7 @@ license.workspace = true
 description = "User interaction: TUI, CLI, and ACIX"
 
 [dependencies]
-base = { path = "../base" }
-corpus = { path = "../corpus", features = ["input", "display", "a11y", "ocr"] }
+fabric = { path = "../fabric" }
 anyhow = "1"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
@@ -28,5 +27,7 @@ chrono = { version = "0.4", features = ["serde"] }
 ctrlc = "3"
 
 [dev-dependencies]
+executive = { path = "../executive" }
 tempfile = "3"
+tokio-util = { workspace = true }
 uuid = { version = "1", features = ["v4"] }

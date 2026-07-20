@@ -1,18 +1,22 @@
 use super::outcome::OutcomeRecord;
 use super::rule::LearnRule;
+use fabric::Clock;
+use std::sync::Arc;
 use tracing::info;
 
 /// Extracts patterns from outcomes to generate learning rules.
 pub struct PatternExtractor {
     min_occurrences: usize,
     success_threshold: f64,
+    clock: Arc<dyn Clock>,
 }
 
 impl PatternExtractor {
-    pub fn new(min_occurrences: usize, success_threshold: f64) -> Self {
+    pub fn new(min_occurrences: usize, success_threshold: f64, clock: Arc<dyn Clock>) -> Self {
         Self {
             min_occurrences,
             success_threshold,
+            clock,
         }
     }
 
@@ -55,7 +59,7 @@ impl PatternExtractor {
                     action: "warn_before_execute".to_string(),
                     examples: common_errors.into_iter().take(5).collect(),
                     confidence: 1.0 - success_rate,
-                    created_at: chrono::Utc::now(),
+                    created_at: fabric::wall_to_datetime(self.clock.wall_now()),
                 };
 
                 info!(tool = tool_name, rule = %rule.id, "Extracted warning rule");
@@ -73,7 +77,7 @@ impl PatternExtractor {
                     action: "suggest_alternative".to_string(),
                     examples: pattern.examples,
                     confidence: pattern.confidence,
-                    created_at: chrono::Utc::now(),
+                    created_at: fabric::wall_to_datetime(self.clock.wall_now()),
                 };
                 rules.push(rule);
             }

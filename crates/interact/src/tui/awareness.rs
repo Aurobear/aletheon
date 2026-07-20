@@ -18,24 +18,24 @@ impl AwarenessWidget {
             awareness.level.icon().to_string()
         } else {
             match awareness.level {
-                base::ui_event::AwarenessLevel::Confident => "OK".to_string(),
-                base::ui_event::AwarenessLevel::Hesitant => "??".to_string(),
-                base::ui_event::AwarenessLevel::Confused => "!!".to_string(),
-                base::ui_event::AwarenessLevel::Curious => "??".to_string(),
-                base::ui_event::AwarenessLevel::Planning => "PL".to_string(),
-                base::ui_event::AwarenessLevel::Reflecting => "RF".to_string(),
-                base::ui_event::AwarenessLevel::Evolving => "EV".to_string(),
+                fabric::ui_event::AwarenessLevel::Confident => "OK".to_string(),
+                fabric::ui_event::AwarenessLevel::Hesitant => "??".to_string(),
+                fabric::ui_event::AwarenessLevel::Confused => "!!".to_string(),
+                fabric::ui_event::AwarenessLevel::Curious => "??".to_string(),
+                fabric::ui_event::AwarenessLevel::Planning => "PL".to_string(),
+                fabric::ui_event::AwarenessLevel::Reflecting => "RF".to_string(),
+                fabric::ui_event::AwarenessLevel::Evolving => "EV".to_string(),
             }
         };
 
         let color = match awareness.level {
-            base::ui_event::AwarenessLevel::Confident => Color::Green,
-            base::ui_event::AwarenessLevel::Hesitant => Color::Yellow,
-            base::ui_event::AwarenessLevel::Confused => Color::Red,
-            base::ui_event::AwarenessLevel::Curious => Color::Cyan,
-            base::ui_event::AwarenessLevel::Planning => Color::Magenta,
-            base::ui_event::AwarenessLevel::Reflecting => Color::DarkGray,
-            base::ui_event::AwarenessLevel::Evolving => Color::Yellow,
+            fabric::ui_event::AwarenessLevel::Confident => Color::Green,
+            fabric::ui_event::AwarenessLevel::Hesitant => Color::Yellow,
+            fabric::ui_event::AwarenessLevel::Confused => Color::Red,
+            fabric::ui_event::AwarenessLevel::Curious => Color::Cyan,
+            fabric::ui_event::AwarenessLevel::Planning => Color::Magenta,
+            fabric::ui_event::AwarenessLevel::Reflecting => Color::DarkGray,
+            fabric::ui_event::AwarenessLevel::Evolving => Color::Yellow,
         };
 
         Span::styled(
@@ -46,8 +46,12 @@ impl AwarenessWidget {
 
     /// Render an inline message for notable awareness transitions.
     /// Returns None if no inline message should be shown.
-    pub fn render_inline(awareness: &AwarenessState, caps: &TermCaps) -> Option<Line<'static>> {
-        if !awareness.should_show_inline() {
+    pub fn render_inline(
+        awareness: &AwarenessState,
+        caps: &TermCaps,
+        now: fabric::MonoTime,
+    ) -> Option<Line<'static>> {
+        if !awareness.should_show_inline(now) {
             return None;
         }
 

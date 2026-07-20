@@ -5,7 +5,7 @@
 //! Orchestrates the MetaRuntimeOps trait methods in sequence.
 
 use anyhow::Result;
-use base::{Evaluation, MetaRuntimeOps, MigrationResult, MutationIntent, RuntimeCandidate};
+use fabric::{Evaluation, MetaRuntimeOps, MigrationResult, MutationIntent, RuntimeCandidate};
 
 /// Orchestrates the full morphogenesis pipeline.
 pub struct MorphogenesisPipeline<M: MetaRuntimeOps> {
@@ -66,7 +66,7 @@ impl<M: MetaRuntimeOps> MorphogenesisPipeline<M> {
 
         // Step 4: Migrate if recommended, otherwise roll back the pre-generation snapshot.
         let (migration, rolled_back) = match &evaluation.recommendation {
-            base::meta::Recommendation::Adopt => {
+            fabric::meta::Recommendation::Adopt => {
                 let result = self.meta_runtime.migrate(&candidate).await?;
                 tracing::info!(
                     "Migration successful: {} -> {}",
@@ -75,7 +75,7 @@ impl<M: MetaRuntimeOps> MorphogenesisPipeline<M> {
                 );
                 (Some(result), false)
             }
-            base::meta::Recommendation::PartialAdopt { changes } => {
+            fabric::meta::Recommendation::PartialAdopt { changes } => {
                 tracing::info!("Partial adopt with {} changes — migrating", changes.len());
                 let result = self.meta_runtime.migrate(&candidate).await?;
                 (Some(result), false)
@@ -137,11 +137,16 @@ pub struct PipelineResult {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use base::genome::*;
-    use base::meta::Recommendation;
-    use base::{Subsystem, SubsystemHealth, TestResult, Version};
+    use fabric::genome::*;
+    use fabric::meta::Recommendation;
+    use fabric::{wall_to_datetime, Clock, Subsystem, SubsystemHealth, TestResult, Version};
+    use kernel::chronos::TestClock;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(TestClock::default())
+    }
 
     fn genome() -> Genome {
         Genome {
@@ -172,6 +177,7 @@ mod tests {
 
     struct RejectingMeta {
         rollbacks: Arc<AtomicUsize>,
+        clock: Arc<dyn Clock>,
     }
 
     #[async_trait]
@@ -182,7 +188,7 @@ mod tests {
         fn version(&self) -> Version {
             Version::new(0, 1, 0)
         }
-        async fn init(&mut self, _c: &base::SubsystemContext) -> anyhow::Result<()> {
+        async fn init(&mut self, _c: &fabric::SubsystemContext) -> anyhow::Result<()> {
             Ok(())
         }
         async fn shutdown(&mut self) -> anyhow::Result<()> {
@@ -206,7 +212,7 @@ mod tests {
                 id: uuid::Uuid::new_v4(),
                 genome: genome(),
                 changes: vec!["c".into()],
-                generated_at: chrono::Utc::now(),
+                generated_at: wall_to_datetime(self.clock.wall_now()),
             })
         }
         async fn sandbox_test(&self, _c: &RuntimeCandidate) -> anyhow::Result<TestResult> {
@@ -248,6 +254,7 @@ mod tests {
         let rollbacks = Arc::new(AtomicUsize::new(0));
         let meta = RejectingMeta {
             rollbacks: rollbacks.clone(),
+            clock: test_clock(),
         };
         let pipeline = MorphogenesisPipeline::new(meta);
         let intent = MutationIntent {
@@ -275,6 +282,7 @@ mod tests {
 
         struct SandboxFailingMeta {
             rolled_back: Arc<AtomicBool>,
+            clock: Arc<dyn Clock>,
         }
 
         #[async_trait]
@@ -285,7 +293,7 @@ mod tests {
             fn version(&self) -> Version {
                 Version::new(0, 1, 0)
             }
-            async fn init(&mut self, _c: &base::SubsystemContext) -> anyhow::Result<()> {
+            async fn init(&mut self, _c: &fabric::SubsystemContext) -> anyhow::Result<()> {
                 Ok(())
             }
             async fn shutdown(&mut self) -> anyhow::Result<()> {
@@ -309,7 +317,7 @@ mod tests {
                     id: uuid::Uuid::new_v4(),
                     genome: genome(),
                     changes: vec!["c".into()],
-                    generated_at: chrono::Utc::now(),
+                    generated_at: wall_to_datetime(self.clock.wall_now()),
                 })
             }
             async fn sandbox_test(&self, _c: &RuntimeCandidate) -> anyhow::Result<TestResult> {
@@ -337,6 +345,7 @@ mod tests {
         let rolled_back = Arc::new(AtomicBool::new(false));
         let meta = SandboxFailingMeta {
             rolled_back: rolled_back.clone(),
+            clock: test_clock(),
         };
         let pipeline = MorphogenesisPipeline::new(meta);
         let intent = MutationIntent {

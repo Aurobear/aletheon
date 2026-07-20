@@ -8,9 +8,9 @@
 //! These signals are the "idea of an idea" — awareness that arises
 //! inherently in the act of thinking, not as a separate reflection.
 
-use base::self_field::{AwarenessCore, AwarenessExtension, SelfAwareness, SelfState};
-use base::ui_event::AwarenessLevel;
 use chrono::{DateTime, Utc};
+use fabric::self_field::{AwarenessCore, AwarenessExtension, SelfAwareness, SelfState};
+use fabric::ui_event::AwarenessLevel;
 
 /// Lightweight awareness signal emitted during cognitive loop.
 /// No LLM call — pure rule-based state detection.
@@ -311,13 +311,13 @@ mod tests {
                 step: StepType::LoopStart,
                 action: "thinking".to_string(),
                 detected_state: Some(SelfState::Focused),
-                timestamp: Utc::now(),
+                timestamp: DateTime::UNIX_EPOCH,
             },
             AwarenessSignal {
                 step: StepType::ToolCallEnd,
                 action: "tool_exec".to_string(),
                 detected_state: None,
-                timestamp: Utc::now(),
+                timestamp: DateTime::UNIX_EPOCH,
             },
         ];
 
@@ -363,7 +363,7 @@ mod tests {
                 step: StepType::LoopStart,
                 action: "test".to_string(),
                 detected_state: Some(state),
-                timestamp: Utc::now(),
+                timestamp: DateTime::UNIX_EPOCH,
             }];
             let result = signals_to_awareness(&signals);
             assert!(

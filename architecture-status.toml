@@ -1,0 +1,70 @@
+# Aletheon 当前架构状态账本（2026-07-20）
+# 由 scripts/architecture-check.sh 校验。这里只记录当前代码事实、已接受边界，
+# 以及仍需明确“接入或删除”的收敛项；不再使用已经删除的 Wave 路线图。
+
+schema_version = 2
+
+[[turn_entry]]
+name = "TurnPipeline"
+role = "daemon turn 主编排器"
+production_caller = "DaemonTurnOrchestrator"
+evidence = "crates/executive/src/impl/daemon/bootstrap/services.rs:374"
+status = "production"
+
+[[turn_entry]]
+name = "TurnService"
+role = "CLI exec turn 实现"
+production_caller = "ExecSessionBuilder"
+evidence = "crates/executive/src/service/exec_session.rs:219"
+status = "internal_compatibility"
+converge_into = "SessionTurnEngine"
+
+[[turn_entry]]
+name = "TurnCoordinator"
+role = "operation/session/cancel 控制外壳"
+production_caller = "TurnPipeline and TurnService"
+evidence = "crates/executive/src/impl/daemon/bootstrap/services.rs:282"
+status = "production"
+
+[[turn_entry]]
+name = "AgentControlService"
+role = "child agent 生命周期控制"
+production_caller = "Executive daemon bootstrap"
+evidence = "crates/executive/src/impl/daemon/bootstrap/services.rs:80"
+status = "production"
+
+# 已接受的稳定边界，不是待删除依赖。
+[[reviewed_dependency]]
+from = "corpus"
+to = "platform"
+reason = "工具执行通过统一 platform contract 访问宿主能力"
+classification = "stable"
+
+[[reviewed_dependency]]
+from = "execd"
+to = "platform"
+reason = "隔离执行守护进程通过 Platform structured patch 与 operation-scoped filesystem contract 执行补丁"
+classification = "stable"
+
+[[reviewed_dependency]]
+from = "executive"
+to = "runtime"
+reason = "Runtime 只拥有 manifest/selector contract；Executive/Fabric AgentResult 与 Goal coding evidence 拥有实例、output/usage/diff、verification 与 settlement 生命周期"
+classification = "stable"
+
+[[experimental_component]]
+name = "hardware deterministic simulator"
+owner = "hardware"
+evidence = "crates/executive/tests/hardware_simulation.rs"
+status = "experimental_wired"
+restriction = "simulator only; no real actuator/provider transport"
+
+[[reviewed_dependency]]
+from = "executive"
+to = "hardware"
+reason = "仅定向集成测试验证 Kernel permit 到 Hardware simulator receipt 的纵向边界"
+classification = "experimental_dev"
+
+# Fabric 根级 pub use 数量上限，防止共享协议层继续膨胀。
+[freeze]
+fabric_root_reexports_max = 132

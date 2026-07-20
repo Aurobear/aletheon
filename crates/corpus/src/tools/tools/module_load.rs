@@ -1,11 +1,13 @@
 //! Tool for loading and unloading Linux kernel modules.
 
 use async_trait::async_trait;
+use fabric::Timer;
 use serde_json::{json, Value};
-use std::time::Instant;
 use tracing::info;
 
-use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use super::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,
+};
 
 pub struct ModuleLoadTool;
 
@@ -47,12 +49,16 @@ impl Tool for ModuleLoadTool {
         PermissionLevel::L3 // destructive: kernel module loading
     }
 
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        Some(ToolExecutionDescriptor::ModuleLoad)
+    }
+
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(ModuleLoadTool)
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
-        let start = Instant::now();
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let ko_path = match input["ko_path"].as_str() {
             Some(p) => p,
@@ -61,8 +67,9 @@ impl Tool for ModuleLoadTool {
                     content: "Missing required parameter: ko_path".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -79,8 +86,9 @@ impl Tool for ModuleLoadTool {
                         content: format!("Module file not found: {}", ko_path),
                         is_error: true,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     };
                 }
@@ -118,8 +126,13 @@ impl Tool for ModuleLoadTool {
                                 ),
                                 is_error: false,
                                 metadata: ToolResultMeta {
-                                    execution_time_ms: start.elapsed().as_millis() as u64,
+                                    execution_time_ms: ctx
+                                        .clock
+                                        .mono_now()
+                                        .0
+                                        .saturating_sub(start.0),
                                     truncated: false,
+                                    patch_delta: None,
                                 },
                             }
                         } else {
@@ -128,8 +141,13 @@ impl Tool for ModuleLoadTool {
                                 content: format!("insmod failed:\n{}", stderr),
                                 is_error: true,
                                 metadata: ToolResultMeta {
-                                    execution_time_ms: start.elapsed().as_millis() as u64,
+                                    execution_time_ms: ctx
+                                        .clock
+                                        .mono_now()
+                                        .0
+                                        .saturating_sub(start.0),
                                     truncated: false,
+                                    patch_delta: None,
                                 },
                             }
                         }
@@ -138,8 +156,9 @@ impl Tool for ModuleLoadTool {
                         content: format!("Failed to run insmod: {}", e),
                         is_error: true,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     },
                 }
@@ -164,8 +183,13 @@ impl Tool for ModuleLoadTool {
                                 content: format!("Module {} unloaded successfully.", module_name),
                                 is_error: false,
                                 metadata: ToolResultMeta {
-                                    execution_time_ms: start.elapsed().as_millis() as u64,
+                                    execution_time_ms: ctx
+                                        .clock
+                                        .mono_now()
+                                        .0
+                                        .saturating_sub(start.0),
                                     truncated: false,
+                                    patch_delta: None,
                                 },
                             }
                         } else {
@@ -174,8 +198,13 @@ impl Tool for ModuleLoadTool {
                                 content: format!("rmmod failed:\n{}", stderr),
                                 is_error: true,
                                 metadata: ToolResultMeta {
-                                    execution_time_ms: start.elapsed().as_millis() as u64,
+                                    execution_time_ms: ctx
+                                        .clock
+                                        .mono_now()
+                                        .0
+                                        .saturating_sub(start.0),
                                     truncated: false,
+                                    patch_delta: None,
                                 },
                             }
                         }
@@ -184,8 +213,9 @@ impl Tool for ModuleLoadTool {
                         content: format!("Failed to run rmmod: {}", e),
                         is_error: true,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     },
                 }
@@ -199,7 +229,9 @@ impl Tool for ModuleLoadTool {
                     .await;
 
                 // Small delay
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                kernel::chronos::SystemTimer
+                    .sleep(std::time::Duration::from_millis(100))
+                    .await;
 
                 // Re-execute as load
                 let load_input = json!({
@@ -207,15 +239,16 @@ impl Tool for ModuleLoadTool {
                     "args": args,
                     "action": "load"
                 });
-                return self.execute(load_input, _ctx).await;
+                return self.execute(load_input, ctx).await;
             }
             _ => {
                 return ToolResult {
                     content: format!("Unknown action: {}. Use load, unload, or reload.", action),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -261,8 +294,12 @@ mod tests {
     async fn test_module_load_missing_file() {
         let tool = ModuleLoadTool;
         let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool
             .execute(json!({"ko_path": "/nonexistent.ko"}), &ctx)

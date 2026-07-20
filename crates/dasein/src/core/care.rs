@@ -4,10 +4,11 @@
 //! and a set of keywords. `score_action()` computes a weighted relevance
 //! score for a given action description.
 
+#[cfg(test)]
 use std::collections::HashMap;
 
 use anyhow::Result;
-use base::Care;
+use fabric::Care;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
@@ -98,7 +99,8 @@ impl CareLayer {
     }
 
     /// Add a new care. If a care with the same topic exists, it is replaced.
-    pub fn add_care(&self, entry: CareEntry) {
+    #[cfg(test)]
+    pub(crate) fn add_care(&self, entry: CareEntry) {
         let mut cares = self.cares.write();
         if let Some(existing) = cares.iter_mut().find(|c| c.care.topic == entry.care.topic) {
             *existing = entry;
@@ -108,7 +110,8 @@ impl CareLayer {
     }
 
     /// Remove a care by topic. Returns true if found and removed.
-    pub fn remove_care(&self, topic: &str) -> bool {
+    #[cfg(test)]
+    pub(crate) fn remove_care(&self, topic: &str) -> bool {
         let mut cares = self.cares.write();
         let len_before = cares.len();
         cares.retain(|c| c.care.topic != topic);
@@ -153,7 +156,8 @@ impl CareLayer {
     /// - Clamps the resulting weight to `[0.1, 1.0]`.
     /// - The `"safety"` care can never go below `0.8`.
     /// - Returns `Some((old_value, new_value))` if the care was found, `None` otherwise.
-    pub fn adjust_weight(&self, care_name: &str, delta: f64) -> Option<(f64, f64)> {
+    #[cfg(test)]
+    pub(crate) fn adjust_weight(&self, care_name: &str, delta: f64) -> Option<(f64, f64)> {
         let mut cares = self.cares.write();
         let entry = cares.iter_mut().find(|c| c.care.topic == care_name)?;
         let old = entry.care.weight;
@@ -182,7 +186,8 @@ impl CareLayer {
     /// `care_scores` maps care topic names to the scores they had during the
     /// task (as returned by `score_action`-like logic). Only cares that
     /// *matched* (score > 0) are considered.
-    pub fn record_outcome(
+    #[cfg(test)]
+    pub(crate) fn record_outcome(
         &self,
         success: bool,
         elapsed_ms: u64,
@@ -201,7 +206,8 @@ impl CareLayer {
     ///    (under-weighted safety).
     /// 3. Success + fast (< 2000ms) → increase efficiency by 0.02.
     /// 4. Failure + slow (>= 10000ms) → increase efficiency by 0.03.
-    pub fn adjust_from_outcome(
+    #[cfg(test)]
+    pub(crate) fn adjust_from_outcome(
         &self,
         success: bool,
         elapsed_ms: u64,

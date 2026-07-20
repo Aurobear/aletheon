@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::core::store::SelfFieldStore;
 
@@ -24,13 +25,15 @@ pub struct AttentionLayer {
     focus: RwLock<Vec<FocusTopic>>,
     /// Priority decays by this amount per second of inactivity.
     decay_rate: f64,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl AttentionLayer {
-    pub fn new(decay_rate: f64) -> Self {
+    pub fn new(decay_rate: f64, clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             focus: RwLock::new(Vec::new()),
             decay_rate,
+            clock,
         }
     }
 
@@ -39,20 +42,20 @@ impl AttentionLayer {
         let mut focus = self.focus.write();
         if let Some(existing) = focus.iter_mut().find(|f| f.topic == topic) {
             existing.priority = priority;
-            existing.last_updated = Utc::now();
+            existing.last_updated = fabric::wall_to_datetime(self.clock.wall_now());
         } else {
             focus.push(FocusTopic {
                 topic: topic.to_string(),
                 priority,
-                started_at: Utc::now(),
-                last_updated: Utc::now(),
+                started_at: fabric::wall_to_datetime(self.clock.wall_now()),
+                last_updated: fabric::wall_to_datetime(self.clock.wall_now()),
             });
         }
     }
 
     /// Apply decay to all focus topics. Removes topics with priority <= 0.
     pub fn decay(&self) {
-        let now = Utc::now();
+        let now = fabric::wall_to_datetime(self.clock.wall_now());
         let mut focus = self.focus.write();
         for topic in focus.iter_mut() {
             let elapsed = (now - topic.last_updated).num_seconds() as f64;
@@ -134,10 +137,10 @@ impl AttentionLayer {
                     priority: row.get(1)?,
                     started_at: DateTime::parse_from_rfc3339(&started_str)
                         .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                        .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
                     last_updated: DateTime::parse_from_rfc3339(&updated_str)
                         .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                        .unwrap_or_else(|_| fabric::wall_to_datetime(self.clock.wall_now())),
                 })
             })
             .context("Failed to query attention_topics")?;
@@ -161,20 +164,22 @@ impl AttentionLayer {
     }
 }
 
-impl Default for AttentionLayer {
-    fn default() -> Self {
-        // Default decay: 0.001 priority per second (~1.0 per 1000 seconds)
-        Self::new(0.001)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
+
+    fn test_layer(decay_rate: f64) -> AttentionLayer {
+        AttentionLayer::new(decay_rate, test_clock())
+    }
 
     #[test]
     fn attend_and_focus() {
-        let layer = AttentionLayer::new(0.0); // no decay for testing
+        let layer = test_layer(0.0); // no decay for testing
         layer.attend("task_a", 0.8);
         layer.attend("task_b", 0.5);
 
@@ -185,7 +190,7 @@ mod tests {
 
     #[test]
     fn refresh_updates_priority() {
-        let layer = AttentionLayer::new(0.0);
+        let layer = test_layer(0.0);
         layer.attend("task_a", 0.3);
         layer.attend("task_a", 0.9);
 
@@ -196,7 +201,7 @@ mod tests {
 
     #[test]
     fn dismiss_removes_topic() {
-        let layer = AttentionLayer::new(0.0);
+        let layer = test_layer(0.0);
         layer.attend("task_a", 0.5);
         assert!(layer.dismiss("task_a"));
         assert!(layer.current_focus().is_none());
@@ -205,7 +210,7 @@ mod tests {
 
     #[test]
     fn auto_focus_sets_high_priority() {
-        let layer = AttentionLayer::new(0.0);
+        let layer = test_layer(0.0);
         layer.auto_focus("debug_session");
         let focus = layer.current_focus();
         assert!(focus.is_some());
@@ -216,7 +221,7 @@ mod tests {
 
     #[test]
     fn auto_focus_overrides_existing() {
-        let layer = AttentionLayer::new(0.0);
+        let layer = test_layer(0.0);
         layer.attend("task_a", 0.3);
         layer.auto_focus("task_a");
         let topics = layer.all_topics();
@@ -231,13 +236,13 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let store = crate::core::store::SelfFieldStore::new(tmp.path().to_path_buf()).unwrap();
 
-        let layer = AttentionLayer::new(0.0);
+        let layer = test_layer(0.0);
         layer.attend("topic_a", 0.8);
         layer.attend("topic_b", 0.5);
 
         layer.save_to_store(&store).unwrap();
 
-        let mut loaded = AttentionLayer::new(0.0);
+        let mut loaded = test_layer(0.0);
         loaded.load_from_store(&store).unwrap();
 
         let topics = loaded.all_topics();
@@ -254,15 +259,15 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let store = crate::core::store::SelfFieldStore::new(tmp.path().to_path_buf()).unwrap();
 
-        let layer = AttentionLayer::new(0.0);
+        let layer = test_layer(0.0);
         layer.attend("old_topic", 0.7);
         layer.save_to_store(&store).unwrap();
 
-        let layer2 = AttentionLayer::new(0.0);
+        let layer2 = test_layer(0.0);
         layer2.attend("new_topic", 0.9);
         layer2.save_to_store(&store).unwrap();
 
-        let mut loaded = AttentionLayer::new(0.0);
+        let mut loaded = test_layer(0.0);
         loaded.load_from_store(&store).unwrap();
         let topics = loaded.all_topics();
         assert_eq!(topics.len(), 1);

@@ -5,9 +5,11 @@
 //! entries are evicted when the buffer is full.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use fabric::WallTime;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +22,7 @@ pub struct NarrativeEntry {
     pub reason: String,
     pub action: Option<String>,
     pub verdict: Option<String>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: WallTime,
 }
 
 /// Summary of narrative patterns and trends.
@@ -55,14 +57,16 @@ pub struct TrajectoryAnalysis {
 pub struct NarrativeLayer {
     buffer: RwLock<VecDeque<NarrativeEntry>>,
     capacity: usize,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl NarrativeLayer {
     /// Create with a given capacity (default 1000).
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, clock: Arc<dyn fabric::Clock>) -> Self {
         Self {
             buffer: RwLock::new(VecDeque::with_capacity(capacity)),
             capacity,
+            clock,
         }
     }
 
@@ -79,7 +83,7 @@ impl NarrativeLayer {
             reason: reason.to_string(),
             action: action.map(|s| s.to_string()),
             verdict: Some(format!("{:?}", verdict)),
-            timestamp: Utc::now(),
+            timestamp: self.clock.wall_now(),
         };
         let mut buffer = self.buffer.write();
         if buffer.len() >= self.capacity {
@@ -95,7 +99,7 @@ impl NarrativeLayer {
             reason: reason.to_string(),
             action: None,
             verdict: None,
-            timestamp: Utc::now(),
+            timestamp: self.clock.wall_now(),
         };
         let mut buffer = self.buffer.write();
         if buffer.len() >= self.capacity {
@@ -276,7 +280,7 @@ impl NarrativeLayer {
                 entry.reason,
                 entry.action,
                 entry.verdict,
-                entry.timestamp.to_rfc3339(),
+                fabric::wall_to_datetime(entry.timestamp).to_rfc3339(),
             ])
             .context("Failed to insert narrative entry")?;
         }
@@ -302,8 +306,8 @@ impl NarrativeLayer {
                     action: row.get(2)?,
                     verdict: row.get(3)?,
                     timestamp: DateTime::parse_from_rfc3339(&ts_str)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now()),
+                        .map(|dt| WallTime(dt.with_timezone(&Utc).timestamp_millis()))
+                        .unwrap_or_else(|_| self.clock.wall_now()),
                 })
             })
             .context("Failed to query narrative_entries")?;
@@ -327,20 +331,23 @@ impl NarrativeLayer {
     }
 }
 
-impl Default for NarrativeLayer {
-    fn default() -> Self {
-        Self::new(1000)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::Verdict;
+    use fabric::Verdict;
+    use kernel::chronos::TestClock;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
+
+    fn test_layer(capacity: usize) -> NarrativeLayer {
+        NarrativeLayer::new(capacity, test_clock())
+    }
 
     #[test]
     fn record_and_retrieve() {
-        let layer = NarrativeLayer::new(100);
+        let layer = test_layer(100);
         layer.record(
             "boundary_check",
             "deny: rm",
@@ -359,7 +366,7 @@ mod tests {
 
     #[test]
     fn capacity_eviction() {
-        let layer = NarrativeLayer::new(3);
+        let layer = test_layer(3);
         layer.narrate("e1", "r1");
         layer.narrate("e2", "r2");
         layer.narrate("e3", "r3");
@@ -376,7 +383,7 @@ mod tests {
 
     #[test]
     fn recent_limits() {
-        let layer = NarrativeLayer::new(100);
+        let layer = test_layer(100);
         for i in 0..10 {
             layer.narrate(&format!("e{}", i), "reason");
         }
@@ -394,13 +401,13 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let store = crate::core::store::SelfFieldStore::new(tmp.path().to_path_buf()).unwrap();
 
-        let layer = NarrativeLayer::new(100);
+        let layer = test_layer(100);
         layer.narrate("evt1", "reason1");
         layer.narrate("evt2", "reason2");
 
         layer.save_to_store(&store).unwrap();
 
-        let mut loaded = NarrativeLayer::new(100);
+        let mut loaded = test_layer(100);
         loaded.load_from_store(&store).unwrap();
 
         assert_eq!(loaded.len(), 2);
@@ -411,7 +418,7 @@ mod tests {
 
     #[test]
     fn summarize_basic() {
-        let layer = NarrativeLayer::new(100);
+        let layer = test_layer(100);
         layer.narrate("init", "startup");
         layer.narrate("review", "allowed");
         layer.narrate("review", "allowed again");
@@ -432,7 +439,7 @@ mod tests {
 
     #[test]
     fn summarize_empty() {
-        let layer = NarrativeLayer::new(100);
+        let layer = test_layer(100);
         let summary = layer.summarize();
         assert_eq!(summary.total_entries, 0);
         assert!(summary.top_themes.is_empty());
@@ -442,7 +449,7 @@ mod tests {
 
     #[test]
     fn analyze_trajectory_with_verdicts() {
-        let layer = NarrativeLayer::new(100);
+        let layer = test_layer(100);
         // Record some entries with verdicts
         layer.record("review", "ok", Some("ls"), &Verdict::Allow);
         layer.record(
@@ -464,7 +471,7 @@ mod tests {
 
     #[test]
     fn analyze_trajectory_declining() {
-        let layer = NarrativeLayer::new(100);
+        let layer = test_layer(100);
         // Old allows, recent denials
         layer.record("review", "ok", Some("ls"), &Verdict::Allow);
         layer.record("review", "ok", Some("cat"), &Verdict::Allow);
@@ -497,15 +504,15 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let store = crate::core::store::SelfFieldStore::new(tmp.path().to_path_buf()).unwrap();
 
-        let layer = NarrativeLayer::new(100);
+        let layer = test_layer(100);
         layer.narrate("old", "old_reason");
         layer.save_to_store(&store).unwrap();
 
-        let layer2 = NarrativeLayer::new(100);
+        let layer2 = test_layer(100);
         layer2.narrate("new", "new_reason");
         layer2.save_to_store(&store).unwrap();
 
-        let mut loaded = NarrativeLayer::new(100);
+        let mut loaded = test_layer(100);
         loaded.load_from_store(&store).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded.recent(10)[0].event, "new");

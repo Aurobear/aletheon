@@ -10,9 +10,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use chrono::Utc;
+use fabric::Clock;
+use std::sync::Arc;
 
-use base::brain::ReflectionEntry;
+use fabric::cognit::ReflectionEntry;
 
 /// Category of an extracted skill.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -56,13 +57,15 @@ pub struct SkillExtractor {
     min_occurrences: usize,
     /// Confidence threshold for single-entry best-practice extraction.
     best_practice_threshold: f64,
+    clock: Arc<dyn Clock>,
 }
 
 impl SkillExtractor {
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             min_occurrences: 3,
             best_practice_threshold: 0.8,
+            clock,
         }
     }
 
@@ -243,7 +246,7 @@ impl SkillExtractor {
              {}\n",
             skill.name,
             skill.category,
-            Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+            fabric::wall_to_datetime(self.clock.wall_now()).format("%Y-%m-%d %H:%M:%S UTC"),
             skill.source_reflections.len(),
             skill.description,
             skill.content,
@@ -251,9 +254,10 @@ impl SkillExtractor {
     }
 }
 
+#[cfg(test)]
 impl Default for SkillExtractor {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(kernel::chronos::TestClock::default()))
     }
 }
 
@@ -295,8 +299,12 @@ fn truncate(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::brain::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
-    use chrono::Utc;
+    use fabric::cognit::{ReflectionEntry, ReflectionOutcome, ReflectionTrigger};
+    use std::sync::Arc;
+
+    fn make_extractor() -> SkillExtractor {
+        SkillExtractor::new(Arc::new(kernel::chronos::TestClock::default()))
+    }
 
     fn make_reflection(
         id: &str,
@@ -307,7 +315,7 @@ mod tests {
     ) -> ReflectionEntry {
         ReflectionEntry {
             id: id.to_string(),
-            timestamp: Utc::now(),
+            timestamp: fabric::wall_to_datetime(kernel::chronos::TestClock::default().wall_now()),
             trigger: ReflectionTrigger::TaskComplete,
             task_summary: format!("task {}", id),
             outcome: ReflectionOutcome::Success,
@@ -321,7 +329,7 @@ mod tests {
 
     #[test]
     fn extract_success_pattern_from_3_similar_what_worked() {
-        let extractor = SkillExtractor::new();
+        let extractor = make_extractor();
         let reflections = vec![
             make_reflection("r1", vec!["use batch processing"], vec![], vec![], 0.7),
             make_reflection("r2", vec!["use batch processing"], vec![], vec![], 0.8),
@@ -341,7 +349,7 @@ mod tests {
 
     #[test]
     fn no_success_pattern_with_only_2_occurrences() {
-        let extractor = SkillExtractor::new();
+        let extractor = make_extractor();
         let reflections = vec![
             make_reflection("r1", vec!["use caching"], vec![], vec![], 0.7),
             make_reflection("r2", vec!["use caching"], vec![], vec![], 0.8),
@@ -358,7 +366,7 @@ mod tests {
 
     #[test]
     fn extract_avoidance_guide_from_3_similar_failures() {
-        let extractor = SkillExtractor::new();
+        let extractor = make_extractor();
         let reflections = vec![
             make_reflection(
                 "r1",
@@ -398,7 +406,7 @@ mod tests {
 
     #[test]
     fn extract_best_practice_from_high_confidence_reflection() {
-        let extractor = SkillExtractor::new();
+        let extractor = make_extractor();
         let reflections = vec![make_reflection(
             "r1",
             vec![],
@@ -421,7 +429,7 @@ mod tests {
 
     #[test]
     fn no_best_practice_below_threshold() {
-        let extractor = SkillExtractor::new();
+        let extractor = make_extractor();
         let reflections = vec![make_reflection(
             "r1",
             vec![],
@@ -441,7 +449,7 @@ mod tests {
 
     #[test]
     fn no_best_practice_without_learned() {
-        let extractor = SkillExtractor::new();
+        let extractor = make_extractor();
         let reflections = vec![make_reflection("r1", vec![], vec![], vec![], 0.95)];
 
         let skills = extractor.extract_skills(&reflections);
@@ -455,14 +463,14 @@ mod tests {
 
     #[test]
     fn extract_empty_input_returns_empty() {
-        let extractor = SkillExtractor::new();
+        let extractor = make_extractor();
         let skills = extractor.extract_skills(&[]);
         assert!(skills.is_empty());
     }
 
     #[test]
     fn save_skill_writes_markdown_file() {
-        let extractor = SkillExtractor::new();
+        let extractor = make_extractor();
         let skill = ExtractedSkill {
             name: "Test Skill".to_string(),
             description: "A test skill.".to_string(),
@@ -516,7 +524,7 @@ mod tests {
 
     #[test]
     fn multiple_categories_extracted_simultaneously() {
-        let extractor = SkillExtractor::new();
+        let extractor = make_extractor();
         let reflections = vec![
             make_reflection("r1", vec!["use retry"], vec![], vec![], 0.7),
             make_reflection("r2", vec!["use retry"], vec![], vec![], 0.8),

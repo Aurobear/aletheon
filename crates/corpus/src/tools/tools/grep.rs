@@ -52,7 +52,7 @@ impl Tool for GrepTool {
     }
 
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+        let start = ctx.clock.mono_now();
 
         let pattern = match input.get("pattern").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
@@ -61,8 +61,9 @@ impl Tool for GrepTool {
                     content: "Error: 'pattern' parameter is required".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -85,7 +86,7 @@ impl Tool for GrepTool {
             None => try_grep(&pattern, &path, max_results, &ctx.working_dir).await,
         };
 
-        let elapsed = start.elapsed().as_millis() as u64;
+        let elapsed = ctx.clock.mono_now().0.saturating_sub(start.0);
 
         match result {
             Some(r) => ToolResult {
@@ -94,6 +95,7 @@ impl Tool for GrepTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: r.truncated,
+                    patch_delta: None,
                 },
             },
             None => ToolResult {
@@ -102,6 +104,7 @@ impl Tool for GrepTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -141,8 +144,8 @@ async fn try_ripgrep(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-    let truncated = lines.len() >= max_results;
+    let lines: Vec<&str> = stdout.lines().take(max_results).collect();
+    let truncated = stdout.lines().count() > max_results;
 
     if lines.is_empty() {
         return Some(SubprocessResult {
@@ -249,8 +252,12 @@ mod tests {
             .execute(
                 input,
                 &ToolContext {
+                    approval_authority: None,
+                    agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
@@ -284,8 +291,12 @@ mod tests {
             .execute(
                 input,
                 &ToolContext {
+                    approval_authority: None,
+                    agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
@@ -304,14 +315,62 @@ mod tests {
             .execute(
                 input,
                 &ToolContext {
+                    approval_authority: None,
+                    agent: None,
                     working_dir: tmp.path().to_path_buf(),
                     session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
                 },
             )
             .await;
 
         assert!(result.is_error);
         assert!(result.content.contains("required"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_global_limit_across_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        // 6 files, each with one match; global max_results = 3.
+        for i in 0..6 {
+            let p = tmp.path().join(format!("f{i}.txt"));
+            std::fs::write(&p, "needle here\n").unwrap();
+        }
+
+        let tool = GrepTool;
+        let input = json!({
+            "pattern": "needle",
+            "path": tmp.path().to_str().unwrap(),
+            "max_results": 3
+        });
+
+        let result = tool
+            .execute(
+                input,
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
+                },
+            )
+            .await;
+
+        assert!(!result.is_error, "got: {}", result.content);
+        let match_lines = result
+            .content
+            .lines()
+            .filter(|l| l.contains("needle"))
+            .count();
+        assert!(
+            match_lines <= 3,
+            "global limit not enforced: {} match lines",
+            match_lines
+        );
+        assert!(result.metadata.truncated, "expected truncated=true");
     }
 
     #[test]

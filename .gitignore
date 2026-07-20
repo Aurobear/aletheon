@@ -21,3 +21,15 @@ __pycache__/
 
 # Runtime audit log (written by the daemon, not source)
 .aletheon-audit.jsonl
+
+# Deployment credentials, secret canaries, and local backup material
+credentials/
+secrets/
+*.credential
+*.secret-canary
+restic-password
+restic-repository
+backup-staging/
+
+# Host-verified production scenario artifacts
+.scenario-runs/

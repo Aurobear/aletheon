@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use fabric::Timer;
 use serde_json::json;
 use tokio::process::Command;
 
@@ -29,6 +30,11 @@ impl Tool for BashExecTool {
                     "type": "integer",
                     "description": "Timeout in seconds (default: 10)",
                     "default": 10
+                },
+                "network_enabled": {
+                    "type": "boolean",
+                    "description": "Request outbound network access. Defaults to false and always requires explicit per-call approval when true.",
+                    "default": false
                 }
             },
             "required": ["command"]
@@ -47,19 +53,20 @@ impl Tool for BashExecTool {
         let command = input["command"].as_str().unwrap_or("");
         let timeout_secs = input["timeout_seconds"].as_u64().unwrap_or(10);
 
-        let start = std::time::Instant::now();
+        let start = ctx.clock.mono_now();
 
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            Command::new("bash")
-                .arg("-c")
-                .arg(command)
-                .current_dir(&ctx.working_dir)
-                .output(),
-        )
-        .await;
+        let result = kernel::chronos::SystemTimer
+            .timeout(
+                std::time::Duration::from_secs(timeout_secs),
+                Command::new("bash")
+                    .arg("-c")
+                    .arg(command)
+                    .current_dir(&ctx.working_dir)
+                    .output(),
+            )
+            .await;
 
-        let elapsed = start.elapsed().as_millis() as u64;
+        let elapsed = ctx.clock.mono_now().0.saturating_sub(start.0);
 
         match result {
             Ok(Ok(output)) => {
@@ -68,15 +75,16 @@ impl Tool for BashExecTool {
 
                 // Layer 2: Per-result overflow to file with head/tail truncation
                 let output_config = OutputConfig::default();
-                let processed = process_result("bash_exec", &captured.content, &output_config)
-                    .await
-                    .unwrap_or_else(|e| {
-                        tracing::warn!(error = %e, "Output processing failed, using inline");
-                        super::output::ProcessedOutput::Inline {
-                            content: captured.content.clone(),
-                            original_bytes: captured.content.len(),
-                        }
-                    });
+                let processed =
+                    process_result("bash_exec", &captured.content, &output_config, &*ctx.clock)
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(error = %e, "Output processing failed, using inline");
+                            super::output::ProcessedOutput::Inline {
+                                content: captured.content.clone(),
+                                original_bytes: captured.content.len(),
+                            }
+                        });
 
                 let content = processed.to_context_content().to_string();
                 let truncated = processed.was_truncated()
@@ -89,6 +97,7 @@ impl Tool for BashExecTool {
                     metadata: ToolResultMeta {
                         execution_time_ms: elapsed,
                         truncated,
+                        patch_delta: None,
                     },
                 }
             }
@@ -98,6 +107,7 @@ impl Tool for BashExecTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
             Err(_) => ToolResult {
@@ -106,8 +116,135 @@ impl Tool for BashExecTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
+    }
+
+    async fn execute_streaming(
+        &self,
+        input: serde_json::Value,
+        ctx: &ToolContext,
+        sink: &mut fabric::ToolEventSink,
+    ) {
+        let command_text = input["command"].as_str().unwrap_or("");
+        let timeout_secs = input["timeout_seconds"].as_u64().unwrap_or(10);
+        let mut command = Command::new("bash");
+        command
+            .arg("-c")
+            .arg(command_text)
+            .current_dir(&ctx.working_dir);
+
+        let result = crate::security::sandbox::streaming::execute_command_streaming(
+            command,
+            std::time::Duration::from_secs(timeout_secs),
+            "bash_exec",
+            fabric::IsolationLevel::None,
+            ctx.clock.clone(),
+            sink,
+        )
+        .await;
+
+        let terminal = match result {
+            Ok(output) => {
+                let captured = capture_output(
+                    output.stdout.as_bytes(),
+                    output.stderr.as_bytes(),
+                    &Default::default(),
+                );
+                let processed = process_result(
+                    "bash_exec",
+                    &captured.content,
+                    &OutputConfig::default(),
+                    &*ctx.clock,
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "streaming output processing failed, using inline");
+                    super::output::ProcessedOutput::Inline {
+                        content: captured.content.clone(),
+                        original_bytes: captured.content.len(),
+                    }
+                });
+                ToolResult {
+                    content: processed.to_context_content().to_string(),
+                    is_error: output.exit_code != 0,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: output.elapsed_ms,
+                        truncated: processed.was_truncated()
+                            || captured.stdout_truncated
+                            || captured.stderr_truncated,
+                        patch_delta: None,
+                    },
+                }
+            }
+            Err(error) => ToolResult {
+                content: format!("Failed to execute command: {error}"),
+                is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: 0,
+                    truncated: false,
+                    patch_delta: None,
+                },
+            },
+        };
+        sink.terminal(Ok(terminal)).await;
+    }
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+    use fabric::{tool_event_channel, ToolExecutionEvent, ToolProgress};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn bash_streams_lines_then_emits_exactly_one_terminal() {
+        let (mut sink, mut events) = tool_event_channel();
+        let context = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: std::env::temp_dir(),
+            session_id: "bash-stream-test".into(),
+            clock: Arc::new(kernel::chronos::SystemClock::new()),
+            turn_event_sender: None,
+        };
+        BashExecTool
+            .execute_streaming(
+                serde_json::json!({
+                    "command": "printf 'first\\n'; printf 'second\\n'; printf 'warning\\n' >&2"
+                }),
+                &context,
+                &mut sink,
+            )
+            .await;
+        drop(sink);
+
+        let mut progress = Vec::new();
+        let mut terminals = Vec::new();
+        let mut saw_terminal = false;
+        while let Some(event) = events.recv().await {
+            match event {
+                ToolExecutionEvent::Progress(ToolProgress::Text(line)) => {
+                    assert!(!saw_terminal, "progress must not follow terminal");
+                    progress.push(line)
+                }
+                ToolExecutionEvent::Terminal(result) => {
+                    assert!(!saw_terminal, "terminal must be unique");
+                    saw_terminal = true;
+                    terminals.push(result)
+                }
+                _ => {}
+            }
+        }
+        assert!(progress.contains(&"first".to_string()));
+        assert!(progress.contains(&"second".to_string()));
+        assert!(progress.contains(&"warning".to_string()));
+        assert_eq!(terminals.len(), 1);
+        let terminal = terminals.pop().unwrap().unwrap();
+        assert!(!terminal.is_error);
+        assert!(terminal.content.contains("first"));
+        assert!(terminal.content.contains("warning"));
     }
 }

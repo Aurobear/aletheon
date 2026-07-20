@@ -3,11 +3,11 @@
 //! The Planner takes an intent + reasoning chain and produces a Plan
 //! containing PlanSteps with rollback actions and cost estimates.
 
-use base::body::Action;
-use base::brain::{CostEstimate, Plan, PlanStep};
-use base::context::Context;
-use base::dasein::Stimmung;
-use base::self_field::{Intent, RiskLevel};
+use fabric::body::Action;
+use fabric::cognit::{CostEstimate, Plan, PlanStep};
+use fabric::context::Context;
+use fabric::dasein::Stimmung;
+use fabric::self_field::{AwarenessRiskLevel, Intent};
 use uuid::Uuid;
 
 /// The planner component.
@@ -156,23 +156,26 @@ impl Planner {
     ///
     /// Returns the risk level the planner should use, which may be
     /// higher or lower than the base assessment depending on mood.
-    pub fn adjust_risk_for_stimmung(base: RiskLevel, mood: &Stimmung) -> RiskLevel {
+    pub fn adjust_risk_for_stimmung(
+        base: AwarenessRiskLevel,
+        mood: &Stimmung,
+    ) -> AwarenessRiskLevel {
         match mood {
             // Angst: Dasein confronts finitude — elevate risk
             Stimmung::Angst { .. } => match base {
-                RiskLevel::None | RiskLevel::Low => RiskLevel::Medium,
-                RiskLevel::Medium => RiskLevel::High,
+                AwarenessRiskLevel::None | AwarenessRiskLevel::Low => AwarenessRiskLevel::Medium,
+                AwarenessRiskLevel::Medium => AwarenessRiskLevel::High,
                 other => other,
             },
             // Entschlossenheit: resolute acceptance — lower risk for chosen path
             Stimmung::Entschlossenheit { .. } => match base {
-                RiskLevel::High => RiskLevel::Medium,
-                RiskLevel::Medium => RiskLevel::Low,
+                AwarenessRiskLevel::High => AwarenessRiskLevel::Medium,
+                AwarenessRiskLevel::Medium => AwarenessRiskLevel::Low,
                 other => other,
             },
             // Verfallenheit: fallenness risks underestimating danger — bump up
             Stimmung::Verfallenheit { .. } => match base {
-                RiskLevel::Low => RiskLevel::Medium,
+                AwarenessRiskLevel::Low => AwarenessRiskLevel::Medium,
                 other => other,
             },
             // Gelassenheit: calm — no adjustment
@@ -191,19 +194,12 @@ impl Planner {
         // Try fenced JSON block first
         let json_str = if let Some(start) = llm_output.find("```json") {
             let after_fence = &llm_output[start + 7..];
-            if let Some(end) = after_fence.find("```") {
-                after_fence[..end].trim()
-            } else {
-                return None;
-            }
-        } else if let Some(start) = llm_output.find('[') {
-            if let Some(end) = llm_output[start..].rfind(']') {
-                &llm_output[start..=start + end]
-            } else {
-                return None;
-            }
+            let end = after_fence.find("```")?;
+            after_fence[..end].trim()
         } else {
-            return None;
+            let start = llm_output.find('[')?;
+            let end = llm_output[start..].rfind(']')?;
+            &llm_output[start..=start + end]
         };
 
         let parsed: serde_json::Value = serde_json::from_str(json_str).ok()?;
@@ -261,17 +257,17 @@ impl Planner {
 
     /// Estimate risk level of an intent.
     #[allow(clippy::if_same_then_else)]
-    fn estimate_risk(&self, intent: &Intent) -> RiskLevel {
+    fn estimate_risk(&self, intent: &Intent) -> AwarenessRiskLevel {
         let action = intent.action.to_lowercase();
         if action.contains("delete") || action.contains("rm") || action.contains("destroy") {
-            RiskLevel::High
+            AwarenessRiskLevel::High
         } else if action.contains("write") || action.contains("modify") || action.contains("deploy")
         {
-            RiskLevel::Medium
+            AwarenessRiskLevel::Medium
         } else if action.contains("read") || action.contains("ls") || action.contains("status") {
-            RiskLevel::Low
+            AwarenessRiskLevel::Low
         } else {
-            RiskLevel::Low
+            AwarenessRiskLevel::Low
         }
     }
 
@@ -301,7 +297,7 @@ impl Default for Planner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::IntentSource;
+    use fabric::IntentSource;
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -366,13 +362,13 @@ mod tests {
         let planner = Planner::new();
 
         let low = planner.estimate_risk(&make_intent("file.read", "read"));
-        assert_eq!(low, RiskLevel::Low);
+        assert_eq!(low, AwarenessRiskLevel::Low);
 
         let medium = planner.estimate_risk(&make_intent("file.write", "write"));
-        assert_eq!(medium, RiskLevel::Medium);
+        assert_eq!(medium, AwarenessRiskLevel::Medium);
 
         let high = planner.estimate_risk(&make_intent("file.delete", "delete"));
-        assert_eq!(high, RiskLevel::High);
+        assert_eq!(high, AwarenessRiskLevel::High);
     }
 
     #[test]
@@ -457,11 +453,11 @@ mod tests {
         let planner = Planner::new();
         let intent = make_intent("file.read", "read file");
         let mood = Stimmung::Angst {
-            facing: base::dasein::AngstSource::Finitude,
+            facing: fabric::dasein::AngstSource::Finitude,
         };
         let plan = planner.generate_plan_with_stimmung(&intent, "reasoning", &make_ctx(), &mood);
         // file.read is normally Low; Angst should bump it to Medium
-        assert_eq!(plan.risk_level, RiskLevel::Medium);
+        assert_eq!(plan.risk_level, AwarenessRiskLevel::Medium);
         assert!(plan.reasoning.contains("Angst"));
     }
 
@@ -471,7 +467,7 @@ mod tests {
         let intent = make_intent("file.read", "read");
         let mood = Stimmung::Gelassenheit;
         let plan = planner.generate_plan_with_stimmung(&intent, "reasoning", &make_ctx(), &mood);
-        assert_eq!(plan.risk_level, RiskLevel::Low);
+        assert_eq!(plan.risk_level, AwarenessRiskLevel::Low);
         assert!(plan.reasoning.contains("Gelassenheit"));
     }
 
@@ -484,7 +480,7 @@ mod tests {
         };
         let plan = planner.generate_plan_with_stimmung(&intent, "reasoning", &make_ctx(), &mood);
         // file.delete is normally High; resolute acceptance should lower it
-        assert_eq!(plan.risk_level, RiskLevel::Medium);
+        assert_eq!(plan.risk_level, AwarenessRiskLevel::Medium);
         assert!(plan.reasoning.contains("Entschlossenheit"));
     }
 
@@ -496,23 +492,23 @@ mod tests {
             absorbed_in: "routine task".to_string(),
         };
         let plan = planner.generate_plan_with_stimmung(&intent, "reasoning", &make_ctx(), &mood);
-        assert_eq!(plan.risk_level, RiskLevel::Medium);
+        assert_eq!(plan.risk_level, AwarenessRiskLevel::Medium);
     }
 
     #[test]
     fn adjust_risk_for_stimmung_identity() {
         assert_eq!(
-            Planner::adjust_risk_for_stimmung(RiskLevel::Low, &Stimmung::Gelassenheit),
-            RiskLevel::Low
+            Planner::adjust_risk_for_stimmung(AwarenessRiskLevel::Low, &Stimmung::Gelassenheit),
+            AwarenessRiskLevel::Low
         );
         assert_eq!(
             Planner::adjust_risk_for_stimmung(
-                RiskLevel::Medium,
+                AwarenessRiskLevel::Medium,
                 &Stimmung::Neugier {
                     curiosity_about: "test".to_string()
                 }
             ),
-            RiskLevel::Medium
+            AwarenessRiskLevel::Medium
         );
     }
 }

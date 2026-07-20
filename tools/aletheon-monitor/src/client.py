@@ -7,6 +7,11 @@ import time
 from typing import Optional
 
 
+def default_socket_path() -> str:
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.geteuid()}"
+    return os.path.join(runtime_dir, "aletheon", "aletheon.sock")
+
+
 class AletheonClient:
     """JSON-RPC 2.0 client communicating with the daemon over a Unix socket.
 
@@ -20,7 +25,7 @@ class AletheonClient:
         timeout: float = 5.0,
     ):
         self.socket_path = socket_path or os.environ.get(
-            "ALETHEON_SOCKET", "/run/aletheon/aletheon.sock"
+            "ALETHEON_SOCKET", default_socket_path()
         )
         self.timeout = float(
             os.environ.get("ALETHEON_TIMEOUT", str(timeout))

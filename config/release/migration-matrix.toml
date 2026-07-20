@@ -1,0 +1,93 @@
+format_version = 1
+release_policy = "forward_only"
+mixed_version_operation = "forbidden"
+binary_only_rollback_after_data_change = "forbidden"
+
+# `kind = "contract"` records a versioned durable contract that currently has
+# no cross-version data rewrite. `kind = "migration"` requires executable
+# pre-migration, reopen, and integrity evidence.
+[[transition]]
+component = "event_spine"
+from = "1"
+to = "1"
+kind = "contract"
+data_change = false
+backup_required = true
+forward = "reopen_current"
+rollback = "matching_data_and_binary"
+evidence = "crates/executive/tests/event_spine_repository.rs"
+integrity_query = "PRAGMA integrity_check"
+
+[[transition]]
+component = "session"
+from = "1"
+to = "1"
+kind = "contract"
+data_change = false
+backup_required = true
+forward = "reopen_current"
+rollback = "matching_data_and_binary"
+evidence = "crates/executive/tests/session_append_store.rs"
+integrity_query = "PRAGMA integrity_check"
+
+[[transition]]
+component = "memory"
+from = "1"
+to = "2"
+kind = "migration"
+data_change = true
+backup_required = true
+forward = "daemon_startup"
+rollback = "restore_matching_data_and_binary"
+fixture = "crates/mnemosyne/tests/gbrain_spool.rs"
+reopen_test = "legacy_migration_redacts_commits_then_renames_and_restarts_idempotently"
+integrity_query = "PRAGMA integrity_check"
+
+[[transition]]
+component = "agent"
+from = "legacy_pre_workspace"
+to = "current_unversioned"
+kind = "migration"
+data_change = true
+backup_required = true
+forward = "daemon_startup"
+rollback = "restore_matching_data_and_binary"
+fixture = "crates/executive/tests/agent_control_repository.rs"
+reopen_test = "repository_migrates_pre_workspace_rows_without_losing_runs"
+integrity_query = "PRAGMA integrity_check"
+
+[[transition]]
+component = "agora"
+from = "1"
+to = "1"
+kind = "contract"
+data_change = false
+backup_required = true
+forward = "reopen_current"
+rollback = "matching_data_and_binary"
+evidence = "crates/agora/tests/broadcast_delivery.rs"
+integrity_query = "workspace invariant validation"
+
+[[transition]]
+component = "dasein"
+from = "1"
+to = "1"
+kind = "contract"
+data_change = false
+backup_required = true
+forward = "ledger_replay"
+rollback = "matching_data_and_binary"
+evidence = "crates/dasein/tests/dasein_ledger_replay.rs"
+integrity_query = "hash-chain verification"
+
+[[transition]]
+component = "config"
+from = "v0.42.59.0"
+to = "v0.42.59.0"
+kind = "contract"
+data_change = false
+backup_required = true
+forward = "typed_parse_and_schema_validation"
+rollback = "matching_config_and_binary"
+evidence = "crates/executive/tests/layered_config_contract.rs"
+integrity_query = "checked-in schema equality"

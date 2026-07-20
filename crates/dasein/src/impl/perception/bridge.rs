@@ -1,9 +1,10 @@
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use super::event::{PerceptionEvent, Priority};
-use base::Message;
+use fabric::Message;
 
 /// Bridges perception events into the engine as system messages.
 pub struct PerceptionBridge {
@@ -12,6 +13,10 @@ pub struct PerceptionBridge {
     buffer: Vec<PerceptionEvent>,
     buffer_max: usize,
     flush_interval: Duration,
+    /// Held for future timestamp-coordination features;
+    /// currently set at construction but unused in the bridge loop.
+    #[allow(dead_code)]
+    clock: Arc<dyn fabric::Clock>,
 }
 
 /// Injection type for the engine.
@@ -27,6 +32,7 @@ impl PerceptionBridge {
     pub fn new(
         event_rx: mpsc::Receiver<PerceptionEvent>,
         engine_tx: mpsc::Sender<PerceptionInjection>,
+        clock: Arc<dyn fabric::Clock>,
     ) -> Self {
         Self {
             event_rx,
@@ -34,6 +40,7 @@ impl PerceptionBridge {
             buffer: Vec::new(),
             buffer_max: 50,
             flush_interval: Duration::from_secs(30),
+            clock,
         }
     }
 
@@ -110,13 +117,17 @@ fn event_to_message(event: &PerceptionEvent) -> Message {
 mod tests {
     use super::super::event::*;
     use super::*;
-    use base::ContentBlock;
-    use chrono::Utc;
+    use fabric::ContentBlock;
+    use kernel::chronos::TestClock;
 
-    fn make_event(priority: Priority, summary_data: EventData) -> PerceptionEvent {
+    fn make_event(
+        priority: Priority,
+        summary_data: EventData,
+        clock: &dyn fabric::Clock,
+    ) -> PerceptionEvent {
         PerceptionEvent {
             id: 1,
-            timestamp: Utc::now(),
+            timestamp: clock.wall_now(),
             source: EventSource::Proc,
             category: EventCategory::Process,
             priority,
@@ -124,12 +135,17 @@ mod tests {
         }
     }
 
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
+
     #[tokio::test]
     async fn test_critical_event_immediate_injection() {
         let (event_tx, event_rx) = mpsc::channel(16);
         let (injection_tx, mut injection_rx) = mpsc::channel(16);
+        let clock = test_clock();
 
-        let mut bridge = PerceptionBridge::new(event_rx, injection_tx);
+        let mut bridge = PerceptionBridge::new(event_rx, injection_tx, clock.clone());
 
         // Send a critical event
         let event = make_event(
@@ -137,6 +153,7 @@ mod tests {
             EventData::Raw {
                 message: "disk full".to_string(),
             },
+            &*clock,
         );
         event_tx.send(event).await.unwrap();
 
@@ -158,8 +175,9 @@ mod tests {
     async fn test_low_event_buffered() {
         let (event_tx, event_rx) = mpsc::channel(16);
         let (injection_tx, mut injection_rx) = mpsc::channel(16);
+        let clock = test_clock();
 
-        let mut bridge = PerceptionBridge::new(event_rx, injection_tx);
+        let mut bridge = PerceptionBridge::new(event_rx, injection_tx, clock.clone());
 
         // Send a low-priority event
         let event = make_event(
@@ -167,6 +185,7 @@ mod tests {
             EventData::Raw {
                 message: "routine check".to_string(),
             },
+            &*clock,
         );
         event_tx.send(event).await.unwrap();
 
@@ -185,8 +204,9 @@ mod tests {
     async fn test_buffer_flush() {
         let (_event_tx, event_rx) = mpsc::channel(16);
         let (injection_tx, mut injection_rx) = mpsc::channel(16);
+        let clock = test_clock();
 
-        let mut bridge = PerceptionBridge::new(event_rx, injection_tx);
+        let mut bridge = PerceptionBridge::new(event_rx, injection_tx, clock.clone());
 
         // Manually add events to buffer
         for i in 0..3 {
@@ -195,6 +215,7 @@ mod tests {
                 EventData::Raw {
                     message: format!("event {}", i),
                 },
+                &*clock,
             ));
         }
 
@@ -213,8 +234,9 @@ mod tests {
     async fn test_buffer_max_flush() {
         let (event_tx, event_rx) = mpsc::channel(100);
         let (injection_tx, mut injection_rx) = mpsc::channel(100);
+        let clock = test_clock();
 
-        let mut bridge = PerceptionBridge::new(event_rx, injection_tx);
+        let mut bridge = PerceptionBridge::new(event_rx, injection_tx, clock.clone());
         bridge.buffer_max = 5; // small for testing
 
         // Send 5 low-priority events
@@ -224,6 +246,7 @@ mod tests {
                 EventData::Raw {
                     message: format!("event {}", i),
                 },
+                &*clock,
             );
             event_tx.send(event).await.unwrap();
         }

@@ -10,6 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
+#[cfg(test)]
+use fabric::Timer;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -20,7 +22,7 @@ use super::{Tool, ToolContext, ToolResult};
 // Concurrency classification
 // ---------------------------------------------------------------------------
 
-pub use base::tool::ConcurrencyClass;
+pub use fabric::tool::ConcurrencyClass;
 
 // ---------------------------------------------------------------------------
 // Cancel mode
@@ -376,7 +378,9 @@ mod tests {
                 .unwrap()
                 .push((self.tool_name.clone(), seq));
             if self.delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+                kernel::chronos::SystemTimer
+                    .sleep(Duration::from_millis(self.delay_ms))
+                    .await;
             }
             ToolResult {
                 content: format!("{}:ok:seq{}", self.tool_name, seq),
@@ -388,8 +392,12 @@ mod tests {
 
     fn mock_ctx() -> ToolContext {
         ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         }
     }
 
@@ -478,15 +486,17 @@ mod tests {
             })
             .collect();
 
+        // Real Instant used for concurrency test timing — TestClock cannot
+        // simulate parallel vs. serial wall-clock elapsed time.
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
-        let elapsed = start.elapsed();
+        let elapsed = start.elapsed().as_millis() as u64;
 
         assert_eq!(results.len(), 3);
         // 3 calls each sleeping 100ms should complete in ~100ms if parallel,
         // not ~300ms if serial. Use 200ms as generous bound.
         assert!(
-            elapsed < Duration::from_millis(200),
+            elapsed < 200,
             "Expected parallel execution, took {:?}",
             elapsed
         );
@@ -597,14 +607,16 @@ mod tests {
             },
         ];
 
+        // Real Instant used for concurrency test timing — TestClock cannot
+        // simulate parallel vs. serial wall-clock elapsed time.
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
-        let elapsed = start.elapsed();
+        let elapsed = start.elapsed().as_millis() as u64;
 
         assert_eq!(results.len(), 2);
         // Same-path writes must be serialized => ~200ms not ~100ms.
         assert!(
-            elapsed >= Duration::from_millis(180),
+            elapsed >= 180,
             "Expected serialized execution for same-path writes, took {:?}",
             elapsed
         );
@@ -655,14 +667,16 @@ mod tests {
             },
         ];
 
+        // Real Instant used for concurrency test timing — TestClock cannot
+        // simulate parallel vs. serial wall-clock elapsed time.
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
-        let elapsed = start.elapsed();
+        let elapsed = start.elapsed().as_millis() as u64;
 
         assert_eq!(results.len(), 3);
         // Disjoint-path writes should run in parallel.
         assert!(
-            elapsed < Duration::from_millis(200),
+            elapsed < 200,
             "Expected parallel execution for disjoint writes, took {:?}",
             elapsed
         );
@@ -695,14 +709,16 @@ mod tests {
             })
             .collect();
 
+        // Real Instant used for concurrency test timing — TestClock cannot
+        // simulate parallel vs. serial wall-clock elapsed time.
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
-        let elapsed = start.elapsed();
+        let elapsed = start.elapsed().as_millis() as u64;
 
         assert_eq!(results.len(), 3);
         // Serialized: 3 x 100ms = ~300ms.
         assert!(
-            elapsed >= Duration::from_millis(280),
+            elapsed >= 280,
             "Expected serialized execution for side effects, took {:?}",
             elapsed
         );
@@ -868,19 +884,21 @@ mod tests {
             })
             .collect();
 
+        // Real Instant used for concurrency test timing — TestClock cannot
+        // simulate parallel vs. serial wall-clock elapsed time.
         let start = std::time::Instant::now();
         let results = executor.execute_batch(calls, &tools, &ctx).await;
-        let elapsed = start.elapsed();
+        let elapsed = start.elapsed().as_millis() as u64;
 
         assert_eq!(results.len(), 4);
         // With concurrency=2 and 4 tasks of 100ms each, should take ~200ms.
         assert!(
-            elapsed >= Duration::from_millis(180),
+            elapsed >= 180,
             "Expected concurrency limit to enforce batching, took {:?}",
             elapsed
         );
         assert!(
-            elapsed < Duration::from_millis(350),
+            elapsed < 350,
             "But should not be fully serial, took {:?}",
             elapsed
         );

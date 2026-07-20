@@ -1,7 +1,8 @@
-use base::body::{Action, ActionResult};
-use base::capability::{Capability, PermissionLevel as AbiPermissionLevel};
-use base::context::Context;
-use base::tool::{PermissionLevel as ToolPermissionLevel, ToolContext, ToolResult};
+use fabric::body::{Action, ActionResult};
+use fabric::capability::{Capability, CapabilityLevel as AbiPermissionLevel};
+use fabric::context::Context;
+use fabric::tool::{PermissionLevel as ToolPermissionLevel, ToolContext, ToolResult};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Convert Action to tool name + JSON input
@@ -26,10 +27,14 @@ pub fn tool_result_to_action_result(result: &ToolResult) -> ActionResult {
 }
 
 /// Convert Context to ToolContext
-pub fn context_to_tool_context(ctx: &Context) -> ToolContext {
+pub fn context_to_tool_context(ctx: &Context, clock: Arc<dyn fabric::Clock>) -> ToolContext {
     ToolContext {
+        approval_authority: None,
+        agent: None,
         working_dir: ctx.working_dir.clone(),
         session_id: ctx.session_id.clone(),
+        clock,
+        turn_event_sender: None,
     }
 }
 
@@ -60,7 +65,7 @@ pub fn elapsed_to_duration(ms: u64) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::tool::ToolResultMeta;
+    use fabric::tool::ToolResultMeta;
 
     #[test]
     fn test_action_roundtrip() {
@@ -83,6 +88,7 @@ mod tests {
             metadata: ToolResultMeta {
                 execution_time_ms: 100,
                 truncated: false,
+                patch_delta: None,
             },
         };
         let ar = tool_result_to_action_result(&result);

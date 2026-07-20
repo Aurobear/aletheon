@@ -95,8 +95,8 @@ impl Tool for ToolSearchTool {
 mod tests {
     use super::super::{tokenize_and_stem, CatalogEntry};
     use super::*;
-    use base::tool::Tool;
-    use base::tool::ToolExposure;
+    use fabric::tool::Tool;
+    use fabric::tool::ToolExposure;
 
     fn build_test_catalog() -> BM25Catalog {
         let entries = vec![
@@ -140,8 +140,12 @@ mod tests {
     async fn tool_search_finds_deferred() {
         let tool = ToolSearchTool::new(build_test_catalog());
         let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool
             .execute(json!({"query": "read file", "limit": 5}), &ctx)
@@ -154,8 +158,12 @@ mod tests {
     async fn tool_search_excludes_hidden() {
         let tool = ToolSearchTool::new(build_test_catalog());
         let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool
             .execute(json!({"query": "internal system", "limit": 5}), &ctx)
@@ -168,8 +176,12 @@ mod tests {
     async fn tool_search_no_match() {
         let tool = ToolSearchTool::new(build_test_catalog());
         let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool
             .execute(json!({"query": "zzzznonexistent", "limit": 5}), &ctx)

@@ -2,10 +2,11 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::time::Instant;
 use tracing::info;
 
-use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use super::{
+    PermissionLevel, Tool, ToolContext, ToolExecutionDescriptor, ToolResult, ToolResultMeta,
+};
 
 pub struct ModuleBuildTool;
 
@@ -43,12 +44,16 @@ impl Tool for ModuleBuildTool {
         PermissionLevel::L2 // system-level: compiling kernel code
     }
 
+    fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
+        Some(ToolExecutionDescriptor::ModuleBuild)
+    }
+
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(ModuleBuildTool)
     }
 
-    async fn execute(&self, input: Value, _ctx: &ToolContext) -> ToolResult {
-        let start = Instant::now();
+    async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let source_dir = match input["source_dir"].as_str() {
             Some(p) => p,
@@ -57,8 +62,9 @@ impl Tool for ModuleBuildTool {
                     content: "Missing required parameter: source_dir".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -79,8 +85,9 @@ impl Tool for ModuleBuildTool {
                             content: format!("Failed to detect kernel version: {}", e),
                             is_error: true,
                             metadata: ToolResultMeta {
-                                execution_time_ms: start.elapsed().as_millis() as u64,
+                                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                                 truncated: false,
+                                patch_delta: None,
                             },
                         };
                     }
@@ -98,8 +105,9 @@ impl Tool for ModuleBuildTool {
                 ),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             };
         }
@@ -111,8 +119,9 @@ impl Tool for ModuleBuildTool {
                 content: format!("No Makefile found in {}", source_dir),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             };
         }
@@ -144,12 +153,13 @@ impl Tool for ModuleBuildTool {
                             kernel_version,
                             source_dir,
                             ko_files.join(", "),
-                            start.elapsed().as_millis()
+                            ctx.clock.mono_now().0.saturating_sub(start.0)
                         ),
                         is_error: false,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 } else {
@@ -164,8 +174,9 @@ impl Tool for ModuleBuildTool {
                         ),
                         is_error: true,
                         metadata: ToolResultMeta {
-                            execution_time_ms: start.elapsed().as_millis() as u64,
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                             truncated: false,
+                            patch_delta: None,
                         },
                     }
                 }
@@ -174,8 +185,9 @@ impl Tool for ModuleBuildTool {
                 content: format!("Failed to run make: {}", e),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -218,8 +230,12 @@ mod tests {
     async fn test_module_build_missing_dir() {
         let tool = ModuleBuildTool;
         let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         };
         let result = tool
             .execute(json!({"source_dir": "/nonexistent"}), &ctx)

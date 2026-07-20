@@ -30,8 +30,8 @@ impl Tool for SystemStatusTool {
         Box::new(SystemStatusTool)
     }
 
-    async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, _input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let mut parts = Vec::new();
 
@@ -63,8 +63,9 @@ impl Tool for SystemStatusTool {
             content: parts.join("\n"),
             is_error: false,
             metadata: ToolResultMeta {
-                execution_time_ms: start.elapsed().as_millis() as u64,
+                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
+                patch_delta: None,
             },
         }
     }

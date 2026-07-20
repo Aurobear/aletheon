@@ -1,17 +1,17 @@
 //! End-to-end tests for the self-awareness seed mechanism.
 //!
 //! Tests the full flow:
-//! 1. BrainCore generates awareness during reasoning
+//! 1. CognitCore generates awareness during reasoning
 //! 2. Awareness is stored in Episodic Memory
 //! 3. AwarenessGrowthAnalyzer produces suggestions
-//! 4. Suggestions are fed back to BrainCore
+//! 4. Suggestions are fed back to CognitCore
 
-use base::{AwarenessExtension, AwarenessExtensionCounts, SelfAwareness, SelfState};
 use dasein::core::awareness_growth::AwarenessGrowthAnalyzer;
+use fabric::{AwarenessExtension, AwarenessExtensionCounts, SelfAwareness, SelfState};
 
 #[test]
 fn test_full_awareness_flow() {
-    // Step 1: Generate awareness (simulating BrainCore)
+    // Step 1: Generate awareness (simulating CognitCore)
     let awareness = SelfAwareness::with_extensions(
         "answering user question",
         vec![

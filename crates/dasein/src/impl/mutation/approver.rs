@@ -5,8 +5,8 @@
 
 use crate::core::mutation::MutationLayer;
 use anyhow::Result;
-use base::evolution::EvolutionTriggeredPayload;
-use base::self_field::{MutationIntent, Verdict};
+use fabric::evolution::EvolutionTriggeredPayload;
+use fabric::self_field::{MutationIntent, Verdict};
 use std::sync::Arc;
 
 /// Validates evolution triggers and generates approved mutation intents.
@@ -101,8 +101,12 @@ impl MutationApprover {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use kernel::chronos::TestClock;
     use uuid::Uuid;
+
+    fn test_clock() -> Arc<dyn fabric::Clock> {
+        Arc::new(TestClock::default())
+    }
 
     fn make_trigger(reason: &str) -> EvolutionTriggeredPayload {
         EvolutionTriggeredPayload {
@@ -114,7 +118,7 @@ mod tests {
 
     #[test]
     fn consecutive_failures_generates_safety_intent() {
-        let layer = Arc::new(MutationLayer::new());
+        let layer = Arc::new(MutationLayer::new(test_clock()));
         let approver = MutationApprover::new(layer);
         let trigger = make_trigger("consecutive_failures");
 
@@ -126,7 +130,7 @@ mod tests {
 
     #[test]
     fn confidence_drop_generates_frequency_intent() {
-        let layer = Arc::new(MutationLayer::new());
+        let layer = Arc::new(MutationLayer::new(test_clock()));
         let approver = MutationApprover::new(layer);
         let trigger = make_trigger("confidence_drop");
 
@@ -138,7 +142,7 @@ mod tests {
 
     #[test]
     fn unknown_trigger_generates_no_intents() {
-        let layer = Arc::new(MutationLayer::new());
+        let layer = Arc::new(MutationLayer::new(test_clock()));
         let approver = MutationApprover::new(layer);
         let trigger = make_trigger("unknown_reason");
 
@@ -148,7 +152,7 @@ mod tests {
 
     #[test]
     fn max_magnitude_applied() {
-        let layer = Arc::new(MutationLayer::new());
+        let layer = Arc::new(MutationLayer::new(test_clock()));
         let approver = MutationApprover::new(layer).with_max_magnitude(0.5);
         let trigger = make_trigger("consecutive_failures");
 

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use fabric::WallTime;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -58,8 +58,8 @@ pub struct Task {
     pub subject: String,
     pub description: String,
     pub status: TaskStatus,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: WallTime,
+    pub updated_at: WallTime,
 }
 
 // ---------------------------------------------------------------------------
@@ -79,9 +79,8 @@ impl TaskStore {
         }
     }
 
-    pub fn create(&mut self, subject: String, description: String) -> Task {
+    pub fn create(&mut self, subject: String, description: String, now: WallTime) -> Task {
         let id = Uuid::new_v4().to_string();
-        let now = Utc::now();
         let task = Task {
             id: id.clone(),
             subject,
@@ -102,10 +101,10 @@ impl TaskStore {
         self.tasks.values().cloned().collect()
     }
 
-    pub fn update_status(&mut self, id: &str, status: TaskStatus) -> Option<Task> {
+    pub fn update_status(&mut self, id: &str, status: TaskStatus, now: WallTime) -> Option<Task> {
         if let Some(task) = self.tasks.get_mut(id) {
             task.status = status;
-            task.updated_at = Utc::now();
+            task.updated_at = now;
             Some(task.clone())
         } else {
             None
@@ -175,8 +174,8 @@ impl Tool for TaskCreateTool {
         ConcurrencyClass::SideEffect
     }
 
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let subject = match input["subject"].as_str() {
             Some(s) if !s.is_empty() => s.to_string(),
@@ -185,8 +184,9 @@ impl Tool for TaskCreateTool {
                     content: "Missing or empty 'subject'".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -194,14 +194,16 @@ impl Tool for TaskCreateTool {
 
         let description = input["description"].as_str().unwrap_or("").to_string();
 
-        let task = self.store.lock().create(subject, description);
+        let now = ctx.clock.wall_now();
+        let task = self.store.lock().create(subject, description, now);
 
         ToolResult {
             content: serde_json::to_string_pretty(&task).unwrap_or_default(),
             is_error: false,
             metadata: ToolResultMeta {
-                execution_time_ms: start.elapsed().as_millis() as u64,
+                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
+                patch_delta: None,
             },
         }
     }
@@ -259,8 +261,8 @@ impl Tool for TaskUpdateTool {
         ConcurrencyClass::SideEffect
     }
 
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let id = match input["id"].as_str() {
             Some(s) if !s.is_empty() => s,
@@ -269,8 +271,9 @@ impl Tool for TaskUpdateTool {
                     content: "Missing or empty 'id'".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -283,8 +286,9 @@ impl Tool for TaskUpdateTool {
                     content: "Missing 'status'".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -300,28 +304,35 @@ impl Tool for TaskUpdateTool {
                     ),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
         };
 
-        match self.store.lock().update_status(id, status) {
+        match self
+            .store
+            .lock()
+            .update_status(id, status, ctx.clock.wall_now())
+        {
             Some(task) => ToolResult {
                 content: serde_json::to_string_pretty(&task).unwrap_or_default(),
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
             None => ToolResult {
                 content: format!("Task not found: {}", id),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -369,8 +380,8 @@ impl Tool for TaskListTool {
         ConcurrencyClass::ReadOnly
     }
 
-    async fn execute(&self, _input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, _input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let tasks = self.store.lock().list();
 
@@ -378,8 +389,9 @@ impl Tool for TaskListTool {
             content: serde_json::to_string_pretty(&tasks).unwrap_or_default(),
             is_error: false,
             metadata: ToolResultMeta {
-                execution_time_ms: start.elapsed().as_millis() as u64,
+                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
+                patch_delta: None,
             },
         }
     }
@@ -432,8 +444,8 @@ impl Tool for TaskGetTool {
         ConcurrencyClass::ReadOnly
     }
 
-    async fn execute(&self, input: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let start = std::time::Instant::now();
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
 
         let id = match input["id"].as_str() {
             Some(s) if !s.is_empty() => s,
@@ -442,8 +454,9 @@ impl Tool for TaskGetTool {
                     content: "Missing or empty 'id'".to_string(),
                     is_error: true,
                     metadata: ToolResultMeta {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                         truncated: false,
+                        patch_delta: None,
                     },
                 };
             }
@@ -454,16 +467,18 @@ impl Tool for TaskGetTool {
                 content: serde_json::to_string_pretty(&task).unwrap_or_default(),
                 is_error: false,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
             None => ToolResult {
                 content: format!("Task not found: {}", id),
                 is_error: true,
                 metadata: ToolResultMeta {
-                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
+                    patch_delta: None,
                 },
             },
         }
@@ -481,8 +496,12 @@ mod tests {
 
     fn ctx() -> ToolContext {
         ToolContext {
+            approval_authority: None,
+            agent: None,
             working_dir: PathBuf::from("/tmp"),
             session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
         }
     }
 
@@ -493,7 +512,11 @@ mod tests {
         let mut store = TaskStore::new();
 
         // create
-        let task = store.create("Fix bug".to_string(), "Fix the null pointer".to_string());
+        let task = store.create(
+            "Fix bug".to_string(),
+            "Fix the null pointer".to_string(),
+            WallTime(0),
+        );
         let id = task.id.clone();
         assert_eq!(task.status, TaskStatus::Pending);
 
@@ -507,7 +530,9 @@ mod tests {
         assert_eq!(got.subject, "Fix bug");
 
         // update status
-        let updated = store.update_status(&id, TaskStatus::InProgress).unwrap();
+        let updated = store
+            .update_status(&id, TaskStatus::InProgress, WallTime(0))
+            .unwrap();
         assert_eq!(updated.status, TaskStatus::InProgress);
 
         // confirm via get
@@ -535,7 +560,9 @@ mod tests {
     #[tokio::test]
     async fn task_list_tool_shows_created() {
         let store = new_shared_task_store();
-        store.lock().create("A".to_string(), "".to_string());
+        store
+            .lock()
+            .create("A".to_string(), "".to_string(), WallTime(0));
 
         let tool = TaskListTool::new(Arc::clone(&store));
         let result = tool.execute(json!({}), &ctx()).await;
@@ -549,7 +576,9 @@ mod tests {
     #[tokio::test]
     async fn task_update_tool_flips_status() {
         let store = new_shared_task_store();
-        let task = store.lock().create("B".to_string(), "".to_string());
+        let task = store
+            .lock()
+            .create("B".to_string(), "".to_string(), WallTime(0));
         let id = task.id.clone();
 
         let tool = TaskUpdateTool::new(Arc::clone(&store));
@@ -565,10 +594,14 @@ mod tests {
     #[tokio::test]
     async fn task_get_tool_reflects_update() {
         let store = new_shared_task_store();
-        let task = store.lock().create("C".to_string(), "".to_string());
+        let task = store
+            .lock()
+            .create("C".to_string(), "".to_string(), WallTime(0));
         let id = task.id.clone();
 
-        store.lock().update_status(&id, TaskStatus::InProgress);
+        store
+            .lock()
+            .update_status(&id, TaskStatus::InProgress, WallTime(0));
 
         let tool = TaskGetTool::new(Arc::clone(&store));
         let result = tool.execute(json!({"id": id}), &ctx()).await;

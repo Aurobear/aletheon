@@ -1,0 +1,6 @@
+id = "rust_multifile"
+fixture = "rust_multifile"
+prompt = "实现逗号分隔标签：去除每项空白、按首次出现去重、输出逗号连接结果，并拒绝空项。保持 parser/domain/CLI 分层。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"], ["cargo", "run", "--quiet", "--", "alpha, beta,alpha"]]
+forbidden_paths = ["Cargo.toml", "tests/acceptance.rs"]

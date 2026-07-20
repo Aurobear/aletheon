@@ -1,6 +1,6 @@
 use crate::r#impl::inference::{InferenceConfig, InferenceRouter, ProviderConfig};
 
-/// Bridges InferenceRouter into BrainCore.
+/// Bridges InferenceRouter into CognitCore.
 ///
 /// Routes inference requests to the optimal provider based on message complexity
 /// and runtime upgrade thresholds (iteration count, tool-call count).
@@ -33,7 +33,7 @@ impl InferenceBridge {
     }
 
     /// Route to the best model, considering both message complexity and runtime metrics.
-    /// This is the main entry point for BrainCore callers.
+    /// This is the main entry point for CognitCore callers.
     pub fn route(&self, message: &str, iterations: usize, total_tool_calls: usize) -> &str {
         self.router.route(message, iterations, total_tool_calls)
     }

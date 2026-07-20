@@ -1,7 +1,7 @@
 use std::io;
 
-use base::brain::{Critique, Plan};
-use base::ui_event::{
+use fabric::cognit::{Critique, Plan};
+use fabric::ui_event::{
     AwarenessLevel, ClientEvent, CollaborationMode, SubAgentHandle, SubAgentStatus,
 };
 
@@ -11,10 +11,15 @@ use super::test_infra::EventRecorder;
 use super::App;
 
 /// Variant of `try_read_socket` that records events via `EventRecorder`.
-pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<EventRecorder>) {
+pub fn try_read_socket_with_recorder(
+    app: &mut App,
+    event_recorder: &mut Option<EventRecorder>,
+) -> bool {
+    let mut changed = false;
     loop {
         match app.stream.try_read(&mut app.read_buf) {
             Ok(0) => {
+                changed = true;
                 app.streaming = false;
                 app.status.waiting = false;
                 app.app_state.streaming = false;
@@ -22,6 +27,7 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
                 break;
             }
             Ok(n) => {
+                changed = true;
                 let chunk = String::from_utf8_lossy(&app.read_buf[..n]);
                 app.response_buf.push_str(&chunk);
 
@@ -57,6 +63,7 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
             Err(_) => {
+                changed = true;
                 app.streaming = false;
                 app.status.waiting = false;
                 app.app_state.streaming = false;
@@ -64,6 +71,7 @@ pub fn try_read_socket_with_recorder(app: &mut App, event_recorder: &mut Option<
             }
         }
     }
+    changed
 }
 
 pub fn handle_event(app: &mut App, params: &serde_json::Value) {
@@ -100,6 +108,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             tool,
             args,
         } => {
+            app.chat.discard_trailing_assistant_draft();
             let args_str = serde_json::to_string(&args).unwrap_or_default();
             app.chat.add_exec(call_id.clone(), tool.clone(), args_str);
             app.app_state.turn_tool_count += 1;
@@ -119,6 +128,36 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             ..
         } => {
             app.chat.update_exec(&call_id, &output, is_error);
+        }
+        ClientEvent::ToolProgress {
+            call_id, payload, ..
+        } => {
+            let progress = payload
+                .as_str()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| payload.to_string());
+            app.chat.update_exec_progress(&call_id, &progress);
+        }
+        ClientEvent::PatchProgress {
+            status,
+            path,
+            operation,
+            error,
+            applied_count,
+            failed_count,
+        } => {
+            let target = path.as_deref().unwrap_or("patch");
+            let operation = operation.as_deref().unwrap_or("apply");
+            let detail = error.unwrap_or_else(|| match (applied_count, failed_count) {
+                (Some(applied), Some(failed)) => format!("{applied} applied, {failed} failed"),
+                _ => String::new(),
+            });
+            app.chat.add_text(
+                ChatRole::System,
+                format!("Patch {status}: {operation} {target} {detail}")
+                    .trim_end()
+                    .to_owned(),
+            );
         }
         ClientEvent::Usage {
             tokens_in,
@@ -146,12 +185,15 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.streaming = false;
             app.status.waiting = false;
             app.app_state.streaming = false;
+            app.turn_active = false;
         }
         ClientEvent::AwarenessChanged { level, context } => {
             if let Ok(awareness_level) =
                 serde_json::from_str::<AwarenessLevel>(&format!("\"{}\"", level))
             {
-                app.app_state.awareness.update(awareness_level, context);
+                app.app_state
+                    .awareness
+                    .update(awareness_level, context, app.clock.mono_now());
             }
         }
         ClientEvent::PlanUpdate {
@@ -232,9 +274,11 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             // compaction is internal, just note it
         }
         ClientEvent::Reflection { summary } => {
-            // `summary` already begins with "Reflection: " (see reflection.rs);
-            // don't prepend it again (bug T2: "Reflection: Reflection: ...").
-            app.chat.add_text(ChatRole::System, summary);
+            // Routine reflection is internal control flow, not conversation.
+            // Surface only a reflection that changes strategy or stops work.
+            if !(summary.contains("Spec: on track") && summary.ends_with("Continuing...")) {
+                app.chat.add_text(ChatRole::System, summary);
+            }
         }
         ClientEvent::GoalSet {
             goal: _,
@@ -277,6 +321,9 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
 }
 
 pub fn process_response(app: &mut App, msg: serde_json::Value) {
+    if apply_typed_protocol_event(app, &msg) {
+        return;
+    }
     if let Some(result) = msg.get("result") {
         if let Some(text) = result.get("response").and_then(|v| v.as_str()) {
             // Standard chat response - deduplicate consecutive identical text
@@ -339,29 +386,56 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
     // same try_read chunk.
 }
 
+fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> bool {
+    use super::reducer::{reduce, UiAction, UiError};
+    use fabric::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage};
+
+    let candidate = message
+        .get("params")
+        .or_else(|| message.get("result"))
+        .unwrap_or(message);
+    let Ok(message) = serde_json::from_value::<ClientMessage<ProtocolEvent>>(candidate.clone())
+    else {
+        return false;
+    };
+    let Ok(event) = message.into_v1() else {
+        return false;
+    };
+    if matches!(
+        &event,
+        ProtocolEvent::TurnCompleted { .. } | ProtocolEvent::TurnStopped { .. }
+    ) {
+        return super::reducer::reduce_terminal(&mut app.app_state, &event);
+    }
+    if matches!(&event, ProtocolEvent::Failed { .. }) {
+        let _ = super::reducer::reduce_terminal(&mut app.app_state, &event);
+    }
+    let action = match event {
+        ProtocolEvent::InitializeResponse(_) => return true,
+        ProtocolEvent::Snapshot(value) => UiAction::Snapshot(value),
+        ProtocolEvent::Item(value) => UiAction::Item(value),
+        ProtocolEvent::Approval(value) => UiAction::Approval(value),
+        ProtocolEvent::Agent(value) => UiAction::Agent(value),
+        ProtocolEvent::Reconnected(value) => UiAction::Reconnected(value),
+        ProtocolEvent::CommandCompleted { .. } => return true,
+        ProtocolEvent::Failed { cursor, message } => UiAction::Failed(UiError { cursor, message }),
+        ProtocolEvent::TurnStarted { .. } => return true,
+        ProtocolEvent::TurnCompleted { .. } | ProtocolEvent::TurnStopped { .. } => unreachable!(),
+    };
+    let _effects = reduce(&mut app.app_state, action);
+    true
+}
+
 /// Deduplicate consecutive identical text blocks.
 /// Some models repeat thinking/reasoning text twice.
 pub fn deduplicate_consecutive_text(text: &str) -> String {
-    let len = text.len();
-
-    // Try to find the longest repeated prefix
-    for split_pos in (1..=len / 2).rev() {
-        // Ensure we split at a valid UTF-8 boundary
-        if !text.is_char_boundary(split_pos) {
-            continue;
-        }
-
-        let prefix = &text[..split_pos];
-        let suffix = &text[split_pos..];
-
-        // Check if the suffix starts with the same prefix
-        if suffix.starts_with(prefix) {
-            // Found a repeated block - return just the prefix
-            return prefix.to_string();
+    let midpoint = text.len() / 2;
+    if text.len() % 2 == 0 && text.is_char_boundary(midpoint) {
+        let (first, second) = text.split_at(midpoint);
+        if first == second {
+            return first.to_string();
         }
     }
-
-    // No repeated block found, return original text
     text.to_string()
 }
 
@@ -657,4 +731,206 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
         lines.push(format!("  {} [{}] — {}", id, status, task));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{deduplicate_consecutive_text, handle_event};
+    use crate::tui::{chat::ChatEntry, host_time::ClientClock, term_compat::TermCaps, App};
+    use executive::service::{tool_stream_bridge::ToolStreamHandle, turn_pipeline};
+    use fabric::{
+        ipc::{StreamConfig, TurnEventStream, TurnEventV1},
+        ToolProgress, ToolResult, ToolResultMeta,
+    };
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn deduplicates_only_an_exact_repeated_response() {
+        assert_eq!(deduplicate_consecutive_text("完整回答完整回答"), "完整回答");
+        assert_eq!(
+            deduplicate_consecutive_text("abcabc trailing"),
+            "abcabc trailing"
+        );
+    }
+
+    #[test]
+    fn preserves_markdown_that_starts_with_repeated_rule_characters() {
+        let response = "----------------------------------------\n邮件分析结果\n- 重点一\n- 重点二";
+        assert_eq!(deduplicate_consecutive_text(response), response);
+    }
+
+    #[tokio::test]
+    async fn error_event_releases_the_active_turn() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let caps = TermCaps {
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        };
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            caps,
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+        );
+        app.streaming = true;
+        app.status.waiting = true;
+        app.app_state.streaming = true;
+        app.turn_active = true;
+
+        handle_event(
+            &mut app,
+            &serde_json::json!({"type": "error", "message": "compaction failed"}),
+        );
+
+        assert!(!app.streaming);
+        assert!(!app.status.waiting);
+        assert!(!app.app_state.streaming);
+        assert!(!app.turn_active);
+    }
+
+    #[tokio::test]
+    async fn patch_progress_is_materialized_immediately_in_chat() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let caps = TermCaps {
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        };
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            caps,
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+        );
+        let event = fabric::ui_event::ClientEvent::PatchProgress {
+            status: "file_changed".into(),
+            path: Some("src/lib.rs".into()),
+            operation: Some("update".into()),
+            error: None,
+            applied_count: None,
+            failed_count: None,
+        };
+
+        handle_event(&mut app, &serde_json::to_value(event).unwrap());
+
+        assert!(app.chat.entries.iter().any(|entry| {
+            matches!(entry, ChatEntry::Text(message)
+                if message.content.contains("Patch file_changed")
+                    && message.content.contains("src/lib.rs"))
+        }));
+    }
+
+    #[tokio::test]
+    async fn governed_tool_progress_reaches_tui_and_keeps_one_terminal() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let caps = TermCaps {
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        };
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            caps,
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+        );
+        handle_event(
+            &mut app,
+            &serde_json::to_value(fabric::ui_event::ClientEvent::ToolCallStart {
+                call_id: "call-e2e".into(),
+                tool: "bash_exec".into(),
+                args: serde_json::Value::Null,
+            })
+            .unwrap(),
+        );
+
+        let ToolStreamHandle { mut sink, event_rx } = ToolStreamHandle::new();
+        let (mut daemon_stream, daemon_sender) =
+            TurnEventStream::new(StreamConfig::turn_events(16));
+        let bridge_sender = daemon_sender.clone();
+        let bridge = tokio::spawn(async move {
+            executive::service::tool_stream_bridge::bridge_tool_stream(
+                event_rx,
+                bridge_sender,
+                "bash_exec".into(),
+                "call-e2e".into(),
+                CancellationToken::new(),
+            )
+            .await
+        });
+
+        assert!(sink.progress(ToolProgress::Structured(serde_json::json!({"line": 1}))));
+        assert!(sink.progress(ToolProgress::Structured(serde_json::json!({"line": 2}))));
+        sink.terminal(Ok(ToolResult {
+            content: "finished".into(),
+            is_error: false,
+            metadata: ToolResultMeta::default(),
+        }))
+        .await;
+        let outcome = bridge.await.unwrap();
+        let terminal = outcome.terminal.unwrap();
+
+        // Production settlement emits the unique authoritative ToolResult only
+        // after the progress bridge returns its single terminal.
+        daemon_sender
+            .send(&TurnEventV1::ToolResult {
+                name: "bash_exec".into(),
+                call_id: "call-e2e".into(),
+                content: terminal.content,
+                is_error: terminal.is_error,
+                execution_time_ms: terminal.metadata.execution_time_ms,
+            })
+            .unwrap();
+
+        let mut progress_count = 0;
+        let mut terminal_count = 0;
+        let mut tui_progress_observations = 0;
+        while let Some(event) = daemon_stream.try_recv() {
+            let event = event.unwrap();
+            match &event {
+                TurnEventV1::ToolProgress { .. } => progress_count += 1,
+                TurnEventV1::ToolResult { .. } => terminal_count += 1,
+                other => panic!("unexpected daemon turn event: {other:?}"),
+            }
+            let client = turn_pipeline::turn_event_to_client_event(&event).unwrap();
+            handle_event(&mut app, &serde_json::to_value(client).unwrap());
+            if matches!(event, TurnEventV1::ToolProgress { .. }) {
+                let visible = app.chat.entries.iter().any(|entry| {
+                    matches!(entry, ChatEntry::Exec(execution)
+                        if execution.call_id == "call-e2e" && !execution.output.is_empty())
+                });
+                assert!(visible, "TUI must materialize each progress event");
+                tui_progress_observations += 1;
+            }
+        }
+
+        assert_eq!(progress_count, 2);
+        assert_eq!(tui_progress_observations, 2);
+        assert_eq!(terminal_count, 1);
+        let execution = app
+            .chat
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ChatEntry::Exec(execution) if execution.call_id == "call-e2e" => Some(execution),
+                _ => None,
+            })
+            .unwrap();
+        assert!(execution.finished);
+        assert_eq!(execution.output, "finished");
+    }
 }

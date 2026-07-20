@@ -7,13 +7,19 @@ license.workspace = true
 description = "Core execution body — the minimal runtime for tool execution"
 
 [dependencies]
-base = { path = "../base" }
+fabric = { path = "../fabric" }
+kernel = { path = "../kernel" }
+platform = { path = "../platform" }
 anyhow = "1"
+aes-gcm = { workspace = true }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
+schemars = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
+thiserror = "2"
 # From drivers
 libc = "0.2"
 uuid = { version = "1", features = ["v4"] }
@@ -27,7 +33,7 @@ atspi = { version = "0.30", features = ["zbus"], optional = true }
 tesseract = { version = "0.15", optional = true }
 zbus = { version = "4", optional = true }
 # From tools
-reqwest = { version = "0.12", features = ["json", "stream", "blocking"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 tree-sitter = { workspace = true }
 tree-sitter-rust = { workspace = true }
 tempfile = "3"
@@ -41,6 +47,7 @@ tokio-util = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = "0.12"
 futures = "0.3"
+sha2 = { workspace = true }
 # From security
 
 [features]
@@ -51,9 +58,13 @@ input = ["nix"]
 display = ["nix", "x11rb"]
 a11y = ["atspi"]
 ocr = []
+acix = ["input", "display", "a11y", "ocr"]
 ocr-tesseract = ["ocr", "tesseract"]
 # From security
 sandbox-primitives = ["nix"]
 
 [dev-dependencies]
 tokio-test = "0.4"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
+http-body-util = "0.1"

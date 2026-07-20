@@ -1,127 +1,117 @@
-use anyhow::Result;
-use std::time::Duration;
-use tracing::{info, warn};
+//! Sandbox executor types — now defined in fabric.
+//!
+//! This module provides backward-compatible re-exports and a convenience factory
+//! that constructs a [`SandboxExecutor`] with corpus default backends.
 
-use crate::sandbox::bubblewrap::BubblewrapBackend;
-use crate::sandbox::noop::NoopBackend;
-use crate::sandbox::process::ProcessBackend;
-use crate::sandbox::{IsolationLevel, SandboxBackend, SandboxConfig, SandboxResult};
+use fabric::Clock;
+use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxPreference {
-    /// Select the best available backend automatically.
-    Auto,
-    /// Require namespace-level isolation; fail if unavailable.
-    Require,
-    /// Disable sandbox entirely (debug mode).
-    Forbid,
-    /// Use best available, but warn on degraded isolation.
-    BestEffort,
-}
+pub use fabric::sandbox::{SandboxExecutor, SandboxPreference};
 
-impl SandboxPreference {
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "auto" => Self::Auto,
-            "require" => Self::Require,
-            "forbid" => Self::Forbid,
-            "best_effort" | "besteffort" => Self::BestEffort,
-            _ => Self::Auto,
-        }
-    }
-}
-
-/// Selects the best available sandbox backend and dispatches execution.
-///
-/// Backends are probed and registered in priority order:
-/// Bubblewrap (namespace) > Process (resource limits) > Noop (no isolation).
-pub struct SandboxExecutor {
-    backends: Vec<Box<dyn SandboxBackend>>,
+/// Construct a [`SandboxExecutor`] pre-loaded with corpus default backends
+/// in priority order: Bubblewrap (namespace) > Process (resource limits)
+/// > Noop (no isolation).
+pub fn create_default_executor(
     preference: SandboxPreference,
+    clock: Arc<dyn Clock>,
+) -> SandboxExecutor {
+    create_executor_with_front_backend(preference, clock, None)
 }
 
-impl SandboxExecutor {
-    pub fn new(preference: SandboxPreference) -> Self {
-        let mut backends: Vec<Box<dyn SandboxBackend>> = Vec::new();
+pub fn create_executor_with_front_backend(
+    preference: SandboxPreference,
+    clock: Arc<dyn Clock>,
+    front: Option<Box<dyn fabric::sandbox::SandboxBackend>>,
+) -> SandboxExecutor {
+    use crate::sandbox::bubblewrap::BubblewrapBackend;
+    use crate::sandbox::noop::NoopBackend;
+    use crate::sandbox::process::ProcessBackend;
 
-        // Priority order: Bubblewrap > Process > Noop
-        if let Some(bwrap) = BubblewrapBackend::probe() {
-            backends.push(Box::new(bwrap));
+    let mut backends: Vec<Box<dyn fabric::sandbox::SandboxBackend>> = Vec::new();
+    // An explicitly supplied external owner is the requested execution route,
+    // not merely another best-effort candidate. Put it first so enabling the
+    // execd gate cannot silently continue through bubblewrap and bypass
+    // process/read streaming. With no front backend, Auto keeps the original
+    // Bubblewrap > Process > Noop policy unchanged.
+    if let Some(front) = front {
+        backends.push(front);
+    }
+    // Default priority order: Bubblewrap > Process > Noop.
+    if let Some(bwrap) = BubblewrapBackend::probe(clock.clone()) {
+        backends.push(Box::new(bwrap));
+    }
+    backends.push(Box::new(ProcessBackend {
+        clock: clock.clone(),
+    }));
+    backends.push(Box::new(NoopBackend { clock }));
+
+    tracing::info!(
+        preference = ?preference,
+        available = backends.len(),
+        "SandboxExecutor initialized"
+    );
+
+    SandboxExecutor::new(backends, preference)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use fabric::{
+        IsolationLevel, MonoTime, SandboxBackend, SandboxCapabilities, SandboxConfig,
+        SandboxResult, WallTime,
+    };
+    use std::time::Duration;
+
+    struct FixedClock;
+    impl Clock for FixedClock {
+        fn wall_now(&self) -> WallTime {
+            WallTime(0)
         }
-        backends.push(Box::new(ProcessBackend));
-        backends.push(Box::new(NoopBackend));
+        fn mono_now(&self) -> MonoTime {
+            MonoTime(0)
+        }
+    }
 
-        info!(
-            preference = ?preference,
-            available = backends.len(),
-            "SandboxExecutor initialized"
+    struct Front;
+    #[async_trait]
+    impl SandboxBackend for Front {
+        fn name(&self) -> &str {
+            "execd"
+        }
+        fn isolation_level(&self) -> IsolationLevel {
+            IsolationLevel::Process
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        fn capabilities(&self) -> SandboxCapabilities {
+            SandboxCapabilities {
+                filesystem_isolation: false,
+                network_isolation: false,
+                resource_limits: false,
+                seccomp_filter: false,
+                limitations: Vec::new(),
+            }
+        }
+        async fn execute(
+            &self,
+            _cmd: &str,
+            _config: &SandboxConfig,
+            _timeout: Duration,
+        ) -> anyhow::Result<SandboxResult> {
+            unreachable!("selection test does not execute")
+        }
+    }
+
+    #[test]
+    fn explicit_front_backend_is_selected_by_auto() {
+        let executor = create_executor_with_front_backend(
+            SandboxPreference::Auto,
+            Arc::new(FixedClock),
+            Some(Box::new(Front)),
         );
-
-        Self {
-            backends,
-            preference,
-        }
-    }
-
-    /// Select the most appropriate backend based on the configured preference.
-    pub fn select_backend(&self) -> Option<&dyn SandboxBackend> {
-        match self.preference {
-            SandboxPreference::Auto | SandboxPreference::BestEffort => {
-                // Return the first available backend (highest priority).
-                self.backends
-                    .iter()
-                    .find(|b| b.is_available())
-                    .map(|b| b.as_ref())
-            }
-            SandboxPreference::Require => {
-                // Must have namespace-level or better isolation.
-                self.backends
-                    .iter()
-                    .find(|b| {
-                        b.is_available()
-                            && matches!(
-                                b.isolation_level(),
-                                IsolationLevel::Namespace | IsolationLevel::Container
-                            )
-                    })
-                    .map(|b| b.as_ref())
-            }
-            SandboxPreference::Forbid => {
-                // Return NoopBackend explicitly.
-                self.backends
-                    .iter()
-                    .find(|b| b.name() == "noop")
-                    .map(|b| b.as_ref())
-            }
-        }
-    }
-
-    /// Execute a command using the selected sandbox backend.
-    pub async fn run(
-        &self,
-        cmd: &str,
-        config: &SandboxConfig,
-        timeout: Duration,
-    ) -> Result<SandboxResult> {
-        let backend = self
-            .select_backend()
-            .ok_or_else(|| anyhow::anyhow!("No suitable sandbox backend available"))?;
-
-        if self.preference == SandboxPreference::BestEffort
-            && backend.isolation_level() == IsolationLevel::None
-        {
-            warn!("Sandbox degraded to no isolation (BestEffort mode)");
-        }
-
-        backend.execute(cmd, config, timeout).await
-    }
-
-    /// List all registered backends with their availability status.
-    pub fn list_backends(&self) -> Vec<(&str, bool)> {
-        self.backends
-            .iter()
-            .map(|b| (b.name(), b.is_available()))
-            .collect()
+        assert_eq!(executor.select_backend().unwrap().name(), "execd");
     }
 }

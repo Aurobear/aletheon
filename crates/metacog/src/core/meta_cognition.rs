@@ -1,6 +1,7 @@
-use base::dasein::{BoredomDepth, DaseinContext, DaseinEvent, Stimmung};
-use base::self_field::MutationIntent;
-use std::sync::RwLock;
+use fabric::dasein::{BoredomDepth, DaseinContext, DaseinEvent, Stimmung};
+use fabric::self_field::MutationIntent;
+use fabric::{wall_to_datetime, Clock};
+use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc;
 
 pub struct MetaCognition {
@@ -9,6 +10,7 @@ pub struct MetaCognition {
     thresholds: MetaCognitionThresholds,
     #[allow(dead_code)]
     dasein_tx: Option<mpsc::Sender<DaseinEvent>>,
+    clock: Arc<dyn Clock>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,7 +49,7 @@ impl Default for MetaCognitionThresholds {
 }
 
 impl MetaCognition {
-    pub fn new(dasein_tx: Option<mpsc::Sender<DaseinEvent>>) -> Self {
+    pub fn new(dasein_tx: Option<mpsc::Sender<DaseinEvent>>, clock: Arc<dyn Clock>) -> Self {
         Self {
             system_state: RwLock::new(SystemState {
                 mood: Stimmung::Gelassenheit,
@@ -57,6 +59,7 @@ impl MetaCognition {
             decisions: RwLock::new(Vec::new()),
             thresholds: MetaCognitionThresholds::default(),
             dasein_tx,
+            clock,
         }
     }
 
@@ -96,7 +99,7 @@ impl MetaCognition {
         self.decisions.write().unwrap().push(EvolutionDecision {
             turn,
             action: action.clone(),
-            timestamp: chrono::Utc::now(),
+            timestamp: wall_to_datetime(self.clock.wall_now()),
         });
 
         action
@@ -114,10 +117,11 @@ impl MetaCognition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::chronos::TestClock;
 
     #[test]
     fn test_meta_cognition_observe() {
-        let mc = MetaCognition::new(None);
+        let mc = MetaCognition::new(None, Arc::new(TestClock::default()));
         let state = mc.system_state();
         assert_eq!(state.turn_count, 0);
     }

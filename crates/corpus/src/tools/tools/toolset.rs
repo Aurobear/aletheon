@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use base::tool::ToolExposure;
+use fabric::tool::ToolExposure;
 
 /// Named collection of tool names with include chains.
 ///

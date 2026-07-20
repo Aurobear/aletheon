@@ -5,10 +5,12 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::sync::Arc;
 use tracing::info;
+
+use fabric::Clock;
 
 use super::PerceptionSource;
 use crate::r#impl::perception::event::*;
@@ -83,7 +85,7 @@ pub struct BottleneckReport {
     pub current_value: f64,
     pub threshold: f64,
     pub suggestion: UpgradeSuggestion,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub timestamp: fabric::WallTime,
 }
 
 /// System metrics snapshot.
@@ -104,7 +106,7 @@ struct SystemMetrics {
     /// Reserved for future network bottleneck analysis.
     #[allow(dead_code)]
     net_tx_bytes: u64,
-    timestamp: chrono::DateTime<chrono::Utc>,
+    timestamp: fabric::WallTime,
 }
 
 /// Bottleneck detector perception source.
@@ -115,15 +117,17 @@ pub struct BottleneckDetector {
     /// Accumulated bottleneck reports — reserved for future reporting API.
     #[allow(dead_code)]
     reports: Vec<BottleneckReport>,
+    clock: Arc<dyn Clock>,
 }
 
 impl BottleneckDetector {
-    pub fn new(threshold: BottleneckThreshold) -> Self {
+    pub fn new(threshold: BottleneckThreshold, clock: Arc<dyn Clock>) -> Self {
         Self {
             threshold,
             history: VecDeque::with_capacity(MAX_HISTORY),
             event_id_counter: 0,
             reports: Vec::new(),
+            clock,
         }
     }
 
@@ -140,7 +144,7 @@ impl BottleneckDetector {
     ) -> PerceptionEvent {
         PerceptionEvent {
             id: self.next_id(),
-            timestamp: Utc::now(),
+            timestamp: self.clock.wall_now(),
             source: EventSource::Proc,
             category,
             priority,
@@ -171,7 +175,7 @@ impl BottleneckDetector {
             disk_latency_us,
             net_rx_bytes,
             net_tx_bytes,
-            timestamp: Utc::now(),
+            timestamp: self.clock.wall_now(),
         })
     }
 
@@ -411,9 +415,13 @@ impl PerceptionSource for BottleneckDetector {
     }
 }
 
+#[cfg(test)]
 impl Default for BottleneckDetector {
     fn default() -> Self {
-        Self::new(BottleneckThreshold::default())
+        Self::new(
+            BottleneckThreshold::default(),
+            Arc::new(kernel::chronos::TestClock::default()),
+        )
     }
 }
 
@@ -452,6 +460,7 @@ mod tests {
 
     #[test]
     fn test_bottleneck_report_serialization() {
+        let clock = test_clock();
         let report = BottleneckReport {
             category: BottleneckCategory::Cpu,
             severity: Severity::High,
@@ -461,10 +470,14 @@ mod tests {
                 program: "test".to_string(),
                 description: "test".to_string(),
             },
-            timestamp: Utc::now(),
+            timestamp: clock.wall_now(),
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("Cpu"));
         assert!(json.contains("95"));
+    }
+
+    fn test_clock() -> Arc<dyn Clock> {
+        Arc::new(kernel::chronos::TestClock::default())
     }
 }

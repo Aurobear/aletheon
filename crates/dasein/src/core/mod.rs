@@ -1,4 +1,4 @@
-//! SelfField — the main struct wiring all 8 internal layers.
+//! SelfField — constitutional policy facade and self-state read projection.
 //!
 //! Implements `SelfFieldOps` (the policy engine trait) and `Subsystem`
 //! (the lifecycle trait). The `review()` pipeline runs:
@@ -18,16 +18,15 @@ pub mod store;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use base::self_field::RiskLevel;
-use base::{
+use chrono::Duration;
+use fabric::self_field::AwarenessRiskLevel;
+use fabric::{
     Care, Conflict, Context, Identity, Intent, MutationIntent, Resolution, Subsystem,
     SubsystemContext, SubsystemHealth, Verdict, Version,
 };
-use chrono::Duration;
 use std::sync::Arc;
 use tracing::info;
 
-use crate::bridge::hook::HookBridge;
 use crate::bridge::loop_detector::LoopBridge;
 use crate::bridge::policy::PolicyBridge;
 use crate::core::attention::AttentionLayer;
@@ -39,10 +38,10 @@ use crate::core::identity::IdentityLayer;
 use crate::core::mutation::MutationLayer;
 use crate::core::narrative::NarrativeLayer;
 
-use crate::core::store::SelfFieldStore;
+use crate::core::store::{CareModulationTrace, SelfFieldStore};
 use crate::dasein::DaseinEventBridge;
 use crate::dasein::DaseinModule;
-use base::dasein::DaseinEvent;
+use fabric::dasein::DaseinEvent;
 
 /// Configuration for SelfField construction.
 pub struct SelfFieldConfig {
@@ -61,6 +60,11 @@ pub struct SelfFieldConfig {
     pub dasein_retention_depth: usize,
     /// Decay rate for the DaseinModule's retention field (0.0-1.0).
     pub dasein_decay_rate: f64,
+    /// Clock supplied by the application composition root.
+    pub clock: Option<Arc<dyn fabric::Clock>>,
+    /// Optional conscious context reader (R2 field feedback).
+    /// When None (legacy), the field is ignored.
+    pub conscious_context: Option<Arc<dyn fabric::LatestConsciousContextPort>>,
 }
 
 impl Default for SelfFieldConfig {
@@ -77,11 +81,18 @@ impl Default for SelfFieldConfig {
             enable_dasein: true,
             dasein_retention_depth: 50,
             dasein_decay_rate: 0.8,
+            clock: None,
+            conscious_context: None,
         }
     }
 }
 
-/// SelfField — the policy engine implementing `SelfFieldOps`.
+/// Constitutional policy facade implementing `SelfFieldOps`.
+///
+/// Mutable lived, autobiographical and reflective state belongs to the
+/// versioned `DaseinModule` reducer. These legacy layers provide policy gates,
+/// audit projections and persisted configuration, not an alternate public
+/// self-mutation authority.
 pub struct SelfField {
     boundary: BoundaryLayer,
     identity: IdentityLayer,
@@ -93,21 +104,38 @@ pub struct SelfField {
     mutation: MutationLayer,
     initialized: bool,
     /// Optional SQLite store for persistence.
-    store: Option<SelfFieldStore>,
+    store: Option<Arc<SelfFieldStore>>,
     // Bridges to external subsystems
     policy_bridge: PolicyBridge,
     loop_bridge: LoopBridge,
-    hook_bridge: HookBridge,
     // DaseinModule (optional, opt-in via config)
-    dasein: Option<DaseinModule>,
+    dasein: Option<Arc<DaseinModule>>,
     dasein_event_tx: Option<tokio::sync::mpsc::Sender<DaseinEvent>>,
     /// Optional Runtime permission authority. When set, `review()` delegates
     /// the confirmation verdict to it instead of using the inline rule.
-    permission_authority: Option<Arc<dyn base::policy::permission_authority::PermissionAuthority>>,
+    permission_authority:
+        Option<Arc<dyn fabric::policy::permission_authority::PermissionAuthority>>,
+    /// Clock for deterministic time in sub-modules.
+    #[allow(dead_code)]
+    clock: Arc<dyn fabric::Clock>,
+    /// Optional conscious context reader for R2 field feedback. None means legacy mode.
+    conscious_context: Option<Arc<dyn fabric::LatestConsciousContextPort>>,
 }
 
 impl SelfField {
+    /// Read durable R2 modulation traces for diagnostics and audit.
+    pub fn care_modulation_traces(&self, session_id: &str) -> Result<Vec<CareModulationTrace>> {
+        self.store
+            .as_ref()
+            .map(|store| store.care_modulations(session_id))
+            .unwrap_or_else(|| Ok(Vec::new()))
+    }
+
     pub fn new(config: SelfFieldConfig) -> Self {
+        let clock: Arc<dyn fabric::Clock> = config
+            .clock
+            .expect("SelfFieldConfig.clock must be injected by the composition root");
+
         let mut boundary = BoundaryLayer::new();
         boundary.set_rules(config.boundary_rules);
 
@@ -115,22 +143,38 @@ impl SelfField {
             &config.agent_name,
             &config.agent_description,
             &config.agent_version,
+            clock.clone(),
         );
 
-        let narrative = NarrativeLayer::new(config.narrative_capacity);
-        let attention = AttentionLayer::new(config.attention_decay_rate);
-        let continuity = ContinuityLayer::new(config.continuity_max_gap);
+        let narrative = NarrativeLayer::new(config.narrative_capacity, clock.clone());
+        let attention = AttentionLayer::new(config.attention_decay_rate, clock.clone());
+        let continuity = ContinuityLayer::new(config.continuity_max_gap, clock.clone());
 
         // Record initial identity in continuity
         continuity.record(&config.agent_name, &config.agent_version, "initialized");
 
         let store = config
             .db_path
-            .and_then(|path| SelfFieldStore::new(path).ok());
+            .and_then(|path| SelfFieldStore::new(path).ok())
+            .map(Arc::new);
 
         let (dasein, dasein_event_tx) = if config.enable_dasein {
-            let (module, tx) = DaseinModule::new();
-            (Some(module), Some(tx))
+            let runtime_config = crate::dasein::DaseinRuntimeConfig {
+                retention_depth: config.dasein_retention_depth,
+                decay_rate: config.dasein_decay_rate,
+                ..Default::default()
+            };
+            let ledger = store
+                .as_ref()
+                .map(|store| Arc::new(crate::dasein::ledger::SelfLedger::new(store.clone())));
+            let (module, tx) = DaseinModule::with_runtime_and_ledger(
+                clock.clone(),
+                Arc::new(crate::dasein::sorge::SystemSorgeTimer),
+                runtime_config,
+                ledger,
+            )
+            .expect("SelfField Dasein configuration must be valid");
+            (Some(Arc::new(module)), Some(tx))
         } else {
             (None, None)
         };
@@ -143,20 +187,22 @@ impl SelfField {
             conflict: ConflictLayer::new(),
             attention,
             continuity,
-            mutation: MutationLayer::new(),
+            mutation: MutationLayer::new(clock.clone()),
             initialized: false,
             store,
             policy_bridge: PolicyBridge::new(),
             loop_bridge: LoopBridge::new(),
-            hook_bridge: HookBridge::new(),
             dasein,
             permission_authority: None,
             dasein_event_tx,
+            clock,
+            conscious_context: config.conscious_context,
         }
     }
 
-    /// Access the boundary layer (for configuring rules at runtime).
-    pub fn boundary_mut(&mut self) -> &mut BoundaryLayer {
+    /// Test-only access to legacy policy configuration.
+    #[cfg(test)]
+    pub(crate) fn boundary_mut(&mut self) -> &mut BoundaryLayer {
         &mut self.boundary
     }
 
@@ -172,7 +218,7 @@ impl SelfField {
     /// daemon handler after constructing SelfField.
     pub fn set_permission_authority(
         &mut self,
-        authority: Arc<dyn base::policy::permission_authority::PermissionAuthority>,
+        authority: Arc<dyn fabric::policy::permission_authority::PermissionAuthority>,
     ) {
         self.permission_authority = Some(authority);
     }
@@ -182,21 +228,23 @@ impl SelfField {
         &self.care
     }
 
-    /// Access the care layer (mutable).
-    pub fn care_mut(&mut self) -> &CareLayer {
+    /// Test-only access for the legacy validator. Production state changes use
+    /// `DaseinModule::transition` and return a versioned receipt.
+    #[cfg(test)]
+    pub(crate) fn care_mut(&mut self) -> &CareLayer {
         // CareLayer uses interior mutability (RwLock), so &CareLayer suffices for mutation.
         // This method exists for API clarity when the caller intends to modify.
         &self.care
     }
 
-    /// Access the narrative layer.
-    pub fn narrative(&self) -> &NarrativeLayer {
-        &self.narrative
+    /// Read the current attention projection without exposing its mutators.
+    pub fn current_attention_focus(&self) -> Option<crate::core::attention::FocusTopic> {
+        self.attention.current_focus()
     }
 
-    /// Access the attention layer.
-    pub fn attention(&self) -> &AttentionLayer {
-        &self.attention
+    /// Read all current attention projections without exposing their mutators.
+    pub fn attention_topics(&self) -> Vec<crate::core::attention::FocusTopic> {
+        self.attention.all_topics()
     }
 
     /// Check for loops (called by Runtime during ReAct loop).
@@ -214,7 +262,7 @@ impl SelfField {
         &self,
         tool_name: &str,
         args: &serde_json::Value,
-        result: &base::tool::ToolResult,
+        result: &fabric::tool::ToolResult,
         turn_id: &str,
     ) {
         self.loop_bridge
@@ -233,11 +281,16 @@ impl SelfField {
 
     /// Access the DaseinModule if enabled.
     pub fn dasein(&self) -> Option<&DaseinModule> {
-        self.dasein.as_ref()
+        self.dasein.as_deref()
+    }
+
+    /// Cloneable handle for Executive adapters that share the canonical state.
+    pub fn dasein_handle(&self) -> Option<Arc<DaseinModule>> {
+        self.dasein.clone()
     }
 
     /// Get DaseinContext for LLM injection.
-    pub fn dasein_context(&self) -> Option<base::dasein::DaseinContext> {
+    pub fn dasein_context(&self) -> Option<fabric::dasein::DaseinContext> {
         self.dasein.as_ref().map(|d| d.to_context_injection())
     }
 
@@ -251,18 +304,18 @@ impl SelfField {
         self.dasein_event_tx.as_ref()
     }
 
-    /// Connect the DaseinModule to the CommunicationBus for real system event integration.
+    /// Connect the DaseinModule to the canonical event bus.
     ///
-    /// This should be called after SelfField::init() when the CommunicationBus is available.
+    /// This should be called after SelfField::init() when the event bus is available.
     /// It subscribes the DaseinModule to tool execution, memory, evolution, and
     /// session lifecycle events.
     pub async fn wire_dasein_event_bridge(
         &self,
-        communication_bus: &base::CommunicationBus,
+        event_bus: &fabric::CanonicalEventBus,
     ) -> anyhow::Result<()> {
         if let (Some(ref _dasein), Some(ref tx)) = (&self.dasein, &self.dasein_event_tx) {
             let bridge = DaseinEventBridge::new(tx.clone());
-            bridge.subscribe(communication_bus).await?;
+            bridge.subscribe(event_bus).await?;
             info!("DaseinModule connected to EventBus via DaseinEventBridge");
         }
         Ok(())
@@ -311,14 +364,11 @@ impl Subsystem for SelfField {
         self.narrative
             .narrate("init", "SelfField subsystem initialized");
         if let Some(ref dasein) = self.dasein {
-            dasein.start_sorge_loop();
-            info!("DaseinModule sorge loop started");
-            // Load DaseinModule state from database
             if let Some(ref store) = self.store {
-                if let Err(e) = crate::dasein::persistence::load_dasein_state(dasein, store) {
-                    tracing::warn!("Failed to load DaseinModule state: {}", e);
-                }
+                crate::dasein::persistence::load_dasein_state(dasein, store).await?;
             }
+            dasein.start_sorge_loop();
+            info!("DaseinModule durable state restored; sorge loop started");
         }
         self.initialized = true;
         Ok(())
@@ -335,15 +385,12 @@ impl Subsystem for SelfField {
 
     async fn shutdown(&mut self) -> Result<()> {
         info!("SelfField shutting down");
-        // Save DaseinModule state before stopping sorge loop
-        if let (Some(ref dasein), Some(ref store)) = (&self.dasein, &self.store) {
-            if let Err(e) = crate::dasein::persistence::save_dasein_state(dasein, store) {
-                tracing::warn!("Failed to save DaseinModule state: {}", e);
-            }
-        }
         if let Some(ref dasein) = self.dasein {
-            dasein.stop_sorge_loop();
+            dasein.stop_sorge_loop().await;
             info!("DaseinModule sorge loop stopped");
+            if let Some(ref store) = self.store {
+                crate::dasein::persistence::save_dasein_state(dasein, store)?;
+            }
         }
         self.narrative
             .narrate("shutdown", "SelfField subsystem shutting down");
@@ -357,26 +404,60 @@ impl Subsystem for SelfField {
     }
 }
 
-#[async_trait]
-impl base::SelfFieldOps for SelfField {
-    /// Core review pipeline: Hook -> Policy -> Boundary -> Care -> Permissions -> Narrative -> Verdict.
-    async fn review(&self, intent: &Intent, ctx: &Context) -> Result<Verdict> {
-        // 1. Hook check (pre-tool hooks can block)
-        if let Some(verdict) = self
-            .hook_bridge
-            .fire_pre_tool(&intent.action, &intent.parameters.to_string())
+impl SelfField {
+    /// Compute the effective care score, modulating the baseline with the
+    /// conscious field readout when available.
+    ///
+    /// When the reader is absent, errors, or returns an empty projection,
+    /// the baseline score is returned unchanged (exact fallback).
+    async fn effective_care_score(&self, baseline: f64, ctx: &fabric::Context) -> f64 {
+        let Some(reader) = &self.conscious_context else {
+            return baseline;
+        };
+        let Ok(projection) = reader
+            .latest_context(&fabric::AgoraSpaceId(ctx.session_id.clone()))
             .await
-        {
-            self.narrative.record(
-                "hook_check",
-                &format!("Blocked by hook: {:?}", verdict),
-                Some(&intent.action),
-                &verdict,
-            );
-            return Ok(verdict);
+        else {
+            tracing::warn!(session_id = %ctx.session_id, "conscious read failed; using baseline care");
+            return baseline;
+        };
+        let Ok(Some(readout)) = fabric::ConsciousFieldReadout::from_projection(&projection) else {
+            return baseline;
+        };
+        let effective =
+            (baseline + (1.0 - baseline) * 0.25 * f64::from(readout.precision)).clamp(0.0, 1.0);
+        if let Some(store) = &self.store {
+            if let Err(error) = store.append_care_modulation(&CareModulationTrace {
+                session_id: ctx.session_id.clone(),
+                baseline,
+                effective,
+                delta: effective - baseline,
+                precision: readout.precision,
+                observed_at_ms: self.clock.wall_now().0,
+            }) {
+                tracing::warn!(%error, session_id = %ctx.session_id, "failed to persist care modulation trace");
+            }
         }
+        tracing::info!(
+            target: "aletheon.conscious",
+            schema = "conscious.field.care_modulation.v1",
+            session_id = %ctx.session_id,
+            baseline,
+            effective,
+            delta = effective - baseline,
+            precision = f64::from(readout.precision),
+            "conscious field modulated SelfField care"
+        );
+        effective
+    }
+}
 
-        // 2. Policy check (PolicyEngine)
+#[async_trait]
+impl fabric::SelfFieldOps for SelfField {
+    /// Core review pipeline: Policy -> Boundary -> Care -> Permissions -> Narrative -> Verdict.
+    async fn review(&self, intent: &Intent, ctx: &Context) -> Result<Verdict> {
+        // 1. Policy check (PolicyEngine). Executable lifecycle hooks are owned
+        // by the governed Corpus path and run before this semantic review.
         if let Some(verdict) = self.policy_bridge.check(&intent.action, &intent.parameters) {
             self.narrative.record(
                 "policy_check",
@@ -387,7 +468,7 @@ impl base::SelfFieldOps for SelfField {
             return Ok(verdict);
         }
 
-        // 3. Boundary check (fast gate)
+        // 2. Boundary check (fast gate)
         if let Some(verdict) = self.boundary.check(intent) {
             self.narrative.record(
                 "boundary_check",
@@ -398,8 +479,9 @@ impl base::SelfFieldOps for SelfField {
             return Ok(verdict);
         }
 
-        // 4. Care scoring
-        let care_score = self.care.score_action(&intent.description);
+        // 4. Care scoring — baseline from keywords, then modulate with conscious field.
+        let baseline_care = self.care.score_action(&intent.description);
+        let care_score = self.effective_care_score(baseline_care, ctx).await;
 
         // 5. Permission check -- delegate to the Runtime authority if installed,
         //    otherwise fall back to the historical inline rule (behavior-preserving).
@@ -415,13 +497,13 @@ impl base::SelfFieldOps for SelfField {
             }
         } else if care_score > 0.8 {
             // Fallback: historical inline rule (exact port, line-for-line).
-            if ctx.permissions.max_level() < base::PermissionLevel::SystemChange {
+            if ctx.permissions.max_level() < fabric::CapabilityLevel::SystemChange {
                 let verdict = Verdict::RequireConfirmation {
                     reason: format!(
                         "High care relevance ({:.2}) with insufficient permissions for action '{}'",
                         care_score, intent.action
                     ),
-                    risk_level: RiskLevel::Medium,
+                    risk_level: AwarenessRiskLevel::Medium,
                 };
                 self.narrative.record(
                     "permission_check",
@@ -487,13 +569,16 @@ impl base::SelfFieldOps for SelfField {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base::self_field::{ConflictSource, RiskLevel};
-    use base::{IntentSource, SelfFieldOps};
+    use fabric::self_field::{AwarenessRiskLevel, ConflictSource};
+    use fabric::{IntentSource, SelfFieldOps};
     use serde_json::json;
     use std::path::PathBuf;
 
     fn default_config() -> SelfFieldConfig {
-        SelfFieldConfig::default()
+        SelfFieldConfig {
+            clock: Some(Arc::new(kernel::chronos::TestClock::default())),
+            ..SelfFieldConfig::default()
+        }
     }
 
     fn make_intent(action: &str, description: &str) -> Intent {
@@ -538,7 +623,7 @@ mod tests {
             action_pattern: "purge *".to_string(),
             source_filter: None,
             action: crate::core::boundary::BoundaryAction::Deny,
-            risk_level: RiskLevel::Critical,
+            risk_level: AwarenessRiskLevel::Critical,
             description: "no purge".to_string(),
             immutable: false,
         });
@@ -556,7 +641,7 @@ mod tests {
             action_pattern: "deploy.*".to_string(),
             source_filter: None,
             action: crate::core::boundary::BoundaryAction::Sandbox,
-            risk_level: RiskLevel::High,
+            risk_level: AwarenessRiskLevel::High,
             description: "sandbox deploys".to_string(),
             immutable: false,
         });
@@ -574,7 +659,7 @@ mod tests {
             action_pattern: "write.*".to_string(),
             source_filter: None,
             action: crate::core::boundary::BoundaryAction::RequireConfirmation,
-            risk_level: RiskLevel::Medium,
+            risk_level: AwarenessRiskLevel::Medium,
             description: "confirm writes".to_string(),
             immutable: false,
         });
@@ -650,7 +735,7 @@ mod tests {
             name: "self_field".to_string(),
             working_dir: PathBuf::from("/tmp"),
             config: json!({}),
-            bus: std::sync::Arc::new(base::CommunicationBus::new()),
+            bus: None,
         };
         sf.init(&ctx).await.unwrap();
         assert!(matches!(sf.health().await, SubsystemHealth::Healthy));
@@ -662,20 +747,20 @@ mod tests {
         ));
     }
 
-    use base::policy::permission_authority::PermissionAuthority;
+    use fabric::policy::permission_authority::PermissionAuthority;
     use std::sync::Arc;
 
     struct StubAuthority;
     impl PermissionAuthority for StubAuthority {
         fn confirmation_verdict(
             &self,
-            _ctx: &base::Context,
+            _ctx: &fabric::Context,
             _care: f64,
             action: &str,
         ) -> Option<Verdict> {
             Some(Verdict::RequireConfirmation {
                 reason: format!("stub gate for {action}"),
-                risk_level: RiskLevel::Medium,
+                risk_level: AwarenessRiskLevel::Medium,
             })
         }
     }
