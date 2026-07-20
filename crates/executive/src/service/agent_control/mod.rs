@@ -122,6 +122,7 @@ pub struct AgentControlService {
     tasks: Mutex<JoinSet<()>>,
     sibling_routes: parking_lot::RwLock<HashSet<(AgentId, AgentId, AgentId)>>,
     agent_memory_vault: Arc<mnemosyne::AgentMemoryVault>,
+    durable_memory: Option<Arc<dyn mnemosyne::MemoryService>>,
     subagent_settlement: bool,
     settlement_generation: String,
     settlement_receipts: Arc<dyn SettlementReceiptStore>,
@@ -187,6 +188,7 @@ impl AgentControlService {
             agent_memory_vault: Arc::new(
                 mnemosyne::AgentMemoryVault::in_memory().expect("in-memory Agent memory vault"),
             ),
+            durable_memory: None,
             subagent_settlement: false,
             settlement_generation: "disabled".into(),
             settlement_receipts: Arc::new(InMemorySettlementReceiptStore::default()),
@@ -226,6 +228,11 @@ impl AgentControlService {
 
     pub fn with_memory_vault(mut self, memory: Arc<mnemosyne::AgentMemoryVault>) -> Self {
         self.agent_memory_vault = memory;
+        self
+    }
+
+    pub fn with_durable_memory(mut self, memory: Arc<dyn mnemosyne::MemoryService>) -> Self {
+        self.durable_memory = Some(memory);
         self
     }
 
@@ -1037,11 +1044,15 @@ impl AgentControlPort for AgentControlService {
             runtime_input.clone(),
             event_projections,
         ));
-        let memory_events = Arc::new(MemoryRecordingAgentEventSink::new(
+        let mut memory_events = MemoryRecordingAgentEventSink::new(
             events,
             self.agent_memory_vault.clone(),
             memory_context,
-        ));
+        );
+        if let Some(memory) = &self.durable_memory {
+            memory_events = memory_events.with_durable_memory(memory.clone());
+        }
+        let memory_events = Arc::new(memory_events);
         let events: Arc<dyn AgentEventSink> = memory_events.clone();
         self.tasks.lock().await.spawn(async move {
             run_agent(
