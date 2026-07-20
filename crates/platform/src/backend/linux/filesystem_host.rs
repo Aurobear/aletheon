@@ -13,10 +13,14 @@ use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+#[cfg(test)]
+static FORCE_OPENAT2_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
 pub struct LinuxFilesystemHost {
     roots: Vec<RootHandle>,
@@ -457,6 +461,13 @@ fn open_beneath(
     flags: i32,
     deny_symlinks: bool,
 ) -> Result<OwnedFd, HostError> {
+    #[cfg(test)]
+    if FORCE_OPENAT2_UNAVAILABLE.load(Ordering::SeqCst) {
+        return Err(map_io_error(
+            std::io::Error::from_raw_os_error(libc::ENOSYS),
+            "openat2 unavailable; scoped filesystem fails closed",
+        ));
+    }
     let relative = if relative.as_os_str().is_empty() {
         Path::new(".")
     } else {
@@ -602,6 +613,24 @@ fn map_io_error(error: std::io::Error, operation: &str) -> HostError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static OPENAT2_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    struct ForceOpenat2Unavailable;
+
+    impl ForceOpenat2Unavailable {
+        fn enable() -> Self {
+            FORCE_OPENAT2_UNAVAILABLE.store(true, Ordering::SeqCst);
+            Self
+        }
+    }
+
+    impl Drop for ForceOpenat2Unavailable {
+        fn drop(&mut self) {
+            FORCE_OPENAT2_UNAVAILABLE.store(false, Ordering::SeqCst);
+        }
+    }
 
     fn host(root: &Path, access: FilesystemAccess) -> LinuxFilesystemHost {
         LinuxFilesystemHost::scoped(FilesystemScope {
@@ -615,6 +644,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_write_round_trip() {
+        let _lock = OPENAT2_TEST_LOCK.lock().unwrap();
         let root = tempfile::tempdir().unwrap();
         let host = host(root.path(), FilesystemAccess::ReadWrite);
         let path = HostPath::new(root.path().join("test.txt"));
@@ -633,6 +663,7 @@ mod tests {
 
     #[tokio::test]
     async fn stale_write_rejected() {
+        let _lock = OPENAT2_TEST_LOCK.lock().unwrap();
         let root = tempfile::tempdir().unwrap();
         let host = host(root.path(), FilesystemAccess::ReadWrite);
         let path = HostPath::new(root.path().join("stale.txt"));
@@ -647,5 +678,25 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error.kind, HostErrorKind::Conflict(_)));
+    }
+
+    #[tokio::test]
+    async fn openat2_unavailable_fails_closed_without_fallback() {
+        let _lock = OPENAT2_TEST_LOCK.lock().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.txt");
+        std::fs::write(&source, b"unchanged").unwrap();
+        let host = host(root.path(), FilesystemAccess::ReadWrite);
+
+        let forced = ForceOpenat2Unavailable::enable();
+        let error = host
+            .read(&HostPath::new(source.clone()))
+            .await
+            .expect_err("scoped reads must not fall back when openat2 is unavailable");
+        drop(forced);
+
+        assert!(matches!(error.kind, HostErrorKind::Io(_)));
+        assert!(error.detail.contains("fails closed"));
+        assert_eq!(std::fs::read(source).unwrap(), b"unchanged");
     }
 }

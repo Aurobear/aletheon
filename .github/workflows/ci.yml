@@ -26,6 +26,30 @@ jobs:
           ARCH_BASE_REF: origin/${{ github.base_ref || 'dev' }}
         run: bash scripts/architecture-check.sh
 
+  coding-evidence:
+    name: Deterministic coding evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify replay receipts
+        run: python3 tests/coding/replay_test.py
+      - name: Verify coding harness contracts
+        run: bash tests/coding/static_test.sh
+
+  platform-contract:
+    name: Linux Platform contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CARGO_BUILD_JOBS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify scoped filesystem contracts
+        run: bash scripts/cargo-agent.sh test -p platform --test contract_suite
+
   msrv:
     name: Rust 1.88 MSRV
     runs-on: ubuntu-latest
