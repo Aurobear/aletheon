@@ -38,6 +38,7 @@ pub fn pi_environment_from_process() -> BTreeMap<String, String> {
         "OPENAI_BASE_URL",
         "GOOGLE_API_KEY",
         "GEMINI_API_KEY",
+        "PI_CODING_AGENT_DIR",
     ];
     let mut environment: BTreeMap<String, String> = KEYS
         .iter()
