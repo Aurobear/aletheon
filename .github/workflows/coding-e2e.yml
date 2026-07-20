@@ -18,7 +18,6 @@ jobs:
       CARGO_BUILD_JOBS: "1"
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       ALETHEON_BIN: ${{ github.workspace }}/target/debug/aletheon
-      ALETHEON_CORE_SOCKET: ${{ runner.temp }}/aletheon/core.sock
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -40,6 +39,7 @@ jobs:
           config="$eval_root/core.toml"
           artifacts="$RUNNER_TEMP/coding-artifacts"
           core_log="$artifacts/core.log"
+          export ALETHEON_CORE_SOCKET="$RUNNER_TEMP/aletheon/core.sock"
           export HOME="$eval_root/home"
           export XDG_CONFIG_HOME="$eval_root/config"
           export XDG_RUNTIME_DIR="$eval_root/run"
