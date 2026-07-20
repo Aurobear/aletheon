@@ -53,6 +53,10 @@ class RealEvaluationWorkflowTest(unittest.TestCase):
         self.assertIn("actions/upload-artifact@v4", self.workflow)
         self.assertIn("if: always()", self.workflow)
 
+    def test_preserves_runner_toolchain_under_isolated_home(self) -> None:
+        self.assertIn('export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"', self.workflow)
+        self.assertIn('export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"', self.workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

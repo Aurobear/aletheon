@@ -40,6 +40,8 @@ jobs:
           artifacts="$RUNNER_TEMP/coding-artifacts"
           core_log="$artifacts/core.log"
           export ALETHEON_CORE_SOCKET="$RUNNER_TEMP/aletheon/core.sock"
+          export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+          export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
           export HOME="$eval_root/home"
           export XDG_CONFIG_HOME="$eval_root/config"
           export XDG_RUNTIME_DIR="$eval_root/run"
