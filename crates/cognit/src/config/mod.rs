@@ -383,7 +383,8 @@ pub struct PiRuntimeConfig {
     pub forbidden_paths: Vec<PathBuf>,
     #[serde(default = "default_true")]
     pub require_namespace_isolation: bool,
-    /// Pi has no network access by default and initial M4 rejects enabling it.
+    /// Pi has no network access by default. Trusted daemon configuration may
+    /// opt in for the independently authenticated model transport.
     #[serde(default)]
     pub network_enabled: bool,
 }

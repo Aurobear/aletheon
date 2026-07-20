@@ -24,6 +24,7 @@ use tokio_util::sync::CancellationToken;
 
 struct FixtureSandbox {
     script: PathBuf,
+    restrict_network: bool,
 }
 
 #[async_trait]
@@ -50,9 +51,13 @@ impl SandboxBackend for FixtureSandbox {
         &self,
         _program: &Path,
         args: &[String],
-        _config: &SandboxConfig,
+        config: &SandboxConfig,
     ) -> Result<SandboxCommand> {
         assert!(args.windows(2).any(|pair| pair == ["--mode", "rpc"]));
+        assert_eq!(
+            config.policy.as_ref().map(|policy| policy.restrict_network),
+            Some(self.restrict_network)
+        );
         Ok(SandboxCommand {
             program: "/bin/sh".into(),
             args: vec![self.script.to_string_lossy().into_owned()],
@@ -199,12 +204,15 @@ done
         allowed_paths: vec![PathBuf::from(".")],
         forbidden_paths: vec![],
         require_namespace_isolation: true,
-        network_enabled: false,
+        network_enabled: true,
     };
     let runtime = Arc::new(
         PiRpcRuntime::prepare(
             &config,
-            Arc::new(FixtureSandbox { script }),
+            Arc::new(FixtureSandbox {
+                script,
+                restrict_network: false,
+            }),
             Arc::new(kernel::chronos::SystemClock::new()),
             BTreeMap::new(),
         )
@@ -329,7 +337,10 @@ done
     };
     let runtime = PiRpcRuntime::prepare(
         &config,
-        Arc::new(FixtureSandbox { script }),
+        Arc::new(FixtureSandbox {
+            script,
+            restrict_network: true,
+        }),
         Arc::new(kernel::chronos::SystemClock::new()),
         BTreeMap::new(),
     )
