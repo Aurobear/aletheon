@@ -299,6 +299,60 @@ async fn filesystem_root_replacement_never_redirects_scoped_operations() {
     }));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn filesystem_parent_swap_pressure_never_escapes_atomic_write() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let active_parent = root.path().join("workspace");
+    let parked_parent = root.path().join("workspace-admitted");
+    let outside_sentinel = outside.path().join("sentinel.txt");
+    std::fs::create_dir(&active_parent).unwrap();
+    std::fs::write(&outside_sentinel, b"outside-sentinel").unwrap();
+    let host = any_filesystem_host(root.path());
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let attacker_stop = Arc::clone(&stop);
+    let attacker_active = active_parent.clone();
+    let attacker_parked = parked_parent.clone();
+    let attacker_outside = outside.path().to_path_buf();
+    let attacker = std::thread::spawn(move || {
+        while !attacker_stop.load(Ordering::Acquire) {
+            std::fs::rename(&attacker_active, &attacker_parked).unwrap();
+            std::os::unix::fs::symlink(&attacker_outside, &attacker_active).unwrap();
+            std::thread::yield_now();
+            std::fs::remove_file(&attacker_active).unwrap();
+            std::fs::rename(&attacker_parked, &attacker_active).unwrap();
+        }
+    });
+
+    for sequence in 0..100 {
+        let _ = host
+            .atomic_write(AtomicWrite {
+                path: HostPath::new(active_parent.join("result.txt")),
+                content: format!("write-{sequence}").into_bytes(),
+                expected_sha256: None,
+                mode: None,
+            })
+            .await;
+    }
+    stop.store(true, Ordering::Release);
+    attacker.join().unwrap();
+
+    assert_eq!(std::fs::read(&outside_sentinel).unwrap(), b"outside-sentinel");
+    assert!(!outside.path().join("result.txt").exists());
+    assert!(std::fs::read_dir(outside.path()).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tmp")
+    }));
+}
+
 #[tokio::test]
 async fn readonly_filesystem_scope_rejects_writes() {
     let root = tempfile::tempdir().unwrap();
