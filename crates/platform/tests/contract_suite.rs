@@ -342,7 +342,10 @@ async fn filesystem_parent_swap_pressure_never_escapes_atomic_write() {
     stop.store(true, Ordering::Release);
     attacker.join().unwrap();
 
-    assert_eq!(std::fs::read(&outside_sentinel).unwrap(), b"outside-sentinel");
+    assert_eq!(
+        std::fs::read(&outside_sentinel).unwrap(),
+        b"outside-sentinel"
+    );
     assert!(!outside.path().join("result.txt").exists());
     assert!(std::fs::read_dir(outside.path()).unwrap().all(|entry| {
         !entry
