@@ -313,7 +313,10 @@ fn attachment_rejection<'a>(
     part: &'a GmailMimePart,
     config: &GmailIngestConfig,
 ) -> Option<&'a str> {
-    let filename = part.filename.as_deref()?;
+    let filename = match part.filename.as_deref() {
+        Some(filename) => filename,
+        None => return Some("missing_filename"),
+    };
     if filename.is_empty()
         || filename.contains(['/', '\\', '\0'])
         || filename == "."
