@@ -73,6 +73,24 @@ if [[ ! -s config/schema/aletheon-config.schema.json ]]; then
   exit 1
 fi
 
+# H2: provider identity and construction have one owner. Heuristic inference
+# candidates must not recreate the application provider schema, and every
+# concrete LLM constructor must remain behind the canonical factory.
+provider_config_defs=$(rg -n '\bstruct ProviderConfig\b' crates/cognit/src -g '*.rs' | wc -l)
+if [[ "$provider_config_defs" -ne 1 ]]; then
+  echo "architecture-check: Cognit must define exactly one ProviderConfig (found $provider_config_defs)" >&2
+  exit 1
+fi
+provider_constructors_outside_factory=$(rg -l \
+  'AnthropicProvider::new|OpenAiProvider::new|OllamaProvider::new' \
+  crates/cognit/src -g '*.rs' \
+  | grep -v '^crates/cognit/src/impl/llm/provider_factory.rs$' || true)
+if [[ -n "$provider_constructors_outside_factory" ]]; then
+  echo "architecture-check: concrete LLM construction bypasses provider_factory:" >&2
+  echo "$provider_constructors_outside_factory" >&2
+  exit 1
+fi
+
 # Q02 deletion gates: Interact and Bin may depend on Fabric protocol types, while
 # domain construction belongs to Executive/Corpus composition.
 if rg -n '^\s*(kernel|corpus)\s*=' crates/interact/Cargo.toml || \

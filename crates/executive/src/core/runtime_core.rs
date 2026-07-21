@@ -116,14 +116,7 @@ impl RuntimeCore {
                     .providers
                     .iter()
                     .map(|p| SchedulerProviderConfig {
-                        name: p.name.clone(),
-                        base_url: p.base_url.clone(),
-                        api_key: p.api_key.clone(),
-                        kind: match p.transport {
-                            cognit::config::Transport::Anthropic => "anthropic".to_string(),
-                            cognit::config::Transport::Openai => "openai".to_string(),
-                            cognit::config::Transport::Auto => "openai".to_string(),
-                        },
+                        definition: p.clone(),
                         model: p.models.first().cloned().unwrap_or_default(),
                     })
                     .collect(),
@@ -134,6 +127,8 @@ impl RuntimeCore {
                         provider_name,
                     })
                     .collect(),
+                max_tokens: app_config.agent.max_tokens as u32,
+                provider_timeouts: app_config.agent.provider_timeouts,
             };
 
             let scheduler_clock: Arc<dyn Clock> = Arc::new(SystemClock::new());

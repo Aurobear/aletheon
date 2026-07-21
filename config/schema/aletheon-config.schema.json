@@ -1789,6 +1789,7 @@
       "enum": [
         "openai",
         "anthropic",
+        "ollama",
         "auto"
       ],
       "type": "string"

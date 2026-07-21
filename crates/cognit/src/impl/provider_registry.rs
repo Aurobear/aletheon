@@ -1,30 +1,9 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use super::llm::anthropic::AnthropicProvider;
-use super::llm::openai_provider::OpenAiProvider;
+use super::llm::provider_factory::{create_provider, ProviderBuildOptions};
 use super::llm::LlmProvider;
-use crate::config::{CognitConfig, ProviderConfig, ProviderTimeoutConfig, Transport};
-
-/// Resolved transport after auto-detection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResolvedTransport {
-    OpenAi,
-    Anthropic,
-}
-
-/// Detect transport from base_url (hermes-style auto-detection).
-///
-/// Rules:
-/// - URL ending with `/anthropic` → Anthropic
-/// - Everything else → OpenAI
-pub fn detect_transport(base_url: &str) -> ResolvedTransport {
-    let normalized = base_url.trim().to_lowercase();
-    if normalized.ends_with("/anthropic") {
-        ResolvedTransport::Anthropic
-    } else {
-        ResolvedTransport::OpenAi
-    }
-}
+use crate::config::{CognitConfig, ProviderConfig, ProviderTimeoutConfig};
 
 /// Registry of configured providers.
 #[derive(Clone)]
@@ -146,52 +125,26 @@ impl ProviderRegistry {
         anyhow::bail!("model alias '{}' not found", spec)
     }
 
-    /// Create an LlmProvider from config.
-    pub fn create_provider(&self, config: &ProviderConfig, model: &str) -> Box<dyn LlmProvider> {
-        let api_key = self.resolve_api_key(config);
-        let transport = match &config.transport {
-            Transport::Auto => detect_transport(&config.base_url),
-            Transport::Openai => ResolvedTransport::OpenAi,
-            Transport::Anthropic => ResolvedTransport::Anthropic,
-        };
-
-        match transport {
-            ResolvedTransport::OpenAi => {
-                let mut provider = OpenAiProvider::new(&api_key, model, &config.base_url)
-                    .with_timeouts(self.provider_timeouts)
-                    .with_max_tokens(self.max_tokens);
-                if let Some(ctx) = config.max_context_length {
-                    provider = provider.with_max_context(ctx);
-                }
-                Box::new(provider)
-            }
-            ResolvedTransport::Anthropic => {
-                let mut provider = AnthropicProvider::new(&api_key, model)
-                    .with_base_url(&config.base_url)
-                    .with_timeouts(self.provider_timeouts)
-                    .with_max_tokens(self.max_tokens);
-                if let Some(ctx) = config.max_context_length {
-                    provider = provider.with_max_context(ctx);
-                }
-                Box::new(provider)
-            }
-        }
+    /// Create an LLM provider through the canonical factory.
+    pub fn create_provider(
+        &self,
+        config: &ProviderConfig,
+        model: &str,
+    ) -> anyhow::Result<Arc<dyn LlmProvider>> {
+        create_provider(
+            config,
+            model,
+            ProviderBuildOptions {
+                max_tokens: self.max_tokens,
+                timeouts: self.provider_timeouts,
+            },
+        )
     }
 
-    /// Resolve API key: config value first, then env var `<NAME>_API_KEY`.
-    fn resolve_api_key(&self, config: &ProviderConfig) -> String {
-        if !config.api_key.is_empty() {
-            return config.api_key.clone();
-        }
-        // Try env var: MIMO_API_KEY, DEEPSEEK_API_KEY, etc.
-        let env_name = format!("{}_API_KEY", config.name.to_uppercase().replace('-', "_"));
-        std::env::var(&env_name).unwrap_or_default()
-    }
-
-    /// Resolve and create provider in one step.
-    pub fn resolve_and_create(&self, spec: &str) -> anyhow::Result<Box<dyn LlmProvider>> {
+    /// Resolve and create a provider in one step.
+    pub fn resolve_and_create(&self, spec: &str) -> anyhow::Result<Arc<dyn LlmProvider>> {
         let (config, model) = self.resolve(spec)?;
-        Ok(self.create_provider(&config, &model))
+        self.create_provider(&config, &model)
     }
 
     /// Get the default model spec (provider/model format).
@@ -241,34 +194,6 @@ sonnet = "anthropic/claude-sonnet-4-20250514"
 local = "ollama/qwen3:8b"
 "#;
         toml::from_str(toml).unwrap()
-    }
-
-    #[test]
-    fn test_detect_transport_anthropic() {
-        assert_eq!(
-            detect_transport("https://api.example.com/anthropic"),
-            ResolvedTransport::Anthropic
-        );
-        assert_eq!(
-            detect_transport("https://token-plan-sgp.xiaomimimo.com/anthropic"),
-            ResolvedTransport::Anthropic
-        );
-    }
-
-    #[test]
-    fn test_detect_transport_openai() {
-        assert_eq!(
-            detect_transport("https://api.deepseek.com"),
-            ResolvedTransport::OpenAi
-        );
-        assert_eq!(
-            detect_transport("http://localhost:11434"),
-            ResolvedTransport::OpenAi
-        );
-        assert_eq!(
-            detect_transport("https://api.openai.com"),
-            ResolvedTransport::OpenAi
-        );
     }
 
     #[test]

@@ -3,7 +3,7 @@ pub mod provider_config;
 pub mod router;
 
 pub use classifier::IntentClassifier;
-pub use provider_config::{ProviderConfig, ProviderType};
+pub use provider_config::{InferenceCandidate, ProviderClass};
 pub use router::InferenceRouter;
 
 use serde::{Deserialize, Serialize};

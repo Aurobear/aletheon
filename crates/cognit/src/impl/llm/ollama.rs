@@ -2,8 +2,10 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use super::provider::*;
+use crate::config::ProviderTimeoutConfig;
 use fabric::message::{ContentBlock, Message, Role};
 
 /// Ollama provider using the native `/api/chat` endpoint.
@@ -15,6 +17,7 @@ pub struct OllamaProvider {
     model: String,
     base_url: String,
     max_context: usize,
+    max_tokens: u32,
 }
 
 impl OllamaProvider {
@@ -24,6 +27,7 @@ impl OllamaProvider {
             model: model.into(),
             base_url: "http://localhost:11434".to_string(),
             max_context: 128_000,
+            max_tokens: 100_000,
         }
     }
 
@@ -35,6 +39,19 @@ impl OllamaProvider {
     pub fn with_max_context(mut self, max_context: usize) -> Self {
         self.max_context = max_context;
         self
+    }
+
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
+    pub fn with_timeouts(mut self, timeouts: ProviderTimeoutConfig) -> anyhow::Result<Self> {
+        self.client = Client::builder()
+            .connect_timeout(Duration::from_millis(timeouts.connect_timeout_ms))
+            .timeout(Duration::from_millis(timeouts.request_timeout_ms))
+            .build()?;
+        Ok(self)
     }
 }
 
@@ -49,6 +66,12 @@ struct ChatRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<OllamaTool>,
     stream: bool,
+    options: ChatOptions,
+}
+
+#[derive(Serialize)]
+struct ChatOptions {
+    num_predict: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -227,6 +250,9 @@ impl LlmProvider for OllamaProvider {
             messages: messages_to_ollama(messages),
             tools: tools_to_ollama(tools),
             stream: false,
+            options: ChatOptions {
+                num_predict: self.max_tokens,
+            },
         };
 
         let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
@@ -300,6 +326,9 @@ impl LlmProvider for OllamaProvider {
             messages: messages_to_ollama(messages),
             tools: tools_to_ollama(tools),
             stream: true,
+            options: ChatOptions {
+                num_predict: self.max_tokens,
+            },
         };
 
         let url = format!("{}/api/chat", self.base_url.trim_end_matches('/'));
