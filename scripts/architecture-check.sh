@@ -583,10 +583,9 @@ if forbidden:
     raise SystemExit("architecture-check: forbidden hyphenated workspace package(s): " + ", ".join(forbidden))
 reviewed={
     ("aletheon", "fabric"),
-    ("corpus", "cognit"),
-    ("corpus", "mnemosyne"),
-    ("execd", "corpus"),
+    ("cognit", "kernel"),
     ("executive", "gateway"),
+    ("executive", "hardware"),
     ("gateway", "fabric"),
     ("interact", "executive"),
 }

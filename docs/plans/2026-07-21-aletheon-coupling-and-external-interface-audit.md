@@ -1,0 +1,643 @@
+# Aletheon 耦合、外部接口与模块化审计
+
+> 日期：2026-07-21
+> 状态：当前代码静态审计，不是实施完成声明
+> 范围：crate 依赖、Provider、外部通信、配置与凭据、网络策略、进程边界、超大模块及架构文档漂移
+
+## 1. 执行摘要
+
+Aletheon 已经具备可运行的 core、用户 daemon、Pi、MCP/GBrain、记忆与定时闭环，但代码结构仍处于“生产能力已接通、架构边界尚未完全收敛”的阶段。
+
+```text
+能力闭环：      已成立
+安全基础：      已存在
+领域 crate：    已初步成形
+统一配置：      部分成立
+外部接口治理：  尚未统一
+模块职责：      Executive / Corpus 过重
+长期扩展成本：  偏高
+```
+
+最重要的结论不是全面重写，而是按顺序完成三项收敛：
+
+1. 统一 Provider 配置、解析与创建入口；
+2. 建立 host-owned 的出站通信、端点、凭据和健康治理边界；
+3. 将 Executive 从“实现中心”收缩为真正的 composition root。
+
+## 2. 审计方法与量化信号
+
+本次以当前工作树代码为准，检查 Cargo 直接依赖、公开 trait/config、`std::env`、HTTP client 构造、进程调用和生产文件体积。统计值是定位信号，不是单独的质量判定：
+
+- `crates/executive/src`：约 78,893 行 Rust；
+- `crates/corpus/src`：约 38,615 行 Rust；
+- 生产代码直接 `std::env::var/var_os`：约 61 处；
+- 独立 reqwest client 构造信号：约 14 处；
+- 超过 1,000 行的 Rust 文件：26 个。
+
+## 3. 当前依赖现实与旧文档冲突
+
+旧架构文档是历史快照，部分结论已被代码修复，但文档没有同步。
+
+| 旧文档描述 | 当前代码现实 | 一致？ |
+|---|---|---|
+| Corpus 依赖 Cognit、Mnemosyne、Platform（`docs/arch/CURRENT_ARCHITECTURE_AND_COUPLING_ANALYSIS.md:46-48,66-67`） | Corpus 当前只直接依赖 Fabric、Kernel、Platform（`crates/corpus/Cargo.toml:9-12`） | 否 |
+| Execd 依赖整个 Corpus（`docs/arch/CURRENT_ARCHITECTURE_AND_COUPLING_ANALYSIS.md:55,68-69`） | Execd 当前直接依赖 Platform，不再依赖 Corpus（`crates/execd/Cargo.toml:8-16`） | 否 |
+| MCP 配置 schema 属于 Cognit（`docs/arch/CURRENT_ARCHITECTURE_AND_COUPLING_ANALYSIS.md:135-152`） | canonical `McpServerConfig` 已在 Corpus（`crates/corpus/src/tools/mcp/config.rs:11-39`） | 否 |
+| Executive 是广泛 composition root（`docs/arch/CURRENT_ARCHITECTURE_AND_COUPLING_ANALYSIS.md:103-123`） | Executive 仍直接依赖十个领域 crate（`crates/executive/Cargo.toml:9-19`）并承载大量实现 | 是，但实现仍过重 |
+
+因此，后续架构决策不能继续直接引用这份旧快照，必须先刷新依赖图和已完成事项。
+
+## 4. 当前系统结构
+
+```text
+                            +-------------------+
+TUI / CLI ----------------->|     Executive     |
+                            | orchestration +   |
+System Core / Provider ---->| much implementation|
+                            +--+---+---+---+----+
+                               |   |   |   |
+           +-------------------+   |   |   +----------------+
+           v                       v   v                    v
+        Cognit                  Corpus Mnemosyne          Dasein
+     inference/reasoning       tools/MCP memory          identity
+           |                      |
+           v                      +--> Google/Web/Process/Filesystem
+     external LLM
+
+Executive additionally composes Pi, Goal, approvals, hooks, sessions,
+worktree recovery, Google integration, channels and runtime settlement.
+```
+
+结构方向基本正确；主要问题是外部能力与领域实现通过多个独立入口接入，并在 Executive bootstrap 中集中组装。
+
+## 5. P0：Provider 配置和创建逻辑重复
+
+### 5.1 两份 ProviderConfig
+
+实际应用 schema 位于 `crates/cognit/src/config/mod.rs:680-699`，字段包括：
+
+```text
+name, base_url, api_key, transport, models,
+max_context_length, pricing
+```
+
+另一份 inference 配置位于 `crates/cognit/src/impl/inference/provider_config.rs:10-21`，字段包括：
+
+```text
+id, name, provider_type, model, api_url,
+max_context_length, cost_per_1k_tokens, latency_ms
+```
+
+两个同名类型表达相近概念但不可互换，容易造成配置、调度和运行时指标分别演进。
+
+### 5.2 两套 Provider factory
+
+`ProviderRegistry::create_provider` 位于 `crates/cognit/src/impl/provider_registry.rs:149-179`：
+
+- 支持 OpenAI/Anthropic；
+- 应用 provider timeout、max tokens、max context；
+- `Auto` 通过 URL 后缀识别 Anthropic。
+
+另一套 `provider_factory::create_provider` 位于 `crates/cognit/src/impl/llm/provider_factory.rs:28-68`：
+
+- 支持 OpenAI/Anthropic/Ollama；
+- Ollama 通过 `localhost:11434` 或 `127.0.0.1:11434` 字符串判断；
+- 没有与 Registry 完全相同的 timeout/token 配置路径。
+
+同一配置经不同入口可能产生不同 Provider 类型和运行参数，这是确定的行为分叉风险。
+
+### 5.3 URL 启发式硬编码
+
+- `crates/cognit/src/impl/provider_registry.rs:15-26`：URL 以 `/anthropic` 结尾才视为 Anthropic；
+- `crates/cognit/src/impl/llm/provider_factory.rs:11-25`：包含本机 11434 才视为 Ollama。
+
+URL 是部署地址，不应成为协议类型的权威。项目已有显式 `Transport`（`crates/cognit/src/config/mod.rs:670-678`），生产路径应优先使用显式声明，`Auto` 仅保留为兼容模式。
+
+### 5.4 凭据名称与 Provider 名耦合
+
+`crates/cognit/src/impl/provider_registry.rs:181-188` 将 provider name 大写后拼成 `<NAME>_API_KEY`。`provider_factory.rs:100-106` 又实现一次相同逻辑。
+
+这会把逻辑身份、部署命名和 secret backend 绑定在一起。推荐改成显式引用：
+
+```toml
+[[providers]]
+name = "leju"
+transport = "openai"
+credential = "provider/leju"
+```
+
+由 `CredentialResolver` 将引用解析到 systemd credential、环境变量或 vault，领域代码不直接知道 secret 来源。
+
+## 6. P1：外部通信缺少统一治理出口
+
+当前不同外部能力分别创建客户端：
+
+| 外部能力 | 当前实现位置 |
+|---|---|
+| LLM OpenAI/Anthropic/Ollama | `crates/cognit/src/impl/llm/` |
+| MCP/GBrain | `crates/corpus/src/tools/mcp/transport.rs` |
+| Google | `crates/corpus/src/tools/google/client.rs` |
+| Telegram | `crates/gateway/src/telegram/mod.rs:23-65` |
+| Web search/fetch | `crates/corpus/src/tools/tools/web_search.rs`, `web_fetch.rs` |
+| Automation delivery | `crates/executive/src/impl/automation/delivery.rs:15-74` |
+| Vector/embedding | `crates/mnemosyne/src/impl/vector_store.rs:144-146` |
+
+这些模块分别处理 timeout、redirect、retry、endpoint、认证、错误分类和健康状态。协议适配应保留在各自领域，但横切治理不能继续复制。
+
+### 6.1 NetworkPolicy 覆盖不完整
+
+全局 NetworkPolicy 定义于 `crates/fabric/src/types/network_policy.rs:15-53`，默认拒绝。项目层配置不能自行提升网络权限，见 `crates/executive/src/core/config/mod.rs:206-220`，这是正确的 host-owned 权限模型。
+
+静态代码中明确接入该策略的主要是：
+
+- WebSearch：`crates/corpus/src/tools/tools/web_search.rs:11-22,126`；
+- WebFetch：`crates/corpus/src/tools/tools/web_fetch.rs:13-24,97`；
+- ToolRegistry 注入：`crates/corpus/src/tools/tools/registry.rs:143-202`。
+
+LLM、Google、Telegram、MCP 和 embedding 使用各自的可信配置/认证模型，但没有统一经过同一个出站治理端口。不能据此断言这些路径当前不安全；可以确认的是策略语义和健康观测是分裂的。
+
+### 6.2 推荐目标边界
+
+```text
+Domain Adapter
+(Google/MCP/LLM/Telegram/Embedding)
+             |
+             v
++----------------------------------+
+| OutboundTransport                |
+| - normalized endpoint identity   |
+| - connect/request/idle timeout   |
+| - redirect and proxy policy      |
+| - TLS requirements               |
+| - retry classification           |
+| - network authority decision     |
+| - metrics and health             |
++----------------------------------+
+             |
+             v
+        reqwest / socket
+
+CredentialResolver is separate and returns short-lived secret material only
+after endpoint/service identity is approved.
+```
+
+不建议创建包含全部业务协议的“万能 ExternalService”。统一的是传输治理和凭据边界，而不是 Google/MCP/LLM 的业务语义。
+
+## 7. P1：业务模块直接读取进程环境
+
+项目已经有 typed layered config：system → user → project → `ALETHEON__` environment → CLI，见 `crates/executive/src/core/config/mod.rs:259-301`。但生产模块仍有约 61 处直接 `std::env::var/var_os` 信号。
+
+### 7.1 Runtime Core 的兼容变量
+
+`crates/executive/src/core/runtime_core.rs:67-87` 直接读取：
+
+- `AGENT_WORKING_DIR`；
+- `AGENT_DATA_DIR`；
+- `AGENT_SYSTEM_PROMPT`；
+- `AGENT_SANDBOX_PREFERENCE`。
+
+这些值部分覆盖已加载的 AppConfig，产生“typed config 与旧环境变量谁更权威”的双重入口。
+
+### 7.2 Google bootstrap
+
+`crates/executive/src/impl/daemon/bootstrap/google.rs:37-59,92-95,122-124` 直接读取 Google client、redirect、secret、Drive 开关、文件 ID 和 ingress policy。Executive 因而了解具体集成的部署变量和解析规则，增加 composition root 对 Google 细节的耦合。
+
+### 7.3 应保留的进程协议变量
+
+不是所有环境变量读取都应迁移。以下属于宿主协议或进程发现，保留合理：
+
+- systemd `NOTIFY_SOCKET`、`WATCHDOG_USEC`（`crates/executive/src/host/systemd.rs:32-51`）；
+- XDG/HOME 路径发现；
+- `DISPLAY`、`WAYLAND_DISPLAY`、`DBUS_SESSION_BUS_ADDRESS`；
+- systemd credential directory；
+- 子进程一次性 capability/secret handoff。
+
+目标规则应是：
+
+```text
+Host/bootstrap 可以读取环境；
+Domain service 只能接收 typed config、SecretRef 或 capability port。
+```
+
+## 8. P1/P2：Executive 仍是实现中心
+
+Executive 对十个领域 crate 的直接依赖见 `crates/executive/Cargo.toml:9-19`。作为 composition root，这种依赖广度可以接受；不健康的是它同时承担领域实现。
+
+`RequestHandler::new` 从 `crates/executive/src/impl/daemon/bootstrap/request.rs:65` 开始，在同一构造流程中涉及：
+
+- inference adapter 与 model routing；
+- session store；
+- SelfField 与 permission authority；
+- core/recall/fact memory；
+- objective、approval 和 Gmail goal store；
+- worktree recovery；
+- hooks、skills、tools；
+- agent profiles；
+- native/Pi runtime；
+- runtime settlement 和服务启动。
+
+当前调用形态：
+
+```text
+RequestHandler::new
+  -> create stores
+  -> restore state
+  -> construct domain services
+  -> register integrations
+  -> register tools/runtimes
+  -> construct turn runtime
+  -> start workers
+```
+
+目标不是把这些内容放进更多任意文件，而是形成可独立测试的 composition units：
+
+```text
+bootstrap/
+  inference.rs      -> InferenceComposition
+  memory.rs         -> MemoryComposition
+  integrations.rs   -> ExternalIntegrationComposition
+  agents.rs         -> AgentRuntimeComposition
+  tools.rs          -> ToolComposition
+  sessions.rs       -> SessionComposition
+  request.rs        -> only order and final wiring
+```
+
+每个 composition unit 必须有明确输入/输出资源结构，不能通过全局环境重新发现配置。
+
+## 9. P2：超大文件与职责密度
+
+当前主要超大生产文件：
+
+| 文件 | 约行数 | 需要验证的拆分边界 |
+|---|---:|---|
+| `crates/corpus/src/security/runner.rs` | 2004 | 执行、guard、审批、审计、结果规范化 |
+| `crates/executive/src/service/agent_control/mod.rs` | 1680 | API facade、状态查询、生命周期路由 |
+| `crates/executive/src/service/agent_control/settlement.rs` | 1523 | 终态、证据、资源回收、记忆投影 |
+| `crates/corpus/src/tools/mcp/client.rs` | 1491 | connect、discover、reconnect、状态机 |
+| `crates/corpus/src/tools/mcp/auth.rs` | 1447 | bearer、OAuth discovery、token lifecycle |
+| `crates/executive/src/impl/daemon/server.rs` | 1400 | socket、RPC dispatch、生命周期 |
+| `crates/mnemosyne/src/service.rs` | 1394 | 记忆 facade、策略和后端协调 |
+| `crates/cognit/src/harness/linear/mod.rs` | 1393 | 推理循环、工具驱动、终态 |
+| `crates/executive/src/service/turn_pipeline.rs` | 1388 | turn stage orchestration |
+| `crates/executive/src/service/workspace_checkpoint.rs` | 1378 | checkpoint lifecycle |
+| `crates/executive/src/impl/daemon/bootstrap/request.rs` | 1373 | 全局组装 |
+| `crates/cognit/src/config/mod.rs` | 1300 | 多领域 schema 聚集 |
+
+文件大不等于错误；这里的问题是多个不同生命周期或授权阶段集中在同一模块。拆分必须以状态机和职责为依据，禁止纯按行数切文件。
+
+推荐优先级：
+
+1. Provider factory/config 重复；
+2. `bootstrap/request.rs` composition units；
+3. `agent_control/settlement.rs` 的 evidence/resource/memory 阶段；
+4. MCP connection/auth state machine；
+5. `security/runner.rs` 的执行与治理分离。
+
+## 10. 硬编码分类
+
+### 10.1 合理默认
+
+以下值是协议或宿主默认，只要可覆盖且集中定义，就不应机械移除：
+
+- `/run/aletheon`、`/etc/aletheon/config.toml`；
+- XDG fallback；
+- Google/Telegram 官方 endpoint；
+- MCP wire/version defaults；
+- systemd unit/socket 名；
+- provider 的合理 token/context 默认。
+
+Google 默认 endpoint 位于 `crates/corpus/src/tools/google/client.rs:62-68` 和 `google/oauth.rs:18-21`。作为 adapter 内可注入默认值是合理设计。
+
+### 10.2 应消除或收敛
+
+- 通过 URL 字符串猜 transport/provider；
+- 通过 provider name 动态拼 secret env 名；
+- 同一 socket/path 在多个模块重复定义；
+- 领域代码直接使用 `/tmp` 作为运行默认；
+- 外部程序名 `git`、`bash`、`cargo`、`rg`、`journalctl` 分散发现；
+- Google 功能开关和文件 ID 直接从环境解析；
+- 同一超时/重试语义在多个 client 重复定义。
+
+`crates/interact/src/tui/cli.rs:25-26` 仍定义 `/run/aletheon/aletheon.sock`，而当前用户 daemon 使用 XDG runtime socket。必须沿实际调用链确认该常量是否仍可达；若只是 legacy CLI，应迁移到 Fabric 的 user runtime path resolver 后删除。
+
+## 11. 已经健康或已改善的边界
+
+### 11.1 InferencePort
+
+`InferencePort` 在 `crates/executive/src/service/inference_port.rs:27-33` 隔离用户运行时和机器 provider。`PortLlmProvider` 在 `inference_port.rs:35-107` 将该端口适配回 Cognit 使用的 `LlmProvider`。凭据不跨用户 daemon inference frame，这是正确方向。
+
+### 11.2 Platform host traits
+
+Platform 已提供 `ProcessHost`、`FilesystemHost`、`ServiceHost`、`SandboxHost`、`DesktopHost`、`PtyHost`。新的 OS 操作应向这些 port 收敛，而不是继续在领域模块增加直接 `Command::new()`。
+
+### 11.3 MCP schema ownership
+
+Canonical MCP schema 已在 Corpus（`crates/corpus/src/tools/mcp/config.rs:11-39`），Executive 只通过 `crates/executive/src/core/config/infra.rs:10` 组合/重导出。旧架构文档对应待办已完成。
+
+### 11.4 Execd 依赖
+
+Execd 当前依赖 Platform 而非 Corpus（`crates/execd/Cargo.toml:8-16`），独立进程边界与最小 host contract 的方向正确。
+
+### 11.5 Host-owned network authority
+
+项目层不能提升 NetworkPolicy（`crates/executive/src/core/config/mod.rs:206-220`），避免仓库配置给自己授予出站权限。这一不变量应扩展到所有外部 adapter。
+
+## 12. 目标架构
+
+```text
+                    AppConfig + Provenance
+                            |
+              +-------------+-------------+
+              |                           |
+       CredentialResolver          EndpointRegistry
+              |                           |
+              +-------------+-------------+
+                            |
+                    OutboundTransport
+                 timeout/TLS/proxy/policy
+                            |
+       +----------+---------+--------+----------+
+       |          |                  |          |
+   LLM Adapter  MCP Adapter     Google Adapter Telegram Adapter
+       |          |                  |          |
+       +----------+---------+--------+----------+
+                            |
+                    ExternalHealthBus
+
+Executive only composes the above ports and domain services.
+Domain adapters retain protocol semantics; host infrastructure owns authority.
+```
+
+### 12.1 核心接口建议
+
+```text
+SecretRef
+  logical secret identity; no raw value in AppConfig
+
+CredentialResolver
+  resolve(SecretRef, ServiceIdentity) -> scoped secret lease
+
+ExternalEndpoint
+  normalized URL + service identity + trust class
+
+OutboundPolicy
+  endpoint authority + timeouts + redirect/proxy/TLS rules
+
+OutboundTransport
+  execute approved request and emit bounded metrics/error class
+
+ExternalHealth
+  ready/degraded/unready without exposing credentials
+```
+
+这些接口应放在有明确所有权的现有 crate 内，不能为了“统一”立即创建 `common`、`external-types` 或 `http-api` 等无领域 crate。
+
+## 13. 分阶段收敛路线
+
+### Phase 0：刷新事实基线
+
+1. 更新 `docs/arch/CURRENT_ARCHITECTURE_AND_COUPLING_ANALYSIS.md` 的 Cargo 依赖图；
+2. 标记 MCP ownership 和 Execd dependency 已完成；
+3. 自动生成直接本地依赖清单；
+4. CI 比较生成结果与受控快照，避免再次漂移。
+
+验收：文档中的每条当前依赖都能定位到对应 Cargo 行，旧描述与代码现实不再冲突。
+
+### Phase 1：Provider 单一真源
+
+1. 盘点两份 ProviderConfig 的生产调用者；
+2. 定义唯一 `ProviderDefinition`；
+3. 合并 Registry/factory，统一 Ollama/OpenAI/Anthropic 行为；
+4. transport 在生产配置中显式声明；
+5. timeout/token/context/pricing 通过同一路径；
+6. 引入显式 credential reference；
+7. 删除重复类型和 URL heuristic 的生产依赖。
+
+验收：给定同一 ProviderDefinition，所有入口创建相同 transport、timeouts、context 和 credential identity。
+
+### Phase 2：凭据与环境入口收敛
+
+1. 将 Google、search、runtime legacy override 转成 bootstrap typed config；
+2. 定义 `SecretRef` 和 `CredentialResolver`；
+3. 领域模块不再直接读取业务 secret env；
+4. 保留 systemd/XDG/display 等 host protocol env；
+5. 加静态架构检查允许列表。
+
+验收：新增业务环境变量只能在 config/host adapter 中解析；日志、配置诊断和错误不包含 secret value。
+
+### Phase 3：统一出站治理
+
+1. 定义 endpoint identity、transport policy 和 error taxonomy；
+2. 先迁移 MCP 与 Google；
+3. 再迁移 Telegram、automation、embedding；
+4. 最后评估 LLM provider 是否共享 transport factory；
+5. 全部接入统一 metrics/health；
+6. 保留 adapter 自己的协议重试语义，但由 transport 限定上限。
+
+验收：所有生产 HTTP 出口均有可定位的 host-owned policy、timeout、TLS/redirect 规则和健康信号。
+
+### Phase 4：Executive composition 收缩
+
+1. 为 inference/memory/integrations/agents/tools/session 定义资源结构；
+2. 逐个从 `RequestHandler::new` 提取 composition unit；
+3. 每个 unit 建立独立构造测试和故障注入；
+4. RequestHandler 只保留顺序、依赖传递和最终 facade；
+5. 禁止提取后的模块重新读取全局环境。
+
+验收：bootstrap 顶层可以通过一张资源图说明，任一 integration 构造失败有明确错误域，其他 optional integration 可按契约降级。
+
+### Phase 5：大模块按状态机拆分
+
+- Settlement：terminal decision → evidence persistence → resource cleanup → memory projection；
+- MCP：connection → authentication → discovery → active → reconnect/backoff；
+- Tool runner：authorize → sandbox → execute → bound output → audit；
+- Turn pipeline：assemble → infer → tool loop → persist → emit terminal event。
+
+验收：每个阶段有输入、输出、失败分类和独立测试，不共享隐式可变全局状态。
+
+## 14. 建议的架构不变量
+
+应由 `scripts/architecture-check.sh` 或专门静态检查执行：
+
+1. Corpus 不依赖 Cognit、Mnemosyne 或 Executive；
+2. Execd 不依赖 Corpus 或 Executive；
+3. Platform 不依赖领域实现；
+4. Runtime manifest crate 不依赖 Executive adapter；
+5. 业务模块禁止直接读取未登记环境变量；
+6. 新 reqwest client 构造只能出现在受控 transport/provider adapter 目录；
+7. 项目配置不能提升 network、sandbox 或 credential authority；
+8. raw secret 不进入 AppConfig schema、argv、日志、evidence；
+9. Executive 可以组合领域，不重新实现领域机制；
+10. 新 crate 必须有真实生产调用者和不可由内部模块满足的隔离价值；
+11. 超大文件增长必须解释职责边界，不能只凭阈值强拆；
+12. 架构文档的当前依赖图必须由机器验证。
+
+## 15. 风险与非目标
+
+### 风险
+
+- 一次性替换所有 HTTP client 会扩大回归面；
+- 错误地统一协议层会形成新的“万能模块”；
+- 凭据迁移若没有兼容期会破坏现有 systemd 环境文件；
+- 拆 Executive 时可能改变启动顺序和恢复顺序；
+- Provider 合并可能暴露历史入口行为差异。
+
+### 非目标
+
+- 不重写整个项目；
+- 不为了减少行数创建大量 crate；
+- 不删除合理的官方 endpoint 和 OS 默认值；
+- 不让 repository/project config 获得 host authority；
+- 不在边界收敛过程中改变 Pi、Goal、memory 的终态语义；
+- 不以 mock 测试代替真实 provider/MCP/daemon 验收。
+
+## 16. 架构收敛的首个核心工作包
+
+仅从架构依赖关系看，首个核心工作包是“Provider 单一真源”，理由：
+
+- 重复证据明确；
+- 范围集中在 Cognit/config；
+- 能立即消除行为分叉；
+- 为后续 CredentialResolver 和 OutboundTransport 提供稳定输入；
+- 不需要先拆 Executive 大模块。
+
+其实施定义统一由 `docs/plans/2026-07-21-production-readiness-hardening.md` 的 H2
+维护；若 H0/H1 发现阻断项，应先按该队列处理。该工作包至少覆盖：
+
+```text
+ProviderDefinition
+ProviderRegistry
+ProviderFactory
+explicit Transport
+CredentialRef compatibility
+timeouts/context/pricing
+OpenAI/Anthropic/Ollama contract tests
+```
+
+Provider 收敛后再做外部通信治理，避免在 Provider 类型仍分裂时搭建过早的统一传输层。
+本节表达架构依赖，不建立与 hardening 文档竞争的执行优先级。
+
+## 17. 最终结论
+
+Aletheon 当前不是“架构不可用”，而是“运行能力领先于边界治理”：
+
+```text
+已经可以真实使用和调用 Pi；
+但继续按现有方式增加外部集成，会扩大配置、凭据、网络和 bootstrap 耦合。
+```
+
+应优先停止新增第三套 Provider/HTTP/config 入口，先统一已有入口，再逐步迁移。正确的长期结构是：
+
+```text
+Host owns authority and transport governance;
+Domains own protocol semantics;
+Executive owns composition and global settlement;
+Fabric owns only genuinely cross-domain contracts.
+```
+
+只要按 Phase 0→5 小步收敛并保持现有实机闭环验收，项目可以在不全面重写的前提下显著降低耦合和长期维护成本。
+
+---
+
+# Part II：运行时安全事实补充（2026-07-22 校正）
+
+本部分是对当前工作树的可复现静态检查，不宣称运行过动态故障注入。它只记录 Part I
+未覆盖的运行时安全证据；实施顺序和验收以
+`docs/plans/2026-07-21-production-readiness-hardening.md` 为唯一工作队列。
+
+## 18. 并发与异步任务生命周期
+
+### 18.1 缺少统一监督的后台任务（P1）
+
+MCP client、reasoning log rotation 和 perception runtime 存在直接
+`tokio::spawn` 的生产路径（`crates/corpus/src/tools/mcp/client.rs:847,856,933,1098,1121`、
+`crates/executive/src/impl/runtime/reasoning_logger.rs:111`、
+`crates/executive/src/core/runtime_core.rs:185,198`）。这些调用点没有共同的任务登记、
+panic 观测和有界关停契约。可确认的风险是：单个后台任务异常退出后，daemon 进程仍可能存活，
+而对应能力进入退化状态。是否存在可触发 panic 以及实际恢复行为，必须由故障注入测试确认，
+不能仅凭 `spawn` 数量判定为 P0。
+
+`crates/mnemosyne/src/service.rs:791` 还在 async 路径执行同步 rusqlite 工作。
+这不是已证实的死锁，但慢 I/O 可能占用 executor worker，属于需要压测确认的 P1 调度风险。
+
+## 19. 持久化与数据完整性
+
+### 19.1 GBrain migration 非事务化（P1）
+
+GBrain migration 依次执行建表、按列存在性补列、数据回填，最后写 `user_version`
+（`crates/mnemosyne/src/backends/gbrain/migrations.rs:7-129`），没有包在同一个显式事务中。
+因此进程在步骤之间退出时可能留下中间 schema 状态。
+
+必须同时记录其现有缓解：迁移每次打开都会执行，`CREATE TABLE IF NOT EXISTS` 与
+`add_column` 的存在性检查使其具备重入基础（`migrations.rs:8-121,133-145`）。当前代码
+**不会因为旧 `user_version` 而跳过迁移**。在没有损坏样本或升级故障复现前，该问题是
+P1 韧性增强，不是已证实的数据损坏 P0。
+
+### 19.2 SessionStore 有记录版本、无数据库结构迁移版本（P1）
+
+`CanonicalSessionStore` 通过 `CREATE TABLE IF NOT EXISTS` 建结构
+（`crates/executive/src/impl/session/canonical_store.rs:29-55`），没有数据库级
+`user_version`/结构迁移状态机；但 session/item 记录包含并校验
+`SESSION_SCHEMA_VERSION`（`canonical_store.rs:9,61-74`）。因此准确结论是“缺少数据库
+结构版本化”，而不是“没有 schema versioning”。
+
+### 19.3 完整性检查是运维诊断项（P2）
+
+当前 open 路径没有显式运行 SQLite `quick_check`/`integrity_check`。SQLite WAL 本身具有
+崩溃恢复语义，不能仅据此推导“断电必然 panic 或静默损坏”。更合适的后续工作是确定
+离线维护或受控启动诊断策略，并评估 `quick_check` 的延迟；不要求每次 open 无条件执行
+全量 `integrity_check`。
+
+## 20. 网络安全补充（条件性 P1）
+
+`NetworkPolicy` 已实现默认拒绝、host/protocol/port/DNS 检查
+（`crates/fabric/src/types/network_policy.rs:53-104`）。但 `looks_like_ip` 只判断字符串是否
+像 IP，没有对 loopback、link-local/metadata、RFC1918 或 IPv6 ULA/loopback 分类
+（`network_policy.rs:210-227`）。
+
+风险是条件性的：默认拒绝时已有缓解；当 host/DNS 策略开放时，出站实现仍需在 DNS
+解析后及每次重定向后复验目标地址，避免私网目标与 DNS rebinding。该约束属于 Part I
+§6 的出站治理目标，而不是要求所有业务协议合并为一个服务。
+
+## 21. 错误可见性与有界存储
+
+以下生产路径显式丢弃结果，值得逐点确定契约：
+
+- turn lifecycle event publish：`crates/executive/src/service/turn_pipeline.rs:135,148`；
+- approval oneshot send：`crates/executive/src/service/admin_service.rs:156,206`；
+- self-evolution rollback：`crates/metacog/src/service.rs:403,408,416,443`。
+
+`oneshot::Sender::send` 失败表示 receiver 已被丢弃，不能据此声称 turn 一定挂起；准确风险是
+终态响应或回滚失败缺少统一可见性。修复前应先定义每个调用点是 best-effort、必须告警，
+还是必须向上返回错误，避免把所有 `let _ =` 机械改成失败终止。
+
+死信和历史事件表的长期容量上限也需要运行数据佐证。在没有增长率与磁盘预算证据前，
+它们是 P2 运维容量项，不是已发生的数据故障。
+
+## 22. 已验证的健康行为与排除项
+
+- 配置层级已经明确定义为 system → user → project → `ALETHEON__` environment → CLI
+  （`crates/executive/src/core/config/mod.rs:259-301`）；问题是部分业务环境变量绕过该入口。
+- daemon 已有 health RPC；待完善的是把外部依赖的 degraded/unready 状态统一投影到健康结果，
+  不是新增一个同名健康接口。
+- LLM scheduler 对 429、5xx、network、timeout 和包含 `eof` 的错误做有界重试
+  （`crates/cognit/src/impl/llm/scheduler.rs:31-74`）；字符串分类可用但脆弱，属 P2 类型化改进。
+- `crates/mnemosyne/src/recall/pipeline.rs:842` 的新 runtime + `block_on` 位于
+  `#[cfg(test)]`/`proptest!`，排除为生产问题。
+- systemd watchdog 持续 ping 到进程退出是预期行为
+  （`crates/executive/src/host/systemd.rs:122`），不要求单独等待该循环结束。
+
+## 23. 两份文档的职责边界
+
+```text
+本审计文档
+  └─ 当前事实、代码证据、目标边界、风险条件
+                |
+                v
+production-readiness-hardening.md
+  └─ 唯一优先级、批次依赖、验收门槛、停止条件
+```
+
+本审计不再维护另一套实施优先级。Provider、配置/凭据、任务监督、持久化、SSRF、
+Executive composition 等发现全部进入 hardening 队列统一排序；若代码变化导致锚点失效，
+先更新事实基线，再调整队列。

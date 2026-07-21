@@ -2,7 +2,7 @@
 
 > **Status:** Current verified snapshot
 >
-> **Verified:** 2026-07-19
+> **Verified:** 2026-07-22
 >
 > **Scope:** Workspace crate boundaries and direct local dependencies after the
 > crate-consolidation pass. Claims about the current tree are anchored to code.
@@ -37,14 +37,14 @@ than counted as delivered capability.
 ```text
 aletheon
   |-- executive
-  |-- interact --------> executive
+  |-- interact --------> fabric
   `-- fabric
 
 executive
   |-- kernel ----------> fabric
   |-- runtime
-  |-- cognit ----------> kernel, fabric
-  |-- corpus ----------> cognit, kernel, mnemosyne, platform, fabric
+  |-- cognit ----------> fabric
+  |-- corpus ----------> kernel, platform, fabric
   |-- dasein ----------> kernel, fabric
   |-- agora -----------> kernel, fabric
   |-- mnemosyne -------> kernel, fabric
@@ -52,7 +52,7 @@ executive
   |-- gateway ---------> fabric
   `-- fabric
 
-execd -----------------> corpus
+execd -----------------> platform
 
 platform                (no local dependency)
 runtime                 (no local dependency)
@@ -63,10 +63,10 @@ Evidence:
 
 - Executive's direct domain dependencies are declared at
   `crates/executive/Cargo.toml:9-19`.
-- Corpus currently depends on Cognit, Mnemosyne and Platform at
-  `crates/corpus/Cargo.toml:9-14`.
-- Execd currently depends on the whole Corpus crate at
-  `crates/execd/Cargo.toml:8-15`.
+- Corpus currently depends directly on Fabric, Kernel and Platform at
+  `crates/corpus/Cargo.toml:9-12`.
+- Execd currently depends directly on Platform, not Corpus, at
+  `crates/execd/Cargo.toml:8-16`.
 - Platform owns its contracts and OS backends in one crate at
   `crates/platform/src/lib.rs:1-38`.
 - Runtime owns lifecycle contracts, registry and selector at
@@ -76,27 +76,29 @@ Evidence:
 
 ## 3. Crate Inventory
 
-The source-size figures below count checked-in Rust files and lines in the
-current tree. They are diagnostic signals, not quality scores.
+The source-size figures below count checked-in production `src/` Rust files and
+lines in the current tree. Direct local dependencies in this table exclude
+`dev-dependencies`; the machine baseline also inventories reviewed test-only
+edges. These are diagnostic signals, not quality scores.
 
 | Crate | Rust files | Rust lines | Direct local dependencies | Role |
 |---|---:|---:|---|---|
-| `aletheon` | 11 | 1,449 | executive, fabric, interact | user entry and assembly |
-| `executive` | 399 | 109,293 | 10 domain crates | composition and orchestration |
-| `kernel` | 25 | 5,681 | fabric | lifecycle and governance primitives |
-| `runtime` | 8 | 313 | none | external executor contract and selection |
-| `cognit` | 68 | 19,358 | fabric, kernel | cognition and harness |
-| `corpus` | 147 | 45,927 | cognit, fabric, kernel, mnemosyne, platform | tools and capability execution |
-| `dasein` | 77 | 19,160 | fabric, kernel | identity and continuity |
-| `agora` | 16 | 5,167 | fabric, kernel | shared cognitive workspace |
-| `mnemosyne` | 90 | 24,201 | fabric, kernel | memory and experience |
-| `metacog` | 28 | 4,408 | fabric, kernel | governed evaluation and evolution |
-| `fabric` | 150 | 31,257 | none | shared protocol and compatibility infrastructure |
+| `aletheon` | 4 | 982 | executive, fabric, interact | user entry and assembly |
+| `executive` | 270 | 78,893 | 10 domain crates | composition and orchestration |
+| `kernel` | 20 | 4,947 | fabric | lifecycle and governance primitives |
+| `runtime` | 3 | 157 | none | external executor contract and selection |
+| `cognit` | 60 | 16,741 | fabric | cognition and harness |
+| `corpus` | 128 | 38,615 | fabric, kernel, platform | tools and capability execution |
+| `dasein` | 71 | 17,426 | fabric, kernel | identity and continuity |
+| `agora` | 12 | 4,139 | fabric, kernel | shared cognitive workspace |
+| `mnemosyne` | 75 | 21,640 | fabric, kernel | memory and experience |
+| `metacog` | 27 | 4,018 | fabric, kernel | governed evaluation and evolution |
+| `fabric` | 133 | 28,737 | none | shared protocol and compatibility infrastructure |
 | `gateway` | 16 | 3,242 | fabric | external request adapter |
-| `interact` | 52 | 12,815 | executive, fabric | TUI and interaction adapter |
-| `platform` | 38 | 2,011 | none | host OS contracts and backends |
-| `execd` | 6 | 2,447 | corpus | isolated low-level side effects |
-| `hardware` | 2 | 191 | none | experimental device contract and simulator |
+| `interact` | 46 | 12,295 | fabric | TUI and interaction adapter |
+| `platform` | 37 | 3,677 | none | host OS contracts and backends |
+| `execd` | 5 | 2,575 | platform | isolated low-level side effects |
+| `hardware` | 9 | 644 | none | experimental device contract and simulator |
 
 ## 4. Coupling Findings
 
@@ -104,7 +106,7 @@ current tree. They are diagnostic signals, not quality scores.
 
 Executive depends on almost every active domain
 (`crates/executive/Cargo.toml:9-19`). That breadth is expected for a composition
-root. Its 109,293 Rust lines show that it also owns substantial implementation,
+root. Its 78,893 Rust lines show that it also owns substantial implementation,
 not only assembly.
 
 The boundary is healthy only if new work follows this rule:
@@ -125,19 +127,18 @@ Examples:
 ### 4.2 Fabric remains a large dependency funnel
 
 Fabric has no local dependency, but most established domains depend on it. It
-contains 31,257 Rust lines, so it is materially larger than a pure ID/schema
+contains 28,737 Rust lines, so it is materially larger than a pure ID/schema
 crate.
 
 This is a controlled legacy boundary, not permission to add arbitrary shared
 types. New public contracts must have a verified cross-domain owner and must not
 be placed in Fabric merely to avoid deciding ownership.
 
-### 4.3 Corpus still leaks configuration ownership into Cognit
+### 4.3 MCP configuration ownership has moved to Corpus
 
-Corpus owns the MCP client, transport, authentication and manager, but re-exports
-its server configuration from Cognit at
-`crates/corpus/src/tools/mcp/config.rs:54-56`. This creates the direct
-`corpus -> cognit` edge visible at `crates/corpus/Cargo.toml:10`.
+Corpus now owns the MCP client, transport, authentication, manager and canonical
+`McpServerConfig` schema (`crates/corpus/src/tools/mcp/config.rs:11-39`). Its
+manifest has no Cognit dependency (`crates/corpus/Cargo.toml:9-12`).
 
 Current reality and intended ownership disagree:
 
@@ -145,19 +146,19 @@ Current reality and intended ownership disagree:
 |---|---|---|
 | MCP execution | Corpus | Corpus |
 | MCP transport/auth | Corpus | Corpus |
-| MCP configuration schema | Cognit | Corpus |
+| MCP configuration schema | Corpus | Corpus |
 | top-level configuration assembly | Executive | Executive |
 
-This edge should be removed by moving the canonical MCP schema into Corpus, not
-by recreating a standalone `mcp-types` crate.
+The previous `corpus -> cognit` ownership leak is closed. Keep the schema in
+Corpus rather than recreating a standalone `mcp-types` crate.
 
-### 4.4 Execd has a justified process boundary but an oversized library edge
+### 4.4 Execd now uses the minimal Platform edge
 
 Execd is a separate process because it provides failure and permission
 isolation. That justifies an independent binary and crate. It now depends on the
 minimal Platform filesystem/patch contract rather than all of Corpus.
 
-Target dependency shape:
+Current dependency shape:
 
 ```text
 Executive -> execd -> platform + minimal patch contract
@@ -232,9 +233,9 @@ The following constraints are enforced or intended to be enforced by
 
 In dependency order:
 
-1. Move MCP configuration ownership from Cognit to Corpus.
-2. Reduce Execd's dependency from full Corpus to the smallest real patch
-   contract without creating a cycle.
+1. Keep the completed MCP ownership and Execd dependency boundaries enforced by
+   machine-checked dependency rules.
+2. Converge Provider configuration and creation to one production path.
 3. Wire Runtime registry/selection into the real external-runtime production
    path while retaining Executive verification.
 4. Prove Hardware through one governed simulator vertical slice before adding
