@@ -18,14 +18,17 @@ private, socket-activated `aletheon daemon`; Goal workers, integrations, Pi, and
 memory workers remain supervised inside that user runtime rather than becoming
 separate system units.
 
-Build a release binary, review `config/production.toml.example`, then install:
+For the supported build/install/deploy command surface, start with the
+[operations guide](README.md):
 
 ```bash
-bash scripts/cargo-agent.sh build --release -p aletheon
-sudo ALETHEON_BINARY="$PWD/target/release/aletheon" \
-  ALETHEON_CONFIG="$PWD/config/production.toml.example" \
-  scripts/install-systemd.sh
+bash scripts/aletheon.sh deploy
 ```
+
+The dispatcher builds through the bounded Cargo wrapper, calls the native
+installer at its explicit sudo boundary, installs the per-user closure assets,
+and verifies readiness. `scripts/install-systemd.sh` remains the low-level
+installer for image construction and advanced automation.
 
 The installer is idempotent. It creates the system account and managed 0750
 core directories, preserves an existing `/etc/aletheon/config.toml`, installs

@@ -8,13 +8,13 @@
 
 - The deployed system must run `core + user daemon`, use Leju DeepSeek, and
   close the scheduled Pi-to-memory-to-GBrain loop
-  (`docs/plans/2026-07-21-aletheon-ser8-deployment.md:6-7`).
+  (`docs/archive/plans/2026-07-21/2026-07-21-aletheon-ser8-deployment.md:6-7`).
 - Pi execution must be isolated, reviewed as a diff, settled, and persisted
-  (`docs/plans/2026-07-21-aletheon-ser8-deployment.md:177-187`).
+  (`docs/archive/plans/2026-07-21/2026-07-21-aletheon-ser8-deployment.md:177-187`).
 - GBrain is a shared local memory service and credentials must remain outside
-  repository content (`docs/plans/2026-07-21-aletheon-ser8-deployment.md:16,184-185`).
+  repository content (`docs/archive/plans/2026-07-21/2026-07-21-aletheon-ser8-deployment.md:16,184-185`).
 - Scheduled operation must be a systemd user timer that submits a fixed task
-  through the user daemon (`docs/plans/2026-07-21-aletheon-ser8-deployment.md:186-187`).
+  through the user daemon (`docs/archive/plans/2026-07-21/2026-07-21-aletheon-ser8-deployment.md:186-187`).
 
 ## Spec-versus-code adjudication
 

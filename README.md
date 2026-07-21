@@ -10,7 +10,7 @@
 **Created:** 2026-06-06
 **Author:** aurobear
 
-**[Design Guide](docs/design/README.md)** | **[Contributing](CONTRIBUTING.md)** | **[Demo](examples/self-evolution-demo/README.md)**
+**[Operations](docs/deployment/README.md)** | **[Design Guide](docs/design/README.md)** | **[Contributing](CONTRIBUTING.md)** | **[Demo](examples/self-evolution-demo/README.md)**
 
 ---
 
