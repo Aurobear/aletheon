@@ -65,7 +65,7 @@ private evidence, generates unique job/attempt IDs, and enforces a hard timeout
 | Outage invocation | PASS | The second real service invocation completed status 0 while GBrain was unavailable and produced the recovery evidence above. |
 | Overlap | PASS | `/tmp/aletheon-goal-evidence/timer-overlap-1784604749`: first invocation 0, overlapping invocation 75, one mode-`0600` receipt. |
 | Timeout | PASS | `/tmp/aletheon-goal-evidence/timer-timeout-1784604714`: a sleeping fake client was terminated with status 124 and the private receipt recorded 124. |
-| Enabled schedule | PASS | `aletheon-pi-closure.timer` is enabled and active; next trigger captured as `2026-07-22 03:29:29 CST`. `systemd-analyze --user verify` passed. |
+| Enabled schedule | PASS | `aletheon-pi-closure.timer` is enabled and active; the current randomized next trigger is `2026-07-22 03:44:42 CST`, within the configured 03:15–03:45 window. `systemd-analyze --user verify` passed. |
 
 ## Targeted validation
 
