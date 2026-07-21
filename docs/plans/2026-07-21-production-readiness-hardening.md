@@ -1,7 +1,7 @@
 # Aletheon Production Readiness Hardening Plan
 
 > **Date:** 2026-07-21（2026-07-22 校正）
-> **Status:** Active；H0–H4 已完成，H5 进行中
+> **Status:** Active；H0–H5 已完成，H6 进行中
 > **Role:** 唯一可执行 hardening 队列
 > **Companion evidence:** `docs/plans/2026-07-21-aletheon-coupling-and-external-interface-audit.md`
 > **Accepted baseline:** `docs/deployment/ser8-acceptance-2026-07-21.md`
@@ -26,8 +26,8 @@ SER8 单机验收已经证明真实 inference、Pi、coding diff、durable memor
 |---|---|---|
 | 配置优先级 | system → user → project → `ALETHEON__` environment → CLI（`crates/executive/src/core/config/mod.rs:259-301`） | 优先级已定义；问题是业务模块存在绕过 typed config 的直接 env 入口 |
 | Provider | 存在两个 `ProviderConfig` 与两条 factory/registry 路径（`crates/cognit/src/config/mod.rs:683`、`crates/cognit/src/impl/inference/provider_config.rs:12`、`crates/cognit/src/impl/provider_registry.rs:149-188`、`crates/cognit/src/impl/llm/provider_factory.rs:28-106`） | P0 行为分叉风险，先收敛单一真源 |
-| GBrain migration | 每次 open 都执行幂等建表/补列/回填，最后写 `user_version`；无显式总事务（`crates/mnemosyne/src/backends/gbrain/migrations.rs:7-145`） | 不存在“重开因版本跳过迁移”；事务化是 P1 韧性增强 |
-| Session schema | DB 建表无 `user_version`，但 session/item 记录校验 `SESSION_SCHEMA_VERSION`（`crates/executive/src/impl/session/canonical_store.rs:29-74`） | 缺少数据库结构迁移版本，不是完全没有 schema version |
+| GBrain migration | H5 已将建表、补列、回填与 `user_version` 放入同一个 `IMMEDIATE` 事务（`crates/mnemosyne/src/backends/gbrain/migrations.rs:25-182`） | 每步故障均回滚到旧版本，重开可重入完成；更高版本 fail closed |
+| Session schema | H5 引入 DB `user_version=1` 事务迁移并保留 session/item 的 `SESSION_SCHEMA_VERSION` 校验（`crates/executive/src/impl/session/canonical_store.rs:19-139`） | 数据库结构版本与 record schema 是两条独立且均受测的契约 |
 | 网络策略 | 默认拒绝及 host/protocol/port/DNS 检查已存在（`crates/fabric/src/types/network_policy.rs:53-104`） | 私网/metadata 拒绝是策略开放后的条件性 P1，且需覆盖 DNS 解析与重定向 |
 | LLM 瞬态错误 | scheduler 对 429、5xx、network、timeout、`eof` 做有界重试（`crates/cognit/src/impl/llm/scheduler.rs:31-74`） | 网络 EOF 已有恢复；Display 字符串分类是 P2 脆弱点 |
 | Health | daemon 已有 health RPC，SER8 运维验收已调用 | 不新增重复 `/health`；补外部依赖 degraded/readiness 聚合 |
@@ -69,7 +69,8 @@ SER8 单机验收已经证明真实 inference、Pi、coding diff、durable memor
 | H2 | **PASS** | `docs/deployment/hardening-h2-provider-single-source-2026-07-22.md` |
 | H3 | **PASS** | `docs/deployment/hardening-h3-typed-preflight-2026-07-22.md` |
 | H4 | **PASS** | `docs/deployment/hardening-h4-mcp-supervision-2026-07-22.md` |
-| H5–H11 | Pending | 按下列依赖顺序推进 |
+| H5 | **PASS** | `docs/deployment/hardening-h5-sqlite-resilience-2026-07-22.md` |
+| H6–H11 | Pending | 按下列依赖顺序推进 |
 
 ```text
 H0 事实基线

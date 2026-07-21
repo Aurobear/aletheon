@@ -565,31 +565,33 @@ reasoning log rotation 和 perception runtime 仍存在直接后台任务路径
 
 ## 19. 持久化与数据完整性
 
-### 19.1 GBrain migration 非事务化（P1）
+### 19.1 GBrain migration 已事务化（H5 已收敛）
 
-GBrain migration 依次执行建表、按列存在性补列、数据回填，最后写 `user_version`
-（`crates/mnemosyne/src/backends/gbrain/migrations.rs:7-129`），没有包在同一个显式事务中。
-因此进程在步骤之间退出时可能留下中间 schema 状态。
+GBrain 的建表、逐列补列、数据回填和 `user_version` 更新现在位于同一个 `IMMEDIATE`
+事务内（`crates/mnemosyne/src/backends/gbrain/migrations.rs:25-182`）。迁移仍保留幂等建表和
+列存在性检查；高于当前二进制支持的版本会在写入前 fail closed
+（`migrations.rs:33-44,185-202`）。
 
-必须同时记录其现有缓解：迁移每次打开都会执行，`CREATE TABLE IF NOT EXISTS` 与
-`add_column` 的存在性检查使其具备重入基础（`migrations.rs:8-121,133-145`）。当前代码
-**不会因为旧 `user_version` 而跳过迁移**。在没有损坏样本或升级故障复现前，该问题是
-P1 韧性增强，不是已证实的数据损坏 P0。
+故障注入逐一覆盖 14 个迁移边界，证明失败后版本仍为 v1，释放连接再打开可以完成 v2
+升级并保留回填值；另有更高版本不被修改的用例
+（`migrations.rs:205-294`）。因此原先的 P1 中间 schema 风险已经由 H5 关闭，而不是被
+重新分类为 P0。
 
-### 19.2 SessionStore 有记录版本、无数据库结构迁移版本（P1）
+### 19.2 SessionStore 数据库结构与记录版本已分离（H5 已收敛）
 
-`CanonicalSessionStore` 通过 `CREATE TABLE IF NOT EXISTS` 建结构
-（`crates/executive/src/impl/session/canonical_store.rs:29-55`），没有数据库级
-`user_version`/结构迁移状态机；但 session/item 记录包含并校验
-`SESSION_SCHEMA_VERSION`（`canonical_store.rs:9,61-74`）。因此准确结论是“缺少数据库
-结构版本化”，而不是“没有 schema versioning”。
+`CanonicalSessionStore` 现在以 `user_version=1` 管理数据库结构，在同一事务中完成建表和
+版本推进，并在打开时拒绝更高版本或声称 v1 但缺列的数据库
+（`crates/executive/src/impl/session/canonical_store.rs:19-139`）。旧的未版本化三表数据库会
+原位标记为 v1，不改变 record JSON；session/item 仍分别校验 `SESSION_SCHEMA_VERSION`
+（`canonical_store.rs:45-69,467-574`）。
 
-### 19.3 完整性检查是运维诊断项（P2）
+### 19.3 完整性检查保持显式离线诊断（H5 已决策）
 
-当前 open 路径没有显式运行 SQLite `quick_check`/`integrity_check`。SQLite WAL 本身具有
-崩溃恢复语义，不能仅据此推导“断电必然 panic 或静默损坏”。更合适的后续工作是确定
-离线维护或受控启动诊断策略，并评估 `quick_check` 的延迟；不要求每次 open 无条件执行
-全量 `integrity_check`。
+没有损坏样本或延迟证据支持把大小相关的扫描加入每次 open。H5 因此保持两个 open 路径只做
+迁移/结构验证，并提供显式只读 `PRAGMA quick_check` 脚本
+（`scripts/aletheon-sqlite-check.sh:1-37`）。脚本要求传入现存数据库，建议停止 owner service
+或检查一致性备份；它不会由 daemon 高频启动路径自动调用。SQLite WAL 的崩溃恢复语义也不
+被错误等同于完整性扫描。
 
 ## 20. 网络安全补充（条件性 P1）
 
