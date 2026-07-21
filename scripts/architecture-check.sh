@@ -91,6 +91,19 @@ if [[ -n "$provider_constructors_outside_factory" ]]; then
   exit 1
 fi
 
+# H3: legacy business environment parsing is a compatibility concern owned by
+# Executive's typed config loader. Host protocol variables (systemd, XDG,
+# display, credential directory, sockets, and subprocess handoff) are excluded.
+h3_business_env_reads=$(rg -n \
+  'std::env::(?:var|var_os)\("(?:AGENT_(?:WORKING_DIR|DATA_DIR|SYSTEM_PROMPT|SANDBOX_PREFERENCE)|ALETHEON_CONSCIOUS_ARBITRATION_MODE|ALETHEON_GOOGLE_(?:CLIENT_ID|CLIENT_SECRET|REDIRECT_URI|DRIVE_SYNC_ENABLED|DRIVE_FILE_IDS)|ALETHEON_GMAIL_INGRESS_POLICY_FILE|SEARCH_API_(?:URL|KEY))"' \
+  crates -g '*.rs' \
+  | grep -v '^crates/executive/src/core/config/' || true)
+if [[ -n "$h3_business_env_reads" ]]; then
+  echo "architecture-check: business environment parsing bypasses typed bootstrap config:" >&2
+  echo "$h3_business_env_reads" >&2
+  exit 1
+fi
+
 # Q02 deletion gates: Interact and Bin may depend on Fabric protocol types, while
 # domain construction belongs to Executive/Corpus composition.
 if rg -n '^\s*(kernel|corpus)\s*=' crates/interact/Cargo.toml || \

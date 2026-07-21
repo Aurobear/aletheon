@@ -1,4 +1,4 @@
-//! Web search tool — search via an external API configured through environment variables.
+//! Web search tool — search via host-resolved typed configuration.
 
 use std::sync::Arc;
 
@@ -9,17 +9,46 @@ use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 pub struct WebSearchTool {
     network_policy: Arc<fabric::network_policy::NetworkPolicy>,
+    config: Option<WebSearchConfig>,
+}
+
+#[derive(Clone)]
+pub struct WebSearchConfig {
+    api_url: String,
+    api_key: String,
+}
+
+impl WebSearchConfig {
+    pub fn new(api_url: String, api_key: String) -> Self {
+        Self { api_url, api_key }
+    }
+}
+
+impl std::fmt::Debug for WebSearchConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WebSearchConfig")
+            .field("api_url", &self.api_url)
+            .field("api_key", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl WebSearchTool {
     pub fn new() -> Self {
         Self {
             network_policy: Arc::new(fabric::network_policy::NetworkPolicy::default()),
+            config: None,
         }
     }
 
     pub fn with_network_policy(mut self, policy: fabric::network_policy::NetworkPolicy) -> Self {
         self.network_policy = Arc::new(policy);
+        self
+    }
+
+    pub fn with_config(mut self, config: Option<WebSearchConfig>) -> Self {
+        self.config = config;
         self
     }
 }
@@ -37,7 +66,7 @@ impl Tool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search the web using an external search API. Requires SEARCH_API_URL and SEARCH_API_KEY environment variables to be configured."
+        "Search the web using an external API configured by the daemon host."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -64,6 +93,7 @@ impl Tool for WebSearchTool {
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(Self {
             network_policy: self.network_policy.clone(),
+            config: self.config.clone(),
         })
     }
 
@@ -90,40 +120,21 @@ impl Tool for WebSearchTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(10) as usize;
 
-        // Read configuration from environment
-        let api_url = match std::env::var("SEARCH_API_URL") {
-            Ok(u) => u,
-            Err(_) => {
-                return ToolResult {
-                    content: "Error: SEARCH_API_URL environment variable is not set. Configure it to enable web search.".to_string(),
-                    is_error: true,
-                    metadata: ToolResultMeta {
-                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                        truncated: false,
-                        patch_delta: None,
-                    },
-                };
-            }
-        };
-
-        let api_key = match std::env::var("SEARCH_API_KEY") {
-            Ok(k) => k,
-            Err(_) => {
-                return ToolResult {
-                    content: "Error: SEARCH_API_KEY environment variable is not set. Configure it to enable web search.".to_string(),
-                    is_error: true,
-                    metadata: ToolResultMeta {
-                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                        truncated: false,
-                        patch_delta: None,
-                    },
-                };
-            }
+        let Some(config) = &self.config else {
+            return ToolResult {
+                content: "Error: web search integration is disabled".to_string(),
+                is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                    patch_delta: None,
+                },
+            };
         };
 
         // Validate the API URL against network policy before making the request.
         {
-            if let Err(reason) = self.network_policy.allows_url(&api_url) {
+            if let Err(reason) = self.network_policy.allows_url(&config.api_url) {
                 return ToolResult {
                     content: format!("Error: Network policy blocked URL: {}", reason),
                     is_error: true,
@@ -145,8 +156,8 @@ impl Tool for WebSearchTool {
         let elapsed = ctx.clock.mono_now().0.saturating_sub(start.0);
 
         match client
-            .post(&api_url)
-            .header("Authorization", format!("Bearer {}", api_key))
+            .post(&config.api_url)
+            .header("Authorization", format!("Bearer {}", config.api_key))
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
@@ -240,11 +251,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_missing_env_vars() {
-        // Ensure env vars are not set for this test
-        std::env::remove_var("SEARCH_API_URL");
-        std::env::remove_var("SEARCH_API_KEY");
-
+    async fn test_disabled_without_host_config() {
         let tool = WebSearchTool::new().with_network_policy(NetworkPolicy {
             default_action: fabric::network_policy::NetworkDefaultAction::Allow,
             allow_dns: true,
@@ -271,8 +278,8 @@ mod tests {
 
         assert!(result.is_error);
         assert!(
-            result.content.contains("SEARCH_API_URL") || result.content.contains("SEARCH_API_KEY"),
-            "Expected env var error, got: {}",
+            result.content.contains("integration is disabled"),
+            "Expected disabled integration error, got: {}",
             result.content
         );
     }
@@ -284,15 +291,16 @@ mod tests {
             allow_dns: true,
             ..Default::default()
         };
-        let tool = WebSearchTool::new().with_network_policy(policy);
+        let tool = WebSearchTool::new()
+            .with_network_policy(policy)
+            .with_config(Some(WebSearchConfig::new(
+                "https://evil-search.com/api/search".into(),
+                "dummy-key".into(),
+            )));
         let input = json!({
             "query": "test"
         });
         let tmp = tempfile::tempdir().unwrap();
-
-        // Set env var to a denied host
-        std::env::set_var("SEARCH_API_URL", "https://evil-search.com/api/search");
-        std::env::set_var("SEARCH_API_KEY", "dummy-key");
 
         let result = tool
             .execute(
@@ -310,26 +318,18 @@ mod tests {
 
         assert!(result.is_error);
         assert!(result.content.contains("Network policy blocked URL"));
-
-        // Clean up env vars
-        std::env::remove_var("SEARCH_API_URL");
-        std::env::remove_var("SEARCH_API_KEY");
     }
 
     #[tokio::test]
     async fn test_default_network_policy_denies_all() {
-        let tool = WebSearchTool::new();
+        let tool = WebSearchTool::new().with_config(Some(WebSearchConfig::new(
+            "https://some-random-search-api-12345.example/search".into(),
+            "dummy-key".into(),
+        )));
         let input = json!({
             "query": "test query"
         });
         let tmp = tempfile::tempdir().unwrap();
-
-        // Set a valid-looking URL; the default policy must reject it before I/O.
-        std::env::set_var(
-            "SEARCH_API_URL",
-            "https://some-random-search-api-12345.example/search",
-        );
-        std::env::set_var("SEARCH_API_KEY", "dummy-key");
 
         let result = tool
             .execute(
@@ -350,9 +350,5 @@ mod tests {
             "default policy should block: {}",
             result.content
         );
-
-        // Clean up env vars
-        std::env::remove_var("SEARCH_API_URL");
-        std::env::remove_var("SEARCH_API_KEY");
     }
 }

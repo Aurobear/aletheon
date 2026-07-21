@@ -297,7 +297,13 @@ impl RequestHandler {
         let active_connections = Arc::new(AtomicUsize::new(0));
 
         // Register tools
-        let mut tools = ToolRegistry::with_network_policy(network_policy);
+        let search_config = config.integrations.search.as_ref().map(|search| {
+            corpus::tools::tools::web_search::WebSearchConfig::new(
+                search.api_url.clone(),
+                search.api_key.expose().to_owned(),
+            )
+        });
+        let mut tools = ToolRegistry::with_network_policy_and_search(network_policy, search_config);
         let _ = tools.register(Arc::new(CoreMemoryAppendTool {
             memory: core_memory.clone(),
             clock: clock.clone(),
@@ -321,6 +327,7 @@ impl RequestHandler {
                 &cancel_token,
                 &external_artifact_root,
                 storage_quota.clone(),
+                config.integrations.google.as_ref(),
             ) {
                 Ok(Some((integration, sync, store, gmail_ingress))) => {
                     (Some(integration), Some(sync), Some(store), gmail_ingress)

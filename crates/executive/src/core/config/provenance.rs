@@ -114,7 +114,13 @@ pub(crate) fn redact_json(value: &mut serde_json::Value) {
                     || normalized == "api_key"
                     || normalized.ends_with("_token")
                 {
-                    *value = serde_json::Value::String("<redacted>".into());
+                    // Preserve absence as `null`; replacing an absent optional
+                    // credential with a string makes diagnostics claim that a
+                    // credential is configured. Every present value, including
+                    // a SecretRef object, remains fully redacted.
+                    if !value.is_null() {
+                        *value = serde_json::Value::String("<redacted>".into());
+                    }
                 } else {
                     redact_json(value);
                 }

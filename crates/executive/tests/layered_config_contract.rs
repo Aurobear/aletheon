@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use executive::core::config::{
-    merge_layers, schema, AppConfig, ConfigLayer, ConfigSource, ConfigSourceKind, Transport,
+    merge_layers, schema, AppConfig, ConfigLayer, ConfigSource, ConfigSourceKind,
+    EnvironmentCredentialResolver, Transport,
 };
 
 fn layer(kind: ConfigSourceKind, locator: &str, text: &str) -> ConfigLayer {
@@ -191,4 +192,25 @@ fn checked_in_leju_deepseek_uses_the_openai_transport() {
             Some("deepseek/deepseek-v4-pro")
         );
     }
+}
+
+#[test]
+fn enabled_integration_preflight_reports_source_and_missing_typed_path() {
+    let loaded = merge_layers([layer(
+        ConfigSourceKind::User,
+        "~/.aletheon/config.toml",
+        "[deployment.integrations]\ngoogle=true",
+    )])
+    .unwrap();
+
+    let diagnostic = loaded
+        .preflight_integrations(&EnvironmentCredentialResolver)
+        .unwrap_err()
+        .to_string();
+    assert!(diagnostic.contains("google=user"), "{diagnostic}");
+    assert!(
+        diagnostic.contains("integrations.google.client_id"),
+        "{diagnostic}"
+    );
+    assert!(!diagnostic.contains("~/.aletheon"), "{diagnostic}");
 }

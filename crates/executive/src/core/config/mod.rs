@@ -9,6 +9,7 @@ pub mod diagnostics;
 mod genome;
 mod grok_hardening;
 mod infra;
+mod integrations;
 mod provenance;
 mod provider;
 pub mod schema;
@@ -29,6 +30,11 @@ pub use genome::GenomeConfig;
 pub use grok_hardening::GrokHardeningConfig;
 pub use infra::{
     DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig, TelegramConfig,
+};
+pub use integrations::{
+    CredentialResolver, EnvironmentCredentialResolver, IntegrationsConfig, OAuthClientType,
+    ResolvedGoogleIntegration, ResolvedIntegrations, ResolvedSearchIntegration,
+    RuntimeBootstrapConfig, SecretRef, SecretValue,
 };
 pub use provenance::{ConfigProvenance, ConfigSource, ConfigSourceKind, Provenanced};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
@@ -94,6 +100,12 @@ pub struct AppConfig {
     pub network_policy: fabric::network_policy::NetworkPolicy,
     #[serde(default)]
     pub agent_profiles: AgentProfilesConfig,
+    /// Host/bootstrap values that are passed into the daemon as typed inputs.
+    #[serde(default)]
+    pub bootstrap: RuntimeBootstrapConfig,
+    /// Optional external integrations and their credential references.
+    #[serde(default)]
+    pub integrations: IntegrationsConfig,
 }
 
 impl AppConfig {
@@ -104,6 +116,14 @@ impl AppConfig {
             model_aliases: self.model_aliases.clone(),
             model_routing: self.model_routing.clone(),
         }
+    }
+
+    pub fn preflight_integrations(
+        &self,
+        resolver: &dyn CredentialResolver,
+    ) -> Result<ResolvedIntegrations> {
+        self.integrations
+            .preflight(self.deployment.integrations.google, resolver)
     }
 
     /// Parse one explicit file strictly. The caller chooses how it participates
@@ -168,6 +188,29 @@ impl LoadedConfig {
         let mut value = serde_json::to_value(&self.value).expect("AppConfig serializes");
         provenance::redact_json(&mut value);
         value
+    }
+
+    /// Resolve optional integrations before startup work begins. Error context
+    /// reports only configuration source kinds and typed paths/reference names.
+    pub fn preflight_integrations(
+        &self,
+        resolver: &dyn CredentialResolver,
+    ) -> Result<ResolvedIntegrations> {
+        self.value
+            .preflight_integrations(resolver)
+            .map_err(|error| {
+                let google_source = self
+                    .source("deployment.integrations.google")
+                    .map(|source| format!("{:?}", source.kind).to_ascii_lowercase())
+                    .unwrap_or_else(|| "default".into());
+                let search_source = self
+                    .source("integrations.search.enabled")
+                    .map(|source| format!("{:?}", source.kind).to_ascii_lowercase())
+                    .unwrap_or_else(|| "default".into());
+                anyhow::anyhow!(
+                    "integration configuration sources: google={google_source}, search={search_source}; {error}"
+                )
+            })
     }
 }
 
@@ -262,6 +305,7 @@ pub fn load_layered(
     environment: impl IntoIterator<Item = (String, String)>,
     cli: impl IntoIterator<Item = (String, String)>,
 ) -> Result<LoadedConfig> {
+    let environment = normalize_legacy_environment(environment);
     let mut layers = Vec::new();
     if let Some(layer) = ConfigLayer::from_path(
         ConfigSourceKind::System,
@@ -301,7 +345,14 @@ pub fn load_layered(
 }
 
 pub fn load_for_host(project_dir: Option<&Path>, explicit: Option<&Path>) -> Result<LoadedConfig> {
-    let mut loaded = load_layered(project_dir, std::env::vars(), std::iter::empty())?;
+    let environment = std::env::vars().collect::<Vec<_>>();
+    for (name, _) in environment
+        .iter()
+        .filter(|(name, _)| is_legacy_business_env(name))
+    {
+        tracing::warn!(variable = %name, "legacy business environment variable is deprecated; use ALETHEON__ typed configuration");
+    }
+    let mut loaded = load_layered(project_dir, environment, std::iter::empty())?;
     if let Some(path) = explicit {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("read explicit config {}", path.display()))?;
@@ -317,6 +368,138 @@ pub fn load_for_host(project_dir: Option<&Path>, explicit: Option<&Path>) -> Res
         loaded = merge_layers([base, layer])?;
     }
     Ok(loaded)
+}
+
+/// Convert supported legacy business variables into the regular typed
+/// environment layer. A native `ALETHEON__...` value always wins. Secret values
+/// are never copied into configuration: only their environment-variable names
+/// become `SecretRef`s.
+fn normalize_legacy_environment(
+    environment: impl IntoIterator<Item = (String, String)>,
+) -> Vec<(String, String)> {
+    let mut values = environment.into_iter().collect::<Vec<_>>();
+    let present = values
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let legacy_drive_files = values
+        .iter()
+        .find(|(name, _)| name == "ALETHEON_GOOGLE_DRIVE_FILE_IDS")
+        .map(|(_, value)| {
+            toml::Value::Array(
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| toml::Value::String(value.to_owned()))
+                    .collect(),
+            )
+            .to_string()
+        });
+    let mut add = |legacy: &str, typed: &str, value: Option<String>| {
+        if present.contains(legacy) && !present.contains(typed) {
+            if let Some(value) = value.or_else(|| {
+                values
+                    .iter()
+                    .find(|(name, _)| name == legacy)
+                    .map(|(_, value)| value.clone())
+            }) {
+                values.push((typed.to_string(), value));
+            }
+        }
+    };
+
+    add(
+        "AGENT_WORKING_DIR",
+        "ALETHEON__BOOTSTRAP__WORKING_DIR",
+        None,
+    );
+    add("AGENT_DATA_DIR", "ALETHEON__BOOTSTRAP__DATA_DIR", None);
+    add(
+        "AGENT_SYSTEM_PROMPT",
+        "ALETHEON__AGENT__SYSTEM_PROMPT",
+        None,
+    );
+    add(
+        "AGENT_SANDBOX_PREFERENCE",
+        "ALETHEON__BOOTSTRAP__SANDBOX_PREFERENCE",
+        None,
+    );
+    add(
+        "ALETHEON_CONSCIOUS_ARBITRATION_MODE",
+        "ALETHEON__BOOTSTRAP__CONSCIOUS_ARBITRATION_MODE",
+        None,
+    );
+    add(
+        "ALETHEON_GOOGLE_CLIENT_ID",
+        "ALETHEON__INTEGRATIONS__GOOGLE__CLIENT_ID",
+        None,
+    );
+    add(
+        "ALETHEON_GOOGLE_CLIENT_ID",
+        "ALETHEON__DEPLOYMENT__INTEGRATIONS__GOOGLE",
+        Some("true".into()),
+    );
+    add(
+        "ALETHEON_GOOGLE_REDIRECT_URI",
+        "ALETHEON__INTEGRATIONS__GOOGLE__REDIRECT_URI",
+        None,
+    );
+    add(
+        "ALETHEON_GOOGLE_CLIENT_SECRET",
+        "ALETHEON__INTEGRATIONS__GOOGLE__CLIENT_SECRET__ENV",
+        Some("ALETHEON_GOOGLE_CLIENT_SECRET".into()),
+    );
+    add(
+        "ALETHEON_GOOGLE_DRIVE_SYNC_ENABLED",
+        "ALETHEON__INTEGRATIONS__GOOGLE__DRIVE_SYNC_ENABLED",
+        None,
+    );
+    add(
+        "ALETHEON_GOOGLE_DRIVE_FILE_IDS",
+        "ALETHEON__INTEGRATIONS__GOOGLE__DRIVE_FILE_IDS",
+        legacy_drive_files,
+    );
+    add(
+        "ALETHEON_GMAIL_INGRESS_POLICY_FILE",
+        "ALETHEON__INTEGRATIONS__GOOGLE__GMAIL_INGRESS_POLICY_FILE",
+        None,
+    );
+    add(
+        "SEARCH_API_URL",
+        "ALETHEON__INTEGRATIONS__SEARCH__API_URL",
+        None,
+    );
+    add(
+        "SEARCH_API_URL",
+        "ALETHEON__INTEGRATIONS__SEARCH__ENABLED",
+        Some("true".into()),
+    );
+    add(
+        "SEARCH_API_KEY",
+        "ALETHEON__INTEGRATIONS__SEARCH__API_KEY__ENV",
+        Some("SEARCH_API_KEY".into()),
+    );
+    values
+}
+
+fn is_legacy_business_env(name: &str) -> bool {
+    matches!(
+        name,
+        "AGENT_WORKING_DIR"
+            | "AGENT_DATA_DIR"
+            | "AGENT_SYSTEM_PROMPT"
+            | "AGENT_SANDBOX_PREFERENCE"
+            | "ALETHEON_CONSCIOUS_ARBITRATION_MODE"
+            | "ALETHEON_GOOGLE_CLIENT_ID"
+            | "ALETHEON_GOOGLE_CLIENT_SECRET"
+            | "ALETHEON_GOOGLE_REDIRECT_URI"
+            | "ALETHEON_GOOGLE_DRIVE_SYNC_ENABLED"
+            | "ALETHEON_GOOGLE_DRIVE_FILE_IDS"
+            | "ALETHEON_GMAIL_INGRESS_POLICY_FILE"
+            | "SEARCH_API_URL"
+            | "SEARCH_API_KEY"
+    )
 }
 
 fn override_layer(
@@ -385,6 +568,52 @@ fn merge_value(base: &mut toml::Value, overlay: toml::Value) {
             }
         }
         (base, overlay) => *base = overlay,
+    }
+}
+
+#[cfg(test)]
+mod legacy_environment_tests {
+    use super::normalize_legacy_environment;
+    use std::collections::HashMap;
+
+    #[test]
+    fn native_typed_environment_wins_over_legacy_alias() {
+        let normalized = normalize_legacy_environment([
+            ("AGENT_WORKING_DIR".into(), "/legacy".into()),
+            ("ALETHEON__BOOTSTRAP__WORKING_DIR".into(), "/typed".into()),
+        ]);
+        let values = normalized.into_iter().collect::<HashMap<_, _>>();
+        assert_eq!(values["ALETHEON__BOOTSTRAP__WORKING_DIR"], "/typed");
+    }
+
+    #[test]
+    fn legacy_secrets_become_references_not_config_values() {
+        let normalized = normalize_legacy_environment([
+            ("SEARCH_API_URL".into(), "https://search.example".into()),
+            ("SEARCH_API_KEY".into(), "do-not-copy-me".into()),
+        ]);
+        let values = normalized.into_iter().collect::<HashMap<_, _>>();
+        assert_eq!(
+            values["ALETHEON__INTEGRATIONS__SEARCH__API_KEY__ENV"],
+            "SEARCH_API_KEY"
+        );
+        assert!(!values
+            .iter()
+            .filter(|(name, _)| name.starts_with("ALETHEON__"))
+            .any(|(_, value)| value == "do-not-copy-me"));
+    }
+
+    #[test]
+    fn legacy_drive_file_csv_becomes_typed_array() {
+        let normalized = normalize_legacy_environment([(
+            "ALETHEON_GOOGLE_DRIVE_FILE_IDS".into(),
+            "first, second".into(),
+        )]);
+        let values = normalized.into_iter().collect::<HashMap<_, _>>();
+        assert_eq!(
+            values["ALETHEON__INTEGRATIONS__GOOGLE__DRIVE_FILE_IDS"],
+            "[\"first\", \"second\"]"
+        );
     }
 }
 

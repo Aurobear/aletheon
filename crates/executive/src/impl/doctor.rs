@@ -157,8 +157,10 @@ impl DoctorReport {
         let effective = loaded_config.effective_view();
         let mut warnings = Vec::new();
 
-        let data_dir = std::env::var_os("AGENT_DATA_DIR")
-            .map(std::path::PathBuf::from)
+        let data_dir = config
+            .bootstrap
+            .data_dir
+            .clone()
             .unwrap_or_else(|| config.deployment.paths.state.clone());
         let manifest_path = std::env::var_os("ALETHEON_DEPLOYMENT_MANIFEST")
             .map(std::path::PathBuf::from)
