@@ -118,9 +118,9 @@ Replace the local-only GBrain assertion with endpoint-configurable wording and d
 **Files:**
 - Create: `docs/archive/README.md`
 - Create: `docs/archive/plans/2026-07-21/README.md`
-- Move: `docs/plans/2026-07-21-aletheon-ser8-deployment.md`
-- Move: `docs/plans/2026-07-21-ser8-pi-memory-closure-design.md`
-- Move: `docs/plans/2026-07-21-ser8-pi-memory-closure-implementation.md`
+- Move: `docs/plans/2026-07-21-aletheon-ser8-deployment.md` → `docs/archive/plans/2026-07-21/2026-07-21-aletheon-ser8-deployment.md`
+- Move: `docs/plans/2026-07-21-ser8-pi-memory-closure-design.md` → `docs/archive/plans/2026-07-21/2026-07-21-ser8-pi-memory-closure-design.md`
+- Move: `docs/plans/2026-07-21-ser8-pi-memory-closure-implementation.md` → `docs/archive/plans/2026-07-21/2026-07-21-ser8-pi-memory-closure-implementation.md`
 - Modify: repository references found by `rg`
 
 - [ ] **Step 1: Move with Git history**

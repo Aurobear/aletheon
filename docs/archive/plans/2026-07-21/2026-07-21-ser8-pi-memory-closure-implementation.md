@@ -111,7 +111,7 @@
 
 **Files:**
 - Create: `docs/deployment/ser8-acceptance-2026-07-21.md`
-- Modify: `docs/plans/2026-07-21-aletheon-ser8-deployment.md` only to correct
+- Modify: `docs/archive/plans/2026-07-21/2026-07-21-aletheon-ser8-deployment.md` only to correct
   observed runtime IDs/statuses while preserving its deployment history
 
 - [ ] Record source commit, deployed binary hash, unit properties, Pi identity,

@@ -7,11 +7,11 @@
 
 The SER8 requirement is to run Aletheon as a resident core plus user daemon and
 close the scheduled Pi → summarized memory → GBrain loop
-(`docs/plans/2026-07-21-aletheon-ser8-deployment.md:6-7`). The required runtime
+(`docs/archive/plans/2026-07-21/2026-07-21-aletheon-ser8-deployment.md:6-7`). The required runtime
 topology is a machine core socket below a per-user daemon
-(`docs/plans/2026-07-21-aletheon-ser8-deployment.md:21-29`). The original
+(`docs/archive/plans/2026-07-21/2026-07-21-aletheon-ser8-deployment.md:21-29`). The original
 operator note separately describes build, installation, provider, Pi, GBrain,
-and timer actions (`docs/plans/2026-07-21-aletheon-ser8-deployment.md:33-127,177-201`).
+and timer actions (`docs/archive/plans/2026-07-21/2026-07-21-aletheon-ser8-deployment.md:33-127,177-201`).
 
 The closure is accepted in
 `docs/deployment/ser8-acceptance-2026-07-21.md:34-68`, but the repository has no

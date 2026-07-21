@@ -5,11 +5,12 @@
 This record closes the SER8 deployment goal: a resident core and user daemon,
 real TUI inference, bounded Pi execution, durable local/GBrain memory, and an
 auditable systemd user timer
-(`docs/plans/2026-07-21-aletheon-ser8-deployment.md:6-7,177-187`). The original
+(`docs/archive/plans/2026-07-21/2026-07-21-aletheon-ser8-deployment.md:6-7,177-187`). The original
 operator deployment note remains unchanged as the historical requirement
-source. Its `pi-rpc` worktree wording conflicts with the runtime manifest; the
-approved dual-runtime adjudication and three-column comparison are recorded in
-`docs/plans/2026-07-21-ser8-pi-memory-closure-design.md:19-42`.
+source. Current operators must use `docs/deployment/README.md`. Its `pi-rpc`
+worktree wording conflicts with the runtime manifest; the approved dual-runtime
+adjudication and three-column comparison are recorded in
+`docs/archive/plans/2026-07-21/2026-07-21-ser8-pi-memory-closure-design.md:19-42`.
 
 ## Accepted topology
 
@@ -45,7 +46,7 @@ become durable `GoalOutcome` records at
 | Mnemosyne/Agent memory | PASS | `~/.local/state/aletheon/agents/agent_memory.db` contains four `goal_outcome` records, including the live pi-coder, scheduled, outage, and pi-rpc Agents. |
 | GBrain projection | PASS | Authenticated MCP search returned `aletheon/goal_outcome/21ba8f0b22285562beeb01d4b05a2749`; structural response proof is `/tmp/aletheon-goal-evidence/gbrain-search-live.body`. No credential value is stored in this record. |
 | GBrain outage recovery | PASS | `/tmp/aletheon-goal-evidence/gbrain-outage-1784603673`: while GBrain was stopped, local settlement created one page and one pending queue record `agent-outcome:639ff37b-f17b-4da8-b9e4-c7e5ac98e4f6`; restart delivered attempt 8, drained queue/pages to zero, left dead letters at zero, and created exactly one new receipt. Authenticated search found slug `aletheon/goal_outcome/57ea5fbdb1ccd5f2ce548fbdb3858467`. |
-| Local-only GBrain | PASS | `gbrain-mcp.service` listens on `127.0.0.1:3131`; the session capture worker uses `127.0.0.1:3131` and listens on `127.0.0.1:3132`. Both services are active. |
+| Configured GBrain endpoint | PASS | The point-in-time acceptance used a same-host GBrain endpoint. The current SER8 deployment selects its reachable endpoint explicitly and supports loopback or Tailscale without a repository hard-code; see `docs/deployment/README.md`. |
 
 ## Scheduled closure acceptance
 
