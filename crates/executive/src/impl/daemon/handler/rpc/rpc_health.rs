@@ -108,6 +108,8 @@ impl RequestHandler {
             .await
             .map_or(0, |items| items.len());
         let health = self.ports.health.health().await;
+        let mcp = self.mcp.as_ref().map(|manager| manager.health_snapshot());
+        let external_status = mcp_external_status(mcp.as_ref());
         json!({
             "jsonrpc": "2.0", "id": id,
             "result": {
@@ -115,11 +117,58 @@ impl RequestHandler {
                 "liveness": health.production.liveness,
                 "readiness": health.production.readiness,
                 "components": health.production.components,
+                "external_dependencies": {
+                    "status": external_status,
+                    "mcp": mcp,
+                },
                 "uptime_seconds": health.uptime_seconds,
                 "active_connections": health.active_connections,
                 "session_count": session_count,
                 "daemon_version": env!("CARGO_PKG_VERSION")
             }
         })
+    }
+}
+
+fn mcp_external_status(
+    snapshot: Option<&corpus::tools::mcp::supervisor::McpHealthSnapshot>,
+) -> &'static str {
+    if snapshot.is_some_and(|snapshot| {
+        snapshot.servers.iter().any(|server| {
+            matches!(
+                server.state,
+                corpus::tools::mcp::supervisor::McpServerHealthState::Connecting
+                    | corpus::tools::mcp::supervisor::McpServerHealthState::Degraded
+                    | corpus::tools::mcp::supervisor::McpServerHealthState::Reconnecting
+            )
+        })
+    }) {
+        "degraded"
+    } else {
+        "ready"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use corpus::tools::mcp::supervisor::{
+        McpHealthSnapshot, McpServerHealth, McpServerHealthState,
+    };
+
+    #[test]
+    fn external_mcp_degradation_is_distinct_from_core_readiness() {
+        assert_eq!(mcp_external_status(None), "ready");
+        let snapshot = McpHealthSnapshot {
+            accepting_tasks: true,
+            servers: vec![McpServerHealth {
+                server: "gbrain".into(),
+                state: McpServerHealthState::Reconnecting,
+                reason: Some("ping_failed".into()),
+                reconnect_count: 1,
+            }],
+            tasks: Vec::new(),
+        };
+        assert_eq!(mcp_external_status(Some(&snapshot)), "degraded");
     }
 }

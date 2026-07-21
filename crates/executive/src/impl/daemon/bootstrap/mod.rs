@@ -32,6 +32,7 @@ pub(super) struct DaemonComposition {
     thread_authority: Arc<crate::service::thread_authority::ThreadAuthorityStore>,
     grok_hardening: GrokHardeningConfig,
     workspace_trust: Arc<crate::service::workspace_trust::WorkspaceTrustResolver>,
+    mcp: Option<Arc<corpus::tools::mcp::manager::McpManager>>,
 }
 
 impl DaemonComposition {
@@ -43,6 +44,7 @@ impl DaemonComposition {
             thread_authority: self.thread_authority,
             grok_hardening: self.grok_hardening,
             workspace_trust: self.workspace_trust,
+            mcp: self.mcp,
         }
     }
 }

@@ -703,7 +703,7 @@ impl RequestHandler {
         );
         let gbrain_runtime = crate::r#impl::gbrain::build_gbrain_memory_runtime_with_retention(
             local_memory,
-            retained_mcp,
+            retained_mcp.clone(),
             &config.gbrain_memory,
             clock.clone(),
             &cancel_token,
@@ -1330,6 +1330,7 @@ impl RequestHandler {
             ),
             grok_hardening,
             workspace_trust,
+            mcp: retained_mcp,
         };
         let handler = composition.into_handler();
 

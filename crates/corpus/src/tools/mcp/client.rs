@@ -15,6 +15,9 @@ use super::config::{
     McpConfig, McpOAuthClientAuthMethod, McpPermissionLevel, McpServerConfig, McpTransportConfig,
     McpTrustLevel,
 };
+use super::supervisor::{
+    McpHealthSnapshot, McpShutdownReport, McpTaskExitPolicy, McpTaskSupervisor,
+};
 use super::transport::{McpNotification, McpTransport};
 use super::wrapper::{McpResourceProvider, McpResourceReadTool, McpToolWrapper};
 
@@ -702,8 +705,16 @@ impl McpClient {
         client: Arc<Mutex<Self>>,
         mut rx: mpsc::Receiver<McpNotification>,
         registry_change_tx: Option<mpsc::Sender<String>>,
+        cancel: tokio_util::sync::CancellationToken,
     ) {
-        while let Some(notification) = rx.recv().await {
+        loop {
+            let notification = tokio::select! {
+                _ = cancel.cancelled() => break,
+                notification = rx.recv() => match notification {
+                    Some(notification) => notification,
+                    None => break,
+                },
+            };
             if let McpNotification::ElicitationCreate { id, params } = notification {
                 let mut client = client.lock().await;
                 let result = client
@@ -849,15 +860,23 @@ fn spawn_connected_health_supervisor(
     server_config: McpServerConfig,
     global_timeout_ms: u64,
     registry_change_tx: Option<mpsc::Sender<String>>,
+    supervisor: Arc<McpTaskSupervisor>,
 ) {
     if server_config.health_check_interval_sec == 0 {
         return;
     }
-    tokio::spawn(async move {
+    let task_name = format!("mcp:{}:health", server_config.name);
+    let server_name = server_config.name.clone();
+    let cancel = supervisor.cancellation_token();
+    let task_supervisor = supervisor.clone();
+    supervisor.spawn(task_name, server_name.clone(), async move {
         let interval =
             std::time::Duration::from_secs(server_config.health_check_interval_sec.max(1));
         loop {
-            tokio::time::sleep(interval).await;
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = tokio::time::sleep(interval) => {}
+            }
             let (healthy, elicitation_handler) = {
                 let mut current = client.lock().await;
                 let handler = current.elicitation_handler.clone();
@@ -871,24 +890,33 @@ fn spawn_connected_health_supervisor(
                 (healthy, handler)
             };
             if healthy {
+                task_supervisor.mark_ping_healthy(&server_config.name);
                 continue;
             }
+            task_supervisor.mark_reconnecting(&server_config.name, "ping_failed");
             match connect_mcp_server(&server_config, global_timeout_ms).await {
                 Ok(mut replacement) => {
                     replacement.elicitation_handler = elicitation_handler;
                     let notification_rx = replacement.notification_rx.take();
                     *client.lock().await = replacement;
                     if let Some(rx) = notification_rx {
-                        tokio::spawn(McpClient::watch_tool_changes(
-                            client.clone(),
-                            rx,
-                            registry_change_tx.clone(),
-                        ));
+                        task_supervisor.spawn_with_policy(
+                            format!("mcp:{}:notifications", server_config.name),
+                            server_config.name.clone(),
+                            McpTaskExitPolicy::Complete,
+                            McpClient::watch_tool_changes(
+                                client.clone(),
+                                rx,
+                                registry_change_tx.clone(),
+                                task_supervisor.cancellation_token(),
+                            ),
+                        );
                     }
                     if let Some(tx) = &registry_change_tx {
                         let _ = tx.send(server_config.name.clone()).await;
                     }
                     tracing::info!(server = %server_config.name, "reconnected unhealthy MCP server");
+                    task_supervisor.mark_connected(&server_config.name);
                 }
                 Err(error) => {
                     tracing::warn!(server = %server_config.name, %error, "MCP reconnect attempt failed")
@@ -905,15 +933,21 @@ pub struct McpConnectionManager {
     registry_change_tx: Option<mpsc::Sender<String>>,
     elicitation_gate:
         Arc<std::sync::RwLock<Option<Arc<dyn crate::security::approval::ApprovalGate>>>>,
+    supervisor: Arc<McpTaskSupervisor>,
 }
 
 impl McpConnectionManager {
     pub fn new(config: McpConfig) -> Self {
+        let supervisor = McpTaskSupervisor::new();
+        for server in config.servers.iter().filter(|server| server.enabled) {
+            supervisor.register_server(&server.name);
+        }
         Self {
             clients: Arc::new(std::sync::RwLock::new(HashMap::new())),
             config,
             registry_change_tx: None,
             elicitation_gate: Arc::new(std::sync::RwLock::new(None)),
+            supervisor,
         }
     }
 
@@ -930,17 +964,25 @@ impl McpConnectionManager {
             .expect("MCP clients lock poisoned")
             .insert(server_config.name.clone(), client.clone());
         if let Some(rx) = notification_rx {
-            tokio::spawn(McpClient::watch_tool_changes(
-                client.clone(),
-                rx,
-                self.registry_change_tx.clone(),
-            ));
+            self.supervisor.spawn_with_policy(
+                format!("mcp:{}:notifications", server_config.name),
+                server_config.name.clone(),
+                McpTaskExitPolicy::Complete,
+                McpClient::watch_tool_changes(
+                    client.clone(),
+                    rx,
+                    self.registry_change_tx.clone(),
+                    self.supervisor.cancellation_token(),
+                ),
+            );
         }
+        self.supervisor.mark_connected(&server_config.name);
         spawn_connected_health_supervisor(
             client,
             server_config,
             global_timeout_ms,
             self.registry_change_tx.clone(),
+            self.supervisor.clone(),
         );
     }
 
@@ -1090,16 +1132,34 @@ impl McpConnectionManager {
 
     fn spawn_initial_reconnect(&self, server_config: McpServerConfig, global_timeout_ms: u64) {
         if server_config.health_check_interval_sec == 0 {
+            self.supervisor.mark_degraded(
+                &server_config.name,
+                "initial_connect_failed_reconnect_disabled",
+            );
             return;
         }
         let clients = self.clients.clone();
         let registry_change_tx = self.registry_change_tx.clone();
         let elicitation_gate = self.elicitation_gate.clone();
-        tokio::spawn(async move {
+        self.supervisor
+            .mark_reconnecting(&server_config.name, "initial_connect_failed");
+        let supervisor = self.supervisor.clone();
+        let task_supervisor = supervisor.clone();
+        let task_name = format!("mcp:{}:initial_reconnect", server_config.name);
+        let server_name = server_config.name.clone();
+        let cancel = supervisor.cancellation_token();
+        supervisor.spawn_with_policy(
+            task_name,
+            server_name,
+            McpTaskExitPolicy::Complete,
+            async move {
             let interval =
                 std::time::Duration::from_secs(server_config.health_check_interval_sec.max(1));
             loop {
-                tokio::time::sleep(interval).await;
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    _ = tokio::time::sleep(interval) => {}
+                }
                 match connect_mcp_server(&server_config, global_timeout_ms).await {
                     Ok(mut client) => {
                         if let Some(gate) = elicitation_gate
@@ -1118,11 +1178,17 @@ impl McpConnectionManager {
                             .expect("MCP clients lock poisoned")
                             .insert(server_config.name.clone(), client.clone());
                         if let Some(rx) = rx {
-                            tokio::spawn(McpClient::watch_tool_changes(
-                                client.clone(),
-                                rx,
-                                registry_change_tx.clone(),
-                            ));
+                            task_supervisor.spawn_with_policy(
+                                format!("mcp:{}:notifications", server_config.name),
+                                server_config.name.clone(),
+                                McpTaskExitPolicy::Complete,
+                                McpClient::watch_tool_changes(
+                                    client.clone(),
+                                    rx,
+                                    registry_change_tx.clone(),
+                                    task_supervisor.cancellation_token(),
+                                ),
+                            );
                         }
                         if let Some(tx) = &registry_change_tx {
                             let _ = tx.send(server_config.name.clone()).await;
@@ -1132,7 +1198,9 @@ impl McpConnectionManager {
                             server_config.clone(),
                             global_timeout_ms,
                             registry_change_tx.clone(),
+                            task_supervisor.clone(),
                         );
+                        task_supervisor.mark_connected(&server_config.name);
                         tracing::info!(server = %server_config.name, "connected MCP server after initial failure");
                         break;
                     }
@@ -1141,7 +1209,8 @@ impl McpConnectionManager {
                     }
                 }
             }
-        });
+            },
+        );
     }
 
     pub fn set_registry_change_sender(&mut self, sender: mpsc::Sender<String>) {
@@ -1278,6 +1347,14 @@ impl McpConnectionManager {
             .read()
             .expect("MCP clients lock poisoned")
             .len()
+    }
+
+    pub fn health_snapshot(&self) -> McpHealthSnapshot {
+        self.supervisor.snapshot()
+    }
+
+    pub async fn shutdown(&self, timeout: std::time::Duration) -> McpShutdownReport {
+        self.supervisor.shutdown(timeout).await
     }
 
     pub fn server_has_tools(&self, server_name: &str, required: &[&str]) -> bool {

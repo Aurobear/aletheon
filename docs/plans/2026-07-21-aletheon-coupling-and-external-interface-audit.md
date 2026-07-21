@@ -547,15 +547,18 @@ Fabric owns only genuinely cross-domain contracts.
 
 ## 18. 并发与异步任务生命周期
 
-### 18.1 缺少统一监督的后台任务（P1）
+### 18.1 后台任务监督现状（P1，MCP 已收敛）
 
-MCP client、reasoning log rotation 和 perception runtime 存在直接
-`tokio::spawn` 的生产路径（`crates/corpus/src/tools/mcp/client.rs:847,856,933,1098,1121`、
-`crates/executive/src/impl/runtime/reasoning_logger.rs:111`、
-`crates/executive/src/core/runtime_core.rs:185,198`）。这些调用点没有共同的任务登记、
-panic 观测和有界关停契约。可确认的风险是：单个后台任务异常退出后，daemon 进程仍可能存活，
-而对应能力进入退化状态。是否存在可触发 panic 以及实际恢复行为，必须由故障注入测试确认，
-不能仅凭 `spawn` 数量判定为 P0。
+H4 已将 MCP health、notification 和 initial-reconnect 任务收敛到
+`McpTaskSupervisor`：任务名、终止原因、取消、panic 降级、健康恢复和有界 shutdown 见
+`crates/corpus/src/tools/mcp/supervisor.rs:14-290`，生产 MCP client 已无直接
+`tokio::spawn`（静态门禁见 `scripts/architecture-check.sh:107-112`）。故障注入与正常重连证据
+记录在 `docs/deployment/hardening-h4-mcp-supervision-2026-07-22.md`。
+
+reasoning log rotation 和 perception runtime 仍存在直接后台任务路径
+（`crates/executive/src/impl/session/observability/reasoning_logger.rs:99,111`、
+`crates/executive/src/core/runtime_core.rs:200,213`）。它们按 H4 的明确非目标保留，后续应在各自
+故障证据成立时复用同一模式，不能仅凭 `spawn` 数量判定为 P0。
 
 `crates/mnemosyne/src/service.rs:791` 还在 async 路径执行同步 rusqlite 工作。
 这不是已证实的死锁，但慢 I/O 可能占用 executor worker，属于需要压测确认的 P1 调度风险。

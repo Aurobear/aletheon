@@ -104,6 +104,13 @@ if [[ -n "$h3_business_env_reads" ]]; then
   exit 1
 fi
 
+# H4: MCP production background work must be registered with the MCP task
+# supervisor. Test-only mock servers remain outside this client gate.
+if rg -n 'tokio::spawn' crates/corpus/src/tools/mcp/client.rs; then
+  echo "architecture-check: MCP client background task bypasses McpTaskSupervisor" >&2
+  exit 1
+fi
+
 # Q02 deletion gates: Interact and Bin may depend on Fabric protocol types, while
 # domain construction belongs to Executive/Corpus composition.
 if rg -n '^\s*(kernel|corpus)\s*=' crates/interact/Cargo.toml || \
