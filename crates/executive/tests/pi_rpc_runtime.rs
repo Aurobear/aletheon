@@ -204,7 +204,7 @@ done
         timeout_ms: 5_000,
         max_output_bytes: 64 * 1024,
         allowed_paths: vec![PathBuf::from("src/lib.rs")],
-        forbidden_paths: vec![],
+        forbidden_paths: vec![PathBuf::from(".git"), PathBuf::from(".env")],
         require_namespace_isolation: true,
         network_enabled: true,
     };
