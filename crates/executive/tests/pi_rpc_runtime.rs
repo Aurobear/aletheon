@@ -170,6 +170,8 @@ async fn resident_runtime_maps_mailbox_commands_correlates_state_and_settles() {
     let temp = TempDir::new().unwrap();
     let workspace = temp.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
+    std::fs::create_dir(workspace.join("src")).unwrap();
+    std::fs::write(workspace.join("src/lib.rs"), "pub fn status() {}\n").unwrap();
     let script = temp.path().join("pi-rpc-fixture.sh");
     std::fs::write(&script, r#"
 count=0
@@ -201,7 +203,7 @@ done
         worktree_base: workspace.clone(),
         timeout_ms: 5_000,
         max_output_bytes: 64 * 1024,
-        allowed_paths: vec![PathBuf::from(".")],
+        allowed_paths: vec![PathBuf::from("src/lib.rs")],
         forbidden_paths: vec![],
         require_namespace_isolation: true,
         network_enabled: true,

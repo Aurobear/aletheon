@@ -146,13 +146,7 @@ impl AgentRuntimeLauncher for PiRpcRuntime {
         let workspace = input.workspace.as_ref().ok_or_else(|| {
             runtime_error("Pi RPC spawn lacks host-injected trusted workspace authority")
         })?;
-        if workspace.writable_roots()
-            != configured_roots(workspace.cwd(), &self.config.allowed_paths)?
-        {
-            return Err(runtime_error(
-                "Pi RPC trusted workspace differs from configured path allowlist",
-            ));
-        }
+        let configured_roots = configured_roots(workspace.cwd(), &self.config.allowed_paths)?;
         let protected = fabric::ProtectedPathPolicy::new(
             self.config
                 .forbidden_paths
@@ -166,7 +160,15 @@ impl AgentRuntimeLauncher for PiRpcRuntime {
                 "Pi RPC trusted workspace differs from configured protected paths",
             ));
         }
-        let (mut child, process_group, mut stdin, mut stdout) = self.spawn(workspace).await?;
+        let workspace = workspace
+            .clone()
+            .narrow_writable_roots(configured_roots)
+            .map_err(|error| {
+                runtime_error(format!(
+                    "Pi RPC configured path allowlist exceeds trusted workspace: {error}"
+                ))
+            })?;
+        let (mut child, process_group, mut stdin, mut stdout) = self.spawn(&workspace).await?;
         let ids = (
             &input.handle.agent_id,
             &input.handle.process_id,
