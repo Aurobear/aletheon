@@ -15,9 +15,10 @@ use crate::service::verification::{
 use async_trait::async_trait;
 use base64::Engine;
 use fabric::{
-    ApprovalArtifactRef, ApprovalCategory, ApprovalRisk, ApprovalSubject, AttemptId, AttemptUsage,
-    Clock, CodingJobReport, CognitiveRole, FailureClass, GoalBudgetUsage, GoalId, GoalSnapshot,
-    GoalState, GoalWaitReason, RuntimeFailure, RuntimeId, RuntimeResult, VerificationReport,
+    ApprovalArtifactRef, ApprovalCategory, ApprovalRisk, ApprovalSubject, AttemptId, AttemptStatus,
+    AttemptUsage, Clock, CodingJobReport, CognitiveRole, FailureClass, GoalBudgetUsage, GoalId,
+    GoalSnapshot, GoalState, GoalWaitReason, RuntimeFailure, RuntimeId, RuntimeResult,
+    VerificationReport,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -255,6 +256,34 @@ impl AttemptCoordinator {
             }
         }
 
+        // Settlement happens after terminal attempt persistence so runtime
+        // evidence survives a transient ledger error. A repeated request must
+        // recover that exact attempt rather than invoke the runtime again.
+        let existing_attempt = {
+            let store = self.store.lock().unwrap();
+            let goal = store
+                .get_goal(request.goal_id)
+                .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
+                .ok_or(AttemptCoordinatorError::GoalNotFound(request.goal_id))?;
+            if goal.state != GoalState::Running {
+                return Err(AttemptCoordinatorError::GoalNotRunning(goal.state));
+            }
+            if goal.version != request.expected_version {
+                return Err(AttemptCoordinatorError::VersionConflict {
+                    expected: request.expected_version,
+                    actual: goal.version,
+                });
+            }
+            store
+                .attempts_for_goal(request.goal_id, usize::MAX)
+                .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
+                .into_iter()
+                .find(|attempt| attempt.sequence == request.sequence)
+        };
+        if let Some(attempt) = existing_attempt {
+            return self.recover_settlement(&request, attempt, cancel).await;
+        }
+
         // Resolve before budget reservation or attempt creation.
         if !self.executor.is_available(&request.runtime_id) {
             return Err(AttemptCoordinatorError::RuntimeUnavailable(
@@ -318,6 +347,7 @@ impl AttemptCoordinator {
                 "goal_version": request.expected_version,
                 "goal_frame": frame,
                 "runtime_request": pi_request,
+                "budget_reservation_id": reservation_id.clone(),
             });
             let begun = if let Some(coding) = pi_request.as_ref() {
                 store.begin_attempt_with_id(
@@ -340,7 +370,11 @@ impl AttemptCoordinator {
             match begun {
                 Ok(attempt) => running_attempt = attempt,
                 Err(error) => {
-                    let _ = store.revoke_goal_budget(&reservation_id);
+                    if let Err(revoke_error) = store.revoke_goal_budget(&reservation_id) {
+                        return Err(AttemptCoordinatorError::Persistence(format!(
+                            "{error}; budget revoke also failed: {revoke_error}"
+                        )));
+                    }
                     return Err(AttemptCoordinatorError::Persistence(error.to_string()));
                 }
             }
@@ -362,7 +396,11 @@ impl AttemptCoordinator {
             let attempt = match persisted {
                 Ok(attempt) => attempt,
                 Err(error) => {
-                    let _ = store.revoke_goal_budget(&reservation_id);
+                    if let Err(revoke_error) = store.revoke_goal_budget(&reservation_id) {
+                        return Err(AttemptCoordinatorError::Persistence(format!(
+                            "{error}; budget revoke also failed: {revoke_error}"
+                        )));
+                    }
                     return Err(AttemptCoordinatorError::Persistence(error.to_string()));
                 }
             };
@@ -384,6 +422,82 @@ impl AttemptCoordinator {
                 .await;
         }
 
+        self.finish_non_coding_attempt(&request, runtime_outcome, terminal_attempt)
+    }
+
+    async fn recover_settlement(
+        &self,
+        request: &AttemptRequest,
+        attempt: GoalAttempt,
+        cancel: CancellationToken,
+    ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
+        if attempt.runtime_id != request.runtime_id || attempt.role != request.role {
+            return Err(AttemptCoordinatorError::Persistence(
+                "attempt sequence retry conflicts with persisted runtime identity".into(),
+            ));
+        }
+        if attempt.status == AttemptStatus::Running {
+            return Err(AttemptCoordinatorError::Persistence(
+                "attempt sequence is already running".into(),
+            ));
+        }
+        let reservation_id = attempt
+            .input
+            .get("budget_reservation_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                AttemptCoordinatorError::Persistence(
+                    "terminal attempt has no budget reservation identity".into(),
+                )
+            })?;
+        self.store
+            .lock()
+            .unwrap()
+            .settle_goal_budget(reservation_id, usage_for_budget(&attempt.usage))
+            .map_err(AttemptCoordinatorError::Budget)?;
+
+        let runtime_outcome = match attempt.status {
+            AttemptStatus::Succeeded => Ok(attempt.output.clone().ok_or_else(|| {
+                AttemptCoordinatorError::Persistence(
+                    "successful attempt has no persisted runtime output".into(),
+                )
+            })?),
+            AttemptStatus::Failed | AttemptStatus::Cancelled => {
+                Err(attempt.failure.clone().ok_or_else(|| {
+                    AttemptCoordinatorError::Persistence(
+                        "failed attempt has no persisted runtime failure".into(),
+                    )
+                })?)
+            }
+            AttemptStatus::Running => unreachable!("running attempt rejected above"),
+        };
+
+        if request.runtime_id.0 == PI_CODER_RUNTIME_ID {
+            let persisted_request =
+                attempt
+                    .input
+                    .get("runtime_request")
+                    .cloned()
+                    .ok_or_else(|| {
+                        AttemptCoordinatorError::Persistence(
+                            "coding attempt has no persisted runtime request".into(),
+                        )
+                    })?;
+            let pi_request: PiAttemptRequest = serde_json::from_value(persisted_request)
+                .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
+            return self
+                .finish_coding_attempt(request, &pi_request, runtime_outcome, attempt, cancel)
+                .await;
+        }
+        self.finish_non_coding_attempt(request, runtime_outcome, attempt)
+    }
+
+    fn finish_non_coding_attempt(
+        &self,
+        request: &AttemptRequest,
+        runtime_outcome: Result<RuntimeResult, RuntimeFailure>,
+        terminal_attempt: GoalAttempt,
+    ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
         match runtime_outcome {
             Ok(_) => {
                 let goal = self.transition_after(
@@ -400,33 +514,7 @@ impl AttemptCoordinator {
                     goal,
                 })
             }
-            Err(failure) => {
-                let attempt_count = {
-                    let store = self.store.lock().unwrap();
-                    store
-                        .attempts_for_goal(request.goal_id, usize::MAX)
-                        .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
-                        .into_iter()
-                        .filter(|attempt| attempt.role == request.role)
-                        .count() as u32
-                };
-                let decision = self.retry_policy.decide(
-                    request.role,
-                    attempt_count,
-                    &failure,
-                    request.escalation_runtime_id.as_ref(),
-                );
-                let goal = self.persist_decision(
-                    request.goal_id,
-                    terminal_attempt.id.0.to_string(),
-                    &decision,
-                )?;
-                Ok(AttemptCoordinationOutcome::Failed {
-                    attempt: terminal_attempt,
-                    decision,
-                    goal,
-                })
-            }
+            Err(failure) => self.failure_outcome(request, terminal_attempt, failure),
         }
     }
 

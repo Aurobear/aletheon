@@ -4,7 +4,7 @@ use super::{
     ApprovalApplyClaim, ApprovalApplyReceipt, ApprovalRepository, ApprovalRepositoryError,
 };
 use crate::r#impl::goal::ObjectiveStore;
-use crate::r#impl::memory_projection::MemoryProjection;
+use crate::r#impl::memory_projection::{MemoryProjection, ProjectionStatus};
 use async_trait::async_trait;
 use corpus::tools::subagent::{
     ApplyAuthorization, ApplyAuthorizer, ApplyError, ApplySpec, ControlledApply,
@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct ApplyCoordinatorConfig {
@@ -558,13 +559,20 @@ impl ApplyCoordinator {
             (persisted, evidence)
         };
         if let Some(projection) = &self.memory_projection {
-            let _ = projection
+            if projection
                 .project_goal_summary(
                     &persisted,
                     &evidence,
                     mnemosyne::MemorySensitivity::Internal,
                 )
-                .await;
+                .await
+                == ProjectionStatus::Degraded
+            {
+                warn!(
+                    goal_id = persisted.goal_id.0,
+                    "best-effort goal summary memory projection is degraded"
+                );
+            }
         }
         Ok(())
     }
@@ -659,6 +667,11 @@ impl TemporaryArtifact {
 
 impl Drop for TemporaryArtifact {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        if let Err(error) = std::fs::remove_file(&self.path) {
+            warn!(
+                error = %error,
+                "best-effort temporary verification artifact cleanup failed"
+            );
+        }
     }
 }

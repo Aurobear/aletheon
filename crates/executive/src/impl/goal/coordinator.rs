@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 // ---------------------------------------------------------------------------
 // GoalTickOutcome
@@ -130,11 +131,21 @@ impl GoalCoordinator {
         let projection = self.memory_projection.as_ref()?;
         let loaded = {
             let store = self.store.lock().unwrap();
-            let summary = store
-                .load_goal_completion_summary(approval_id)
-                .ok()
-                .flatten()?;
-            let evidence = store.goal_projection_evidence(summary.goal_id).ok()?;
+            let summary = match store.load_goal_completion_summary(approval_id) {
+                Ok(Some(summary)) => summary,
+                Ok(None) => return None,
+                Err(error) => {
+                    warn!(error = %error, "goal summary read failed before memory projection");
+                    return Some(ProjectionStatus::Degraded);
+                }
+            };
+            let evidence = match store.goal_projection_evidence(summary.goal_id) {
+                Ok(evidence) => evidence,
+                Err(error) => {
+                    warn!(error = %error, "goal evidence read failed before memory projection");
+                    return Some(ProjectionStatus::Degraded);
+                }
+            };
             (summary, evidence)
         };
         Some(
@@ -386,7 +397,7 @@ impl GoalCoordinator {
         )?;
 
         if changed == 0 {
-            tx.rollback().ok();
+            tx.rollback()?;
             let fresh = store.get_goal(goal_id)?;
             return match fresh {
                 Some(g) => Err(GoalTransitionError::VersionConflict {

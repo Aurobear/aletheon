@@ -606,17 +606,27 @@ GBrain 的建表、逐列补列、数据回填和 `user_version` 更新现在位
 
 ## 21. 错误可见性与有界存储
 
-以下生产路径显式丢弃结果，值得逐点确定契约：
+H6 已逐点确定 Executive 候选的错误契约：
 
-- turn lifecycle event publish：`crates/executive/src/service/turn_pipeline.rs:135,148`；
-- approval oneshot send：`crates/executive/src/service/admin_service.rs:156,206`；
-- self-evolution rollback：`crates/metacog/src/service.rs:403,408,416,443`。
+- contributor 明确请求的 lifecycle event 发布失败向上返回；effect audit event 与原始 turn
+  error 上的 abort hook 为 warn-and-continue，不能覆盖主错误
+  （`crates/executive/src/service/turn_pipeline.rs:119-159,760-787,1017-1036`）；
+- approval oneshot receiver 已消失时，pending 记录被终结为 `ConsumerGone`，RPC 返回 false 且
+  不授予 session approval；断连 deny 的同类失败记录 warning
+  （`crates/executive/src/service/admin_service.rs:97-228,544-576`）；
+- budget revoke 失败不再被覆盖；terminal attempt 在 settle 前持久化 reservation identity，
+  settle 精确重放幂等，重复请求从原 attempt/evidence 恢复而不再次调用 runtime/Pi
+  （`crates/executive/src/impl/goal/attempt_coordinator.rs:259-518`、
+  `crates/executive/src/impl/goal/budget.rs:254-308`）；
+- apply receipt 在 goal 终态之前持久化，失败 receipt 保留 diff hash 并进入需要 fresh
+  verification/approval 的 blocked 状态；重复 callback 读取 receipt 恢复，不重复 apply
+  （`crates/executive/src/impl/approval/apply_coordinator.rs:138-270,435-493`）。
 
-`oneshot::Sender::send` 失败表示 receiver 已被丢弃，不能据此声称 turn 一定挂起；准确风险是
-终态响应或回滚失败缺少统一可见性。修复前应先定义每个调用点是 best-effort、必须告警，
-还是必须向上返回错误，避免把所有 `let _ =` 机械改成失败终止。
+memory projection 与临时 artifact 删除是明确的 best-effort 路径，但 degraded/cleanup failure
+现在会告警（`apply_coordinator.rs:532-578,646-676`）。self-evolution rollback 仍属 metacog
+独立 owner，不在 H6 coding apply/settle 范围内；其原有风险不应被误报为已由本批关闭。
 
-死信和历史事件表的长期容量上限也需要运行数据佐证。在没有增长率与磁盘预算证据前，
+死信和历史事件表的长期容量上限仍需要运行数据佐证。在没有增长率与磁盘预算证据前，
 它们是 P2 运维容量项，不是已发生的数据故障。
 
 ## 22. 已验证的健康行为与排除项
