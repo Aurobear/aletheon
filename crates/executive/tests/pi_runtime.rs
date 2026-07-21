@@ -229,7 +229,8 @@ printf '%s\n' \
   '{"type":"session","version":3,"id":"fixture-session"}' \
   '{"type":"agent_start"}' \
   '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"inputTokens":11,"outputTokens":7}}}' \
-  '{"type":"agent_end","messages":[]}'
+  '{"type":"agent_end","messages":[]}' \
+  '{"type":"agent_settled"}'
 "##,
     );
     let before = git_output(&fixture.repository, &["status", "--porcelain=v2"]);

@@ -170,8 +170,11 @@ pub(super) async fn register_agent_tools(
         corpus::tools::tools::agent_control::AgentControlTools::new(agent_control.clone());
     let mut registry = tools.lock().await;
     for tool in explicit.tools() {
+        let name = tool.name().to_owned();
         if let Err(error) = registry.register(tool) {
             tracing::warn!(%error, "Failed to register explicit Agent control tool");
+        } else if let Err(error) = registry.set_proposal_confidence(&name, 0.5) {
+            tracing::warn!(%error, tool = %name, "Failed to register Agent control proposal confidence");
         }
     }
     if !profiles.is_empty() {
@@ -183,6 +186,8 @@ pub(super) async fn register_agent_tools(
         );
         if let Err(e) = registry.register(Arc::new(agent_tool)) {
             tracing::warn!(error = %e, "Failed to register AgentTool");
+        } else if let Err(error) = registry.set_proposal_confidence("agent", 0.5) {
+            tracing::warn!(%error, "Failed to register compatibility Agent proposal confidence");
         } else {
             info!(
                 agents = count,

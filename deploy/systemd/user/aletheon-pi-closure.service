@@ -1,0 +1,14 @@
+[Unit]
+Description=Aletheon bounded Pi-to-memory closure
+After=aletheon.socket
+Requires=aletheon.socket
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/aletheon/scheduled-task.env
+ExecStart=%h/.local/bin/aletheon-pi-scheduled-task
+TimeoutStartSec=6min
+UMask=0077
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes

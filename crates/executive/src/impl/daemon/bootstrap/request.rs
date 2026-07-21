@@ -1018,6 +1018,7 @@ impl RequestHandler {
             corpus_group.tools.clone(),
             agent_profiles_for_tools,
             granted_capabilities.clone(),
+            memory_group.memory_service.clone(),
         )
         .await?;
         let canonical_event_spine = agent_svc.canonical_event_spine;

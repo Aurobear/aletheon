@@ -5,8 +5,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use fabric::{AgentControlError, AgentControlErrorKind, PrincipalId};
 use mnemosyne::{
-    AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft, MemoryAuthority, MemoryKind,
-    MemoryPromotionReceipt, MemoryPromotionRequest, MemoryRecordId, MemoryScope,
+    AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft, ExperienceEvent, MemoryAuthority,
+    MemoryKind, MemoryMetadata, MemoryPromotionReceipt, MemoryPromotionRequest, MemoryRecordId,
+    MemoryScope, MemoryService,
 };
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
@@ -40,6 +41,7 @@ pub struct MemoryRecordingAgentEventSink {
     downstream: Arc<dyn AgentEventSink>,
     vault: Arc<AgentMemoryVault>,
     context: AgentMemoryContext,
+    durable: Option<Arc<dyn MemoryService>>,
     error: Mutex<Option<AgentControlError>>,
 }
 
@@ -53,8 +55,14 @@ impl MemoryRecordingAgentEventSink {
             downstream,
             vault,
             context,
+            durable: None,
             error: Mutex::new(None),
         }
+    }
+
+    pub fn with_durable_memory(mut self, durable: Arc<dyn MemoryService>) -> Self {
+        self.durable = Some(durable);
+        self
     }
 
     pub fn take_error(&self) -> Option<AgentControlError> {
@@ -179,6 +187,34 @@ impl MemoryRecordingAgentEventSink {
             .map(|_| ())
             .map_err(memory_error)
     }
+
+    fn durable_event(event: &AgentRuntimeEvent) -> Option<ExperienceEvent> {
+        let AgentRuntimeEvent::Terminal {
+            agent_id,
+            operation_id,
+            status,
+            result,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        let source_id = format!("operation:{}:terminal:{status:?}", operation_id.0);
+        let content = result.as_ref().map_or_else(
+            || format!("child Agent ended {status:?}"),
+            |result| format!("child Agent ended {status:?}: {}", result.output),
+        );
+        Some(ExperienceEvent::GoalOutcome {
+            goal_id: format!("agent:{}", agent_id.0),
+            outcome: format!("{status:?}").to_ascii_lowercase(),
+            content,
+            metadata: MemoryMetadata::local(
+                format!("agent-outcome:{}", operation_id.0),
+                source_id,
+                chrono::Utc::now(),
+            ),
+        })
+    }
 }
 
 #[async_trait]
@@ -187,6 +223,13 @@ impl AgentEventSink for MemoryRecordingAgentEventSink {
         if self.error.lock().is_none() {
             if let Err(error) = self.record(&event) {
                 *self.error.lock() = Some(error);
+            }
+        }
+        if self.error.lock().is_none() {
+            if let (Some(durable), Some(event)) = (&self.durable, Self::durable_event(&event)) {
+                if let Err(error) = durable.record(event).await {
+                    *self.error.lock() = Some(memory_error(error));
+                }
             }
         }
         self.downstream.emit(event).await;
@@ -244,5 +287,42 @@ mod tests {
                 String::new(),
             )
             .is_err());
+    }
+
+    #[test]
+    fn terminal_event_becomes_durable_goal_outcome() {
+        let agent_id = AgentId::new();
+        let operation_id = OperationId::new();
+        let event = AgentRuntimeEvent::Terminal {
+            agent_id,
+            process_id: ProcessId::new(),
+            operation_id,
+            status: fabric::AgentRunStatus::Succeeded,
+            result: Some(fabric::AgentResult {
+                output: "fixture passed".into(),
+                usage: fabric::AttemptUsage::default(),
+                evidence: vec![],
+                artifacts: vec![],
+            }),
+        };
+
+        let projected = MemoryRecordingAgentEventSink::durable_event(&event).unwrap();
+        let ExperienceEvent::GoalOutcome {
+            goal_id,
+            outcome,
+            content,
+            metadata,
+        } = projected
+        else {
+            panic!("terminal Agent event did not become a GoalOutcome");
+        };
+        assert_eq!(goal_id, format!("agent:{}", agent_id.0));
+        assert_eq!(outcome, "succeeded");
+        assert!(content.contains("fixture passed"));
+        assert_eq!(
+            metadata.record_id,
+            format!("agent-outcome:{}", operation_id.0)
+        );
+        assert!(!metadata.record_id.contains("fixture passed"));
     }
 }

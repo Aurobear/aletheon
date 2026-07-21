@@ -1,6 +1,6 @@
 use executive::service::context_assembler::{
     working_directory_policy_prompt, ContextAssembler, ContextAssemblyError, ContextFragments,
-    ContextSource,
+    ContextSource, ProductionContextSource,
 };
 use fabric::dasein::{SelfVersion, Stimmung};
 use fabric::{
@@ -8,12 +8,22 @@ use fabric::{
     ProcessId, StructuredSelfView, TurnRequest,
 };
 use std::{path::PathBuf, sync::Arc};
+use tokio::sync::Mutex;
 
 struct FixedSource(ContextFragments);
 #[async_trait::async_trait]
 impl ContextSource for FixedSource {
     async fn load(&self, _: &TurnRequest) -> Result<ContextFragments, ContextAssemblyError> {
         Ok(self.0.clone())
+    }
+}
+
+struct UnavailableConsciousContext;
+
+#[async_trait::async_trait]
+impl fabric::LatestConsciousContextPort for UnavailableConsciousContext {
+    async fn latest_context(&self, _: &AgoraSpaceId) -> anyhow::Result<ConsciousContextProjection> {
+        anyhow::bail!("conscious workspace has not observed a turn")
     }
 }
 
@@ -53,6 +63,27 @@ fn projection() -> ConsciousContextProjection {
             content_ids: vec![],
         },
     }
+}
+
+#[tokio::test]
+async fn production_source_allows_first_turn_without_conscious_projection() {
+    let skills = tempfile::tempdir().unwrap();
+    let source = ProductionContextSource {
+        cached_prefix: Arc::new(Mutex::new("system".into())),
+        skill_loader: Arc::new(Mutex::new(corpus::SkillLoader::new(
+            skills.path().to_path_buf(),
+        ))),
+        skill_router: Arc::new(Mutex::new(corpus::SkillRouter::new())),
+        conscious: Arc::new(UnavailableConsciousContext),
+    };
+
+    let fragments = source.load(&request("first turn")).await.unwrap();
+
+    assert!(fragments.conscious.is_none());
+    assert!(fragments.system_prefix.contains("system"));
+    assert!(fragments
+        .system_prefix
+        .contains("Current working directory: /workspace"));
 }
 
 #[tokio::test]

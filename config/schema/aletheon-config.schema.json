@@ -1438,7 +1438,7 @@
         },
         "network_enabled": {
           "default": false,
-          "description": "Pi has no network access by default and initial M4 rejects enabling it.",
+          "description": "Pi has no network access by default. Trusted daemon configuration may\nopt in for the independently authenticated model transport.",
           "type": "boolean"
         },
         "package_version": {

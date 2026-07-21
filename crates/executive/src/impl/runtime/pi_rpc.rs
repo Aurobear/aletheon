@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::pi::{PiRuntime, ResolvedPiConfig};
+use super::pi::{pi_environment_from_process, pi_sandbox_policy, PiRuntime, ResolvedPiConfig};
 use super::pi_protocol::{parse_rpc_record, validate_rpc_response, PiRpcCommand, PiRpcRecord};
 use crate::service::agent_control::{
     AgentEventSink, AgentRuntimeEvent, AgentRuntimeInput, AgentRuntimeLauncher,
@@ -35,23 +35,7 @@ const REQUIRED_ISOLATION_FLAGS: &[&str] = &[
 /// Import only reviewed process environment keys. Values remain inside the
 /// sandbox command and are never copied into Agent results or evidence.
 pub fn pi_rpc_environment_from_process() -> BTreeMap<String, String> {
-    const KEYS: &[&str] = &[
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_BASE_URL",
-        "OPENAI_API_KEY",
-        "OPENAI_BASE_URL",
-        "GOOGLE_API_KEY",
-        "GEMINI_API_KEY",
-    ];
-    let mut environment: BTreeMap<String, String> = KEYS
-        .iter()
-        .filter_map(|key| std::env::var(key).ok().map(|value| ((*key).into(), value)))
-        .collect();
-    environment.insert("PATH".into(), "/usr/local/bin:/usr/bin:/bin".into());
-    environment.insert("PI_OFFLINE".into(), "1".into());
-    environment.insert("PI_SKIP_VERSION_CHECK".into(), "1".into());
-    environment.insert("PI_TELEMETRY".into(), "0".into());
-    environment
+    pi_environment_from_process()
 }
 
 /// A reviewed runtime that creates one isolated Pi process per child Agent.
@@ -111,10 +95,12 @@ impl PiRpcRuntime {
         &self,
         workspace: &WorkspacePolicy,
     ) -> Result<(Child, u32, ChildStdin, BufReader<ChildStdout>), AgentControlError> {
+        let policy = pi_sandbox_policy(workspace, self.config.network_enabled)
+            .map_err(|error| runtime_error(format!("resolving Pi RPC sandbox policy: {error}")))?;
         let sandbox_config = SandboxConfig {
             workspace: workspace.clone(),
             environment: self.credential_environment.clone(),
-            policy: None,
+            policy: Some(policy),
         };
         let wrapped = self
             .sandbox
@@ -160,27 +146,32 @@ impl AgentRuntimeLauncher for PiRpcRuntime {
         let workspace = input.workspace.as_ref().ok_or_else(|| {
             runtime_error("Pi RPC spawn lacks host-injected trusted workspace authority")
         })?;
-        if workspace.writable_roots()
-            != configured_roots(workspace.cwd(), &self.config.allowed_paths)?
-        {
-            return Err(runtime_error(
-                "Pi RPC trusted workspace differs from configured path allowlist",
-            ));
-        }
+        let configured_roots = configured_roots(workspace.cwd(), &self.config.allowed_paths)?;
         let protected = fabric::ProtectedPathPolicy::new(
-            self.config
-                .forbidden_paths
+            workspace
+                .protected_paths()
+                .credential_paths()
                 .iter()
-                .map(|path| workspace.cwd().join(path))
+                .cloned()
+                .chain(
+                    self.config
+                        .forbidden_paths
+                        .iter()
+                        .map(|path| workspace.cwd().join(path)),
+                )
                 .collect(),
         )
         .map_err(|error| runtime_error(format!("resolving Pi RPC protected paths: {error}")))?;
-        if workspace.protected_paths() != &protected {
-            return Err(runtime_error(
-                "Pi RPC trusted workspace differs from configured protected paths",
-            ));
-        }
-        let (mut child, process_group, mut stdin, mut stdout) = self.spawn(workspace).await?;
+        let workspace = workspace
+            .clone()
+            .narrow_writable_roots(configured_roots)
+            .map_err(|error| {
+                runtime_error(format!(
+                    "Pi RPC configured path allowlist exceeds trusted workspace: {error}"
+                ))
+            })?
+            .with_protected_paths(protected);
+        let (mut child, process_group, mut stdin, mut stdout) = self.spawn(&workspace).await?;
         let ids = (
             &input.handle.agent_id,
             &input.handle.process_id,

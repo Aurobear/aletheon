@@ -12,11 +12,13 @@ use corpus::tools::subagent::{
 };
 use fabric::sandbox::{IsolationLevel, SandboxBackend, SandboxConfig};
 use fabric::{
-    AttemptEvidence, AttemptUsage, Clock, CodingJobReport, CodingJobSpec, CodingJobStatus,
-    CodingNetworkPolicy, FailureClass, RuntimeFailure, RuntimeId, RuntimeResult,
+    resolve_profile, AttemptEvidence, AttemptUsage, Clock, CodingJobReport, CodingJobSpec,
+    CodingJobStatus, CodingNetworkPolicy, FailureClass, ProfileName, ResolvedSandboxPolicy,
+    RuntimeFailure, RuntimeId, RuntimeResult, SandboxProfiles, WorkspacePolicy,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -25,6 +27,30 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 pub const PI_CODER_RUNTIME_ID: &str = "pi-coder";
+
+/// Import only reviewed process environment keys. Values are injected into a
+/// Pi sandbox and are never copied into Agent results or attempt evidence.
+pub fn pi_environment_from_process() -> BTreeMap<String, String> {
+    const KEYS: &[&str] = &[
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+        "PI_CODING_AGENT_DIR",
+    ];
+    let mut environment: BTreeMap<String, String> = KEYS
+        .iter()
+        .filter_map(|key| std::env::var(key).ok().map(|value| ((*key).into(), value)))
+        .collect();
+    environment.insert("PATH".into(), "/usr/local/bin:/usr/bin:/bin".into());
+    environment.insert("HOME".into(), "/tmp".into());
+    environment.insert("PI_OFFLINE".into(), "1".into());
+    environment.insert("PI_SKIP_VERSION_CHECK".into(), "1".into());
+    environment.insert("PI_TELEMETRY".into(), "0".into());
+    environment
+}
 
 pub fn register_pi_runtime(
     registry: &mut RuntimeRegistry,
@@ -54,6 +80,7 @@ pub struct ResolvedPiConfig {
     pub max_output_bytes: usize,
     pub allowed_paths: Vec<PathBuf>,
     pub forbidden_paths: Vec<PathBuf>,
+    pub network_enabled: bool,
 }
 
 /// JSON request accepted by the stable `pi-coder` runtime.
@@ -100,9 +127,6 @@ impl PiRuntime {
         if !config.require_namespace_isolation {
             bail!("Pi runtime requires namespace isolation");
         }
-        if config.network_enabled {
-            bail!("Pi runtime network access is disabled in M4");
-        }
         validate_sandbox(sandbox.as_ref())?;
 
         let executable = resolve_executable(config)?;
@@ -146,6 +170,7 @@ impl PiRuntime {
             max_output_bytes: config.max_output_bytes,
             allowed_paths: config.allowed_paths.clone(),
             forbidden_paths: config.forbidden_paths.clone(),
+            network_enabled: config.network_enabled,
         };
         let worktrees = Arc::new(WorktreeManager::with_clock(
             WorktreeManagerConfig {
@@ -255,6 +280,27 @@ fn validate_sandbox(sandbox: &dyn SandboxBackend) -> Result<()> {
         bail!("Pi runtime sandbox lacks filesystem or network isolation");
     }
     Ok(())
+}
+
+pub(super) fn pi_sandbox_policy(
+    workspace: &WorkspacePolicy,
+    network_enabled: bool,
+) -> Result<ResolvedSandboxPolicy> {
+    let mut policy = resolve_profile(
+        &ProfileName::Workspace,
+        workspace,
+        &SandboxProfiles::default(),
+    )
+    .context("resolving Pi workspace sandbox profile")?;
+    // Empty mount roots deliberately select Bubblewrap's established
+    // workspace-driven plan: host root read-only, declared worktree writable,
+    // and protected metadata re-bound read-only. The resolved deny set remains
+    // attached and is applied after that plan.
+    policy.name = "pi-workspace".into();
+    policy.read_only_roots.clear();
+    policy.read_write_roots.clear();
+    policy.restrict_network = !network_enabled;
+    Ok(policy)
 }
 
 fn resolve_executable(config: &PiRuntimeConfig) -> Result<PathBuf> {
@@ -427,22 +473,31 @@ impl SubAgentRuntime for PiRuntime {
                 )
             })?;
 
-        let mut sandbox_env = std::collections::HashMap::new();
-        sandbox_env.insert("PATH".into(), "/usr/local/bin:/usr/bin:/bin".into());
-        sandbox_env.insert("HOME".into(), "/tmp".into());
+        let sandbox_env = pi_environment_from_process();
+        let workspace = fabric::WorkspacePolicy::from_resolved_roots(lease.path.clone(), vec![])
+            .map_err(|error| {
+                self.failure(
+                    FailureClass::ToolFailure,
+                    format!("invalid Pi workspace policy: {error}"),
+                    false,
+                    self.clock.mono_now().0.saturating_sub(started),
+                    vec![],
+                )
+            })?;
+        let policy =
+            pi_sandbox_policy(&workspace, self.config.network_enabled).map_err(|error| {
+                self.failure(
+                    FailureClass::ToolFailure,
+                    format!("resolving Pi sandbox policy: {error}"),
+                    false,
+                    self.clock.mono_now().0.saturating_sub(started),
+                    vec![],
+                )
+            })?;
         let sandbox_config = SandboxConfig {
-            workspace: fabric::WorkspacePolicy::from_resolved_roots(lease.path.clone(), vec![])
-                .map_err(|error| {
-                    self.failure(
-                        FailureClass::ToolFailure,
-                        format!("invalid Pi workspace policy: {error}"),
-                        false,
-                        self.clock.mono_now().0.saturating_sub(started),
-                        vec![],
-                    )
-                })?,
-            environment: sandbox_env.into_iter().collect(),
-            policy: None,
+            workspace,
+            environment: sandbox_env,
+            policy: Some(policy),
         };
         let wrapped = match self.sandbox.wrap_argv(
             &self.config.executable,
@@ -865,6 +920,24 @@ mod tests {
         )
         .unwrap());
         assert!(registry.contains(&PiRuntime::runtime_id()));
+    }
+
+    #[test]
+    fn network_access_requires_explicit_trusted_configuration() {
+        let fixture = TempDir::new().unwrap();
+        let workspace =
+            WorkspacePolicy::from_resolved_roots(fixture.path().to_path_buf(), vec![]).unwrap();
+
+        let restricted = pi_sandbox_policy(&workspace, false).unwrap();
+        assert!(restricted.restrict_network);
+
+        let enabled = pi_sandbox_policy(&workspace, true).unwrap();
+        assert!(!enabled.restrict_network);
+        assert_eq!(enabled.name, "pi-workspace");
+        assert!(enabled.read_only_roots.is_empty());
+        assert!(enabled.read_write_roots.is_empty());
+        assert_eq!(enabled.deny_exact, restricted.deny_exact);
+        assert_eq!(enabled.deny_globs, restricted.deny_globs);
     }
 
     #[test]

@@ -45,6 +45,7 @@ pub(super) async fn build_agent_services(
     tools: Arc<Mutex<corpus::tools::tools::ToolRegistry>>,
     agent_profiles_for_tools: HashMap<String, fabric::AgentProfile>,
     granted_capabilities: Arc<tokio::sync::RwLock<Vec<fabric::CapabilityId>>>,
+    durable_memory: Arc<dyn mnemosyne::MemoryService>,
 ) -> anyhow::Result<AgentServices> {
     let agent_state_root = data_dir.join("agents");
     std::fs::create_dir_all(&agent_state_root)?;
@@ -100,6 +101,7 @@ pub(super) async fn build_agent_services(
             mnemosyne::AgentMemoryVault::open(agent_state_root.join("agent_memory.db"))
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?,
         ))
+        .with_durable_memory(durable_memory)
         .with_subagent_settlement(
             grok_hardening.subagent_settlement,
             agent_daemon_generation.clone(),

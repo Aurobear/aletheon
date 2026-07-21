@@ -108,6 +108,43 @@ impl WorkspacePolicy {
         &self.writable_roots
     }
 
+    /// Reduce this policy to an explicit subset of its existing write authority.
+    ///
+    /// The working directory is intentionally independent from the writable
+    /// roots so a sandboxed process may start at the repository root while only
+    /// a reviewed file or subdirectory is writable.
+    pub fn narrow_writable_roots(mut self, roots: Vec<PathBuf>) -> Result<Self, String> {
+        if roots.is_empty() {
+            return Err("narrowed workspace roots must not be empty".into());
+        }
+
+        let mut seen = HashSet::new();
+        let mut narrowed = Vec::with_capacity(roots.len());
+        for root in roots {
+            if !root.is_absolute() {
+                return Err(format!(
+                    "narrowed workspace root is not absolute: {}",
+                    root.display()
+                ));
+            }
+            if !self
+                .writable_roots
+                .iter()
+                .any(|authority| root.starts_with(authority))
+            {
+                return Err(format!(
+                    "narrowed workspace root exceeds existing authority: {}",
+                    root.display()
+                ));
+            }
+            if seen.insert(root.clone()) {
+                narrowed.push(root);
+            }
+        }
+        self.writable_roots = narrowed;
+        Ok(self)
+    }
+
     pub fn with_protected_paths(mut self, protected_paths: ProtectedPathPolicy) -> Self {
         self.protected_paths = protected_paths;
         self
