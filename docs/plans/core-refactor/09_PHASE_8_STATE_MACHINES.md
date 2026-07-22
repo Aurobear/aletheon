@@ -120,9 +120,16 @@ bash scripts/cargo-agent.sh test -p mnemosyne --test unified_memory_contract
 
 ## Work package 8d: MCP Client/Auth
 
-- [ ] Separate connection lifecycle, discovery generation, request routing, notifications, reconnect, elicitation, OAuth/token lifecycle, and shutdown.
-- [ ] Keep all background tasks under `McpTaskSupervisor`.
-- [ ] Preserve endpoint scoping, SSRF/network policy, credential release, size limits, and fail-closed elicitation.
+- [x] Separate connection lifecycle, discovery generation, request routing, notifications, reconnect, elicitation, OAuth/token lifecycle, and shutdown.
+- [x] Keep all background tasks under `McpTaskSupervisor`.
+- [x] Preserve endpoint scoping, SSRF/network policy, credential release, size limits, and fail-closed elicitation.
+
+Evidence: `crates/corpus/src/tools/mcp/STATE_MACHINE.md` documents connection,
+supervision, discovery, elicitation, and OAuth security semantics. `lifecycle.rs`
+contains pure connection and OAuth reducers. `apply_server_transition`
+is the server-health mutation entry and owns all background tasks; the OAuth provider
+owns token transitions through `McpOAuthLifecycle::apply`. MCP/OAuth tests cover
+reconnect, shutdown timeout, CSRF replay, endpoint grants, redirects, and redaction.
 
 Validation:
 

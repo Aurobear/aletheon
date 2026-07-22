@@ -2,3 +2,4 @@
 agent-control	crates/executive/src/application/agent_control/lifecycle.rs	AgentRunRepository::transition	170	crates/executive/src/adapters/agent_control/sqlite_repository.rs	923
 turn-pipeline	crates/executive/src/application/turn_lifecycle.rs	TurnPipelineLifecycle::apply	215	crates/executive/src/application/turn_pipeline.rs	1448
 mnemosyne-service	crates/mnemosyne/src/lifecycle.rs	MemoryOperationLifecycle::apply	255	crates/mnemosyne/src/service.rs	1426
+mcp-client-auth	crates/corpus/src/tools/mcp/lifecycle.rs	apply_server_transition / McpOAuthLifecycle::apply	225	crates/corpus/src/tools/mcp/client.rs	1527

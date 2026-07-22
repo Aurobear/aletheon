@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use fabric::Clock;
 use serde::{Deserialize, Serialize};
 
+use super::lifecycle::{McpOAuthEvent, McpOAuthLifecycle};
 pub use super::token_store::{TokenEntry, TokenStore};
 use crate::tools::google::oauth::{AsyncOAuthClient, OAuthClientConfig};
 
@@ -389,6 +390,7 @@ pub struct McpOAuthProvider {
     clock: Arc<dyn Clock>,
     oauth_client: AsyncOAuthClient,
     endpoint_grant: Option<McpEndpointCredentialGrant>,
+    lifecycle: McpOAuthLifecycle,
 }
 
 impl McpOAuthProvider {
@@ -402,6 +404,8 @@ impl McpOAuthProvider {
         clock: Arc<dyn Clock>,
     ) -> Self {
         let client_id = client_id.into();
+        let server_id = server_id.into();
+        let has_token = token_store.get(&server_id).is_some();
         let oauth_client = AsyncOAuthClient::new(OAuthClientConfig {
             client_id: client_id.clone(),
             client_secret: None,
@@ -418,12 +422,13 @@ impl McpOAuthProvider {
             client_secret: None,
             endpoints,
             scopes,
-            server_id: server_id.into(),
+            server_id,
             token_store,
             pending_states: HashMap::new(),
             clock,
             oauth_client,
             endpoint_grant: None,
+            lifecycle: McpOAuthLifecycle::new(has_token),
         }
     }
 
@@ -489,6 +494,9 @@ impl McpOAuthProvider {
     /// The returned `OAuthState` must be stored and verified when
     /// `callback()` is called.
     pub fn authorize_url(&mut self) -> (String, OAuthState) {
+        self.lifecycle
+            .apply(McpOAuthEvent::BeginAuthorization)
+            .expect("authorization may start only from an OAuth owner state");
         let state_str = generate_state_string();
         let now = now_epoch_secs(&*self.clock);
         let oauth_state = OAuthState {
@@ -519,24 +527,40 @@ impl McpOAuthProvider {
             .remove(state)
             .context("unknown or already-consumed OAuth state")?;
 
-        let age = now_epoch_secs(&*self.clock).saturating_sub(oauth_state.created_at);
-        if age > STATE_MAX_AGE_SECS {
-            anyhow::bail!(
-                "OAuth state expired (age {}s > {}s max)",
-                age,
-                STATE_MAX_AGE_SECS
-            );
+        self.lifecycle
+            .apply(McpOAuthEvent::ExchangeCode)
+            .map_err(anyhow::Error::msg)?;
+
+        let result: Result<TokenEntry> = async {
+            let age = now_epoch_secs(&*self.clock).saturating_sub(oauth_state.created_at);
+            if age > STATE_MAX_AGE_SECS {
+                anyhow::bail!(
+                    "OAuth state expired (age {}s > {}s max)",
+                    age,
+                    STATE_MAX_AGE_SECS
+                );
+            }
+            let entry = self.exchange_code(code, &oauth_state.pkce_verifier).await?;
+            self.token_store
+                .set(oauth_state.server_id.clone(), entry.clone());
+            self.token_store.save()?;
+            Ok(entry)
         }
-
-        // Exchange code for tokens via HTTP POST.
-        let entry = self.exchange_code(code, &oauth_state.pkce_verifier).await?;
-
-        // Persist.
-        self.token_store
-            .set(oauth_state.server_id.clone(), entry.clone());
-        self.token_store.save()?;
-
-        Ok(entry)
+        .await;
+        match result {
+            Ok(entry) => {
+                self.lifecycle
+                    .apply(McpOAuthEvent::TokenStored)
+                    .map_err(anyhow::Error::msg)?;
+                Ok(entry)
+            }
+            Err(error) => {
+                self.lifecycle
+                    .apply(McpOAuthEvent::Fail)
+                    .map_err(anyhow::Error::msg)?;
+                Err(error)
+            }
+        }
     }
 
     /// Perform the token exchange HTTP request.
@@ -613,8 +637,23 @@ impl McpAuth for McpOAuthProvider {
     }
 
     async fn refresh(&mut self) -> Result<()> {
-        self.do_refresh().await?;
-        Ok(())
+        self.lifecycle
+            .apply(McpOAuthEvent::BeginRefresh)
+            .map_err(anyhow::Error::msg)?;
+        match self.do_refresh().await {
+            Ok(_) => {
+                self.lifecycle
+                    .apply(McpOAuthEvent::TokenStored)
+                    .map_err(anyhow::Error::msg)?;
+                Ok(())
+            }
+            Err(error) => {
+                self.lifecycle
+                    .apply(McpOAuthEvent::Fail)
+                    .map_err(anyhow::Error::msg)?;
+                Err(error)
+            }
+        }
     }
 }
 
