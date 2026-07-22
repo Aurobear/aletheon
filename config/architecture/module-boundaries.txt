@@ -1,0 +1,25 @@
+# frozen_commit=efde4ca11a7c45a72ce7a03fee4cdd0c3c9d8e1e
+# crate|path|local_dependencies|public_modules|top_level_impl|adapter_like_dirs
+agora|crates/agora|fabric,kernel|attention,blackboard,broadcast,competition,ops,persistence,scratchpad,task_graph,trace,workspace|false|-
+basic_agent|examples/basic_agent|executive,fabric|-|false|-
+aletheon|crates/aletheon|executive,fabric,interact|workspace|false|-
+cognit|crates/cognit|fabric,kernel|bridge,config,core,harness,impl,ports,testing|true|-
+corpus|crates/corpus|fabric,kernel,platform|acix,catalog,core,drivers,hook,security,service,skill,tools|false|drivers
+dasein|crates/dasein|fabric,kernel|bridge,core,dasein,impl,testing|true|-
+execd|crates/execd|platform|-|false|-
+executive|crates/executive|agora,cognit,corpus,dasein,fabric,gateway,hardware,kernel,metacog,mnemosyne,runtime|core,host,impl,service,tools,user_runtime|true|-
+evolution_loop|examples/evolution_loop|cognit,corpus,dasein,executive,fabric,kernel,metacog,mnemosyne|-|false|-
+fabric|crates/fabric|-|contract,dasein,events,include,ipc,kernel,policy,primitives,protocol,security,types|false|-
+gateway|crates/gateway|fabric|dispatcher,effect,handlers,intent,notify,ports,registry,store,telegram|false|telegram
+hardware|crates/hardware|fabric|broker,clock,command,deployment_gate,device,emergency_stop,grpc,lease,observation,provider,registry,safety,simulator,skill,telemetry|false|grpc
+interact|crates/interact|executive,fabric|acix,acp,host,tui|false|-
+kernel|crates/kernel|fabric|admission,capability,chronos,operation,process,runtime,space,supervision|false|-
+metacog|crates/metacog|fabric,kernel|bridge,core,hil_evidence_verifier,impl,outcome_verifier,service|true|-
+mnemosyne|crates/mnemosyne|fabric,kernel|agent_scope,backends,composite_service,consolidation,credential,embodied_episode,fact_service,impl,knowledge_graph,model,observability,ops,projection,promotion,retention,service,testing|true|backends
+platform|crates/platform|-|artifact_store,backend,desktop,error,filesystem,manifest,path,process,pty,receipt,registry,sandbox,selector,service,structured_patch|false|-
+runtime|crates/runtime|-|manifest,selector|false|-
+# ownership|owner|responsibility
+ownership|runtime|runtime manifests, capabilities, interaction/workspace/tool-governance contracts, deterministic selection
+ownership|kernel|governed process/operation lifecycle, supervision, admission, budget, lease, mailbox authority
+ownership|executive|application use cases, runtime instances, composition, daemon host lifecycle
+ownership|platform|operating-system filesystem, process, PTY, sandbox and service capabilities

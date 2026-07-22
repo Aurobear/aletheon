@@ -1093,6 +1093,17 @@ Phase 8 不是一个整体节点，应拆成独立子任务：Phase 2、3 → 8a
 
 以下三张表是本方案从“原则”落到“可执行”的关键，必须在 Phase 0 产出并随迁移更新。缺任何一张，对应阶段不得开工。
 
+Phase 0 的机器可读冻结产物位于 `config/architecture/`：
+
+- `module-boundaries.txt`：workspace crate、公开模块、依赖与 Runtime/Kernel/Executive/Platform 所有权；
+- `wire-surfaces.tsv`：wire/internal-shared 分类、参与方、协议 owner 与兼容规则；
+- `persistence-surfaces.tsv`：schema/version owner、读写方与迁移规则；
+- `external-identifiers.txt`：受保护外部标识、合法 adapter 区域与中性替代项；
+- `compatibility-debt.tsv`：逐文件兼容债务、计数基线及退出阶段；
+- `metrics.env`：由 `scripts/architecture-check.sh` 强制执行的精确棘轮指标。
+
+这些文件均记录冻结提交；降低债务必须同步降低基线，增加或遗漏 owner 会直接导致架构门禁失败。对应正反 fixture 由 `tests/architecture_check.sh` 维护。
+
 ### 19.1 持久化面清单（最高风险）
 
 枚举所有已落盘/跨会话格式，标注受影响阶段与迁移策略。候选面（Phase 0 补全并核对）：

@@ -1,0 +1,9 @@
+# frozen_commit=efde4ca11a7c45a72ce7a03fee4cdd0c3c9d8e1e
+# id	path	pattern	reason	canonical_replacement	baseline_count	exit_phase
+fabric-google-module	crates/fabric/src/lib.rs	google	legacy provider-specific Fabric export	neutral external identity/source contracts	2	1
+fabric-gmail-event	crates/fabric/src/types/external_event.rs	GmailMessageSummary	persisted v1 external event embeds provider DTO	neutral message summary with versioned migration	3	1
+cognit-public-impl	crates/cognit/src/lib.rs	pub mod r#impl	legacy concrete inference implementation is public	private adapters behind inference port	1	7
+executive-public-impl	crates/executive/src/lib.rs	pub mod r#impl	legacy implementation tree is public	stable facade plus private adapter/composition	1	9
+gbrain-config	crates/cognit/src/config/mod.rs	GbrainMemoryConfig	legacy supplemental-memory product name	SupplementalMemoryConfig	2	5
+telegram-config	crates/cognit/src/config/mod.rs	TelegramConfig	channel configuration owned by cognitive core	channel adapter configuration	12	6
+pi-runtime-types	crates/executive/src/impl/runtime/pi.rs	PiRuntime	legacy coding-runtime implementation name	private coding runtime adapter	24	3
