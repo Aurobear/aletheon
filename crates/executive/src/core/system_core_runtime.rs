@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use cognit::r#impl::provider_registry::ProviderRegistry;
+use cognit::composition::provider_registry::ProviderRegistry;
 use fabric::{LlmResponse, LlmStream};
 use tokio_util::sync::CancellationToken;
 

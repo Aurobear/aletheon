@@ -762,10 +762,6 @@ mod tests {
         assert!(p2.pricing.is_none(), "pricing is optional");
     }
 
-
-
-
-
     #[test]
     fn production_deployment_rejects_tilde_outside_and_invalid_quota() {
         let mut deployment = DeploymentConfig::production();

@@ -17,8 +17,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use cognit::r#impl::llm::pulse::{LlmPulse, PulseConfig};
-use cognit::r#impl::llm::scheduler::{
+use cognit::inference::pulse::{LlmPulse, PulseConfig};
+use cognit::inference::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
 use fabric::evolution::LlmPurpose;
@@ -29,7 +29,7 @@ use kernel::chronos::SystemClock;
 
 use crate::host::daemon::handler::RequestHandler;
 use crate::host::daemon::DaemonConfig;
-use cognit::r#impl::provider_registry::ProviderRegistry;
+use cognit::composition::provider_registry::ProviderRegistry;
 
 use dasein::r#impl::perception::PerceptionEvent;
 

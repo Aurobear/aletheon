@@ -31,14 +31,23 @@ fn timeouts() -> ProviderTimeoutConfig {
 
 fn provider(base_url: String) -> std::sync::Arc<dyn LlmProvider> {
     let config = cognit::config::ProviderConfig {
-        name: "test-adapter".into(), base_url, api_key: "secret-api-key".into(),
-        transport: cognit::config::Transport::Openai, models: vec!["test-model".into()],
-        max_context_length: None, pricing: None,
+        name: "test-adapter".into(),
+        base_url,
+        api_key: "secret-api-key".into(),
+        transport: cognit::config::Transport::Openai,
+        models: vec!["test-model".into()],
+        max_context_length: None,
+        pricing: None,
     };
     cognit::composition::inference_factory::create_provider(
-        &config, "test-model",
-        cognit::composition::inference_factory::ProviderBuildOptions { max_tokens: 100_000, timeouts: timeouts() },
-    ).unwrap()
+        &config,
+        "test-model",
+        cognit::composition::inference_factory::ProviderBuildOptions {
+            max_tokens: 100_000,
+            timeouts: timeouts(),
+        },
+    )
+    .unwrap()
 }
 
 #[test]

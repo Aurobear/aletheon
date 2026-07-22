@@ -1,7 +1,7 @@
-use cognit::ports::policy_provider::PolicyProviderPort;
-use cognit::r#impl::policy::grpc_provider::{
+use cognit::policy::grpc_provider::{
     validate_policy_endpoint, GrpcPolicyConfig, StubPolicyProvider,
 };
+use cognit::ports::policy_provider::PolicyProviderPort;
 use fabric::types::embodiment::{DeviceId, RiskClass, SkillDescriptor, SkillId};
 
 #[test]

@@ -15,7 +15,7 @@ use uuid::Uuid;
 use fabric::evolution::*;
 use fabric::message::{ContentBlock, Message, Role};
 
-use crate::r#impl::llm::scheduler::LlmScheduler;
+use crate::adapters::inference::scheduler::LlmScheduler;
 
 /// Configuration for the tool observation handler.
 #[derive(Debug, Clone)]

@@ -105,7 +105,7 @@ impl CognitError {
     }
 
     fn from_runtime(error: anyhow::Error) -> Self {
-        use crate::r#impl::llm::scheduler::{classify_error, ErrorClass};
+        use crate::adapters::inference::scheduler::{classify_error, ErrorClass};
         let kind = match classify_error(&error) {
             ErrorClass::Transient => CognitErrorKind::TransientProvider,
             ErrorClass::ContextOverflow => CognitErrorKind::ContextOverflow,
@@ -137,7 +137,7 @@ impl CompactorTrait for NoopCompressor {
     fn maybe_compact<'a>(
         &'a mut self,
         _messages: &'a mut Vec<Message>,
-        _llm: &'a dyn crate::r#impl::llm::provider::LlmProvider,
+        _llm: &'a dyn crate::adapters::inference::provider::LlmProvider,
     ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>> {
         Box::pin(async { Ok(false) })
     }
@@ -145,7 +145,7 @@ impl CompactorTrait for NoopCompressor {
     fn force_compact<'a>(
         &'a mut self,
         _messages: &'a mut Vec<Message>,
-        _llm: &'a dyn crate::r#impl::llm::provider::LlmProvider,
+        _llm: &'a dyn crate::adapters::inference::provider::LlmProvider,
     ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>> {
         Box::pin(async { Ok(false) })
     }

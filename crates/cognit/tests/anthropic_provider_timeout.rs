@@ -23,14 +23,27 @@ async fn server(response: Option<&'static [u8]>) -> String {
 
 fn provider(base_url: String) -> std::sync::Arc<dyn LlmProvider> {
     let config = cognit::config::ProviderConfig {
-        name: "test-adapter".into(), base_url, api_key: "secret-api-key".into(),
-        transport: cognit::config::Transport::Anthropic, models: vec!["test-model".into()],
-        max_context_length: None, pricing: None,
+        name: "test-adapter".into(),
+        base_url,
+        api_key: "secret-api-key".into(),
+        transport: cognit::config::Transport::Anthropic,
+        models: vec!["test-model".into()],
+        max_context_length: None,
+        pricing: None,
     };
     cognit::composition::inference_factory::create_provider(
-        &config, "test-model",
-        cognit::composition::inference_factory::ProviderBuildOptions { max_tokens: 100_000, timeouts: ProviderTimeoutConfig { connect_timeout_ms: 50, request_timeout_ms: 80, stream_idle_timeout_ms: 50 } },
-    ).unwrap()
+        &config,
+        "test-model",
+        cognit::composition::inference_factory::ProviderBuildOptions {
+            max_tokens: 100_000,
+            timeouts: ProviderTimeoutConfig {
+                connect_timeout_ms: 50,
+                request_timeout_ms: 80,
+                stream_idle_timeout_ms: 50,
+            },
+        },
+    )
+    .unwrap()
 }
 
 #[tokio::test]

@@ -1,4 +1,4 @@
-use crate::r#impl::learning::{
+use crate::application::learning::{
     LearnRule, OutcomeContext, OutcomeRecord, OutcomeRecorder, PatternExtractor, RuleStore,
 };
 use anyhow::Result;

@@ -3,7 +3,7 @@ use super::tool_budget;
 use super::tool_output::{bounded_tool_result, MAX_TOOL_RESULT_BYTES};
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
 
-use crate::r#impl::llm::provider::LlmProvider;
+use crate::adapters::inference::provider::LlmProvider;
 use fabric::message::{ContentBlock, Message, Role};
 use fabric::policy::verifier::Verdict;
 use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};

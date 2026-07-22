@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::adapters::inference::provider::LlmProvider;
 use crate::composition::inference_factory::{create_provider, ProviderBuildOptions};
-use super::llm::LlmProvider;
 use crate::config::{CognitConfig, ProviderConfig, ProviderTimeoutConfig};
 
 /// Registry of configured providers.

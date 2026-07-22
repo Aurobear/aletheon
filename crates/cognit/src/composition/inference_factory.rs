@@ -47,7 +47,9 @@ pub(crate) struct ResolvedProviderDefinition {
 ///
 /// Explicit transport is authoritative. `Auto` fails closed; endpoint values
 /// are never inspected to infer an adapter.
-pub(crate) fn resolve_provider_definition(config: &ProviderConfig) -> Result<ResolvedProviderDefinition> {
+pub(crate) fn resolve_provider_definition(
+    config: &ProviderConfig,
+) -> Result<ResolvedProviderDefinition> {
     let kind = match config.transport {
         Transport::Openai => ProviderKind::OpenAi,
         Transport::Anthropic => ProviderKind::Anthropic,
@@ -164,7 +166,8 @@ mod tests {
         assert!(resolve_provider_definition(&definition(
             Transport::Auto,
             "http://localhost:11434/anthropic",
-        )).is_err());
+        ))
+        .is_err());
     }
 
     #[test]
@@ -172,7 +175,8 @@ mod tests {
         let resolved = resolve_provider_definition(&definition(
             Transport::Anthropic,
             "https://api.anthropic.com",
-        )).unwrap();
+        ))
+        .unwrap();
         assert_eq!(resolved.credential_env_name, "LOCAL_PROVIDER_API_KEY");
         assert_eq!(resolved.max_context_length, Some(32_768));
         assert_eq!(resolved.pricing.unwrap().output_per_1k, 0.2);

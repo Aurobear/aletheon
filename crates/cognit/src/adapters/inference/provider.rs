@@ -2,10 +2,12 @@
 //!
 //! These items now live in `fabric` (RFC-018 Phase 4, resolves D4) since they
 //! are a shared client abstraction, not cognit-specific implementation. This
-//! shim keeps every existing cognit-internal path
-//! (`crate::r#impl::llm::provider::LlmProvider`, `cognit::r#impl::llm::LlmProvider`,
-//! `cognit::llm::provider::LlmProvider`, etc.) resolving unchanged.
-pub use fabric::{InferenceCapabilities, LlmProvider, LlmResponse, LlmStream, ModelInfo, StopReason, StreamChunk, Usage};
+//! Cognit uses the shared contract internally and exposes it through the stable
+//! `cognit::inference::provider` facade. Provider transports stay private.
+pub use fabric::{
+    InferenceCapabilities, LlmProvider, LlmResponse, LlmStream, ModelInfo, StopReason, StreamChunk,
+    Usage,
+};
 
 /// Tool definition sent to the LLM.
 pub use fabric::ToolDefinition;
@@ -26,15 +28,24 @@ pub struct InferenceFailure {
 
 impl InferenceFailure {
     pub fn transient(code: &'static str) -> anyhow::Error {
-        anyhow::Error::new(Self { kind: InferenceFailureKind::Transient, code })
+        anyhow::Error::new(Self {
+            kind: InferenceFailureKind::Transient,
+            code,
+        })
     }
 
     pub fn terminal(code: &'static str) -> anyhow::Error {
-        anyhow::Error::new(Self { kind: InferenceFailureKind::Terminal, code })
+        anyhow::Error::new(Self {
+            kind: InferenceFailureKind::Terminal,
+            code,
+        })
     }
 
     pub fn context_overflow() -> anyhow::Error {
-        anyhow::Error::new(Self { kind: InferenceFailureKind::ContextOverflow, code: "context_overflow" })
+        anyhow::Error::new(Self {
+            kind: InferenceFailureKind::ContextOverflow,
+            code: "context_overflow",
+        })
     }
 
     pub fn from_http_status(status: reqwest::StatusCode) -> anyhow::Error {

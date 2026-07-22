@@ -19,10 +19,10 @@ use goal_tracker::GoalTracker;
 use reflection::ReflectionEngine;
 use tool_budget::ToolBudget;
 
+use crate::adapters::inference::provider::{LlmProvider, LlmResponse, LlmStream};
 use crate::core::awareness_signal::AwarenessSignal;
 use crate::harness::config::HarnessConfig;
 use crate::harness::interrupt::InterruptFlag;
-use crate::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream};
 use fabric::body::Action;
 use fabric::message::Message;
 use fabric::policy::verifier::Verifier;
@@ -438,7 +438,9 @@ fn is_context_overflow(err: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r#impl::llm::provider::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
+    use crate::adapters::inference::provider::{
+        LlmProvider, LlmResponse, LlmStream, StopReason, Usage,
+    };
     use async_trait::async_trait;
     use fabric::message::{ContentBlock, Message};
     use fabric::CompactionOutcome;

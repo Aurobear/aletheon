@@ -4,7 +4,7 @@ use super::tool_output::{bounded_tool_result, MAX_TOOL_RESULT_BYTES};
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
-use crate::r#impl::llm::provider::{LlmProvider, StopReason, StreamChunk};
+use crate::adapters::inference::provider::{LlmProvider, StopReason, StreamChunk};
 use fabric::message::{ContentBlock, Message, Role};
 use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
 use std::future::Future;

@@ -31,7 +31,10 @@ pub enum ErrorClass {
 }
 
 pub fn classify_error(err: &anyhow::Error) -> ErrorClass {
-    match err.downcast_ref::<InferenceFailure>().map(|failure| failure.kind) {
+    match err
+        .downcast_ref::<InferenceFailure>()
+        .map(|failure| failure.kind)
+    {
         Some(InferenceFailureKind::Transient) => ErrorClass::Transient,
         Some(InferenceFailureKind::ContextOverflow) => ErrorClass::ContextOverflow,
         Some(InferenceFailureKind::Terminal) | None => ErrorClass::Terminal,
@@ -395,18 +398,30 @@ mod tests {
 
     #[test]
     fn classify_transient_errors() {
-        assert_eq!(classify_error(&InferenceFailure::transient("rate_limited")), ErrorClass::Transient);
+        assert_eq!(
+            classify_error(&InferenceFailure::transient("rate_limited")),
+            ErrorClass::Transient
+        );
     }
 
     #[test]
     fn classify_context_overflow_errors() {
-        assert_eq!(classify_error(&InferenceFailure::context_overflow()), ErrorClass::ContextOverflow);
+        assert_eq!(
+            classify_error(&InferenceFailure::context_overflow()),
+            ErrorClass::ContextOverflow
+        );
     }
 
     #[test]
     fn classify_terminal_errors() {
-        assert_eq!(classify_error(&InferenceFailure::terminal("unauthorized")), ErrorClass::Terminal);
-        assert_eq!(classify_error(&anyhow::anyhow!("unknown")), ErrorClass::Terminal);
+        assert_eq!(
+            classify_error(&InferenceFailure::terminal("unauthorized")),
+            ErrorClass::Terminal
+        );
+        assert_eq!(
+            classify_error(&anyhow::anyhow!("unknown")),
+            ErrorClass::Terminal
+        );
     }
 
     // --- Mocks for retry/failover tests ---
