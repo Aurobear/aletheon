@@ -8,8 +8,9 @@ use corpus::tools::google::{
 use corpus::tools::tools::ToolRegistry;
 use fabric::tool::ToolContext;
 use fabric::{
-    CalendarEventPage, CalendarTimeRange, ExternalIdentityId, GmailMessage, GmailMessagePage,
-    GmailMessageSummary, GmailQuery, PrincipalId, ProviderRecordRef, LOCAL_OWNER_PRINCIPAL,
+    CalendarEntryPage, CalendarQuery, ExternalIdentityId, ExternalRecordRef, MailMessage,
+    MailMessagePage, MailMessageSummary, MailQuery, OpaqueCursor, OpaqueProviderObjectId,
+    PrincipalId, LOCAL_OWNER_PRINCIPAL,
 };
 use kernel::chronos::TestClock;
 use std::sync::{Arc, Mutex};
@@ -50,11 +51,11 @@ impl GmailCapability for Gmail {
     async fn search_messages(
         &self,
         principal: &PrincipalId,
-        query: GmailQuery,
+        query: MailQuery,
         _cancel: &CancellationToken,
-    ) -> Result<GmailMessagePage, GoogleApiError> {
+    ) -> Result<MailMessagePage, GoogleApiError> {
         self.seen_principals.lock().unwrap().push(principal.clone());
-        Ok(GmailMessagePage {
+        Ok(MailMessagePage {
             account_id: query.account_id,
             messages: vec![summary(query.account_id)],
             next_page_token: None,
@@ -67,10 +68,10 @@ impl GmailCapability for Gmail {
         account: ExternalIdentityId,
         _page_size: u16,
         cancel: &CancellationToken,
-    ) -> Result<GmailMessagePage, GoogleApiError> {
+    ) -> Result<MailMessagePage, GoogleApiError> {
         self.search_messages(
             principal,
-            GmailQuery {
+            MailQuery {
                 account_id: account,
                 query: "is:important is:unread".into(),
                 page_size: 20,
@@ -87,9 +88,9 @@ impl GmailCapability for Gmail {
         account: ExternalIdentityId,
         _message_id: &str,
         _cancel: &CancellationToken,
-    ) -> Result<GmailMessage, GoogleApiError> {
+    ) -> Result<MailMessage, GoogleApiError> {
         self.seen_principals.lock().unwrap().push(principal.clone());
-        Ok(GmailMessage {
+        Ok(MailMessage {
             summary: summary(account),
             body_text: "bounded body".into(),
         })
@@ -103,10 +104,10 @@ impl CalendarCapability for Calendar {
     async fn list_events(
         &self,
         _principal: &PrincipalId,
-        range: CalendarTimeRange,
+        range: CalendarQuery,
         _cancel: &CancellationToken,
-    ) -> Result<CalendarEventPage, GoogleApiError> {
-        Ok(CalendarEventPage {
+    ) -> Result<CalendarEntryPage, GoogleApiError> {
+        Ok(CalendarEntryPage {
             account_id: range.account_id,
             events: Vec::new(),
             next_page_token: None,
@@ -114,16 +115,16 @@ impl CalendarCapability for Calendar {
     }
 }
 
-fn summary(account: ExternalIdentityId) -> GmailMessageSummary {
-    GmailMessageSummary {
-        source: ProviderRecordRef {
+fn summary(account: ExternalIdentityId) -> MailMessageSummary {
+    MailMessageSummary {
+        source: ExternalRecordRef {
             account_id: account,
-            provider_object_id: "message-1".into(),
+            provider_object_id: OpaqueProviderObjectId::new("message-1").unwrap(),
             fetched_at_ms: 1,
             source_timestamp_ms: 1,
-            etag_or_history: Some("history-1".into()),
+            etag_or_history: Some(OpaqueCursor::new("history-1").unwrap()),
         },
-        thread_id: "thread-1".into(),
+        thread_id: OpaqueProviderObjectId::new("thread-1").unwrap(),
         subject: "status".into(),
         from: "sender@example.com".into(),
         snippet: "safe normalized snippet".into(),

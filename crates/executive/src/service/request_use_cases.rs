@@ -9,10 +9,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use corpus::tools::google::is_google_read_capability;
 use fabric::hook::{HookContext, HookPoint};
 use fabric::ui_event::InterruptReason;
 use fabric::{
-    Clock, EvolutionLogEntry, ExternalIdentityState, ExternalScope, GrantState, OperationId,
+    Clock, EvolutionLogEntry, ExternalCapabilityId, ExternalIdentityState, GrantState, OperationId,
     OperationResult, PrincipalContext, PrincipalId, ProcessId, ReflectionEntry, ReflectionTrigger,
     SessionId, ThreadId, LOCAL_OWNER_PRINCIPAL,
 };
@@ -813,8 +814,10 @@ impl ProductionGoogleUseCases {
         let (gmail, calendar) = {
             let repository = repository.lock().unwrap();
             (
-                repository.has_active_scope(ExternalScope::GmailReadonly)?,
-                repository.has_active_scope(ExternalScope::CalendarReadonly)?,
+                repository
+                    .has_active_scope(ExternalCapabilityId::new("mail.read").unwrap())?,
+                repository
+                    .has_active_scope(ExternalCapabilityId::new("calendar.read").unwrap())?,
             )
         };
         let credentials = Arc::new(
@@ -971,14 +974,14 @@ impl GoogleUseCases for ProductionGoogleUseCases {
             let active = identity.state == ExternalIdentityState::Active
                 && grant.state == GrantState::Active
                 && grant.scopes.iter().any(|scope| {
-                    matches!(
-                        scope,
-                        ExternalScope::GmailReadonly
-                            | ExternalScope::CalendarReadonly
-                            | ExternalScope::DriveReadonly
-                    )
+                    [
+                        ExternalCapabilityId::new("mail.read").unwrap(),
+                        ExternalCapabilityId::new("calendar.read").unwrap(),
+                        ExternalCapabilityId::new("file.read").unwrap(),
+                    ]
+                    .contains(scope)
                 })
-                && grant.scopes.iter().all(|scope| !scope.is_write());
+                && grant.scopes.iter().all(is_google_read_capability);
             if !active {
                 return Err(GoogleUseCaseError::Forbidden);
             }

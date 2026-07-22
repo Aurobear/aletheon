@@ -16,7 +16,8 @@ use executive::r#impl::channel::gmail::{
 use executive::r#impl::external::ExternalIdentityRepository;
 use executive::r#impl::goal::ObjectiveStore;
 use fabric::{
-    ApprovalCategory, ApprovalStatus, ExternalIdentityId, ExternalScope, GoalState, PrincipalId,
+    ApprovalCategory, ApprovalStatus, ExternalCapabilityId, ExternalIdentityId, GoalState,
+    PrincipalId,
 };
 use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
@@ -50,7 +51,7 @@ impl Fixture {
                     identity_id: account,
                     provider_subject: "subject".into(),
                     email: "owner@example.com".into(),
-                    scopes: vec![ExternalScope::GmailReadonly],
+                    scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
                 },
                 Some("work".into()),
                 1,

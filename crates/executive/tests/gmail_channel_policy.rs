@@ -7,7 +7,7 @@ use executive::r#impl::channel::gmail::{
     GmailChannelMessage, GmailChannelStore, GmailInsertOutcome,
 };
 use executive::r#impl::external::ExternalIdentityRepository;
-use fabric::{ExternalIdentityId, ExternalScope, PrincipalId};
+use fabric::{ExternalCapabilityId, ExternalIdentityId, PrincipalId};
 use std::collections::HashSet;
 
 struct Fixture {
@@ -31,7 +31,7 @@ impl Fixture {
                     identity_id: account,
                     provider_subject: "subject".into(),
                     email: "owner@example.com".into(),
-                    scopes: vec![ExternalScope::GmailReadonly],
+                    scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
                 },
                 Some("work".into()),
                 1,

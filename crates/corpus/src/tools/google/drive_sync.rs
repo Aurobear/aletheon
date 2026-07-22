@@ -3,9 +3,9 @@
 use super::{GoogleApiError, GoogleDriveAdapter};
 use chrono::DateTime;
 use fabric::{
-    DriveFileMetadata, ExternalContentRef, ExternalEventDraft, ExternalEventEnvelope,
-    ExternalIdentityId, ExternalObjectRef, GoogleEvent, IdentityProvider, PrincipalId,
-    ProviderRecordRef,
+    ExternalContentRef, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
+    ExternalFileMetadata, ExternalIdentityId, ExternalObjectRef, ExternalProviderId,
+    ExternalRecordRef, OpaqueCursor, OpaqueProviderObjectId, PrincipalId,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -252,7 +252,7 @@ impl DriveSynchronizer {
                 change.file_id,
                 object.clone(),
                 change_ms,
-                GoogleEvent::DriveFileDeleted(object),
+                ExternalEvent::FileDeleted(object),
             )?;
             return Ok((envelope, None));
         }
@@ -298,7 +298,7 @@ impl DriveSynchronizer {
         } else {
             None
         };
-        let metadata = DriveFileMetadata {
+        let metadata = ExternalFileMetadata {
             object: object.clone(),
             name: file.name,
             mime_type: file.mime_type,
@@ -312,7 +312,7 @@ impl DriveSynchronizer {
             file.id,
             object,
             change_ms,
-            GoogleEvent::DriveFileUpdated(metadata),
+            ExternalEvent::FileUpdated(metadata),
         )?;
         Ok((event, artifact))
     }
@@ -359,7 +359,7 @@ struct RawFile {
 
 fn object(account: ExternalIdentityId, id: &str, version: &str) -> ExternalObjectRef {
     ExternalObjectRef {
-        provider: IdentityProvider::Google,
+        provider: ExternalProviderId::new("google").unwrap(),
         account_id: account,
         object_id: id.into(),
         object_version: version.into(),
@@ -371,19 +371,23 @@ fn envelope(
     provider_event_id: String,
     object: ExternalObjectRef,
     source_ms: i64,
-    event: GoogleEvent,
+    event: ExternalEvent,
 ) -> Result<ExternalEventEnvelope, GoogleApiError> {
     let now = chrono::Utc::now().timestamp_millis();
     ExternalEventEnvelope::from_draft(ExternalEventDraft {
-        provider: IdentityProvider::Google,
+        provider: ExternalProviderId::new("google").unwrap(),
         account_id: account,
         provider_event_id: Some(provider_event_id),
-        provenance: ProviderRecordRef {
+        provenance: ExternalRecordRef {
             account_id: account,
-            provider_object_id: object.object_id.clone(),
+            provider_object_id: OpaqueProviderObjectId::new(object.object_id.clone())
+                .map_err(|_| GoogleApiError::MalformedResponse)?,
             fetched_at_ms: now,
             source_timestamp_ms: source_ms,
-            etag_or_history: Some(object.object_version.clone()),
+            etag_or_history: Some(
+                OpaqueCursor::new(object.object_version.clone())
+                    .map_err(|_| GoogleApiError::MalformedResponse)?,
+            ),
         },
         object,
         observed_at_ms: now,

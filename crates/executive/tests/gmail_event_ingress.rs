@@ -13,9 +13,9 @@ use executive::r#impl::channel::gmail::{
 use executive::r#impl::external::ExternalIdentityRepository;
 use executive::r#impl::goal::ObjectiveStore;
 use fabric::{
-    ExternalEventDraft, ExternalEventEnvelope, ExternalIdentityId, ExternalObjectRef,
-    ExternalScope, GmailMessageSummary, GoogleEvent, IdentityProvider, MailChange, PrincipalId,
-    ProviderRecordRef,
+    ExternalCapabilityId, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
+    ExternalIdentityId, ExternalObjectRef, ExternalProviderId, ExternalRecordRef, MailChange,
+    MailMessageSummary, OpaqueCursor, OpaqueProviderObjectId, PrincipalId,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -79,7 +79,7 @@ impl Fixture {
                     identity_id: account,
                     provider_subject: "subject".into(),
                     email: "owner@example.com".into(),
-                    scopes: vec![ExternalScope::GmailReadonly],
+                    scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
                 },
                 Some("work".into()),
                 1,
@@ -139,19 +139,19 @@ impl Fixture {
     }
 
     fn event(&self, id: &str) -> ExternalEventEnvelope {
-        let source = ProviderRecordRef {
+        let source = ExternalRecordRef {
             account_id: self.account,
-            provider_object_id: id.into(),
+            provider_object_id: OpaqueProviderObjectId::new(id).unwrap(),
             fetched_at_ms: 101,
             source_timestamp_ms: 100,
-            etag_or_history: Some("7".into()),
+            etag_or_history: Some(OpaqueCursor::new("7").unwrap()),
         };
         ExternalEventEnvelope::from_draft(ExternalEventDraft {
-            provider: IdentityProvider::Google,
+            provider: ExternalProviderId::new("google").unwrap(),
             account_id: self.account,
             provider_event_id: Some(format!("history-{id}")),
             object: ExternalObjectRef {
-                provider: IdentityProvider::Google,
+                provider: ExternalProviderId::new("google").unwrap(),
                 account_id: self.account,
                 object_id: id.into(),
                 object_version: "7".into(),
@@ -159,10 +159,10 @@ impl Fixture {
             observed_at_ms: 200,
             source_timestamp_ms: 100,
             provenance: source.clone(),
-            event: GoogleEvent::MailReceived(MailChange {
-                message: GmailMessageSummary {
+            event: ExternalEvent::MailReceived(MailChange {
+                message: MailMessageSummary {
                     source,
-                    thread_id: format!("thread-{id}"),
+                    thread_id: OpaqueProviderObjectId::new(format!("thread-{id}")).unwrap(),
                     subject: "[GOAL] release".into(),
                     from: "metadata-only@example.invalid".into(),
                     snippet: String::new(),

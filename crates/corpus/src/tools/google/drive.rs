@@ -1,7 +1,7 @@
 //! Minimal read-only Google Drive API adapter used by delta synchronization.
 
 use super::{GoogleApiClient, GoogleApiError};
-use fabric::{ExternalIdentityId, ExternalScope, PrincipalId};
+use fabric::{ExternalCapabilityId, ExternalIdentityId, PrincipalId};
 use serde::de::DeserializeOwned;
 use tokio_util::sync::CancellationToken;
 
@@ -34,7 +34,7 @@ impl GoogleDriveAdapter {
             .get_json(
                 principal,
                 account,
-                ExternalScope::DriveReadonly,
+                ExternalCapabilityId::new("file.read").unwrap(),
                 url,
                 cancel,
             )
@@ -62,7 +62,7 @@ impl GoogleDriveAdapter {
             .get_bounded_bytes(
                 principal,
                 account,
-                ExternalScope::DriveReadonly,
+                ExternalCapabilityId::new("file.read").unwrap(),
                 url,
                 max_bytes,
                 cancel,

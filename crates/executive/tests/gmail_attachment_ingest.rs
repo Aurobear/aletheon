@@ -6,7 +6,7 @@ use executive::r#impl::channel::gmail::ingest::{
     GmailMimePart,
 };
 use executive::r#impl::external::ExternalIdentityRepository;
-use fabric::{ExternalIdentityId, ExternalScope, PrincipalId};
+use fabric::{ExternalCapabilityId, ExternalIdentityId, PrincipalId};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_util::sync::CancellationToken;
@@ -32,7 +32,7 @@ impl Fixture {
                     identity_id: account,
                     provider_subject: "subject".into(),
                     email: "owner@example.com".into(),
-                    scopes: vec![ExternalScope::GmailReadonly],
+                    scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
                 },
                 None,
                 1,

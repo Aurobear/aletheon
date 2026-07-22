@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
-use corpus::tools::google::oauth::{GoogleOAuthProvider, OAuthClientConfig};
+use corpus::tools::google::oauth::{GoogleCapability, GoogleOAuthProvider, OAuthClientConfig};
 use corpus::tools::mcp::token_store::{TokenEntry, TokenKey, TokenStore};
 use executive::r#impl::external::{ExternalIdentityRepository, GoogleIntegration};
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,
 };
-use fabric::{ExternalIdentityId, ExternalScope, IdentityProvider, PrincipalId};
+use fabric::{ExternalCapabilityId, ExternalIdentityId, ExternalProviderId, PrincipalId};
 use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
@@ -201,7 +201,7 @@ fn account_binding_and_revocation_survive_repository_restart() {
                 identity_id,
                 provider_subject: "subject-7".into(),
                 email: "owner@example.com".into(),
-                scopes: vec![ExternalScope::GmailReadonly],
+                scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
             },
             Some("work".into()),
             10,
@@ -232,7 +232,7 @@ async fn expired_token_refresh_is_singleflight_and_transcript_safe() {
         StatusCode::OK,
         format!(
             r#"{{"access_token":"{TOKEN_SENTINEL}","expires_in":3600,"token_type":"Bearer","scope":"{}"}}"#,
-            ExternalScope::GmailReadonly.oauth_name()
+            GoogleCapability::MailRead.oauth_scope()
         ),
     )])
     .await;
@@ -240,12 +240,12 @@ async fn expired_token_refresh_is_singleflight_and_transcript_safe() {
     let identity = ExternalIdentityId::new();
     let mut tokens = TokenStore::new(dir.path().join("tokens.json")).unwrap();
     tokens.set_key(
-        TokenKey::external(IdentityProvider::Google, identity),
+        TokenKey::external(ExternalProviderId::new("google").unwrap(), identity),
         TokenEntry {
             access_token: "expired-access".into(),
             refresh_token: Some("refresh-secret".into()),
             expires_at: 0,
-            scopes: vec![ExternalScope::GmailReadonly.oauth_name().into()],
+            scopes: vec![GoogleCapability::MailRead.oauth_scope().into()],
             token_type: "Bearer".into(),
         },
     );
@@ -261,7 +261,7 @@ async fn expired_token_refresh_is_singleflight_and_transcript_safe() {
             userinfo_url: Some(format!("{endpoint}/userinfo")),
             client_auth_method: corpus::tools::google::oauth::OAuthClientAuthMethod::None,
         },
-        vec![ExternalScope::GmailReadonly],
+        vec![ExternalCapabilityId::new("mail.read").unwrap()],
         tokens,
         Arc::new(TestClock::default()),
     )
@@ -296,12 +296,12 @@ async fn refresh_failure_returns_only_reauthorization_status() {
     let identity = ExternalIdentityId::new();
     let mut tokens = TokenStore::new(dir.path().join("tokens.json")).unwrap();
     tokens.set_key(
-        TokenKey::external(IdentityProvider::Google, identity),
+        TokenKey::external(ExternalProviderId::new("google").unwrap(), identity),
         TokenEntry {
             access_token: "expired".into(),
             refresh_token: Some("refresh-do-not-print".into()),
             expires_at: 0,
-            scopes: vec![ExternalScope::GmailReadonly.oauth_name().into()],
+            scopes: vec![GoogleCapability::MailRead.oauth_scope().into()],
             token_type: "Bearer".into(),
         },
     );
@@ -316,7 +316,7 @@ async fn refresh_failure_returns_only_reauthorization_status() {
             userinfo_url: None,
             client_auth_method: corpus::tools::google::oauth::OAuthClientAuthMethod::None,
         },
-        vec![ExternalScope::GmailReadonly],
+        vec![ExternalCapabilityId::new("mail.read").unwrap()],
         tokens,
         Arc::new(TestClock::default()),
     )

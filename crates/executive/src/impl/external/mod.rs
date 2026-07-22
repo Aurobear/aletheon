@@ -5,9 +5,12 @@ mod repository;
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleOAuthProvider;
 use corpus::tools::google::{
-    GoogleAccessToken, GoogleAccountResolver, GoogleApiError, GoogleCredentialSource,
+    is_google_read_capability, is_google_write_capability, GoogleAccessToken,
+    GoogleAccountResolver, GoogleApiError, GoogleCredentialSource,
 };
-use fabric::{ExternalIdentityId, ExternalIdentityState, ExternalScope, GrantState, PrincipalId};
+use fabric::{
+    ExternalCapabilityId, ExternalIdentityId, ExternalIdentityState, GrantState, PrincipalId,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -150,14 +153,14 @@ impl gateway::handlers::google_read::GoogleChannelAccountDirectory for GoogleInt
             .filter(|(identity, grant)| {
                 identity.state == ExternalIdentityState::Active
                     && grant.state == GrantState::Active
-                    && grant.scopes.iter().all(|scope| !scope.is_write())
+                    && grant.scopes.iter().all(is_google_read_capability)
                     && grant.scopes.iter().any(|scope| {
-                        matches!(
-                            scope,
-                            ExternalScope::GmailReadonly
-                                | ExternalScope::CalendarReadonly
-                                | ExternalScope::DriveReadonly
-                        )
+                        [
+                            ExternalCapabilityId::new("mail.read").unwrap(),
+                            ExternalCapabilityId::new("calendar.read").unwrap(),
+                            ExternalCapabilityId::new("file.read").unwrap(),
+                        ]
+                        .contains(scope)
                     })
             })
             .map(|(identity, _)| identity.alias.unwrap_or_else(|| identity.id.to_string()))
@@ -200,9 +203,9 @@ impl ExecutiveGoogleCredentialSource {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        required_scope: ExternalScope,
+        required_scope: ExternalCapabilityId,
     ) -> Result<(), GoogleApiError> {
-        if required_scope.is_write() {
+        if is_google_write_capability(&required_scope) {
             return Err(GoogleApiError::ScopeDenied);
         }
         let binding = self
@@ -215,7 +218,7 @@ impl ExecutiveGoogleCredentialSource {
         if binding.0.state != ExternalIdentityState::Active
             || binding.1.state != GrantState::Active
             || !binding.1.scopes.contains(&required_scope)
-            || binding.1.scopes.iter().any(|scope| scope.is_write())
+            || !binding.1.scopes.iter().all(is_google_read_capability)
         {
             return Err(GoogleApiError::ScopeDenied);
         }
@@ -229,7 +232,7 @@ impl GoogleCredentialSource for ExecutiveGoogleCredentialSource {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        required_scope: ExternalScope,
+        required_scope: ExternalCapabilityId,
     ) -> Result<GoogleAccessToken, GoogleApiError> {
         self.authorize(principal, account, required_scope)?;
         let mut oauth = self.oauth.lock().await;
@@ -244,7 +247,7 @@ impl GoogleCredentialSource for ExecutiveGoogleCredentialSource {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        required_scope: ExternalScope,
+        required_scope: ExternalCapabilityId,
     ) -> Result<GoogleAccessToken, GoogleApiError> {
         self.authorize(principal, account, required_scope)?;
         self.oauth.lock().await.refresh_credential(account).await

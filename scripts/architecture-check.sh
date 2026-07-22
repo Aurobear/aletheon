@@ -113,6 +113,7 @@ metrics = {
     "PROVIDER_ERROR_TEXT_BRANCHES": 0,
     "FORBIDDEN_INFRA_IMPORTS": 0,
     "CORE_OPAQUE_VALUE_INSPECTIONS": 0,
+    "FABRIC_PROVIDER_TYPES": 0,
 }
 for rel, body in sources:
     lines = body.splitlines()
@@ -122,6 +123,8 @@ for rel, body in sources:
                    for _, rx, allowed in identifier_rules):
                 metrics["CORE_EXTERNAL_IDENTIFIER_HITS"] += 1
     metrics["PUBLIC_IMPL_ADAPTER_EXPORTS"] += sum(bool(re.search(r"\bpub\s+(?:mod|use)\s+(?:r#impl|impl|adapter|adapters)\b", line)) for line in lines)
+    if rel.startswith("crates/fabric/"):
+        metrics["FABRIC_PROVIDER_TYPES"] += sum(bool(re.search(r"\b(?:pub\s+)?(?:struct|enum|trait|type)\s+\w*(?:Google|Gmail|Drive|Anthropic|OpenAi|Ollama|Telegram)\w*", line)) for line in lines)
     metrics["CROSS_CRATE_IMPL_REFERENCES"] += sum(bool(re.search(r"\b(?:agora|cognit|corpus|dasein|executive|gateway|hardware|metacog|mnemosyne)::(?:r#impl|impl)::", line)) for line in lines)
     if (core(rel) and not any(part in rel for part in
             ("/adapter/", "/adapters/", "/impl/", "/composition/", "/factory", "/registry"))):

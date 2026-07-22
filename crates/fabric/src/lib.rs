@@ -66,9 +66,9 @@ pub use types::evidence;
 pub use types::extension;
 pub use types::external_event;
 pub use types::external_identity;
+pub use types::external_source;
 pub use types::genome;
 pub use types::goal;
-pub use types::google;
 pub use types::grounding;
 pub use types::hook;
 pub use types::hook_ext;
@@ -235,22 +235,23 @@ pub use types::extension::{
     ExtensionId, ExtensionKind, ExtensionOrigin, ExtensionSnapshot,
 };
 pub use types::external_event::{
-    DriveFileMetadata, ExternalContentRef, ExternalEventDraft, ExternalEventEnvelope,
-    ExternalEventError, ExternalEventId, ExternalObjectRef, GoogleEvent, MailChange,
+    ExternalContentRef, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
+    ExternalEventError, ExternalEventId, ExternalFileMetadata, ExternalObjectRef, MailChange,
     EXTERNAL_EVENT_SCHEMA_VERSION,
 };
 pub use types::external_identity::{
-    CapabilityGrant, ExternalIdentity, ExternalIdentityId, ExternalIdentityState, ExternalScope,
-    GrantState, IdentityProvider, LOCAL_OWNER_PRINCIPAL,
+    CapabilityGrant, ExternalCapabilityId, ExternalIdentity, ExternalIdentityContractError,
+    ExternalIdentityId, ExternalIdentityState, ExternalProviderId, GrantState,
+    LOCAL_OWNER_PRINCIPAL,
+};
+pub use types::external_source::{
+    CalendarEntry, CalendarEntryPage, CalendarQuery, ExternalChangeBatch, ExternalRecordRef,
+    ExternalSourceContractError, MailMessage, MailMessagePage, MailMessageSummary, MailQuery,
+    OpaqueCursor, OpaqueProviderObjectId, MAX_EXTERNAL_OBJECT_ID_BYTES,
 };
 pub use types::genome::Genome;
 pub use types::goal::{
     GoalBudget, GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason,
-};
-pub use types::google::{
-    CalendarEvent, CalendarEventPage, CalendarTimeRange, GmailMessage, GmailMessagePage,
-    GmailMessageSummary, GmailQuery, GoogleContractError, ProviderRecordRef,
-    MAX_GOOGLE_PROVIDER_ID_BYTES,
 };
 pub use types::hook::{HookContext, HookPoint, HookResult, HookToolResult};
 pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};

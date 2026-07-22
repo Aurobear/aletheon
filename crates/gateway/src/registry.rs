@@ -26,7 +26,7 @@ pub enum IntentKind {
     Chat,
     GoalCommand,
     Unsupported,
-    /// Event-sourced Gmail ingest (`GoogleEvent::MailReceived`). Never
+    /// Event-sourced Gmail ingest (`ExternalEvent::MailReceived`). Never
     /// produced by [`classify_intent`](super::intent::classify_intent) —
     /// this key exists only so Gmail ingest can be registered and looked up
     /// through the same [`IntentKind`] namespace as chat capabilities,
@@ -116,7 +116,7 @@ impl CapabilityRegistry {
 // ---------------------------------------------------------------------------
 
 /// A capability triggered by an inbound *event* rather than a classified
-/// chat [`Intent`] — e.g. Gmail's `GoogleEvent::MailReceived` ingest.
+/// chat [`Intent`] — e.g. Gmail's `ExternalEvent::MailReceived` ingest.
 ///
 /// Deliberately separate from [`CapabilityHandler`]: event capabilities are
 /// invoked directly by their event source (see `google/event_dispatcher.rs`),

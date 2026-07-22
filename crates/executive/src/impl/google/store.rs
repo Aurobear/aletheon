@@ -310,7 +310,10 @@ impl GoogleSyncStore {
                 |row| row.get::<_, String>(0),
             )
             .optional()?
-            .map(|json| serde_json::from_str(&json).map_err(Into::into))
+            .map(|json| {
+                ExternalEventEnvelope::from_persisted_json(&json)
+                    .map_err(|error| SyncStoreError::Storage(error.to_string()))
+            })
             .transpose()
     }
 
@@ -470,7 +473,8 @@ impl GoogleSyncStore {
                 )?;
                 claims.push(GoogleOutboxClaim {
                     outbox_id: id,
-                    event: serde_json::from_str(&json)?,
+                    event: ExternalEventEnvelope::from_persisted_json(&json)
+                        .map_err(|error| SyncStoreError::Storage(error.to_string()))?,
                     attempt_count: attempts,
                 });
             }
@@ -846,7 +850,7 @@ fn subscription_matches(subscription: &GoogleSubscription, event: &ExternalEvent
     if query.important_only {
         return matches!(
             &event.event,
-            fabric::GoogleEvent::MailReceived(change) | fabric::GoogleEvent::MailUpdated(change)
+            fabric::ExternalEvent::MailReceived(change) | fabric::ExternalEvent::MailUpdated(change)
                 if change.message.important
         );
     }
@@ -938,9 +942,11 @@ mod tests {
     use crate::r#impl::external::ExternalIdentityRepository;
     use corpus::tools::google::oauth::GoogleBinding;
     use fabric::{
-        ExternalEventDraft, ExternalObjectRef, ExternalScope, GmailMessageSummary, GoogleEvent,
-        IdentityProvider, MailChange, PrincipalId, ProviderRecordRef,
+        ExternalCapabilityId, ExternalEvent, ExternalEventDraft, ExternalObjectRef,
+        ExternalProviderId, ExternalRecordRef, MailChange, MailMessageSummary, OpaqueCursor,
+        OpaqueProviderObjectId, PrincipalId,
     };
+    use sha2::{Digest, Sha256};
 
     struct Fixture {
         _dir: tempfile::TempDir,
@@ -962,7 +968,7 @@ mod tests {
                         identity_id: account,
                         provider_subject: "subject".into(),
                         email: "owner@example.com".into(),
-                        scopes: vec![ExternalScope::GmailReadonly],
+                        scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
                     },
                     Some("work".into()),
                     1,
@@ -983,30 +989,30 @@ mod tests {
 
         fn event(&self, version: &str, source_timestamp_ms: i64) -> ExternalEventEnvelope {
             let object = ExternalObjectRef {
-                provider: IdentityProvider::Google,
+                provider: ExternalProviderId::new("google").unwrap(),
                 account_id: self.account,
                 object_id: "message-1".into(),
                 object_version: version.into(),
             };
-            let provenance = ProviderRecordRef {
+            let provenance = ExternalRecordRef {
                 account_id: self.account,
-                provider_object_id: "message-1".into(),
+                provider_object_id: OpaqueProviderObjectId::new("message-1").unwrap(),
                 fetched_at_ms: source_timestamp_ms + 10,
                 source_timestamp_ms,
-                etag_or_history: Some(version.into()),
+                etag_or_history: Some(OpaqueCursor::new(version).unwrap()),
             };
             ExternalEventEnvelope::from_draft(ExternalEventDraft {
-                provider: IdentityProvider::Google,
+                provider: ExternalProviderId::new("google").unwrap(),
                 account_id: self.account,
                 provider_event_id: Some(format!("history-{version}")),
                 object,
                 observed_at_ms: source_timestamp_ms + 10,
                 source_timestamp_ms,
                 provenance: provenance.clone(),
-                event: GoogleEvent::MailUpdated(MailChange {
-                    message: GmailMessageSummary {
+                event: ExternalEvent::MailUpdated(MailChange {
+                    message: MailMessageSummary {
                         source: provenance,
-                        thread_id: "thread".into(),
+                        thread_id: OpaqueProviderObjectId::new("thread").unwrap(),
                         subject: "subject".into(),
                         from: "sender@example.com".into(),
                         snippet: "snippet".into(),
@@ -1169,7 +1175,7 @@ mod tests {
             .commit(fixture.commit(fixture.event("v1", 50), "h1", "h2", 0))
             .unwrap();
         let mut deletion = fixture.event("v2", 80);
-        deletion.event = GoogleEvent::MailDeleted(deletion.object.clone());
+        deletion.event = ExternalEvent::MailDeleted(deletion.object.clone());
         deletion = ExternalEventEnvelope::from_draft(ExternalEventDraft {
             provider: deletion.provider,
             account_id: deletion.account_id,
@@ -1206,5 +1212,88 @@ mod tests {
                 Err(SyncStoreError::InvalidInput)
             ));
         }
+    }
+
+    #[test]
+    fn persisted_v1_rows_dual_read_and_unknown_versions_preserve_source() {
+        fn sha256(bytes: &[u8]) -> String {
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        }
+
+        let fixture = Fixture::new();
+        let current = fixture.event("legacy", 50);
+        let event_component = current.provider_event_id.as_deref().unwrap();
+        let dedup_key = sha256(
+            format!(
+                "Google|{}|{}|{}|{}",
+                current.account_id,
+                current.event.kind(),
+                event_component,
+                current.object.object_version
+            )
+            .as_bytes(),
+        );
+        let legacy_id = ExternalEventId::from_dedup_key(&dedup_key);
+        let payload_hash = sha256(&serde_json::to_vec(&current.event).unwrap());
+        let mut legacy_json = serde_json::to_value(&current).unwrap();
+        legacy_json["id"] = serde_json::json!(legacy_id);
+        legacy_json["dedup_key"] = serde_json::json!(dedup_key);
+        legacy_json["payload_hash"] = serde_json::json!(payload_hash);
+        legacy_json["schema_version"] = serde_json::json!(1);
+        let frozen_json = serde_json::to_string(&legacy_json).unwrap();
+        fixture
+            .store
+            .db
+            .execute(
+                "INSERT INTO google_events(
+                    event_id,account_id,stream,dedup_key,event_kind,object_id,object_version,
+                    source_timestamp_ms,observed_at_ms,payload_hash,envelope_json,created_at_ms
+                 ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+                params![
+                    legacy_id.to_string(),
+                    fixture.account.to_string(),
+                    SyncStream::GmailHistory.as_str(),
+                    dedup_key,
+                    current.event.kind(),
+                    current.object.object_id,
+                    current.object.object_version,
+                    current.source_timestamp_ms,
+                    current.observed_at_ms,
+                    payload_hash,
+                    frozen_json,
+                    60,
+                ],
+            )
+            .unwrap();
+
+        let decoded = fixture.store.event(legacy_id).unwrap().unwrap();
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.id, legacy_id);
+
+        let mut unknown_json = legacy_json;
+        unknown_json["schema_version"] = serde_json::json!(99);
+        let unknown_json = serde_json::to_string(&unknown_json).unwrap();
+        fixture
+            .store
+            .db
+            .execute(
+                "UPDATE google_events SET envelope_json=?1 WHERE event_id=?2",
+                params![unknown_json, legacy_id.to_string()],
+            )
+            .unwrap();
+        assert!(fixture.store.event(legacy_id).is_err());
+        let retained: String = fixture
+            .store
+            .db
+            .query_row(
+                "SELECT envelope_json FROM google_events WHERE event_id=?1",
+                [legacy_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, unknown_json);
     }
 }

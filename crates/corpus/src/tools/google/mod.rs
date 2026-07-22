@@ -26,6 +26,11 @@ pub use gmail::{
 pub use gmail_sync::{
     GmailHistorySyncConfig, GmailHistorySynchronizer, GmailSyncBatch, GmailSyncHealthEvent,
 };
+pub use oauth::{
+    canonical_google_capability, classify_google_capability, google_capability, google_provider_id,
+    is_google_read_capability, is_google_write_capability, validate_google_read_grant,
+    GoogleBinding, GoogleCapability,
+};
 pub use tools::{
     GoogleAccountResolver, GoogleCalendarListTool, GoogleGmailReadTool, GoogleGmailSearchTool,
 };

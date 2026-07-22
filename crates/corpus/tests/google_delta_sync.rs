@@ -4,7 +4,7 @@ use corpus::tools::google::{
     DriveSynchronizer, GoogleAccessToken, GoogleApiClient, GoogleApiEndpoints, GoogleApiError,
     GoogleCalendarAdapter, GoogleCredentialSource, GoogleDriveAdapter,
 };
-use fabric::{ExternalIdentityId, ExternalScope, GoogleEvent, PrincipalId};
+use fabric::{ExternalCapabilityId, ExternalEvent, ExternalIdentityId, PrincipalId};
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};
 use hyper::service::service_fn;
@@ -25,7 +25,7 @@ impl GoogleCredentialSource for Credentials {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        scope: ExternalScope,
+        scope: ExternalCapabilityId,
     ) -> Result<GoogleAccessToken, GoogleApiError> {
         self.authorize(principal, account, scope)?;
         GoogleAccessToken::new("access-secret".into())
@@ -35,7 +35,7 @@ impl GoogleCredentialSource for Credentials {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        scope: ExternalScope,
+        scope: ExternalCapabilityId,
     ) -> Result<GoogleAccessToken, GoogleApiError> {
         self.authorize(principal, account, scope)?;
         GoogleAccessToken::new("refreshed-secret".into())
@@ -47,15 +47,17 @@ impl Credentials {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        scope: ExternalScope,
+        scope: ExternalCapabilityId,
     ) -> Result<(), GoogleApiError> {
         if principal != &self.owner || account != self.account {
             return Err(GoogleApiError::UnauthorizedAccount);
         }
-        if !matches!(
-            scope,
-            ExternalScope::CalendarReadonly | ExternalScope::DriveReadonly
-        ) {
+        if ![
+            ExternalCapabilityId::new("calendar.read").unwrap(),
+            ExternalCapabilityId::new("file.read").unwrap(),
+        ]
+        .contains(&scope)
+        {
             return Err(GoogleApiError::ScopeDenied);
         }
         Ok(())
@@ -200,7 +202,7 @@ async fn calendar_initial_window_paginates_recurring_instances_and_continues_wit
     assert!(initial
         .events
         .iter()
-        .all(|event| matches!(event.event, GoogleEvent::CalendarEventCreated(_))));
+        .all(|event| matches!(event.event, ExternalEvent::CalendarEventCreated(_))));
 
     let delta = sync
         .synchronize(
@@ -215,7 +217,7 @@ async fn calendar_initial_window_paginates_recurring_instances_and_continues_wit
     assert_eq!(delta.successor_cursor, "sync-2");
     assert!(matches!(
         delta.events[0].event,
-        GoogleEvent::CalendarEventDeleted(_)
+        ExternalEvent::CalendarEventDeleted(_)
     ));
     let requests = requests.lock().unwrap();
     assert!(requests[0].contains("timeMin=") && requests[0].contains("showDeleted=true"));
@@ -316,14 +318,14 @@ async fn drive_baseline_and_changes_enforce_selection_shared_drive_and_content_p
     assert_eq!(batch.artifacts[0].bytes, b"data");
     assert!(matches!(
         batch.events[1].event,
-        GoogleEvent::DriveFileDeleted(_)
+        ExternalEvent::FileDeleted(_)
     ));
     match &batch.events[2].event {
-        GoogleEvent::DriveFileUpdated(file) => assert!(file.content.is_none()),
+        ExternalEvent::FileUpdated(file) => assert!(file.content.is_none()),
         other => panic!("unexpected event: {other:?}"),
     }
     match &batch.events[3].event {
-        GoogleEvent::DriveFileUpdated(file) => assert!(file.content.is_none()),
+        ExternalEvent::FileUpdated(file) => assert!(file.content.is_none()),
         other => panic!("unexpected event: {other:?}"),
     }
     let requests = requests.lock().unwrap();

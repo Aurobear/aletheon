@@ -1,9 +1,12 @@
 use crate::r#impl::goal::migrations;
 use async_trait::async_trait;
-use corpus::tools::google::oauth::GoogleBinding;
+use corpus::tools::google::{
+    canonical_google_capability, is_google_read_capability, validate_google_read_grant,
+    GoogleBinding,
+};
 use fabric::{
-    CapabilityGrant, ExternalIdentity, ExternalIdentityId, ExternalIdentityState, ExternalScope,
-    GrantState, IdentityProvider, PrincipalId,
+    CapabilityGrant, ExternalCapabilityId, ExternalIdentity, ExternalIdentityId,
+    ExternalIdentityState, ExternalProviderId, GrantState, PrincipalId,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::fmt;
@@ -33,7 +36,7 @@ impl ExternalIdentityRepository {
     ) -> Result<(ExternalIdentity, CapabilityGrant), ExternalRepositoryError> {
         let identity = ExternalIdentity {
             id: binding.identity_id,
-            provider: IdentityProvider::Google,
+            provider: ExternalProviderId::new("google").unwrap(),
             principal_id: principal_id.clone(),
             provider_subject: binding.provider_subject,
             email: binding.email,
@@ -52,7 +55,7 @@ impl ExternalIdentityRepository {
             revoked_at_ms: None,
             version: 0,
         };
-        grant.validate_m6_read_only()?;
+        validate_google_read_grant(&grant)?;
         let scopes = serde_json::to_string(&grant.scopes)?;
         let tx = self.db.unchecked_transaction()?;
         let inserted = tx.execute(
@@ -144,7 +147,10 @@ impl ExternalIdentityRepository {
         Ok(bindings)
     }
 
-    pub fn has_active_scope(&self, scope: ExternalScope) -> Result<bool, ExternalRepositoryError> {
+    pub fn has_active_scope(
+        &self,
+        scope: ExternalCapabilityId,
+    ) -> Result<bool, ExternalRepositoryError> {
         let mut statement = self.db.prepare(
             "SELECT g.scopes_json FROM capability_grants g
              JOIN external_identities i USING(identity_id)
@@ -154,8 +160,8 @@ impl ExternalIdentityRepository {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?
         {
-            let scopes: Vec<ExternalScope> = serde_json::from_str(&scopes_json)?;
-            if scopes.contains(&scope) && scopes.iter().all(|candidate| !candidate.is_write()) {
+            let scopes: Vec<ExternalCapabilityId> = serde_json::from_str(&scopes_json)?;
+            if scopes.contains(&scope) && scopes.iter().all(is_google_read_capability) {
                 return Ok(true);
             }
         }
@@ -242,7 +248,7 @@ impl ExternalIdentityRepository {
         principal_id: &PrincipalId,
         identity_id: ExternalIdentityId,
         expected_version: u64,
-        scopes: Vec<ExternalScope>,
+        scopes: Vec<ExternalCapabilityId>,
         now_ms: i64,
     ) -> Result<CapabilityGrant, ExternalRepositoryError> {
         let (_, current) = self
@@ -262,7 +268,7 @@ impl ExternalIdentityRepository {
             revoked_at_ms: None,
             version: current.version + 1,
         };
-        next.validate_m6_read_only()?;
+        validate_google_read_grant(&next)?;
         let tx = self.db.unchecked_transaction()?;
         let changed = tx.execute(
             "UPDATE capability_grants SET scopes_json=?1,version=?2
@@ -454,7 +460,7 @@ fn decode_binding(row: &Row<'_>) -> rusqlite::Result<(ExternalIdentity, Capabili
     }
     let identity = ExternalIdentity {
         id: identity_id,
-        provider: IdentityProvider::Google,
+        provider: ExternalProviderId::new("google").unwrap(),
         principal_id: PrincipalId(row.get(2)?),
         provider_subject: row.get(3)?,
         email: row.get(4)?,
@@ -469,11 +475,20 @@ fn decode_binding(row: &Row<'_>) -> rusqlite::Result<(ExternalIdentity, Capabili
         version: row.get(9)?,
     };
     let scopes_json: String = row.get(10)?;
+    let decoded_scopes: Vec<ExternalCapabilityId> =
+        serde_json::from_str(&scopes_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                10,
+                rusqlite::types::Type::Text,
+                error.into(),
+            )
+        })?;
     let grant = CapabilityGrant {
         identity_id,
-        scopes: serde_json::from_str(&scopes_json).map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(10, rusqlite::types::Type::Text, error.into())
-        })?,
+        scopes: decoded_scopes
+            .iter()
+            .map(|scope| canonical_google_capability(scope).unwrap_or_else(|| scope.clone()))
+            .collect(),
         state: match row.get::<_, String>(11)?.as_str() {
             "active" => GrantState::Active,
             "revoked" => GrantState::Revoked,
@@ -518,7 +533,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn binding(subject: &str, email: &str, scopes: Vec<ExternalScope>) -> GoogleBinding {
+    fn binding(subject: &str, email: &str, scopes: Vec<ExternalCapabilityId>) -> GoogleBinding {
         GoogleBinding {
             identity_id: ExternalIdentityId::new(),
             provider_subject: subject.into(),
@@ -553,7 +568,10 @@ mod tests {
                     binding(
                         subject,
                         email,
-                        vec![ExternalScope::OpenId, ExternalScope::GmailReadonly],
+                        vec![
+                            ExternalCapabilityId::new("identity.openid").unwrap(),
+                            ExternalCapabilityId::new("mail.read").unwrap(),
+                        ],
                     ),
                     None,
                     10,
@@ -570,7 +588,11 @@ mod tests {
         assert_ne!(first.0.id, second.0.id);
         let duplicate = f.repo.bind_google(
             &f.owner,
-            binding("subject-1", "one@example.com", vec![ExternalScope::OpenId]),
+            binding(
+                "subject-1",
+                "one@example.com",
+                vec![ExternalCapabilityId::new("identity.openid").unwrap()],
+            ),
             None,
             20,
         );
@@ -596,7 +618,7 @@ mod tests {
             binding(
                 "attacker-subject",
                 "attacker@example.com",
-                vec![ExternalScope::GmailSend],
+                vec![ExternalCapabilityId::new("mail.send").unwrap()],
             ),
             None,
             10,
@@ -669,17 +691,20 @@ mod tests {
                 &f.owner,
                 identity.id,
                 grant.version,
-                vec![ExternalScope::OpenId],
+                vec![ExternalCapabilityId::new("identity.openid").unwrap()],
                 20,
             )
             .unwrap();
-        assert_eq!(reduced.scopes, vec![ExternalScope::OpenId]);
+        assert_eq!(
+            reduced.scopes,
+            vec![ExternalCapabilityId::new("identity.openid").unwrap()]
+        );
         assert!(matches!(
             f.repo.update_grant(
                 &f.owner,
                 identity.id,
                 grant.version,
-                vec![ExternalScope::OpenId],
+                vec![ExternalCapabilityId::new("identity.openid").unwrap()],
                 30
             ),
             Err(ExternalRepositoryError::VersionConflict { .. })

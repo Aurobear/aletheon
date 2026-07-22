@@ -8,7 +8,9 @@ use executive::r#impl::channel::gmail::report::{
 };
 use executive::r#impl::external::ExternalIdentityRepository;
 use executive::r#impl::goal::ObjectiveStore;
-use fabric::{ApprovalId, ExternalIdentityId, ExternalScope, GoalBudget, GoalSpec, PrincipalId};
+use fabric::{
+    ApprovalId, ExternalCapabilityId, ExternalIdentityId, GoalBudget, GoalSpec, PrincipalId,
+};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -37,7 +39,7 @@ impl Fixture {
                     identity_id: account,
                     provider_subject: "subject".into(),
                     email: "owner@example.com".into(),
-                    scopes: vec![ExternalScope::GmailReadonly],
+                    scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
                 },
                 Some("work".into()),
                 1,
@@ -81,8 +83,8 @@ impl Fixture {
                  WHERE identity_id=?2 AND state='active'",
                 rusqlite::params![
                     serde_json::to_string(&vec![
-                        ExternalScope::GmailReadonly,
-                        ExternalScope::GmailSend,
+                        ExternalCapabilityId::new("mail.read").unwrap(),
+                        ExternalCapabilityId::new("mail.send").unwrap(),
                     ])
                     .unwrap(),
                     self.account.to_string()

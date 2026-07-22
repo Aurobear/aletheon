@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use corpus::tools::google::{
     GmailIngressCapability, GmailIngressMessage, GmailIngressPart, GoogleApiError,
 };
-use fabric::{ExternalEventEnvelope, ExternalIdentityId, GoogleEvent, PrincipalId};
+use fabric::{ExternalEvent, ExternalEventEnvelope, ExternalIdentityId, PrincipalId};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -138,7 +138,7 @@ impl GmailGoalEventIngress {
         event: &ExternalEventEnvelope,
         cancel: &CancellationToken,
     ) -> Result<bool, String> {
-        let GoogleEvent::MailReceived(change) = &event.event else {
+        let ExternalEvent::MailReceived(change) = &event.event else {
             return Ok(false);
         };
         let Some(policy) = self.policies.get(&event.account_id) else {
@@ -231,12 +231,12 @@ fn validate_event_binding(
     event: &ExternalEventEnvelope,
     message: &GmailIngressMessage,
 ) -> Result<(), String> {
-    let GoogleEvent::MailReceived(change) = &event.event else {
+    let ExternalEvent::MailReceived(change) = &event.event else {
         return Err("gmail_ingress_event_mismatch".into());
     };
     if message.account_id != event.account_id
-        || message.message_id != change.message.source.provider_object_id
-        || message.thread_id != change.message.thread_id
+        || message.message_id != change.message.source.provider_object_id.as_str()
+        || message.thread_id != change.message.thread_id.as_str()
         || message.source_timestamp_ms != event.source_timestamp_ms
     {
         return Err("gmail_ingress_event_mismatch".into());

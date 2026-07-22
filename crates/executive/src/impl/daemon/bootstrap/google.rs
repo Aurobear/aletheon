@@ -42,16 +42,18 @@ pub(super) fn register_configured_google_read_tools(
     let repository = ExternalIdentityRepository::open(objective_db_path)
         .context("opening external identity repository")?;
     let active_bindings = repository.list_active()?;
-    let gmail_enabled = repository.has_active_scope(fabric::ExternalScope::GmailReadonly)?;
-    let calendar_enabled = repository.has_active_scope(fabric::ExternalScope::CalendarReadonly)?;
+    let gmail_enabled = repository
+        .has_active_scope(fabric::ExternalCapabilityId::new("mail.read").unwrap())?;
+    let calendar_enabled = repository
+        .has_active_scope(fabric::ExternalCapabilityId::new("calendar.read").unwrap())?;
     let mut scopes = vec![
-        fabric::ExternalScope::OpenId,
-        fabric::ExternalScope::UserInfoEmail,
-        fabric::ExternalScope::GmailReadonly,
-        fabric::ExternalScope::CalendarReadonly,
+        fabric::ExternalCapabilityId::new("identity.openid").unwrap(),
+        fabric::ExternalCapabilityId::new("identity.email.read").unwrap(),
+        fabric::ExternalCapabilityId::new("mail.read").unwrap(),
+        fabric::ExternalCapabilityId::new("calendar.read").unwrap(),
     ];
     if config.drive_sync_enabled {
-        scopes.push(fabric::ExternalScope::DriveReadonly);
+        scopes.push(fabric::ExternalCapabilityId::new("file.read").unwrap());
     }
     let tokens = corpus::tools::mcp::token_store::TokenStore::open_default()
         .context("opening encrypted Google credential vault")?;
@@ -120,7 +122,10 @@ pub(super) fn register_configured_google_read_tools(
         .collect::<std::collections::HashSet<_>>();
     let now_ms = clock.wall_now().0.max(0);
     for (identity, grant) in active_bindings {
-        if grant.scopes.contains(&fabric::ExternalScope::GmailReadonly) {
+        if grant
+            .scopes
+            .contains(&fabric::ExternalCapabilityId::new("mail.read").unwrap())
+        {
             manager.register(crate::r#impl::google::GoogleSyncRegistration {
                 principal: identity.principal_id.clone(),
                 account_id: identity.id,
@@ -137,7 +142,7 @@ pub(super) fn register_configured_google_read_tools(
         }
         if grant
             .scopes
-            .contains(&fabric::ExternalScope::CalendarReadonly)
+            .contains(&fabric::ExternalCapabilityId::new("calendar.read").unwrap())
         {
             manager.register(crate::r#impl::google::GoogleSyncRegistration {
                 principal: identity.principal_id.clone(),
@@ -160,7 +165,11 @@ pub(super) fn register_configured_google_read_tools(
             })?;
         }
 
-        if drive_enabled && grant.scopes.contains(&fabric::ExternalScope::DriveReadonly) {
+        if drive_enabled
+            && grant
+                .scopes
+                .contains(&fabric::ExternalCapabilityId::new("file.read").unwrap())
+        {
             manager.register(crate::r#impl::google::GoogleSyncRegistration {
                 principal: identity.principal_id,
                 account_id: identity.id,

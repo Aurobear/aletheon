@@ -6,7 +6,8 @@ use fabric::tool::{
     ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
 };
 use fabric::{
-    CalendarTimeRange, ExternalIdentityId, GmailQuery, PrincipalId, LOCAL_OWNER_PRINCIPAL,
+    CalendarQuery, ExternalIdentityId, MailQuery, OpaqueCursor, PrincipalId,
+    LOCAL_OWNER_PRINCIPAL,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -85,15 +86,19 @@ impl Tool for GoogleGmailSearchTool {
             Ok(account) => account,
             Err(error) => return error_result(error, started, ctx),
         };
+        let page_token = match parsed.page_token.map(OpaqueCursor::new).transpose() {
+            Ok(token) => token,
+            Err(_) => return error_result(GoogleApiError::InvalidRequest, started, ctx),
+        };
         let result = self
             .gmail
             .search_messages(
                 &principal,
-                GmailQuery {
+                MailQuery {
                     account_id: account,
                     query: parsed.query,
                     page_size: parsed.page_size,
-                    page_token: parsed.page_token,
+                    page_token,
                 },
                 &CancellationToken::new(),
             )
@@ -251,17 +256,21 @@ impl Tool for GoogleCalendarListTool {
             Ok(account) => account,
             Err(error) => return error_result(error, started, ctx),
         };
+        let page_token = match parsed.page_token.map(OpaqueCursor::new).transpose() {
+            Ok(token) => token,
+            Err(_) => return error_result(GoogleApiError::InvalidRequest, started, ctx),
+        };
         let result = self
             .calendar
             .list_events(
                 &principal,
-                CalendarTimeRange {
+                CalendarQuery {
                     account_id: account,
                     start_ms: parsed.start_ms,
                     end_ms: parsed.end_ms,
                     timezone: parsed.timezone,
                     page_size: parsed.page_size,
-                    page_token: parsed.page_token,
+                    page_token,
                 },
                 &CancellationToken::new(),
             )

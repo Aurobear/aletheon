@@ -1,7 +1,7 @@
 //! Shared bounded Google REST client.
 
 use async_trait::async_trait;
-use fabric::{ExternalIdentityId, ExternalScope, PrincipalId};
+use fabric::{ExternalCapabilityId, ExternalIdentityId, PrincipalId};
 use futures::StreamExt;
 use serde::de::DeserializeOwned;
 use std::fmt;
@@ -43,14 +43,14 @@ pub trait GoogleCredentialSource: Send + Sync {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        required_scope: ExternalScope,
+        required_scope: ExternalCapabilityId,
     ) -> Result<GoogleAccessToken, GoogleApiError>;
 
     async fn refresh_access_token(
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        required_scope: ExternalScope,
+        required_scope: ExternalCapabilityId,
     ) -> Result<GoogleAccessToken, GoogleApiError>;
 }
 
@@ -138,14 +138,14 @@ impl GoogleApiClient {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        required_scope: ExternalScope,
+        required_scope: ExternalCapabilityId,
         url: reqwest::Url,
         cancel: &CancellationToken,
     ) -> Result<T, GoogleApiError> {
         self.approve_request_endpoint(&url).await?;
         let mut token = self
             .credentials
-            .access_token(principal, account, required_scope)
+            .access_token(principal, account, required_scope.clone())
             .await?;
         let mut refreshed = false;
         let mut rate_retried = false;
@@ -161,7 +161,7 @@ impl GoogleApiClient {
                 401 if !refreshed => {
                     token = self
                         .credentials
-                        .refresh_access_token(principal, account, required_scope)
+                        .refresh_access_token(principal, account, required_scope.clone())
                         .await?;
                     refreshed = true;
                 }
@@ -186,7 +186,7 @@ impl GoogleApiClient {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        required_scope: ExternalScope,
+        required_scope: ExternalCapabilityId,
         url: reqwest::Url,
         max_bytes: usize,
         cancel: &CancellationToken,
@@ -197,7 +197,7 @@ impl GoogleApiClient {
         self.approve_request_endpoint(&url).await?;
         let mut token = self
             .credentials
-            .access_token(principal, account, required_scope)
+            .access_token(principal, account, required_scope.clone())
             .await?;
         let mut refreshed = false;
         let mut rate_retried = false;
@@ -233,7 +233,7 @@ impl GoogleApiClient {
                 401 if !refreshed => {
                     token = self
                         .credentials
-                        .refresh_access_token(principal, account, required_scope)
+                        .refresh_access_token(principal, account, required_scope.clone())
                         .await?;
                     refreshed = true;
                 }

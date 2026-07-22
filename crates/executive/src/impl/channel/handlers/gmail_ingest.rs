@@ -1,6 +1,6 @@
 //! Gmail event-sourced ingest as a first-class channel-registry capability.
 //!
-//! Gmail is event-sourced (`GoogleEvent::MailReceived` → sender-verify →
+//! Gmail is event-sourced (`ExternalEvent::MailReceived` → sender-verify →
 //! classify → draft Goal), not a duplex chat channel. This handler is a thin
 //! wrapper around the existing [`GmailGoalEventIngress::ingest`] pipeline —
 //! it delegates entirely and does not reimplement any of Gmail's own stores,

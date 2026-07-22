@@ -1,6 +1,6 @@
 # frozen_commit=efde4ca11a7c45a72ce7a03fee4cdd0c3c9d8e1e
 # name	owner	schema_path	version_path	readers	writers	migration_rule	affected_phase
-google-event-store	executive	crates/executive/src/impl/google/store.rs	ExternalEventEnvelope.schema_version	external event ingress/store	executive google adapter	detect version; dual-read before DTO change; transaction/backup required	1,6
+google-event-store	executive	crates/executive/src/impl/google/store.rs	ExternalEventEnvelope.schema_version (v1 read/v2 write)	external event ingress/store	executive google adapter	validate v1/v2; reject unknown; never overwrite source row during compatibility read	1,6
 agent-runs	executive	crates/executive/src/service/agent_control/migrations/001_agent_runs.sql	crates/executive/src/service/agent_control/sqlite_repository.rs::MIGRATION	agent control repository	agent control repository	CREATE IF NOT EXISTS is idempotent; additive migration; rollback by DB backup	2,3,8a
 agent-messages	executive	crates/executive/src/service/agent_control/migrations/002_agent_messages.sql	crates/executive/src/service/agent_control/sqlite_repository.rs::MESSAGE_MIGRATION	agent control repository	agent control repository	ordered additive migration; preserve durable replay semantics	2,8a
 agent-recovery	executive	crates/executive/src/service/agent_control/migrations/003_agent_recovery.sql	crates/executive/src/service/agent_control/sqlite_repository.rs::RECOVERY_MIGRATION	recovery reconciler	agent control repository	ordered additive migration; fail closed on ambiguous recovery state	2,8a

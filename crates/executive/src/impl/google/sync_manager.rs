@@ -104,9 +104,9 @@ fn normalized_batch(
         .map(|event| {
             let tombstone = matches!(
                 event.event,
-                fabric::GoogleEvent::MailDeleted(_)
-                    | fabric::GoogleEvent::CalendarEventDeleted(_)
-                    | fabric::GoogleEvent::DriveFileDeleted(_)
+                fabric::ExternalEvent::MailDeleted(_)
+                    | fabric::ExternalEvent::CalendarEventDeleted(_)
+                    | fabric::ExternalEvent::FileDeleted(_)
             );
             let json = serde_json::to_value(&event.event).unwrap_or(serde_json::Value::Null);
             (event, ProjectionWrite { json, tombstone })

@@ -8,7 +8,7 @@ use crate::r#impl::goal::{migrations, ObjectiveStore};
 use async_trait::async_trait;
 use fabric::{
     ApprovalCategory, ApprovalId, ApprovalRisk, ApprovalSnapshot, ApprovalStatus, ApprovalSubject,
-    ExternalIdentityId, ExternalScope, GoalId, PrincipalId,
+    ExternalCapabilityId, ExternalIdentityId, GoalId, PrincipalId,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
@@ -340,13 +340,13 @@ impl GmailReportBoundary {
                 |row| row.get(0),
             )
             .optional()?;
-        let scopes: Vec<ExternalScope> = grant
+        let scopes: Vec<ExternalCapabilityId> = grant
             .as_deref()
             .map(serde_json::from_str)
             .transpose()?
             .unwrap_or_default();
         anyhow::ensure!(
-            scopes.contains(&ExternalScope::GmailSend),
+            scopes.contains(&ExternalCapabilityId::new("mail.send").unwrap()),
             "active gmail.send grant required"
         );
         Ok(())

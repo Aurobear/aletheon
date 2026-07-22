@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::r#impl::goal::GoalCoordinator;
 use fabric::channel::{MessageContent, OutboundMessage};
-use fabric::{ConversationId, GoogleEvent};
+use fabric::{ConversationId, ExternalEvent};
 use gateway::registry::{EventCapabilityHandler, EventCapabilityRegistry, IntentKind};
 use gateway::store::ChannelStore;
 use std::path::Path;
@@ -260,7 +260,7 @@ impl GoogleEventSink for GoogleEventRouter {
                 .matching_subscriptions(event, stream, generation)
                 .map_err(|error| error.to_string())?
         };
-        if matches!(event.event, GoogleEvent::MailReceived(_)) {
+        if matches!(event.event, ExternalEvent::MailReceived(_)) {
             if let Some(handler) = self.event_capabilities.get(IntentKind::GmailIngest) {
                 handler
                     .handle(event, cancel)
@@ -294,15 +294,15 @@ impl GoogleEventSink for GoogleEventRouter {
 
 fn bounded_notification_text(event: &ExternalEventEnvelope) -> Option<String> {
     let summary = match &event.event {
-        GoogleEvent::MailReceived(change) | GoogleEvent::MailUpdated(change) => format!(
+        ExternalEvent::MailReceived(change) | ExternalEvent::MailUpdated(change) => format!(
             "Important mail from {}: {}",
             change.message.from, change.message.subject
         ),
-        GoogleEvent::CalendarEventCreated(calendar)
-        | GoogleEvent::CalendarEventUpdated(calendar) => {
+        ExternalEvent::CalendarEventCreated(calendar)
+        | ExternalEvent::CalendarEventUpdated(calendar) => {
             format!("Calendar changed: {}", calendar.summary)
         }
-        GoogleEvent::CalendarEventDeleted(_) => "Calendar event cancelled".into(),
+        ExternalEvent::CalendarEventDeleted(_) => "Calendar event cancelled".into(),
         _ => return None,
     };
     Some(summary.chars().take(2_000).collect())
@@ -310,14 +310,14 @@ fn bounded_notification_text(event: &ExternalEventEnvelope) -> Option<String> {
 
 fn stream_for(event: &ExternalEventEnvelope) -> super::SyncStream {
     match event.event {
-        fabric::GoogleEvent::MailReceived(_)
-        | fabric::GoogleEvent::MailUpdated(_)
-        | fabric::GoogleEvent::MailDeleted(_) => super::SyncStream::GmailHistory,
-        fabric::GoogleEvent::CalendarEventCreated(_)
-        | fabric::GoogleEvent::CalendarEventUpdated(_)
-        | fabric::GoogleEvent::CalendarEventDeleted(_) => super::SyncStream::Calendar,
-        fabric::GoogleEvent::DriveFileCreated(_)
-        | fabric::GoogleEvent::DriveFileUpdated(_)
-        | fabric::GoogleEvent::DriveFileDeleted(_) => super::SyncStream::DriveChanges,
+        fabric::ExternalEvent::MailReceived(_)
+        | fabric::ExternalEvent::MailUpdated(_)
+        | fabric::ExternalEvent::MailDeleted(_) => super::SyncStream::GmailHistory,
+        fabric::ExternalEvent::CalendarEventCreated(_)
+        | fabric::ExternalEvent::CalendarEventUpdated(_)
+        | fabric::ExternalEvent::CalendarEventDeleted(_) => super::SyncStream::Calendar,
+        fabric::ExternalEvent::FileCreated(_)
+        | fabric::ExternalEvent::FileUpdated(_)
+        | fabric::ExternalEvent::FileDeleted(_) => super::SyncStream::DriveChanges,
     }
 }
