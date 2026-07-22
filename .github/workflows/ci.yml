@@ -46,7 +46,8 @@ jobs:
             sleep $((attempt * 3))
           done
           exit 1
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify preinstalled stable toolchain
+        run: rustup run stable rustc --version
       - run: bash tests/architecture_check.sh
       - run: bash tests/architecture_path_inventory.sh
       - name: Reject architecture drift
@@ -61,9 +62,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy,rustfmt
+      - name: Verify preinstalled stable toolchain
+        run: rustup run stable rustc --version
       - name: Formatting
         run: bash scripts/cargo-agent.sh fmt --all -- --check
       - name: Test workspace
