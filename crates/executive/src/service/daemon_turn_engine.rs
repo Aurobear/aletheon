@@ -47,7 +47,8 @@ impl DaemonTurnEngine {
     }
 }
 
-/// Daemon lifecycle events are already persisted by [`TurnCoordinator`].
+/// Daemon lifecycle events are already persisted by
+/// [`TurnCoordinator`](crate::service::turn_coordinator::TurnCoordinator).
 pub struct NoopTurnEngineEventSink;
 
 #[async_trait]
