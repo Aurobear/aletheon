@@ -1,0 +1,5 @@
+Phase 0 architecture fixtures: pass
+architecture-check fixture: pass
+multi-user runtime architecture boundary: pass
+
+DURATION_SECONDS=1.17

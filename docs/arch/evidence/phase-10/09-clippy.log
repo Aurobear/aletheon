@@ -1,0 +1,740 @@
+    Checking libc v0.2.186
+    Checking cfg-if v1.0.4
+    Checking memchr v2.8.1
+    Checking smallvec v1.15.1
+    Checking itoa v1.0.18
+    Checking pin-project-lite v0.2.17
+    Checking log v0.4.32
+    Checking bytes v1.11.1
+    Checking serde_core v1.0.228
+    Checking errno v0.3.14
+    Checking scopeguard v1.2.0
+    Checking lock_api v0.4.14
+    Checking signal-hook-registry v1.4.8
+    Checking parking_lot_core v0.9.12
+    Checking once_cell v1.21.4
+    Checking mio v1.2.1
+    Checking parking_lot v0.12.5
+    Checking bitflags v2.13.0
+    Checking getrandom v0.2.17
+    Checking futures-core v0.3.32
+    Checking rand_core v0.6.4
+    Checking socket2 v0.6.4
+    Checking serde v1.0.228
+    Checking tokio v1.52.3
+    Checking typenum v1.20.1
+    Checking generic-array v0.14.7
+    Checking crypto-common v0.1.7
+    Checking futures-sink v0.3.32
+    Checking equivalent v1.0.2
+    Checking slab v0.4.12
+    Checking futures-channel v0.3.32
+    Checking zmij v1.0.21
+   Compiling zerocopy v0.8.50
+    Checking subtle v2.6.1
+    Checking serde_json v1.0.150
+    Checking futures-io v0.3.32
+    Checking futures-task v0.3.32
+    Checking hashbrown v0.17.1
+    Checking futures-util v0.3.32
+    Checking indexmap v2.14.0
+    Checking tracing-core v0.1.36
+    Checking cpufeatures v0.2.17
+    Checking getrandom v0.4.2
+    Checking block-buffer v0.10.4
+    Checking tracing v0.1.44
+    Checking digest v0.10.7
+    Checking thiserror v2.0.18
+    Checking tokio-util v0.7.18
+    Checking sha2 v0.10.9
+    Checking anyhow v1.0.102
+    Checking base64 v0.22.1
+   Compiling ahash v0.8.12
+    Checking simd-adler32 v0.3.9
+   Compiling num-traits v0.2.19
+    Checking adler2 v2.0.1
+    Checking miniz_oxide v0.8.9
+    Checking hashbrown v0.14.5
+    Checking crc32fast v1.5.0
+    Checking flate2 v1.1.9
+    Checking toml_datetime v0.6.11
+    Checking serde_spanned v0.6.9
+    Checking winnow v0.7.15
+    Checking toml_write v0.1.2
+    Checking sha1_smol v1.0.1
+    Checking uuid v1.23.2
+    Checking ref-cast v1.0.25
+    Checking crossbeam-utils v0.8.21
+    Checking fdeflate v0.3.7
+    Checking futures-executor v0.3.32
+    Checking toml_edit v0.22.27
+    Checking bincode v1.3.3
+    Checking iana-time-zone v0.1.65
+    Checking dyn-clone v1.0.20
+    Checking bitflags v1.3.2
+    Checking png v0.17.16
+    Checking schemars v1.2.1
+    Checking toml v0.8.23
+    Checking chrono v0.4.45
+    Checking futures v0.3.32
+    Checking dashmap v6.2.1
+    Checking nix v0.29.0
+    Checking linux-raw-sys v0.12.1
+    Checking fabric v0.1.0 (/home/aurobear/Workspace/aletheon/crates/fabric)
+    Checking rustix v1.1.4
+    Checking fastrand v2.4.1
+    Checking tempfile v3.27.0
+    Checking http v1.4.1
+    Checking fnv v1.0.7
+    Checking http-body v1.0.1
+    Checking tower-service v0.3.3
+    Checking percent-encoding v2.3.2
+    Checking zerofrom v0.1.8
+    Checking stable_deref_trait v1.2.1
+    Checking yoke v0.8.3
+    Checking atomic-waker v1.1.2
+    Checking try-lock v0.2.5
+    Checking tower-layer v0.3.3
+    Checking want v0.3.1
+    Checking h2 v0.4.14
+    Checking httparse v1.10.1
+    Checking sync_wrapper v1.0.2
+    Checking httpdate v1.0.3
+    Checking hyper v1.10.1
+    Checking zerovec v0.11.6
+    Checking http-body-util v0.1.3
+    Checking ipnet v2.12.0
+    Checking hyper-util v0.1.20
+    Checking tower v0.5.3
+    Checking ryu v1.0.23
+    Checking mime v0.3.17
+    Checking option-ext v0.2.0
+    Checking dirs-sys v0.4.1
+    Checking tinystr v0.8.3
+    Checking litemap v0.8.2
+    Checking writeable v0.6.3
+    Checking icu_locale_core v2.2.0
+    Checking dirs v5.0.1
+    Checking zerotrie v0.2.4
+    Checking potential_utf v0.1.5
+    Checking utf8_iter v1.0.4
+    Checking icu_collections v2.2.0
+    Checking icu_provider v2.2.0
+   Compiling libsqlite3-sys v0.28.0
+    Checking icu_normalizer_data v2.2.0
+    Checking icu_properties_data v2.2.0
+    Checking foreign-types-shared v0.1.1
+    Checking regex-syntax v0.8.10
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/include/cognit.rs:159:28
+    |
+159 |                 lines.push(format!("    · {}", l));
+    |                            ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+    = note: `-D clippy::uninlined-format-args` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::uninlined_format_args)]`
+help: change this to
+    |
+159 -                 lines.push(format!("    · {}", l));
+159 +                 lines.push(format!("    · {l}"));
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/include/cognit.rs:165:28
+    |
+165 |                 lines.push(format!("    · {}", c));
+    |                            ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+165 -                 lines.push(format!("    · {}", c));
+165 +                 lines.push(format!("    · {c}"));
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/include/compaction.rs:136:32
+    |
+136 |                       *content = format!(
+    |  ________________________________^
+137 | |                         "[Tool result: {} chars, {} lines. Preview: {}]",
+138 | |                         char_count, line_count, first_line
+139 | |                     );
+    | |_____________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/include/compaction.rs:160:45
+    |
+160 | ...                   s.push_str(&format!("... [truncated from {} bytes]", original_len));
+    |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+160 -                                 s.push_str(&format!("... [truncated from {} bytes]", original_len));
+160 +                                 s.push_str(&format!("... [truncated from {original_len} bytes]"));
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/backends/io_uring.rs:101:47
+    |
+101 |             .map_err(|e| IpcProbeError::Other(format!("Serialization failed: {}", e)))?;
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+101 -             .map_err(|e| IpcProbeError::Other(format!("Serialization failed: {}", e)))?;
+101 +             .map_err(|e| IpcProbeError::Other(format!("Serialization failed: {e}")))?;
+    |
+
+error: variables can be used directly in the `format!` string
+  --> crates/fabric/src/ipc/backends/json_rpc_transport.rs:63:26
+   |
+63 |             .map_err(|e| anyhow::anyhow!("JSON-RPC connect failed: {}", e))?;
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+63 -             .map_err(|e| anyhow::anyhow!("JSON-RPC connect failed: {}", e))?;
+63 +             .map_err(|e| anyhow::anyhow!("JSON-RPC connect failed: {e}"))?;
+   |
+
+error: variables can be used directly in the `format!` string
+  --> crates/fabric/src/ipc/backends/transport_adapter.rs:91:26
+   |
+91 |             .map_err(|e| anyhow::anyhow!("IPC send failed: {:?}", e))
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+91 -             .map_err(|e| anyhow::anyhow!("IPC send failed: {:?}", e))
+91 +             .map_err(|e| anyhow::anyhow!("IPC send failed: {e:?}"))
+   |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/backends/unix_socket.rs:100:38
+    |
+100 |                 IpcProbeError::Other(format!("Failed to create socket directory: {}", e))
+    |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+100 -                 IpcProbeError::Other(format!("Failed to create socket directory: {}", e))
+100 +                 IpcProbeError::Other(format!("Failed to create socket directory: {e}"))
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/backends/unix_socket.rs:107:38
+    |
+107 |                 IpcProbeError::Other(format!("Failed to remove stale socket: {}", e))
+    |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+107 -                 IpcProbeError::Other(format!("Failed to remove stale socket: {}", e))
+107 +                 IpcProbeError::Other(format!("Failed to remove stale socket: {e}"))
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/backends/unix_socket.rs:112:47
+    |
+112 |             .map_err(|e| IpcProbeError::Other(format!("Failed to bind unix socket: {}", e)))?;
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+112 -             .map_err(|e| IpcProbeError::Other(format!("Failed to bind unix socket: {}", e)))?;
+112 +             .map_err(|e| IpcProbeError::Other(format!("Failed to bind unix socket: {e}")))?;
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/backends/unix_socket.rs:159:28
+    |
+159 |                   return Err(anyhow::anyhow!(
+    |  ____________________________^
+160 | |                     "Message too large: {} bytes (max {})",
+161 | |                     len,
+162 | |                     MAX_MESSAGE_SIZE
+163 | |                 ));
+    | |_________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/backends/unix_socket.rs:172:30
+    |
+172 |                 .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {}", e))?;
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+172 -                 .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {}", e))?;
+172 +                 .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e}"))?;
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/backends/unix_socket.rs:204:26
+    |
+204 |             .map_err(|e| anyhow::anyhow!("Failed to serialize message: {}", e))?;
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+204 -             .map_err(|e| anyhow::anyhow!("Failed to serialize message: {}", e))?;
+204 +             .map_err(|e| anyhow::anyhow!("Failed to serialize message: {e}"))?;
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/backends/unix_socket.rs:228:47
+    |
+228 |             .map_err(|e| IpcProbeError::Other(format!("Connect failed: {}", e)))?;
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+228 -             .map_err(|e| IpcProbeError::Other(format!("Connect failed: {}", e)))?;
+228 +             .map_err(|e| IpcProbeError::Other(format!("Connect failed: {e}")))?;
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/backends/unix_socket.rs:232:47
+    |
+232 |             .map_err(|e| IpcProbeError::Other(format!("Send failed: {}", e)))
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+232 -             .map_err(|e| IpcProbeError::Other(format!("Send failed: {}", e)))
+232 +             .map_err(|e| IpcProbeError::Other(format!("Send failed: {e}")))
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/ipc_types.rs:106:33
+    |
+106 |             Self::Other(msg) => write!(f, "{}", msg),
+    |                                 ^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+106 -             Self::Other(msg) => write!(f, "{}", msg),
+106 +             Self::Other(msg) => write!(f, "{msg}"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/stream.rs:393:21
+    |
+393 |             actual: format!("deserialization error: {}", e),
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+393 -             actual: format!("deserialization error: {}", e),
+393 +             actual: format!("deserialization error: {e}"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/transport/unix_socket_transport.rs:102:26
+    |
+102 |             .map_err(|e| anyhow::anyhow!("Connect failed: {}", e))
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+102 -             .map_err(|e| anyhow::anyhow!("Connect failed: {}", e))
+102 +             .map_err(|e| anyhow::anyhow!("Connect failed: {e}"))
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/transport/unix_socket_transport.rs:146:30
+    |
+146 |                 .map_err(|e| anyhow::anyhow!("Failed to create socket directory: {}", e))?;
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+146 -                 .map_err(|e| anyhow::anyhow!("Failed to create socket directory: {}", e))?;
+146 +                 .map_err(|e| anyhow::anyhow!("Failed to create socket directory: {e}"))?;
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/transport/unix_socket_transport.rs:152:30
+    |
+152 |                 .map_err(|e| anyhow::anyhow!("Failed to remove stale socket: {}", e))?;
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+152 -                 .map_err(|e| anyhow::anyhow!("Failed to remove stale socket: {}", e))?;
+152 +                 .map_err(|e| anyhow::anyhow!("Failed to remove stale socket: {e}"))?;
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/transport/unix_socket_transport.rs:156:26
+    |
+156 |             .map_err(|e| anyhow::anyhow!("Failed to bind unix socket: {}", e))?;
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+156 -             .map_err(|e| anyhow::anyhow!("Failed to bind unix socket: {}", e))?;
+156 +             .map_err(|e| anyhow::anyhow!("Failed to bind unix socket: {e}"))?;
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/transport/unix_socket_transport.rs:203:28
+    |
+203 |                   return Err(anyhow::anyhow!(
+    |  ____________________________^
+204 | |                     "Envelope too large: {} bytes (max {})",
+205 | |                     len,
+206 | |                     MAX_MESSAGE_SIZE
+207 | |                 ));
+    | |_________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/transport/unix_socket_transport.rs:216:30
+    |
+216 |                 .map_err(|e| anyhow::anyhow!("Failed to deserialize envelope: {}", e))?;
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+216 -                 .map_err(|e| anyhow::anyhow!("Failed to deserialize envelope: {}", e))?;
+216 +                 .map_err(|e| anyhow::anyhow!("Failed to deserialize envelope: {e}"))?;
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/ipc/transport/unix_socket_transport.rs:251:26
+    |
+251 |             .map_err(|e| anyhow::anyhow!("Failed to serialize envelope: {}", e))?;
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+251 -             .map_err(|e| anyhow::anyhow!("Failed to serialize envelope: {}", e))?;
+251 +             .map_err(|e| anyhow::anyhow!("Failed to serialize envelope: {e}"))?;
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:181:13
+    |
+181 |             format!("LLM provider {} timed out", provider),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+181 -             format!("LLM provider {} timed out", provider),
+181 +             format!("LLM provider {provider} timed out"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:192:13
+    |
+192 |             format!("LLM provider {} rate limited", provider),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+192 -             format!("LLM provider {} rate limited", provider),
+192 +             format!("LLM provider {provider} rate limited"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:203:13
+    |
+203 |             format!("Tool {} timed out", tool),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+203 -             format!("Tool {} timed out", tool),
+203 +             format!("Tool {tool} timed out"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:214:13
+    |
+214 |             format!("Tool {} denied: {}", tool, reason),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+214 -             format!("Tool {} denied: {}", tool, reason),
+214 +             format!("Tool {tool} denied: {reason}"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:224:13
+    |
+224 |             format!("Missing config key: {}", key),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+224 -             format!("Missing config key: {}", key),
+224 +             format!("Missing config key: {key}"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:234:13
+    |
+234 |             format!("'{}' already registered", name),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+234 -             format!("'{}' already registered", name),
+234 +             format!("'{name}' already registered"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:244:13
+    |
+244 |             format!("'{}' not found", name),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+244 -             format!("'{}' not found", name),
+244 +             format!("'{name}' not found"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:254:13
+    |
+254 |             format!("Dependency cycle: {}", detail),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+254 -             format!("Dependency cycle: {}", detail),
+254 +             format!("Dependency cycle: {detail}"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:265:13
+    |
+265 |             format!("Hook '{}' timed out after {}s", hook, secs),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+265 -             format!("Hook '{}' timed out after {}s", hook, secs),
+265 +             format!("Hook '{hook}' timed out after {secs}s"),
+    |
+
+    Checking foreign-types v0.3.2
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:416:33
+    |
+416 |                         reason: format!("Tool {} timed out after {} retries", tool_name, attempt),
+    |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+416 -                         reason: format!("Tool {} timed out after {} retries", tool_name, attempt),
+416 +                         reason: format!("Tool {tool_name} timed out after {attempt} retries"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:424:30
+    |
+424 |                 alternative: format!("Skip {} and inform user", tool_name),
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+424 -                 alternative: format!("Skip {} and inform user", tool_name),
+424 +                 alternative: format!("Skip {tool_name} and inform user"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:427:25
+    |
+427 |                 reason: format!("Security violation in tool {}", tool_name),
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+427 -                 reason: format!("Security violation in tool {}", tool_name),
+427 +                 reason: format!("Security violation in tool {tool_name}"),
+    |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/kernel/error.rs:443:30
+    |
+443 |                     message: format!("LLM unavailable after {} retries", attempt),
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+443 -                     message: format!("LLM unavailable after {} retries", attempt),
+443 +                     message: format!("LLM unavailable after {attempt} retries"),
+    |
+
+    Checking icu_properties v2.2.0
+error: variables can be used directly in the `format!` string
+  --> crates/fabric/src/security/audit.rs:67:51
+   |
+67 | ...                   if let Err(err) = writeln!(file, "{}", json) {
+   |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+67 -                                 if let Err(err) = writeln!(file, "{}", json) {
+67 +                                 if let Err(err) = writeln!(file, "{json}") {
+   |
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/security/audit.rs:104:26
+    |
+104 |             .map_err(|e| anyhow::anyhow!("Audit logger channel closed: {}", e))?;
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+104 -             .map_err(|e| anyhow::anyhow!("Audit logger channel closed: {}", e))?;
+104 +             .map_err(|e| anyhow::anyhow!("Audit logger channel closed: {e}"))?;
+    |
+
+error: variables can be used directly in the `format!` string
+  --> crates/fabric/src/security/circuit_breaker.rs:74:25
+   |
+74 |                   reason: format!(
+   |  _________________________^
+75 | |                     "Blocks in window: {} (threshold: {})",
+76 | |                     window_blocks, WINDOW_BLOCK_THRESHOLD
+77 | |                 ),
+   | |_________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+
+    Checking icu_normalizer v2.2.0
+    Checking openssl-sys v0.9.116
+    Checking hashlink v0.9.1
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/types/conscious_arbitration.rs:321:9
+    |
+321 | /         anyhow::ensure!(
+322 | |             expected == actual,
+323 | |             "batch plan is not an exact permutation: expected {:?}, got {:?}",
+324 | |             expected,
+325 | |             actual,
+326 | |         );
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/types/conscious_arbitration.rs:338:9
+    |
+338 | /         anyhow::ensure!(
+339 | |             expected_decisions == actual_decisions,
+340 | |             "batch decisions are not exactly one per call: expected {:?}, got {:?}",
+341 | |             expected_decisions,
+342 | |             actual_decisions,
+343 | |         );
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/types/conscious_arbitration.rs:377:36
+    |
+377 |                     .ok_or_else(|| anyhow::anyhow!("call_id '{}' not in input batch", id))
+    |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+377 -                     .ok_or_else(|| anyhow::anyhow!("call_id '{}' not in input batch", id))
+377 +                     .ok_or_else(|| anyhow::anyhow!("call_id '{id}' not in input batch"))
+    |
+
+    Checking aho-corasick v1.1.4
+    Checking fallible-iterator v0.3.0
+    Checking fallible-streaming-iterator v0.1.9
+    Checking rusqlite v0.31.0
+error: variables can be used directly in the `format!` string
+   --> crates/fabric/src/types/permission.rs:101:19
+    |
+101 |         let key = format!("{}:{}", tool, action_summary);
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+    |
+101 -         let key = format!("{}:{}", tool, action_summary);
+101 +         let key = format!("{tool}:{action_summary}");
+    |
+
+    Checking openssl v0.10.80
+error: variables can be used directly in the `format!` string
+  --> crates/fabric/src/types/frame.rs:38:24
+   |
+38 |             return Err(format!("dimensions exceed max {}", MAX_DIMENSION));
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+38 -             return Err(format!("dimensions exceed max {}", MAX_DIMENSION));
+38 +             return Err(format!("dimensions exceed max {MAX_DIMENSION}"));
+   |
+
+error: variables can be used directly in the `format!` string
+  --> crates/fabric/src/types/skill_proposal.rs:43:26
+   |
+43 |             .map_err(|e| format!("expected_outcome: {}", e))?;
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#uninlined_format_args
+help: change this to
+   |
+43 -             .map_err(|e| format!("expected_outcome: {}", e))?;
+43 +             .map_err(|e| format!("expected_outcome: {e}"))?;
+   |
+
+error: could not compile `fabric` (lib) due to 46 previous errors
+warning: build failed, waiting for other jobs to finish...
+Command exited with non-zero status 101
+
+DURATION_SECONDS=22.26
