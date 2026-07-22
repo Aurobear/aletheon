@@ -243,6 +243,10 @@ adapters -------┘
 
 不得继续把互不相关的实现放入含义模糊的顶层 `impl`。迁移期间可以保留旧路径，但新代码必须进入目标分层。
 
+**统一的是职责分类和依赖方向，不是目录模板。** `fabric`、`executive`、`cognit`、`mnemosyne`、`hardware`、`gateway` 中的每个模块都必须能唯一归入 domain、contract、application、adapter、composition、host 中的一类，并符合 §4 的依赖方向；crate 只创建实际需要的层，不要求五类目录齐全。例如 Fabric 可以是 contract-only，Executive 需要 application/composition/host，而 Hardware 未必需要独立 application 层。各 crate 的目标内部结构见 §20。
+
+**`impl` 治理分为公共边界和物理目录两个目标。** 当前存在 `impl/` 目录的 crate 有 5 个：`cognit`、`executive`、`mnemosyne`、`dasein`、`metacog`。所有 crate root 都必须停止公开 `r#impl`，跨 crate 的 `impl` 路径必须归零；本轮只要求 `cognit`、`executive`、`mnemosyne` 将杂物容器式顶层 `impl/` 物理拆入明确职责层。`dasein`、`metacog` 属于 §17.1 的非主动重构范围，本轮收缩其公共 facade，是否物理拆目录另行评估。
+
 > 附注：`impl` 是 Rust 关键字，`src/impl/` 目录实际依赖 `r#impl` 或路径属性才能编译，本身即是应当改名的信号之一。目标目录名（`adapters`、`composition` 等）不与关键字冲突。
 
 ### 4.2 进程与 wire 边界
@@ -269,6 +273,65 @@ adapters -------┘
 | `internal-shared` | 仅在同一进程内跨 crate 共享，不越过 wire/持久化边界 | 可按内部 DTO 迁移，无需协议版本流程 |
 
 Phase 1 / Phase 6 改动 Fabric DTO 前，必须先产出该分类（见 §19 wire 面清单）。未分类的 Fabric 类型默认按 `wire-exposed` 从严处理，原因是漏做一次兼容迁移的损失高于多做一次边界核对。
+
+### 4.3 端到端数据流与待清洗耦合点
+
+分层图(§4)描述**依赖方向**,本节描述**运行时数据流**,并把 §3 的泄漏点标注在流上——这是重构要"清洗"的对象。两条主链路:
+
+**链路 A：入站消息 → 回复**
+
+```text
+外部渠道 ──[InboundMessage]──▶ Gateway ��─▶ TurnRuntime / turn_pipeline
+   (adapter)                   (app)          (app, executive)
+        │                                         │
+        │                                   [统一 Message/ContentBlock]
+        ▼                                         ▼
+  ⚠️渠道配置在 Cognit                       InferenceProvider ──[wire 转换]──▶ LLM adapter
+  ⚠️具体 transport 由 Gateway 公开            (contract)                        (adapter)
+                                                  │
+                                            工具调用 ▼
+                                        Corpus 工具 / MCP client ──▶ 外部工具/MCP server
+                                                  │                    ⚠️MCP 名称贯穿 config
+                                            [记忆读写] ▼
+                                        Mnemosyne(supplemental) ──▶ 记忆后端
+                                                  │                    ⚠️backends::gbrain 公开
+                                                  ▼
+                                        [OutboundMessage] ──▶ 渠道 adapter ──▶ 外部
+```
+
+**链路 B：Goal → 编码执行 → 验证**
+
+```text
+Goal ──▶ AgentControl(admission / lifecycle / settlement) ──▶ CodingRuntime(port)
+(app)        (app, executive)                                    (contract)
+  │             ⚠️runtime_id.contains("pi") 决定存储                  │
+  │             ⚠️Goal coordinator 直接导入 Pi request               ▼
+  │                                                        CodingRuntime adapter
+  ▼                                                          (Pi argv/JSONL/RPC)
+[RuntimeEvidence / RuntimeManifest] ◀────[归一化 outcome]────────┘
+  │
+  ▼
+存储配额 / 验证策略  ⚠️应由 manifest 显式字段驱动,而非名称
+```
+
+**链路 C（旁路）：身份 / 外部信息源**
+
+```text
+ExternalIdentity/Mail/Calendar/File(port) ──▶ Google adapter ──▶ 外部 API
+   (contract)          ⚠️IdentityProvider::Google、Gmail scope、GmailMessageSummary 在 Fabric
+        │                ⚠️ExternalEvent 内嵌 Google 类型(且已持久化)
+        ▼
+  归一化 ExternalEvent ──▶ 消费方(app)
+```
+
+图中每个 ⚠️ 对应 §3 的一处泄漏,是各阶段的清洗目标:链路 A 的渠道/记忆/MCP 名称(Phase 4/5/6),链路 B 的 `contains("pi")` 与 Pi 类型(Phase 3),链路 C 的 Google 类型与持久化事件(Phase 1)。清洗的判定标准:**每条箭头两端只应看到通用 DTO 与 port,任何厂商类型/名称都必须被挡在最外层 adapter 之内。**
+
+数据流治理原则:
+
+1. 每条箭头必须能标出 owner crate 与所处层(adapter/app/contract);标不出的说明职责不清,需先拆分;
+2. 跨 wire/持久化的箭头(链路 A 的入站/出站、链路 C 的事件落盘)按 §4.2 分类并版本化;
+3. 同一数据在链路上只有一个归一化点(如 InboundMessage、ExternalEvent、CodingAttemptOutcome),不得多处各自解析外部 payload;
+4. 反向依赖禁止:下游(Mnemosyne、Corpus)不得回指 Executive application 内部类型,只经 port/contract 交互。
 
 ---
 
@@ -377,6 +440,10 @@ DomainConfig + AdapterConfig
 7. 旧字段通过 compatibility normalization 转换为新模型；
 8. 日志输出只包含脱敏后的规范化配置。
 
+**adapter-id → 构造器匹配的唯一合法位置（消除歧义）：** 静态注册表不可避免存在一处 `match adapter_id { "messages-http" => ... }`。规则是：**该匹配只允许出现在 composition 的 registry/factory 模块中，且只用于选择构造器，不得据此改变业务语义。** application、domain、host 层出现任何按 adapter/provider 字符串分派的 `match`/`contains` 均视为违规。这条与 §11.2 门禁对应，避免"要么把 match 塞进 application、要么把合法 registry 也当违规删掉"两种误读。本项目不引入动态插件 ABI（见 §17），注册表是编译期静态表。
+
+**`SecretRef` 归属（消除歧义）：** `SecretRef` 属于 deployment/composition config contract，不属于 domain contract。DeploymentConfig、NormalizedConfig 和构造期 AdapterConfig 可以持有它；DomainConfig、application port、领域事件和共享业务 DTO 不得持有它。明文只在 composition 构造 adapter 时解析，解析结果不得写回 config 或事件；需要刷新 credential 的 adapter 应持有受限 credential handle，而不是让 domain/application 接触 `SecretRef` 或明文。
+
 推荐配置形态：
 
 ```toml
@@ -420,6 +487,18 @@ Cancelled
 
 错误可携带通用 category、retry disposition、sanitized message、opaque diagnostic code 和 correlation ID。不得包含 credential、未经限制的外部响应正文，也不得要求核心理解厂商错误文本。
 
+上述 12 类定义的是外部传输和集成边界的稳定 `IntegrationFailureKind`，不替代领域错误。`AdmissionError`、`MemoryContractError`、`CognitError`、repository error 等领域错误仍由各自 owner 定义；当它们包裹 adapter 失败时，只能依赖 `IntegrationFailureKind`，不能暴露 Google、Pi、ROS 或其他厂商错误类型和文本。
+
+**与 §3.6 命名的关系（消除歧义）：** 上面 12 类是 `IntegrationFailureKind` 的唯一稳定枚举，不是全系统唯一错误枚举。§3.6 出现的 `ProviderUnavailable`、`ControlPlaneUnavailable`、`UpstreamDisconnected` 不是新增集成失败变体，而是 adapter 归一化时对以下变体的语义描述，必须映射到本枚举：
+
+| §3.6 描述 | 归一化目标（§7 枚举） |
+|---|---|
+| `ProviderUnavailable` | `TemporarilyUnavailable` 或 `PermanentlyUnavailable`（按可重试性） |
+| `ControlPlaneUnavailable` | `TemporarilyUnavailable` |
+| `UpstreamDisconnected` | `TemporarilyUnavailable`（携带 opaque diagnostic code 区分场景） |
+
+任何外部 adapter 的传输失败不得向核心暴露这 12 类之外的**集成失败种类**；领域 port 可以在其上定义稳定领域错误。需要区分的厂商细节放进 opaque diagnostic code，不进入领域枚举变体。
+
 可观测性允许记录 adapter ID 和部署实例 ID，以便诊断；这不构成业务耦合。任何日志字段都不得参与业务分支。
 
 该约束同样适用于 metrics 与 trace span：span 名称、metric label 可以携带 adapter ID / 部署实例名以便排障，但告警规则、重试逻辑或任何业务分支都不得以这些名称为条件。
@@ -449,6 +528,8 @@ Cancelled
 
 具体 adapter 默认使用 `pub(crate)`。跨 crate 使用必须经稳定 facade。兼容 re-export 必须登记规范路径、调用点数量和删除条件；新代码不得使用旧路径。
 
+**"稳定 facade"的统一形态（消除歧义）：** facade = 每个 crate 根部一个显式的公开表面，仅由以下构成：(a) `pub use` 重导出的领域 DTO / 通用 trait / 通用错误 / capability；(b) 用户需要的 host/client 门面类型；(c) 测试用 fake port。**不是** newtype 包装、**不是** 直接 `pub` 内部模块树。具体 adapter、repository、wire 类型、parser 一律不进 facade。各 crate 的 facade 形态必须一致（同一套 `pub use` 约定），避免每个 crate 各自发明一种。
+
 ---
 
 ## 9. Runtime 术语约束
@@ -476,6 +557,7 @@ Cancelled
 | Executive runtime（`crates/executive/src/impl/runtime`） | `AgentRuntime` + adapter | executive | Phase 3 迁移 |
 | `UserRuntimeConfig`（`crates/executive/src/user_runtime`） | 归入 `DomainConfig` | executive composition | Phase 4 迁移 |
 | system core runtime / runtime core | `CompositionState` / `DomainServices` | executive composition | Phase 2 迁移 |
+| Executive daemon/host 生命周期（`crates/executive/src/impl/daemon/server.rs`）+ `aletheon` bin bootstrap | `HostRuntime` | executive host / `aletheon` | Phase 2 迁移；只做进程 bootstrap/RPC/信号，不持有领域规则或治理 |
 
 **保留独立 runtime crate 的原因：** 当前该 crate 只定义 `RuntimeManifest`、`RuntimeCapability` 和 `RuntimeSelector`，且 selector 明确声明 Executive 仍是 registry/admission authority，见 `crates/runtime/src/lib.rs:1-9`、`crates/runtime/src/manifest.rs:40-49`、`crates/runtime/src/selector.rs:10-13`。它已经接近一个稳定、无基础设施依赖的 contract crate；把它并入 Executive 会让通用能力描述反向依赖 application/composition，增加而不是减少耦合。是否将 crate 物理改名为 `runtime-contract` 只在 Phase 10 根据收益复评，不阻塞 Phase 2。
 
@@ -530,7 +612,20 @@ agent_control/
 - UI/Interact 只通过 Fabric protocol 与 host 通信；
 - binary crate 不构造领域内部对象；
 - domain module 不直接依赖 reqwest、rusqlite、dirs 等基础设施库；
-- 任何新增依赖边必须进入审查基线。
+- 任何新增依赖边必须进入审查基线（见下方"新增边"判定）。
+
+**contract/domain 层允许依赖白名单（消除歧义）：** 只有明确列出的"无 I/O、无 OS、无运行时"库允许出现在 contract/domain：
+
+```text
+允许：serde / serde_json（仅作 DTO 派生，不做业务分派）/ uuid / chrono / thiserror / bytes / 纯数据结构库
+禁止：reqwest、rusqlite/sqlx、tokio(full)、nix、libc、dirs、toml（config 解析属 composition）、
+      png/base64 等编解码（属 adapter）、任何具体 provider/DB/HTTP client
+灰色（需登记理由）：tracing（允许 span/event，但不得据字段分派）、async-trait、futures
+```
+
+> 现状警示：`crates/fabric/Cargo.toml` 目前依赖 `tokio(full)`、`nix`、`libc`、`toml`、`png`、`base64`、`bincode`、`dashmap`，**Fabric 现在并不是纯契约 crate**。这些超标依赖必须在 Phase 1/2 登记为待清理项：运行时/OS 相关下沉到 host/platform，config 解析下沉到 composition，编解码下沉到 adapter。清理前它们进入依赖基线并只减不增。
+
+**"新增依赖边"判定（消除歧义）：** "只减不增"针对的是**违规边**（domain/application → 基础设施或 adapter crate）。合法方向的新边——如新增 `adapters/<x>` 依赖 reqwest、composition 依赖具体 crate——允许，但必须在审查基线登记，且不得反向让 domain/application 因此获得对基础设施的传递依赖。
 
 ### 11.2 Rust import/module 门禁
 
@@ -538,7 +633,8 @@ agent_control/
 - core/domain 不导入具体 provider；
 - crate root 不公开整个 `impl` 或 adapter tree；
 - repository concrete type 只能出现在 adapter/composition；
-- config loader 和 environment parsing 只在 composition。
+- config loader 和 environment parsing 只在 composition；
+- 按 adapter/provider 字符串分派的 `match`/`contains` 只允许出现在 composition registry/factory；application、domain、host 出现即违规（对应 §6"唯一合法匹配位置"）。
 
 ### 11.3 外部标识与语义门禁
 
@@ -573,6 +669,8 @@ adapter contract tests
 ```
 
 不允许整目录永久放行。allowlist 必须满足“调用点只减不增”。
+
+**"调用点"计数法（消除歧义）：** 一个调用点 = 一条对旧路径/兼容 re-export 的**导入或引用行**（`use 旧路径`、限定路径引用、或命中禁用标识的一行）。计数由门禁脚本对每条 allowlist 条目 grep 得到整数,基线数字随条目一起提交到 `config/architecture-allowlist.txt`(或同类台账)。CI 规则:任一条目的当前计数 > 基线即失败;计数下降时必须同步下调基线(棘轮),使其不可回升。计数归零则删除该条目及其允许区域。
 
 同时禁止核心代码：
 
@@ -639,6 +737,8 @@ bash scripts/cargo-agent.sh <cargo arguments>
 
 每阶段使用最窄 package/test target；只有最终集成验证 owner 可以运行 workspace-wide 检查；不得并发运行 Executive 或 workspace build。
 
+**"集成验证 owner"定义（消除歧义）：** 指被显式指派运行 workspace-wide 构建/测试的**单一角色**——在多 agent 协作中即协调者(coordinator)或人类维护者本人,而非任意 developer/fixer 子代理。子代理只跑自己 package 的最窄 target;workspace-wide 检查串行、由该单一 owner 触发,以遵守"不并发运行 Executive/workspace build"的资源约束。
+
 ---
 
 ## 13. 分阶段迁移计划
@@ -655,7 +755,7 @@ bash scripts/cargo-agent.sh <cargo arguments>
 | 5 Supplemental memory | 中 | 低 | 2 | 与 3、4 并行 |
 | 6 Channel/Identity/信息源 | 大 | 高（含安全敏感 OAuth） | 1、2 | 与 3、5 部分并行 |
 | 7 Inference adapter 私有化 | 中 | 中 | 2 | 与 5、6 部分并行 |
-| 8 大模块状态机化 | **特大** | 中（局部但深） | 无强前置（逐个做） | 可穿插 |
+| 8 大模块状态机化 | **特大** | 中（局部但深） | 对应模块的端口稳定阶段完成 | 逐模块实施，非整体并行 |
 | 9 公共 API 收缩 | 中 | 高（跨 crate import） | 1–7 | 收尾，不并行 |
 | 10 全局验证/复评 | 小 | — | 9 | — |
 
@@ -668,10 +768,12 @@ bash scripts/cargo-agent.sh <cargo arguments>
         2 → 5      │
     1,2 → 6        │
         2 → 7      │
-8（独立，可穿插）──┘
+8（拆为 8a–8e，各自位于对应端口稳定阶段之后）┘
 ```
 
 要点：**Phase 2 是关键路径上体量最大的单点**，其余多数阶段等它；而 3/5/4/7 在 2 完成后彼此高度独立，应并行以缩短总工期，不要按 3→4→5→6→7 串行执行。
+
+Phase 8 不是一个整体节点，应拆成独立子任务：Phase 2、3 → 8a Agent Control；Phase 2 → 8b Turn Pipeline；Phase 5 → 8c Mnemosyne service；对应 MCP adapter 边界稳定阶段 → 8d MCP client/auth；Phase 2 → 8e Daemon server。端口尚未稳定就先拆状态机，会在后续阶段被推倒重来。
 
 ### 阶段 0：架构决策、风险盘点与防扩散
 
@@ -739,7 +841,9 @@ bash scripts/cargo-agent.sh <cargo arguments>
 5. 移除 `runtime_id.contains(...)` 业务判断；
 6. 以 capability/manifest 决定存储与验证策略。
 
-验收：使用 fake coding runtime 可完成 Goal/Agent Control 全部核心测试。
+**替换 `contains("pi")` 的具体字段（消除歧义）：** 当前 `agent_control/mod.rs:747` 用 `runtime_id.contains("pi")` gate 1GB 存储配额，而现有 `RuntimeManifest`（`crates/runtime/src/manifest.rs:40-49`）没有存储维度。本阶段必须给 manifest 增加显式 `resource_requirements`（如请求的 storage bytes/items），由 adapter 注册时声明；它只是需求，不是授权。Agent Control 将声明转换为 `AgentStorageRequirement`，再由 admission/quota policy 按系统上限 clamp 或拒绝，最终产生 `AgentStorageReservation`。禁止用 `workspace_mode` 等无关字段隐式代表存储需求，也禁止 adapter 自行决定最终配额。该字段属于 runtime contract 变更，按 §4.2 的 contract/wire 纪律处理。
+
+验收：使用 fake coding runtime 可完成 Goal/Agent Control 全部核心测试；存储需求来自 manifest 显式字段，最终配额由 admission/policy 裁决，代码中不再有任何 `contains("pi")` 或等价名称判断。
 
 ### 阶段 4：配置所有权与规范化
 
@@ -815,18 +919,23 @@ bash scripts/cargo-agent.sh <cargo arguments>
 
 每个模块必须先画出状态、事件、owner、I/O port，再进行拆分。不得在一个提交中同时重构多个状态机。
 
+**排序约束（与 §13 DAG 一致）：** 上述顺序是优先级，不是可提前执行的许可。每个模块必须排在**改动其端口的那个阶段之后**——Agent Control 在 Phase 2、3 之后；Mnemosyne service 在 Phase 5 之后；MCP client/auth 在其 adapter 化之后；Daemon server 在 Phase 2 之后。端口未稳定就先做状态机拆分，会在后续阶段被推倒重来。
+
 ### 阶段 9：公共 API 收缩
 
 **目标：** `impl`、具体 adapter 和 repository 不再作为公共稳定面。
 
 工作内容：
 
-1. 建立 crate facade；
+1. 建立 crate facade（形态见 §8）；
 2. 将实现模块改为 private/crate-private；
 3. 迁移跨 crate import；
 4. compatibility re-export 标记 deprecated；
 5. 门禁保证旧路径调用点只减不增；
-6. 调用点归零后删除旧导出。
+6. 调用点归零后删除旧导出；
+7. **拆除主要范围内的 `impl/` 顶层容器**：`cognit`、`executive`、`mnemosyne` 必须完成（拆入其实际需要的职责层，不强制创建空目录）；`dasein`、`metacog` 只要求收敛公共导出，完整物理拆分不属于本轮强制范围。
+
+验收：以上 5 个 crate 的 crate root 都不再出现 `pub mod impl` 或 `pub use impl::*`；跨 crate 不存在对任何 `impl` 路径的依赖（对应 §15.1.8）。
 
 ### 阶段 10：全局验证与是否拆 crate 的复评
 
@@ -858,6 +967,12 @@ bash scripts/cargo-agent.sh <cargo arguments>
 8. 不允许以长期 `serde_json::Value` 作为迁移捷径；
 9. 不允许静默 fallback 到其他 provider/runtime；
 10. 所有安全相关行为保持 fail closed。
+
+**fail-closed 与 degrade 的边界（消除歧义）：** integration 必须在配置中显式标注 `required` 或 `optional`：
+
+- `required`（如主推理 provider、身份、授权、安全策略）：配置缺失或校验失败时 **fail closed = 拒绝启动/拒绝该请求**，并给出明确错误，绝不静默降级或换实现。
+- `optional`（如默认关闭的 supplemental memory）：缺失时**允许降级运行**，但必须记录明确的 degraded 状态；一旦配置存在却校验失败，则按 `required` 处理（fail closed），不得因"可选"而吞掉错误配置。
+- 判定"安全相关"的口径：凡影响 credential、授权 scope、sandbox/network policy、workspace trust 的行为一律按 `required` fail closed，不因所属 integration 标为 optional 而放宽。
 
 ---
 
@@ -905,7 +1020,7 @@ bash scripts/cargo-agent.sh <cargo arguments>
 完成本方案后，必须满足：
 
 1. Fabric 不包含外部供应商/项目专属类型、scope 或错误；
-2. 核心业务 service 不导入具体 adapter、repository 或 wire parser；
+2. application 层（协调器/用例）只通过 port 访问 I/O，不导入具体 adapter、repository 或 wire parser；domain 层不含任何 I/O；（"核心"一词在本方案统一指 domain + contract + application 三层，不含 adapter/composition/host）
 3. Goal 与 Agent Control 不知道具体 coding runtime 名称；
 4. Cognit 不知道具体消息渠道；
 5. Memory core 不知道具体补充记忆产品；
@@ -1010,3 +1125,100 @@ Phase 0 提交一次快照，每阶段出 delta，用数字而非清单勾选证
 | 兼容 allowlist 条目数与调用点数 | allowlist 台账 | 只减不增 |
 
 这些指标应接入 `scripts/architecture-check.sh` 的基线，使“回退”在 CI 中可被机械拦截。
+
+---
+
+## 20. 附录：各 crate 目标内部结构
+
+以下是“主要重构范围”六个 crate 的目标态内部结构，基于当前真实布局给出迁移方向。目标不是照抄目录名，而是让每个模块唯一归入一个职责层并满足依赖方向；只创建实际需要的层。迁移期间旧路径可经 compatibility re-export 保留，新代码进入目标层。
+
+附录以 Phase 0 inventory 所在提交为冻结基线。Phase 0 前产生的新模块（包括当前工作区中的 Cognit ports/policy/proto 和 embodiment 相关模块）必须重新归类，不能仅凭临时工作区路径直接认定最终 owner。
+
+### 20.1 fabric（纯契约,收缩为 contract-only）
+
+现状顶层:`contract/ types/ include/ events/ ipc/ kernel/ policy/ protocol/ primitives/ security/ dasein/`。问题:承载了运行时/OS 依赖(§11.1 现状警示)与 `types::google` 等外部类型(§2.1)。
+
+```text
+fabric/                      # 只保留稳定契约，无 tokio(full)/nix/libc/toml/png
+├── contract/                # 跨边界 trait/port（inference/channel/identity/memory/coding/device）
+├── types/                   # 通用 DTO（移除 google、去除 external_event 对 Google 的内嵌）
+├── protocol/                # wire-exposed 协议（客户端协议在此,标 protocol_owner）
+├── events/                  # 通用事件（ExternalEvent 改通用 payload）
+├── errors/                  # §7 的 IntegrationFailureKind；领域错误仍归各 owner
+└── primitives/policy/security（仅保留稳定契约部分）
+```
+
+Fabric IPC 必须在 Phase 0 分类后迁移，不能整体下沉 Platform：DTO/envelope/protocol 留在 Fabric；进程内 mailbox/bus 由 Kernel 或 Executive runtime owner 承接；Unix socket、文件描述符等 OS transport 由 Platform/Host adapter 承接。原因是 Platform 只拥有 OS capability，不能反向承载应用通信语义。
+
+### 20.2 executive（拆分最重,§13.2 主战场）
+
+现状顶层：`core/ host/ impl/ service/ tools/ user_runtime/`，其中 `impl/` 混装 daemon/external/gbrain/google/runtime/goal/channel 等模块（§2.2）。
+
+```text
+executive/
+├── domain/                  # Goal/Turn/Agent 领域状态与规则（来自 service/ 的纯逻辑）
+├── application/             # 用例与协调器 + 应用 port（service/ 的协调部分、impl/goal、impl/orchestration）
+├── adapters/                # impl/{external,google,gbrain,runtime,channel,daemon 的 client 部分}
+│   ├── google/  identity/  channel/  coding_runtime/  supplemental_memory/
+├── composition/             # core/config 归一化、factory、secret 解析、registry（唯一 match adapter-id 处）
+├── host/                    # impl/daemon/server + bin bootstrap → HostRuntime（进程/RPC/信号）
+└── compatibility/           # 旧 config/路径/持久化迁移;旧 impl 路径 re-export（登记退出条件）
+# user_runtime/ 归入 composition 的 DomainConfig（§9 映射）;顶层 impl/ 消除
+```
+
+### 20.3 cognit（推理域）
+
+现状:`config/ core/ harness/ impl/ ports/ bridge/ testing/`,`impl/llm` 公开具体 provider(§3.4),渠道/Pi 配置混在 `config`(§2.4/§3.5)。
+
+```text
+cognit/
+├── domain/                  # core/ 的推理领域逻辑、harness 纯策略
+├── contract/                # ports/ 中的 InferenceProvider 等通用 trait + 通用 DTO/错误
+├── adapters/                # impl/llm/{anthropic,ollama,openai_provider} 降为 crate-private
+├── composition/             # provider_factory、scheduler 路由（按 capability/health,不按名称）
+└── compatibility/           # 渠道配置迁出 cognit（→ gateway）、Pi 配置迁出（→ executive adapter）
+# impl/ 消除;crate root 不再导出 impl::llm
+```
+
+### 20.4 mnemosyne（记忆域）
+
+现状:`impl/{core_memory,fact_store,vector_store,recall_memory,…}`、`backends/{gbrain,…}`、`service.rs`(1394 行)、`recall/ consolidation/ retention/ projection`。`backends::gbrain` 公开(§3.3)。
+
+```text
+mnemosyne/
+├── domain/                  # 记忆领域模型 model/、consolidation/retention/promotion 规则
+├── contract/                # SupplementalMemoryTransport 等 port（去 gbrain 命名）
+├── application/             # service.rs 按状态机/端口拆分（Phase 8 第 3 项）
+├── adapters/                # backends/{mcp（原 gbrain）, vector_store, fact_store} → crate-private
+└── composition/             # backend 选择与构造
+# impl/ 消除;backends::gbrain 改 backends::mcp,旧名走 compatibility
+```
+
+### 20.5 hardware（本体域,已较干净)
+
+现状无 `impl/`,但通用错误含 `ROS master unreachable`(§3.6)。
+
+```text
+hardware/
+├── domain/                  # device/observation/command/lease/safety/emergency_stop 领域
+├── contract/                # provider.rs（DeviceProvider）、capability、gRPC contract
+├── adapters/                # grpc/（错误归一化为 ProviderUnavailable 等,清除 ROS 字符串）、simulator
+└── composition/             # registry、broker、deployment_gate 的构造部分
+# ROS/topic/厂商类型不得进入 domain/contract
+```
+
+### 20.6 gateway（渠道域,已具 ports.rs)
+
+现状:`ports.rs store.rs registry.rs dispatcher.rs telegram/ handlers/`,具体 telegram transport 由 crate 公开(§3.5)。
+
+```text
+gateway/
+├── domain/                  # intent/effect/notify 领域逻辑
+├── contract/                # ports.rs（ChannelTransport）已接近目标,保留并收敛可见性
+├── adapters/                # telegram/ 降为 crate-private（polling/token/callback 在此）
+├── composition/             # registry/ dispatcher 构造
+└── store.rs                 # 归入 adapters（具体持久化）
+# crate root 不再公开具体 transport（§3.5 目标）
+```
+
+> 这些树是方向而非硬性文件清单;每个 crate 的精确拆分在其所属阶段的文件级实施计划(§18)中细化,并遵守 §14"先 canonical 后迁移、最后收缩"的顺序。
