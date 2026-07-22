@@ -22,6 +22,10 @@ use fabric::{self, wall_to_datetime, ReflectionEntry, ReflectionOutcome, Reflect
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::adapters::storage::fact_store::FactStore;
+use crate::adapters::storage::recall_memory::RecallMemory;
+use crate::backends::EpisodicMemory;
+use crate::domain::core_memory::CoreMemory;
 pub use crate::model::{
     MemoryAuthority, MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity,
     TemporalState,
@@ -30,7 +34,6 @@ use crate::model::{MemoryKind, MemoryRecord, MemoryRecordId, MemoryStatus};
 use crate::observability::{
     MemoryMetrics, RecallOmittedReason, RecallSourceLabel, TombstoneDestination,
 };
-use crate::{CoreMemory, EpisodicMemory, FactStore, RecallMemory};
 
 /// A unit of experience to be recorded into memory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -987,9 +990,7 @@ impl MemoryService for DefaultMemoryService {
         .await;
         match result {
             Ok(()) => {
-                lifecycle.apply(
-                    crate::lifecycle::MemoryOperationEvent::ReconciliationFinished,
-                )?;
+                lifecycle.apply(crate::lifecycle::MemoryOperationEvent::ReconciliationFinished)?;
                 Ok(())
             }
             Err(error) => {

@@ -14,7 +14,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use mnemosyne::backends::supplemental::SupplementalDocument;
+use mnemosyne::supplemental::SupplementalDocument;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;

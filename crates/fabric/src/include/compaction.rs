@@ -1,7 +1,7 @@
 //! Shared context-compaction interface and pruning helpers.
 //!
 //! `CompactorTrait` is the shared contract implemented by memory-compaction
-//! strategies (e.g. `mnemosyne::AdvancedCompressor`) and consumed by
+//! strategies (e.g. `mnemosyne::runtime::AdvancedCompressor`) and consumed by
 //! cognitive harnesses (e.g. `cognit::ReActLoop`). Living in `fabric` lets
 //! both sides depend on the interface without depending on each other,
 //! avoiding a cyclic dependency between `cognit` and `mnemosyne`.

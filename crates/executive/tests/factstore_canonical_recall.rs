@@ -1,7 +1,7 @@
 //! M-H Option A regression guard: after removing the cognitive MemoryRouter,
 //! the daemon's canonical store (FactStore) must still recall injected facts.
 
-use mnemosyne::FactStore;
+use mnemosyne::runtime::FactStore;
 
 #[test]
 fn factstore_remains_the_canonical_recall_store() {

@@ -5,7 +5,7 @@ use anyhow::Result;
 use tracing::{debug, info};
 
 use fabric::{Clock, LlmProvider, Message, Role};
-use mnemosyne::AdvancedCompressor;
+use mnemosyne::runtime::AdvancedCompressor;
 
 /// Process-local working context for one canonical Session.
 ///

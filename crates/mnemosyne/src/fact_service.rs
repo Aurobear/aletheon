@@ -7,7 +7,7 @@ use serde::Serialize;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
-use crate::r#impl::{FactRow, FactStore};
+use crate::adapters::storage::fact_store::{FactRow, FactStore};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AddFactRequest {

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use mnemosyne::backends::supplemental::{
+use mnemosyne::supplemental::{
     EnqueueOutcome, SupplementalMemoryBackend, SupplementalBackendConfig, SupplementalDocument, SupplementalSpool, SpoolLimits,
     SupplementalErrorCategory, SupplementalHit, SupplementalMemoryTransport,
     SupplementalTransportError,

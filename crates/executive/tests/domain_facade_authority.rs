@@ -54,7 +54,7 @@ fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
         "src/service/turn_runtime_ports.rs",
     ];
     let forbidden = [
-        "mnemosyne::FactStore",
+        "mnemosyne::runtime::FactStore",
         "corpus::tools::tools::ToolRegistry",
         "corpus::HookRegistry",
         "ToolRunnerWithGuard",

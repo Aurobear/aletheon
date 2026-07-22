@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use cognit::harness::config::HarnessConfig;
 use fabric::SessionRecord;
-use mnemosyne::AdvancedCompressor;
+use mnemosyne::runtime::AdvancedCompressor;
 use tokio_util::sync::CancellationToken;
 
 use crate::application::turn_policy::TurnPolicy;
@@ -50,7 +50,7 @@ pub trait CognitiveSessionFactory: Send + Sync {
 pub struct LinearCognitiveSessionFactory {
     config: HarnessConfig,
     clock: std::sync::Arc<dyn fabric::Clock>,
-    evicted_memory: Option<std::sync::Arc<tokio::sync::Mutex<mnemosyne::RecallMemory>>>,
+    evicted_memory: Option<std::sync::Arc<tokio::sync::Mutex<mnemosyne::runtime::RecallMemory>>>,
     verifier: Option<std::sync::Arc<dyn fabric::policy::verifier::Verifier>>,
 }
 
@@ -74,7 +74,7 @@ impl LinearCognitiveSessionFactory {
 
     pub fn with_evicted_memory(
         mut self,
-        memory: std::sync::Arc<tokio::sync::Mutex<mnemosyne::RecallMemory>>,
+        memory: std::sync::Arc<tokio::sync::Mutex<mnemosyne::runtime::RecallMemory>>,
     ) -> Self {
         self.evicted_memory = Some(memory);
         self
@@ -147,7 +147,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
 }
 
 fn evicted_callback(
-    memory: Option<std::sync::Arc<tokio::sync::Mutex<mnemosyne::RecallMemory>>>,
+    memory: Option<std::sync::Arc<tokio::sync::Mutex<mnemosyne::runtime::RecallMemory>>>,
     session: &SessionRecord,
 ) -> Option<std::sync::Arc<dyn Fn(Vec<fabric::Message>) + Send + Sync>> {
     let memory = memory?;
@@ -216,7 +216,7 @@ mod tests {
     async fn evicted_callback_captures_session_scoped_observed_memory() {
         let dir = tempfile::tempdir().unwrap();
         let memory = std::sync::Arc::new(tokio::sync::Mutex::new(
-            mnemosyne::RecallMemory::new(
+            mnemosyne::runtime::RecallMemory::new(
                 &dir.path().join("recall.db"),
                 std::sync::Arc::new(kernel::chronos::SystemClock::new()),
             )

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use fabric::{Clock, Subsystem, SubsystemContext};
-use mnemosyne::backends::supplemental::{
+use mnemosyne::supplemental::{
     EnqueueOutcome, SupplementalMemoryError, SupplementalErrorCategory, SupplementalRecall,
     SupplementalRecallHealth,
 };

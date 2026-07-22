@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use fabric::Clock;
-use mnemosyne::{CoreMemory, FactStore, RecallMemory};
+use mnemosyne::runtime::{CoreMemory, FactStore, RecallMemory};
 use tokio::sync::Mutex;
 
 pub(super) struct MemoryCompositionInput<'a> {

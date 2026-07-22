@@ -5,9 +5,9 @@ use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMet
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use super::core_memory::CoreMemory;
-use super::fact_store::FactStore;
-use super::recall_memory::RecallMemory;
+use crate::adapters::storage::fact_store::FactStore;
+use crate::adapters::storage::recall_memory::RecallMemory;
+use crate::domain::core_memory::CoreMemory;
 
 /// Tool: core_memory_append -- append content to a Core Memory block.
 pub struct CoreMemoryAppendTool {

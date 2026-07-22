@@ -5,14 +5,17 @@
 //! Cognitive backends (MemoryRouter + semantic/procedural/self) are behind the
 //! off-by-default `cognitive-memory` feature (M-H Option A).
 
+mod adapters;
 pub mod agent_scope;
-pub mod backends;
+mod application;
+mod backends;
 pub mod composite_service;
 pub mod consolidation;
 pub mod credential;
+mod domain;
 pub mod embodied_episode;
 pub mod fact_service;
-pub mod r#impl;
+mod host;
 pub mod knowledge_graph;
 pub mod lifecycle;
 pub mod model;
@@ -43,9 +46,9 @@ pub use model::{
     MemoryScope, MemorySensitivity, MemoryStatus, ScopeAncestry, TemporalState,
 };
 pub use observability::{
-    CandidateDecisionLabel, ConsolidationJobState, SupplementalDegradedCategory, LatencySamples,
-    MemoryKindLabel, MemoryMetrics, MemoryMetricsSnapshot, MemoryScopeLabel, RecallOmittedReason,
-    RecallSourceLabel, TombstoneDestination,
+    CandidateDecisionLabel, ConsolidationJobState, LatencySamples, MemoryKindLabel, MemoryMetrics,
+    MemoryMetricsSnapshot, MemoryScopeLabel, RecallOmittedReason, RecallSourceLabel,
+    SupplementalDegradedCategory, TombstoneDestination,
 };
 pub use projection::{
     DefaultMemoryWorkspaceProjector, MemoryCandidateContext, MemoryProjection,
@@ -80,45 +83,60 @@ pub use knowledge_graph::{
 #[cfg(feature = "llm-synthesis")]
 pub use service::SynthesisModel;
 
-// Always-available exports
-pub use backends::EpisodicMemory;
 pub use ops::{apply_access_boost, compute_strength, should_forget};
 pub use ops::{compute_activation, ActivationEntry};
 
 // Cognitive exports (off by default)
-#[cfg(feature = "cognitive-memory")]
-pub use backends::{ProceduralMemory, SelfMemory, SemanticMemory};
 #[cfg(feature = "cognitive-memory")]
 pub use ops::{
     ConsolidationConfig, ConsolidationResult, MemoryContext, MemoryRouter, ReflectionSummary,
     SkillSummary,
 };
 
-// Sub-module re-exports for direct path access
-pub use backends::episodic;
 pub use ops::activation;
 pub use ops::decay;
 pub use ops::schema;
 
 #[cfg(feature = "cognitive-memory")]
-pub use backends::procedural;
-#[cfg(feature = "cognitive-memory")]
-pub use backends::self_memory;
-#[cfg(feature = "cognitive-memory")]
-pub use backends::semantic;
-#[cfg(feature = "cognitive-memory")]
 pub use ops::consolidation;
 #[cfg(feature = "cognitive-memory")]
 pub use ops::router;
 
-// Re-exports from impl (migrated from runtime, Group B Phase 2)
-pub use r#impl::auto_memory::AutoMemory;
-pub use r#impl::compaction::CompactionManager;
-pub use r#impl::compressor::AdvancedCompressor;
-pub use r#impl::core_memory::{CoreMemory, MemoryBlock};
-pub use r#impl::fact_store::FactStore;
-pub use r#impl::recall_memory::RecallMemory;
-pub use r#impl::tools as memory_tools;
+/// Composition-only local memory runtime.
+///
+/// These concrete handles are intentionally separated from request-facing
+/// memory contracts. Hosts may construct them and inject `MemoryService` or
+/// `FactUseCases`; application code must depend on those stable traits.
+pub mod runtime {
+    pub use crate::adapters::storage::fact_store::FactStore;
+    pub use crate::adapters::storage::recall_memory::RecallMemory;
+    pub use crate::application::compressor::AdvancedCompressor;
+    pub use crate::backends::EpisodicMemory;
+    #[cfg(feature = "cognitive-memory")]
+    pub use crate::backends::{ProceduralMemory, SelfMemory, SemanticMemory};
+    pub use crate::domain::core_memory::{CoreMemory, MemoryBlock};
+}
+
+/// Stable supplemental-memory contracts and durable local outbox facade.
+///
+/// The remote transport implementation is supplied by the host; Mnemosyne
+/// owns the product-neutral contracts, reconciliation rules, and spool.
+pub mod supplemental {
+    pub use crate::backends::supplemental::*;
+
+    pub mod config {
+        pub use crate::backends::supplemental::config::*;
+    }
+
+    pub mod page {
+        pub use crate::backends::supplemental::page::*;
+    }
+}
+
+/// Host tool adapters for the local memory runtime.
+pub mod memory_tools {
+    pub use crate::host::tools::*;
+}
 
 #[cfg(test)]
 pub mod testing;

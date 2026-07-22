@@ -1,8 +1,8 @@
 use std::fs;
 use std::sync::{Arc, Barrier};
 
-use mnemosyne::backends::supplemental::config::RetryPolicy;
-use mnemosyne::backends::supplemental::{
+use mnemosyne::supplemental::config::RetryPolicy;
+use mnemosyne::supplemental::{
     EnqueueOutcome, SupplementalDocument, SupplementalSpool, RemoteMemoryReceipt, RetryOutcome, SpoolError,
     SpoolLimits,
 };

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::composition::config::SupplementalMemoryConfig;
 use corpus::tools::mcp::manager::McpManager;
-use mnemosyne::backends::supplemental::{
+use mnemosyne::supplemental::{
     SupplementalMemoryBackend, SupplementalBackendConfig, SupplementalSpool, RetryPolicy, SpoolLimits,
     SupplementalErrorCategory,
 };
@@ -40,7 +40,7 @@ pub fn backend_config(config: &SupplementalMemoryConfig) -> SupplementalBackendC
             max_attempts: config.retry_max_attempts,
             max_age_secs: config.retry_max_age_secs,
         },
-        spool: mnemosyne::backends::supplemental::SpoolPolicy {
+        spool: mnemosyne::supplemental::SpoolPolicy {
             path: config.spool_path.clone(),
             max_items: config.spool_max_items,
             max_bytes: config.spool_max_bytes,
@@ -179,7 +179,7 @@ fn valid_runtime_config(config: &SupplementalMemoryConfig) -> bool {
         && config.retry_initial_ms <= config.retry_max_ms
         && config.retry_max_attempts > 0
         && config.retry_max_age_secs > 0
-        && config.schema_version == mnemosyne::backends::supplemental::config::PINNED_RELEASE
+        && config.schema_version == mnemosyne::supplemental::config::PINNED_RELEASE
 }
 
 fn local_runtime(

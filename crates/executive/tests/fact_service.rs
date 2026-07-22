@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 
 fn service() -> (tempfile::TempDir, DefaultFactUseCases) {
     let directory = tempfile::tempdir().unwrap();
-    let store = mnemosyne::FactStore::open(&directory.path().join("facts.db")).unwrap();
+    let store = mnemosyne::runtime::FactStore::open(&directory.path().join("facts.db")).unwrap();
     (
         directory,
         DefaultFactUseCases::new(Arc::new(Mutex::new(store))),

@@ -24,7 +24,7 @@ use fabric::Registry;
 use fabric::Version;
 use fabric::{Subsystem, SubsystemContext};
 use metacog::DefaultMetaRuntime;
-use mnemosyne::episodic::EpisodicMemory;
+use mnemosyne::runtime::EpisodicMemory;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;

@@ -48,8 +48,8 @@ use cognit::harness::linear::circuit_breaker::CircuitBreakerStatus;
 use cognit::harness::linear::goal_tracker::GoalTracker;
 use dasein::SelfField;
 use fabric::LlmProvider;
-use mnemosyne::CoreMemory;
-use mnemosyne::RecallMemory;
+use mnemosyne::runtime::CoreMemory;
+use mnemosyne::runtime::RecallMemory;
 
 /// Session Gateway — unified facade for external debug access.
 ///

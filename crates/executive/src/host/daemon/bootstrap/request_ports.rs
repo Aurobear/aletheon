@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use dasein::SelfField;
-use mnemosyne::episodic::EpisodicMemory;
+use mnemosyne::runtime::EpisodicMemory;
 use tokio::sync::Mutex;
 
 use fabric::{Subsystem, SubsystemContext};

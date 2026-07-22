@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use mnemosyne::backends::supplemental::{
+use mnemosyne::supplemental::{
     SupplementalDocument, SupplementalReconciliation, SupplementalSpool, ReconcileOperationKind, RemoteMemoryReceipt,
     RetryOutcome, RetryPolicy, SpoolError, SpoolLimits, RECONCILIATION_SCHEMA_VERSION,
 };
@@ -60,7 +60,7 @@ fn replay_uses_one_logical_page_and_persists_verified_receipt() {
         reconciliation
             .enqueue(&record(MemoryStatus::Current), 10)
             .unwrap(),
-        mnemosyne::backends::supplemental::EnqueueOutcome::Inserted
+        mnemosyne::supplemental::EnqueueOutcome::Inserted
     );
     let first = spool.claim("worker-a", 10, 10, 1).unwrap().pop().unwrap();
     let replay = spool.claim("worker-b", 20, 10, 1).unwrap().pop().unwrap();
@@ -159,7 +159,7 @@ fn raw_unapproved_sensitive_and_external_records_never_enqueue() {
         mutate(&mut value);
         assert_eq!(
             reconciliation.enqueue(&value, 0).unwrap(),
-            mnemosyne::backends::supplemental::EnqueueOutcome::ExcludedSensitive
+            mnemosyne::supplemental::EnqueueOutcome::ExcludedSensitive
         );
     }
     assert_eq!(spool.queue_depth().unwrap(), 0);

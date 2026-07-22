@@ -3,13 +3,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use mnemosyne::backends::supplemental::{
+use mnemosyne::supplemental::{
     SupplementalReconciliationService, SupplementalSpool, RetryPolicy, SpoolError, SupplementalMemoryTransport,
 };
 use mnemosyne::RetentionRepository;
 use tokio_util::sync::CancellationToken;
 
-pub use mnemosyne::backends::supplemental::ReconciliationDrainReport as DrainReport;
+pub use mnemosyne::supplemental::ReconciliationDrainReport as DrainReport;
 
 /// Scheduling-only adapter. All claim, receipt, retry, dead-letter, and
 /// tombstone-settlement decisions live in Mnemosyne.

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use executive::r#impl::gbrain::GbrainWorker;
-use mnemosyne::backends::supplemental::{
+use mnemosyne::supplemental::{
     SupplementalDocument, SupplementalSpool, RetryPolicy, SpoolLimits, SupplementalErrorCategory, SupplementalHit,
     SupplementalMemoryTransport, SupplementalTransportError,
 };

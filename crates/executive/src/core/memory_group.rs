@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use mnemosyne::episodic::EpisodicMemory;
+use mnemosyne::runtime::EpisodicMemory;
 use mnemosyne::MemoryService;
 
 use crate::r#impl::approval::ApprovalRepository;

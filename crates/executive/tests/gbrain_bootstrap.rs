@@ -14,7 +14,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use mnemosyne::backends::supplemental::{
+use mnemosyne::supplemental::{
     EnqueueOutcome, SupplementalMemoryError, SupplementalErrorCategory, SupplementalRecall,
     SupplementalRecallHealth,
 };
@@ -395,9 +395,9 @@ async fn healthy_http_bootstrap_and_shutdown_leave_committed_queue_durable() {
         .await
         .unwrap()
         .unwrap();
-    let spool = mnemosyne::backends::supplemental::SupplementalSpool::open(
+    let spool = mnemosyne::supplemental::SupplementalSpool::open(
         &config.spool_path,
-        mnemosyne::backends::supplemental::SpoolLimits {
+        mnemosyne::supplemental::SpoolLimits {
             max_items: config.spool_max_items,
             max_bytes: config.spool_max_bytes,
         },
@@ -455,9 +455,9 @@ outbox_dir = "/tmp/overridden-below"
     );
     assert!(legacy.join("one.json.migrated").exists());
     runtime.worker_task.unwrap().await.unwrap();
-    let spool = mnemosyne::backends::supplemental::SupplementalSpool::open(
+    let spool = mnemosyne::supplemental::SupplementalSpool::open(
         &config.spool_path,
-        mnemosyne::backends::supplemental::SpoolLimits {
+        mnemosyne::supplemental::SpoolLimits {
             max_items: config.spool_max_items,
             max_bytes: config.spool_max_bytes,
         },
