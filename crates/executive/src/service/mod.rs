@@ -16,6 +16,7 @@ pub mod daemon_turn;
 pub mod daemon_turn_engine;
 pub mod dasein_workspace_adapter;
 pub mod durable_write;
+pub mod embodied_recovery;
 pub mod embodiment_authority;
 pub mod embodiment_progress;
 pub mod embodiment_service;
@@ -46,6 +47,7 @@ pub mod turn_services;
 pub mod verification;
 pub mod workspace_checkpoint;
 pub mod workspace_trust;
+pub mod world_state;
 
 pub use admin_service::{AdminService, AdminUseCases};
 pub use approval_service::{ApprovalService, ApprovalUseCases};
@@ -65,5 +67,7 @@ pub use turn_service::TurnService;
 pub mod post_turn_projection;
 
 pub mod request_use_cases;
+
+pub mod robot_audit;
 
 pub mod turn_runtime_ports;

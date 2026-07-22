@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package aletheon.policy.gateway.v1;
+
+import "google/protobuf/struct.proto";
+
+service PolicyGateway {
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
+  rpc Propose(ProposeRequest) returns (ProposeResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message GetCapabilitiesRequest {
+  string protocol_version = 1;
+}
+
+message GetCapabilitiesResponse {
+  string protocol_version = 1;
+  string provider_id = 2;
+  uint32 max_proposals = 3;
+}
+
+message ProposeRequest {
+  string protocol_version = 1;
+  string goal = 2;
+  string device_id = 3;
+  repeated string frame_uris = 4;
+  repeated string frame_labels = 5;
+  string frame_summary = 6;
+  float frame_confidence = 7;
+  repeated string allowed_skill_ids = 8;
+}
+
+message SkillProposalWire {
+  string skill_id = 1;
+  string device_id = 2;
+  google.protobuf.Struct parameters = 3;
+  google.protobuf.Struct expected_outcome = 4;
+  float confidence = 5;
+  string provider = 6;
+  string model = 7;
+  string version = 8;
+  string digest = 9;
+}
+
+message ProposeResponse {
+  repeated SkillProposalWire proposals = 1;
+  string error = 2;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+}

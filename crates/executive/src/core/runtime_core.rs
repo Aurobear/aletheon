@@ -123,6 +123,7 @@ impl RuntimeCore {
             agent_max_iterations: app_config.agent.max_iterations,
             harness_kind: app_config.agent.harness_kind,
             integrations,
+            embodiment_provider: Default::default(),
         };
 
         // ── Event bus ───────────────────────────────────────────────

@@ -13,6 +13,7 @@ mod inference;
 mod integrations;
 mod memory;
 mod params;
+pub mod production_embodiment;
 mod request;
 mod request_ports;
 mod runtime;

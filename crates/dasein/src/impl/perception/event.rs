@@ -136,6 +136,22 @@ pub enum EventData {
         args: [u64; 6],
     },
 
+    // Visual perception event — frame reference + compact metadata only,
+    // NO image bytes are carried.
+    Visual {
+        frame: fabric::types::frame::FrameRef,
+        /// Compact labels (max 16).
+        labels: Vec<String>,
+        /// One-line summary (max 256 chars).
+        summary: String,
+        /// Detection confidence [0.0, 1.0].
+        confidence: f32,
+        /// Camera identifier this frame came from.
+        camera_id: String,
+        /// Hash of frame content for dedup.
+        content_hash: String,
+    },
+
     // Generic
     Raw {
         message: String,
@@ -248,6 +264,11 @@ impl PerceptionEvent {
                 comm, syscall_nr, ..
             } => {
                 format!("eBPF syscall: {} nr={}", comm, syscall_nr)
+            }
+            EventData::Visual {
+                labels, summary, ..
+            } => {
+                format!("Visual: [{}] {}", labels.join(","), summary)
             }
             EventData::Raw { message } => message.clone(),
         }

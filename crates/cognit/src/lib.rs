@@ -22,6 +22,7 @@ pub mod config;
 pub mod core;
 pub mod harness;
 pub mod r#impl;
+pub mod ports;
 
 // Re-export core components
 pub use core::critic::Critic;
@@ -47,6 +48,7 @@ pub use harness::{
 pub use r#impl::inference;
 pub use r#impl::learning;
 pub use r#impl::llm;
+pub use r#impl::policy;
 pub use r#impl::provider_registry;
 
 pub mod testing;

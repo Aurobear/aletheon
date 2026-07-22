@@ -32,9 +32,10 @@ pub use infra::{
     DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig, TelegramConfig,
 };
 pub use integrations::{
-    CredentialResolver, EnvironmentCredentialResolver, IntegrationsConfig, OAuthClientType,
-    ResolvedGoogleIntegration, ResolvedIntegrations, ResolvedSearchIntegration,
-    RuntimeBootstrapConfig, SecretRef, SecretValue,
+    CredentialResolver, EmbodimentProviderConfig, EnvironmentCredentialResolver,
+    IntegrationsConfig, OAuthClientType, ProductionEmbodimentConfig, ResolvedGoogleIntegration,
+    ResolvedIntegrations, ResolvedSearchIntegration, RuntimeBootstrapConfig, SecretRef,
+    SecretValue,
 };
 pub use provenance::{ConfigProvenance, ConfigSource, ConfigSourceKind, Provenanced};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};

@@ -11,6 +11,7 @@ use crate::service::turn_policy::TurnPolicy;
 pub fn selected_harness_kind(kind: cognit::harness::HarnessKind) -> &'static str {
     match kind {
         cognit::harness::HarnessKind::Linear => "linear",
+        cognit::harness::HarnessKind::Robot => "robot",
     }
 }
 
