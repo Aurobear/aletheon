@@ -132,12 +132,12 @@ impl Fixture {
         }
     }
 
-    fn config(&self, output_cap: usize, timeout_ms: u64) -> PiRuntimeConfig {
+    fn config(&self, output_cap: usize, timeout_ms: u64) -> CodingRuntimeConfig {
         let digest = format!(
             "{:x}",
             Sha256::digest(std::fs::read(&self.executable).unwrap())
         );
-        PiRuntimeConfig {
+        CodingRuntimeConfig {
             enabled: true,
             executable: self.executable.clone(),
             fixed_args: Self::fixed_args(),

@@ -129,7 +129,7 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         session_approvals: executive::service::admin_service::ScopedApprovalCache::default(),
         daemon_cancel: CancellationToken::new(),
         external_sync: None,
-        gbrain_worker: None,
+        supplemental_memory_worker: None,
         goal_worker: None,
         runtime_shutdown: Arc::new(|| Box::pin(async { Ok(()) })),
         memory_admin: Some(memory_admin),

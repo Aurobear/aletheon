@@ -260,7 +260,7 @@ async fn list_is_owner_scoped_expiry_aware_and_bounded() {
 
 #[test]
 fn approval_rpc_has_no_repository_clock_or_lock_access() {
-    let source = include_str!("../src/impl/daemon/handler/rpc/rpc_approval.rs");
+    let source = include_str!("../src/host/daemon/handler/rpc/rpc_approval.rs");
     assert!(source.contains("self.ports.approvals"));
     for forbidden in [
         "subsystems",

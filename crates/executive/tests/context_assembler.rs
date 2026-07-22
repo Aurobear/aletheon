@@ -148,7 +148,7 @@ fn working_directory_prompt_distinguishes_policy_from_host_mounts() {
 
 #[test]
 fn turn_pipeline_has_one_context_assembly_route() {
-    let pipeline = include_str!("../src/service/turn_pipeline.rs");
+    let pipeline = include_str!("../src/application/turn_pipeline.rs");
     assert!(pipeline.contains(".context_assembler"));
     assert!(pipeline.contains(".assemble(&context_request, &existing_messages)"));
     assert!(pipeline.contains(".canonical_sessions"));
@@ -166,7 +166,7 @@ fn turn_pipeline_has_one_context_assembly_route() {
             "duplicate context route: {removed}"
         );
     }
-    let daemon_modules = include_str!("../src/service/daemon_turn/mod.rs");
+    let daemon_modules = include_str!("../src/application/daemon_turn/mod.rs");
     assert!(!daemon_modules.contains("mod injection"));
 }
 mod turn_request_support;

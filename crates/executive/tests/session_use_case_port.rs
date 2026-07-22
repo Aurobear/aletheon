@@ -176,8 +176,8 @@ async fn compact_materializes_a_new_canonical_session() {
 
 #[test]
 fn session_rpc_and_routing_do_not_construct_concrete_session_stores() {
-    let rpc = include_str!("../src/impl/daemon/handler/rpc/rpc_session.rs");
-    let handler = include_str!("../src/impl/daemon/handler/mod.rs");
+    let rpc = include_str!("../src/host/daemon/handler/rpc/rpc_session.rs");
+    let handler = include_str!("../src/host/daemon/handler/mod.rs");
     for forbidden in [
         "SessionStore::new",
         "SessionManager::new",

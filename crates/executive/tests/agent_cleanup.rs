@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use executive::r#impl::runtime::worktree_recovery::AgentWorktreeReclaimer;
+use executive::application::agent_control::cleanup::AgentWorktreeReclaimer;
 use executive::service::agent_control::{
     AgentCleanupCoordinator, AgentResourceLease, AgentResourceLeaseKind, AgentRunRecord,
     AgentRunRepository, SqliteAgentRunRepository,

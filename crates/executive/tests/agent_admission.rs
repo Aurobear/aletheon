@@ -408,7 +408,7 @@ async fn policy_rejects_depth_internal_delegation_and_storage_before_resources()
 
 #[test]
 fn service_reserves_policy_before_creating_any_child_resource() {
-    let source = include_str!("../src/service/agent_control/mod.rs");
+    let source = include_str!("../src/application/agent_control/mod.rs");
     let reserve = source.find(".reserve(AgentAdmissionRequest").unwrap();
     let process = source.find(".spawn_process(SpawnSpec").unwrap();
     let operation = source.find(".submit_operation(OperationRequest").unwrap();

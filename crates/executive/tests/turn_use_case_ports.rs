@@ -119,7 +119,7 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
 
 #[test]
 fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
-    let pipeline = include_str!("../src/service/turn_pipeline.rs");
+    let pipeline = include_str!("../src/application/turn_pipeline.rs");
     for forbidden in [
         "extract_auto_memory(",
         "record_turn_reflection(",
@@ -154,12 +154,12 @@ fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
     let capability = pipeline.find(".capabilities").unwrap();
     assert!(context < model && model < capability);
 
-    let coordinator = include_str!("../src/service/turn_coordinator.rs");
+    let coordinator = include_str!("../src/application/turn_coordinator.rs");
     let settlement = coordinator.find("terminal?;").unwrap();
     let projection = coordinator.find("dispatch.projector.project").unwrap();
     assert!(settlement < projection);
 
-    let post_turn = include_str!("../src/service/post_turn_projection.rs");
+    let post_turn = include_str!("../src/application/post_turn_projection.rs");
     for forbidden in [
         "MemoryService",
         "AutoMemory",

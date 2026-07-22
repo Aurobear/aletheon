@@ -110,7 +110,7 @@ async fn archive_pin_and_hard_delete_are_bounded_use_cases() {
 
 #[test]
 fn memory_rpc_depends_on_fact_use_cases_not_the_store() {
-    let source = include_str!("../src/impl/daemon/handler/rpc/rpc_memory.rs");
+    let source = include_str!("../src/host/daemon/handler/rpc/rpc_memory.rs");
     assert!(source.contains(".ports"));
     for forbidden in ["subsystems", "FactStore", "fact_store", ".lock()"] {
         assert!(

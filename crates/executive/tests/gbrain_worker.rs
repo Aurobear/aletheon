@@ -298,7 +298,7 @@ async fn retention_tombstone_outbox_is_projected_and_settled_asynchronously() {
 
 #[test]
 fn executive_worker_only_schedules_mnemosyne_reconciliation() {
-    let source = include_str!("../src/impl/gbrain/worker.rs");
+    let source = include_str!("../src/adapters/gbrain/worker.rs");
     for forbidden in [
         ".claim(",
         ".acknowledge(",

@@ -363,7 +363,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
 
 #[test]
 fn production_context_source_has_no_direct_self_or_memory_store_route() {
-    let source = include_str!("../src/service/context_assembler.rs");
+    let source = include_str!("../src/application/context_assembler.rs");
     for forbidden in [
         "recall_service",
         "core_memory",

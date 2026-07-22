@@ -73,7 +73,7 @@ fn setup_with_rollback(
         session_approvals: ScopedApprovalCache::default(),
         daemon_cancel: cancellation.clone(),
         external_sync: None,
-        gbrain_worker: None,
+        supplemental_memory_worker: None,
         goal_worker: None,
         runtime_shutdown: noop_runtime_shutdown(),
         memory_admin: None,
@@ -159,7 +159,7 @@ async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
         session_approvals: ScopedApprovalCache::default(),
         daemon_cancel: cancellation,
         external_sync: None,
-        gbrain_worker: None,
+        supplemental_memory_worker: None,
         goal_worker: None,
         runtime_shutdown: noop_runtime_shutdown(),
         memory_admin: None,
@@ -235,7 +235,7 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
         session_approvals: session.clone(),
         daemon_cancel: cancellation.clone(),
         external_sync: None,
-        gbrain_worker: None,
+        supplemental_memory_worker: None,
         goal_worker: None,
         runtime_shutdown: Arc::new(move || {
             let runtime_shutdowns = runtime_shutdowns_for_hook.clone();
@@ -368,7 +368,7 @@ async fn approval_with_closed_consumer_reports_terminal_non_delivery() {
 
 #[test]
 fn admin_rpc_has_no_concrete_runtime_registry_or_lock_access() {
-    let source = include_str!("../src/impl/daemon/handler/rpc/rpc_admin.rs");
+    let source = include_str!("../src/host/daemon/handler/rpc/rpc_admin.rs");
     assert!(source.contains("self.ports.admin"));
     for forbidden in [
         "subsystems",
