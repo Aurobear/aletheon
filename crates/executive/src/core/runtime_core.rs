@@ -77,7 +77,11 @@ impl RuntimeCore {
                 .bootstrap
                 .working_dir
                 .clone()
-                .unwrap_or_else(|| PathBuf::from("/tmp"))
+                .unwrap_or(
+                    std::env::current_dir().context(
+                        "bootstrap.working_dir is unset and the process cwd is unavailable",
+                    )?,
+                )
                 .to_string_lossy()
                 .to_string(),
             data_dir: app_config.bootstrap.data_dir.clone().map_or_else(

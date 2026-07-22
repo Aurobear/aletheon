@@ -40,6 +40,12 @@ fn resolve_socket_with(
     Ok(UserRuntimePaths::resolve(environment)?.socket_path())
 }
 
+/// Resolve the current user's control socket using the canonical precedence:
+/// explicit CLI value, `ALETHEON_SOCKET`, then XDG runtime.
+pub(crate) fn resolve_user_socket(explicit: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    resolve_socket_with(explicit, &ProcessRuntimeEnvironment)
+}
+
 fn resolve_workspace(selection: WorkspaceLaunch) -> anyhow::Result<fabric::WorkspacePolicy> {
     let process_cwd = std::env::current_dir()
         .map_err(|source| anyhow::anyhow!("cannot resolve process cwd: {source}"))?;
@@ -54,14 +60,14 @@ fn resolve_workspace(selection: WorkspaceLaunch) -> anyhow::Result<fabric::Works
 pub async fn run_single_message(request: MessageLaunch) -> anyhow::Result<()> {
     let workspace = resolve_workspace(request.workspace)?;
     std::env::set_current_dir(workspace.cwd())?;
-    let socket = resolve_socket_with(request.socket, &ProcessRuntimeEnvironment)?;
+    let socket = resolve_user_socket(request.socket)?;
     crate::cli::single_message(&socket, &request.message).await
 }
 
 pub async fn run_tui(request: TuiLaunch, config: crate::tui::TestConfig) -> anyhow::Result<()> {
     let workspace = resolve_workspace(request.workspace)?;
     std::env::set_current_dir(workspace.cwd())?;
-    let socket = resolve_socket_with(request.socket, &ProcessRuntimeEnvironment)?;
+    let socket = resolve_user_socket(request.socket)?;
     crate::tui::run_with_workspace_config(socket.to_string_lossy().as_ref(), config, workspace)
         .await
 }

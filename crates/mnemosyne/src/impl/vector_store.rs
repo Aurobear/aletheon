@@ -40,15 +40,19 @@ pub enum VectorBackend {
 
 impl Default for VectorStoreConfig {
     fn default() -> Self {
+        let canonical_lance_path = dirs::data_local_dir()
+            .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")))
+            .unwrap_or_else(|| "/nonexistent/aletheon-missing-home".into())
+            .join("aletheon")
+            .join("vector-db");
+        let legacy_lance_path = dirs::home_dir().map(|home| home.join(".aletheon/vector-db"));
+        let lance_path = legacy_lance_path
+            .filter(|legacy| legacy.exists() && !canonical_lance_path.exists())
+            .unwrap_or(canonical_lance_path);
         Self {
             backend: VectorBackend::Auto,
             qdrant_url: "http://localhost:6333".to_string(),
-            lance_path: dirs::home_dir()
-                .unwrap_or_else(|| "/tmp".into())
-                .join(".aletheon")
-                .join("vector-db")
-                .to_string_lossy()
-                .to_string(),
+            lance_path: lance_path.to_string_lossy().to_string(),
             collection: "archival_memory".to_string(),
             dimension: 384,
             embedding_grant: None,

@@ -15,7 +15,7 @@ pub mod container;
 pub mod launcher;
 pub mod systemd;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use fabric::Timer;
 use kernel::chronos::SystemTimer;
 use std::path::PathBuf;
@@ -61,6 +61,14 @@ pub trait RuntimeHost {
     async fn shutdown(&mut self) -> Result<()>;
 }
 
+fn runtime_sidecar_path(socket: &std::path::Path, name: &str) -> Result<PathBuf> {
+    let runtime_dir = socket
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .context("daemon socket must have a runtime directory")?;
+    Ok(runtime_dir.join(name))
+}
+
 /// The Unix-socket daemon host.
 ///
 /// Holds CLI-supplied configuration.  `init()` delegates agent-level
@@ -100,11 +108,31 @@ impl DaemonHost {
 impl RuntimeHost for DaemonHost {
     async fn init(&mut self) -> Result<()> {
         // ── PID file ────────────────────────────────────────────────
-        let pid_file = PathBuf::from("/tmp/aletheon/aletheond.pid");
+        let pid_file = runtime_sidecar_path(&self.socket, "aletheond.pid")?;
         if let Some(parent) = pid_file.parent() {
-            std::fs::create_dir_all(parent).ok();
+            let mut builder = std::fs::DirBuilder::new();
+            builder.recursive(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            builder
+                .create(parent)
+                .with_context(|| format!("create runtime directory '{}'", parent.display()))?;
         }
-        std::fs::write(&pid_file, std::process::id().to_string()).ok();
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        use std::io::Write;
+        options
+            .open(&pid_file)
+            .and_then(|mut file| write!(file, "{}", std::process::id()))
+            .with_context(|| format!("write PID file '{}'", pid_file.display()))?;
         self.pid_file = Some(pid_file);
 
         // ── .env ────────────────────────────────────────────────────
@@ -158,10 +186,7 @@ impl RuntimeHost for DaemonHost {
         let clock = request_handler.clock();
 
         // ── MCP embedded server ─────────────────────────────────────
-        let mcp_socket = socket
-            .parent()
-            .unwrap_or(&PathBuf::from("/tmp/aletheon"))
-            .join("aletheon-mcp.sock");
+        let mcp_socket = runtime_sidecar_path(&socket, "aletheon-mcp.sock")?;
         let mcp_server = McpEmbedded::new(
             request_handler.corpus_service(),
             request_handler.corpus_grant(),
@@ -288,8 +313,25 @@ mod tests {
         // init/shutdown for DaemonHost now delegate to RuntimeCore::bootstrap().
         // The test verifies construction + lifecycle phases compile and do not panic
         // (init/shutdown may fail without a real config; accept that).
-        let mut host = DaemonHost::new(None, None, PathBuf::from("/tmp/test.sock"), false);
+        let runtime = tempfile::tempdir().unwrap();
+        let mut host = DaemonHost::new(None, None, runtime.path().join("test.sock"), false);
         let _ = host.init().await;
         let _ = host.shutdown().await;
+    }
+
+    #[test]
+    fn sidecars_are_instance_local_and_relative_sockets_fail_closed() {
+        let first = runtime_sidecar_path(
+            std::path::Path::new("/run/user/1001/aletheon/one.sock"),
+            "aletheon-mcp.sock",
+        )
+        .unwrap();
+        let second = runtime_sidecar_path(
+            std::path::Path::new("/run/user/1002/aletheon/two.sock"),
+            "aletheon-mcp.sock",
+        )
+        .unwrap();
+        assert_ne!(first, second);
+        assert!(runtime_sidecar_path(std::path::Path::new("relative.sock"), "sidecar").is_err());
     }
 }

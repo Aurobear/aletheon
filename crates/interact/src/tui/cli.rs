@@ -22,9 +22,6 @@ use fabric::Timer;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-/// Default socket path for the aletheond daemon.
-pub const DEFAULT_SOCKET: &str = "/run/aletheon/aletheon.sock";
-
 #[derive(Parser)]
 #[command(
     name = "aletheon",
@@ -34,8 +31,8 @@ pub const DEFAULT_SOCKET: &str = "/run/aletheon/aletheon.sock";
 )]
 pub struct Args {
     /// Socket path
-    #[arg(short, long, default_value = DEFAULT_SOCKET, global = true)]
-    pub socket: PathBuf,
+    #[arg(short, long, global = true)]
+    pub socket: Option<PathBuf>,
 
     /// Use this directory as the primary workspace.
     #[arg(short = 'C', long = "chdir", global = true)]
@@ -223,10 +220,11 @@ pub enum GoalAction {
 /// CLI entry point — parses args and dispatches to the appropriate mode.
 pub async fn run() -> Result<()> {
     let args = Args::parse();
+    let socket = crate::host::resolve_user_socket(args.socket.clone())?;
 
     // Handle subcommands
     if let Some(cmd) = args.command {
-        return handle_command(&args.socket, cmd).await;
+        return handle_command(&socket, cmd).await;
     }
 
     // Resolve once for this client lifetime. Subcommands that do not open a
@@ -239,12 +237,12 @@ pub async fn run() -> Result<()> {
     // Handle positional message args
     if !args.message_args.is_empty() {
         let msg = args.message_args.join(" ");
-        return single_message_with_workspace(&args.socket, &msg, &workspace).await;
+        return single_message_with_workspace(&socket, &msg, &workspace).await;
     }
 
     // Handle -m flag
     if let Some(msg) = args.message {
-        return single_message_with_workspace(&args.socket, &msg, &workspace).await;
+        return single_message_with_workspace(&socket, &msg, &workspace).await;
     }
 
     // Interactive mode: use the line-based TUI (IME-compatible)
@@ -255,12 +253,8 @@ pub async fn run() -> Result<()> {
         auto_submit: args.auto_submit,
         test_timeout: args.test_timeout,
     };
-    super::run_with_workspace_config(
-        args.socket.to_str().unwrap_or(DEFAULT_SOCKET),
-        test_config,
-        workspace,
-    )
-    .await
+    super::run_with_workspace_config(socket.to_string_lossy().as_ref(), test_config, workspace)
+        .await
 }
 
 /// Handle subcommands.
@@ -402,7 +396,7 @@ async fn handle_daemon_action(socket: &PathBuf, action: DaemonAction) -> Result<
             if detach {
                 // Start daemon in background
                 let mut cmd = tokio::process::Command::new(exe);
-                cmd.arg("--socket").arg(DEFAULT_SOCKET);
+                cmd.arg("--socket").arg(socket);
                 cmd.stdout(std::process::Stdio::null());
                 cmd.stderr(std::process::Stdio::null());
                 cmd.stdin(std::process::Stdio::null());
@@ -414,13 +408,13 @@ async fn handle_daemon_action(socket: &PathBuf, action: DaemonAction) -> Result<
                         .map(|pid| pid.to_string())
                         .unwrap_or_else(|| "unknown".into())
                 );
-                println!("Socket: {}", DEFAULT_SOCKET);
+                println!("Socket: {}", socket.display());
             } else {
                 // Start daemon in foreground
                 println!("Starting daemon (Ctrl+C to stop)...");
                 let status = tokio::process::Command::new(exe)
                     .arg("--socket")
-                    .arg(DEFAULT_SOCKET)
+                    .arg(socket)
                     .status()
                     .await?;
                 std::process::exit(status.code().unwrap_or(1));
@@ -438,7 +432,6 @@ async fn handle_daemon_action(socket: &PathBuf, action: DaemonAction) -> Result<
         DaemonAction::Status => {
             println!("Daemon status: checking...");
             // Try to connect to socket
-            let socket = std::path::Path::new(DEFAULT_SOCKET);
             if socket.exists() {
                 match UnixStream::connect(socket).await {
                     Ok(_) => println!("Daemon is running"),

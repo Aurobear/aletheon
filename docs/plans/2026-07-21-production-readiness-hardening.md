@@ -1,7 +1,7 @@
 # Aletheon Production Readiness Hardening Plan
 
 > **Date:** 2026-07-21（2026-07-22 校正）
-> **Status:** Active；H0–H7 已完成，H8 进行中
+> **Status:** Active；H0–H8 已完成，H9 进行中
 > **Role:** 唯一可执行 hardening 队列
 > **Companion evidence:** `docs/plans/2026-07-21-aletheon-coupling-and-external-interface-audit.md`
 > **Accepted baseline:** `docs/deployment/ser8-acceptance-2026-07-21.md`
