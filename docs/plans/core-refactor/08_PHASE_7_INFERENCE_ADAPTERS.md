@@ -37,9 +37,9 @@ Prerequisite: Phase 2; coordinate config normalization with Phase 4.
 
 ## Task 1: Lock provider behavior
 
-- [ ] Preserve request/response conversion, streaming, tool calls, usage, stop reasons, timeout, cancellation, context-limit handling, rate limits, authentication, and retry disposition.
-- [ ] Add contract tests against fake HTTP endpoints for every wire adapter.
-- [ ] Keep tests naming concrete providers only under adapter tests.
+- [x] Preserve request/response conversion, streaming, tool calls, usage, stop reasons, timeout, cancellation, context-limit handling, rate limits, authentication, and retry disposition.
+- [x] Add contract tests against fake HTTP endpoints for every wire adapter.
+- [x] Keep tests naming concrete providers only under adapter tests.
 
 ## Task 2: Stable inference contract/facade
 
@@ -53,30 +53,30 @@ InferenceCapabilities
 IntegrationFailureKind + stable inference-domain errors
 ```
 
-- [ ] Concrete provider structs are crate-private.
-- [ ] Crate root does not export concrete provider modules.
-- [ ] External callers build providers only through composition/factory.
+- [x] Concrete provider structs are crate-private.
+- [x] Crate root does not export concrete provider modules.
+- [x] External callers build providers only through composition/factory.
 
 ## Task 3: Composition factory and config
 
-- [ ] Static adapter ID -> constructor match exists only in composition.
-- [ ] Remove URL suffix inference and fallback guessing.
-- [ ] Unknown adapter ID fails explicitly.
-- [ ] Provider/model values remain deployment data.
-- [ ] SecretRef resolves only during adapter construction.
+- [x] Static adapter ID -> constructor match exists only in composition.
+- [x] Remove URL suffix inference and fallback guessing.
+- [x] Unknown adapter ID fails explicitly.
+- [x] Provider/model values remain deployment data.
+- [x] SecretRef resolves only during adapter construction.
 
 ## Task 4: Capability-based scheduling
 
-- [ ] Scheduler selects by required capabilities, configured routing policy, health, cost/limits where explicitly modeled, and deterministic tie-breaking.
-- [ ] Scheduler does not match provider names or parse provider error strings.
-- [ ] Adapter failures normalize before scheduler retry decisions.
-- [ ] Add two differently named fake adapters with identical capabilities to prove neutrality.
+- [x] Scheduler selects by required capabilities, configured routing policy, health, cost/limits where explicitly modeled, and deterministic tie-breaking.
+- [x] Scheduler does not match provider names or parse provider error strings.
+- [x] Adapter failures normalize before scheduler retry decisions.
+- [x] Add two differently named fake adapters with identical capabilities to prove neutrality.
 
 ## Task 5: Public API contraction and gates
 
-- [ ] Remove `pub mod anthropic`, `ollama`, and `openai_provider` from public facade.
-- [ ] Migrate tests/callers to factory or explicit testing facade.
-- [ ] Update compatibility counts and architecture gates.
+- [x] Remove `pub mod anthropic`, `ollama`, and `openai_provider` from public facade.
+- [x] Migrate tests/callers to factory or explicit testing facade.
+- [x] Update compatibility counts and architecture gates.
 
 ## Validation
 
@@ -96,3 +96,10 @@ bash tests/architecture_check.sh
 3. `refactor(cognit): centralize inference adapter construction`
 4. `refactor(cognit): route inference by capability and policy`
 5. `chore(arch): hide concrete inference providers`
+
+## Completion evidence (2026-07-23)
+
+- Concrete Anthropic, OpenAI-compatible, and Ollama modules moved under crate-private `cognit::adapters::inference`; integration tests construct them only through `composition::inference_factory`. Legacy `cognit::llm` and factory paths are counted Phase 9 facades exposing no concrete modules.
+- The factory requires an explicit transport and rejects `Auto`; endpoint/URL inference was deleted and is architecture-gated. Concrete constructors exist only in the composition factory.
+- Fabric exposes `InferenceCapabilities`; scheduler candidate selection filters required tool-call capability, health, explicit route, and deterministic sorted tie-breaking. Two differently named equal-capability fakes prove name-neutral selection.
+- Adapter failures normalize to typed `InferenceFailureKind`; scheduler no longer parses provider error text. Timeout, HTTP redaction, provider registry, scheduler, turn parity, and architecture tests pass.

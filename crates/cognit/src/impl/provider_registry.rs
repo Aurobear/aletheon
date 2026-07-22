@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::llm::provider_factory::{create_provider, ProviderBuildOptions};
+use crate::composition::inference_factory::{create_provider, ProviderBuildOptions};
 use super::llm::LlmProvider;
 use crate::config::{CognitConfig, ProviderConfig, ProviderTimeoutConfig};
 
@@ -172,7 +172,7 @@ default_model = "mimo-v2.5-pro"
 name = "mimo"
 base_url = "https://token-plan-sgp.xiaomimimo.com"
 api_key = "tp-test"
-transport = "auto"
+transport = "openai"
 models = ["mimo-v2.5-pro", "mimo-v2.5-flash"]
 
 [[providers]]

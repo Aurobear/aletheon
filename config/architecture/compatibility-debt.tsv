@@ -1,6 +1,8 @@
 # frozen_commit=efde4ca11a7c45a72ce7a03fee4cdd0c3c9d8e1e
 # id	path	pattern	reason	canonical_replacement	baseline_count	exit_phase
 coding-runtime-config-alias	crates/executive/src/composition/config/coding.rs	\bPiRuntimeConfig\b	legacy Rust config type name remains during deployment migration	CodingRuntimeConfig	1	9
+cognit-llm-facade	crates/cognit/src/lib.rs	#\[deprecated\(note = "use stable inference facade and composition::inference_factory"\)\]	legacy cognit::llm module remains for callers	stable Fabric inference contracts and composition factory	1	9
+cognit-provider-factory-facade	crates/cognit/src/impl/llm.rs	#\[deprecated\(note = "use cognit::composition::inference_factory"\)\]	legacy factory module path remains for callers	cognit::composition::inference_factory	1	9
 cognit-public-impl	crates/cognit/src/lib.rs	pub mod r#impl	legacy concrete inference implementation is public	private adapters behind inference port	1	7
 executive-application-moved-facades	crates/executive/src/application/mod.rs	#\[deprecated\(note	legacy application paths for moved session helpers	crate root and compatibility host paths	2	9
 executive-core-config-facade	crates/executive/src/core/mod.rs	#\[deprecated\(note = "use executive::composition::config"\)\]	legacy core config path remains public	executive::composition::config	1	9

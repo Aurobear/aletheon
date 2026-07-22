@@ -3,7 +3,7 @@
 agora|crates/agora|fabric,kernel|attention,blackboard,broadcast,competition,ops,persistence,scratchpad,task_graph,trace,workspace|false|-
 basic_agent|examples/basic_agent|executive,fabric|-|false|-
 aletheon|crates/aletheon|executive,fabric,interact|workspace|false|-
-cognit|crates/cognit|fabric,kernel|bridge,config,core,harness,impl,ports,testing|true|-
+cognit|crates/cognit|fabric,kernel|bridge,composition,config,core,harness,impl,ports,testing|true|adapters
 corpus|crates/corpus|fabric,kernel,platform|acix,catalog,core,drivers,hook,security,service,skill,tools|false|drivers
 dasein|crates/dasein|fabric,kernel|bridge,core,dasein,impl,testing|true|-
 execd|crates/execd|platform|-|false|-

@@ -20,7 +20,7 @@ This directory is the complete execution package for implementing
 - [x] Phase 4 — configuration ownership
 - [x] Phase 5 — supplemental memory generalization
 - [x] Phase 6 — channel, identity, and information sources
-- [ ] Phase 7 — inference adapter isolation
+- [x] Phase 7 — inference adapter isolation
 - [ ] Phase 8a — Agent Control state machine
 - [ ] Phase 8b — Turn Pipeline state machine
 - [ ] Phase 8c — Mnemosyne service state machine

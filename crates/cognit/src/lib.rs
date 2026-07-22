@@ -17,6 +17,8 @@
 //! - **Harness** — production sessions compose the focused components through
 //!   `harness`.
 
+pub(crate) mod adapters;
+pub mod composition;
 pub mod bridge;
 pub mod config;
 pub mod core;
@@ -47,6 +49,7 @@ pub use harness::{
 };
 pub use r#impl::inference;
 pub use r#impl::learning;
+#[deprecated(note = "use stable inference facade and composition::inference_factory")]
 pub use r#impl::llm;
 pub use r#impl::policy;
 pub use r#impl::provider_registry;

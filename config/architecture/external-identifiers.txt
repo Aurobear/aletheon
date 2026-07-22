@@ -3,9 +3,9 @@
 google	(?i)\bgoogle\b|Google[A-Z]|GOOGLE_	crates/executive/src/adapters/google/,crates/corpus/src/drivers/google/	external information provider	external identity/source port	6
 gmail	(?i)\bgmail\b|Gmail[A-Z]|GMAIL_	crates/executive/src/adapters/google/,crates/corpus/src/drivers/google/	external message product	message source contract	1
 gbrain	(?i)\bgbrain\b|Gbrain[A-Z]|GBRAIN_	crates/mnemosyne/src/backends/supplemental/	external supplemental-memory backend	supplemental memory port	5
-anthropic	(?i)\banthropic\b|Anthropic[A-Z]|ANTHROPIC_	crates/cognit/src/impl/llm/	inference provider	inference adapter id/capability	7
-openai	(?i)\bopenai\b|OpenAi[A-Z]|OPENAI_	crates/cognit/src/impl/llm/	inference provider	inference adapter id/capability	7
-ollama	(?i)\bollama\b|Ollama[A-Z]|OLLAMA_	crates/cognit/src/impl/llm/	inference provider	inference adapter id/capability	7
+anthropic	(?i)\banthropic\b|Anthropic[A-Z]|ANTHROPIC_	crates/cognit/src/adapters/inference/	inference provider	inference adapter id/capability	7
+openai	(?i)\bopenai\b|OpenAi[A-Z]|OPENAI_	crates/cognit/src/adapters/inference/	inference provider	inference adapter id/capability	7
+ollama	(?i)\bollama\b|Ollama[A-Z]|OLLAMA_	crates/cognit/src/adapters/inference/	inference provider	inference adapter id/capability	7
 telegram	(?i)\btelegram\b|Telegram[A-Z]|TELEGRAM_	crates/gateway/src/adapters/telegram/	channel provider	channel adapter id	6
 ros	\bROS(?:2)?\b|\bRos[A-Z]|ROS_	crates/hardware/src/grpc/	robot middleware	generic embodiment diagnostics	6
 kuavo	(?i)\bkuavo\b|Kuavo[A-Z]|KUAVO_	crates/hardware/src/grpc/	robot vendor	device capability metadata	6

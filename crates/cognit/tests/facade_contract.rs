@@ -118,7 +118,7 @@ fn production_cognit_has_no_concrete_kernel_dependency() {
     assert!(manifest["dependencies"].get("kernel").is_none());
     assert!(manifest["dev-dependencies"].get("kernel").is_some());
 
-    let scheduler = include_str!("../src/impl/llm/scheduler.rs");
+    let scheduler = include_str!("../src/adapters/inference/scheduler.rs");
     let production = scheduler.split("#[cfg(test)]").next().unwrap();
     assert!(!production.contains("kernel::"));
 }

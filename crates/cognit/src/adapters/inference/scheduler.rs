@@ -13,8 +13,10 @@ use fabric::evolution::{LlmPurpose, ProviderHealth};
 use fabric::message::Message;
 use fabric::Clock;
 
-use super::provider::{LlmProvider, LlmResponse, ToolDefinition};
-use super::provider_factory::{create_provider, ProviderBuildOptions};
+use super::provider::{
+    InferenceFailure, InferenceFailureKind, LlmProvider, LlmResponse, ToolDefinition,
+};
+use crate::composition::inference_factory::{create_provider, ProviderBuildOptions};
 use crate::config::{ProviderConfig, ProviderTimeoutConfig};
 
 /// How a provider error should be handled during retry/failover.
@@ -28,50 +30,12 @@ pub enum ErrorClass {
     Terminal,
 }
 
-/// Classify a provider error by inspecting its Display string.
-///
-/// Errors are untyped `anyhow::bail!("<Provider> API error {status}: {body}")`
-/// from the provider impls (anthropic.rs:248,324; openai_provider.rs:368,469;
-/// ollama.rs:245,318) plus reqwest transport errors.  We match on stable
-/// substrings because errors carry no structured `ErrorKind`.
 pub fn classify_error(err: &anyhow::Error) -> ErrorClass {
-    let m = err.to_string().to_ascii_lowercase();
-
-    // --- Context overflow (check first -- some providers report as 400) ---
-    if m.contains("maximum context length")
-        || m.contains("context length")
-        || m.contains("context_length_exceeded")
-        || m.contains("prompt is too long")
-        || m.contains("too many tokens")
-        || m.contains("reduce the length")
-    {
-        return ErrorClass::ContextOverflow;
+    match err.downcast_ref::<InferenceFailure>().map(|failure| failure.kind) {
+        Some(InferenceFailureKind::Transient) => ErrorClass::Transient,
+        Some(InferenceFailureKind::ContextOverflow) => ErrorClass::ContextOverflow,
+        Some(InferenceFailureKind::Terminal) | None => ErrorClass::Terminal,
     }
-
-    // --- Transient (retryable HTTP statuses + network failure signatures) ---
-    // Status codes matched with leading space to avoid false positives on
-    // token counts / timestamps (e.g. avoid matching "50000" as "500").
-    if m.contains(" 429")
-        || m.contains("429 too many requests")
-        || m.contains(" 500")
-        || m.contains(" 502")
-        || m.contains(" 503")
-        || m.contains(" 504")
-        || m.contains(" 529")
-        || m.contains("overloaded")
-        || m.contains("timed out")
-        || m.contains("timeout")
-        || m.contains("error sending request")
-        || m.contains("connection reset")
-        || m.contains("connection refused")
-        || m.contains("broken pipe")
-        || m.contains("eof")
-    {
-        return ErrorClass::Transient;
-    }
-
-    // --- Everything else is terminal ---
-    ErrorClass::Terminal
 }
 
 /// Routing rule: maps a purpose to a provider name.
@@ -141,9 +105,10 @@ impl LlmScheduler {
         routing: HashMap<LlmPurpose, String>,
         clock: Arc<dyn Clock>,
     ) -> Self {
-        let default_provider = providers.keys().next().cloned().unwrap_or_default();
-        // Stable failover order from the HashMap key iteration order.
-        let failover_order: Vec<String> = providers.keys().cloned().collect();
+        // HashMap iteration is intentionally removed from routing decisions.
+        let mut failover_order: Vec<String> = providers.keys().cloned().collect();
+        failover_order.sort();
+        let default_provider = failover_order.first().cloned().unwrap_or_default();
         Self {
             providers,
             routing,
@@ -233,13 +198,14 @@ impl LlmScheduler {
     }
 
     /// Ordered candidates for a purpose, skipping circuit-broken providers.
-    fn candidates(&self, purpose: &LlmPurpose) -> Vec<String> {
+    fn candidates(&self, purpose: &LlmPurpose, require_tool_calls: bool) -> Vec<String> {
         let mut seen = HashSet::new();
         let mut out = Vec::with_capacity(self.providers.len());
 
         let push = |name: String, out: &mut Vec<String>, seen: &mut HashSet<String>| {
             if self.providers.contains_key(&name)
                 && self.is_healthy(&name)
+                && (!require_tool_calls || self.providers[&name].capabilities().tool_calls)
                 && seen.insert(name.clone())
             {
                 out.push(name);
@@ -256,7 +222,9 @@ impl LlmScheduler {
         }
 
         // 3. Remaining providers.
-        for name in self.providers.keys().cloned().collect::<Vec<_>>() {
+        let mut remaining = self.providers.keys().cloned().collect::<Vec<_>>();
+        remaining.sort();
+        for name in remaining {
             push(name, &mut out, &mut seen);
         }
 
@@ -283,7 +251,7 @@ impl LlmScheduler {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> Result<LlmResponse> {
-        let order = self.candidates(purpose);
+        let order = self.candidates(purpose, !tools.is_empty());
         if order.is_empty() {
             anyhow::bail!("No healthy providers available for purpose {:?}", purpose);
         }
@@ -427,49 +395,18 @@ mod tests {
 
     #[test]
     fn classify_transient_errors() {
-        for s in [
-            "Anthropic API error 429 Too Many Requests: rate limited",
-            "OpenAI API error 503 Service Unavailable: overloaded",
-            "Anthropic API error 529: {\"error\":\"overloaded_error\"}",
-            "error sending request for url (...): connection reset",
-            "request timed out",
-        ] {
-            assert_eq!(
-                classify_error(&anyhow::anyhow!(s.to_string())),
-                ErrorClass::Transient,
-                "should classify as transient: {s}"
-            );
-        }
+        assert_eq!(classify_error(&InferenceFailure::transient("rate_limited")), ErrorClass::Transient);
     }
 
     #[test]
     fn classify_context_overflow_errors() {
-        for s in [
-            "OpenAI API error 400: This model's maximum context length is 128000 tokens",
-            "Anthropic API error 400: prompt is too long: 250000 tokens > 200000",
-            "Anthropic API error 400: context_length_exceeded",
-        ] {
-            assert_eq!(
-                classify_error(&anyhow::anyhow!(s.to_string())),
-                ErrorClass::ContextOverflow,
-                "should classify as context-overflow: {s}"
-            );
-        }
+        assert_eq!(classify_error(&InferenceFailure::context_overflow()), ErrorClass::ContextOverflow);
     }
 
     #[test]
     fn classify_terminal_errors() {
-        for s in [
-            "Anthropic API error 401 Unauthorized: invalid x-api-key",
-            "OpenAI API error 403 Forbidden",
-            "some unknown error string",
-        ] {
-            assert_eq!(
-                classify_error(&anyhow::anyhow!(s.to_string())),
-                ErrorClass::Terminal,
-                "should classify as terminal: {s}"
-            );
-        }
+        assert_eq!(classify_error(&InferenceFailure::terminal("unauthorized")), ErrorClass::Terminal);
+        assert_eq!(classify_error(&anyhow::anyhow!("unknown")), ErrorClass::Terminal);
     }
 
     // --- Mocks for retry/failover tests ---
@@ -485,7 +422,7 @@ mod tests {
         async fn complete(&self, _m: &[Message], _t: &[ToolDefinition]) -> Result<LlmResponse> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if n < self.fail_n {
-                anyhow::bail!("Anthropic API error 429 Too Many Requests: slow down");
+                return Err(InferenceFailure::transient("rate_limited"));
             }
             Ok(LlmResponse {
                 content: vec![ContentBlock::Text {
@@ -519,7 +456,7 @@ mod tests {
     #[async_trait::async_trait]
     impl LlmProvider for DeadProvider {
         async fn complete(&self, _m: &[Message], _t: &[ToolDefinition]) -> Result<LlmResponse> {
-            anyhow::bail!("Anthropic API error 401 Unauthorized: invalid x-api-key");
+            Err(InferenceFailure::terminal("unauthorized"))
         }
         async fn complete_stream(
             &self,
@@ -670,5 +607,26 @@ mod tests {
 
         let agg = sched.health_check().await;
         assert_eq!(agg.name, sched.default_provider_name());
+    }
+
+    #[test]
+    fn identically_capable_fake_adapters_use_deterministic_tie_breaking() {
+        let mut providers: HashMap<String, Arc<dyn LlmProvider>> = HashMap::new();
+        for name in ["zeta-adapter", "alpha-adapter"] {
+            providers.insert(
+                name.into(),
+                Arc::new(FlakyProvider {
+                    name: name.into(),
+                    fail_n: 0,
+                    calls: AtomicUsize::new(0),
+                }),
+            );
+        }
+        let scheduler = LlmScheduler::from_providers(
+            providers,
+            HashMap::new(),
+            Arc::new(kernel::chronos::TestClock::default()),
+        );
+        assert_eq!(scheduler.default_provider_name(), "alpha-adapter");
     }
 }

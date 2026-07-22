@@ -69,14 +69,14 @@ impl OpenAiProvider {
 }
 
 fn provider_timeout() -> anyhow::Error {
-    anyhow::anyhow!("provider_timeout")
+    InferenceFailure::transient("provider_timeout")
 }
 
 fn provider_request_error(error: reqwest::Error) -> anyhow::Error {
     if error.is_timeout() {
         provider_timeout()
     } else {
-        anyhow::anyhow!("provider_request_failed")
+        InferenceFailure::transient("provider_request_failed")
     }
 }
 
@@ -419,7 +419,7 @@ impl LlmProvider for OpenAiProvider {
                 .map_err(provider_request_error)?;
 
             if !response.status().is_success() {
-                anyhow::bail!("OpenAI API error {}", response.status());
+                return Err(InferenceFailure::from_http_status(response.status()));
             }
             response.json().await.map_err(provider_request_error)
         })
@@ -537,7 +537,7 @@ impl LlmProvider for OpenAiProvider {
         .map_err(provider_request_error)?;
 
         if !response.status().is_success() {
-            anyhow::bail!("OpenAI API error {}", response.status());
+            return Err(InferenceFailure::from_http_status(response.status()));
         }
 
         let byte_stream = response.bytes_stream().map(|r| r.map(|b| b.to_vec()));

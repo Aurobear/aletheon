@@ -130,6 +130,14 @@ for rel, body in production_rs():
             rel != "crates/gateway/src/lib.rs" and provider_leak):
         raise SystemExit(f"architecture-check: provider identity leaked into Gateway core: {rel}")
 
+factory_path = root / "crates/cognit/src/composition/inference_factory.rs"
+if factory_path.is_file():
+    factory_source = factory_path.read_text()
+    if "detect_compatibility_kind" in factory_source or re.search(
+            r"Transport::Auto[^\n]*(?:base_url|endpoint)|(?:base_url|endpoint)[^\n]*Transport::Auto",
+            factory_source):
+        raise SystemExit("architecture-check: inference factory restored URL-based provider guessing")
+
 # Every explicit protocol and migration file has an owner before it can land.
 wire_paths = {line.split("\t")[2] for line in data_lines("wire-surfaces.tsv")}
 wire_candidates = set()
@@ -283,7 +291,7 @@ fi
 provider_constructors_outside_factory=$(rg -l \
   'AnthropicProvider::new|OpenAiProvider::new|OllamaProvider::new' \
   crates/cognit/src -g '*.rs' \
-  | grep -v '^crates/cognit/src/impl/llm/provider_factory.rs$' || true)
+  | grep -v '^crates/cognit/src/composition/inference_factory.rs$' || true)
 if [[ -n "$provider_constructors_outside_factory" ]]; then
   echo "architecture-check: concrete LLM construction bypasses provider_factory:" >&2
   echo "$provider_constructors_outside_factory" >&2

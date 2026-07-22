@@ -4,15 +4,15 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use super::anthropic::AnthropicProvider;
-use super::ollama::OllamaProvider;
-use super::openai_provider::OpenAiProvider;
-use super::provider::LlmProvider;
+use crate::adapters::inference::anthropic::AnthropicProvider;
+use crate::adapters::inference::ollama::OllamaProvider;
+use crate::adapters::inference::openai_provider::OpenAiProvider;
+use crate::adapters::inference::provider::LlmProvider;
 use crate::config::{ProviderConfig, ProviderPricing, ProviderTimeoutConfig, Transport};
 
 /// Concrete protocol selected after resolving the compatibility-only `Auto` mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProviderKind {
+pub(crate) enum ProviderKind {
     OpenAi,
     Anthropic,
     Ollama,
@@ -36,7 +36,7 @@ impl Default for ProviderBuildOptions {
 
 /// Non-secret interpretation of the canonical provider definition.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ResolvedProviderDefinition {
+pub(crate) struct ResolvedProviderDefinition {
     pub kind: ProviderKind,
     pub credential_env_name: String,
     pub max_context_length: Option<usize>,
@@ -45,21 +45,21 @@ pub struct ResolvedProviderDefinition {
 
 /// Resolve the transport and deployment metadata without constructing a client.
 ///
-/// Explicit transport is authoritative. `Auto` is retained only for backwards
-/// compatibility with existing endpoint-based configuration.
-pub fn resolve_provider_definition(config: &ProviderConfig) -> ResolvedProviderDefinition {
+/// Explicit transport is authoritative. `Auto` fails closed; endpoint values
+/// are never inspected to infer an adapter.
+pub(crate) fn resolve_provider_definition(config: &ProviderConfig) -> Result<ResolvedProviderDefinition> {
     let kind = match config.transport {
         Transport::Openai => ProviderKind::OpenAi,
         Transport::Anthropic => ProviderKind::Anthropic,
         Transport::Ollama => ProviderKind::Ollama,
-        Transport::Auto => detect_compatibility_kind(&config.base_url),
+        Transport::Auto => anyhow::bail!("provider transport must be explicit"),
     };
-    ResolvedProviderDefinition {
+    Ok(ResolvedProviderDefinition {
         kind,
         credential_env_name: credential_env_name(&config.name),
         max_context_length: config.max_context_length,
         pricing: config.pricing.clone(),
-    }
+    })
 }
 
 /// The only production implementation that constructs an LLM provider.
@@ -68,7 +68,7 @@ pub fn create_provider(
     model: &str,
     options: ProviderBuildOptions,
 ) -> Result<Arc<dyn LlmProvider>> {
-    let resolved = resolve_provider_definition(config);
+    let resolved = resolve_provider_definition(config)?;
     let api_key = resolve_api_key(config, &resolved.credential_env_name);
 
     match resolved.kind {
@@ -101,17 +101,6 @@ pub fn create_provider(
             }
             Ok(Arc::new(provider))
         }
-    }
-}
-
-fn detect_compatibility_kind(base_url: &str) -> ProviderKind {
-    let normalized = base_url.trim().to_ascii_lowercase();
-    if normalized.ends_with("/anthropic") {
-        ProviderKind::Anthropic
-    } else if normalized.contains("localhost:11434") || normalized.contains("127.0.0.1:11434") {
-        ProviderKind::Ollama
-    } else {
-        ProviderKind::OpenAi
     }
 }
 
@@ -155,6 +144,7 @@ mod tests {
                 Transport::Openai,
                 "http://localhost:11434/anthropic"
             ))
+            .unwrap()
             .kind,
             ProviderKind::OpenAi
         );
@@ -163,24 +153,18 @@ mod tests {
                 Transport::Ollama,
                 "https://api.example.com/anthropic"
             ))
+            .unwrap()
             .kind,
             ProviderKind::Ollama
         );
     }
 
     #[test]
-    fn auto_endpoint_heuristic_is_compatibility_only_and_deterministic() {
-        for (url, expected) in [
-            ("https://api.example.com/anthropic", ProviderKind::Anthropic),
-            ("http://localhost:11434", ProviderKind::Ollama),
-            ("http://127.0.0.1:11434", ProviderKind::Ollama),
-            ("https://api.openai.com", ProviderKind::OpenAi),
-        ] {
-            assert_eq!(
-                resolve_provider_definition(&definition(Transport::Auto, url)).kind,
-                expected
-            );
-        }
+    fn auto_transport_fails_closed_without_url_inference() {
+        assert!(resolve_provider_definition(&definition(
+            Transport::Auto,
+            "http://localhost:11434/anthropic",
+        )).is_err());
     }
 
     #[test]
@@ -188,7 +172,7 @@ mod tests {
         let resolved = resolve_provider_definition(&definition(
             Transport::Anthropic,
             "https://api.anthropic.com",
-        ));
+        )).unwrap();
         assert_eq!(resolved.credential_env_name, "LOCAL_PROVIDER_API_KEY");
         assert_eq!(resolved.max_context_length, Some(32_768));
         assert_eq!(resolved.pricing.unwrap().output_per_1k, 0.2);
