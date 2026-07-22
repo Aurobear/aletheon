@@ -21,7 +21,7 @@ struct StubTurnEngine {
 }
 
 enum StubBehaviour {
-    Success(TurnEngineResult),
+    Success(fabric::TurnId),
     Reject,
 }
 
@@ -34,10 +34,20 @@ impl TurnEngine for StubTurnEngine {
         events: Arc<dyn TurnEngineEventSink>,
     ) -> Result<TurnEngineResult, TurnEngineError> {
         match &self.behaviour {
-            StubBehaviour::Success(result) => {
+            StubBehaviour::Success(turn_id) => {
+                let result = TurnEngineResult {
+                    turn_id: *turn_id,
+                    output: "ok".into(),
+                    status: TurnEngineStatus::Completed,
+                    tool_calls: 2,
+                    tokens_in: 500,
+                    tokens_out: 128,
+                    elapsed_ms: 1_200,
+                    coordinator_execution: None,
+                };
                 events.on_turn_started(result.turn_id).await;
-                events.on_turn_settled(result.turn_id, result).await;
-                Ok(result.clone())
+                events.on_turn_settled(result.turn_id, &result).await;
+                Ok(result)
             }
             StubBehaviour::Reject => Err(TurnEngineError::AdmissionRejected("stub reject".into())),
         }
@@ -78,6 +88,7 @@ fn test_context() -> TurnEngineContext {
         ),
         profile: test_profile(),
         cancel_token: tokio_util::sync::CancellationToken::new(),
+        principal_context: None,
     }
 }
 
@@ -107,17 +118,8 @@ impl TurnEngineEventSink for CountingEventSink {
 #[tokio::test]
 async fn stub_engine_emits_started_and_settled_on_success() {
     let turn_id = fabric::TurnId::new();
-    let result = TurnEngineResult {
-        turn_id,
-        output: "ok".into(),
-        status: TurnEngineStatus::Completed,
-        tool_calls: 2,
-        tokens_in: 500,
-        tokens_out: 128,
-        elapsed_ms: 1_200,
-    };
     let engine = StubTurnEngine {
-        behaviour: StubBehaviour::Success(result.clone()),
+        behaviour: StubBehaviour::Success(turn_id),
     };
     let sink = Arc::new(CountingEventSink::new());
 
@@ -136,6 +138,43 @@ async fn stub_engine_emits_started_and_settled_on_success() {
 
     assert_eq!(got.turn_id, turn_id);
     assert!(sink.started.lock().unwrap().contains(&turn_id));
+}
+
+fn snapshot_of(result: &TurnEngineResult) -> TurnEngineParitySnapshot {
+    TurnEngineParitySnapshot {
+        turn_id: result.turn_id,
+        output_len: result.output.len(),
+        tool_calls: result.tool_calls,
+        status: result.status.clone(),
+        tokens_in: result.tokens_in,
+        tokens_out: result.tokens_out,
+    }
+}
+
+#[test]
+fn daemon_mapping_matches_engine_result_snapshot() {
+    let turn_id = fabric::TurnId::new();
+    let mapped = executive::service::daemon_turn_engine::map_pipeline_response(
+        turn_id,
+        &serde_json::json!({
+            "result": {
+                "response": "ok",
+                "succeeded": true,
+                "metrics": { "tool_calls_made": 2, "elapsed_ms": 5 }
+            }
+        }),
+    );
+    let stub = TurnEngineResult {
+        turn_id,
+        output: "ok".into(),
+        status: TurnEngineStatus::Completed,
+        tool_calls: 2,
+        tokens_in: 0,
+        tokens_out: 0,
+        elapsed_ms: 5,
+        coordinator_execution: None,
+    };
+    assert_eq!(snapshot_of(&mapped), snapshot_of(&stub));
 }
 
 #[tokio::test]

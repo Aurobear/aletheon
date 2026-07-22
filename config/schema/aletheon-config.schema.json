@@ -147,6 +147,11 @@
             "null"
           ]
         },
+        "harness_kind": {
+          "$ref": "#/$defs/HarnessKind",
+          "default": "linear",
+          "description": "Cognitive harness selected by the root application configuration.\nP0 exposes only `linear`; unsupported future values fail deserialization."
+        },
         "max_iterations": {
           "default": 0,
           "format": "uint",
@@ -788,6 +793,13 @@
         }
       },
       "type": "object"
+    },
+    "HarnessKind": {
+      "description": "Selects which concrete harness implementation `build_harness` constructs.\n\nPhase 2 fallback (see RFC-018): `ReActLoop::run` is generic over\n`<L: LlmProvider, F: Fn(...) -> Fut, Fut: Future>`, which is not\nobject-safe (generic methods cannot be part of a `dyn Trait`). Rather than\nforce an incompatible trait-object seam, this factory keeps `ReActLoop` as\na concrete return type and provides the config-selected construction seam:\nadding a new harness kind means adding a variant here and a construction\narm in `build_harness`, without touching `executive`'s call sites beyond\nthe `HarnessKind` selection itself.\n\nSelectable from TOML via `harness_kind = \"linear\"` (see\n`executive::core::config::ExecutiveConfig::harness_kind`).",
+      "enum": [
+        "linear"
+      ],
+      "type": "string"
     },
     "HooksConfig": {
       "additionalProperties": false,
@@ -1981,6 +1993,7 @@
         "compaction_threshold": 30,
         "default_model": null,
         "default_provider": null,
+        "harness_kind": "linear",
         "max_iterations": 0,
         "max_tokens": 100000,
         "provider_timeouts": {

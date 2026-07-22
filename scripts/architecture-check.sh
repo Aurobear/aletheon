@@ -625,6 +625,7 @@ reviewed={
     ("executive", "gateway"),
     ("executive", "hardware"),
     ("gateway", "fabric"),
+    ("hardware", "fabric"),
     ("interact", "executive"),
 }
 for package in data["packages"]:

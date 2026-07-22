@@ -93,6 +93,38 @@ impl ToolRegistry {
         }
         Ok(registrations)
     }
+
+    pub fn register_robot_tools(
+        &mut self,
+        port: Arc<dyn fabric::types::embodiment::EmbodimentExecutionPort>,
+    ) -> Result<Vec<RegistrationId>, AgentError> {
+        use super::robot::{
+            RobotCancelTool, RobotExecuteSkillTool, RobotGetStateTool, RobotListSkillsTool,
+            RobotObserveTool, RobotSafeStopTool,
+        };
+        let registrations = [
+            Arc::new(RobotObserveTool::new(port.clone())) as Arc<dyn Tool>,
+            Arc::new(RobotGetStateTool::new(port.clone())),
+            Arc::new(RobotListSkillsTool::new(port.clone())),
+            Arc::new(RobotExecuteSkillTool::new(port.clone())),
+            Arc::new(RobotCancelTool::new(port.clone())),
+            Arc::new(RobotSafeStopTool::new(port)),
+        ]
+        .into_iter()
+        .map(|tool| self.register(tool))
+        .collect::<Result<Vec<_>, _>>()?;
+        for name in [
+            "robot.observe",
+            "robot.get_state",
+            "robot.list_skills",
+            "robot.execute_skill",
+            "robot.cancel",
+            "robot.safe_stop",
+        ] {
+            self.set_proposal_confidence(name, 0.5)?;
+        }
+        Ok(registrations)
+    }
 }
 
 impl Registry<Arc<dyn Tool>> for ToolRegistry {

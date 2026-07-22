@@ -489,6 +489,10 @@ pub struct AgentConfig {
     pub default_model: Option<String>,
     #[serde(default = "default_max_iterations")]
     pub max_iterations: usize,
+    /// Cognitive harness selected by the root application configuration.
+    /// P0 exposes only `linear`; unsupported future values fail deserialization.
+    #[serde(default)]
+    pub harness_kind: crate::harness::HarnessKind,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: usize,
     #[serde(default = "default_true")]
@@ -629,6 +633,7 @@ impl Default for AgentConfig {
             default_provider: None,
             default_model: None,
             max_iterations: default_max_iterations(),
+            harness_kind: crate::harness::HarnessKind::default(),
             max_tokens: default_max_tokens(),
             compaction_enabled: true,
             compaction_keep_recent: default_compaction_keep_recent(),

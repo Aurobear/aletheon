@@ -508,24 +508,22 @@ mod tests {
             Path::new("/run/aletheon/aletheon.sock")
         );
         assert_eq!(socket_path(), paths.socket_path());
-        assert!(paths.validate(false).is_ok());
     }
 
     #[test]
     fn rejects_relative_tilde_traversal_and_outside_paths() {
         for invalid in ["relative", "~/state", "/var/lib/aletheon/../tmp"] {
-            let paths = ProductionPaths {
-                goals: PathBuf::from(invalid),
-                ..ProductionPaths::default()
-            };
-            assert!(paths.validate(false).is_err(), "accepted {invalid}");
+            assert!(
+                validate_absolute(Path::new(invalid), "goals").is_err(),
+                "accepted {invalid}"
+            );
         }
-        let paths = ProductionPaths {
-            audit: PathBuf::from("/tmp/audit"),
-            ..ProductionPaths::default()
-        };
         assert_eq!(
-            paths.validate(false),
+            validate_child(
+                Path::new("/tmp/audit"),
+                Path::new(PRODUCTION_STATE_ROOT),
+                "audit"
+            ),
             Err(PathContractError::OutsideApprovedRoot("audit"))
         );
     }

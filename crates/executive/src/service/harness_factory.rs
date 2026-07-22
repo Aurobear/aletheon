@@ -7,6 +7,13 @@ use tokio_util::sync::CancellationToken;
 use crate::core::config::ExecutiveConfig;
 use crate::service::turn_policy::TurnPolicy;
 
+/// Stable operator-facing label for the typed harness selected at bootstrap.
+pub fn selected_harness_kind(kind: cognit::harness::HarnessKind) -> &'static str {
+    match kind {
+        cognit::harness::HarnessKind::Linear => "linear",
+    }
+}
+
 #[async_trait]
 pub trait CognitiveSessionFactory: Send + Sync {
     async fn create(

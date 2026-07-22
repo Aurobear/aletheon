@@ -5,20 +5,49 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  schedule:
+    - cron: "17 18 * * *"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  ALETHEON_CARGO_CACHE_ROOT: /home/aletheon-ci/.cache/aletheon-cargo
+  ALETHEON_CARGO_TARGET_MAX_GIB: 30
+
+# Runner jobs are deliberately limited to branches in this repository. The
+# repository is public, so forked pull requests must never execute arbitrary
+# code on the persistent SER8 host.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   architecture:
     name: architecture fitness
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, aletheon]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y ripgrep
+          fetch-depth: 1
+      - name: Fetch architecture comparison base
+        shell: bash
+        run: |
+          base="${{ github.base_ref || 'dev' }}"
+          for attempt in 1 2 3 4 5; do
+            if git fetch --no-tags --depth=1 origin \
+              "+refs/heads/$base:refs/remotes/origin/$base"; then
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          exit 1
+      - name: Verify preinstalled stable toolchain
+        run: rustup run stable rustc --version
       - run: bash tests/architecture_check.sh
       - run: bash tests/architecture_path_inventory.sh
       - name: Reject architecture drift
@@ -26,125 +55,104 @@ jobs:
           ARCH_BASE_REF: origin/${{ github.base_ref || 'dev' }}
         run: bash scripts/architecture-check.sh
 
-  coding-evidence:
-    name: Deterministic coding evidence
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      CARGO_BUILD_JOBS: 1
+  pr-validation:
+    name: PR validation
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, aletheon]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify preinstalled stable toolchain
+        run: rustup run stable rustc --version
+      - name: Formatting
+        run: bash scripts/cargo-agent.sh fmt --all -- --check
+      - name: Test workspace
+        run: bash scripts/cargo-agent.sh +stable test --workspace
+
+  strict-contracts:
+    name: Strict contracts
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, Linux, X64, aletheon]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y libxcb1-dev
       - name: Verify replay receipts
         run: python3 tests/coding/replay_test.py
       - name: Verify coding harness contracts
         run: bash tests/coding/static_test.sh
       - name: Verify production coding closure
-        run: bash scripts/cargo-agent.sh test -p executive --test coding_production_e2e
+        run: bash scripts/cargo-agent.sh +stable test -p executive --test coding_production_e2e
+      - name: Verify Linux platform contracts
+        run: bash scripts/cargo-agent.sh +stable test -p platform --test contract_suite
+      - name: Verify JSON-RPC snapshots
+        run: bash scripts/cargo-agent.sh +stable test -p interact --test json_rpc_snapshots
 
-  platform-contract:
-    name: Linux Platform contract
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      CARGO_BUILD_JOBS: 1
+  strict-quality:
+    name: Strict quality
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, Linux, X64, aletheon]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Verify scoped filesystem contracts
-        run: bash scripts/cargo-agent.sh test -p platform --test contract_suite
+        with:
+          components: clippy,rustfmt
+      - name: Formatting
+        run: bash scripts/cargo-agent.sh fmt --all -- --check
+      - name: Clippy
+        run: bash scripts/cargo-agent.sh +stable clippy --workspace -- -D warnings
+      - name: Documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: bash scripts/cargo-agent.sh +stable doc --workspace --no-deps
+      - name: Release build
+        run: bash scripts/cargo-agent.sh +stable build --workspace --release
 
-  msrv:
+  strict-msrv:
     name: Rust 1.88 MSRV
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, Linux, X64, aletheon]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.88.0
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: msrv-1.88
-      - run: sudo apt-get update && sudo apt-get install -y libxcb1-dev
-      - run: cargo +1.88.0 check --workspace --all-targets
+      - run: bash scripts/cargo-agent.sh +1.88.0 check --workspace --all-targets
 
-  check:
-    name: cargo check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo +stable check --workspace --all-targets
-
-  test:
-    name: cargo test
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      CARGO_BUILD_JOBS: 1
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y libxcb1-dev ripgrep
-      - run: cargo +stable test --workspace
-      # Snapshot assertions run through ordinary tests; no cargo-insta CLI is required.
-      - name: JSON-RPC contract snapshots
-        run: cargo +stable test -p interact --test json_rpc_snapshots
-
-  pi-contract:
-    name: pinned Pi RPC contract
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  strict-pi-contract:
+    name: Pinned Pi RPC contract
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, Linux, X64, aletheon]
+    timeout-minutes: 20
     env:
       ALETHEON_REAL_PI: pi
       ALETHEON_REAL_PI_VERSION: 0.80.10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Install reviewed Pi release without lifecycle scripts
-        run: npm install --global --ignore-scripts @earendil-works/pi-coding-agent@${ALETHEON_REAL_PI_VERSION}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pi" --ignore-scripts \
+            @earendil-works/pi-coding-agent@${ALETHEON_REAL_PI_VERSION}
+          echo "$RUNNER_TEMP/pi/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Verify real Pi RPC framing and state response
         run: bash scripts/cargo-agent.sh +stable test -p executive --test pi_real_contract -- --ignored --exact pinned_pi_rpc_get_state_obeys_reviewed_jsonl_contract
 
-  clippy:
-    name: cargo clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo +stable clippy --workspace -- -D warnings
-
-  fmt:
-    name: cargo fmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo +stable fmt --all -- --check
-
-  fuzz-quick-check:
-    name: fuzz quick-check
-    runs-on: ubuntu-latest
+  strict-fuzz:
+    name: Fuzz quick-check
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, Linux, X64, aletheon]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates/executive/fuzz -> target
-      - name: Install cargo-fuzz
-        run: cargo +nightly install cargo-fuzz --locked
+      - name: Install cargo-fuzz when absent
+        run: command -v cargo-fuzz >/dev/null || cargo +nightly install cargo-fuzz --locked
       - name: Run all executive fuzz targets
         shell: bash
         run: |
@@ -161,24 +169,3 @@ jobs:
             cargo +nightly fuzz run "$target" \
               --fuzz-dir crates/executive/fuzz -- -max_total_time=30
           done
-
-  doc:
-    name: cargo doc
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo +stable doc --workspace --no-deps
-        env:
-          RUSTDOCFLAGS: "-D warnings"
-
-  build:
-    name: cargo build (release)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y libxcb1-dev
-      - run: cargo +stable build --workspace --release

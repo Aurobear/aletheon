@@ -40,6 +40,7 @@ pub struct DaemonTurnOrchestrator {
     pub(crate) main_agent_process_id: Arc<Mutex<Option<ProcessId>>>,
     pub(crate) turn_token: Arc<Mutex<Option<CancellationToken>>>,
     pub(crate) pipeline: Option<Arc<TurnPipeline>>,
+    pub(crate) turn_engine: Option<Arc<dyn crate::service::turn_engine::TurnEngine>>,
     pub(crate) coordinator: Arc<TurnCoordinator>,
     pub(crate) session_service: Arc<crate::service::session_service::SessionService>,
     #[allow(dead_code)]
@@ -51,12 +52,16 @@ pub struct DaemonTurnOrchestrator {
 
 impl DaemonTurnOrchestrator {
     pub(crate) fn new(resources: DaemonTurnResources) -> Self {
+        let turn_engine = Arc::new(crate::service::daemon_turn_engine::DaemonTurnEngine::new(
+            resources.pipeline.clone(),
+        ));
         Self {
             kernel: resources.kernel,
             notify_tx: resources.notify,
             main_agent_process_id: resources.main_agent_process_id,
             turn_token: resources.turn_token,
             pipeline: Some(resources.pipeline),
+            turn_engine: Some(turn_engine),
             coordinator: resources.coordinator,
             session_service: resources.session_service,
             grok_hardening: resources.grok_hardening,

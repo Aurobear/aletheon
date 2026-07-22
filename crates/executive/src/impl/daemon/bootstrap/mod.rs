@@ -6,6 +6,7 @@
 mod agents;
 mod approval_gate;
 mod channels;
+pub(crate) mod embodiment;
 mod extensions;
 mod google;
 mod inference;

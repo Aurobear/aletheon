@@ -488,9 +488,16 @@ impl RequestHandler {
             // Wave 0: honor configured agent iteration cap (0 = unlimited)
             // instead of the hardcoded Default (50).
             max_iterations: config.agent_max_iterations,
+            harness_kind: config.harness_kind,
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
+        tracing::info!(
+            harness = crate::service::harness_factory::selected_harness_kind(
+                runtime_config_snapshot.harness_kind
+            ),
+            "cognitive harness selected from config"
+        );
         let cognitive_sessions: Arc<dyn crate::service::harness_factory::CognitiveSessionFactory> =
             Arc::new(
                 crate::service::harness_factory::LinearCognitiveSessionFactory::new(
@@ -712,6 +719,25 @@ impl RequestHandler {
             clock.clone(),
             durable_budget,
         ));
+        let hardware_clock: Arc<dyn hardware::MonotonicClock> =
+            Arc::new(super::embodiment::HardwareClockAdapter(clock.clone()));
+        let embodiment_workspace =
+            fabric::WorkspacePolicy::from_resolved_roots(data_dir.clone(), Vec::new())
+                .map_err(anyhow::Error::msg)
+                .context("resolving embodiment workspace")?;
+        let embodiment_port = super::embodiment::build_embodiment_port(
+            hardware_clock,
+            kernel.admission(),
+            Arc::new(crate::service::embodiment_progress::NoopEmbodimentProgress),
+            fabric::ProcessId::new(),
+            fabric::PrincipalId(fabric::LOCAL_OWNER_PRINCIPAL.to_string()),
+            embodiment_workspace,
+        );
+        tools
+            .lock()
+            .await
+            .register_robot_tools(embodiment_port)
+            .context("registering governed robot tools")?;
         let fact_use_cases: Arc<dyn mnemosyne::FactUseCases> =
             Arc::new(mnemosyne::DefaultFactUseCases::new(fact_store.clone()));
         let goal_use_cases: Arc<dyn crate::service::GoalUseCases> =
