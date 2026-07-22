@@ -58,9 +58,16 @@ messaging/follow-up/steer/cancel/wait
 persistence and restart recovery
 ```
 
-- [ ] Separate admission, lifecycle, messaging, settlement, runtime port, persistence port, and errors.
-- [ ] Preserve identity depth, parent validation, budget/lease/storage reservation, cancellation, timeout, and settlement exactly-once behavior.
-- [ ] No runtime-name policy branch.
+- [x] Separate admission, lifecycle, messaging, settlement, runtime port, persistence port, and errors.
+- [x] Preserve identity depth, parent validation, budget/lease/storage reservation, cancellation, timeout, and settlement exactly-once behavior.
+- [x] No runtime-name policy branch.
+
+Evidence: `crates/executive/src/application/agent_control/STATE_MACHINE.md` defines
+the model and ownership; `lifecycle.rs` contains the pure reducer and exhaustive
+pair characterization; `SqliteAgentRunRepository::transition` is the sole durable
+effect executor. `config/architecture/state-machine-inventory.tsv` records the owner,
+mutation entry, and current largest-module measurements. Repository and recovery
+integration tests cover compare-and-swap replay and crash/restart behavior.
 
 Validation:
 

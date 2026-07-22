@@ -42,6 +42,7 @@ crates/executive/src/application/agent_control/cleanup.rs	application	executive	
 crates/executive/src/application/agent_control/context_fork.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/execution.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/live_runs.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/agent_control/lifecycle.rs	application	executive	pure Agent lifecycle reducer
 crates/executive/src/application/agent_control/mailbox.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/memory.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/mod.rs	application	executive	use-case orchestration and ports

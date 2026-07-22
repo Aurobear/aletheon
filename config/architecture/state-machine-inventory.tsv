@@ -1,0 +1,2 @@
+# package	state_owner	mutation_entry	owner_loc	largest_io_module	largest_io_loc
+agent-control	crates/executive/src/application/agent_control/lifecycle.rs	AgentRunRepository::transition	170	crates/executive/src/adapters/agent_control/sqlite_repository.rs	923

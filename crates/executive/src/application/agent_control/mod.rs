@@ -25,6 +25,7 @@ pub mod cleanup;
 pub mod context_fork;
 pub mod execution;
 pub mod live_runs;
+pub mod lifecycle;
 pub mod mailbox;
 pub mod memory;
 pub mod recovery;
@@ -54,6 +55,10 @@ pub use execution::{
     CompatibilityRuntimeLauncher, NoopAgentEventSink, SpineAgentEventSink,
 };
 pub use live_runs::{LiveAgentRun, LiveAgentRuns, ReparentAuthority};
+pub use lifecycle::{
+    reduce_agent_lifecycle, reduce_agent_status_transition, AgentLifecycleEffect,
+    AgentLifecycleEvent, AgentLifecycleTransition, InvalidAgentLifecycleTransition,
+};
 pub use mailbox::{AgentMailboxBridge, AgentRuntimeInbox};
 pub use memory::MemoryRecordingAgentEventSink;
 pub use recovery::{

@@ -18,6 +18,7 @@ use crate::application::agent_control::repository::{
     AgentMessageRecord, AgentResourceLease, AgentResourceLeaseKind, AgentRunRecord,
     AgentRunRepository,
 };
+use crate::application::agent_control::{reduce_agent_status_transition, AgentLifecycleEffect};
 
 const MIGRATION: &str = include_str!("migrations/001_agent_runs.sql");
 const MESSAGE_MIGRATION: &str = include_str!("migrations/002_agent_messages.sql");
@@ -99,7 +100,9 @@ impl AgentRunRepository for SqliteAgentRunRepository {
                 "new Agent run must be queued at version zero",
             ));
         }
-        if run.workspace_id != crate::application::agent_control::repository::agent_workspace_id(run.agent_id()) {
+        if run.workspace_id
+            != crate::application::agent_control::repository::agent_workspace_id(run.agent_id())
+        {
             return Err(control_error(
                 AgentControlErrorKind::InvalidRequest,
                 "Agent workspace ID does not match durable Agent identity",
@@ -169,12 +172,9 @@ impl AgentRunRepository for SqliteAgentRunRepository {
         error: Option<String>,
         now_ms: i64,
     ) -> Result<AgentRunRecord, AgentControlError> {
-        if !can_transition(expected, next) {
-            return Err(control_error(
-                AgentControlErrorKind::InvalidRequest,
-                format!("illegal Agent transition {expected:?} -> {next:?}"),
-            ));
-        }
+        let transition = reduce_agent_status_transition(expected, next).map_err(|error| {
+            control_error(AgentControlErrorKind::InvalidRequest, error.to_string())
+        })?;
         if let Some(value) = &result {
             value.validate()?;
         }
@@ -189,8 +189,14 @@ impl AgentRunRepository for SqliteAgentRunRepository {
             .map(serde_json::to_string)
             .transpose()
             .map_err(persistence)?;
-        let started_at = (next == AgentRunStatus::Running).then_some(now_ms);
-        let ended_at = next.is_terminal().then_some(now_ms);
+        let started_at = transition
+            .effects
+            .contains(&AgentLifecycleEffect::MarkStarted)
+            .then_some(now_ms);
+        let ended_at = transition
+            .effects
+            .contains(&AgentLifecycleEffect::MarkTerminal)
+            .then_some(now_ms);
         let mut connection = self.connection.lock();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -806,27 +812,6 @@ fn column<T: rusqlite::types::FromSql>(
     index: usize,
 ) -> Result<T, AgentControlError> {
     row.get(index).map_err(persistence)
-}
-
-fn can_transition(from: AgentRunStatus, to: AgentRunStatus) -> bool {
-    use AgentRunStatus::{Cancelled, Failed, Interrupted, Queued, Running, Succeeded, Waiting};
-    matches!(
-        (from, to),
-        (Queued, Running)
-            | (Queued, Cancelled)
-            | (Queued, Failed)
-            | (Queued, Interrupted)
-            | (Running, Waiting)
-            | (Waiting, Running)
-            | (Running, Succeeded)
-            | (Running, Failed)
-            | (Running, Cancelled)
-            | (Running, Interrupted)
-            | (Waiting, Succeeded)
-            | (Waiting, Failed)
-            | (Waiting, Cancelled)
-            | (Waiting, Interrupted)
-    )
 }
 
 fn status_wire(status: AgentRunStatus) -> &'static str {
