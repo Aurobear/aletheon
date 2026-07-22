@@ -41,17 +41,17 @@ fn domain_ports_retain_only_authoritative_facades() {
 #[test]
 fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
     let files = [
-        "src/impl/daemon/handler/mod.rs",
-        "src/impl/daemon/handler/init.rs",
-        "src/impl/daemon/handler/ports.rs",
-        "src/impl/daemon/handler/tool_executor.rs",
-        "src/impl/daemon/mcp_embedded.rs",
-        "src/impl/runtime/provider_worker.rs",
-        "src/service/request_use_cases.rs",
-        "src/service/admin_service.rs",
-        "src/service/post_turn_projection.rs",
-        "src/service/turn_pipeline.rs",
-        "src/service/turn_runtime_ports.rs",
+        "src/host/daemon/handler/mod.rs",
+        "src/host/daemon/handler/init.rs",
+        "src/host/daemon/handler/ports.rs",
+        "src/host/daemon/handler/tool_executor.rs",
+        "src/host/daemon/mcp_embedded.rs",
+        "src/adapters/runtime/provider_worker.rs",
+        "src/application/request_use_cases.rs",
+        "src/application/admin_service.rs",
+        "src/application/post_turn_projection.rs",
+        "src/application/turn_pipeline.rs",
+        "src/application/turn_runtime_ports.rs",
     ];
     let forbidden = [
         "mnemosyne::runtime::FactStore",
@@ -83,9 +83,12 @@ fn request_turn_and_goal_paths_do_not_import_domain_implementations() {
 #[test]
 fn admin_and_post_turn_retain_runtime_facades_not_executive() {
     for (file, contract) in [
-        ("src/service/admin_service.rs", "Arc<dyn AdminRuntimePort>"),
         (
-            "src/service/post_turn_projection.rs",
+            "src/application/admin_service.rs",
+            "Arc<dyn AdminRuntimePort>",
+        ),
+        (
+            "src/application/post_turn_projection.rs",
             "Arc<dyn PostTurnRuntimePort>",
         ),
     ] {
@@ -103,7 +106,7 @@ fn admin_and_post_turn_retain_runtime_facades_not_executive() {
 
 #[test]
 fn request_use_cases_retain_only_typed_runtime_and_domain_ports() {
-    let source = production_source("src/service/request_use_cases.rs");
+    let source = production_source("src/application/request_use_cases.rs");
     for contract in [
         "Arc<dyn ExecutiveRuntimePort>",
         "Arc<dyn ReflectionMemoryPort>",
@@ -137,7 +140,7 @@ fn request_use_cases_retain_only_typed_runtime_and_domain_ports() {
 
 #[test]
 fn exec_session_crosses_private_corpus_composition() {
-    let source = production_source("src/service/exec_session.rs");
+    let source = production_source("src/composition/exec_session.rs");
     assert!(
         source.contains("compose_exec_corpus"),
         "exec session does not use private Corpus composition"
@@ -158,7 +161,7 @@ fn exec_session_crosses_private_corpus_composition() {
 
 #[test]
 fn turn_runtime_retain_only_typed_use_case_ports() {
-    let source = production_source("src/service/turn_runtime_ports.rs");
+    let source = production_source("src/application/turn_runtime_ports.rs");
     for contract in [
         "Arc<dyn SelfPolicyPort>",
         "Arc<dyn TurnConfigPort>",
@@ -195,9 +198,9 @@ fn turn_runtime_retain_only_typed_use_case_ports() {
 fn concrete_domain_construction_is_confined_to_composition_or_domain_tests() {
     let root = Path::new("src");
     let allowed = [
-        PathBuf::from("src/impl/daemon/bootstrap"),
-        PathBuf::from("src/impl/exec_corpus.rs"),
-        PathBuf::from("src/service/harness_factory.rs"),
+        PathBuf::from("src/host/daemon/bootstrap"),
+        PathBuf::from("src/composition/exec_corpus.rs"),
+        PathBuf::from("src/application/harness_factory.rs"),
     ];
     let constructors = [
         "DefaultMetacogService::",
