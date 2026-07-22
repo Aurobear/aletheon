@@ -7,6 +7,7 @@ mod approval_gate;
 mod channels;
 mod extensions;
 mod google;
+mod memory;
 mod params;
 mod request;
 mod request_ports;

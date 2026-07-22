@@ -28,8 +28,6 @@ use fabric::{Subsystem, SubsystemContext};
 use metacog::DefaultMetaRuntime;
 use mnemosyne::episodic::EpisodicMemory;
 use mnemosyne::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
-use mnemosyne::CoreMemory;
-use mnemosyne::RecallMemory;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
@@ -50,7 +48,6 @@ use corpus::skill::plugin::register_skill;
 use corpus::HookRegistry;
 use corpus::SkillLoader;
 use corpus::SkillRouter;
-use mnemosyne::FactStore;
 
 use super::super::debug_handler::DebugHandler;
 use crate::core::session_gateway::gateway::SessionStateRef;
@@ -125,25 +122,19 @@ impl RequestHandler {
             sf.wire_dasein_event_bridge(bus).await?;
         }
 
-        let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
-        let recall_db_path = data_dir.join("recall_memory.db");
-        let recall_clock: Arc<dyn fabric::Clock> = Arc::new(SystemClock::new());
-        let recall_memory = Arc::new(Mutex::new(RecallMemory::new(
-            &recall_db_path,
-            recall_clock,
-        )?));
+        let memory = super::memory::compose(super::memory::MemoryCompositionInput {
+            data_dir: &data_dir,
+            clock: clock.clone(),
+        })?;
+        let core_memory = memory.core;
+        let recall_memory = memory.recall;
+        let fact_store = memory.facts;
 
         // Every durable user-runtime store is rooted in the injected state
         // directory. Never rediscover HOME or a machine deployment path here.
         let aletheon_dir = data_dir.clone();
         std::fs::create_dir_all(&aletheon_dir)?;
         let production = config.deployment.mode == cognit::config::DeploymentMode::Production;
-        let fact_root = data_dir.join("mnemosyne");
-        std::fs::create_dir_all(&fact_root)?;
-        let fact_store =
-            FactStore::open(&fact_root.join("fact_store.db")).context("opening fact store")?;
-        let fact_store = Arc::new(Mutex::new(fact_store));
-
         let objective_root = data_dir.join("goals");
         std::fs::create_dir_all(&objective_root)?;
         let objective_db_path = objective_root.join("objectives.db");
