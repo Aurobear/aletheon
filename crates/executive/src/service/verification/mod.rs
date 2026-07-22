@@ -370,6 +370,8 @@ pub struct CapabilityAuditSummary {
     pub audit_present: bool,
     pub observed_capabilities: Vec<String>,
     pub allowed_capabilities: Vec<String>,
+    #[serde(default)]
+    pub unavailable_capabilities: Vec<String>,
 }
 
 impl CapabilityAuditSummary {
@@ -378,6 +380,8 @@ impl CapabilityAuditSummary {
         self.observed_capabilities.dedup();
         self.allowed_capabilities.sort();
         self.allowed_capabilities.dedup();
+        self.unavailable_capabilities.sort();
+        self.unavailable_capabilities.dedup();
         self
     }
 }

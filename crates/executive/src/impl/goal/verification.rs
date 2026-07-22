@@ -110,6 +110,13 @@ impl ObjectiveStore {
         }
         let diff_artifact_ref = PathBuf::from("coding-diffs").join(format!("{job_id}.diff"));
         validate_relative_ref(&diff_artifact_ref, "diff artifact")?;
+        if report
+            .diff_artifact
+            .as_deref()
+            .is_some_and(|expected| expected != diff_artifact_ref)
+        {
+            bail!("coding report diff artifact reference does not match stable job reference");
+        }
         let final_path = self.artifact_path(&diff_artifact_ref)?;
         write_artifact_atomic(&final_path, diff)?;
 

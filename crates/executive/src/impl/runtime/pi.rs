@@ -282,6 +282,35 @@ fn validate_sandbox(sandbox: &dyn SandboxBackend) -> Result<()> {
     Ok(())
 }
 
+fn capability_audit_summary(sandbox: &dyn SandboxBackend) -> CapabilityAuditSummary {
+    const CAPABILITIES: [(&str, fn(&fabric::sandbox::SandboxCapabilities) -> bool); 4] = [
+        ("filesystem_isolation", |value| value.filesystem_isolation),
+        ("network_isolation", |value| value.network_isolation),
+        ("resource_limits", |value| value.resource_limits),
+        ("seccomp_filter", |value| value.seccomp_filter),
+    ];
+    let capabilities = sandbox.capabilities();
+    let mut observed_capabilities = Vec::new();
+    let mut unavailable_capabilities = Vec::new();
+    for (name, available) in CAPABILITIES {
+        if available(&capabilities) {
+            observed_capabilities.push(name.to_owned());
+        } else {
+            unavailable_capabilities.push(name.to_owned());
+        }
+    }
+    CapabilityAuditSummary {
+        audit_present: true,
+        observed_capabilities,
+        allowed_capabilities: CAPABILITIES
+            .into_iter()
+            .map(|(name, _)| name.to_owned())
+            .collect(),
+        unavailable_capabilities,
+    }
+    .normalized()
+}
+
 pub(super) fn pi_sandbox_policy(
     workspace: &WorkspacePolicy,
     network_enabled: bool,
@@ -608,6 +637,8 @@ impl SubAgentRuntime for PiRuntime {
             .as_ref()
             .map(|parsed| parsed.final_text.clone())
             .unwrap_or_else(|| output.stdout.clone());
+        let diff_artifact_ref =
+            PathBuf::from("coding-diffs").join(format!("{}.diff", request.job.job_id.0));
         let report = CodingJobReport {
             job_id: request.job.job_id,
             goal_id: request.job.goal_id,
@@ -622,7 +653,7 @@ impl SubAgentRuntime for PiRuntime {
             stderr_truncated: output.stderr_truncated,
             changed_files: snapshot.changed_files.clone(),
             diff_sha256: Some(snapshot.diff_sha256.clone()),
-            diff_artifact: None,
+            diff_artifact: Some(diff_artifact_ref),
         };
         let report_json = serde_json::to_string(&report)
             .unwrap_or_else(|error| format!(r#"{{"serialization_error":"{error}"}}"#));
@@ -656,12 +687,8 @@ impl SubAgentRuntime for PiRuntime {
             AttemptEvidence {
                 kind: "coding_capability_audit".into(),
                 summary: "isolated Pi capability audit".into(),
-                content: serde_json::to_string(&CapabilityAuditSummary {
-                    audit_present: true,
-                    observed_capabilities: Vec::new(),
-                    allowed_capabilities: Vec::new(),
-                })
-                .expect("capability audit is serializable"),
+                content: serde_json::to_string(&capability_audit_summary(self.sandbox.as_ref()))
+                    .expect("capability audit is serializable"),
             },
             AttemptEvidence {
                 kind: "pi_build_identity".into(),

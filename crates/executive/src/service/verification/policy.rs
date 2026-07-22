@@ -134,6 +134,7 @@ mod tests {
                 audit_present: true,
                 observed_capabilities: vec![],
                 allowed_capabilities: vec![],
+                unavailable_capabilities: vec![],
             },
             selection: VerificationSelection::default(),
         }

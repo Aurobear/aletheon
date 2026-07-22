@@ -648,6 +648,12 @@ memory projection 与临时 artifact 删除是明确的 best-effort 路径，但
 
 ## 22. 已验证的健康行为与排除项
 
+- H9 的 Pi capability audit 不再用“present + 两个空向量”占位，而是记录 sandbox backend
+  报告的 observed/unavailable 信号，并用显式 allow-list 供 verifier 比对
+  （`crates/executive/src/impl/runtime/pi.rs:285-315,685-693`）。Pi report 同时预声明与 durable
+  store 一致的 `coding-diffs/<job-id>.diff` 相对引用；store 在写入前复核引用与 diff hash
+  （`crates/executive/src/impl/runtime/pi.rs:641-658`、
+  `crates/executive/src/impl/goal/verification.rs:82-120`）。
 - 配置层级已经明确定义为 system → user → project → `ALETHEON__` environment → CLI
   （`crates/executive/src/core/config/mod.rs:259-301`）；问题是部分业务环境变量绕过该入口。
 - daemon 已有 health RPC；待完善的是把外部依赖的 degraded/unready 状态统一投影到健康结果，

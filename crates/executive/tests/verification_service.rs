@@ -118,6 +118,7 @@ esac
                 audit_present: true,
                 observed_capabilities: vec!["file.write".into()],
                 allowed_capabilities: vec!["file.write".into()],
+                unavailable_capabilities: vec![],
             },
             selection: VerificationSelection::default(),
         }
