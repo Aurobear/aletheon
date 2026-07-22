@@ -9,3 +9,5 @@ async-trait = "0.1"
 fabric = { path = "../fabric" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }

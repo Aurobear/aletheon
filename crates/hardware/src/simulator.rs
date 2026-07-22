@@ -6,7 +6,10 @@ use crate::{
     RejectionReason, SafetyState, TelemetryEnvelope, TypedCommand, ValidatedCommand,
 };
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 pub struct SimulatedDevice {
     pub manifest: DeviceManifest,
@@ -223,6 +226,159 @@ impl DeviceProvider for SimulatedDevice {
     }
 }
 
+/// Async provider facade over the deterministic device safety boundary.
+pub struct SimulatedEmbodiment {
+    inner: tokio::sync::Mutex<SimulatedDevice>,
+    sequence: AtomicU64,
+}
+
+impl SimulatedEmbodiment {
+    pub fn mobile_robot(id: &str, clock: Arc<dyn MonotonicClock>) -> Self {
+        Self {
+            inner: tokio::sync::Mutex::new(SimulatedDevice::mobile_robot(id, clock)),
+            sequence: AtomicU64::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::EmbodimentProvider for SimulatedEmbodiment {
+    async fn list_skills(
+        &self,
+        device: &fabric::DeviceId,
+    ) -> Result<Vec<fabric::SkillDescriptor>, crate::ProviderError> {
+        let guard = self.inner.lock().await;
+        if guard.manifest.id != *device {
+            return Err(crate::ProviderError::Rejected("device mismatch".into()));
+        }
+        Ok(vec![fabric::SkillDescriptor {
+            skill: fabric::SkillId("navigate".into()),
+            device: device.clone(),
+            summary: "navigate to a two-dimensional target".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
+                "required": ["x", "y"],
+                "additionalProperties": false
+            }),
+            risk: fabric::RiskClass::Medium,
+            timeout_ms: 30_000,
+            cancellable: true,
+            preconditions: vec!["active control lease".into()],
+            success_criteria: vec!["simulated position equals target".into()],
+        }])
+    }
+
+    async fn execute_skill(
+        &self,
+        command: crate::ValidatedSkillCommand<'_>,
+        progress: Arc<dyn crate::SkillProgressSink>,
+    ) -> Result<fabric::SkillResult, crate::ProviderError> {
+        let request = command.request();
+        if request.skill.0 != "navigate" {
+            return Err(crate::ProviderError::Rejected(format!(
+                "unsupported skill {}",
+                request.skill.0
+            )));
+        }
+        let x = request
+            .parameters
+            .get("x")
+            .and_then(serde_json::Value::as_f64)
+            .ok_or_else(|| crate::ProviderError::Rejected("navigate x missing".into()))?;
+        let y = request
+            .parameters
+            .get("y")
+            .and_then(serde_json::Value::as_f64)
+            .ok_or_else(|| crate::ProviderError::Rejected("navigate y missing".into()))?;
+        let operation_id = command
+            .permit()
+            .operation
+            .0
+            .parse()
+            .map_err(|_| crate::ProviderError::Rejected("invalid operation mapping".into()))?;
+        let sequence = crate::CommandSequence(self.sequence.fetch_add(1, Ordering::SeqCst) + 1);
+        let typed = crate::TypedCommand {
+            command_id: format!("skill-{}", sequence.0),
+            operation: command.permit().operation.clone(),
+            principal: command.permit().principal.clone(),
+            sequence,
+            device: request.device.clone(),
+            schema: request.skill.0.clone(),
+            payload: serde_json::json!({"x": x, "y": y}),
+            deadline: command.permit().expires_at,
+        };
+        let mut guard = self.inner.lock().await;
+        guard
+            .grant_lease(command.lease().clone())
+            .map_err(crate::ProviderError::Rejected)?;
+        let receipt = guard.execute(&typed, Some(command.permit()));
+        let outcome = if receipt.accepted() {
+            fabric::SkillOutcome::Succeeded
+        } else {
+            fabric::SkillOutcome::Failed {
+                reason: format!("{:?}", receipt.decision),
+            }
+        };
+        if !receipt.accepted() {
+            return Ok(fabric::SkillResult {
+                operation_id,
+                skill: request.skill.clone(),
+                device: request.device.clone(),
+                outcome,
+                duration_ms: 0,
+                evidence: vec![],
+            });
+        }
+        progress
+            .progress(fabric::SkillProgress {
+                operation_id,
+                skill: request.skill.clone(),
+                fraction: 1.0,
+                note: "navigate settled".into(),
+                at: fabric::MonoTime(receipt.observed_at.0),
+            })
+            .await;
+        Ok(fabric::SkillResult {
+            operation_id,
+            skill: request.skill.clone(),
+            device: request.device.clone(),
+            outcome,
+            duration_ms: 0,
+            evidence: vec![],
+        })
+    }
+
+    async fn cancel(
+        &self,
+        device: &fabric::DeviceId,
+        _operation: &crate::OperationId,
+    ) -> Result<crate::CancelAck, crate::ProviderError> {
+        let mut guard = self.inner.lock().await;
+        if guard.manifest.id != *device {
+            return Err(crate::ProviderError::Rejected("device mismatch".into()));
+        }
+        guard.safe_stop().map_err(crate::ProviderError::Rejected)?;
+        Ok(crate::CancelAck {
+            device: device.clone(),
+        })
+    }
+
+    async fn safe_stop(
+        &self,
+        device: &fabric::DeviceId,
+    ) -> Result<crate::StopReceipt, crate::ProviderError> {
+        let mut guard = self.inner.lock().await;
+        if guard.manifest.id != *device {
+            return Err(crate::ProviderError::Rejected("device mismatch".into()));
+        }
+        guard.safe_stop().map_err(crate::ProviderError::Rejected)?;
+        Ok(crate::StopReceipt {
+            device: device.clone(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,5 +541,74 @@ mod tests {
         assert!(b.sequence > a.sequence);
         assert!(b.source_time > a.source_time);
         assert!(clock.advance_to(1).is_err());
+    }
+}
+
+#[cfg(test)]
+mod embodiment_tests {
+    use super::*;
+    use crate::{skill::authorized_fixture, EmbodimentProvider, ManualClock, SkillProgressSink};
+    use fabric::{DeviceId, SkillId, SkillOutcome, SkillProgress, SkillRequest};
+
+    struct NullSink;
+    #[async_trait::async_trait]
+    impl SkillProgressSink for NullSink {
+        async fn progress(&self, _update: SkillProgress) {}
+    }
+
+    #[tokio::test]
+    async fn simulated_provider_executes_only_with_matching_authority() {
+        let clock = Arc::new(ManualClock::new(0));
+        let provider = SimulatedEmbodiment::mobile_robot("bot", clock);
+        let request = SkillRequest {
+            skill: SkillId("navigate".into()),
+            device: DeviceId("bot".into()),
+            parameters: serde_json::json!({"x": 2.0, "y": 3.0}),
+        };
+        let authorized = authorized_fixture(request);
+        let result = provider
+            .execute_skill(
+                crate::ValidatedSkillCommand(&authorized),
+                Arc::new(NullSink),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.outcome, SkillOutcome::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn mismatched_permit_is_rejected_without_success() {
+        let clock = Arc::new(ManualClock::new(0));
+        let provider = SimulatedEmbodiment::mobile_robot("bot", clock);
+        let request = SkillRequest {
+            skill: SkillId("navigate".into()),
+            device: DeviceId("bot".into()),
+            parameters: serde_json::json!({"x": 2.0, "y": 3.0}),
+        };
+        let mut authorized = authorized_fixture(request);
+        authorized.permit.operation = OperationId(fabric::OperationId::new().0.to_string());
+        let result = provider
+            .execute_skill(
+                crate::ValidatedSkillCommand(&authorized),
+                Arc::new(NullSink),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(result.outcome, SkillOutcome::Failed { .. }));
+    }
+
+    #[tokio::test]
+    async fn cancellation_applies_internal_safe_stop() {
+        let clock = Arc::new(ManualClock::new(0));
+        let provider = SimulatedEmbodiment::mobile_robot("bot", clock);
+        let acknowledgement = provider
+            .cancel(&DeviceId("bot".into()), &OperationId("op".into()))
+            .await
+            .unwrap();
+        assert_eq!(acknowledgement.device, DeviceId("bot".into()));
+        assert_eq!(
+            provider.inner.lock().await.safety(),
+            SafetyState::SafeStopped
+        );
     }
 }
