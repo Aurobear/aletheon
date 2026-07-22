@@ -19,6 +19,16 @@ use kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
+/// Canonical construction point for Kernel's admit-execute-settle invoker.
+/// Domain adapters may supply a narrow executor but never assemble a parallel
+/// admission lifecycle themselves.
+pub fn canonical_capability_invoker(
+    admission: Arc<dyn AdmissionController>,
+    executor: Arc<dyn ToolExecutor>,
+) -> Arc<dyn CapabilityInvoker> {
+    Arc::new(DefaultCapabilityInvoker::new(admission, executor))
+}
+
 /// Trusted execution context attached by Executive, never by model input.
 #[derive(Clone)]
 pub struct CapabilityExecutionContext {

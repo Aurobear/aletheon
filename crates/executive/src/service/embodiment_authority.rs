@@ -11,7 +11,7 @@ use hardware::{
     AuthorizedSkillRequest, Broker, ControlLease, ControlPermit, MonotonicInstant,
     SkillProgressSink,
 };
-use kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
+use kernel::capability::ToolExecutor;
 use tokio_util::sync::CancellationToken;
 
 use super::embodiment_progress::{BoundedProgressSink, EmbodimentProgressPort};
@@ -156,7 +156,7 @@ pub fn build_embodiment_invoker(
         active: active.clone(),
     });
     (
-        Arc::new(DefaultCapabilityInvoker::new(admission, executor)),
+        crate::service::governed_capability::canonical_capability_invoker(admission, executor),
         active,
     )
 }
