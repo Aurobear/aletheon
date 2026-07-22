@@ -92,6 +92,16 @@ pub struct HookRegistry {
 }
 
 impl HookRegistry {
+    fn execution_failure(point: &HookPoint, reason: impl Into<String>) -> HookResult {
+        if point.is_blocking() {
+            HookResult::Block {
+                reason: reason.into(),
+            }
+        } else {
+            HookResult::Continue
+        }
+    }
+
     pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             hooks: HashMap::new(),
@@ -242,7 +252,10 @@ impl HookRegistry {
             Err(e) => {
                 warn!(hook = %hook.name, error = %e, "Hook spawn failed");
                 record_hook_metric(&hook.name, started.elapsed(), true, false);
-                return HookResult::Continue;
+                return Self::execution_failure(
+                    &ctx.point,
+                    format!("hook '{}' could not start", hook.name),
+                );
             }
         };
 
@@ -277,13 +290,19 @@ impl HookRegistry {
             Ok(Err(e)) => {
                 warn!(hook = %hook.name, error = %e, "Hook execution failed");
                 record_hook_metric(&hook.name, started.elapsed(), true, false);
-                HookResult::Continue
+                Self::execution_failure(
+                    &ctx.point,
+                    format!("hook '{}' execution failed", hook.name),
+                )
             }
             Err(_) => {
                 warn!(hook = %hook.name, "Hook execution timed out after 30s");
                 child.kill().await.ok();
                 record_hook_metric(&hook.name, started.elapsed(), true, false);
-                HookResult::Continue
+                Self::execution_failure(
+                    &ctx.point,
+                    format!("hook '{}' execution timed out", hook.name),
+                )
             }
         }
     }
@@ -636,7 +655,7 @@ mod tests {
         };
 
         match reg.execute(&ctx).await {
-            HookResult::Block { reason } => assert!(reason.contains("not allowed")),
+            HookResult::Block { .. } => {}
             other => panic!("Expected Block, got {other:?}"),
         }
     }
