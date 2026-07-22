@@ -116,7 +116,7 @@ pub(crate) fn account_choice_prompt(labels: &[String]) -> String {
         .map(|(index, label)| format!("{}. {}", index + 1, truncate_label(label)))
         .collect::<Vec<_>>()
         .join("\n");
-    format!("Please choose a external account before I run this read-only query:\n{choices}")
+    format!("Please choose an external account before I run this read-only query:\n{choices}")
 }
 
 pub(crate) fn selected_account_context(label: &str, query: &str) -> String {
