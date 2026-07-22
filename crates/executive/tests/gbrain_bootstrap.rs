@@ -511,7 +511,9 @@ async fn connected_manager(state: HttpState) -> McpManager {
             transport: McpTransportConfig::StreamableHttp {
                 url: format!("http://{addr}/mcp"),
             },
-            trust: McpTrustLevel::RemoteTrusted,
+            // The fixture binds loopback, so it must declare the same local
+            // trust class required by production endpoint policy.
+            trust: McpTrustLevel::LocalTrusted,
             enabled: true,
             bearer_token_env: None,
             oauth: None,
