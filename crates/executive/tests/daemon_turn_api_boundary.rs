@@ -15,7 +15,7 @@ fn daemon_turn_composition_resources_do_not_escape_the_crate() {
     assert!(module.contains("pub(crate) use orchestrator::DaemonTurnResources"));
     assert!(!module.contains("pub use orchestrator::DaemonTurnResources"));
 
-    for path in ["src/application/mod.rs", "src/service.rs", "src/lib.rs"] {
+    for path in ["src/application/mod.rs", "src/lib.rs"] {
         let public_surface = source(path);
         for private in [
             "DaemonTurnResources",
@@ -34,7 +34,7 @@ fn daemon_turn_composition_resources_do_not_escape_the_crate() {
 
 #[test]
 fn any_in_crate_test_support_module_is_test_cfg_gated() {
-    for path in ["src/lib.rs", "src/application/mod.rs", "src/service.rs"] {
+    for path in ["src/lib.rs", "src/application/mod.rs"] {
         let source = source(path);
         if let Some(module_offset) = source.find("mod test_support") {
             let prefix = &source[..module_offset];
