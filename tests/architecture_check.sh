@@ -83,6 +83,116 @@ if ARCH_ROOT="$deps" ARCH_SKIP_DELETION_GATES=1 \
   bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected a hyphenated workspace package to fail' >&2; exit 1
 fi
+
+# Phase 0 semantic gates are fixture-driven.  The clean fixture deliberately
+# contains the two legal exceptions: adapter-id selection in composition and
+# opaque JSON inspection inside an adapter.
+phase0="$tmp/phase0"
+mkdir -p "$phase0/config/architecture" "$phase0/config" "$phase0/target" \
+  "$phase0/crates/fabric/src/protocol" "$phase0/crates/fabric/src/application" \
+  "$phase0/crates/fabric/src/composition" "$phase0/crates/fabric/src/adapter"
+cat > "$phase0/Cargo.toml" <<'TOML'
+[workspace]
+resolver = "2"
+members = ["crates/fabric"]
+TOML
+cat > "$phase0/crates/fabric/Cargo.toml" <<'TOML'
+[package]
+name = "fabric"
+version = "0.1.0"
+edition = "2021"
+TOML
+cat > "$phase0/crates/fabric/src/lib.rs" <<'RS'
+pub fn stable_contract() {}
+RS
+printf 'pub struct Request;\n' > "$phase0/crates/fabric/src/protocol/client.rs"
+cat > "$phase0/crates/fabric/src/composition/registry.rs" <<'RS'
+fn construct(adapter_id: &str) { match adapter_id { "messages-http" => (), _ => () } }
+RS
+cat > "$phase0/crates/fabric/src/adapter/json.rs" <<'RS'
+fn decode(value: serde_json::Value) { let _ = value.get("open_payload"); }
+RS
+cat > "$phase0/architecture-status.toml" <<'TOML'
+[freeze]
+fabric_root_reexports_max = 0
+TOML
+: > "$phase0/config/architecture-allowlist.txt"
+: > "$phase0/config/architecture-dependencies.txt"
+: > "$phase0/config/architecture-path-inventory.txt"
+cat > "$phase0/config/architecture/module-boundaries.txt" <<'EOF'
+# frozen_commit=fixture
+fabric|crates/fabric|-|protocol|false|adapter
+EOF
+cat > "$phase0/config/architecture/external-identifiers.txt" <<'EOF'
+# frozen_commit=fixture
+evil	\bEvilCorp\b	crates/fabric/src/adapter/	fixture external name	neutral contract	1
+EOF
+cat > "$phase0/config/architecture/wire-surfaces.tsv" <<'EOF'
+# frozen_commit=fixture
+wire-exposed	Request	crates/fabric/src/protocol/client.rs	client,server	fabric	v1	additive	1
+EOF
+cat > "$phase0/config/architecture/persistence-surfaces.tsv" <<'EOF'
+# frozen_commit=fixture
+fixture	fabric	crates/fabric/src/store.rs	v1	reader	writer	versioned	1
+EOF
+cat > "$phase0/config/architecture/compatibility-debt.tsv" <<'EOF'
+# frozen_commit=fixture
+legacy	crates/fabric/src/lib.rs	LEGACY	fixture debt	stable contract	0	1
+EOF
+cat > "$phase0/config/architecture/metrics.env" <<'EOF'
+# frozen_commit=fixture
+CORE_EXTERNAL_IDENTIFIER_HITS=0
+CORE_OPAQUE_VALUE_INSPECTIONS=0
+CROSS_CRATE_IMPL_REFERENCES=0
+FORBIDDEN_INFRA_IMPORTS=0
+PROVIDER_ERROR_TEXT_BRANCHES=0
+PROVIDER_NAME_BRANCHES=0
+PUBLIC_IMPL_ADAPTER_EXPORTS=0
+URL_PROVIDER_INFERENCE=0
+EOF
+phase0_check() {
+  ARCH_ROOT="$phase0" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+    bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1
+}
+phase0_check || {
+  echo 'expected clean Phase 0 fixture to pass' >&2
+  ARCH_ROOT="$phase0" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+    bash "$ROOT/scripts/architecture-check.sh"
+  exit 1
+}
+expect_phase0_rejection() {
+  if phase0_check; then echo "expected Phase 0 gate to reject $1" >&2; exit 1; fi
+}
+mkdir -p "$phase0/crates/extra/src"; printf 'pub fn extra() {}\n' > "$phase0/crates/extra/src/lib.rs"
+cat > "$phase0/crates/extra/Cargo.toml" <<'TOML'
+[package]
+name = "extra"
+version = "0.1.0"
+edition = "2021"
+TOML
+sed -i 's#members = \["crates/fabric"\]#members = ["crates/fabric", "crates/extra"]#' "$phase0/Cargo.toml"
+expect_phase0_rejection 'unregistered workspace crate'
+sed -i 's#members = \["crates/fabric", "crates/extra"\]#members = ["crates/fabric"]#' "$phase0/Cargo.toml"; rm -r "$phase0/crates/extra"
+mkdir -p "$phase0/crates/fabric/src/impl"
+expect_phase0_rejection 'unregistered top-level impl tree'; rmdir "$phase0/crates/fabric/src/impl"
+printf 'fn leak() { let _ = EvilCorp::new(); }\n' > "$phase0/crates/fabric/src/application/leak.rs"
+expect_phase0_rejection 'external name in core'; rm "$phase0/crates/fabric/src/application/leak.rs"
+printf 'use executive::adapter::Store;\n' > "$phase0/crates/fabric/src/application/leak.rs"
+expect_phase0_rejection 'application adapter import'; rm "$phase0/crates/fabric/src/application/leak.rs"
+printf 'pub mod adapter;\n' >> "$phase0/crates/fabric/src/lib.rs"
+expect_phase0_rejection 'public adapter export'; sed -i '$d' "$phase0/crates/fabric/src/lib.rs"
+printf 'fn choose(provider: &str) { if provider == "evil" {} }\n' > "$phase0/crates/fabric/src/application/leak.rs"
+expect_phase0_rejection 'provider-name business branch'; rm "$phase0/crates/fabric/src/application/leak.rs"
+printf 'pub struct NewWire;\n' > "$phase0/crates/fabric/src/protocol/new_wire.rs"
+expect_phase0_rejection 'unregistered wire surface'; rm "$phase0/crates/fabric/src/protocol/new_wire.rs"
+mkdir -p "$phase0/crates/fabric/src/migrations"; printf 'SELECT 1;\n' > "$phase0/crates/fabric/src/migrations/001.sql"
+expect_phase0_rejection 'unregistered persistence migration'; rm -r "$phase0/crates/fabric/src/migrations"
+printf '// LEGACY\n' >> "$phase0/crates/fabric/src/lib.rs"
+expect_phase0_rejection 'compatibility debt growth'; sed -i '$d' "$phase0/crates/fabric/src/lib.rs"
+printf 'fn inspect(value: serde_json::Value) { let _ = value.get("business_kind"); }\n' > "$phase0/crates/fabric/src/application/leak.rs"
+expect_phase0_rejection 'opaque JSON field inspection in core'; rm "$phase0/crates/fabric/src/application/leak.rs"
+phase0_check || { echo 'legal composition/adapter exceptions regressed' >&2; exit 1; }
+echo 'Phase 0 architecture fixtures: pass'
 echo 'architecture-check fixture: pass'
 
 # Runtime authority invariants are checked against the real source tree. Keep
