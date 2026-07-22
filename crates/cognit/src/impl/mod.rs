@@ -5,6 +5,7 @@ pub mod grounding;
 pub mod inference;
 pub mod learning;
 pub mod llm;
+pub mod policy;
 pub mod provider_registry;
 
 pub use provider_registry::ProviderRegistry;

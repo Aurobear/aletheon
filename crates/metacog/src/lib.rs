@@ -2,6 +2,7 @@ pub mod bridge;
 pub mod core;
 #[path = "impl/mod.rs"]
 pub mod r#impl;
+pub mod outcome_verifier;
 pub mod service;
 
 pub use core::traits::DefaultMetaRuntime;

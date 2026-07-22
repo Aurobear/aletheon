@@ -12,6 +12,7 @@ pub mod config;
 pub mod event_sink;
 pub mod interrupt;
 pub mod linear;
+pub mod robot;
 pub mod session;
 
 pub use config::HarnessConfig;
@@ -43,6 +44,8 @@ pub use session::{
 pub enum HarnessKind {
     #[default]
     Linear,
+    /// RobotHarness — bounded embodied execution with outcome verification.
+    Robot,
 }
 
 #[cfg(test)]
@@ -50,8 +53,8 @@ mod harness_kind_tests {
     use super::HarnessKind;
 
     #[test]
-    fn robot_is_rejected_until_robot_harness_exists() {
-        assert!(serde_json::from_str::<HarnessKind>(r#""robot""#).is_err());
+    fn robot_now_parses() {
+        assert!(serde_json::from_str::<HarnessKind>(r#""robot""#).is_ok());
     }
 
     #[test]
@@ -73,5 +76,8 @@ pub fn build_harness(
 ) -> ReActLoop {
     match kind {
         HarnessKind::Linear => ReActLoop::new_with_clock(config, compressor, clock),
+        HarnessKind::Robot => {
+            unimplemented!("RobotHarness is constructed by Executive with injected ports, not via build_harness")
+        }
     }
 }

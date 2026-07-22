@@ -10,6 +10,7 @@ pub mod backends;
 pub mod composite_service;
 pub mod consolidation;
 pub mod credential;
+pub mod embodied_episode;
 pub mod fact_service;
 pub mod r#impl;
 pub mod knowledge_graph;

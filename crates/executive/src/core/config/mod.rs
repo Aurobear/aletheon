@@ -33,8 +33,8 @@ pub use infra::{
 };
 pub use integrations::{
     CredentialResolver, EmbodimentProviderConfig, EnvironmentCredentialResolver,
-    IntegrationsConfig, OAuthClientType, ResolvedGoogleIntegration, ResolvedIntegrations,
-    ResolvedSearchIntegration, RuntimeBootstrapConfig, SecretRef, SecretValue,
+    IntegrationsConfig, OAuthClientType, ProductionEmbodimentConfig, ResolvedGoogleIntegration,
+    ResolvedIntegrations, ResolvedSearchIntegration, RuntimeBootstrapConfig, SecretRef, SecretValue,
 };
 pub use provenance::{ConfigProvenance, ConfigSource, ConfigSourceKind, Provenanced};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};

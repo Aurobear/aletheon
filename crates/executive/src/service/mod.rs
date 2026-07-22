@@ -18,6 +18,7 @@ pub mod dasein_workspace_adapter;
 pub mod durable_write;
 pub mod embodiment_authority;
 pub mod embodiment_progress;
+pub mod embodied_recovery;
 pub mod embodiment_service;
 pub mod event_projection;
 pub mod exec_session;
@@ -43,6 +44,7 @@ pub mod turn_policy;
 pub mod turn_recovery;
 pub mod turn_service;
 pub mod turn_services;
+pub mod world_state;
 pub mod verification;
 pub mod workspace_checkpoint;
 pub mod workspace_trust;
@@ -65,5 +67,7 @@ pub use turn_service::TurnService;
 pub mod post_turn_projection;
 
 pub mod request_use_cases;
+
+pub mod robot_audit;
 
 pub mod turn_runtime_ports;

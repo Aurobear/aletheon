@@ -24,7 +24,14 @@ pub enum DeviceClass {
 pub enum DeviceNamespace {
     Simulation,
     Lab,
+    Hil,
     Production,
+}
+
+impl Default for DeviceNamespace {
+    fn default() -> Self {
+        Self::Simulation
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceManifest {

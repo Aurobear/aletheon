@@ -157,6 +157,91 @@ impl Default for EmbodimentProviderConfig {
     }
 }
 
+/// Production embodiment deployment configuration.
+/// Only valid when namespace is Production. Simulation/HIL skip these checks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProductionEmbodimentConfig {
+    /// Must be "production".
+    pub namespace: String,
+    /// Device serial number (must match device manifest).
+    pub device_serial: String,
+    /// TLS endpoint for the bridge (must not be loopback).
+    pub endpoint: String,
+    /// Reference to TLS client certificate (secret ref, never inline).
+    pub tls_client_cert: SecretRef,
+    /// Reference to TLS client key (secret ref, never inline).
+    pub tls_client_key: SecretRef,
+    /// Allowlisted skill IDs — wildcards rejected.
+    pub skill_allowlist: Vec<String>,
+    /// Maximum linear velocity for production (must be ≤ HIL limits).
+    pub max_linear_mps: f64,
+    /// Maximum angular velocity for production.
+    pub max_angular_rps: f64,
+    /// Maximum skill duration for production.
+    pub max_duration_ms: u64,
+    /// Path to signed HIL evidence JSON file.
+    pub gate_evidence_path: String,
+}
+
+impl ProductionEmbodimentConfig {
+    /// Validate production config. Returns errors for all violations.
+    pub fn validate(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        // 1. Namespace must be "production"
+        if self.namespace != "production" {
+            errors.push(format!("namespace must be 'production', got '{}'", self.namespace));
+        }
+
+        // 2. Device serial required
+        if self.device_serial.trim().is_empty() {
+            errors.push("device_serial must not be empty".into());
+        }
+
+        // 3. Endpoint must not be loopback
+        if self.endpoint.contains("127.0.0.1") || self.endpoint.contains("localhost") {
+            errors.push("production endpoint must not be loopback".into());
+        }
+
+        // 4. TLS endpoint must use https or grpcs scheme (no plaintext)
+        if !self.endpoint.starts_with("https://") && !self.endpoint.starts_with("grpcs://") {
+            errors.push("production endpoint must use TLS (https:// or grpcs://)".into());
+        }
+
+        // 5. Skill allowlist must not be empty
+        if self.skill_allowlist.is_empty() {
+            errors.push("skill_allowlist must not be empty for production".into());
+        }
+
+        // 6. Reject wildcards in allowlist
+        if self.skill_allowlist.iter().any(|s| s.contains('*') || s.contains('?')) {
+            errors.push("skill_allowlist must not contain wildcards".into());
+        }
+
+        // 7. Default simulator device_id must not be used
+        // (checked at call site — device_id must match actual hardware)
+
+        // 8. Hard production limits (compile-time maxima)
+        if self.max_linear_mps > 0.1 {
+            errors.push(format!("max_linear_mps {} exceeds production limit 0.1", self.max_linear_mps));
+        }
+        if self.max_angular_rps > 0.2 {
+            errors.push(format!("max_angular_rps {} exceeds production limit 0.2", self.max_angular_rps));
+        }
+        if self.max_duration_ms > 5000 {
+            errors.push(format!("max_duration_ms {} exceeds production limit 5000", self.max_duration_ms));
+        }
+
+        // 9. Evidence path must be non-empty
+        if self.gate_evidence_path.trim().is_empty() {
+            errors.push("gate_evidence_path must not be empty".into());
+        }
+
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
+}
+
 #[derive(Clone)]
 pub struct ResolvedGoogleIntegration {
     pub client_id: String,

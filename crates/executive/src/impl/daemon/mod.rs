@@ -15,7 +15,7 @@
 //! Business logic lives in `crate::core/` (orchestrator, session_gateway)
 //! and in subsystem crates (cognit, dasein, corpus, memory, metacog).
 
-pub(crate) mod bootstrap;
+pub mod bootstrap;
 pub mod cache_shape;
 pub mod debug_handler;
 pub mod handler;
