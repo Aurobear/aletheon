@@ -12,11 +12,10 @@ use corpus::tools::subagent::{
 };
 use fabric::sandbox::{IsolationLevel, SandboxBackend, SandboxConfig};
 use fabric::{
-    resolve_profile, AttemptEvidence, AttemptUsage, Clock, CodingJobReport, CodingJobSpec,
+    resolve_profile, AttemptEvidence, AttemptUsage, Clock, CodingJobReport,
     CodingJobStatus, CodingNetworkPolicy, FailureClass, ProfileName, ResolvedSandboxPolicy,
     RuntimeFailure, RuntimeId, RuntimeResult, SandboxProfiles, WorkspacePolicy,
 };
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -84,11 +83,8 @@ pub struct ResolvedPiConfig {
 }
 
 /// JSON request accepted by the stable `pi-coder` runtime.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PiAttemptRequest {
-    pub job: CodingJobSpec,
-    pub task_input: String,
-}
+#[deprecated(note = "use executive::application::coding_runtime::CodingAttemptRequest")]
+pub type PiAttemptRequest = crate::application::coding_runtime::CodingAttemptRequest;
 
 /// A configured runtime is constructible only after executable and isolation checks pass.
 pub struct PiRuntime {
@@ -211,7 +207,7 @@ impl PiRuntime {
         &self.config
     }
 
-    fn validate_job(&self, request: &PiAttemptRequest) -> Result<()> {
+    fn validate_job(&self, request: &crate::application::coding_runtime::CodingAttemptRequest) -> Result<()> {
         request.job.validate()?;
         if request.task_input.trim().is_empty() {
             bail!("Pi task input must not be empty");
@@ -260,6 +256,12 @@ impl PiRuntime {
         }
     }
 }
+
+const PI_RESOURCE_REQUIREMENTS: runtime::RuntimeResourceRequirements =
+    runtime::RuntimeResourceRequirements {
+        storage_bytes: 1024 * 1024 * 1024,
+        storage_items: 1,
+    };
 
 fn validate_sandbox(sandbox: &dyn SandboxBackend) -> Result<()> {
     if !sandbox.is_available() {
@@ -452,6 +454,20 @@ fn validate_fixed_args(args: &[String]) -> Result<()> {
 
 #[async_trait]
 impl SubAgentRuntime for PiRuntime {
+    fn capabilities(&self) -> std::collections::BTreeSet<runtime::RuntimeCapability> {
+        std::collections::BTreeSet::from([
+            runtime::RuntimeCapability::CodeRead,
+            runtime::RuntimeCapability::CodeSearch,
+            runtime::RuntimeCapability::CodeEdit,
+            runtime::RuntimeCapability::Shell,
+            runtime::RuntimeCapability::Test,
+            runtime::RuntimeCapability::Git,
+        ])
+    }
+
+    fn resource_requirements(&self) -> runtime::RuntimeResourceRequirements {
+        PI_RESOURCE_REQUIREMENTS
+    }
     async fn run(&self, task: &str, cancel: CancellationToken) -> Result<String, String> {
         self.run_attempt(task, cancel)
             .await
@@ -465,7 +481,7 @@ impl SubAgentRuntime for PiRuntime {
         cancel: CancellationToken,
     ) -> std::result::Result<RuntimeResult, RuntimeFailure> {
         let started = self.clock.mono_now().0;
-        let request: PiAttemptRequest = serde_json::from_str(task).map_err(|error| {
+        let request: crate::application::coding_runtime::CodingAttemptRequest = serde_json::from_str(task).map_err(|error| {
             self.failure(
                 FailureClass::InvalidAssumption,
                 format!("invalid Pi attempt request: {error}"),

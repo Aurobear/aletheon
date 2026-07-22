@@ -4,7 +4,8 @@ use executive::r#impl::approval::ApprovalRepository;
 use executive::r#impl::goal::{
     AttemptExecutor, AttemptRequest, CodingVerifier, GoalCoordinator, ObjectiveStore, RetryPolicy,
 };
-use executive::r#impl::runtime::{PiAttemptRequest, PI_CODER_RUNTIME_ID};
+use executive::application::coding_runtime::CodingAttemptRequest;
+const TEST_CODING_RUNTIME_ID: &str = "fake-coding-runtime";
 use executive::service::verification::{VerificationCheckKind, VerificationContext};
 use fabric::*;
 use sha2::{Digest, Sha256};
@@ -71,7 +72,7 @@ struct Executor {
 #[async_trait]
 impl AttemptExecutor for Executor {
     fn is_available(&self, id: &RuntimeId) -> bool {
-        id.0 == PI_CODER_RUNTIME_ID
+        id.0 == TEST_CODING_RUNTIME_ID
     }
     async fn run_once(
         &self,
@@ -80,7 +81,7 @@ impl AttemptExecutor for Executor {
         _: CancellationToken,
     ) -> Result<RuntimeResult, RuntimeFailure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let r: PiAttemptRequest = serde_json::from_str(task).unwrap();
+        let r: CodingAttemptRequest = serde_json::from_str(task).unwrap();
         let relative = PathBuf::from(format!("job-{}", r.job.job_id.0));
         std::fs::create_dir_all(self.base.join(&relative)).unwrap();
         let diff = b"diff --git a/src/lib.rs b/src/lib.rs\n";
@@ -212,7 +213,7 @@ impl Harness {
             vec![PathBuf::from(".git")],
         )
         .unwrap();
-        let task = serde_json::to_string(&PiAttemptRequest {
+        let task = serde_json::to_string(&CodingAttemptRequest {
             job: CodingJobSpec {
                 job_id: job,
                 goal_id: self.goal,
@@ -232,7 +233,7 @@ impl Harness {
             goal_id: self.goal,
             expected_version: version,
             sequence: 1,
-            runtime_id: RuntimeId(PI_CODER_RUNTIME_ID.into()),
+            runtime_id: RuntimeId(TEST_CODING_RUNTIME_ID.into()),
             escalation_runtime_id: None,
             role: CognitiveRole::Worker,
             task,

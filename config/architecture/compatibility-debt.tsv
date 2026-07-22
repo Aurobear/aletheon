@@ -12,5 +12,6 @@ executive-user-runtime-facade	crates/executive/src/user_runtime.rs	#\[deprecated
 external-event-v1-file-kind	crates/fabric/src/types/external_event.rs	drive_file_	persisted v1 event tags require aliases and integrity reconstruction	retire after persisted v1 migration window	6	10
 external-event-v1-provider	crates/fabric/src/types/external_event.rs	Google\|	persisted v1 dedup material used enum Debug output	retire after persisted v1 migration window	2	10
 gbrain-config	crates/cognit/src/config/mod.rs	GbrainMemoryConfig	legacy supplemental-memory product name	SupplementalMemoryConfig	2	5
+pi-attempt-request-alias	crates/executive/src/adapters/runtime/pi.rs	\bPiAttemptRequest\b	legacy adapter tests and callers use Pi request name	executive::application::coding_runtime::CodingAttemptRequest	1	9
 pi-runtime-types	crates/executive/src/adapters/runtime/pi.rs	PiRuntime	legacy coding-runtime implementation name	private coding runtime adapter	24	3
 telegram-config	crates/cognit/src/config/mod.rs	TelegramConfig	channel configuration owned by cognitive core	channel adapter configuration	12	6

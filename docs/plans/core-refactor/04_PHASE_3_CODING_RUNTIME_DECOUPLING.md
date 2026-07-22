@@ -35,9 +35,9 @@ Prerequisite: Phase 2.
 
 ## Task 1: Lock current Pi behavior
 
-- [ ] Preserve argv validation, executable hash/version pinning, JSONL/RPC lifecycle validation, sandbox/network fail-closed behavior, cancellation, timeout, evidence bounds, and worktree settlement.
-- [ ] Add application tests using a fake runtime that do not mention Pi.
-- [ ] Add adapter contract tests that explicitly mention Pi and its wire format.
+- [x] Preserve argv validation, executable hash/version pinning, JSONL/RPC lifecycle validation, sandbox/network fail-closed behavior, cancellation, timeout, evidence bounds, and worktree settlement.
+- [x] Add application tests using a fake runtime that do not mention Pi.
+- [x] Add adapter contract tests that explicitly mention Pi and its wire format.
 
 ## Task 2: Extend RuntimeManifest with requirements
 
@@ -50,11 +50,11 @@ pub struct RuntimeResourceRequirements {
 }
 ```
 
-- [ ] Defaults preserve non-Pi current behavior.
-- [ ] Values have validated system maxima and cannot overflow admission accounting.
-- [ ] The manifest declaration is a request, never an authorization.
-- [ ] Admission/quota policy clamps or rejects and returns a reservation.
-- [ ] Update all manifest constructors and selector tests.
+- [x] Defaults preserve non-Pi current behavior.
+- [x] Values have validated system maxima and cannot overflow admission accounting.
+- [x] The manifest declaration is a request, never an authorization.
+- [x] Admission/quota policy clamps or rejects and returns a reservation.
+- [x] Update all manifest constructors and selector tests.
 
 ## Task 3: Canonical coding contracts
 
@@ -69,24 +69,24 @@ VerificationPolicy
 CodingRuntime / AgentRuntimeLauncher ports
 ```
 
-- [ ] No type or evidence kind exposed to application contains Pi.
-- [ ] Canonical evidence preserves package identity, protocol version, diff, tests, usage, capability audit, and terminal outcome.
-- [ ] Persisted request/evidence compatibility is inventoried and migrated or dual-read.
+- [x] No type or evidence kind exposed to application contains Pi.
+- [x] Canonical evidence preserves package identity, protocol version, diff, tests, usage, capability audit, and terminal outcome.
+- [x] Persisted request/evidence compatibility is inventoried and migrated or dual-read.
 
 ## Task 4: Migrate Goal and Agent Control
 
-- [ ] Replace imports of `PiAttemptRequest` and `PI_CODER_RUNTIME_ID` with canonical contracts/capabilities.
-- [ ] Replace `runtime_id.contains("pi")` with manifest resource requirements passed through admission policy.
-- [ ] Runtime selection uses capability and interaction requirements.
-- [ ] Verification gates consume canonical evidence, not Pi-specific evidence kind strings.
-- [ ] Application tests use two differently named fake runtimes to prove name neutrality.
+- [x] Replace imports of `PiAttemptRequest` and `PI_CODER_RUNTIME_ID` with canonical contracts/capabilities.
+- [x] Replace `runtime_id.contains("pi")` with manifest resource requirements passed through admission policy.
+- [x] Runtime selection uses capability and interaction requirements.
+- [x] Verification gates consume canonical evidence, not Pi-specific evidence kind strings.
+- [x] Application tests use two differently named fake runtimes to prove name neutrality.
 
 ## Task 5: Isolate the Pi adapter
 
-- [ ] Move Pi argv, process setup, JSONL/RPC parser, protocol event names, executable pinning, and error text into `executive/adapters/coding_runtime/pi/` or the Phase 2 canonical adapter path.
-- [ ] Adapter implements canonical ports and returns normalized outcomes/errors.
-- [ ] Concrete Pi types are crate-private and absent from Executive crate-root exports.
-- [ ] Deployment config compatibility may still accept old Pi fields, but canonical runtime objects do not contain legacy names outside adapter ID/diagnostics.
+- [x] Move Pi argv, process setup, JSONL/RPC parser, protocol event names, executable pinning, and error text into `executive/adapters/coding_runtime/pi/` or the Phase 2 canonical adapter path.
+- [x] Adapter implements canonical ports and returns normalized outcomes/errors.
+- [x] Concrete Pi types are crate-private and absent from Executive crate-root exports.
+- [x] Deployment config compatibility may still accept old Pi fields, but canonical runtime objects do not contain legacy names outside adapter ID/diagnostics.
 
 ## Validation
 
@@ -109,3 +109,10 @@ Expected: adapter tests preserve Pi behavior; application paths and tests contai
 3. `refactor(executive): introduce neutral coding runtime contracts`
 4. `refactor(executive): isolate Pi runtime adapter`
 5. `chore(arch): prohibit runtime-name business policy`
+
+## Completion evidence (2026-07-23)
+
+- `RuntimeManifest` now carries bounded, serde-defaulted resource requirements; Agent Control validates them and admission remains the reservation authority.
+- Goal uses `CodingAttemptRequest` and persisted canonical coding evidence without importing a Pi identifier or adapter type. Neutral fake-runtime goal and approval tests cover restart, verification, settlement, and evidence flows.
+- Pi argv, executable pinning, JSONL/RPC lifecycle, sandbox/network behavior, and protocol parsing remain isolated under `executive::adapters::runtime`; the former request name is a counted Phase 9 compatibility alias.
+- The architecture checker rejects Pi types, IDs, and runtime-name policy branches in application and Goal production code. All commands in **Validation** pass.

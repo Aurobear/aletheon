@@ -2,6 +2,7 @@ pub mod admin_service;
 pub mod agent_control;
 pub mod approval_service;
 pub mod compaction_normalize;
+pub mod coding_runtime;
 pub mod conscious_action;
 pub mod conscious_context_slot;
 pub mod conscious_core_coordinator;

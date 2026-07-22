@@ -62,6 +62,7 @@ mod tests {
             interaction_modes: BTreeSet::from([InteractionMode::Resident]),
             workspace_mode: WorkspaceMode::Shared,
             tool_governance: ToolGovernance::Observed,
+            resource_requirements: Default::default(),
         }
     }
 

@@ -49,6 +49,7 @@ crates/executive/src/application/agent_control/recovery.rs	application	executive
 crates/executive/src/application/agent_control/repository.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/settlement.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/approval_service.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/coding_runtime.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/compaction_normalize.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/conscious_action.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/conscious_context_slot.rs	application	executive	use-case orchestration and ports
@@ -185,6 +186,7 @@ crates/executive/src/host/daemon/handler/format.rs	host	executive	daemon, transp
 crates/executive/src/host/daemon/handler/init.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/mod.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/ports.rs	host	executive	daemon, transport, or process lifecycle
+crates/executive/src/host/daemon/handler/rpc.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_admin.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_approval.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_goal.rs	host	executive	daemon, transport, or process lifecycle
@@ -195,7 +197,6 @@ crates/executive/src/host/daemon/handler/rpc/rpc_reflection.rs	host	executive	da
 crates/executive/src/host/daemon/handler/rpc/rpc_session.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_turn.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/rpc/rpc_workflow.rs	host	executive	daemon, transport, or process lifecycle
-crates/executive/src/host/daemon/handler/rpc.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/tool_executor.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/handler/turn_handler.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/mcp_embedded.rs	host	executive	daemon, transport, or process lifecycle

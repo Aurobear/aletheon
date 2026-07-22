@@ -347,6 +347,10 @@ pub struct AgentRecoveryRuntimeInput {
 
 #[async_trait]
 pub trait AgentRuntimeLauncher: Send + Sync {
+    fn resource_requirements(&self) -> runtime::RuntimeResourceRequirements {
+        runtime::RuntimeResourceRequirements::default()
+    }
+
     fn resumability(&self) -> fabric::RuntimeResumability {
         fabric::RuntimeResumability::Never
     }
@@ -445,17 +449,21 @@ impl AgentRuntimeRegistry {
 }
 
 pub struct CompatibilityRuntimeLauncher {
-    runtime: Arc<dyn SubAgentRuntime>,
+    backend: Arc<dyn SubAgentRuntime>,
 }
 
 impl CompatibilityRuntimeLauncher {
-    pub fn new(runtime: Arc<dyn SubAgentRuntime>) -> Self {
-        Self { runtime }
+    pub fn new(backend: Arc<dyn SubAgentRuntime>) -> Self {
+        Self { backend: runtime }
     }
 }
 
 #[async_trait]
 impl AgentRuntimeLauncher for CompatibilityRuntimeLauncher {
+    fn resource_requirements(&self) -> backend::RuntimeResourceRequirements {
+        self.backend.resource_requirements()
+    }
+
     async fn launch(
         &self,
         input: AgentRuntimeInput,

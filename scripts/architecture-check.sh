@@ -97,6 +97,16 @@ for rel in sorted(path for path, layer in recorded_layers.items() if layer == "a
             if not sqlite_shim:
                 raise SystemExit(f"architecture-check: Executive application imports a concrete/host layer at {rel}:{lineno}")
 
+# Coding runtime identity and wire types terminate at the private adapter.
+# Goal and Agent Control must make policy decisions from neutral request and
+# resource contracts rather than a runtime name.
+for rel, body in production_rs():
+    if not (rel.startswith("crates/executive/src/application/") or
+            rel.startswith("crates/executive/src/impl/goal/")):
+        continue
+    if re.search(r"\b(?:PiAttemptRequest|PiRuntime|PI_CODER_RUNTIME_ID)\b|contains\s*\([^\n]*[\"']pi", body, re.I):
+        raise SystemExit(f"architecture-check: coding runtime identity leaked into application policy: {rel}")
+
 # Every explicit protocol and migration file has an owner before it can land.
 wire_paths = {line.split("\t")[2] for line in data_lines("wire-surfaces.tsv")}
 wire_candidates = set()

@@ -751,13 +751,12 @@ impl AgentControlPort for AgentControlService {
         let agent_id = identity.agent_id;
         let workspace_id = agent_workspace_id(agent_id);
         let request_hash = SqliteAgentRunRepository::request_hash(&request)?;
-        let storage = if request.runtime_id.0.contains("pi") {
-            AgentStorageRequest {
-                bytes: 1024 * 1024 * 1024,
-                items: 1,
-            }
-        } else {
-            AgentStorageRequest::default()
+        let requirements = launcher.resource_requirements().validate().map_err(|message| {
+            control_error(AgentControlErrorKind::Capacity, message)
+        })?;
+        let storage = AgentStorageRequest {
+            bytes: requirements.storage_bytes,
+            items: requirements.storage_items,
         };
         let mut admission = self
             .admission

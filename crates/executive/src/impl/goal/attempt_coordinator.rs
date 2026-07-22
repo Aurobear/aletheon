@@ -11,7 +11,7 @@ use crate::application::verification::{
 };
 use crate::core::runtime_registry::RuntimeRegistry;
 use crate::r#impl::approval::{ApprovalCreate, ApprovalRepository};
-use crate::adapters::runtime::{PiAttemptRequest, PI_CODER_RUNTIME_ID};
+use crate::application::coding_runtime::CodingAttemptRequest;
 use async_trait::async_trait;
 use base64::Engine;
 use fabric::{
@@ -229,12 +229,15 @@ impl AttemptCoordinator {
         request: AttemptRequest,
         cancel: CancellationToken,
     ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
-        let is_coding = request.runtime_id.0 == PI_CODER_RUNTIME_ID;
-        let mut pi_request = if is_coding {
+        let request_value = serde_json::from_str::<serde_json::Value>(&request.task).ok();
+        let is_coding = request_value.as_ref().is_some_and(|value| {
+            value.get("job").is_some() && value.get("task_input").is_some()
+        });
+        let mut coding_request = if is_coding {
             Some(
-                serde_json::from_str::<PiAttemptRequest>(&request.task).map_err(|error| {
+                serde_json::from_str::<CodingAttemptRequest>(&request.task).map_err(|error| {
                     AttemptCoordinatorError::Persistence(format!(
-                        "invalid pi-coder attempt request: {error}"
+                        "invalid coding attempt request: {error}"
                     ))
                 })?,
             )
@@ -243,13 +246,13 @@ impl AttemptCoordinator {
         };
         if is_coding && self.coding_verification.is_none() {
             return Err(AttemptCoordinatorError::Persistence(
-                "pi-coder verification lifecycle is not configured".into(),
+                "coding verification lifecycle is not configured".into(),
             ));
         }
 
-        if let Some(pi_request) = pi_request.as_ref() {
+        if let Some(coding_request) = coding_request.as_ref() {
             if let Some(outcome) = self
-                .resume_coding_attempt(&request, pi_request, cancel.clone())
+                .resume_coding_attempt(&request, coding_request, cancel.clone())
                 .await?
             {
                 return Ok(outcome);
@@ -313,12 +316,12 @@ impl AttemptCoordinator {
             let previous_attempts = store
                 .attempts_for_goal(request.goal_id, usize::MAX)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
-            let frame_task = pi_request
+            let frame_task = coding_request
                 .as_ref()
                 .map(|coding| coding.task_input.as_str())
                 .unwrap_or(request.task.as_str());
             let frame = GoalFrame::build(&goal, &previous_attempts, frame_task);
-            rendered_task = if let Some(coding) = pi_request.as_mut() {
+            rendered_task = if let Some(coding) = coding_request.as_mut() {
                 coding.job.goal_id = request.goal_id;
                 coding.job.attempt_id = AttemptId::new();
                 coding.task_input = frame.render();
@@ -346,10 +349,10 @@ impl AttemptCoordinator {
                 "task": request.task,
                 "goal_version": request.expected_version,
                 "goal_frame": frame,
-                "runtime_request": pi_request,
+                "runtime_request": coding_request,
                 "budget_reservation_id": reservation_id.clone(),
             });
-            let begun = if let Some(coding) = pi_request.as_ref() {
+            let begun = if let Some(coding) = coding_request.as_ref() {
                 store.begin_attempt_with_id(
                     coding.job.attempt_id,
                     request.goal_id,
@@ -410,11 +413,11 @@ impl AttemptCoordinator {
             attempt
         };
 
-        if let Some(pi_request) = pi_request.as_ref() {
+        if let Some(coding_request) = coding_request.as_ref() {
             return self
                 .finish_coding_attempt(
                     &request,
-                    pi_request,
+                    coding_request,
                     runtime_outcome,
                     terminal_attempt,
                     cancel,
@@ -472,7 +475,7 @@ impl AttemptCoordinator {
             AttemptStatus::Running => unreachable!("running attempt rejected above"),
         };
 
-        if request.runtime_id.0 == PI_CODER_RUNTIME_ID {
+        if attempt.input.get("runtime_request").is_some() {
             let persisted_request =
                 attempt
                     .input
@@ -483,10 +486,10 @@ impl AttemptCoordinator {
                             "coding attempt has no persisted runtime request".into(),
                         )
                     })?;
-            let pi_request: PiAttemptRequest = serde_json::from_value(persisted_request)
+            let coding_request: CodingAttemptRequest = serde_json::from_value(persisted_request)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
             return self
-                .finish_coding_attempt(request, &pi_request, runtime_outcome, attempt, cancel)
+                .finish_coding_attempt(request, &coding_request, runtime_outcome, attempt, cancel)
                 .await;
         }
         self.finish_non_coding_attempt(request, runtime_outcome, attempt)
@@ -521,13 +524,13 @@ impl AttemptCoordinator {
     async fn resume_coding_attempt(
         &self,
         request: &AttemptRequest,
-        pi_request: &PiAttemptRequest,
+        coding_request: &CodingAttemptRequest,
         cancel: CancellationToken,
     ) -> Result<Option<AttemptCoordinationOutcome>, AttemptCoordinatorError> {
         let (persisted, verification, attempt, goal) = {
             let store = self.store.lock().unwrap();
             let Some(persisted) = store
-                .load_coding_job(pi_request.job.job_id)
+                .load_coding_job(coding_request.job.job_id)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
             else {
                 return Ok(None);
@@ -538,7 +541,7 @@ impl AttemptCoordinator {
                 ));
             }
             let verification = store
-                .load_verification_report(pi_request.job.job_id)
+                .load_verification_report(coding_request.job.job_id)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
             let attempt = store
                 .attempt(persisted.report.attempt_id)
@@ -560,7 +563,7 @@ impl AttemptCoordinator {
                 return self
                     .outcome_for_verification(
                         request,
-                        pi_request,
+                        coding_request,
                         &persisted,
                         attempt,
                         verification.report,
@@ -573,7 +576,7 @@ impl AttemptCoordinator {
             }));
         }
         let report = match self
-            .run_and_persist_verification(pi_request, &persisted, &attempt.evidence, cancel)
+            .run_and_persist_verification(coding_request, &persisted, &attempt.evidence, cancel)
             .await
         {
             Ok(report) => report,
@@ -584,14 +587,14 @@ impl AttemptCoordinator {
             }
         };
         let outcome =
-            self.outcome_for_verification(request, pi_request, &persisted, attempt, report)?;
+            self.outcome_for_verification(request, coding_request, &persisted, attempt, report)?;
         Ok(Some(outcome))
     }
 
     async fn finish_coding_attempt(
         &self,
         request: &AttemptRequest,
-        pi_request: &PiAttemptRequest,
+        coding_request: &CodingAttemptRequest,
         runtime_outcome: Result<RuntimeResult, RuntimeFailure>,
         attempt: GoalAttempt,
         cancel: CancellationToken,
@@ -606,12 +609,12 @@ impl AttemptCoordinator {
         };
         if bundle.report.goal_id != request.goal_id
             || bundle.report.attempt_id != attempt.id
-            || bundle.report.job_id != pi_request.job.job_id
+            || bundle.report.job_id != coding_request.job.job_id
         {
             return self.block_coding_service_error(
                 request.goal_id,
                 attempt,
-                "Pi coding evidence identity mismatch",
+                "Coding evidence identity mismatch",
             );
         }
         let persisted = {
@@ -637,7 +640,7 @@ impl AttemptCoordinator {
         }
 
         let report = match self
-            .run_and_persist_verification(pi_request, &persisted, evidence, cancel)
+            .run_and_persist_verification(coding_request, &persisted, evidence, cancel)
             .await
         {
             Ok(report) => report,
@@ -649,12 +652,12 @@ impl AttemptCoordinator {
                 )
             }
         };
-        self.outcome_for_verification(request, pi_request, &persisted, attempt, report)
+        self.outcome_for_verification(request, coding_request, &persisted, attempt, report)
     }
 
     async fn run_and_persist_verification(
         &self,
-        pi_request: &PiAttemptRequest,
+        coding_request: &CodingAttemptRequest,
         persisted: &super::PersistedCodingJob,
         evidence: &[fabric::AttemptEvidence],
         cancel: CancellationToken,
@@ -672,8 +675,8 @@ impl AttemptCoordinator {
             worktree,
             base_commit: persisted.report.base_commit.clone(),
             changed_files: persisted.report.changed_files.clone(),
-            allowed_paths: pi_request.job.workspace.allowed_paths().to_vec(),
-            forbidden_paths: pi_request.job.workspace.forbidden_paths().to_vec(),
+            allowed_paths: coding_request.job.workspace.allowed_paths().to_vec(),
+            forbidden_paths: coding_request.job.workspace.forbidden_paths().to_vec(),
             capability_audit: audit,
             selection: VerificationSelection::default(),
         };
@@ -692,7 +695,7 @@ impl AttemptCoordinator {
     fn outcome_for_verification(
         &self,
         request: &AttemptRequest,
-        pi_request: &PiAttemptRequest,
+        coding_request: &CodingAttemptRequest,
         persisted: &super::PersistedCodingJob,
         attempt: GoalAttempt,
         report: VerificationReport,
@@ -724,7 +727,7 @@ impl AttemptCoordinator {
             {
                 let approval = create_apply_approval(
                     approvals,
-                    pi_request,
+                    coding_request,
                     persisted,
                     &report,
                     self.clock.wall_now().0,
@@ -939,7 +942,7 @@ fn parse_coding_evidence(
             .iter()
             .find(|item| item.kind == kind)
             .map(|item| item.content.as_str())
-            .ok_or_else(|| format!("Pi result is missing {kind} evidence"))
+            .ok_or_else(|| format!("Coding result is missing {kind} evidence"))
     };
     let report = serde_json::from_str::<CodingJobReport>(content("coding_job_report")?)
         .map_err(|error| format!("invalid coding job report: {error}"))?;
@@ -961,7 +964,7 @@ fn capability_audit(
     let item = evidence
         .iter()
         .find(|item| item.kind == "coding_capability_audit")
-        .ok_or_else(|| "Pi result is missing capability audit evidence".to_string())?;
+        .ok_or_else(|| "Coding result is missing capability audit evidence".to_string())?;
     serde_json::from_str(&item.content)
         .map(CapabilityAuditSummary::normalized)
         .map_err(|error| format!("invalid capability audit evidence: {error}"))
@@ -996,7 +999,7 @@ fn resolve_worktree(base: &Path, relative: &Path) -> Result<PathBuf, String> {
 
 fn create_apply_approval(
     approvals: &Arc<Mutex<ApprovalRepository>>,
-    pi_request: &PiAttemptRequest,
+    coding_request: &CodingAttemptRequest,
     persisted: &super::PersistedCodingJob,
     verification: &VerificationReport,
     now_ms: i64,
@@ -1022,7 +1025,7 @@ fn create_apply_approval(
             ("base_commit".into(), persisted.report.base_commit.clone()),
             (
                 "repository_root".into(),
-                pi_request
+                coding_request
                     .job
                     .workspace
                     .repository_root()
@@ -1040,7 +1043,7 @@ fn create_apply_approval(
                 "all required checks passed".into(),
             ),
         ]),
-        allowed_scope: pi_request.job.workspace.allowed_paths().to_vec(),
+        allowed_scope: coding_request.job.workspace.allowed_paths().to_vec(),
         apply_target: Some(PathBuf::from(".")),
     };
     let approval = approvals

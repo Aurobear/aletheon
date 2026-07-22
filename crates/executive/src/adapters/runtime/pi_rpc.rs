@@ -138,6 +138,10 @@ impl PiRpcRuntime {
 
 #[async_trait]
 impl AgentRuntimeLauncher for PiRpcRuntime {
+    fn resource_requirements(&self) -> runtime::RuntimeResourceRequirements {
+        pi_manifest().resource_requirements
+    }
+
     async fn launch(
         &self,
         input: AgentRuntimeInput,
@@ -593,5 +597,9 @@ pub fn pi_manifest() -> &'static runtime::RuntimeManifest {
         ]),
         workspace_mode: runtime::WorkspaceMode::Shared,
         tool_governance: runtime::ToolGovernance::Observed,
+        resource_requirements: runtime::RuntimeResourceRequirements {
+            storage_bytes: 1024 * 1024 * 1024,
+            storage_items: 1,
+        },
     })
 }

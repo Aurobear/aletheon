@@ -175,7 +175,7 @@ impl GoalCoordinator {
         AttemptCoordinator::new(self.store.clone(), executor, clock, retry_policy)
     }
 
-    /// Build a one-shot coordinator with the mandatory Pi verification gate.
+    /// Build a one-shot coordinator with the mandatory coding verification gate.
     pub fn coding_attempt_coordinator(
         &self,
         executor: Arc<dyn AttemptExecutor>,
