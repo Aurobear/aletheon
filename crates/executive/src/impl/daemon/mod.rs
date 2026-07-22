@@ -62,6 +62,8 @@ pub struct DaemonConfig {
     pub harness_kind: cognit::harness::HarnessKind,
     /// Secret-safe integration settings resolved by the host startup preflight.
     pub integrations: crate::core::config::ResolvedIntegrations,
+    /// Embodiment provider selection (Simulator or gRPC gateway).
+    pub embodiment_provider: crate::core::config::EmbodimentProviderConfig,
 }
 
 pub fn parse_conscious_arbitration_mode(

@@ -732,7 +732,9 @@ impl RequestHandler {
             fabric::ProcessId::new(),
             fabric::PrincipalId(fabric::LOCAL_OWNER_PRINCIPAL.to_string()),
             embodiment_workspace,
-        );
+            Some(config.embodiment_provider.clone()),
+        )
+        .await?;
         tools
             .lock()
             .await

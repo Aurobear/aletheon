@@ -106,6 +106,55 @@ pub struct SearchIntegrationConfig {
 pub struct IntegrationsConfig {
     pub google: GoogleIntegrationConfig,
     pub search: SearchIntegrationConfig,
+    /// Optional embodiment provider config. Defaults to simulator when absent.
+    pub embodiment: Option<EmbodimentProviderConfig>,
+}
+
+/// Tagged configuration for the embodied device provider.
+///
+/// Default when absent: `Simulator { device_id: "bot" }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EmbodimentProviderConfig {
+    /// Deterministic simulator (default).
+    Simulator {
+        /// Device ID exposed to the model.
+        #[serde(default = "default_sim_device_id")]
+        device_id: String,
+    },
+    /// gRPC embodiment gateway (e.g. Kuavo MuJoCo bridge).
+    Grpc {
+        /// Device ID exposed to the model.
+        device_id: String,
+        /// gRPC endpoint URL (e.g. "http://127.0.0.1:50051").
+        endpoint: String,
+        /// Connection timeout in milliseconds.
+        #[serde(default = "default_connect_timeout_ms")]
+        connect_timeout_ms: u64,
+        /// Per-RPC request timeout in milliseconds.
+        #[serde(default = "default_request_timeout_ms")]
+        request_timeout_ms: u64,
+    },
+}
+
+fn default_sim_device_id() -> String {
+    "bot".into()
+}
+
+fn default_connect_timeout_ms() -> u64 {
+    5000
+}
+
+fn default_request_timeout_ms() -> u64 {
+    30000
+}
+
+impl Default for EmbodimentProviderConfig {
+    fn default() -> Self {
+        Self::Simulator {
+            device_id: "bot".into(),
+        }
+    }
 }
 
 #[derive(Clone)]
