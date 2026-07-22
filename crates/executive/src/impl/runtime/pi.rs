@@ -283,7 +283,8 @@ fn validate_sandbox(sandbox: &dyn SandboxBackend) -> Result<()> {
 }
 
 fn capability_audit_summary(sandbox: &dyn SandboxBackend) -> CapabilityAuditSummary {
-    const CAPABILITIES: [(&str, fn(&fabric::sandbox::SandboxCapabilities) -> bool); 4] = [
+    type CapabilityProbe = fn(&fabric::sandbox::SandboxCapabilities) -> bool;
+    const CAPABILITIES: [(&str, CapabilityProbe); 4] = [
         ("filesystem_isolation", |value| value.filesystem_isolation),
         ("network_isolation", |value| value.network_isolation),
         ("resource_limits", |value| value.resource_limits),
