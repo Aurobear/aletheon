@@ -3,23 +3,23 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use mnemosyne::backends::gbrain::{
-    GbrainReconciliationService, GbrainSpool, RetryPolicy, SpoolError, SupplementalMemoryTransport,
+use mnemosyne::backends::supplemental::{
+    SupplementalReconciliationService, SupplementalSpool, RetryPolicy, SpoolError, SupplementalMemoryTransport,
 };
 use mnemosyne::RetentionRepository;
 use tokio_util::sync::CancellationToken;
 
-pub use mnemosyne::backends::gbrain::ReconciliationDrainReport as DrainReport;
+pub use mnemosyne::backends::supplemental::ReconciliationDrainReport as DrainReport;
 
 /// Scheduling-only adapter. All claim, receipt, retry, dead-letter, and
 /// tombstone-settlement decisions live in Mnemosyne.
 pub struct GbrainWorker<T: SupplementalMemoryTransport> {
-    service: GbrainReconciliationService<T>,
+    service: SupplementalReconciliationService<T>,
 }
 
 impl<T: SupplementalMemoryTransport> GbrainWorker<T> {
     pub fn new(
-        spool: Arc<GbrainSpool>,
+        spool: Arc<SupplementalSpool>,
         transport: Arc<T>,
         retry: RetryPolicy,
         worker_id: impl Into<String>,
@@ -27,7 +27,7 @@ impl<T: SupplementalMemoryTransport> GbrainWorker<T> {
         lease_ms: i64,
     ) -> Result<Self, SpoolError> {
         Ok(Self {
-            service: GbrainReconciliationService::new(
+            service: SupplementalReconciliationService::new(
                 spool, transport, retry, worker_id, batch_size, lease_ms,
             )?,
         })

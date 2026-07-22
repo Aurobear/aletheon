@@ -1,4 +1,4 @@
-//! Crash-safe SQLite spool for asynchronous GBrain `put_page` delivery.
+//! Crash-safe SQLite spool for asynchronous supplemental memory `put_page` delivery.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 use super::config::RetryPolicy;
 use super::migrations;
-use super::page::{GbrainPage, MAX_PAGE_BYTES};
+use super::page::{SupplementalDocument, MAX_PAGE_BYTES};
 use super::reconcile::{ReconcileOperationKind, RemoteMemoryReceipt};
 use crate::service::MemorySensitivity;
 
@@ -79,33 +79,33 @@ pub struct MigrationReport {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpoolError {
-    #[error("GBrain spool conflict for stable record identity")]
+    #[error("supplemental memory spool conflict for stable record identity")]
     Conflict,
-    #[error("GBrain spool item or byte quota exceeded")]
+    #[error("supplemental memory spool item or byte quota exceeded")]
     QuotaExceeded,
-    #[error("GBrain spool lease is not owned by this worker")]
+    #[error("supplemental memory spool lease is not owned by this worker")]
     LeaseMismatch,
-    #[error("GBrain spool record was not found")]
+    #[error("supplemental memory spool record was not found")]
     NotFound,
-    #[error("GBrain spool payload is corrupt")]
+    #[error("supplemental memory spool payload is corrupt")]
     Corrupt,
-    #[error("GBrain spool payload is invalid: {0}")]
+    #[error("supplemental memory spool payload is invalid: {0}")]
     Invalid(&'static str),
-    #[error("GBrain spool storage error")]
+    #[error("supplemental memory spool storage error")]
     Storage(#[from] rusqlite::Error),
-    #[error("GBrain spool filesystem error")]
+    #[error("supplemental memory spool filesystem error")]
     Io(#[from] std::io::Error),
-    #[error("GBrain legacy entry is malformed")]
+    #[error("supplemental memory legacy entry is malformed")]
     LegacyMalformed,
 }
 
-pub struct GbrainSpool {
+pub struct SupplementalSpool {
     path: PathBuf,
     limits: SpoolLimits,
     fault_full_once: Arc<AtomicBool>,
 }
 
-impl GbrainSpool {
+impl SupplementalSpool {
     pub fn open(path: impl AsRef<Path>, limits: SpoolLimits) -> Result<Self, SpoolError> {
         if limits.max_items == 0 || limits.max_bytes == 0 {
             return Err(SpoolError::Invalid("spool limits must be positive"));
@@ -154,7 +154,7 @@ impl GbrainSpool {
     pub fn enqueue(
         &self,
         record_id: &str,
-        page: &GbrainPage,
+        page: &SupplementalDocument,
         sensitivity: MemorySensitivity,
         now_ms: i64,
     ) -> Result<EnqueueOutcome, SpoolError> {
@@ -176,7 +176,7 @@ impl GbrainSpool {
         logical_page_id: &str,
         operation: ReconcileOperationKind,
         schema_version: u32,
-        page: &GbrainPage,
+        page: &SupplementalDocument,
         sensitivity: MemorySensitivity,
         now_ms: i64,
     ) -> Result<EnqueueOutcome, SpoolError> {
@@ -590,7 +590,7 @@ impl GbrainSpool {
                 let record_id = format!("legacy:{}", hex_digest(slug.as_bytes()));
                 self.enqueue(
                     &record_id,
-                    &GbrainPage {
+                    &SupplementalDocument {
                         slug: slug.to_owned(),
                         content: clean,
                     },
@@ -663,7 +663,7 @@ fn find_existing(
     .optional()
 }
 
-fn validate_payload(record_id: &str, page: &GbrainPage) -> Result<(), SpoolError> {
+fn validate_payload(record_id: &str, page: &SupplementalDocument) -> Result<(), SpoolError> {
     if record_id.trim().is_empty() || record_id.len() > 512 {
         return Err(SpoolError::Invalid("record ID is invalid"));
     }

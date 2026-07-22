@@ -12,7 +12,8 @@ executive-sqlite-repository-facade	crates/executive/src/application/agent_contro
 executive-user-runtime-facade	crates/executive/src/user_runtime.rs	#\[deprecated\(note	legacy user runtime root remains public	executive::composition::user_runtime	1	9
 external-event-v1-file-kind	crates/fabric/src/types/external_event.rs	drive_file_	persisted v1 event tags require aliases and integrity reconstruction	retire after persisted v1 migration window	6	10
 external-event-v1-provider	crates/fabric/src/types/external_event.rs	Google\|	persisted v1 dedup material used enum Debug output	retire after persisted v1 migration window	2	10
-gbrain-config	crates/cognit/src/config/mod.rs	GbrainMemoryConfig	legacy supplemental-memory product name	SupplementalMemoryConfig	2	5
 pi-attempt-request-alias	crates/executive/src/adapters/runtime/pi.rs	\bPiAttemptRequest\b	legacy adapter tests and callers use Pi request name	executive::application::coding_runtime::CodingAttemptRequest	1	9
 pi-runtime-types	crates/executive/src/adapters/runtime/pi.rs	PiRuntime	legacy coding-runtime implementation name	private coding runtime adapter	17	3
+supplemental-memory-config-aliases	crates/executive/src/composition/config/supplemental_memory.rs	\b(?:GbrainMemoryConfig|McpMemoryConfig)\b	legacy Rust config type names remain during public API contraction	SupplementalMemoryConfig	2	9
+supplemental-memory-persistence-tables	crates/mnemosyne/src/backends/supplemental/migrations.rs	gbrain_(?:pages|queue|attempts|delivery_receipts|dead_letters|spool_meta)	legacy SQLite table names are retained to avoid unsafe no-value renames	private SupplementalSpool repository	35	10
 telegram-channel-config-alias	crates/executive/src/composition/config/channel.rs	\bTelegramConfig\b	legacy Rust config type name remains during deployment migration	TelegramChannelConfig	1	9

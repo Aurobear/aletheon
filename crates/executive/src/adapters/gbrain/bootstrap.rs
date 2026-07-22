@@ -4,10 +4,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use cognit::config::McpMemoryConfig;
+use crate::composition::config::SupplementalMemoryConfig;
 use corpus::tools::mcp::manager::McpManager;
-use mnemosyne::backends::gbrain::{
-    GbrainBackend, GbrainBackendConfig, GbrainSpool, RetryPolicy, SpoolLimits,
+use mnemosyne::backends::supplemental::{
+    SupplementalMemoryBackend, SupplementalBackendConfig, SupplementalSpool, RetryPolicy, SpoolLimits,
     SupplementalErrorCategory,
 };
 use mnemosyne::{CompositeMemoryHealth, CompositeMemoryService, MemoryService};
@@ -22,8 +22,8 @@ pub struct GbrainMemoryRuntime {
     pub worker_task: Option<JoinHandle<()>>,
 }
 
-pub fn backend_config(config: &McpMemoryConfig) -> GbrainBackendConfig {
-    GbrainBackendConfig {
+pub fn backend_config(config: &SupplementalMemoryConfig) -> SupplementalBackendConfig {
+    SupplementalBackendConfig {
         enabled: config.enabled,
         projection_enabled: config.projection_enabled,
         server_name: config.server_name.clone(),
@@ -40,7 +40,7 @@ pub fn backend_config(config: &McpMemoryConfig) -> GbrainBackendConfig {
             max_attempts: config.retry_max_attempts,
             max_age_secs: config.retry_max_age_secs,
         },
-        spool: mnemosyne::backends::gbrain::SpoolPolicy {
+        spool: mnemosyne::backends::supplemental::SpoolPolicy {
             path: config.spool_path.clone(),
             max_items: config.spool_max_items,
             max_bytes: config.spool_max_bytes,
@@ -49,20 +49,20 @@ pub fn backend_config(config: &McpMemoryConfig) -> GbrainBackendConfig {
     }
 }
 
-pub fn build_gbrain_memory_runtime(
+pub fn build_supplemental_memory_runtime(
     local: Arc<dyn MemoryService>,
     manager: Option<Arc<McpManager>>,
-    config: &McpMemoryConfig,
+    config: &SupplementalMemoryConfig,
     clock: Arc<dyn fabric::Clock>,
     daemon_cancel: &CancellationToken,
 ) -> GbrainMemoryRuntime {
-    build_gbrain_memory_runtime_with_retention(local, manager, config, clock, daemon_cancel, None)
+    build_supplemental_memory_runtime_with_retention(local, manager, config, clock, daemon_cancel, None)
 }
 
-pub fn build_gbrain_memory_runtime_with_retention(
+pub fn build_supplemental_memory_runtime_with_retention(
     local: Arc<dyn MemoryService>,
     manager: Option<Arc<McpManager>>,
-    config: &McpMemoryConfig,
+    config: &SupplementalMemoryConfig,
     clock: Arc<dyn fabric::Clock>,
     daemon_cancel: &CancellationToken,
     retention: Option<Arc<mnemosyne::RetentionRepository>>,
@@ -90,7 +90,7 @@ pub fn build_gbrain_memory_runtime_with_retention(
     if adapter.health().schema != GbrainSchemaStatus::Valid {
         return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Schema));
     }
-    let spool = match GbrainSpool::open(
+    let spool = match SupplementalSpool::open(
         &config.spool_path,
         SpoolLimits {
             max_items: config.spool_max_items,
@@ -135,7 +135,7 @@ pub fn build_gbrain_memory_runtime_with_retention(
     } else {
         None
     };
-    let backend = Arc::new(GbrainBackend::new(
+    let backend = Arc::new(SupplementalMemoryBackend::new(
         spool.clone(),
         adapter.clone(),
         backend_config.clone(),
@@ -162,7 +162,7 @@ pub fn build_gbrain_memory_runtime_with_retention(
     }
 }
 
-fn valid_runtime_config(config: &McpMemoryConfig) -> bool {
+fn valid_runtime_config(config: &SupplementalMemoryConfig) -> bool {
     !config.server_name.trim().is_empty()
         && !config.write_source.trim().is_empty()
         && !config.read_sources.is_empty()
@@ -179,7 +179,7 @@ fn valid_runtime_config(config: &McpMemoryConfig) -> bool {
         && config.retry_initial_ms <= config.retry_max_ms
         && config.retry_max_attempts > 0
         && config.retry_max_age_secs > 0
-        && config.schema_version == mnemosyne::backends::gbrain::config::PINNED_RELEASE
+        && config.schema_version == mnemosyne::backends::supplemental::config::PINNED_RELEASE
 }
 
 fn local_runtime(

@@ -9,14 +9,14 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use super::config::GbrainBackendConfig;
-use super::page::GbrainPage;
-use super::spool::{EnqueueOutcome, GbrainSpool, SpoolError};
+use super::config::SupplementalBackendConfig;
+use super::page::SupplementalDocument;
+use super::spool::{EnqueueOutcome, SupplementalSpool, SpoolError};
 use crate::service::{
     ExperienceEvent, ForgetPolicy, MemorySensitivity, RecallItem, RecallRequest, TemporalState,
 };
 use crate::{
-    GbrainDegradedCategory, MemoryKind, MemoryMetrics, RecallOmittedReason, RecallSourceLabel,
+    SupplementalDegradedCategory, MemoryKind, MemoryMetrics, RecallOmittedReason, RecallSourceLabel,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,7 +73,7 @@ pub trait SupplementalMemoryTransport: Send + Sync {
 
     async fn put_page(
         &self,
-        page: &GbrainPage,
+        page: &SupplementalDocument,
         cancel: &CancellationToken,
     ) -> Result<Option<String>, SupplementalTransportError>;
     async fn query(
@@ -110,7 +110,7 @@ pub struct SupplementalRecall {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum GbrainBackendError {
+pub enum SupplementalMemoryError {
     #[error(transparent)]
     Spool(#[from] SpoolError),
     #[error("supplemental forget is unsupported")]
@@ -119,17 +119,17 @@ pub enum GbrainBackendError {
     InvalidRecord,
 }
 
-pub struct GbrainBackend<T: SupplementalMemoryTransport> {
-    spool: Arc<GbrainSpool>,
+pub struct SupplementalMemoryBackend<T: SupplementalMemoryTransport> {
+    spool: Arc<SupplementalSpool>,
     transport: Arc<T>,
-    config: GbrainBackendConfig,
+    config: SupplementalBackendConfig,
     metrics: MemoryMetrics,
 }
 
-impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
-    pub fn new(spool: Arc<GbrainSpool>, transport: Arc<T>, config: GbrainBackendConfig) -> Self {
+impl<T: SupplementalMemoryTransport> SupplementalMemoryBackend<T> {
+    pub fn new(spool: Arc<SupplementalSpool>, transport: Arc<T>, config: SupplementalBackendConfig) -> Self {
         let metrics = MemoryMetrics::default();
-        metrics.set_gbrain_queue_depth(spool.queue_depth().unwrap_or_default());
+        metrics.set_supplemental_queue_depth(spool.queue_depth().unwrap_or_default());
         Self {
             spool,
             transport,
@@ -139,7 +139,7 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
     }
 
     pub fn with_metrics(mut self, metrics: MemoryMetrics) -> Self {
-        metrics.set_gbrain_queue_depth(self.spool.queue_depth().unwrap_or_default());
+        metrics.set_supplemental_queue_depth(self.spool.queue_depth().unwrap_or_default());
         self.metrics = metrics;
         self
     }
@@ -148,7 +148,7 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
         &self.metrics
     }
 
-    pub fn spool(&self) -> &Arc<GbrainSpool> {
+    pub fn spool(&self) -> &Arc<SupplementalSpool> {
         &self.spool
     }
 
@@ -157,7 +157,7 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
         &self,
         event: &ExperienceEvent,
         now_ms: i64,
-    ) -> Result<EnqueueOutcome, GbrainBackendError> {
+    ) -> Result<EnqueueOutcome, SupplementalMemoryError> {
         if !self.config.projection_enabled {
             self.metrics
                 .recall_omitted(RecallOmittedReason::Unsupported, 1);
@@ -178,7 +178,7 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
             return Ok(EnqueueOutcome::ExcludedSensitive);
         }
         let Some(page) =
-            GbrainPage::from_event(event).map_err(|_| GbrainBackendError::InvalidRecord)?
+            SupplementalDocument::from_event(event).map_err(|_| SupplementalMemoryError::InvalidRecord)?
         else {
             return Ok(EnqueueOutcome::ExcludedSensitive);
         };
@@ -187,7 +187,7 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
                 .enqueue(&metadata.record_id, &page, metadata.sensitivity, now_ms)?;
         let depth = self.spool.queue_depth().unwrap_or_default();
         self.transport.set_queue_depth(depth);
-        self.metrics.set_gbrain_queue_depth(depth);
+        self.metrics.set_supplemental_queue_depth(depth);
         Ok(outcome)
     }
 
@@ -200,7 +200,7 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
         if !self.config.enabled {
             let result = self.empty_health(None);
             self.metrics
-                .observe_recall_latency(RecallSourceLabel::Gbrain, started.elapsed());
+                .observe_recall_latency(RecallSourceLabel::Supplemental, started.elapsed());
             return result;
         }
         if req.validate().is_err() {
@@ -233,8 +233,8 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
         recall
     }
 
-    pub fn forget(&self, _policy: ForgetPolicy) -> Result<(), GbrainBackendError> {
-        Err(GbrainBackendError::Unsupported)
+    pub fn forget(&self, _policy: ForgetPolicy) -> Result<(), SupplementalMemoryError> {
+        Err(SupplementalMemoryError::Unsupported)
     }
 
     async fn recall_inner(
@@ -291,7 +291,7 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
                     .await
                     .map_err(|error| error.category)?
             };
-            let page = GbrainPage {
+            let page = SupplementalDocument {
                 slug: hit.slug,
                 content: page_content,
             };
@@ -345,23 +345,23 @@ impl<T: SupplementalMemoryTransport> GbrainBackend<T> {
 
     fn finish_recall_metrics(&self, recall: &SupplementalRecall, elapsed: Duration) {
         self.metrics
-            .observe_recall_latency(RecallSourceLabel::Gbrain, elapsed);
+            .observe_recall_latency(RecallSourceLabel::Supplemental, elapsed);
         self.metrics.recall_hit(
-            RecallSourceLabel::Gbrain,
+            RecallSourceLabel::Supplemental,
             MemoryKind::ExternalReference,
             recall.items.len(),
         );
         self.metrics
-            .set_gbrain_queue_depth(recall.health.queue_depth);
+            .set_supplemental_queue_depth(recall.health.queue_depth);
         if let Some(category) = recall.health.error_category {
-            self.metrics.gbrain_degraded(category.into());
+            self.metrics.supplemental_degraded(category.into());
             self.metrics
                 .recall_omitted(RecallOmittedReason::SourceDegraded, 1);
         }
     }
 }
 
-impl From<SupplementalErrorCategory> for GbrainDegradedCategory {
+impl From<SupplementalErrorCategory> for SupplementalDegradedCategory {
     fn from(value: SupplementalErrorCategory) -> Self {
         match value {
             SupplementalErrorCategory::Auth => Self::Auth,

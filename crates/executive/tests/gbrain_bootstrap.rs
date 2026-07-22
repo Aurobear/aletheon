@@ -4,18 +4,18 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use cognit::config::McpMemoryConfig;
+use executive::composition::config::SupplementalMemoryConfig;
 use corpus::tools::mcp::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use corpus::tools::mcp::manager::McpManager;
-use executive::r#impl::gbrain::build_gbrain_memory_runtime;
+use executive::r#impl::gbrain::build_supplemental_memory_runtime;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use mnemosyne::backends::gbrain::{
-    EnqueueOutcome, GbrainBackendError, SupplementalErrorCategory, SupplementalRecall,
+use mnemosyne::backends::supplemental::{
+    EnqueueOutcome, SupplementalMemoryError, SupplementalErrorCategory, SupplementalRecall,
     SupplementalRecallHealth,
 };
 use mnemosyne::{
@@ -77,9 +77,9 @@ impl SupplementalMemoryService for FakeSupplemental {
         &self,
         event: &ExperienceEvent,
         _now_ms: i64,
-    ) -> Result<EnqueueOutcome, GbrainBackendError> {
+    ) -> Result<EnqueueOutcome, SupplementalMemoryError> {
         if self.record_error {
-            return Err(GbrainBackendError::InvalidRecord);
+            return Err(SupplementalMemoryError::InvalidRecord);
         }
         self.records.lock().unwrap().push(event.clone());
         Ok(EnqueueOutcome::Inserted)
@@ -92,8 +92,8 @@ impl SupplementalMemoryService for FakeSupplemental {
         tokio::time::sleep(self.delay).await;
         self.recall.clone()
     }
-    fn forget(&self, _policy: ForgetPolicy) -> Result<(), GbrainBackendError> {
-        Err(GbrainBackendError::Unsupported)
+    fn forget(&self, _policy: ForgetPolicy) -> Result<(), SupplementalMemoryError> {
+        Err(SupplementalMemoryError::Unsupported)
     }
 }
 
@@ -154,10 +154,10 @@ async fn disabled_and_unavailable_startup_keep_local_memory_operational() {
         1,
     )]));
     let cancel = CancellationToken::new();
-    let runtime = build_gbrain_memory_runtime(
+    let runtime = build_supplemental_memory_runtime(
         local.clone(),
         None,
-        &McpMemoryConfig::default(),
+        &SupplementalMemoryConfig::default(),
         Arc::new(kernel::chronos::TestClock::default()),
         &cancel,
     );
@@ -165,11 +165,11 @@ async fn disabled_and_unavailable_startup_keep_local_memory_operational() {
     runtime.memory_service.record(decision("d1")).await.unwrap();
     assert_eq!(local.records.lock().unwrap().len(), 1);
 
-    let config = McpMemoryConfig {
+    let config = SupplementalMemoryConfig {
         enabled: true,
         ..Default::default()
     };
-    let runtime = build_gbrain_memory_runtime(
+    let runtime = build_supplemental_memory_runtime(
         local,
         None,
         &config,
@@ -344,11 +344,11 @@ async fn slow_or_malformed_supplemental_recall_falls_back_to_local_with_health()
 #[tokio::test]
 async fn schema_drift_is_local_only_and_marked_degraded() {
     let manager = Arc::new(McpManager::new(McpConfig::default()));
-    let config = McpMemoryConfig {
+    let config = SupplementalMemoryConfig {
         enabled: true,
         ..Default::default()
     };
-    let runtime = build_gbrain_memory_runtime(
+    let runtime = build_supplemental_memory_runtime(
         Arc::new(LocalMemory::new(Vec::new())),
         Some(manager),
         &config,
@@ -370,14 +370,14 @@ async fn healthy_http_bootstrap_and_shutdown_leave_committed_queue_durable() {
     let dir = tempfile::tempdir().unwrap();
     let cancel = CancellationToken::new();
     cancel.cancel();
-    let config = McpMemoryConfig {
+    let config = SupplementalMemoryConfig {
         enabled: true,
         projection_enabled: true,
         spool_path: dir.path().join("spool.db").to_string_lossy().into_owned(),
         legacy_outbox_dir: dir.path().join("legacy").to_string_lossy().into_owned(),
         ..Default::default()
     };
-    let runtime = build_gbrain_memory_runtime(
+    let runtime = build_supplemental_memory_runtime(
         Arc::new(LocalMemory::new(Vec::new())),
         Some(Arc::new(manager)),
         &config,
@@ -395,9 +395,9 @@ async fn healthy_http_bootstrap_and_shutdown_leave_committed_queue_durable() {
         .await
         .unwrap()
         .unwrap();
-    let spool = mnemosyne::backends::gbrain::GbrainSpool::open(
+    let spool = mnemosyne::backends::supplemental::SupplementalSpool::open(
         &config.spool_path,
-        mnemosyne::backends::gbrain::SpoolLimits {
+        mnemosyne::backends::supplemental::SpoolLimits {
             max_items: config.spool_max_items,
             max_bytes: config.spool_max_bytes,
         },
@@ -408,7 +408,7 @@ async fn healthy_http_bootstrap_and_shutdown_leave_committed_queue_durable() {
 
 #[tokio::test]
 async fn legacy_config_and_json_outbox_migrate_before_worker_start() {
-    let parsed: McpMemoryConfig = toml::from_str(
+    let parsed: SupplementalMemoryConfig = toml::from_str(
         r#"
 enabled = true
 source = "aletheon"
@@ -439,14 +439,14 @@ outbox_dir = "/tmp/overridden-below"
         .to_string(),
     )
     .unwrap();
-    let config = McpMemoryConfig {
+    let config = SupplementalMemoryConfig {
         spool_path: dir.path().join("spool.db").to_string_lossy().into_owned(),
         legacy_outbox_dir: legacy.to_string_lossy().into_owned(),
         ..parsed
     };
     let cancel = CancellationToken::new();
     cancel.cancel();
-    let runtime = build_gbrain_memory_runtime(
+    let runtime = build_supplemental_memory_runtime(
         Arc::new(LocalMemory::new(Vec::new())),
         Some(Arc::new(connected_manager(HttpState::valid()).await)),
         &config,
@@ -455,9 +455,9 @@ outbox_dir = "/tmp/overridden-below"
     );
     assert!(legacy.join("one.json.migrated").exists());
     runtime.worker_task.unwrap().await.unwrap();
-    let spool = mnemosyne::backends::gbrain::GbrainSpool::open(
+    let spool = mnemosyne::backends::supplemental::SupplementalSpool::open(
         &config.spool_path,
-        mnemosyne::backends::gbrain::SpoolLimits {
+        mnemosyne::backends::supplemental::SpoolLimits {
             max_items: config.spool_max_items,
             max_bytes: config.spool_max_bytes,
         },

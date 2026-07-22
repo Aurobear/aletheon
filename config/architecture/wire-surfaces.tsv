@@ -12,6 +12,6 @@ internal-shared	External information source DTOs	crates/fabric/src/types/externa
 internal-shared	Fabric IPC protocol	crates/fabric/src/ipc/protocol.rs	kernel,executive,platform host	fabric	serialized enum contract	classify transport separately; version incompatible variants	1,2
 wire-exposed	MCP JSON-RPC and tool schemas	crates/corpus/src/tools/mcp/protocol.rs	corpus,MCP servers	corpus	MCP initialize protocolVersion and per-tool inputSchema	negotiate protocol; opaque payload only inside adapter	8d
 internal-shared	Agent run state	crates/executive/src/application/agent_control/model.rs	executive service,SQLite repository	executive	SQLite migrations 001-003	migrate durable state before enum/DTO changes	2,3,8a
-internal-shared	Memory/spool DTOs	crates/mnemosyne/src/backends/gbrain/migrations.rs	mnemosyne,supplemental backend	mnemosyne	SQLite PRAGMA user_version	idempotent ordered migration; compatibility read old/write new	5,8c
+internal-shared	Memory/spool DTOs	crates/mnemosyne/src/backends/supplemental/migrations.rs	mnemosyne,supplemental backend	mnemosyne	SQLite PRAGMA user_version	idempotent ordered migration; compatibility read old/write new	5,8c
 internal-shared	Audit/HIL evidence	crates/metacog/src/hil_evidence_verifier.rs	metacog,executive	metacog	schema_version field	fail closed on unknown schema/evidence integrity failure	8c
 internal-shared	Artifact metadata	crates/platform/src/artifact_store.rs	executive,platform	platform	typed metadata plus receipt	preserve receipt validation; version before incompatible persistence	2

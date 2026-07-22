@@ -2,7 +2,7 @@
 # name	protected_pattern	allowed_path_prefixes	reason	canonical_replacement	exit_phase
 google	(?i)\bgoogle\b|Google[A-Z]|GOOGLE_	crates/executive/src/adapters/google/,crates/corpus/src/drivers/google/	external information provider	external identity/source port	6
 gmail	(?i)\bgmail\b|Gmail[A-Z]|GMAIL_	crates/executive/src/adapters/google/,crates/corpus/src/drivers/google/	external message product	message source contract	1
-gbrain	(?i)\bgbrain\b|Gbrain[A-Z]|GBRAIN_	crates/mnemosyne/src/backends/gbrain/	external supplemental-memory backend	supplemental memory port	5
+gbrain	(?i)\bgbrain\b|Gbrain[A-Z]|GBRAIN_	crates/mnemosyne/src/backends/supplemental/	external supplemental-memory backend	supplemental memory port	5
 anthropic	(?i)\banthropic\b|Anthropic[A-Z]|ANTHROPIC_	crates/cognit/src/impl/llm/	inference provider	inference adapter id/capability	7
 openai	(?i)\bopenai\b|OpenAi[A-Z]|OPENAI_	crates/cognit/src/impl/llm/	inference provider	inference adapter id/capability	7
 ollama	(?i)\bollama\b|Ollama[A-Z]|OLLAMA_	crates/cognit/src/impl/llm/	inference provider	inference adapter id/capability	7

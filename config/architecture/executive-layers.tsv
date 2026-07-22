@@ -124,6 +124,7 @@ crates/executive/src/composition/config/mod.rs	composition	executive	configurati
 crates/executive/src/composition/config/provenance.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/provider.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/schema.rs	composition	executive	configuration and dependency construction
+crates/executive/src/composition/config/supplemental_memory.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/exec_session.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/mod.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/prefix_builder.rs	composition	executive	configuration and dependency construction

@@ -42,7 +42,7 @@ pub use model::{
     MemoryScope, MemorySensitivity, MemoryStatus, ScopeAncestry, TemporalState,
 };
 pub use observability::{
-    CandidateDecisionLabel, ConsolidationJobState, GbrainDegradedCategory, LatencySamples,
+    CandidateDecisionLabel, ConsolidationJobState, SupplementalDegradedCategory, LatencySamples,
     MemoryKindLabel, MemoryMetrics, MemoryMetricsSnapshot, MemoryScopeLabel, RecallOmittedReason,
     RecallSourceLabel, TombstoneDestination,
 };

@@ -50,7 +50,7 @@ impl UserRuntimeConfig {
         // config value, while `--execd` can only enable the backend.
         apply_execd_override(&mut app.grok_hardening, enable_execd);
         let crate::composition::config::AppConfig {
-            memory: crate::composition::config::MemoryConfig { gbrain, .. },
+            memory: crate::composition::config::MemoryConfig { supplemental, .. },
             ..
         } = &app;
         let mut deployment = app.deployment.clone();
@@ -88,7 +88,7 @@ impl UserRuntimeConfig {
             mcp_servers: crate::core::mcp_config::convert_mcp_servers(&app.mcp_servers),
             hooks: app.hooks.clone(),
             telegram: app.telegram.clone(),
-            gbrain_memory: gbrain.clone(),
+            supplemental_memory: supplemental.clone(),
             deployment,
             backpressure: app.backpressure.clone(),
             agent_admission: app.agent.admission.clone(),
@@ -129,7 +129,7 @@ impl UserRuntimeConfig {
             .expect("default user runtime fixture config must load");
         config.request.mcp_servers.clear();
         config.request.telegram.enabled = false;
-        config.request.gbrain_memory.enabled = false;
+        config.request.supplemental_memory.enabled = false;
 
         // Populate the agents directory so that RequestHandler::new can
         // resolve at least one agent profile (required since the profile

@@ -290,7 +290,7 @@ impl ForgetReceipt {
 }
 
 // ---------------------------------------------------------------------------
-// Wave 3: Synthesis + Gap Analysis (GBrain "think" absorption)
+// Wave 3: Synthesis + Gap Analysis (supplemental memory "think" absorption)
 // ---------------------------------------------------------------------------
 
 /// A single inline citation linking back to a source record.
@@ -745,7 +745,7 @@ impl DefaultMemoryService {
             self.metrics
                 .recall_omitted(RecallOmittedReason::Tombstoned, before - items.len());
             self.metrics.set_tombstone_pending(
-                TombstoneDestination::Gbrain,
+                TombstoneDestination::Supplemental,
                 retention.pending_remote_count().unwrap_or_default(),
             );
         }
@@ -1007,7 +1007,7 @@ impl DefaultMemoryService {
     }
 
     /// Fire-and-forget entity/relation extraction into the knowledge graph.
-    /// Failures are logged and swallowed (fail-open, matching GBrain).
+    /// Failures are logged and swallowed (fail-open, matching supplemental memory).
     async fn maybe_extract_to_kg(&self, content: &str, record_id: &str) {
         let Some(kg) = &self.knowledge_graph else {
             return;

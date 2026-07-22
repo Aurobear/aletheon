@@ -1,16 +1,16 @@
 use std::fs;
 use std::sync::{Arc, Barrier};
 
-use mnemosyne::backends::gbrain::config::RetryPolicy;
-use mnemosyne::backends::gbrain::{
-    EnqueueOutcome, GbrainPage, GbrainSpool, RemoteMemoryReceipt, RetryOutcome, SpoolError,
+use mnemosyne::backends::supplemental::config::RetryPolicy;
+use mnemosyne::backends::supplemental::{
+    EnqueueOutcome, SupplementalDocument, SupplementalSpool, RemoteMemoryReceipt, RetryOutcome, SpoolError,
     SpoolLimits,
 };
 use mnemosyne::MemorySensitivity;
 use rusqlite::{Connection, ErrorCode};
 
-fn open(dir: &tempfile::TempDir, max_items: usize, max_bytes: u64) -> GbrainSpool {
-    GbrainSpool::open(
+fn open(dir: &tempfile::TempDir, max_items: usize, max_bytes: u64) -> SupplementalSpool {
+    SupplementalSpool::open(
         dir.path().join("spool.db"),
         SpoolLimits {
             max_items,
@@ -20,8 +20,8 @@ fn open(dir: &tempfile::TempDir, max_items: usize, max_bytes: u64) -> GbrainSpoo
     .unwrap()
 }
 
-fn page(id: usize) -> GbrainPage {
-    GbrainPage {
+fn page(id: usize) -> SupplementalDocument {
+    SupplementalDocument {
         slug: format!("aletheon/goal/{id}"),
         content: format!("---\nschema: aletheon.memory/v1\n---\n\nGoal outcome {id}"),
     }
@@ -65,7 +65,7 @@ fn enqueue_is_durable_idempotent_bounded_and_sensitivity_gated() {
             .unwrap(),
         EnqueueOutcome::ExcludedSensitive
     );
-    let credential = GbrainPage {
+    let credential = SupplementalDocument {
         slug: "aletheon/goal/credential".into(),
         content: "Bearer should-not-be-spooled".into(),
     };
@@ -270,7 +270,7 @@ fn sqlite_full_is_reported_without_silent_drop() {
     let dir = tempfile::tempdir().unwrap();
     let spool = open(&dir, 100, 10_000_000);
     spool.inject_disk_full_once();
-    let large = GbrainPage {
+    let large = SupplementalDocument {
         slug: "aletheon/goal/full".into(),
         content: "x".repeat(100_000),
     };

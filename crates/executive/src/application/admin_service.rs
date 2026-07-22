@@ -410,7 +410,7 @@ pub struct AdminResources {
     pub session_approvals: ScopedApprovalCache,
     pub daemon_cancel: CancellationToken,
     pub google_sync: Option<Arc<dyn BackgroundWorkerPort>>,
-    pub gbrain_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
+    pub supplemental_memory_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     pub goal_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     pub runtime_shutdown: Arc<dyn Fn() -> RuntimeShutdownFuture + Send + Sync>,
     pub memory_admin: Option<Arc<dyn MemoryAdminUseCases>>,
@@ -492,7 +492,7 @@ impl AdminUseCases for AdminService {
             sync.shutdown().await;
         }
         for (name, worker) in [
-            ("GBrain", &self.resources.gbrain_worker),
+            ("Supplemental memory", &self.resources.supplemental_memory_worker),
             ("Goal", &self.resources.goal_worker),
         ] {
             if let Some(worker) = worker {

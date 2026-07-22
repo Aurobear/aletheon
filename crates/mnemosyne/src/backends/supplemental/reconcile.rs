@@ -1,11 +1,11 @@
-//! Mnemosyne-owned GBrain reconciliation policy and durable receipt contracts.
+//! Mnemosyne-owned supplemental memory reconciliation policy and durable receipt contracts.
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-use super::page::GbrainPage;
-use super::spool::{EnqueueOutcome, GbrainSpool, SpoolError};
+use super::page::SupplementalDocument;
+use super::spool::{EnqueueOutcome, SupplementalSpool, SpoolError};
 use super::{RetryOutcome, RetryPolicy, SupplementalErrorCategory, SupplementalMemoryTransport};
 use crate::model::{MemoryRecord, MemoryRecordId, MemoryStatus};
 use crate::{MemoryMetrics, RetentionRepository};
@@ -73,12 +73,12 @@ pub struct RemoteMemoryReceipt {
     pub synced_at_ms: i64,
 }
 
-pub struct GbrainReconciliation<'a> {
-    spool: &'a GbrainSpool,
+pub struct SupplementalReconciliation<'a> {
+    spool: &'a SupplementalSpool,
 }
 
-impl<'a> GbrainReconciliation<'a> {
-    pub fn new(spool: &'a GbrainSpool) -> Self {
+impl<'a> SupplementalReconciliation<'a> {
+    pub fn new(spool: &'a SupplementalSpool) -> Self {
         Self { spool }
     }
 
@@ -94,7 +94,7 @@ impl<'a> GbrainReconciliation<'a> {
         ) {
             return Ok(EnqueueOutcome::ExcludedSensitive);
         }
-        let Some(page) = GbrainPage::from_record(record)
+        let Some(page) = SupplementalDocument::from_record(record)
             .map_err(|_| SpoolError::Invalid("record is not projectable"))?
         else {
             return Ok(EnqueueOutcome::ExcludedSensitive);
@@ -131,8 +131,8 @@ pub struct ReconciliationDrainReport {
 
 /// Mnemosyne-owned outbound reconciliation lifecycle. Executive schedules this
 /// service but never claims, acknowledges, retries, or settles memory records.
-pub struct GbrainReconciliationService<T: SupplementalMemoryTransport> {
-    spool: Arc<GbrainSpool>,
+pub struct SupplementalReconciliationService<T: SupplementalMemoryTransport> {
+    spool: Arc<SupplementalSpool>,
     transport: Arc<T>,
     retry: RetryPolicy,
     worker_id: String,
@@ -142,9 +142,9 @@ pub struct GbrainReconciliationService<T: SupplementalMemoryTransport> {
     metrics: MemoryMetrics,
 }
 
-impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
+impl<T: SupplementalMemoryTransport> SupplementalReconciliationService<T> {
     pub fn new(
-        spool: Arc<GbrainSpool>,
+        spool: Arc<SupplementalSpool>,
         transport: Arc<T>,
         retry: RetryPolicy,
         worker_id: impl Into<String>,
@@ -168,7 +168,7 @@ impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
     }
 
     pub fn with_metrics(mut self, metrics: MemoryMetrics) -> Self {
-        metrics.set_gbrain_queue_depth(self.spool.queue_depth().unwrap_or_default());
+        metrics.set_supplemental_queue_depth(self.spool.queue_depth().unwrap_or_default());
         self.metrics = metrics;
         self
     }
@@ -187,7 +187,7 @@ impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
             let pending = retention
                 .pending_remote_records(self.batch_size)
                 .map_err(|_| SpoolError::Invalid("retention tombstone outbox is unavailable"))?;
-            let reconciliation = GbrainReconciliation::new(&self.spool);
+            let reconciliation = SupplementalReconciliation::new(&self.spool);
             for record in pending {
                 reconciliation.enqueue(&record, now_ms)?;
             }
@@ -202,11 +202,11 @@ impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
         for item in claimed {
             if cancel.is_cancelled() {
                 self.metrics
-                    .gbrain_degraded(SupplementalErrorCategory::Cancelled.into());
+                    .supplemental_degraded(SupplementalErrorCategory::Cancelled.into());
                 report.interrupted += 1;
                 break;
             }
-            let page = GbrainPage {
+            let page = SupplementalDocument {
                 slug: item.slug.clone(),
                 content: item.content.clone(),
             };
@@ -233,7 +233,7 @@ impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
                         || error.category == SupplementalErrorCategory::Cancelled =>
                 {
                     self.metrics
-                        .gbrain_degraded(SupplementalErrorCategory::Cancelled.into());
+                        .supplemental_degraded(SupplementalErrorCategory::Cancelled.into());
                     report.interrupted += 1;
                     break;
                 }
@@ -246,11 +246,11 @@ impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
                     !error.category.is_transient(),
                 )? {
                     RetryOutcome::Scheduled { .. } => {
-                        self.metrics.gbrain_degraded(error.category.into());
+                        self.metrics.supplemental_degraded(error.category.into());
                         report.retried += 1;
                     }
                     RetryOutcome::DeadLettered => {
-                        self.metrics.gbrain_degraded(error.category.into());
+                        self.metrics.supplemental_degraded(error.category.into());
                         report.dead_lettered += 1;
                     }
                 },
@@ -258,7 +258,7 @@ impl<T: SupplementalMemoryTransport> GbrainReconciliationService<T> {
         }
         report.queue_depth = self.spool.queue_depth()?;
         self.transport.set_queue_depth(report.queue_depth);
-        self.metrics.set_gbrain_queue_depth(report.queue_depth);
+        self.metrics.set_supplemental_queue_depth(report.queue_depth);
         Ok(report)
     }
 

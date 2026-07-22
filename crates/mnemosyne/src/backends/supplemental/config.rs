@@ -1,4 +1,4 @@
-//! Pinned GBrain HTTP MCP contract validation and transport-neutral settings.
+//! Pinned supplemental memory HTTP MCP contract validation and transport-neutral settings.
 
 use std::collections::BTreeSet;
 
@@ -49,7 +49,7 @@ impl Default for SpoolPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GbrainBackendConfig {
+pub struct SupplementalBackendConfig {
     pub enabled: bool,
     pub projection_enabled: bool,
     pub server_name: String,
@@ -64,7 +64,7 @@ pub struct GbrainBackendConfig {
     pub spool: SpoolPolicy,
 }
 
-impl Default for GbrainBackendConfig {
+impl Default for SupplementalBackendConfig {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -87,7 +87,7 @@ pub fn validate_tools_list(document: &Value) -> anyhow::Result<()> {
     let tools = document
         .pointer("/result/tools")
         .and_then(Value::as_array)
-        .context("GBrain tools/list response lacks result.tools")?;
+        .context("supplemental memory tools/list response lacks result.tools")?;
     for (name, required, properties) in [
         ("query", &[][..], &["query", "source_id", "limit"][..]),
         ("search", &["query"][..], &["query", "limit"][..]),
@@ -101,28 +101,28 @@ pub fn validate_tools_list(document: &Value) -> anyhow::Result<()> {
         let tool = tools
             .iter()
             .find(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
-            .with_context(|| format!("GBrain required MCP tool `{name}` is missing"))?;
+            .with_context(|| format!("supplemental memory required MCP tool `{name}` is missing"))?;
         let schema = tool
             .get("inputSchema")
             .context("required tool lacks inputSchema")?;
         if schema.get("type").and_then(Value::as_str) != Some("object") {
-            bail!("GBrain tool `{name}` inputSchema is not an object");
+            bail!("supplemental memory tool `{name}` inputSchema is not an object");
         }
         let props = schema
             .get("properties")
             .and_then(Value::as_object)
-            .with_context(|| format!("GBrain tool `{name}` lacks properties"))?;
+            .with_context(|| format!("supplemental memory tool `{name}` lacks properties"))?;
         for property in properties {
             let value = props
                 .get(*property)
-                .with_context(|| format!("GBrain tool `{name}` lacks `{property}`"))?;
+                .with_context(|| format!("supplemental memory tool `{name}` lacks `{property}`"))?;
             let expected = if *property == "limit" {
                 "number"
             } else {
                 "string"
             };
             if value.get("type").and_then(Value::as_str) != Some(expected) {
-                bail!("GBrain tool `{name}` property `{property}` has incompatible type");
+                bail!("supplemental memory tool `{name}` property `{property}` has incompatible type");
             }
         }
         let actual: BTreeSet<_> = schema
@@ -133,7 +133,7 @@ pub fn validate_tools_list(document: &Value) -> anyhow::Result<()> {
             .filter_map(Value::as_str)
             .collect();
         if required.iter().any(|field| !actual.contains(field)) {
-            bail!("GBrain tool `{name}` has incompatible required fields");
+            bail!("supplemental memory tool `{name}` has incompatible required fields");
         }
     }
     Ok(())

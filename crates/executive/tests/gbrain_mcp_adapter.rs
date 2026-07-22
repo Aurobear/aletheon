@@ -14,7 +14,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use mnemosyne::backends::gbrain::GbrainPage;
+use mnemosyne::backends::supplemental::SupplementalDocument;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
@@ -201,7 +201,7 @@ async fn validates_schema_and_supports_put_query_search_and_get() {
     let (adapter, state) = build_adapter(FakeState::valid(), Duration::from_secs(1)).await;
     assert_eq!(adapter.health().schema, GbrainSchemaStatus::Valid);
     let cancel = CancellationToken::new();
-    let page = GbrainPage {
+    let page = SupplementalDocument {
         slug: "aletheon/goal/one".into(),
         content: "page".into(),
     };

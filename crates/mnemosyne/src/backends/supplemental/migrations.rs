@@ -1,4 +1,4 @@
-//! Transactional SQLite schema for the durable GBrain delivery spool.
+//! Transactional SQLite schema for the durable supplemental memory delivery spool.
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
@@ -34,7 +34,7 @@ fn migrate_with_step_hook(
     let current: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if current > SCHEMA_VERSION {
         return Err(rusqlite::Error::InvalidParameterName(format!(
-            "GBrain spool schema version {current} is newer than supported {SCHEMA_VERSION}"
+            "supplemental memory spool schema version {current} is newer than supported {SCHEMA_VERSION}"
         )));
     }
 

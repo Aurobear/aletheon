@@ -18,7 +18,7 @@ This directory is the complete execution package for implementing
 - [x] Phase 2 — Executive layering
 - [x] Phase 3 — coding runtime decoupling
 - [x] Phase 4 — configuration ownership
-- [ ] Phase 5 — supplemental memory generalization
+- [x] Phase 5 — supplemental memory generalization
 - [ ] Phase 6 — channel, identity, and information sources
 - [ ] Phase 7 — inference adapter isolation
 - [ ] Phase 8a — Agent Control state machine

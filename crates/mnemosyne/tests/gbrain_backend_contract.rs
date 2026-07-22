@@ -4,13 +4,13 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use mnemosyne::backends::gbrain::{
-    EnqueueOutcome, GbrainBackend, GbrainBackendConfig, GbrainPage, GbrainSpool, SpoolLimits,
+use mnemosyne::backends::supplemental::{
+    EnqueueOutcome, SupplementalMemoryBackend, SupplementalBackendConfig, SupplementalDocument, SupplementalSpool, SpoolLimits,
     SupplementalErrorCategory, SupplementalHit, SupplementalMemoryTransport,
     SupplementalTransportError,
 };
 use mnemosyne::{
-    ExperienceEvent, ForgetPolicy, GbrainDegradedCategory, MemoryKindLabel, MemoryMetadata,
+    ExperienceEvent, ForgetPolicy, SupplementalDegradedCategory, MemoryKindLabel, MemoryMetadata,
     MemoryProvenance, MemorySensitivity, RecallRequest, RecallSourceLabel, TemporalState,
 };
 use tokio_util::sync::CancellationToken;
@@ -43,7 +43,7 @@ impl FakeTransport {
 impl SupplementalMemoryTransport for FakeTransport {
     async fn put_page(
         &self,
-        _page: &GbrainPage,
+        _page: &SupplementalDocument,
         _cancel: &CancellationToken,
     ) -> Result<Option<String>, SupplementalTransportError> {
         self.put_calls.fetch_add(1, Ordering::SeqCst);
@@ -116,9 +116,9 @@ fn build_backend(
     dir: &tempfile::TempDir,
     transport: Arc<FakeTransport>,
     timeout_ms: u64,
-) -> GbrainBackend<FakeTransport> {
+) -> SupplementalMemoryBackend<FakeTransport> {
     let spool = Arc::new(
-        GbrainSpool::open(
+        SupplementalSpool::open(
             dir.path().join("spool.db"),
             SpoolLimits {
                 max_items: 100,
@@ -127,7 +127,7 @@ fn build_backend(
         )
         .unwrap(),
     );
-    let config = GbrainBackendConfig {
+    let config = SupplementalBackendConfig {
         enabled: true,
         projection_enabled: true,
         read_sources: vec!["aletheon".into()],
@@ -136,7 +136,7 @@ fn build_backend(
         recall_limit: 4,
         ..Default::default()
     };
-    GbrainBackend::new(spool, transport, config)
+    SupplementalMemoryBackend::new(spool, transport, config)
 }
 
 fn request() -> RecallRequest {
@@ -185,7 +185,7 @@ fn record_commits_locally_without_transport_and_is_stably_idempotent() {
 async fn recall_preserves_provenance_temporal_fields_and_uses_get_only_when_needed() {
     let dir = tempfile::tempdir().unwrap();
     let transport = Arc::new(FakeTransport::healthy());
-    let page = GbrainPage::from_event(&event("decision-1"))
+    let page = SupplementalDocument::from_event(&event("decision-1"))
         .unwrap()
         .unwrap();
     *transport.query.lock().unwrap() = Ok(vec![SupplementalHit {
@@ -207,12 +207,12 @@ async fn recall_preserves_provenance_temporal_fields_and_uses_get_only_when_need
     assert_eq!(transport.get_calls.load(Ordering::SeqCst), 0);
     let snapshot = backend.metrics().snapshot();
     assert_eq!(
-        snapshot.memory_recall_hits[&RecallSourceLabel::Gbrain]
+        snapshot.memory_recall_hits[&RecallSourceLabel::Supplemental]
             [&MemoryKindLabel::ExternalReference],
         1
     );
     assert_eq!(
-        snapshot.memory_recall_latency_ms[&RecallSourceLabel::Gbrain].count,
+        snapshot.memory_recall_latency_ms[&RecallSourceLabel::Supplemental].count,
         1
     );
 
@@ -232,7 +232,7 @@ async fn recall_preserves_provenance_temporal_fields_and_uses_get_only_when_need
 async fn query_failure_falls_back_to_verified_search() {
     let dir = tempfile::tempdir().unwrap();
     let transport = Arc::new(FakeTransport::healthy());
-    let page = GbrainPage::from_event(&event("decision-1"))
+    let page = SupplementalDocument::from_event(&event("decision-1"))
         .unwrap()
         .unwrap();
     *transport.query.lock().unwrap() = Err(error(SupplementalErrorCategory::Provider));
@@ -263,7 +263,7 @@ async fn outage_slow_and_malformed_remote_memory_degrade_to_empty() {
         Some(SupplementalErrorCategory::Provider)
     );
     assert_eq!(
-        backend.metrics().snapshot().memory_gbrain_degraded[&GbrainDegradedCategory::Provider],
+        backend.metrics().snapshot().memory_supplemental_degraded[&SupplementalDegradedCategory::Provider],
         1
     );
 

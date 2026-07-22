@@ -258,7 +258,7 @@ impl HealthUseCases for ProductionHealthUseCases {
         if supplemental.enabled {
             supplemental_health.count = Some(supplemental.queue_depth as u64);
         }
-        self.registry.set("gbrain_spool", supplemental_health);
+        self.registry.set("supplemental_memory_spool", supplemental_health);
         if self.daemon_cancel.is_cancelled() {
             self.registry.begin_shutdown();
         }

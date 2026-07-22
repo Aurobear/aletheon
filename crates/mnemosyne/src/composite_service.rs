@@ -6,8 +6,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use crate::backends::gbrain::{
-    EnqueueOutcome, GbrainBackend, GbrainBackendError, SupplementalErrorCategory,
+use crate::backends::supplemental::{
+    EnqueueOutcome, SupplementalMemoryBackend, SupplementalMemoryError, SupplementalErrorCategory,
     SupplementalMemoryTransport, SupplementalRecall,
 };
 use crate::service::{
@@ -35,31 +35,31 @@ pub trait SupplementalMemoryService: Send + Sync {
         &self,
         event: &ExperienceEvent,
         now_ms: i64,
-    ) -> Result<EnqueueOutcome, GbrainBackendError>;
+    ) -> Result<EnqueueOutcome, SupplementalMemoryError>;
     async fn recall(
         &self,
         request: RecallRequest,
         cancel: &CancellationToken,
     ) -> SupplementalRecall;
-    fn forget(&self, policy: ForgetPolicy) -> Result<(), GbrainBackendError>;
+    fn forget(&self, policy: ForgetPolicy) -> Result<(), SupplementalMemoryError>;
 }
 
 #[async_trait]
-impl<T: SupplementalMemoryTransport + 'static> SupplementalMemoryService for GbrainBackend<T> {
+impl<T: SupplementalMemoryTransport + 'static> SupplementalMemoryService for SupplementalMemoryBackend<T> {
     fn queue_depth(&self) -> usize {
         self.spool().queue_depth().unwrap_or_default()
     }
 
     fn metrics(&self) -> Option<crate::MemoryMetrics> {
-        Some(GbrainBackend::metrics(self).clone())
+        Some(SupplementalMemoryBackend::metrics(self).clone())
     }
 
     fn record(
         &self,
         event: &ExperienceEvent,
         now_ms: i64,
-    ) -> Result<EnqueueOutcome, GbrainBackendError> {
-        GbrainBackend::record(self, event, now_ms)
+    ) -> Result<EnqueueOutcome, SupplementalMemoryError> {
+        SupplementalMemoryBackend::record(self, event, now_ms)
     }
 
     async fn recall(
@@ -67,11 +67,11 @@ impl<T: SupplementalMemoryTransport + 'static> SupplementalMemoryService for Gbr
         request: RecallRequest,
         cancel: &CancellationToken,
     ) -> SupplementalRecall {
-        GbrainBackend::recall(self, request, cancel).await
+        SupplementalMemoryBackend::recall(self, request, cancel).await
     }
 
-    fn forget(&self, policy: ForgetPolicy) -> Result<(), GbrainBackendError> {
-        GbrainBackend::forget(self, policy)
+    fn forget(&self, policy: ForgetPolicy) -> Result<(), SupplementalMemoryError> {
+        SupplementalMemoryBackend::forget(self, policy)
     }
 }
 
@@ -188,7 +188,7 @@ impl MemoryService for CompositeMemoryService {
                         Ok(recall) => recall,
                         Err(_) => SupplementalRecall {
                             items: Vec::new(),
-                            health: crate::backends::gbrain::SupplementalRecallHealth {
+                            health: crate::backends::supplemental::SupplementalRecallHealth {
                                 degraded: true,
                                 error_category: Some(SupplementalErrorCategory::Timeout),
                                 queue_depth: service.queue_depth(),
@@ -215,7 +215,7 @@ impl MemoryService for CompositeMemoryService {
         }
         let mut degraded_sources = local.degraded_sources;
         if supplemental.health.degraded {
-            degraded_sources.push("gbrain".into());
+            degraded_sources.push("supplemental_memory".into());
         }
         let metrics = self
             .supplemental

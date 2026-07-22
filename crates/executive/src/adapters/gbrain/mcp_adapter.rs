@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use corpus::tools::mcp::manager::McpManager;
-use mnemosyne::backends::gbrain::page::MAX_PAGE_BYTES;
-use mnemosyne::backends::gbrain::{validate_tools_list, GbrainPage};
+use mnemosyne::backends::supplemental::page::MAX_PAGE_BYTES;
+use mnemosyne::backends::supplemental::{validate_tools_list, SupplementalDocument};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
@@ -147,7 +147,7 @@ impl GbrainMcpAdapter {
 
     pub async fn put_page(
         &self,
-        page: &GbrainPage,
+        page: &SupplementalDocument,
         cancel: &CancellationToken,
     ) -> Result<(), GbrainAdapterError> {
         if page.slug.len() > MAX_SLUG_BYTES || page.content.len() > MAX_PAGE_BYTES {
@@ -430,8 +430,8 @@ fn category_message(category: GbrainErrorCategory) -> &'static str {
 
 fn supplemental_category(
     category: GbrainErrorCategory,
-) -> mnemosyne::backends::gbrain::SupplementalErrorCategory {
-    use mnemosyne::backends::gbrain::SupplementalErrorCategory as Target;
+) -> mnemosyne::backends::supplemental::SupplementalErrorCategory {
+    use mnemosyne::backends::supplemental::SupplementalErrorCategory as Target;
     match category {
         GbrainErrorCategory::Auth => Target::Auth,
         GbrainErrorCategory::Schema => Target::Schema,
@@ -449,24 +449,24 @@ fn supplemental_category(
 
 fn supplemental_error(
     error: GbrainAdapterError,
-) -> mnemosyne::backends::gbrain::SupplementalTransportError {
-    mnemosyne::backends::gbrain::SupplementalTransportError::new(
+) -> mnemosyne::backends::supplemental::SupplementalTransportError {
+    mnemosyne::backends::supplemental::SupplementalTransportError::new(
         supplemental_category(error.category),
         error.sanitized_message(),
     )
 }
 
 #[async_trait::async_trait]
-impl mnemosyne::backends::gbrain::SupplementalMemoryTransport for GbrainMcpAdapter {
+impl mnemosyne::backends::supplemental::SupplementalMemoryTransport for GbrainMcpAdapter {
     fn set_queue_depth(&self, queue_depth: usize) {
         GbrainMcpAdapter::set_queue_depth(self, queue_depth);
     }
 
     async fn put_page(
         &self,
-        page: &GbrainPage,
+        page: &SupplementalDocument,
         cancel: &CancellationToken,
-    ) -> Result<Option<String>, mnemosyne::backends::gbrain::SupplementalTransportError> {
+    ) -> Result<Option<String>, mnemosyne::backends::supplemental::SupplementalTransportError> {
         GbrainMcpAdapter::put_page(self, page, cancel)
             .await
             .map(|()| None)
@@ -480,14 +480,14 @@ impl mnemosyne::backends::gbrain::SupplementalMemoryTransport for GbrainMcpAdapt
         limit: usize,
         cancel: &CancellationToken,
     ) -> Result<
-        Vec<mnemosyne::backends::gbrain::SupplementalHit>,
-        mnemosyne::backends::gbrain::SupplementalTransportError,
+        Vec<mnemosyne::backends::supplemental::SupplementalHit>,
+        mnemosyne::backends::supplemental::SupplementalTransportError,
     > {
         GbrainMcpAdapter::query(self, query, source_id, limit, cancel)
             .await
             .map(|hits| {
                 hits.into_iter()
-                    .map(|hit| mnemosyne::backends::gbrain::SupplementalHit {
+                    .map(|hit| mnemosyne::backends::supplemental::SupplementalHit {
                         source_id: hit.source_id,
                         slug: hit.slug,
                         content: hit.content,
@@ -504,14 +504,14 @@ impl mnemosyne::backends::gbrain::SupplementalMemoryTransport for GbrainMcpAdapt
         limit: usize,
         cancel: &CancellationToken,
     ) -> Result<
-        Vec<mnemosyne::backends::gbrain::SupplementalHit>,
-        mnemosyne::backends::gbrain::SupplementalTransportError,
+        Vec<mnemosyne::backends::supplemental::SupplementalHit>,
+        mnemosyne::backends::supplemental::SupplementalTransportError,
     > {
         GbrainMcpAdapter::search(self, query, limit, cancel)
             .await
             .map(|hits| {
                 hits.into_iter()
-                    .map(|hit| mnemosyne::backends::gbrain::SupplementalHit {
+                    .map(|hit| mnemosyne::backends::supplemental::SupplementalHit {
                         source_id: hit.source_id,
                         slug: hit.slug,
                         content: hit.content,
@@ -526,7 +526,7 @@ impl mnemosyne::backends::gbrain::SupplementalMemoryTransport for GbrainMcpAdapt
         &self,
         slug: &str,
         cancel: &CancellationToken,
-    ) -> Result<String, mnemosyne::backends::gbrain::SupplementalTransportError> {
+    ) -> Result<String, mnemosyne::backends::supplemental::SupplementalTransportError> {
         GbrainMcpAdapter::get_page(self, slug, cancel)
             .await
             .map_err(supplemental_error)

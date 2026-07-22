@@ -74,7 +74,8 @@ pub enum RecallSourceLabel {
     FactStore,
     Episodic,
     Core,
-    Gbrain,
+    #[serde(alias = "gbrain")]
+    Supplemental,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -113,7 +114,7 @@ pub enum CandidateDecisionLabel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GbrainDegradedCategory {
+pub enum SupplementalDegradedCategory {
     Auth,
     Schema,
     InvalidPage,
@@ -133,7 +134,8 @@ pub enum GbrainDegradedCategory {
 #[serde(rename_all = "snake_case")]
 pub enum TombstoneDestination {
     Local,
-    Gbrain,
+    #[serde(alias = "gbrain")]
+    Supplemental,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,8 +154,8 @@ pub struct MemoryMetricsSnapshot {
     pub memory_recall_omitted_total: BTreeMap<RecallOmittedReason, u64>,
     pub memory_consolidation_jobs: BTreeMap<ConsolidationJobState, u64>,
     pub memory_candidate_decisions: BTreeMap<CandidateDecisionLabel, u64>,
-    pub memory_gbrain_queue_depth: u64,
-    pub memory_gbrain_degraded: BTreeMap<GbrainDegradedCategory, u64>,
+    pub memory_supplemental_queue_depth: u64,
+    pub memory_supplemental_degraded: BTreeMap<SupplementalDegradedCategory, u64>,
     pub memory_tombstone_pending_total: BTreeMap<TombstoneDestination, u64>,
     pub recall_fts_only_total: u64,
     pub recall_vector_used_total: u64,
@@ -219,12 +221,12 @@ impl MemoryMetrics {
         increment(&mut self.lock().memory_candidate_decisions, decision, 1);
     }
 
-    pub fn set_gbrain_queue_depth(&self, depth: usize) {
-        self.lock().memory_gbrain_queue_depth = depth as u64;
+    pub fn set_supplemental_queue_depth(&self, depth: usize) {
+        self.lock().memory_supplemental_queue_depth = depth as u64;
     }
 
-    pub fn gbrain_degraded(&self, category: GbrainDegradedCategory) {
-        increment(&mut self.lock().memory_gbrain_degraded, category, 1);
+    pub fn supplemental_degraded(&self, category: SupplementalDegradedCategory) {
+        increment(&mut self.lock().memory_supplemental_degraded, category, 1);
     }
 
     pub fn set_tombstone_pending(&self, destination: TombstoneDestination, count: usize) {
@@ -288,9 +290,9 @@ mod tests {
         );
         metrics.recall_hit(RecallSourceLabel::FactStore, MemoryKind::SemanticFact, 2);
         metrics.observe_recall_latency(RecallSourceLabel::FactStore, Duration::from_millis(7));
-        metrics.gbrain_degraded(GbrainDegradedCategory::Auth);
-        metrics.set_gbrain_queue_depth(3);
-        metrics.set_tombstone_pending(TombstoneDestination::Gbrain, 4);
+        metrics.supplemental_degraded(SupplementalDegradedCategory::Auth);
+        metrics.set_supplemental_queue_depth(3);
+        metrics.set_tombstone_pending(TombstoneDestination::Supplemental, 4);
 
         let snapshot = metrics.snapshot();
         assert_eq!(
@@ -300,7 +302,7 @@ mod tests {
                 .and_then(|scopes| scopes.get(&MemoryScopeLabel::Session)),
             Some(&1)
         );
-        assert_eq!(snapshot.memory_gbrain_queue_depth, 3);
+        assert_eq!(snapshot.memory_supplemental_queue_depth, 3);
         assert_eq!(
             snapshot.memory_recall_latency_ms[&RecallSourceLabel::FactStore],
             LatencySamples {

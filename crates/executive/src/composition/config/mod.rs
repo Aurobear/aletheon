@@ -12,6 +12,7 @@ mod genome;
 mod grok_hardening;
 mod infra;
 mod integrations;
+mod supplemental_memory;
 mod provenance;
 mod provider;
 pub mod schema;
@@ -24,16 +25,17 @@ pub use backpressure::BackpressureConfig;
 pub use cognit::config::{
     AgentAdmissionConfig, BackupMode, CognitConfig, DeploymentBackupConfig, DeploymentConfig,
     DeploymentHealthConfig, DeploymentIntegrationsConfig, DeploymentMode, DeploymentPathsConfig,
-    DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig, McpMemoryConfig,
+    DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig,
     RoleRuntimeConfig,
 };
 pub use channel::{TelegramChannelConfig, TelegramConfig};
 pub use coding::{CodingRuntimeConfig, PiRuntimeConfig};
+pub use supplemental_memory::{GbrainMemoryConfig, McpMemoryConfig, MemoryConfig, SupplementalMemoryConfig};
 pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
 pub use genome::GenomeConfig;
 pub use grok_hardening::GrokHardeningConfig;
 pub use infra::{
-    DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig,
+    DaemonConfig, McpServerConfig, PluginsConfig, SandboxConfig,
 };
 pub use integrations::{
     CredentialResolver, EmbodimentProviderConfig, EnvironmentCredentialResolver,

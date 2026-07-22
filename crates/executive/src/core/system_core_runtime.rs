@@ -110,11 +110,11 @@ impl SystemCoreRuntime {
         let app_config = crate::composition::config::load_for_host(None, config_path)?.value;
         let crate::composition::config::AppConfig {
             telegram,
-            memory: crate::composition::config::MemoryConfig { gbrain, .. },
+            memory: crate::composition::config::MemoryConfig { supplemental, .. },
             mcp_servers,
             ..
         } = &app_config;
-        if telegram.enabled || gbrain.enabled || !mcp_servers.is_empty() {
+        if telegram.enabled || supplemental.enabled || !mcp_servers.is_empty() {
             anyhow::bail!("system core configuration contains user-scoped integration credentials");
         }
         let registry = Arc::new(ProviderRegistry::from_config(&app_config.cognit())?);

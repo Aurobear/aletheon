@@ -81,9 +81,9 @@ pub(super) fn deployment_storage_quota(
             StorageRoot {
                 path: paths.mnemosyne.clone(),
                 limit: StorageLimit {
-                    soft_bytes: quotas.gbrain_spool_soft_bytes,
-                    hard_bytes: quotas.gbrain_spool_bytes,
-                    hard_items: quotas.gbrain_spool_items,
+                    soft_bytes: quotas.supplemental_spool_soft_bytes,
+                    hard_bytes: quotas.supplemental_spool_bytes,
+                    hard_items: quotas.supplemental_spool_items,
                 },
             },
         ),

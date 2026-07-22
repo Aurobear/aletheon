@@ -1,4 +1,4 @@
-core_systems_field|crates/executive/src/core/runtime_core.rs| gbrain_memory: app_config.memory.gbrain.clone(),
+core_systems_field|crates/executive/src/core/runtime_core.rs| supplemental_memory: app_config.memory.supplemental.clone(),
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| let result = self.runtime.execute(&self.name, &input).await;
 core_systems_field|crates/executive/src/impl/plugin/manager.rs| runtime: self.runtime.clone(),
 executive_store_import|crates/executive/src/application/verification/command.rs| ) -> Result<CommandOutput, corpus::tools::subagent::CommandRunnerError> {

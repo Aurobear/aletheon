@@ -357,8 +357,8 @@
         "integrations": {
           "$ref": "#/$defs/DeploymentIntegrationsConfig",
           "default": {
-            "gbrain": false,
             "google": false,
+            "supplemental_memory": false,
             "telegram": false
           }
         },
@@ -392,9 +392,6 @@
             "audit_bytes": 5368709120,
             "audit_items": 400000,
             "audit_soft_bytes": 4294967296,
-            "gbrain_spool_bytes": 268435456,
-            "gbrain_spool_items": 10000,
-            "gbrain_spool_soft_bytes": 201326592,
             "google_bytes": 5368709120,
             "google_items": 500000,
             "google_soft_bytes": 4294967296,
@@ -402,6 +399,9 @@
             "sessions_bytes": 10737418240,
             "sessions_items": 500000,
             "sessions_soft_bytes": 8589934592,
+            "supplemental_spool_bytes": 268435456,
+            "supplemental_spool_items": 10000,
+            "supplemental_spool_soft_bytes": 201326592,
             "total_data_bytes": 107374182400,
             "total_data_items": 2000000,
             "total_data_soft_bytes": 91268055040,
@@ -414,9 +414,9 @@
           "$ref": "#/$defs/DeploymentSecretFilesConfig",
           "default": {
             "backup_password": null,
-            "gbrain": null,
             "google_vault_key": null,
             "provider": null,
+            "supplemental_memory": null,
             "telegram": null
           }
         }
@@ -450,11 +450,11 @@
     "DeploymentIntegrationsConfig": {
       "additionalProperties": false,
       "properties": {
-        "gbrain": {
+        "google": {
           "default": false,
           "type": "boolean"
         },
-        "google": {
+        "supplemental_memory": {
           "default": false,
           "type": "boolean"
         },
@@ -566,24 +566,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "gbrain_spool_bytes": {
-          "default": 268435456,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "gbrain_spool_items": {
-          "default": 10000,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "gbrain_spool_soft_bytes": {
-          "default": 201326592,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
         "google_bytes": {
           "default": 5368709120,
           "format": "uint64",
@@ -622,6 +604,24 @@
         },
         "sessions_soft_bytes": {
           "default": 8589934592,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "supplemental_spool_bytes": {
+          "default": 268435456,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "supplemental_spool_items": {
+          "default": 10000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "supplemental_spool_soft_bytes": {
+          "default": 201326592,
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -675,13 +675,6 @@
             "null"
           ]
         },
-        "gbrain": {
-          "default": null,
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "google_vault_key": {
           "default": null,
           "type": [
@@ -690,6 +683,13 @@
           ]
         },
         "provider": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "supplemental_memory": {
           "default": null,
           "type": [
             "string",
@@ -1091,115 +1091,6 @@
       },
       "type": "object"
     },
-    "McpMemoryConfig": {
-      "additionalProperties": false,
-      "description": "Optional GBrain supplemental memory over the configured HTTP MCP server.\nRenamed to `McpMemoryConfig` for generic MCP-based memory integration.",
-      "properties": {
-        "delivery_batch_size": {
-          "default": 20,
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "enabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "legacy_outbox_dir": {
-          "default": "~/.aletheon/gbrain-outbox",
-          "type": "string"
-        },
-        "max_content_bytes": {
-          "default": 6000,
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "projection_enabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "read_sources": {
-          "default": [
-            "aletheon",
-            "general"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "recall_limit": {
-          "default": 4,
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "request_timeout_ms": {
-          "default": 1200,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "retry_initial_ms": {
-          "default": 1000,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "retry_max_age_secs": {
-          "default": 86400,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "retry_max_attempts": {
-          "default": 12,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "retry_max_ms": {
-          "default": 60000,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "schema_fixture": {
-          "default": "config/gbrain/tools-schema.json",
-          "type": "string"
-        },
-        "schema_version": {
-          "default": "v0.42.59.0",
-          "type": "string"
-        },
-        "server_name": {
-          "default": "gbrain",
-          "type": "string"
-        },
-        "spool_max_bytes": {
-          "default": 268435456,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "spool_max_items": {
-          "default": 10000,
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "spool_path": {
-          "default": "~/.aletheon/memory/gbrain-spool.db",
-          "type": "string"
-        },
-        "write_source": {
-          "default": "aletheon",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "McpOAuthClientAuthMethod": {
       "enum": [
         "none",
@@ -1470,19 +1361,17 @@
     },
     "MemoryConfig": {
       "additionalProperties": false,
-      "description": "Memory backend configuration.",
       "properties": {
         "backend": {
           "default": "sqlite",
-          "description": "\"sqlite\" or \"in_memory\"",
           "type": "string"
         },
         "data_dir": {
           "default": "~/.aletheon/memory",
           "type": "string"
         },
-        "gbrain": {
-          "$ref": "#/$defs/McpMemoryConfig",
+        "supplemental": {
+          "$ref": "#/$defs/SupplementalMemoryConfig",
           "default": {
             "delivery_batch_size": 20,
             "enabled": false,
@@ -1506,8 +1395,7 @@
             "spool_max_items": 10000,
             "spool_path": "~/.aletheon/memory/gbrain-spool.db",
             "write_source": "aletheon"
-          },
-          "description": "Optional gbrain shared memory integration (disabled by default)."
+          }
         }
       },
       "type": "object"
@@ -1999,6 +1887,114 @@
       ],
       "type": "object"
     },
+    "SupplementalMemoryConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "delivery_batch_size": {
+          "default": 20,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "legacy_outbox_dir": {
+          "default": "~/.aletheon/gbrain-outbox",
+          "type": "string"
+        },
+        "max_content_bytes": {
+          "default": 6000,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "projection_enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "read_sources": {
+          "default": [
+            "aletheon",
+            "general"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "recall_limit": {
+          "default": 4,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "request_timeout_ms": {
+          "default": 1200,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_initial_ms": {
+          "default": 1000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_max_age_secs": {
+          "default": 86400,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_max_attempts": {
+          "default": 12,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_max_ms": {
+          "default": 60000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_fixture": {
+          "default": "config/gbrain/tools-schema.json",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "v0.42.59.0",
+          "type": "string"
+        },
+        "server_name": {
+          "default": "gbrain",
+          "type": "string"
+        },
+        "spool_max_bytes": {
+          "default": 268435456,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spool_max_items": {
+          "default": 10000,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spool_path": {
+          "default": "~/.aletheon/memory/gbrain-spool.db",
+          "type": "string"
+        },
+        "write_source": {
+          "default": "aletheon",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "TelegramChannelConfig": {
       "additionalProperties": false,
       "properties": {
@@ -2119,8 +2115,8 @@
           "minimum_free_bytes": 5368709120
         },
         "integrations": {
-          "gbrain": false,
           "google": false,
+          "supplemental_memory": false,
           "telegram": false
         },
         "mode": "user",
@@ -2145,9 +2141,6 @@
           "audit_bytes": 5368709120,
           "audit_items": 400000,
           "audit_soft_bytes": 4294967296,
-          "gbrain_spool_bytes": 268435456,
-          "gbrain_spool_items": 10000,
-          "gbrain_spool_soft_bytes": 201326592,
           "google_bytes": 5368709120,
           "google_items": 500000,
           "google_soft_bytes": 4294967296,
@@ -2155,6 +2148,9 @@
           "sessions_bytes": 10737418240,
           "sessions_items": 500000,
           "sessions_soft_bytes": 8589934592,
+          "supplemental_spool_bytes": 268435456,
+          "supplemental_spool_items": 10000,
+          "supplemental_spool_soft_bytes": 201326592,
           "total_data_bytes": 107374182400,
           "total_data_items": 2000000,
           "total_data_soft_bytes": 91268055040,
@@ -2164,9 +2160,9 @@
         },
         "secrets": {
           "backup_password": null,
-          "gbrain": null,
           "google_vault_key": null,
           "provider": null,
+          "supplemental_memory": null,
           "telegram": null
         }
       }
@@ -2256,7 +2252,7 @@
       "default": {
         "backend": "sqlite",
         "data_dir": "~/.aletheon/memory",
-        "gbrain": {
+        "supplemental": {
           "delivery_batch_size": 20,
           "enabled": false,
           "legacy_outbox_dir": "~/.aletheon/gbrain-outbox",

@@ -4,8 +4,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use fabric::{Clock, Subsystem, SubsystemContext};
-use mnemosyne::backends::gbrain::{
-    EnqueueOutcome, GbrainBackendError, SupplementalErrorCategory, SupplementalRecall,
+use mnemosyne::backends::supplemental::{
+    EnqueueOutcome, SupplementalMemoryError, SupplementalErrorCategory, SupplementalRecall,
     SupplementalRecallHealth,
 };
 use mnemosyne::{
@@ -343,8 +343,8 @@ impl SupplementalMemoryService for OutageSupplemental {
         0
     }
 
-    fn record(&self, _: &ExperienceEvent, _: i64) -> Result<EnqueueOutcome, GbrainBackendError> {
-        Err(GbrainBackendError::Unsupported)
+    fn record(&self, _: &ExperienceEvent, _: i64) -> Result<EnqueueOutcome, SupplementalMemoryError> {
+        Err(SupplementalMemoryError::Unsupported)
     }
 
     async fn recall(&self, _: RecallRequest, _: &CancellationToken) -> SupplementalRecall {
@@ -358,7 +358,7 @@ impl SupplementalMemoryService for OutageSupplemental {
         }
     }
 
-    fn forget(&self, _: ForgetPolicy) -> Result<(), GbrainBackendError> {
+    fn forget(&self, _: ForgetPolicy) -> Result<(), SupplementalMemoryError> {
         Ok(())
     }
 }

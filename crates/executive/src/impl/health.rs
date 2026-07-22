@@ -93,7 +93,7 @@ impl HealthRegistry {
         for component in [
             "telegram",
             "google_sync",
-            "gbrain_spool",
+            "supplemental_memory_spool",
             "goal_worker",
             "backup",
         ] {

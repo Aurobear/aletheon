@@ -134,9 +134,12 @@ pub struct DeploymentQuotaConfig {
     pub google_bytes: u64,
     pub google_soft_bytes: u64,
     pub google_items: u64,
-    pub gbrain_spool_bytes: u64,
-    pub gbrain_spool_soft_bytes: u64,
-    pub gbrain_spool_items: u64,
+    #[serde(alias = "gbrain_spool_bytes")]
+    pub supplemental_spool_bytes: u64,
+    #[serde(alias = "gbrain_spool_soft_bytes")]
+    pub supplemental_spool_soft_bytes: u64,
+    #[serde(alias = "gbrain_spool_items")]
+    pub supplemental_spool_items: u64,
 }
 
 impl Default for DeploymentQuotaConfig {
@@ -161,9 +164,9 @@ impl Default for DeploymentQuotaConfig {
             google_bytes: 5 * 1024 * 1024 * 1024,
             google_soft_bytes: 4 * 1024 * 1024 * 1024,
             google_items: 500_000,
-            gbrain_spool_bytes: 256 * 1024 * 1024,
-            gbrain_spool_soft_bytes: 192 * 1024 * 1024,
-            gbrain_spool_items: 10_000,
+            supplemental_spool_bytes: 256 * 1024 * 1024,
+            supplemental_spool_soft_bytes: 192 * 1024 * 1024,
+            supplemental_spool_items: 10_000,
         }
     }
 }
@@ -174,7 +177,8 @@ impl Default for DeploymentQuotaConfig {
 pub struct DeploymentIntegrationsConfig {
     pub telegram: bool,
     pub google: bool,
-    pub gbrain: bool,
+    #[serde(alias = "gbrain")]
+    pub supplemental_memory: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -184,7 +188,8 @@ pub struct DeploymentSecretFilesConfig {
     pub provider: Option<PathBuf>,
     pub telegram: Option<PathBuf>,
     pub google_vault_key: Option<PathBuf>,
-    pub gbrain: Option<PathBuf>,
+    #[serde(alias = "gbrain")]
+    pub supplemental_memory: Option<PathBuf>,
     pub backup_password: Option<PathBuf>,
 }
 
@@ -285,7 +290,7 @@ impl DeploymentConfig {
             self.secrets.provider.as_ref(),
             self.secrets.telegram.as_ref(),
             self.secrets.google_vault_key.as_ref(),
-            self.secrets.gbrain.as_ref(),
+            self.secrets.supplemental_memory.as_ref(),
             self.secrets.backup_password.as_ref(),
             self.backup.repository_file.as_ref(),
         ]
@@ -336,9 +341,9 @@ impl DeploymentConfig {
                 self.quotas.google_items,
             ),
             (
-                self.quotas.gbrain_spool_soft_bytes,
-                self.quotas.gbrain_spool_bytes,
-                self.quotas.gbrain_spool_items,
+                self.quotas.supplemental_spool_soft_bytes,
+                self.quotas.supplemental_spool_bytes,
+                self.quotas.supplemental_spool_items,
             ),
         ] {
             if soft > hard || hard == 0 || items == 0 {
@@ -652,162 +657,6 @@ pub struct PluginsConfig {
     pub directories: Vec<String>,
 }
 
-/// Memory backend configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MemoryConfig {
-    /// "sqlite" or "in_memory"
-    #[serde(default = "default_memory_backend")]
-    pub backend: String,
-    #[serde(default = "default_memory_data_dir")]
-    pub data_dir: String,
-    /// Optional gbrain shared memory integration (disabled by default).
-    #[serde(default)]
-    pub gbrain: McpMemoryConfig,
-}
-
-fn default_memory_backend() -> String {
-    "sqlite".to_string()
-}
-fn default_memory_data_dir() -> String {
-    "~/.aletheon/memory".to_string()
-}
-
-impl Default for MemoryConfig {
-    fn default() -> Self {
-        Self {
-            backend: default_memory_backend(),
-            data_dir: default_memory_data_dir(),
-            gbrain: McpMemoryConfig::default(),
-        }
-    }
-}
-/// Optional GBrain supplemental memory over the configured HTTP MCP server.
-/// Renamed to `McpMemoryConfig` for generic MCP-based memory integration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct McpMemoryConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default = "default_gbrain_server_name")]
-    pub server_name: String,
-    #[serde(default = "default_gbrain_read_sources")]
-    pub read_sources: Vec<String>,
-    #[serde(default = "default_gbrain_source", alias = "source")]
-    pub write_source: String,
-    #[serde(default = "default_gbrain_timeout_ms", alias = "timeout_ms")]
-    pub request_timeout_ms: u64,
-    #[serde(default = "default_gbrain_batch_size")]
-    pub delivery_batch_size: usize,
-    #[serde(default = "default_gbrain_max_results", alias = "max_results")]
-    pub recall_limit: usize,
-    #[serde(default = "default_gbrain_max_chars", alias = "max_chars")]
-    pub max_content_bytes: usize,
-    #[serde(default, alias = "capture_enabled")]
-    pub projection_enabled: bool,
-    #[serde(default = "default_gbrain_spool_path")]
-    pub spool_path: String,
-    #[serde(default = "default_gbrain_spool_items")]
-    pub spool_max_items: usize,
-    #[serde(default = "default_gbrain_spool_bytes")]
-    pub spool_max_bytes: u64,
-    #[serde(default = "default_gbrain_retry_initial_ms")]
-    pub retry_initial_ms: u64,
-    #[serde(default = "default_gbrain_retry_max_ms")]
-    pub retry_max_ms: u64,
-    #[serde(default = "default_gbrain_retry_attempts")]
-    pub retry_max_attempts: u32,
-    #[serde(default = "default_gbrain_retry_age_secs")]
-    pub retry_max_age_secs: u64,
-    #[serde(default = "default_gbrain_schema_fixture")]
-    pub schema_fixture: String,
-    #[serde(default = "default_gbrain_schema_version")]
-    pub schema_version: String,
-    #[serde(default = "default_gbrain_outbox_dir", alias = "outbox_dir")]
-    pub legacy_outbox_dir: String,
-}
-
-/// Backward-compatible type alias for the legacy `GbrainMemoryConfig` name.
-pub type GbrainMemoryConfig = McpMemoryConfig;
-
-fn default_gbrain_server_name() -> String {
-    "gbrain".into()
-}
-fn default_gbrain_source() -> String {
-    "aletheon".into()
-}
-fn default_gbrain_read_sources() -> Vec<String> {
-    vec!["aletheon".into(), "general".into()]
-}
-fn default_gbrain_timeout_ms() -> u64 {
-    1200
-}
-fn default_gbrain_batch_size() -> usize {
-    20
-}
-fn default_gbrain_max_results() -> usize {
-    4
-}
-fn default_gbrain_max_chars() -> usize {
-    6000
-}
-fn default_gbrain_spool_path() -> String {
-    "~/.aletheon/memory/gbrain-spool.db".into()
-}
-fn default_gbrain_spool_items() -> usize {
-    10_000
-}
-fn default_gbrain_spool_bytes() -> u64 {
-    256 * 1024 * 1024
-}
-fn default_gbrain_retry_initial_ms() -> u64 {
-    1_000
-}
-fn default_gbrain_retry_max_ms() -> u64 {
-    60_000
-}
-fn default_gbrain_retry_attempts() -> u32 {
-    12
-}
-fn default_gbrain_retry_age_secs() -> u64 {
-    86_400
-}
-fn default_gbrain_schema_fixture() -> String {
-    "config/gbrain/tools-schema.json".into()
-}
-fn default_gbrain_schema_version() -> String {
-    "v0.42.59.0".into()
-}
-fn default_gbrain_outbox_dir() -> String {
-    "~/.aletheon/gbrain-outbox".into()
-}
-
-impl Default for McpMemoryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            server_name: default_gbrain_server_name(),
-            read_sources: default_gbrain_read_sources(),
-            write_source: default_gbrain_source(),
-            request_timeout_ms: default_gbrain_timeout_ms(),
-            delivery_batch_size: default_gbrain_batch_size(),
-            recall_limit: default_gbrain_max_results(),
-            max_content_bytes: default_gbrain_max_chars(),
-            projection_enabled: false,
-            spool_path: default_gbrain_spool_path(),
-            spool_max_items: default_gbrain_spool_items(),
-            spool_max_bytes: default_gbrain_spool_bytes(),
-            retry_initial_ms: default_gbrain_retry_initial_ms(),
-            retry_max_ms: default_gbrain_retry_max_ms(),
-            retry_max_attempts: default_gbrain_retry_attempts(),
-            retry_max_age_secs: default_gbrain_retry_age_secs(),
-            schema_fixture: default_gbrain_schema_fixture(),
-            schema_version: default_gbrain_schema_version(),
-            legacy_outbox_dir: default_gbrain_outbox_dir(),
-        }
-    }
-}
-
 /// Daemon runtime settings.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -913,58 +762,9 @@ mod tests {
         assert!(p2.pricing.is_none(), "pricing is optional");
     }
 
-    #[test]
-    fn gbrain_parses_from_toml() {
-        let toml = r#"
-enabled = true
-server_name = "gbrain-primary"
-read_sources = ["project", "general"]
-write_source = "project"
-request_timeout_ms = 2500
-delivery_batch_size = 12
-recall_limit = 6
-max_content_bytes = 8192
-projection_enabled = true
-spool_path = "/tmp/gbrain.db"
-spool_max_items = 500
-spool_max_bytes = 1048576
-retry_initial_ms = 250
-retry_max_ms = 10000
-retry_max_attempts = 8
-retry_max_age_secs = 3600
-schema_fixture = "config/gbrain/tools-schema.json"
-schema_version = "v0.42.59.0"
-legacy_outbox_dir = "/tmp/legacy"
-"#;
-        let cfg: McpMemoryConfig = toml::from_str(toml).unwrap();
-        assert!(cfg.enabled);
-        assert_eq!(cfg.server_name, "gbrain-primary");
-        assert_eq!(cfg.read_sources, ["project", "general"]);
-        assert_eq!(cfg.write_source, "project");
-        assert_eq!(cfg.request_timeout_ms, 2500);
-        assert_eq!(cfg.delivery_batch_size, 12);
-        assert_eq!(cfg.spool_max_bytes, 1_048_576);
-        assert!(cfg.projection_enabled);
-    }
 
-    #[test]
-    fn gbrain_nested_in_memory_config() {
-        let toml = r#"
-backend = "sqlite"
-data_dir = "/tmp/mem"
 
-[gbrain]
-enabled = true
-source = "aletheon"
-timeout_ms = 2500
-max_results = 6
-"#;
-        let mem: MemoryConfig = toml::from_str(toml).unwrap();
-        assert!(mem.gbrain.enabled);
-        assert_eq!(mem.gbrain.write_source, "aletheon");
-        assert_eq!(mem.gbrain.request_timeout_ms, 2500);
-        assert_eq!(mem.gbrain.server_name, "gbrain");
-    }
+
 
     #[test]
     fn production_deployment_rejects_tilde_outside_and_invalid_quota() {

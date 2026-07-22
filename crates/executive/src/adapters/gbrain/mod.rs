@@ -12,6 +12,6 @@ pub use mcp_adapter::{
 pub use worker::{DrainReport, GbrainWorker};
 
 pub use bootstrap::{
-    backend_config, build_gbrain_memory_runtime, build_gbrain_memory_runtime_with_retention,
+    backend_config, build_supplemental_memory_runtime, build_supplemental_memory_runtime_with_retention,
     GbrainMemoryRuntime,
 };

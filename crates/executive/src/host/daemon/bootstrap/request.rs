@@ -416,13 +416,13 @@ impl RequestHandler {
                     }
                 }
             }
-            if config.gbrain_memory.enabled
+            if config.supplemental_memory.enabled
                 && mcp
-                    .server_tools(&config.gbrain_memory.server_name)
+                    .server_tools(&config.supplemental_memory.server_name)
                     .is_none()
             {
                 tracing::warn!(
-                    server = %config.gbrain_memory.server_name,
+                    server = %config.supplemental_memory.server_name,
                     "GBrain server unavailable; local memory remains active"
                 );
             }
@@ -682,10 +682,10 @@ impl RequestHandler {
             .with_consolidation_repository(consolidation_repository)
             .with_retention_repository(retention_repository.clone()),
         );
-        let gbrain_runtime = crate::adapters::gbrain::build_gbrain_memory_runtime_with_retention(
+        let gbrain_runtime = crate::adapters::gbrain::build_supplemental_memory_runtime_with_retention(
             local_memory,
             retained_mcp.clone(),
-            &config.gbrain_memory,
+            &config.supplemental_memory,
             clock.clone(),
             &cancel_token,
             Some(retention_repository.clone()),
@@ -699,7 +699,7 @@ impl RequestHandler {
                 fabric::LOCAL_OWNER_PRINCIPAL.to_string(),
             ),
         );
-        let gbrain_worker_task = gbrain_runtime.worker_task;
+        let supplemental_memory_worker_task = gbrain_runtime.worker_task;
         let consolidation_cancel = cancel_token.clone();
         let consolidation_memory = gbrain_runtime.memory_service.clone();
         tokio::spawn(async move {
@@ -1103,7 +1103,7 @@ impl RequestHandler {
             Arc::new(crate::adapters::google::GoogleSyncWorkerPort::new(handle))
                 as Arc<dyn crate::application::admin_service::BackgroundWorkerPort>
         });
-        let gbrain_worker_task = gbrain_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
+        let supplemental_memory_worker_task = supplemental_memory_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
         let self_field_shutdown = Arc::new(Mutex::new(Some(self_field.clone())));
 
         let approval_use_cases: Arc<dyn crate::application::ApprovalUseCases> =
@@ -1148,7 +1148,7 @@ impl RequestHandler {
                     session_approvals: admin_session_approvals,
                     daemon_cancel: cancel_token.clone(),
                     google_sync: google_sync.clone(),
-                    gbrain_worker: gbrain_worker_task.clone(),
+                    supplemental_memory_worker: supplemental_memory_worker_task.clone(),
                     goal_worker: goal_worker_task.clone(),
                     runtime_shutdown: Arc::new(move || {
                         let self_field_shutdown = self_field_shutdown.clone();

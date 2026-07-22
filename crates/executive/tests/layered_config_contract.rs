@@ -189,6 +189,33 @@ json_protocol_version = 3
 }
 
 #[test]
+fn legacy_supplemental_memory_keys_are_read_but_never_reemitted() {
+    let memory: executive::composition::config::MemoryConfig = toml::from_str(
+        r#"
+backend = "sqlite"
+data_dir = "/tmp/memory"
+[gbrain]
+enabled = true
+server_name = "deployment-instance"
+"#,
+    )
+    .unwrap();
+    assert!(memory.supplemental.enabled);
+    let rendered = toml::to_string(&memory).unwrap();
+    assert!(rendered.contains("[supplemental]"));
+    assert!(!rendered.contains("[gbrain]"));
+
+    let quotas: cognit::config::DeploymentQuotaConfig = toml::from_str(
+        "gbrain_spool_bytes=1024\ngbrain_spool_soft_bytes=512\ngbrain_spool_items=4\n",
+    )
+    .unwrap();
+    assert_eq!(quotas.supplemental_spool_bytes, 1024);
+    let rendered = toml::to_string(&quotas).unwrap();
+    assert!(rendered.contains("supplemental_spool_bytes"));
+    assert!(!rendered.contains("gbrain_spool_bytes"));
+}
+
+#[test]
 fn checked_in_leju_deepseek_uses_the_openai_transport() {
     for relative_path in [
         "../../config/default.toml",

@@ -52,7 +52,7 @@ pub struct DaemonConfig {
     /// Telegram owner-only control channel configuration.
     pub telegram: crate::composition::config::TelegramChannelConfig,
     /// gbrain shared memory integration configuration.
-    pub gbrain_memory: cognit::config::McpMemoryConfig,
+    pub supplemental_memory: crate::composition::config::SupplementalMemoryConfig,
     /// Typed deployment paths, quotas, integrations, and health policy.
     pub deployment: cognit::config::DeploymentConfig,
     /// Host-layer turn admission limits from the effective AppConfig.

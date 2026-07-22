@@ -36,10 +36,10 @@ Prerequisite: Phase 2 and Phase 0 persistence inventory.
 
 ## Task 1: Freeze current memory and spool behavior
 
-- [ ] Add fixtures for current GBrain config, schema fixture, spool DB schema/version, retry policy, reconciliation state, health keys, quotas, and legacy outbox migration.
-- [ ] Prove disabled supplemental memory degrades to local memory.
-- [ ] Prove configured-but-invalid memory fails according to required/optional policy.
-- [ ] Prove spool migrations are idempotent and source data survives failure.
+- [x] Add fixtures for current GBrain config, schema fixture, spool DB schema/version, retry policy, reconciliation state, health keys, quotas, and legacy outbox migration.
+- [x] Prove disabled supplemental memory degrades to local memory.
+- [x] Prove configured-but-invalid memory fails according to required/optional policy.
+- [x] Prove spool migrations are idempotent and source data survives failure.
 
 ## Task 2: Canonical contracts and names
 
@@ -54,31 +54,31 @@ SupplementalMemoryError
 SupplementalSpoolPolicy
 ```
 
-- [ ] Mnemosyne domain/application paths contain no GBrain name.
-- [ ] Contract is independent of MCP method/tool names.
-- [ ] MCP tool mapping stays in adapter config/implementation.
+- [x] Mnemosyne domain/application paths contain no GBrain name.
+- [x] Contract is independent of MCP method/tool names.
+- [x] MCP tool mapping stays in adapter config/implementation.
 
 ## Task 3: Config and persistence compatibility
 
-- [ ] Canonical config key is `memory.supplemental`.
-- [ ] Old `memory.gbrain` input normalizes deterministically but is never re-emitted.
-- [ ] Old spool tables/metadata remain readable; new writes use canonical schema/names only if a safe migration is justified.
-- [ ] If table renaming has no functional benefit, keep physical legacy table names behind repository implementation and document that they are persistence compatibility, not core vocabulary.
-- [ ] Unknown schema versions fail closed.
+- [x] Canonical config key is `memory.supplemental`.
+- [x] Old `memory.gbrain` input normalizes deterministically but is never re-emitted.
+- [x] Old spool tables/metadata remain readable; new writes use canonical schema/names only if a safe migration is justified.
+- [x] If table renaming has no functional benefit, keep physical legacy table names behind repository implementation and document that they are persistence compatibility, not core vocabulary.
+- [x] Unknown schema versions fail closed.
 
 ## Task 4: Migrate application, health, and quota callers
 
-- [ ] Replace `gbrain_spool` application health/status keys with canonical supplemental keys plus compatibility output only where externally required.
-- [ ] Rename quota fields canonically through config normalization.
-- [ ] Executive application depends only on supplemental status/transport ports.
-- [ ] Deployment instance/server name remains data and may still be `gbrain`.
+- [x] Replace `gbrain_spool` application health/status keys with canonical supplemental keys plus compatibility output only where externally required.
+- [x] Rename quota fields canonically through config normalization.
+- [x] Executive application depends only on supplemental status/transport ports.
+- [x] Deployment instance/server name remains data and may still be `gbrain`.
 
 ## Task 5: Adapter isolation
 
-- [ ] MCP-specific tool names, schema fixture validation, HTTP client, and diagnostics stay under adapter.
-- [ ] Mnemosyne crate root no longer publicly exports `backends::gbrain`.
-- [ ] Compatibility alias has a counted exit condition.
-- [ ] Architecture metric for core GBrain names reaches zero.
+- [x] MCP-specific tool names, schema fixture validation, HTTP client, and diagnostics stay under adapter.
+- [x] Mnemosyne crate root no longer publicly exports `backends::gbrain`.
+- [x] Compatibility alias has a counted exit condition.
+- [x] Architecture metric for core GBrain names reaches zero.
 
 ## Validation
 
@@ -99,3 +99,10 @@ bash tests/architecture_check.sh
 3. `refactor(config): normalize legacy shared-memory settings`
 4. `refactor(executive): migrate supplemental health and quotas`
 5. `chore(arch): confine product names to memory adapters`
+
+## Completion evidence (2026-07-23)
+
+- Mnemosyne exposes product-neutral `SupplementalMemoryBackend`, transport, document, spool, reconciliation, error, status, and observability names under `backends::supplemental`; the former public `backends::gbrain` module no longer exists.
+- Executive application health, worker lifecycle, runtime inputs, quota fields, and composition configuration use supplemental-memory vocabulary. `[memory.gbrain]`, old quota keys, enum labels, and physical SQLite table names remain read-compatible and are never emitted as canonical configuration.
+- Physical `gbrain_*` SQLite tables remain private persistence compatibility to avoid a no-value risky rename; their exact occurrences and Phase 10 exit decision are ratcheted. Unknown future schema versions continue to fail closed.
+- MCP method/schema details and deployment instance naming remain in the Executive adapter boundary. Spool, backend, reconciliation, bootstrap, MCP adapter, layered-config, and architecture validations pass.
