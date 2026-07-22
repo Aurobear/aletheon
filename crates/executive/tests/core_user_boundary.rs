@@ -43,14 +43,16 @@ async fn user_runtime_builds_from_inference_port_without_provider_registry() {
 
 #[tokio::test]
 async fn two_user_runtime_configs_never_share_state_paths() {
+    let alice_root = tempfile::tempdir().unwrap();
+    let bob_root = tempfile::tempdir().unwrap();
     let alice = UserRuntime::bootstrap(
-        UserRuntimeConfig::fixture_at("/tmp/alice-state"),
+        UserRuntimeConfig::fixture_at(alice_root.path()),
         Arc::new(FakeInferencePort),
     )
     .await
     .unwrap();
     let bob = UserRuntime::bootstrap(
-        UserRuntimeConfig::fixture_at("/tmp/bob-state"),
+        UserRuntimeConfig::fixture_at(bob_root.path()),
         Arc::new(FakeInferencePort),
     )
     .await
@@ -59,11 +61,11 @@ async fn two_user_runtime_configs_never_share_state_paths() {
     assert!(alice
         .state_paths()
         .iter()
-        .all(|path| path.starts_with("/tmp/alice-state")));
+        .all(|path| path.starts_with(alice_root.path())));
     assert!(bob
         .state_paths()
         .iter()
-        .all(|path| path.starts_with("/tmp/bob-state")));
+        .all(|path| path.starts_with(bob_root.path())));
 }
 
 #[test]
