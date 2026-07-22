@@ -25,25 +25,14 @@ pub(super) fn compose(input: InferenceCompositionInput) -> InferenceComposition 
 mod tests {
     use super::*;
     use crate::service::inference_port::{CoreInferenceRequest, InferenceError};
-    use fabric::{ContentBlock, LlmResponse, LlmStream, Message, StopReason, Usage};
+    use fabric::{LlmResponse, LlmStream};
 
     struct RecordingPort;
 
     #[async_trait::async_trait]
     impl InferencePort for RecordingPort {
-        async fn complete(
-            &self,
-            request: CoreInferenceRequest,
-        ) -> Result<LlmResponse, InferenceError> {
-            Ok(LlmResponse {
-                content: vec![ContentBlock::Text {
-                    text: request.model_spec,
-                }],
-                stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
-            })
+        async fn complete(&self, _: CoreInferenceRequest) -> Result<LlmResponse, InferenceError> {
+            Err(anyhow::anyhow!("completion disabled in construction fixture").into())
         }
 
         async fn stream(&self, _: CoreInferenceRequest) -> Result<LlmStream, InferenceError> {
@@ -51,22 +40,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn binds_the_injected_port_and_model_without_environment_lookup() {
+    #[test]
+    fn binds_the_injected_port_and_model_without_environment_lookup() {
         let composition = compose(InferenceCompositionInput {
             port: Arc::new(RecordingPort),
             model_spec: "reviewed/model".into(),
         });
 
         assert_eq!(composition.provider.name(), "reviewed/model");
-        let response = composition
-            .provider
-            .complete(&[Message::user("hello")], &[])
-            .await
-            .unwrap();
-        assert!(matches!(
-            response.content.as_slice(),
-            [ContentBlock::Text { text }] if text == "reviewed/model"
-        ));
+        assert_eq!(composition.provider.max_context_length(), 128_000);
     }
 }

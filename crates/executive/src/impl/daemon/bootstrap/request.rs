@@ -289,13 +289,13 @@ impl RequestHandler {
         let tool_composition = super::tools::compose(super::tools::ToolCompositionInput {
             network_policy,
             search: search_config,
-            memory,
+            stores: memory,
             clock: clock.clone(),
         });
         let mut tools = tool_composition.registry;
-        let core_memory = tool_composition.memory.core;
-        let recall_memory = tool_composition.memory.recall;
-        let fact_store = tool_composition.memory.facts;
+        let core_memory = tool_composition.stores.core;
+        let recall_memory = tool_composition.stores.recall;
+        let fact_store = tool_composition.stores.facts;
         let external_artifact_root = data_dir.join("external-artifacts");
         let google_composition =
             super::integrations::compose_google(super::integrations::GoogleCompositionInput {

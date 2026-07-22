@@ -11,36 +11,36 @@ use super::memory::MemoryComposition;
 pub(super) struct ToolCompositionInput {
     pub(super) network_policy: NetworkPolicy,
     pub(super) search: Option<WebSearchConfig>,
-    pub(super) memory: MemoryComposition,
+    pub(super) stores: MemoryComposition,
     pub(super) clock: Arc<dyn Clock>,
 }
 
 pub(super) struct ToolComposition {
     pub(super) registry: ToolRegistry,
-    pub(super) memory: MemoryComposition,
+    pub(super) stores: MemoryComposition,
 }
 
 pub(super) fn compose(input: ToolCompositionInput) -> ToolComposition {
     let mut registry =
         ToolRegistry::with_network_policy_and_search(input.network_policy, input.search);
     let _ = registry.register(Arc::new(CoreMemoryAppendTool {
-        memory: input.memory.core.clone(),
+        memory: input.stores.core.clone(),
         clock: input.clock.clone(),
     }));
     let _ = registry.register(Arc::new(CoreMemoryReplaceTool {
-        memory: input.memory.core.clone(),
+        memory: input.stores.core.clone(),
         clock: input.clock.clone(),
     }));
     let _ = registry.register(Arc::new(MemorySearchTool {
-        recall: input.memory.recall.clone(),
-        core_memory: input.memory.core.clone(),
-        fact_store: Some(input.memory.facts.clone()),
+        recall: input.stores.recall.clone(),
+        core_memory: input.stores.core.clone(),
+        fact_store: Some(input.stores.facts.clone()),
         clock: input.clock,
     }));
 
     ToolComposition {
         registry,
-        memory: input.memory,
+        stores: input.stores,
     }
 }
 
@@ -60,7 +60,7 @@ mod tests {
         let composition = compose(ToolCompositionInput {
             network_policy: NetworkPolicy::default(),
             search: None,
-            memory,
+            stores: memory,
             clock,
         });
 
