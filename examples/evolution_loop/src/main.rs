@@ -16,8 +16,8 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use cognit::config::{ProviderConfig, ProviderTimeoutConfig, Transport};
-use cognit::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
-use cognit::r#impl::llm::scheduler::{
+use cognit::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
+use cognit::inference::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
 use fabric::evolution::*;

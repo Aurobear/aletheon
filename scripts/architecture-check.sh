@@ -202,6 +202,15 @@ for rel, body in sources:
         metrics["FORBIDDEN_INFRA_IMPORTS"] += sum(bool(re.search(r"(?:use\s+[^;]*(?:::adapter|::r#impl|::impl)|\b(?:sqlx|reqwest|tonic)::)", line)) for line in lines)
         metrics["CORE_OPAQUE_VALUE_INSPECTIONS"] += sum(bool(re.search(r"(?:serde_json::Value|\bValue\b).*(?:\.get\(|\[\s*\")|(?:\.get\(|\[\s*\").*(?:serde_json::Value|\bValue\b)", line)) for line in lines)
 
+# Workspace examples are downstream consumers too. They are excluded from core
+# coupling metrics, but must never preserve a deleted implementation path.
+for path in (root / "examples").rglob("*.rs"):
+    body = path.read_text(errors="ignore")
+    metrics["CROSS_CRATE_IMPL_REFERENCES"] += sum(
+        bool(re.search(r"\b(?:agora|cognit|corpus|dasein|executive|gateway|hardware|metacog|mnemosyne)::(?:r#impl|impl)::", line))
+        for line in body.splitlines()
+    )
+
 if os.environ.get("ARCH_PRINT_PHASE0_METRICS") == "1":
     for key in sorted(metrics): print(f"{key}={metrics[key]}")
     sys.exit(0)

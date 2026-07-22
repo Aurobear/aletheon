@@ -226,6 +226,7 @@ pub fn merge_layers(layers: impl IntoIterator<Item = ConfigLayer>) -> Result<Loa
     provenance::record_leaves(&merged, "", &ConfigSource::defaults(), &mut provenance);
 
     for mut layer in layers {
+        normalize_legacy_layer(&mut layer.value);
         // Project configuration is the only lower-trust profile source. It may
         // add names, but cannot hollow out a daemon/system/user profile by
         // redefining the same name. Environment and CLI remain trusted daemon
@@ -301,6 +302,68 @@ pub fn merge_layers(layers: impl IntoIterator<Item = ConfigLayer>) -> Result<Loa
         .try_into::<AppConfig>()
         .context("validate effective application config")?;
     Ok(LoadedConfig { value, provenance })
+}
+
+fn normalize_alias(table: &mut toml::map::Map<String, toml::Value>, old: &str, canonical: &str) {
+    if let Some(value) = table.remove(old) {
+        table.entry(canonical.to_owned()).or_insert(value);
+    }
+}
+
+/// Convert legacy TOML keys before they are merged with canonical compiled
+/// defaults. Serde aliases alone cannot safely decode a merged table containing
+/// both spellings because that is correctly rejected as a duplicate field.
+fn normalize_legacy_layer(value: &mut toml::Value) {
+    let Some(root) = value.as_table_mut() else {
+        return;
+    };
+    if let Some(memory) = root.get_mut("memory").and_then(toml::Value::as_table_mut) {
+        normalize_alias(memory, "gbrain", "supplemental");
+        if let Some(config) = memory
+            .get_mut("supplemental")
+            .and_then(toml::Value::as_table_mut)
+        {
+            for (old, canonical) in [
+                ("source", "write_source"),
+                ("timeout_ms", "request_timeout_ms"),
+                ("max_results", "recall_limit"),
+                ("max_chars", "max_content_bytes"),
+                ("capture_enabled", "projection_enabled"),
+                ("outbox_dir", "legacy_outbox_dir"),
+            ] {
+                normalize_alias(config, old, canonical);
+            }
+        }
+    }
+    if let Some(deployment) = root
+        .get_mut("deployment")
+        .and_then(toml::Value::as_table_mut)
+    {
+        if let Some(integrations) = deployment
+            .get_mut("integrations")
+            .and_then(toml::Value::as_table_mut)
+        {
+            normalize_alias(integrations, "gbrain", "supplemental_memory");
+        }
+        if let Some(secrets) = deployment
+            .get_mut("secrets")
+            .and_then(toml::Value::as_table_mut)
+        {
+            normalize_alias(secrets, "gbrain", "supplemental_memory");
+        }
+        if let Some(quotas) = deployment
+            .get_mut("quotas")
+            .and_then(toml::Value::as_table_mut)
+        {
+            normalize_alias(quotas, "gbrain_spool_bytes", "supplemental_spool_bytes");
+            normalize_alias(
+                quotas,
+                "gbrain_spool_soft_bytes",
+                "supplemental_spool_soft_bytes",
+            );
+            normalize_alias(quotas, "gbrain_spool_items", "supplemental_spool_items");
+        }
+    }
 }
 
 /// Load defaults, system, user, project, environment, then CLI overrides.
@@ -577,7 +640,8 @@ fn merge_value(base: &mut toml::Value, overlay: toml::Value) {
 
 #[cfg(test)]
 mod legacy_environment_tests {
-    use super::normalize_legacy_environment;
+    use super::{merge_layers, normalize_legacy_environment, ConfigLayer};
+    use crate::composition::config::{ConfigSource, ConfigSourceKind};
     use std::collections::HashMap;
 
     #[test]
@@ -618,6 +682,37 @@ mod legacy_environment_tests {
             values["ALETHEON__INTEGRATIONS__GOOGLE__DRIVE_FILE_IDS"],
             "[\"first\", \"second\"]"
         );
+    }
+
+    #[test]
+    fn legacy_file_aliases_merge_with_canonical_defaults() {
+        let value = toml::from_str(
+            r#"
+                [memory.gbrain]
+                source = "legacy-source"
+                timeout_ms = 250
+                [deployment.integrations]
+                gbrain = true
+                [deployment.secrets]
+                gbrain = "/run/secrets/supplemental.env"
+                [deployment.quotas]
+                gbrain_spool_items = 42
+            "#,
+        )
+        .unwrap();
+        let loaded = merge_layers([ConfigLayer {
+            source: ConfigSource::new(ConfigSourceKind::System, "legacy fixture"),
+            value,
+        }])
+        .unwrap();
+
+        assert_eq!(
+            loaded.value.memory.supplemental.write_source,
+            "legacy-source"
+        );
+        assert_eq!(loaded.value.memory.supplemental.request_timeout_ms, 250);
+        assert!(loaded.value.deployment.integrations.supplemental_memory);
+        assert_eq!(loaded.value.deployment.quotas.supplemental_spool_items, 42);
     }
 }
 

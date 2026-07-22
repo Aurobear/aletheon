@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use fabric::{Subsystem, SubsystemContext};
 use mnemosyne::consolidation::{ConsolidationRepository, ExtractionStatus};
+use mnemosyne::runtime::{CoreMemory, EpisodicMemory, FactStore, RecallMemory};
 use mnemosyne::{
-    CoreMemory, DefaultMemoryService, EpisodicMemory, ExperienceEvent, FactStore, MemoryMetadata,
-    MemoryScope, MemoryService, RecallMemory,
+    DefaultMemoryService, ExperienceEvent, MemoryMetadata, MemoryScope, MemoryService,
 };
 use tokio::sync::Mutex;
 
