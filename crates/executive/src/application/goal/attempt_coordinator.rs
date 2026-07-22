@@ -475,17 +475,12 @@ impl AttemptCoordinator {
             AttemptStatus::Running => unreachable!("running attempt rejected above"),
         };
 
-        if attempt.input.get("runtime_request").is_some() {
-            let persisted_request =
-                attempt
-                    .input
-                    .get("runtime_request")
-                    .cloned()
-                    .ok_or_else(|| {
-                        AttemptCoordinatorError::Persistence(
-                            "coding attempt has no persisted runtime request".into(),
-                        )
-                    })?;
+        if let Some(persisted_request) = attempt
+            .input
+            .get("runtime_request")
+            .filter(|value| !value.is_null())
+            .cloned()
+        {
             let coding_request: CodingAttemptRequest = serde_json::from_value(persisted_request)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
             return self
