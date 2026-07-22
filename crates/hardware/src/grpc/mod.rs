@@ -5,6 +5,7 @@
 
 pub mod convert;
 pub mod error;
+pub mod provider;
 
 /// Generated wire types from `gateway.proto`.
 /// Public only for integration test accessibility; proto types must not

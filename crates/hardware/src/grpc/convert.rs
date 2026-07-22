@@ -128,6 +128,35 @@ pub fn to_observation(obs: &wire::Observation) -> Result<domain::EmbodiedObserva
 
 // ── Struct → JSON ───────────────────────────────────────────────────────────
 
+/// Convert serde_json::Value to a protobuf Struct.
+pub fn json_to_struct(value: &serde_json::Value) -> prost_types::Struct {
+    let mut fields = std::collections::BTreeMap::new();
+    if let serde_json::Value::Object(map) = value {
+        for (key, val) in map {
+            fields.insert(key.clone(), json_to_prost_value(val));
+        }
+    }
+    prost_types::Struct { fields }
+}
+
+fn json_to_prost_value(v: &serde_json::Value) -> prost_types::Value {
+    use prost_types::value::Kind;
+    let kind = match v {
+        serde_json::Value::Null => Kind::NullValue(0),
+        serde_json::Value::Bool(b) => Kind::BoolValue(*b),
+        serde_json::Value::Number(n) => {
+            Kind::NumberValue(n.as_f64().unwrap_or(0.0))
+        }
+        serde_json::Value::String(s) => Kind::StringValue(s.clone()),
+        serde_json::Value::Array(arr) => {
+            let values: Vec<prost_types::Value> = arr.iter().map(json_to_prost_value).collect();
+            Kind::ListValue(prost_types::ListValue { values })
+        }
+        serde_json::Value::Object(_) => Kind::StructValue(json_to_struct(v)),
+    };
+    prost_types::Value { kind: Some(kind) }
+}
+
 /// Convert a protobuf Struct to serde_json::Value by traversing fields manually.
 /// prost_types does not provide serde support by default.
 fn struct_to_json(s: &Option<prost_types::Struct>) -> serde_json::Value {

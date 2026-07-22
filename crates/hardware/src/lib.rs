@@ -31,6 +31,7 @@ pub use provider::{DeviceProvider, ValidatedCommand};
 pub use registry::ProviderRegistry;
 pub use safety::{CommandDecision, RejectionReason, SafetyState};
 pub use simulator::{SimulatedDevice, SimulatedEmbodiment};
+pub use grpc::provider::{GrpcEmbodimentProvider, GrpcProviderConfig};
 pub use skill::{
     AuthorizedSkillRequest, CancelAck, EmbodimentProvider, ProviderError, SkillProgressSink,
     StopReceipt, ValidatedSkillCommand,
