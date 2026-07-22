@@ -1,6 +1,4 @@
 # frozen_commit=efde4ca11a7c45a72ce7a03fee4cdd0c3c9d8e1e
-# id	path	pattern	reason	canonical_replacement	baseline_count	exit_phase
-external-event-v1-file-kind	crates/fabric/src/types/external_event.rs	drive_file_	persisted v1 event tags require aliases and integrity reconstruction	retire after persisted v1 migration window	6	10
-external-event-v1-provider	crates/fabric/src/types/external_event.rs	Google\|	persisted v1 dedup material used enum Debug output	retire after persisted v1 migration window	2	10
-pi-runtime-types	crates/executive/src/adapters/runtime/pi.rs	PiRuntime	legacy coding-runtime implementation name	private coding runtime adapter	17	3
-supplemental-memory-persistence-tables	crates/mnemosyne/src/backends/supplemental/migrations.rs	gbrain_(?:pages|queue|attempts|delivery_receipts|dead_letters|spool_meta)	legacy SQLite table names are retained to avoid unsafe no-value renames	private SupplementalSpool repository	35	10
+# id	path	pattern	reason	canonical_replacement	baseline_count	exit_condition
+external-event-v1-file-kind	crates/fabric/src/types/external_event.rs	drive_file_	persisted v1 event tags require aliases and integrity reconstruction	write v2; retire after the persisted v1 migration window is formally closed	6	no-v1-rows-and-supported-upgrade-window-closed
+external-event-v1-provider	crates/fabric/src/types/external_event.rs	Google\|	persisted v1 dedup material used enum Debug output	write v2; retire after the persisted v1 migration window is formally closed	2	no-v1-rows-and-supported-upgrade-window-closed

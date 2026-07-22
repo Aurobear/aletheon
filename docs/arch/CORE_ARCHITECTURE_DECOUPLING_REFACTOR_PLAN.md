@@ -1,6 +1,6 @@
 # Aletheon 核心架构解耦与外部集成边界重构方案
 
-**状态：** 设计基线
+**状态：** 已实施并通过 Phase 10 全局验证（证据见 `CORE_REFACTOR_COMPLETION_REPORT.md`）
 
 **日期：** 2026-07-23
 

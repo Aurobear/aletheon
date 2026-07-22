@@ -43,18 +43,18 @@ Build a table covering all §16 acceptance criteria with:
 criterion | authoritative evidence | command/path | result | remaining risk
 ```
 
-- [ ] Fabric contains no provider-specific shared contracts.
-- [ ] Application/domain dependency directions pass.
-- [ ] Goal/Agent Control are coding-runtime-name neutral.
-- [ ] Cognit is channel neutral.
-- [ ] Memory core is product neutral.
-- [ ] Hardware core is ROS/vendor neutral.
-- [ ] New provider addition does not require core enum modification.
-- [ ] Integration failures normalize without provider-text parsing.
-- [ ] Config/secret/adapter construction ownership is centralized.
-- [ ] Public implementation trees/imports are closed.
-- [ ] Legacy data/config/API behavior is compatible or explicitly rejected.
-- [ ] State machines have unique owners and transition evidence.
+- [x] Fabric contains no provider-specific shared contracts.
+- [x] Application/domain dependency directions pass.
+- [x] Goal/Agent Control are coding-runtime-name neutral.
+- [x] Cognit is channel neutral.
+- [x] Memory core is product neutral.
+- [x] Hardware core is ROS/vendor neutral.
+- [x] New provider addition does not require core enum modification.
+- [x] Integration failures normalize without provider-text parsing.
+- [x] Config/secret/adapter construction ownership is centralized.
+- [x] Public implementation trees/imports are closed.
+- [x] Legacy data/config/API behavior is compatible or explicitly rejected.
+- [x] State machines have unique owners and transition evidence.
 
 ## Task 2: Metrics delta
 
@@ -93,11 +93,11 @@ Record duration, result, and log/artifact location for every command. A broad gr
 
 ## Task 4: Compatibility and security evidence
 
-- [ ] Run every legacy config fixture through canonical normalization.
-- [ ] Run persistence migration fixtures including failure/retry/idempotency.
-- [ ] Run credential redaction, OAuth scope, sandbox/network, workspace trust, lease, emergency stop, and provider-unavailable fail-closed tests.
-- [ ] Verify optional absent integrations degrade explicitly and invalid configured integrations fail.
-- [ ] Verify old protocol versions are accepted or rejected exactly as inventories specify.
+- [x] Run every legacy config fixture through canonical normalization.
+- [x] Run persistence migration fixtures including failure/retry/idempotency.
+- [x] Run credential redaction, OAuth scope, sandbox/network, workspace trust, lease, emergency stop, and provider-unavailable fail-closed tests.
+- [x] Verify optional absent integrations degrade explicitly and invalid configured integrations fail.
+- [x] Verify old protocol versions are accepted or rejected exactly as inventories specify.
 
 ## Task 5: Crate-split review
 
@@ -121,10 +121,10 @@ Decision options:
 
 ## Task 6: Completion report and final commit
 
-- [ ] Completion report links every evidence artifact.
-- [ ] Architecture design status changes from design baseline to implemented only if all criteria are proven.
-- [ ] Remove zero-count allowlist/compatibility entries.
-- [ ] Confirm `git status --short` contains no unowned changes.
+- [x] Completion report links every evidence artifact.
+- [x] Architecture design status changes from design baseline to implemented only if all criteria are proven.
+- [x] Remove zero-count allowlist/compatibility entries.
+- [x] Confirm `git status --short` contains no unowned changes.
 
 Commit:
 
