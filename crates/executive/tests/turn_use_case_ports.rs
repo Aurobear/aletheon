@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use executive::r#impl::session::canonical_store::CanonicalSessionStore;
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::service::post_turn_projection::{
     PostTurnDispatch, PostTurnOutcome, PostTurnProjection,
 };

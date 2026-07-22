@@ -1079,7 +1079,7 @@ mod tests {
         let mut rewound =
             bus.subscribe_channel(SchemaId::from(SchemaId::EVENT_WORKSPACE_REWOUND_V1));
         let spine = Arc::new(
-            crate::r#impl::events::SqliteEventSpine::open(":memory:").expect("event spine"),
+            crate::adapters::events::SqliteEventSpine::open(":memory:").expect("event spine"),
         );
         let service =
             WorkspaceCheckpointService::new(store.clone(), Arc::new(TestLeases::default()), true)

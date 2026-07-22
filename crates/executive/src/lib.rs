@@ -16,7 +16,6 @@ pub(crate) mod adapters;
 pub mod composition;
 pub(crate) mod compatibility;
 pub mod core;
-pub mod r#impl;
 pub mod service;
 pub mod tools;
 pub mod user_runtime;
@@ -33,12 +32,65 @@ pub use core::orchestrator::AletheonExecutive;
 pub use core::verdict_handler::DefaultVerdictHandler;
 pub use kernel::admission::ProductionAdmissionController;
 
-// Re-export from impl for backward compatibility
-pub use r#impl::agent::AgentRuntime;
-pub use r#impl::automation;
-pub use r#impl::orchestration;
-pub use r#impl::plugin;
-pub use r#impl::session;
+// Stable application facades.
+pub use application::{approval, automation, conscious, goal, orchestration};
+
+/// Composition-only runtime handles.
+///
+/// Hosts construct these concrete local components, then inject application
+/// ports. Request handlers must not use this facade as a domain shortcut.
+pub mod runtime {
+    pub use crate::application::agent::AgentRuntime;
+
+    pub mod health {
+        pub use crate::application::health::*;
+    }
+
+    pub mod storage_quota {
+        pub use crate::application::storage_quota::*;
+    }
+
+    pub mod events {
+        pub use crate::adapters::events::*;
+    }
+
+    pub mod plugin {
+        pub use crate::adapters::plugin::*;
+    }
+
+    pub mod session {
+        pub use crate::adapters::session::*;
+    }
+}
+
+/// Integration-test access to concrete external adapters.
+///
+/// This surface is not a production contract. It exists so black-box tests can
+/// characterize adapter behavior while production code receives ports through
+/// composition.
+#[doc(hidden)]
+pub mod testing {
+    pub mod artifact {
+        pub use crate::adapters::artifact::*;
+    }
+    pub mod channel {
+        pub use crate::adapters::channel::*;
+    }
+    pub mod coding_runtime {
+        pub use crate::adapters::runtime::*;
+    }
+    pub mod external {
+        pub use crate::adapters::external::*;
+    }
+    pub mod provider_account {
+        pub use crate::adapters::google::*;
+    }
+    pub mod supplemental_memory {
+        pub use crate::adapters::gbrain::*;
+    }
+}
+
+pub use runtime::AgentRuntime;
 
 // ── Re-exports for CLI exec path (bin crate uses these via executive) ───
 pub use crate::composition::exec_session::ExecSessionBuilder;

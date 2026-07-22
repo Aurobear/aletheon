@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use executive::r#impl::goal::ObjectiveStore;
+use executive::goal::ObjectiveStore;
 use executive::service::goal_service::{GoalAction, GoalService, GoalServiceError, GoalUseCases};
 use fabric::{GoalSpec, GoalState, PrincipalId};
 use tempfile::tempdir;

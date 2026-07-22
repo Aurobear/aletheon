@@ -341,15 +341,15 @@ fn conscious_arbitration_mode_is_strict_and_observe_first() {
         ConsciousArbitrationMode::Observe
     );
     assert_eq!(
-        executive::r#impl::daemon::parse_conscious_arbitration_mode(None).unwrap(),
+        executive::host::daemon::parse_conscious_arbitration_mode(None).unwrap(),
         ConsciousArbitrationMode::Observe
     );
     assert_eq!(
-        executive::r#impl::daemon::parse_conscious_arbitration_mode(Some("enforce")).unwrap(),
+        executive::host::daemon::parse_conscious_arbitration_mode(Some("enforce")).unwrap(),
         ConsciousArbitrationMode::Enforce
     );
-    assert!(executive::r#impl::daemon::parse_conscious_arbitration_mode(Some("warn")).is_err());
-    assert!(executive::r#impl::daemon::parse_conscious_arbitration_mode(Some("ENFORCE")).is_err());
+    assert!(executive::host::daemon::parse_conscious_arbitration_mode(Some("warn")).is_err());
+    assert!(executive::host::daemon::parse_conscious_arbitration_mode(Some("ENFORCE")).is_err());
 }
 
 #[test]

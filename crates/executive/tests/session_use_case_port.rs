@@ -1,9 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use executive::r#impl::daemon::session_manager::SessionManager;
-use executive::r#impl::session::canonical_store::CanonicalSessionStore;
-use executive::r#impl::session::store::SessionStore;
+use executive::host::daemon::session_manager::SessionManager;
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
+use executive::runtime::session::store::SessionStore;
 use executive::service::legacy_session_service::{
     LegacySessionResources, LegacySessionService, LegacySessionUseCases,
 };

@@ -167,7 +167,7 @@ impl ObjectiveStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r#impl::goal::ObjectiveStore;
+    use crate::application::goal::ObjectiveStore;
     use fabric::goal::{GoalBudget, GoalSpec};
     use fabric::PrincipalId;
     use tempfile::NamedTempFile;

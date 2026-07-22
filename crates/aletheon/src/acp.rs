@@ -280,8 +280,8 @@ pub async fn run(workspace: WorkspaceLaunch) -> Result<()> {
     let authenticated = AuthenticatedAcpConnection::new(principal);
     let receiver = core.request_handler.create_notify_channel().await;
     let sessions = Arc::new(
-        executive::r#impl::session::canonical_store::CanonicalSessionStore::open(
-            executive::r#impl::session::canonical_store::session_db_path(Path::new(
+        executive::runtime::session::canonical_store::CanonicalSessionStore::open(
+            executive::runtime::session::canonical_store::session_db_path(Path::new(
                 &core.daemon_config.data_dir,
             )),
         )?,

@@ -7,7 +7,7 @@ use fabric::{AgentControlPort, Registry};
 use tracing::info;
 
 use crate::application::inference_port::{InferencePort, PortLlmProvider};
-use crate::r#impl::agent_loader::AgentLoader;
+use crate::composition::agent_loader::AgentLoader;
 
 /// Combine a profile-level and global iteration limit where `0` means
 /// "unlimited". The old `.min(global).max(1)` collapsed `0` (unlimited)

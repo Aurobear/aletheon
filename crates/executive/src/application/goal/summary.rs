@@ -1,7 +1,7 @@
 //! Bounded, redacted audit summary for an approval-driven Goal outcome.
 
 use super::ObjectiveStore;
-use crate::r#impl::approval::ApprovalApplyReceipt;
+use crate::application::approval::ApprovalApplyReceipt;
 use anyhow::{bail, Context, Result};
 use fabric::{ApprovalId, ApprovalSnapshot, GoalId};
 use rusqlite::{params, OptionalExtension};

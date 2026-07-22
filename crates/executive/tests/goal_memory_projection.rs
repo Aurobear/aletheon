@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use executive::r#impl::events::{
+use executive::runtime::events::{
     memory_job_projection::MemoryJobProjection, DefaultEventProjectionSet, EventReadFilter,
     SqliteEventSpine,
 };
-use executive::r#impl::goal::{
+use executive::goal::{
     GoalApprovalOutcomeSummary, GoalCompletionSummary, GoalProjectionEvidence,
 };
-use executive::r#impl::memory_projection::{
+use executive::application::memory_projection::{
     ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
 };
 use executive::service::event_projection::SqliteProjectionStore;

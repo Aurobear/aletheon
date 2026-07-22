@@ -1,4 +1,4 @@
-use executive::r#impl::daemon::bootstrap::production_embodiment::ProductionStartupGate;
+use executive::host::daemon::bootstrap::production_embodiment::ProductionStartupGate;
 
 #[test]
 fn full_gate_sequence_passes() {

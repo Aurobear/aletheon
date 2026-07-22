@@ -59,7 +59,7 @@ use super::conscious_core_ports::{
     ConsciousCycleReceipt, DaseinWorkspacePort,
 };
 use super::governed_capability::{GovernedActionLoop, GovernedActionLoopResolver};
-use crate::r#impl::conscious::{
+use crate::application::conscious::{
     AgentAdapter, CorpusProcessor, MetacogProcessor, MnemosyneProcessor,
 };
 
@@ -552,7 +552,7 @@ impl ConsciousWorkspaceRegistry {
                     "aletheon.workspace.governed-action-outcome/v1",
                 ],
                 VisibilityScope::PrivateProcess {
-                    process: crate::r#impl::conscious::processor_source(space, "mnemosyne"),
+                    process: crate::application::conscious::processor_source(space, "mnemosyne"),
                 },
             ),
             (

@@ -272,7 +272,7 @@ mod tests {
         .unwrap();
         let canonical_sessions = Arc::new(SessionService::new(
             Arc::new(
-                crate::r#impl::session::canonical_store::CanonicalSessionStore::open(
+                crate::adapters::session::canonical_store::CanonicalSessionStore::open(
                     tmp.path().join("sessions.db"),
                 )
                 .unwrap(),

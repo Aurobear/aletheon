@@ -3,8 +3,8 @@
 use super::ingest::ExternalEventIngestResult;
 use super::sender_policy::GmailSenderPolicy;
 use super::{GmailClassification, GmailInboxRecord};
-use crate::r#impl::approval::{ApprovalCreate, ApprovalRepository};
-use crate::r#impl::goal::{migrations, ObjectiveStore};
+use crate::application::approval::{ApprovalCreate, ApprovalRepository};
+use crate::application::goal::{migrations, ObjectiveStore};
 use fabric::{
     ApprovalArtifactRef, ApprovalCategory, ApprovalId, ApprovalRisk, ApprovalSnapshot,
     ApprovalStatus, ApprovalSubject, ExternalIdentityId, GoalBudget, GoalId, GoalSnapshot,

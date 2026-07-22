@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::external::ExternalIdentityRepository;
-use executive::r#impl::google::{
+use executive::testing::external::ExternalIdentityRepository;
+use executive::testing::provider_account::{
     GoogleEventDispatcher, GoogleEventSink, GooglePollBatch, GooglePollFailure, GoogleSyncManager,
     GoogleSyncManagerConfig, GoogleSyncPoller, GoogleSyncRegistration, GoogleSyncStore,
     ProjectionWrite, SyncCommit, SyncStream,
@@ -231,7 +231,7 @@ impl GoogleSyncPoller for ScriptedPoller {
     async fn poll(
         &self,
         _principal: &PrincipalId,
-        _cursor: &executive::r#impl::google::GoogleSyncCursor,
+        _cursor: &executive::testing::provider_account::GoogleSyncCursor,
         cancel: &CancellationToken,
     ) -> Result<GooglePollBatch, GooglePollFailure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
@@ -391,7 +391,7 @@ impl GoogleSyncPoller for ConcurrencyPoller {
     async fn poll(
         &self,
         _principal: &PrincipalId,
-        cursor: &executive::r#impl::google::GoogleSyncCursor,
+        cursor: &executive::testing::provider_account::GoogleSyncCursor,
         cancel: &CancellationToken,
     ) -> Result<GooglePollBatch, GooglePollFailure> {
         let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use executive::r#impl::core_rpc::{
+use executive::host::core_rpc::{
     CoreFrame, CorePeerPolicy, CoreRequest, CoreRpcClient, CoreRpcServer,
 };
 use executive::service::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};

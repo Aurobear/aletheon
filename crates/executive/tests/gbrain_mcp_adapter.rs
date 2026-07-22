@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use corpus::tools::mcp::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use corpus::tools::mcp::manager::McpManager;
-use executive::r#impl::gbrain::{
+use executive::testing::supplemental_memory::{
     GbrainErrorCategory, GbrainHealthState, GbrainMcpAdapter, GbrainSchemaStatus,
 };
 use http_body_util::{BodyExt, Full};

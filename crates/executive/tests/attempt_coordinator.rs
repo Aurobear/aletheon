@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use executive::kernel::chronos::TestClock;
-use executive::r#impl::goal::{
+use executive::goal::{
     AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
     AttemptRequest, ObjectiveStore, RetryDecision, RetryPolicy,
 };

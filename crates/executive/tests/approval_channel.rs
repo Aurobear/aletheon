@@ -1,7 +1,7 @@
 use async_trait::async_trait;
-use executive::r#impl::approval::{ApprovalCreate, ApprovalRepository};
-use executive::r#impl::channel::daemon_adapter::ApprovalRepositoryPort;
-use executive::r#impl::goal::ObjectiveStore;
+use executive::approval::{ApprovalCreate, ApprovalRepository};
+use executive::testing::channel::daemon_adapter::ApprovalRepositoryPort;
+use executive::goal::ObjectiveStore;
 use fabric::channel::*;
 use fabric::*;
 use gateway::dispatcher::{

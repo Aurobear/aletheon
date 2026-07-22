@@ -6,7 +6,7 @@ use fabric::{ExternalEventEnvelope, ExternalEventId};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
-use crate::r#impl::goal::GoalCoordinator;
+use crate::application::goal::GoalCoordinator;
 use fabric::channel::{MessageContent, OutboundMessage};
 use fabric::{ConversationId, ExternalEvent};
 use gateway::registry::{EventCapabilityHandler, EventCapabilityRegistry, IntentKind};

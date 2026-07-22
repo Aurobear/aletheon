@@ -29,7 +29,7 @@ use crate::application::governed_capability::{
 use crate::application::inference_port::{InferencePort, PortLlmProvider};
 use crate::application::turn_coordinator::TurnCoordinator;
 use crate::application::{PostTurnPipeline, PreTurnPipeline, TurnService};
-use crate::r#impl::session::canonical_store::CanonicalSessionStore;
+use crate::adapters::session::canonical_store::CanonicalSessionStore;
 
 /// Builder for a CLI `exec` session (non-daemon, single-turn).
 pub struct ExecSessionBuilder {
@@ -112,7 +112,7 @@ impl ExecSessionBuilder {
         let audit_path = user_paths.state_root.join("exec-audit.jsonl");
         let clock = Arc::new(SystemClock::new());
         let session_id = uuid::Uuid::new_v4().to_string();
-        let corpus_composition = crate::r#impl::exec_corpus::compose_exec_corpus(
+        let corpus_composition = crate::composition::exec_corpus::compose_exec_corpus(
             audit_path,
             &self.sandbox,
             clock.clone(),
@@ -130,7 +130,7 @@ impl ExecSessionBuilder {
         );
 
         let event_db = user_paths.state_root.join("exec-events.db");
-        let event_spine = Arc::new(crate::r#impl::events::SqliteEventSpine::open(event_db)?);
+        let event_spine = Arc::new(crate::adapters::events::SqliteEventSpine::open(event_db)?);
 
         let kernel = Arc::new(KernelRuntime::new());
         let process = kernel.spawn_process(fabric::SpawnSpec::default()).await?;
@@ -193,7 +193,7 @@ impl ExecSessionBuilder {
         if let Some(parent) = session_db.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let event_projections = Arc::new(crate::r#impl::events::DefaultEventProjectionSet::open(
+        let event_projections = Arc::new(crate::adapters::events::DefaultEventProjectionSet::open(
             user_paths.state_root.join("exec-event-projections.db"),
         )?);
         let coordinator = Arc::new(

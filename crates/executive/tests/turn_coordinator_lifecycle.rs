@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use executive::r#impl::events::{EventReadFilter, SqliteEventSpine};
-use executive::r#impl::session::canonical_store::CanonicalSessionStore;
+use executive::runtime::events::{EventReadFilter, SqliteEventSpine};
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::service::harness_factory::CognitiveSessionFactory;
 use executive::service::turn_coordinator::{TurnCoordinator, TurnExecution};
 use executive::service::turn_policy::*;

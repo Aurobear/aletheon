@@ -7,10 +7,10 @@
 use std::sync::Arc;
 
 use crate::application::DaemonTurnOrchestrator;
-use crate::r#impl::approval::ApplyCoordinator;
-use crate::r#impl::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
+use crate::application::approval::ApplyCoordinator;
+use crate::application::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
 use crate::adapters::channel::gmail::GmailGoalDraftCoordinator;
-use crate::r#impl::goal::ObjectiveStore;
+use crate::application::goal::ObjectiveStore;
 use fabric::{
     ApprovalId, ApprovalSnapshot, GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId, ProcessId,
 };
@@ -287,7 +287,7 @@ impl ChannelTurnExecutor for DaemonChannelTurnExecutor {
 
 /// Adapts the concrete `ApprovalRepository` to the fabric-native
 /// [`ChannelApprovalPort`] so `dispatcher.rs` and `handlers/approval.rs`
-/// no longer depend on `crate::r#impl::approval::*` directly.
+/// no longer depend on `crate::application::approval::*` directly.
 pub struct ApprovalRepositoryPort {
     repository: Arc<std::sync::Mutex<ApprovalRepository>>,
 }

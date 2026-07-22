@@ -4,14 +4,14 @@ use corpus::tools::google::{
     GmailIngressCapability, GmailIngressHeader, GmailIngressMessage, GmailIngressPart,
     GoogleApiError,
 };
-use executive::r#impl::channel::gmail::sender_policy::{
+use executive::testing::channel::gmail::sender_policy::{
     AuthenticationRequirement, GmailSenderPolicy,
 };
-use executive::r#impl::channel::gmail::{
+use executive::testing::channel::gmail::{
     load_gmail_ingress_policies, GmailGoalEventIngress, GmailIngressPolicy,
 };
-use executive::r#impl::external::ExternalIdentityRepository;
-use executive::r#impl::goal::ObjectiveStore;
+use executive::testing::external::ExternalIdentityRepository;
+use executive::goal::ObjectiveStore;
 use fabric::{
     ExternalCapabilityId, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
     ExternalIdentityId, ExternalObjectRef, ExternalProviderId, ExternalRecordRef, MailChange,

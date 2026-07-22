@@ -4,18 +4,18 @@
 //! one turn request. The caller (M3 worker) is responsible for scheduling
 //! subsequent ticks.
 
-use crate::r#impl::approval::ApprovalRepository;
-use crate::r#impl::approval::{ApplyCoordinator, ApplyCoordinatorConfig, ManagedWorktreeCleaner};
-use crate::r#impl::goal::budget::GoalBudgetRequest;
-use crate::r#impl::goal::transition::GoalTransitionError;
-use crate::r#impl::goal::{
+use crate::application::approval::ApprovalRepository;
+use crate::application::approval::{ApplyCoordinator, ApplyCoordinatorConfig, ManagedWorktreeCleaner};
+use crate::application::goal::budget::GoalBudgetRequest;
+use crate::application::goal::transition::GoalTransitionError;
+use crate::application::goal::{
     AttemptCoordinationOutcome, AttemptCoordinator, AttemptCoordinatorError, AttemptExecutor,
     AttemptRequest, CodingVerifier, ObjectiveStore, RetryPolicy,
 };
-use crate::r#impl::memory_projection::{
+use crate::application::memory_projection::{
     ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
 };
-use crate::r#impl::storage_quota::{StorageClass, StorageQuota, StorageReservation};
+use crate::application::storage_quota::{StorageClass, StorageQuota, StorageReservation};
 use fabric::goal::{GoalId, GoalSnapshot, GoalState, GoalWaitReason};
 use fabric::Clock;
 use fabric::ProcessId;
@@ -208,7 +208,7 @@ impl GoalCoordinator {
         clock: Arc<dyn Clock>,
         config: ApplyCoordinatorConfig,
         cleaner: Arc<dyn ManagedWorktreeCleaner>,
-    ) -> Result<ApplyCoordinator, crate::r#impl::approval::ApplyCoordinationError> {
+    ) -> Result<ApplyCoordinator, crate::application::approval::ApplyCoordinationError> {
         let coordinator = ApplyCoordinator::new(
             self.store.clone(),
             approvals,

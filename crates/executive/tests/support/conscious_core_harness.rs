@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::Context;
 use async_trait::async_trait;
-use executive::r#impl::events::{
+use executive::runtime::events::{
     agent_tree_projection::AgentTreeProjection, debug_projection::DebugProjection,
     memory_job_projection::MemoryJobProjection, metrics_projection::MetricsProjection,
     session_projection::SessionProjection,
@@ -382,10 +382,10 @@ async fn run_agent_lifecycle(
     let projection_path = root.join("agent-projections.db");
     let repository = Arc::new(SqliteAgentRunRepository::open(&repository_path)?);
     let memory = Arc::new(mnemosyne::AgentMemoryVault::open(&memory_path)?);
-    let spine = Arc::new(executive::r#impl::events::SqliteEventSpine::open(
+    let spine = Arc::new(executive::runtime::events::SqliteEventSpine::open(
         &event_path,
     )?);
-    let projections = Arc::new(executive::r#impl::events::DefaultEventProjectionSet::open(
+    let projections = Arc::new(executive::runtime::events::DefaultEventProjectionSet::open(
         &projection_path,
     )?);
     let launcher = AcceptanceLauncher::new();
@@ -538,7 +538,7 @@ async fn run_agent_lifecycle(
     let tree_id = EventTreeId::for_root_session(&root_agent.0.to_string());
     let actual_events = spine.read_tree(
         tree_id,
-        executive::r#impl::events::EventReadFilter {
+        executive::runtime::events::EventReadFilter {
             limit: 100,
             ..Default::default()
         },
@@ -573,10 +573,10 @@ async fn run_agent_lifecycle(
         conflict.is_err() && spine.metrics().rejected > 0,
         "event spine did not expose conflicting duplicate rejection"
     );
-    let reopened_spine = executive::r#impl::events::SqliteEventSpine::open(&event_path)?;
+    let reopened_spine = executive::runtime::events::SqliteEventSpine::open(&event_path)?;
     let reopened_events = reopened_spine.read_tree(
         tree_id,
-        executive::r#impl::events::EventReadFilter {
+        executive::runtime::events::EventReadFilter {
             limit: 100,
             ..Default::default()
         },

@@ -3,8 +3,8 @@
 use super::{
     ApprovalApplyClaim, ApprovalApplyReceipt, ApprovalRepository, ApprovalRepositoryError,
 };
-use crate::r#impl::goal::ObjectiveStore;
-use crate::r#impl::memory_projection::{MemoryProjection, ProjectionStatus};
+use crate::application::goal::ObjectiveStore;
+use crate::application::memory_projection::{MemoryProjection, ProjectionStatus};
 use async_trait::async_trait;
 use corpus::tools::subagent::{
     ApplyAuthorization, ApplyAuthorizer, ApplyError, ApplySpec, ControlledApply,
@@ -543,7 +543,7 @@ impl ApplyCoordinator {
         };
         let (persisted, evidence) = {
             let store = self.store.lock().unwrap();
-            let summary = crate::r#impl::goal::GoalCompletionSummary::build(
+            let summary = crate::application::goal::GoalCompletionSummary::build(
                 &store,
                 &approval,
                 receipt.as_ref(),

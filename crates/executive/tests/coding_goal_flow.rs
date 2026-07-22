@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use base64::Engine;
-use executive::r#impl::goal::{
+use executive::goal::{
     AttemptCoordinationOutcome, AttemptCoordinatorError, AttemptExecutor, AttemptRequest,
     CodingVerifier, GoalCoordinator, ObjectiveStore, RetryPolicy,
 };
@@ -164,7 +164,7 @@ struct Harness {
     goal_id: GoalId,
     executor: Arc<FakeCodingExecutor>,
     verifier: Arc<FakeVerifier>,
-    coordinator: executive::r#impl::goal::AttemptCoordinator,
+    coordinator: executive::goal::AttemptCoordinator,
 }
 impl Harness {
     fn new(results: Vec<VerifyResult>) -> Self {

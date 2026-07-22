@@ -1,20 +1,20 @@
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::approval::{ApprovalDecision, ApprovalResolutionContext};
-use executive::r#impl::artifact::{ArtifactRecord, ArtifactScanStatus};
-use executive::r#impl::channel::daemon_adapter::{
+use executive::approval::{ApprovalDecision, ApprovalResolutionContext};
+use executive::testing::artifact::{ArtifactRecord, ArtifactScanStatus};
+use executive::testing::channel::daemon_adapter::{
     ApprovalRepositoryPort, DaemonExternalDraftApprovalExecutor,
 };
-use executive::r#impl::channel::gmail::ingest::{
+use executive::testing::channel::gmail::ingest::{
     ExternalEventIngestResult, GmailOriginalReference, IngestedAttachment,
 };
-use executive::r#impl::channel::gmail::sender_policy::{
+use executive::testing::channel::gmail::sender_policy::{
     AuthenticationRequirement, GmailHeader, GmailSenderPolicy,
 };
-use executive::r#impl::channel::gmail::{
+use executive::testing::channel::gmail::{
     GmailChannelMessage, GmailChannelStore, GmailGoalDraftCoordinator,
 };
-use executive::r#impl::external::ExternalIdentityRepository;
-use executive::r#impl::goal::ObjectiveStore;
+use executive::testing::external::ExternalIdentityRepository;
+use executive::goal::ObjectiveStore;
 use fabric::{
     ApprovalCategory, ApprovalStatus, ExternalCapabilityId, ExternalIdentityId, GoalState,
     PrincipalId,
@@ -74,7 +74,7 @@ impl Fixture {
         }
     }
 
-    fn accepted(&self, id: &str) -> executive::r#impl::channel::gmail::GmailInboxRecord {
+    fn accepted(&self, id: &str) -> executive::testing::channel::gmail::GmailInboxRecord {
         let store = GmailChannelStore::open(&self.path).unwrap();
         store
             .authenticate_and_persist(
@@ -148,12 +148,12 @@ impl Fixture {
 
     fn resolve(
         &self,
-        draft: &executive::r#impl::channel::gmail::GmailGoalDraft,
+        draft: &executive::testing::channel::gmail::GmailGoalDraft,
         principal: &PrincipalId,
         decision: ApprovalDecision,
         now: i64,
     ) -> anyhow::Result<fabric::ApprovalSnapshot> {
-        let repo = executive::r#impl::approval::ApprovalRepository::open(&self.path)?;
+        let repo = executive::approval::ApprovalRepository::open(&self.path)?;
         Ok(repo.resolve(
             draft.approval.id,
             draft.approval.version,
@@ -231,7 +231,7 @@ fn telegram_owner_confirmation_is_durable_and_wrong_or_email_identity_cannot_act
             110,
         )
         .is_err());
-    let repo = executive::r#impl::approval::ApprovalRepository::open(&f.path).unwrap();
+    let repo = executive::approval::ApprovalRepository::open(&f.path).unwrap();
     assert!(repo
         .resolve(
             draft.approval.id,

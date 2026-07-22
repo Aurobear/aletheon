@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
-use executive::r#impl::goal::CodingJobRecoveryRecord;
-use executive::r#impl::runtime::worktree_recovery::{
+use executive::goal::CodingJobRecoveryRecord;
+use executive::testing::coding_runtime::worktree_recovery::{
     WorktreeCleaner, WorktreeRecoveryConfig, WorktreeRecoveryService,
 };
 use fabric::{Clock, CodingJobId, CodingJobStatus, MonoTime, WallTime};

@@ -496,7 +496,7 @@ fn parse_coding_status(value: &str) -> Result<CodingJobStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r#impl::goal::ObjectiveStore;
+    use crate::application::goal::ObjectiveStore;
     use fabric::{
         CognitiveRole, GoalBudget, GoalSpec, PrincipalId, RuntimeId, VerificationCheck,
         VerificationSeverity,

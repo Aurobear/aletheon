@@ -5,7 +5,7 @@ use super::{
     ObjectiveStore, RegistryAttemptExecutor, RetryDecision, RetryPolicy,
 };
 use crate::core::runtime_registry::RuntimeRegistry;
-use crate::r#impl::storage_quota::StorageQuota;
+use crate::application::storage_quota::StorageQuota;
 use anyhow::Context;
 use fabric::{AttemptUsage, Clock, CognitiveRole, GoalState, GoalWaitReason, RuntimeId};
 use gateway::dispatcher::{GoalProgress, GoalProgressKind};

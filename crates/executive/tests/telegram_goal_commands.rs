@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use executive::r#impl::channel::daemon_adapter::DaemonChannelGoalExecutor;
-use executive::r#impl::goal::ObjectiveStore;
+use executive::testing::channel::daemon_adapter::DaemonChannelGoalExecutor;
+use executive::goal::ObjectiveStore;
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,

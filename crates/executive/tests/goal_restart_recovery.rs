@@ -3,7 +3,7 @@
 //! Validates that recover_goals() correctly handles every GoalState
 //! after a simulated daemon restart.
 
-use executive::r#impl::goal::ObjectiveStore;
+use executive::goal::ObjectiveStore;
 use fabric::goal::{GoalBudget, GoalId, GoalSpec, GoalState, GoalWaitReason};
 use fabric::PrincipalId;
 

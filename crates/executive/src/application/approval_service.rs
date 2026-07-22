@@ -7,7 +7,7 @@ use fabric::{ApprovalCategory, ApprovalId, ApprovalSnapshot, Clock, PrincipalId,
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::r#impl::approval::{
+use crate::application::approval::{
     ApplyCoordinator, ApprovalDecision, ApprovalRepository, ApprovalRepositoryError,
     ApprovalResolutionContext,
 };

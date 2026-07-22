@@ -51,10 +51,10 @@ impl RequestHandler {
             .await?;
         let decision = match request.decision {
             fabric::protocol::client::ApprovalDecisionRequest::Approve => {
-                crate::r#impl::approval::ApprovalDecision::Approve
+                crate::application::approval::ApprovalDecision::Approve
             }
             fabric::protocol::client::ApprovalDecisionRequest::Reject => {
-                crate::r#impl::approval::ApprovalDecision::Reject {
+                crate::application::approval::ApprovalDecision::Reject {
                     reason: request.reason,
                 }
             }

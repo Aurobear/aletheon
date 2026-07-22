@@ -13,7 +13,7 @@ use crate::adapters::channel::daemon_adapter::{
 };
 use crate::adapters::channel::gmail::GmailGoalDraftCoordinator;
 use crate::adapters::external::GoogleIntegration;
-use crate::r#impl::goal::ObjectiveStore;
+use crate::application::goal::ObjectiveStore;
 use fabric::ApprovalCategory;
 use gateway::dispatcher::{ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoalProgress};
 use gateway::handlers::chat::ChatHandler;
@@ -31,9 +31,9 @@ pub(super) fn init_telegram_channel(
     data_dir: PathBuf,
     orchestrator: Arc<crate::application::DaemonTurnOrchestrator>,
     objective_store: Arc<Mutex<ObjectiveStore>>,
-    approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
+    approval_repository: Arc<std::sync::Mutex<crate::application::approval::ApprovalRepository>>,
     gmail_goal_drafts: Arc<std::sync::Mutex<GmailGoalDraftCoordinator>>,
-    approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
+    approved_apply: Option<Arc<crate::application::approval::ApplyCoordinator>>,
     google: Option<Arc<GoogleIntegration>>,
     cancel: CancellationToken,
     goal_progress_rx: Option<mpsc::Receiver<GoalProgress>>,
@@ -121,7 +121,7 @@ async fn telegram_poll_loop(
     mut router: ChannelDispatcher,
     transport: Arc<dyn ChannelTransport>,
     mut cursor: Option<String>,
-    approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
+    approval_repository: Arc<std::sync::Mutex<crate::application::approval::ApprovalRepository>>,
     approval_conversation: Option<fabric::channel::ConversationId>,
     cancel: CancellationToken,
     mut goal_progress_rx: Option<mpsc::Receiver<GoalProgress>>,

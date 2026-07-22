@@ -10,7 +10,7 @@ use crate::application::verification::{
     CapabilityAuditSummary, VerificationContext, VerificationSelection, VerificationService,
 };
 use crate::core::runtime_registry::RuntimeRegistry;
-use crate::r#impl::approval::{ApprovalCreate, ApprovalRepository};
+use crate::application::approval::{ApprovalCreate, ApprovalRepository};
 use crate::application::coding_runtime::CodingAttemptRequest;
 use async_trait::async_trait;
 use base64::Engine;

@@ -4,7 +4,7 @@ use super::RequestHandler;
 use crate::application::approval_service::{
     ApprovalContext, ApprovalServiceError, ResolveApprovalRequest,
 };
-use crate::r#impl::approval::ApprovalDecision;
+use crate::application::approval::ApprovalDecision;
 use fabric::ApprovalId;
 use serde_json::{json, Value};
 

@@ -24,9 +24,9 @@ use tokio_util::sync::CancellationToken;
 use crate::application::session_service::{InterruptOutcome, ResumeResult, SessionService};
 use crate::application::admin_service::BackgroundWorkerPort;
 use crate::application::DaemonTurnOrchestrator;
-use crate::r#impl::health::{ComponentHealth, HealthRegistry, ProductionHealth};
-use crate::r#impl::orchestration::digraph::graph::{DiGraph, WorkflowDef};
-use crate::r#impl::orchestration::store::WorkflowStore;
+use crate::application::health::{ComponentHealth, HealthRegistry, ProductionHealth};
+use crate::application::orchestration::digraph::graph::{DiGraph, WorkflowDef};
+use crate::application::orchestration::store::WorkflowStore;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RequestStatus {

@@ -8,3 +8,7 @@ pub mod prefix_builder;
 pub mod skill_admin;
 
 pub mod exec_session;
+
+pub mod agent_loader;
+pub mod agents;
+pub(crate) mod exec_corpus;

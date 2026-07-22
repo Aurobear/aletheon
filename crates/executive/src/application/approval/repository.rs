@@ -1,4 +1,4 @@
-use crate::r#impl::goal::migrations;
+use crate::application::goal::migrations;
 use fabric::{
     ApprovalArtifactRef, ApprovalCategory, ApprovalContractError, ApprovalId, ApprovalResolution,
     ApprovalRisk, ApprovalSnapshot, ApprovalStatus, ApprovalSubject, AttemptId, CodingJobId,
@@ -933,7 +933,7 @@ impl std::error::Error for ApprovalRepositoryError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r#impl::goal::ObjectiveStore;
+    use crate::application::goal::ObjectiveStore;
     use fabric::{GoalBudget, GoalSpec};
     use std::collections::BTreeMap;
     use std::path::PathBuf;

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
 use corpus::tools::google::oauth::{GoogleCapability, GoogleOAuthProvider, OAuthClientConfig};
 use corpus::tools::mcp::token_store::{TokenEntry, TokenKey, TokenStore};
-use executive::r#impl::external::{ExternalIdentityRepository, GoogleIntegration};
+use executive::testing::external::{ExternalIdentityRepository, GoogleIntegration};
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,

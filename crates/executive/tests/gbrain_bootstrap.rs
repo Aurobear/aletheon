@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use executive::composition::config::SupplementalMemoryConfig;
 use corpus::tools::mcp::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use corpus::tools::mcp::manager::McpManager;
-use executive::r#impl::gbrain::build_supplemental_memory_runtime;
+use executive::testing::supplemental_memory::build_supplemental_memory_runtime;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;

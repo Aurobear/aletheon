@@ -355,7 +355,7 @@ async fn handle_doctor(
     project_dir: Option<&std::path::Path>,
 ) -> Result<()> {
     use executive::composition::config;
-    use executive::r#impl::doctor::DoctorReport;
+    use executive::host::doctor::DoctorReport;
     let loaded = if let Some(path) = config_path {
         let txt = std::fs::read_to_string(path)?;
         let layer = config::ConfigLayer::from_toml(

@@ -19,8 +19,8 @@
 
 use std::sync::Arc;
 
-use executive::r#impl::events::SqliteEventSpine;
-use executive::r#impl::session::canonical_store::CanonicalSessionStore;
+use executive::runtime::events::SqliteEventSpine;
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::service::harness_factory::LinearCognitiveSessionFactory;
 use executive::service::session_input::SessionInputCoordinator;
 use executive::service::turn_coordinator::TurnCoordinator;

@@ -2,7 +2,7 @@ use crate::application::harness_factory::{CognitiveSessionFactory, LinearCogniti
 use crate::application::turn_coordinator::{cancelled_result, TurnCoordinator, TurnExecution};
 use crate::application::turn_policy::TurnPolicy;
 use crate::application::{PostTurnPipeline, PreTurnPipeline};
-use crate::r#impl::session::canonical_store::CanonicalSessionStore;
+use crate::adapters::session::canonical_store::CanonicalSessionStore;
 use anyhow::Result;
 use async_trait::async_trait;
 use cognit::harness::HarnessConfig;
@@ -109,7 +109,7 @@ impl TurnService {
                 }) {
                     history.pop();
                 }
-                let canonical_seed = crate::r#impl::session::canonical_store::project_messages(&history)?;
+                let canonical_seed = crate::adapters::session::canonical_store::project_messages(&history)?;
                 let recording = RecordingTurnServices::new(services, canonical_seed);
                 let request = pre_turn.run(request, &recording).await?;
                 let mut session = factory

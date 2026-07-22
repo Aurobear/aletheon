@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use executive::r#impl::gbrain::GbrainWorker;
+use executive::testing::supplemental_memory::GbrainWorker;
 use mnemosyne::supplemental::{
     SupplementalDocument, SupplementalSpool, RetryPolicy, SpoolLimits, SupplementalErrorCategory, SupplementalHit,
     SupplementalMemoryTransport, SupplementalTransportError,

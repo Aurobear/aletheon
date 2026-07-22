@@ -99,7 +99,7 @@ pub struct GmailGoalEventIngress {
     artifact_root: PathBuf,
     policies: HashMap<ExternalIdentityId, GmailSenderPolicy>,
     review_ttl_ms: i64,
-    storage_quota: Option<crate::r#impl::storage_quota::StorageQuota>,
+    storage_quota: Option<crate::application::storage_quota::StorageQuota>,
 }
 
 impl GmailGoalEventIngress {
@@ -128,7 +128,7 @@ impl GmailGoalEventIngress {
         })
     }
 
-    pub fn with_storage_quota(mut self, quota: crate::r#impl::storage_quota::StorageQuota) -> Self {
+    pub fn with_storage_quota(mut self, quota: crate::application::storage_quota::StorageQuota) -> Self {
         self.storage_quota = Some(quota);
         self
     }

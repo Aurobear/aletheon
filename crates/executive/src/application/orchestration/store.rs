@@ -105,10 +105,10 @@ impl WorkflowStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r#impl::orchestration::digraph::edge::ConditionExpr;
-    use crate::r#impl::orchestration::digraph::graph::{DiGraph, JoinStrategy};
-    use crate::r#impl::orchestration::digraph::node::{Node, NodeKind, RetryPolicy};
-    use crate::r#impl::orchestration::digraph::Edge;
+    use crate::application::orchestration::digraph::edge::ConditionExpr;
+    use crate::application::orchestration::digraph::graph::{DiGraph, JoinStrategy};
+    use crate::application::orchestration::digraph::node::{Node, NodeKind, RetryPolicy};
+    use crate::application::orchestration::digraph::Edge;
 
     fn sample_node(id: &str, cond: &str) -> Node {
         Node {
@@ -187,7 +187,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_saved_workflow_reproduces_direct_execution() {
-        use crate::r#impl::orchestration::digraph::state::GraphState;
+        use crate::application::orchestration::digraph::state::GraphState;
 
         let dir = tempfile::tempdir().unwrap();
         let store = WorkflowStore::new(dir.path()).unwrap();

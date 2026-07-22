@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use base64::Engine;
-use executive::r#impl::approval::ApprovalRepository;
-use executive::r#impl::goal::{
+use executive::approval::ApprovalRepository;
+use executive::goal::{
     AttemptExecutor, AttemptRequest, CodingVerifier, GoalCoordinator, ObjectiveStore, RetryPolicy,
 };
 use executive::application::coding_runtime::CodingAttemptRequest;
@@ -244,7 +244,7 @@ impl Harness {
         &self,
         passed: bool,
         approvals: bool,
-    ) -> (executive::r#impl::goal::AttemptCoordinator, Arc<Verifier>) {
+    ) -> (executive::goal::AttemptCoordinator, Arc<Verifier>) {
         let verifier = Arc::new(Verifier {
             passed,
             calls: AtomicUsize::new(0),
@@ -333,7 +333,7 @@ async fn verified_diff_creates_one_hash_bound_apply_approval() {
         .execute_one(req.clone(), CancellationToken::new())
         .await
         .unwrap();
-    let executive::r#impl::goal::AttemptCoordinationOutcome::Succeeded { goal, .. } = out else {
+    let executive::goal::AttemptCoordinationOutcome::Succeeded { goal, .. } = out else {
         panic!()
     };
     assert_eq!(goal.state, GoalState::AwaitingHuman);
@@ -348,7 +348,7 @@ async fn verified_diff_creates_one_hash_bound_apply_approval() {
     assert_eq!(a.subject.apply_target, Some(PathBuf::from(".")));
     let duplicate = c.execute_one(req, CancellationToken::new()).await.unwrap();
     assert!(
-        matches!(duplicate,executive::r#impl::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
+        matches!(duplicate,executive::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
     );
     assert_eq!(h.pending().len(), 1);
     assert_eq!(h.exec.calls.load(Ordering::SeqCst), 1);
@@ -381,7 +381,7 @@ async fn restart_between_verification_and_approval_creation_recovers_without_ree
     let (c2, v2) = h.coordinator(true, true);
     let out = c2.execute_one(req, CancellationToken::new()).await.unwrap();
     assert!(
-        matches!(out,executive::r#impl::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
+        matches!(out,executive::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
     );
     assert_eq!(h.exec.calls.load(Ordering::SeqCst), 1);
     assert_eq!(v2.calls.load(Ordering::SeqCst), 0);

@@ -1,13 +1,13 @@
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::approval::{
+use executive::approval::{
     ApprovalDecision, ApprovalRepository, ApprovalResolutionContext,
 };
-use executive::r#impl::channel::gmail::report::{
+use executive::testing::channel::gmail::report::{
     GmailDeliveryOutcome, GmailReconciliation, GmailReportBoundary, GmailReportProvider,
     GmailSendResult,
 };
-use executive::r#impl::external::ExternalIdentityRepository;
-use executive::r#impl::goal::ObjectiveStore;
+use executive::testing::external::ExternalIdentityRepository;
+use executive::goal::ObjectiveStore;
 use fabric::{
     ApprovalId, ExternalCapabilityId, ExternalIdentityId, GoalBudget, GoalSpec, PrincipalId,
 };
@@ -190,7 +190,7 @@ fn read_only_default_creates_local_artifact_and_never_authorizes_gmail_send() {
         .unwrap();
     assert_eq!(
         report.artifact.scan_status,
-        executive::r#impl::artifact::ArtifactScanStatus::Clean
+        executive::testing::artifact::ArtifactScanStatus::Clean
     );
     assert!(report.telegram_summary.contains("Report ready"));
     assert!(f

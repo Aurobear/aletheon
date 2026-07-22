@@ -1,3 +1,13 @@
+pub mod agent;
+pub mod approval;
+pub mod automation;
+pub mod conscious;
+pub mod goal;
+pub mod health;
+pub mod hook_lifecycle;
+pub mod memory_projection;
+pub mod orchestration;
+pub mod storage_quota;
 pub mod admin_service;
 pub mod agent_control;
 pub mod approval_service;

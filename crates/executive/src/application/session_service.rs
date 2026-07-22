@@ -11,7 +11,7 @@ use fabric::{
 use rusqlite::{params, Connection, OptionalExtension};
 use tokio::sync::Mutex;
 
-use crate::r#impl::session::canonical_store::project_messages;
+use crate::adapters::session::canonical_store::project_messages;
 
 use super::turn_coordinator::{ActiveTurn, ActiveTurnKey};
 
@@ -446,7 +446,7 @@ mod tests {
     #[tokio::test]
     async fn lifecycle_context_fragment_is_bounded_and_durable() {
         let store: Arc<dyn SessionAppendStore> = Arc::new(
-            crate::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
+            crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
                 .unwrap(),
         );
         let session_id = SessionId("context-session".into());

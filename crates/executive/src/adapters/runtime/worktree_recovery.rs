@@ -1,6 +1,6 @@
 //! Startup reconciliation for retained Pi coding worktrees.
 
-use crate::r#impl::goal::CodingJobRecoveryRecord;
+use crate::application::goal::CodingJobRecoveryRecord;
 use anyhow::{bail, Context, Result};
 use fabric::{Clock, CodingJobId, CodingJobStatus};
 use std::collections::{HashMap, HashSet};

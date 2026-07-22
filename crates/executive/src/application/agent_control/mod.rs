@@ -179,7 +179,7 @@ impl AgentControlService {
         runtimes: Arc<AgentRuntimeRegistry>,
     ) -> Self {
         let event_spine = Arc::new(
-            crate::r#impl::events::SqliteEventSpine::open(":memory:")
+            crate::adapters::events::SqliteEventSpine::open(":memory:")
                 .expect("in-memory Agent event spine"),
         );
         Self {

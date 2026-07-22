@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use executive::r#impl::events::{EventReadFilter, SqliteEventSpine};
-use executive::r#impl::session::canonical_store::CanonicalSessionStore;
+use executive::runtime::events::{EventReadFilter, SqliteEventSpine};
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::service::session_service::{InterruptOutcome, SessionService};
 use executive::service::turn_coordinator::{
     cancelled_result, ActiveTurnKey, TurnCoordinator, TurnExecution,

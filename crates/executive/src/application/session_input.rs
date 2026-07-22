@@ -924,7 +924,7 @@ mod tests {
         let mut consumed =
             bus.subscribe_channel(SchemaId::from(SchemaId::EVENT_INTERJECTION_CONSUMED_V1));
         let spine = Arc::new(
-            crate::r#impl::events::SqliteEventSpine::open(":memory:").expect("event spine"),
+            crate::adapters::events::SqliteEventSpine::open(":memory:").expect("event spine"),
         );
         let coordinator = SessionInputCoordinator::in_memory()
             .with_event_bus(bus)

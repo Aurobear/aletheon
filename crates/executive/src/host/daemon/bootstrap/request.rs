@@ -7,7 +7,7 @@ use crate::composition::config::ExecutiveConfig;
 use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonExecutive;
 use crate::host::daemon::handler::RequestHandler;
-use crate::session::store::SessionStore;
+use crate::adapters::session::store::SessionStore;
 use anyhow::Context;
 use kernel::chronos::SystemClock;
 
@@ -36,7 +36,7 @@ use tracing::{info, warn};
 use crate::application::inference_port::InferencePort;
 use crate::application::CapabilityService;
 use crate::adapters::channel::gmail::GmailGoalDraftCoordinator;
-use crate::r#impl::goal::ObjectiveStore;
+use crate::application::goal::ObjectiveStore;
 use crate::adapters::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
 use crate::adapters::runtime::{pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime};
 use corpus::hook::builtin::audit_hook;
@@ -143,7 +143,7 @@ impl RequestHandler {
             ObjectiveStore::open(&objective_db_path).context("opening apply objective store")?,
         ));
         let approval_repository =
-            crate::r#impl::approval::ApprovalRepository::open(&objective_db_path)
+            crate::application::approval::ApprovalRepository::open(&objective_db_path)
                 .context("opening approval repository")?;
         let approval_repository = Arc::new(std::sync::Mutex::new(approval_repository));
         let gmail_goal_drafts = Arc::new(std::sync::Mutex::new(
@@ -316,7 +316,7 @@ impl RequestHandler {
                 ObjectiveStore::open(&objective_db_path)
                     .context("opening Google event Goal store")?,
             ));
-            let mut goals = crate::r#impl::goal::GoalCoordinator::new(goal_store);
+            let mut goals = crate::application::goal::GoalCoordinator::new(goal_store);
             if let Some(quota) = storage_quota.clone() {
                 goals = goals.with_storage_quota(quota, 16 * 1024 * 1024);
             }
@@ -1078,7 +1078,7 @@ impl RequestHandler {
                 .reviewer
                 .as_ref()
                 .context("missing Goal reviewer route")?;
-            let worker = crate::r#impl::goal::GoalWorker::new(
+            let worker = crate::application::goal::GoalWorker::new(
                 Arc::new(std::sync::Mutex::new(ObjectiveStore::open(
                     &objective_db_path,
                 )?)),
@@ -1200,7 +1200,7 @@ impl RequestHandler {
             ),
         );
         let started_at = clock_2.mono_now();
-        let health_registry = Arc::new(crate::r#impl::health::HealthRegistry::production_ready());
+        let health_registry = Arc::new(crate::application::health::HealthRegistry::production_ready());
         let channel_task = Arc::new(Mutex::new(None));
         let request_facades = RequestFacadePorts::new(
             runtime.clone(),
@@ -1265,7 +1265,7 @@ impl RequestHandler {
         let workflow_use_cases: Arc<dyn crate::application::request_use_cases::WorkflowUseCases> =
             Arc::new(
                 crate::application::request_use_cases::ProductionWorkflowUseCases::new(
-                    crate::r#impl::orchestration::store::WorkflowStore::default_dir(),
+                    crate::application::orchestration::store::WorkflowStore::default_dir(),
                 ),
             );
         let turn_use_cases: Arc<dyn crate::application::request_use_cases::TurnUseCases> = Arc::new(

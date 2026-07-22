@@ -1,7 +1,7 @@
 //! Workflow persistence RPC handlers.
 
 use super::RequestHandler;
-use crate::r#impl::orchestration::digraph::graph::WorkflowDef;
+use crate::application::orchestration::digraph::graph::WorkflowDef;
 use serde_json::json;
 
 impl RequestHandler {

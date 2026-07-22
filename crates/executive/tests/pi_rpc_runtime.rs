@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use executive::r#impl::runtime::PiRpcRuntime;
+use executive::testing::coding_runtime::PiRpcRuntime;
 use executive::service::agent_control::{
     AgentContextProjection, AgentEventSink, AgentRuntimeEvent, AgentRuntimeInbox,
     AgentRuntimeInput, AgentRuntimeLauncher, AgentRuntimeRegistry,
@@ -226,7 +226,7 @@ done
         .register_manifested(
             PiRpcRuntime::runtime_id(),
             runtime.clone(),
-            executive::r#impl::runtime::pi_manifest().clone(),
+            executive::testing::coding_runtime::pi_manifest().clone(),
         )
         .unwrap();
     let selected = registry
@@ -384,7 +384,7 @@ done
 
 #[test]
 fn rpc_environment_uses_a_reviewed_path_not_the_parent_path() {
-    let environment = executive::r#impl::runtime::pi_rpc_environment_from_process();
+    let environment = executive::testing::coding_runtime::pi_rpc_environment_from_process();
     assert_eq!(
         environment.get("PATH").map(String::as_str),
         Some("/usr/local/bin:/usr/bin:/bin")

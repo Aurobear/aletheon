@@ -1,10 +1,10 @@
 //! Local-first report artifacts and approval-bound Gmail delivery.
 
-use crate::r#impl::approval::{ApprovalCreate, ApprovalRepository};
+use crate::application::approval::{ApprovalCreate, ApprovalRepository};
 use crate::adapters::artifact::{
     ArtifactMetadata, ArtifactRecord, ArtifactScanStatus, ArtifactStore,
 };
-use crate::r#impl::goal::{migrations, ObjectiveStore};
+use crate::application::goal::{migrations, ObjectiveStore};
 use async_trait::async_trait;
 use fabric::{
     ApprovalCategory, ApprovalId, ApprovalRisk, ApprovalSnapshot, ApprovalStatus, ApprovalSubject,

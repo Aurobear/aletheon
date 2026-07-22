@@ -5,7 +5,7 @@
 //! must preserve: (1) ProcessState transition rules, and (2) ObjectiveStore
 //! persistence across re-opens.
 
-use executive::r#impl::goal::ObjectiveStore;
+use executive::goal::ObjectiveStore;
 use fabric::ProcessState;
 
 // ── Step 1.1: ProcessState transition contract ────────────────────────────

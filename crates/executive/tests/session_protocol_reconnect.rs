@@ -1,7 +1,7 @@
 use std::{collections::HashSet, sync::Arc};
 
 use executive::{
-    r#impl::session::canonical_store::CanonicalSessionStore,
+    runtime::session::canonical_store::CanonicalSessionStore,
     service::session_service::SessionService,
 };
 use fabric::{

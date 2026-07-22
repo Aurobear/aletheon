@@ -27,7 +27,7 @@ pub(crate) fn bootstrap_workspace_trust_resolver(
 
 pub(crate) struct DurableSocketApprovalGate {
     pub(crate) socket: Arc<SocketApprovalGate>,
-    pub(crate) repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
+    pub(crate) repository: Arc<std::sync::Mutex<crate::application::approval::ApprovalRepository>>,
     pub(crate) clock: Arc<dyn Clock>,
 }
 

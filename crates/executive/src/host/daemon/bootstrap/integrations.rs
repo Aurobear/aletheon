@@ -16,7 +16,7 @@ pub(super) struct GoogleCompositionInput<'a> {
     pub(super) clock: Arc<dyn Clock>,
     pub(super) cancel: &'a CancellationToken,
     pub(super) artifact_root: &'a Path,
-    pub(super) storage_quota: Option<crate::r#impl::storage_quota::StorageQuota>,
+    pub(super) storage_quota: Option<crate::application::storage_quota::StorageQuota>,
     pub(super) config: Option<&'a crate::composition::config::ResolvedGoogleIntegration>,
 }
 

@@ -32,7 +32,7 @@ pub(super) fn register_configured_external_read_tools(
     clock: Arc<dyn Clock>,
     cancel: &CancellationToken,
     artifact_root: &std::path::Path,
-    storage_quota: Option<crate::r#impl::storage_quota::StorageQuota>,
+    storage_quota: Option<crate::application::storage_quota::StorageQuota>,
     config: Option<&crate::composition::config::ResolvedGoogleIntegration>,
 ) -> anyhow::Result<Option<ConfiguredGoogleReadTools>> {
     let Some(config) = config else {

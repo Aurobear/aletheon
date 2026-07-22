@@ -3,7 +3,7 @@
 //! Validates new goal.create, goal.list, goal.pause, goal.run, goal.cancel
 //! methods alongside legacy response compatibility.
 
-use executive::r#impl::goal::ObjectiveStore;
+use executive::goal::ObjectiveStore;
 use fabric::goal::{GoalBudget, GoalId, GoalSpec, GoalState};
 use fabric::PrincipalId;
 use tempfile::NamedTempFile;

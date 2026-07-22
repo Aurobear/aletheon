@@ -17,7 +17,7 @@ use fabric::{
 use support::test_aletheon_builder::TestAletheonBuilder;
 
 struct TerminalFailingStore {
-    inner: executive::r#impl::session::canonical_store::CanonicalSessionStore,
+    inner: executive::runtime::session::canonical_store::CanonicalSessionStore,
 }
 
 #[async_trait]
@@ -132,10 +132,10 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
         clock as Arc<dyn fabric::Clock>,
     ));
     let store: Arc<dyn SessionAppendStore> = Arc::new(TerminalFailingStore {
-        inner: executive::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
+        inner: executive::runtime::session::canonical_store::CanonicalSessionStore::open(":memory:")
             .unwrap(),
     });
-    let spine = Arc::new(executive::r#impl::events::SqliteEventSpine::open(":memory:").unwrap());
+    let spine = Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap());
     let mut hardening = executive::core::config::GrokHardeningConfig::default();
     hardening.compaction_v2 = true;
     let coordinator =
@@ -562,7 +562,7 @@ async fn event_spine_sequence_monotonic_across_turns() {
         .event_spine
         .read_tree(
             fabric::EventTreeId::for_root_session("mono-seq"),
-            executive::r#impl::events::EventReadFilter {
+            executive::runtime::events::EventReadFilter {
                 limit: 20,
                 ..Default::default()
             },

@@ -14,6 +14,7 @@
 pub mod container;
 pub mod core_rpc;
 pub mod daemon;
+pub mod doctor;
 pub mod launcher;
 pub mod systemd;
 

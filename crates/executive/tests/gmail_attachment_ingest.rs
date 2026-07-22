@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::artifact::ArtifactStore;
-use executive::r#impl::channel::gmail::ingest::{
+use executive::testing::artifact::ArtifactStore;
+use executive::testing::channel::gmail::ingest::{
     GmailAttachmentFetcher, ExternalEventIngestConfig, ExternalEventIngestMessage, GmailMessageIngester,
     GmailMimePart,
 };
-use executive::r#impl::external::ExternalIdentityRepository;
+use executive::testing::external::ExternalIdentityRepository;
 use fabric::{ExternalCapabilityId, ExternalIdentityId, PrincipalId};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};

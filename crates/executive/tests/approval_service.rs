@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use executive::r#impl::approval::{ApprovalCreate, ApprovalDecision, ApprovalRepository};
-use executive::r#impl::goal::ObjectiveStore;
+use executive::approval::{ApprovalCreate, ApprovalDecision, ApprovalRepository};
+use executive::goal::ObjectiveStore;
 use executive::service::admin_service::{ApprovalOwner, PendingApprovals, ScopedApprovalCache};
 use executive::service::approval_service::{
     ApprovalContext, ApprovalService, ApprovalServiceError, ApprovalUseCases,

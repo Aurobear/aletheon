@@ -7,7 +7,7 @@ use fabric::{GoalId, GoalSnapshot, GoalSpec, GoalState, Objective, ObjectiveSumm
 use thiserror::Error;
 use tokio::sync::Mutex;
 
-use crate::r#impl::goal::ObjectiveStore;
+use crate::application::goal::ObjectiveStore;
 
 #[derive(Debug, Clone)]
 pub struct LegacyObjectiveDetail {

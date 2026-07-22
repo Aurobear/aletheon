@@ -38,9 +38,9 @@ pub(super) async fn activate_runtime_extensions(
 ) -> anyhow::Result<Arc<dyn crate::application::extension_service::ExtensionDecisionSink>> {
     let decisions: Arc<dyn crate::application::extension_service::ExtensionDecisionSink> = Arc::new(
         crate::application::extension_service::SpineExtensionDecisionSink::new(Arc::new(
-            crate::r#impl::events::SqliteEventSpine::open(state_root.join("extension-events.db"))
+            crate::adapters::events::SqliteEventSpine::open(state_root.join("extension-events.db"))
                 .unwrap_or_else(|_| {
-                    crate::r#impl::events::SqliteEventSpine::open(":memory:")
+                    crate::adapters::events::SqliteEventSpine::open(":memory:")
                         .expect("in-memory extension decision spine")
                 }),
         )),

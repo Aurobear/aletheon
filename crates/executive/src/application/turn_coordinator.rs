@@ -85,10 +85,10 @@ pub struct TurnCoordinator {
 impl TurnCoordinator {
     pub fn new(kernel: Arc<KernelRuntime>, store: Arc<dyn SessionAppendStore>) -> Self {
         let event_spine = Arc::new(
-            crate::r#impl::events::SqliteEventSpine::open(":memory:")
+            crate::adapters::events::SqliteEventSpine::open(":memory:")
                 .expect("in-memory event spine"),
         );
-        let projections = Arc::new(crate::r#impl::events::DefaultEventProjectionSet::in_memory());
+        let projections = Arc::new(crate::adapters::events::DefaultEventProjectionSet::in_memory());
         Self::with_components(kernel, store, event_spine, projections)
     }
 
@@ -98,10 +98,10 @@ impl TurnCoordinator {
         grok_hardening: GrokHardeningConfig,
     ) -> Self {
         let event_spine = Arc::new(
-            crate::r#impl::events::SqliteEventSpine::open(":memory:")
+            crate::adapters::events::SqliteEventSpine::open(":memory:")
                 .expect("in-memory event spine"),
         );
-        let projections = Arc::new(crate::r#impl::events::DefaultEventProjectionSet::in_memory());
+        let projections = Arc::new(crate::adapters::events::DefaultEventProjectionSet::in_memory());
         Self::with_components_and_grok(kernel, store, event_spine, projections, grok_hardening)
     }
 
@@ -110,7 +110,7 @@ impl TurnCoordinator {
         store: Arc<dyn SessionAppendStore>,
         event_spine: Arc<dyn EventSpine>,
     ) -> Self {
-        let projections = Arc::new(crate::r#impl::events::DefaultEventProjectionSet::in_memory());
+        let projections = Arc::new(crate::adapters::events::DefaultEventProjectionSet::in_memory());
         Self::with_components(kernel, store, event_spine, projections)
     }
 
@@ -120,7 +120,7 @@ impl TurnCoordinator {
         event_spine: Arc<dyn EventSpine>,
         grok_hardening: GrokHardeningConfig,
     ) -> Self {
-        let projections = Arc::new(crate::r#impl::events::DefaultEventProjectionSet::in_memory());
+        let projections = Arc::new(crate::adapters::events::DefaultEventProjectionSet::in_memory());
         Self::with_components_and_grok(kernel, store, event_spine, projections, grok_hardening)
     }
 
@@ -147,7 +147,7 @@ impl TurnCoordinator {
         grok_hardening: GrokHardeningConfig,
     ) -> Self {
         let store: Arc<dyn SessionAppendStore> = Arc::new(
-            crate::r#impl::session::event_sourced_store::EventSourcedSessionStore::new(
+            crate::adapters::session::event_sourced_store::EventSourcedSessionStore::new(
                 read_store.clone(),
                 event_spine.clone(),
                 projections,
@@ -171,7 +171,7 @@ impl TurnCoordinator {
         projections: Arc<dyn super::event_projection::EventProjectionSink>,
     ) -> Self {
         self.store = Arc::new(
-            crate::r#impl::session::event_sourced_store::EventSourcedSessionStore::new(
+            crate::adapters::session::event_sourced_store::EventSourcedSessionStore::new(
                 self.read_store.clone(),
                 self.event_spine.clone(),
                 projections,

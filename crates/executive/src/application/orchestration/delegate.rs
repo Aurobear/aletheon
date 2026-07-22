@@ -182,7 +182,7 @@ impl Tool for DelegateTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r#impl::orchestration::agent::{Agent, AgentConfig, Capability};
+    use crate::application::orchestration::agent::{Agent, AgentConfig, Capability};
     use tokio::sync::RwLock;
 
     /// Minimal mock agent for testing.

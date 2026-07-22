@@ -28,8 +28,8 @@ use crate::host::daemon::DaemonConfig;
 pub(super) struct AgentServices {
     pub agent_recovery: crate::application::agent_control::AgentRecoveryReport,
     pub agent_repository: Arc<SqliteAgentRunRepository>,
-    pub canonical_event_spine: Arc<crate::r#impl::events::SqliteEventSpine>,
-    pub event_projections: Arc<crate::r#impl::events::DefaultEventProjectionSet>,
+    pub canonical_event_spine: Arc<crate::adapters::events::SqliteEventSpine>,
+    pub event_projections: Arc<crate::adapters::events::DefaultEventProjectionSet>,
     pub agent_live_runs: Arc<crate::application::agent_control::LiveAgentRuns>,
 }
 
@@ -54,20 +54,20 @@ pub(super) async fn build_agent_services(
             .map_err(|error| anyhow::anyhow!(error.to_string()))?,
     );
     let canonical_event_spine = Arc::new(
-        crate::r#impl::events::SqliteEventSpine::open(data_dir.join("events.db"))
+        crate::adapters::events::SqliteEventSpine::open(data_dir.join("events.db"))
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "canonical event spine unavailable; using process-local fallback");
-                crate::r#impl::events::SqliteEventSpine::open(":memory:")
+                crate::adapters::events::SqliteEventSpine::open(":memory:")
                     .expect("in-memory event spine")
             }),
     );
     let event_projections = Arc::new(
-        crate::r#impl::events::DefaultEventProjectionSet::open(
+        crate::adapters::events::DefaultEventProjectionSet::open(
             data_dir.join("event-projections.db"),
         )
         .unwrap_or_else(|error| {
             tracing::warn!(%error, "event projections unavailable; using process-local fallback");
-            crate::r#impl::events::DefaultEventProjectionSet::in_memory()
+            crate::adapters::events::DefaultEventProjectionSet::in_memory()
         }),
     );
     let agent_daemon_generation = format!("daemon:{}", uuid::Uuid::new_v4());
@@ -174,7 +174,7 @@ pub(super) struct TurnServices {
     pub session_input: Arc<crate::application::session_input::SessionInputCoordinator>,
     pub session_gateway: Arc<SessionGateway>,
     pub turn_orchestrator: Arc<crate::application::DaemonTurnOrchestrator>,
-    pub approved_apply: Option<Arc<crate::r#impl::approval::ApplyCoordinator>>,
+    pub approved_apply: Option<Arc<crate::application::approval::ApplyCoordinator>>,
     pub lifecycle_registry: Arc<crate::application::lifecycle_contributors::LifecycleRegistry>,
 }
 
@@ -209,11 +209,11 @@ pub(super) async fn build_turn_services(
     capability_resources: crate::host::daemon::handler::tool_executor::CapabilityResources,
     conscious_registry: Arc<crate::application::conscious_workspace::ConsciousWorkspaceRegistry>,
     context_assembler: Arc<crate::application::context_assembler::ContextAssembler>,
-    apply_objective_store: Arc<std::sync::Mutex<crate::r#impl::goal::ObjectiveStore>>,
+    apply_objective_store: Arc<std::sync::Mutex<crate::application::goal::ObjectiveStore>>,
     param_registry: Arc<ParamRegistry>,
     agent_live_runs: Arc<crate::application::agent_control::LiveAgentRuns>,
-    canonical_event_spine: Arc<crate::r#impl::events::SqliteEventSpine>,
-    event_projections: Arc<crate::r#impl::events::DefaultEventProjectionSet>,
+    canonical_event_spine: Arc<crate::adapters::events::SqliteEventSpine>,
+    event_projections: Arc<crate::adapters::events::DefaultEventProjectionSet>,
     agent_profile_registry: Arc<crate::adapters::runtime::AgentProfileRegistry>,
     active_profile: Arc<Mutex<String>>,
     runtime: Arc<Mutex<crate::core::orchestrator::AletheonExecutive>>,
@@ -227,14 +227,14 @@ pub(super) async fn build_turn_services(
         let _ = std::fs::create_dir_all(parent);
     }
     let canonical_store =
-        crate::r#impl::session::canonical_store::CanonicalSessionStore::open(&session_db)
+        crate::adapters::session::canonical_store::CanonicalSessionStore::open(&session_db)
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, path = %session_db.display(), "canonical session store unavailable; using process-local fallback");
-                crate::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
+                crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
                     .expect("in-memory canonical session store")
             });
     let session_recovery =
-        crate::r#impl::session::event_sourced_store::reconcile_committed_session_events(
+        crate::adapters::session::event_sourced_store::reconcile_committed_session_events(
             canonical_event_spine.as_ref(),
             event_projections.as_ref(),
             &canonical_store,
@@ -268,7 +268,7 @@ pub(super) async fn build_turn_services(
     let session_input = if grok_hardening.prompt_queue {
         let coordinator =
             crate::application::session_input::SessionInputCoordinator::new(Arc::new(
-                crate::r#impl::session::prompt_queue_sqlite::SqlitePromptQueueStore::open(
+                crate::adapters::session::prompt_queue_sqlite::SqlitePromptQueueStore::open(
                     data_dir.join("prompt-queue.sqlite"),
                 )?,
             ))
@@ -295,7 +295,7 @@ pub(super) async fn build_turn_services(
     let workspace_checkpoint = Arc::new(
         crate::application::workspace_checkpoint::WorkspaceCheckpointService::new(
             Arc::new(
-                crate::r#impl::session::checkpoint_store_sqlite::SqliteCheckpointStore::open(
+                crate::adapters::session::checkpoint_store_sqlite::SqliteCheckpointStore::open(
                     data_dir.join("workspace-checkpoints.sqlite"),
                 )?,
             ),
@@ -420,19 +420,19 @@ pub(super) async fn build_turn_services(
 
     let approved_apply = if pi_runtime.enabled && pi_work_allowed {
         Some(Arc::new(
-            crate::r#impl::approval::ApplyCoordinator::new(
+            crate::application::approval::ApplyCoordinator::new(
                 apply_objective_store,
                 memory_group.approval_repository.clone(),
                 kernel.clone(),
                 clock.clone(),
-                crate::r#impl::approval::ApplyCoordinatorConfig {
+                crate::application::approval::ApplyCoordinatorConfig {
                     worktree_base: pi_runtime.worktree_base.clone(),
                     timeout: std::time::Duration::from_secs(60),
                 },
-                Arc::new(crate::r#impl::approval::GitManagedWorktreeCleaner),
+                Arc::new(crate::application::approval::GitManagedWorktreeCleaner),
             )?
             .with_memory_projection(
-                crate::r#impl::memory_projection::MemoryProjection::new(
+                crate::application::memory_projection::MemoryProjection::new(
                     canonical_event_spine.clone(),
                     event_projections.clone(),
                 ),

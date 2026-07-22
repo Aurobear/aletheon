@@ -1,4 +1,4 @@
-use executive::r#impl::health::{ComponentHealth, HealthClass, HealthRegistry};
+use executive::runtime::health::{ComponentHealth, HealthClass, HealthRegistry};
 
 #[test]
 fn required_store_failure_is_unready_but_optional_outages_are_degraded() {
