@@ -33,7 +33,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+      - name: Fetch architecture comparison base
+        shell: bash
+        run: |
+          base="${{ github.base_ref || 'dev' }}"
+          for attempt in 1 2 3 4 5; do
+            if git fetch --no-tags --depth=1 origin \
+              "+refs/heads/$base:refs/remotes/origin/$base"; then
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          exit 1
       - uses: dtolnay/rust-toolchain@stable
       - run: bash tests/architecture_check.sh
       - run: bash tests/architecture_path_inventory.sh
