@@ -439,7 +439,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_HTTP_TOKEN".into()),
                 oauth: None,
@@ -485,7 +485,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_CALL_TOKEN".into()),
                 oauth: None,
@@ -540,7 +540,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_TOOL_ERROR_TOKEN".into()),
                 oauth: None,
@@ -577,7 +577,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_401_TOKEN".into()),
                 oauth: None,
@@ -635,7 +635,7 @@ mod tests {
             transport: McpTransportConfig::StreamableHttp {
                 url: "http://localhost:9020/mcp".into(),
             },
-            trust: McpTrustLevel::RemoteTrusted,
+            trust: McpTrustLevel::LocalTrusted,
             enabled: true,
             bearer_token_env: Some("GBRAIN_READ_TOKEN".into()),
             oauth: None,
@@ -681,7 +681,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: false,
                 bearer_token_env: Some("TEST_DISABLED_TOKEN".into()),
                 oauth: None,
@@ -718,7 +718,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_RESOURCE_TOKEN".into()),
                 oauth: None,
@@ -774,7 +774,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_READ_RESOURCE_TOKEN".into()),
                 oauth: None,
@@ -812,7 +812,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_LIST_RESOURCES_TOKEN".into()),
                 oauth: None,
@@ -849,7 +849,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_RESOURCE_EXEC_TOKEN".into()),
                 oauth: None,
@@ -909,7 +909,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_PARALLEL_TOKEN".into()),
                 oauth: None,
@@ -953,7 +953,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_REFRESH_TOKEN".into()),
                 oauth: None,
@@ -996,7 +996,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_INITIAL_RECONNECT_TOKEN".into()),
                 oauth: None,
@@ -1053,7 +1053,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{addr}/mcp"),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_HEALTH_RECONNECT_TOKEN".into()),
                 oauth: None,

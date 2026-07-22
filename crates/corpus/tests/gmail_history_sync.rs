@@ -150,7 +150,7 @@ fn fixture_with_config(
         account,
         refreshes: AtomicUsize::new(0),
     });
-    let client = GoogleApiClient::new(
+    let client = GoogleApiClient::new_local(
         credentials.clone(),
         GoogleApiEndpoints {
             gmail_base: endpoint.into(),

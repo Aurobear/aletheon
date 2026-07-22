@@ -70,16 +70,21 @@ operations tool. Both of these deployments are valid:
 [[mcp_servers]]
 name = "gbrain"
 url = "http://127.0.0.1:3131/mcp"
+trust = "LocalTrusted"
 
 # Tailnet-reachable service
 [[mcp_servers]]
 name = "gbrain"
 url = "http://100.x.y.z:3131/mcp"
+trust = "RemoteTrusted"
 ```
 
 Use HTTPS for networks that are not already protected by a trusted private
 transport. `configure check` accepts only credential-free HTTP(S) URLs and
 rejects file URLs or URLs containing user information.
+`LocalTrusted` is loopback-only. `RemoteTrusted` permits non-loopback private
+addresses (for example a tailnet) but still rejects loopback, link-local and
+metadata addresses; use `Untrusted` for public-address-only MCP endpoints.
 
 ## First installation
 

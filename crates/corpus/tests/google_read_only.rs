@@ -180,7 +180,7 @@ async fn server(responses: Vec<MockResponse>) -> (String, Arc<Mutex<Vec<String>>
 
 fn gmail(endpoint: &str, credentials: Arc<Credentials>) -> GoogleGmailAdapter {
     GoogleGmailAdapter::new(
-        GoogleApiClient::new(
+        GoogleApiClient::new_local(
             credentials,
             GoogleApiEndpoints {
                 gmail_base: endpoint.into(),
@@ -194,7 +194,7 @@ fn gmail(endpoint: &str, credentials: Arc<Credentials>) -> GoogleGmailAdapter {
 
 fn calendar(endpoint: &str, credentials: Arc<Credentials>) -> GoogleCalendarAdapter {
     GoogleCalendarAdapter::new(
-        GoogleApiClient::new(
+        GoogleApiClient::new_local(
             credentials,
             GoogleApiEndpoints {
                 gmail_base: endpoint.into(),

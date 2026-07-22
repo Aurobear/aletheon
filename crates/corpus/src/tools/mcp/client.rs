@@ -8,8 +8,8 @@ use serde_json::Value;
 use tokio::sync::{mpsc, Mutex};
 
 use super::auth::{
-    discover_oauth_metadata, BearerTokenAuth, McpEndpointCredentialGrant, McpHttpAuth,
-    McpOAuthProvider, OAuthClientAuthMethod, OAuthEndpoints, TokenStore,
+    BearerTokenAuth, McpEndpointCredentialGrant, McpHttpAuth, McpOAuthProvider,
+    OAuthClientAuthMethod, OAuthEndpoints, TokenStore,
 };
 use super::config::{
     McpConfig, McpOAuthClientAuthMethod, McpPermissionLevel, McpServerConfig, McpTransportConfig,
@@ -48,6 +48,14 @@ pub trait ElicitationHandler: Send + Sync {
 
 async fn connect_mcp_server(server: &McpServerConfig, global_timeout_ms: u64) -> Result<McpClient> {
     let timeout_ms = server.request_timeout_ms.unwrap_or(global_timeout_ms);
+    if let McpTransportConfig::StreamableHttp { url } | McpTransportConfig::Sse { url } =
+        &server.transport
+    {
+        endpoint_policy(server.trust)
+            .approve(url)
+            .await
+            .context("MCP endpoint policy denied connection")?;
+    }
     let bearer_auth = server
         .bearer_token_env
         .as_ref()
@@ -116,6 +124,16 @@ async fn connect_mcp_server(server: &McpServerConfig, global_timeout_ms: u64) ->
     }
 }
 
+fn endpoint_policy(trust: McpTrustLevel) -> crate::tools::outbound::EndpointPolicy {
+    match trust {
+        McpTrustLevel::LocalTrusted => crate::tools::outbound::EndpointPolicy::local_loopback(),
+        McpTrustLevel::RemoteTrusted => {
+            crate::tools::outbound::EndpointPolicy::trusted_private_network()
+        }
+        McpTrustLevel::Untrusted => crate::tools::outbound::EndpointPolicy::public(),
+    }
+}
+
 #[cfg(test)]
 fn selected_http_auth_kind(server: &McpServerConfig) -> &'static str {
     let is_http = matches!(
@@ -139,6 +157,34 @@ async fn configured_oauth(
         return Ok(None);
     };
     validate_oauth_redirect_uri(&config.redirect_uri)?;
+    let policy = endpoint_policy(server.trust);
+    let discovered = match config.issuer.as_deref() {
+        Some(issuer) => {
+            Some(super::auth::discover_oauth_metadata_guarded(issuer, policy.clone()).await?)
+        }
+        None => None,
+    };
+    let auth_url = discovered
+        .as_ref()
+        .map(|value| value.authorization_endpoint.clone())
+        .or_else(|| config.authorization_endpoint.clone())
+        .context("OAuth requires issuer discovery or authorization_endpoint")?;
+    let token_url = discovered
+        .as_ref()
+        .map(|value| value.token_endpoint.clone())
+        .or_else(|| config.token_endpoint.clone())
+        .context("OAuth requires issuer discovery or token_endpoint")?;
+    policy
+        .approve(&auth_url)
+        .await
+        .context("MCP OAuth authorization endpoint denied")?;
+    policy
+        .approve(&token_url)
+        .await
+        .context("MCP OAuth token endpoint denied")?;
+
+    // Resolve credential material only after every credential-bearing endpoint
+    // has passed identity and post-DNS address policy.
     let client_id = std::env::var(&config.client_id_env).with_context(|| {
         format!(
             "OAuth client id environment variable {} is unavailable",
@@ -154,21 +200,6 @@ async fn configured_oauth(
             })
         })
         .transpose()?;
-
-    let discovered = match config.issuer.as_deref() {
-        Some(issuer) => Some(discover_oauth_metadata(issuer).await?),
-        None => None,
-    };
-    let auth_url = discovered
-        .as_ref()
-        .map(|value| value.authorization_endpoint.clone())
-        .or_else(|| config.authorization_endpoint.clone())
-        .context("OAuth requires issuer discovery or authorization_endpoint")?;
-    let token_url = discovered
-        .as_ref()
-        .map(|value| value.token_endpoint.clone())
-        .or_else(|| config.token_endpoint.clone())
-        .context("OAuth requires issuer discovery or token_endpoint")?;
     let method = match config.token_endpoint_auth_method {
         McpOAuthClientAuthMethod::None => OAuthClientAuthMethod::None,
         McpOAuthClientAuthMethod::ClientSecretBasic => OAuthClientAuthMethod::ClientSecretBasic,
@@ -360,7 +391,16 @@ impl McpClient {
         request_timeout_ms: u64,
     ) -> Result<Self> {
         let (notification_tx, notification_rx) = mpsc::channel(64);
-        let mut transport = McpTransport::streamable_http(url, auth, request_timeout_ms);
+        endpoint_policy(trust_level)
+            .approve(url)
+            .await
+            .context("MCP endpoint policy denied connection")?;
+        let mut transport = McpTransport::streamable_http_guarded(
+            url,
+            auth,
+            request_timeout_ms,
+            endpoint_policy(trust_level),
+        )?;
 
         // Initialize handshake
         let init_result = transport
@@ -426,8 +466,18 @@ impl McpClient {
         request_timeout_ms: u64,
     ) -> Result<Self> {
         let (notification_tx, notification_rx) = mpsc::channel(64);
-        let mut transport =
-            McpTransport::sse(url, auth, request_timeout_ms, notification_tx.clone()).await?;
+        endpoint_policy(trust_level)
+            .approve(url)
+            .await
+            .context("MCP endpoint policy denied connection")?;
+        let mut transport = McpTransport::sse_guarded(
+            url,
+            auth,
+            request_timeout_ms,
+            notification_tx.clone(),
+            endpoint_policy(trust_level),
+        )
+        .await?;
 
         // Initialize handshake
         let init_result = transport
@@ -995,135 +1045,17 @@ impl McpConnectionManager {
                 continue;
             }
 
-            let bearer_auth: Option<McpHttpAuth> = server_config
-                .bearer_token_env
-                .as_ref()
-                .and_then(|env_var| match &server_config.transport {
-                    McpTransportConfig::StreamableHttp { url } => {
-                        Some(BearerTokenAuth::with_endpoint_scoping(
-                            env_var.clone(),
-                            McpEndpointCredentialGrant::new(
-                                format!("mcp:{}", server_config.name),
-                                url,
-                                server_config.name.clone(),
-                                u64::MAX,
-                                0,
-                            ),
-                            Arc::new(kernel::chronos::SystemClock::new()),
-                        ))
-                    }
-                    McpTransportConfig::Sse { url } => {
-                        let principal = format!("mcp:{}", server_config.name);
-                        Some(
-                            BearerTokenAuth::with_endpoint_scoping(
-                                env_var.clone(),
-                                McpEndpointCredentialGrant::new(
-                                    principal.clone(),
-                                    url,
-                                    server_config.name.clone(),
-                                    u64::MAX,
-                                    0,
-                                ),
-                                Arc::new(kernel::chronos::SystemClock::new()),
-                            )
-                            .allow_endpoint(
-                                McpEndpointCredentialGrant::new(
-                                    principal,
-                                    &format!("{}/sse", url.trim_end_matches('/')),
-                                    server_config.name.clone(),
-                                    u64::MAX,
-                                    0,
-                                ),
-                            ),
-                        )
-                    }
-                    McpTransportConfig::Stdio { .. } => None,
-                })
-                .map(McpHttpAuth::from);
-            let auth = match bearer_auth {
-                Some(auth) => Some(auth),
-                None => match &server_config.transport {
-                    McpTransportConfig::StreamableHttp { url }
-                    | McpTransportConfig::Sse { url } => {
-                        configured_oauth(&server_config, url).await?
-                    }
-                    McpTransportConfig::Stdio { .. } => None,
-                },
-            };
-
-            let timeout_ms = server_config
-                .request_timeout_ms
-                .unwrap_or(global_timeout_ms);
-
-            match &server_config.transport {
-                McpTransportConfig::Stdio { command, args } => {
-                    match McpClient::connect_stdio(
-                        server_config.name.clone(),
-                        command,
-                        args,
-                        server_config.trust,
-                        timeout_ms,
-                    )
-                    .await
-                    {
-                        Ok(client) => {
-                            self.install_client(server_config.clone(), global_timeout_ms, client);
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                server = %server_config.name,
-                                error = %e,
-                                "Failed to connect MCP server"
-                            );
-                            self.spawn_initial_reconnect(server_config.clone(), global_timeout_ms);
-                        }
-                    }
+            match connect_mcp_server(&server_config, global_timeout_ms).await {
+                Ok(client) => {
+                    self.install_client(server_config.clone(), global_timeout_ms, client);
                 }
-                McpTransportConfig::StreamableHttp { url } => {
-                    match McpClient::connect_http(
-                        server_config.name.clone(),
-                        url,
-                        auth.clone(),
-                        server_config.trust,
-                        timeout_ms,
-                    )
-                    .await
-                    {
-                        Ok(client) => {
-                            self.install_client(server_config.clone(), global_timeout_ms, client);
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                server = %server_config.name,
-                                error = %e,
-                                "Failed to connect MCP server via HTTP"
-                            );
-                            self.spawn_initial_reconnect(server_config.clone(), global_timeout_ms);
-                        }
-                    }
-                }
-                McpTransportConfig::Sse { url } => {
-                    match McpClient::connect_sse(
-                        server_config.name.clone(),
-                        url,
-                        auth.clone(),
-                        server_config.trust,
-                        timeout_ms,
-                    )
-                    .await
-                    {
-                        Ok(client) => {
-                            self.install_client(server_config.clone(), global_timeout_ms, client);
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                server = %server_config.name,
-                                error = %e,
-                                "Failed to connect MCP server via SSE"
-                            );
-                            self.spawn_initial_reconnect(server_config.clone(), global_timeout_ms);
-                        }
-                    }
+                Err(error) => {
+                    tracing::warn!(
+                        server = %server_config.name,
+                        error = %error,
+                        "Failed to connect MCP server"
+                    );
+                    self.spawn_initial_reconnect(server_config.clone(), global_timeout_ms);
                 }
             }
         }
@@ -1564,5 +1496,32 @@ mod oauth_selection_tests {
         assert!(validate_oauth_redirect_uri("https://example.test/callback#token").is_err());
         assert!(validate_oauth_redirect_uri("http://127.0.0.1:8765/callback").is_ok());
         assert!(validate_oauth_redirect_uri("https://app.example.test/callback").is_ok());
+    }
+
+    #[tokio::test]
+    async fn oauth_credentials_are_not_resolved_before_endpoint_approval() {
+        let mut server = http_server();
+        server.trust = McpTrustLevel::RemoteTrusted;
+        server.oauth = Some(McpOAuthConfig {
+            enabled: true,
+            client_id_env: "ALETHEON_TEST_MISSING_CLIENT_ID".into(),
+            client_secret_env: Some("ALETHEON_TEST_MISSING_CLIENT_SECRET".into()),
+            redirect_uri: "http://127.0.0.1:8765/callback".into(),
+            scopes: vec!["tools:read".into()],
+            token_endpoint_auth_method: McpOAuthClientAuthMethod::ClientSecretPost,
+            issuer: None,
+            authorization_endpoint: Some("http://127.0.0.1:9/authorize".into()),
+            token_endpoint: Some("http://127.0.0.1:9/token".into()),
+        });
+
+        let error = match configured_oauth(&server, "https://mcp.example.test/rpc").await {
+            Ok(_) => panic!("prohibited OAuth endpoint was accepted"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            error.contains("endpoint denied"),
+            "unexpected error: {error}"
+        );
+        assert!(!error.contains("environment variable"));
     }
 }

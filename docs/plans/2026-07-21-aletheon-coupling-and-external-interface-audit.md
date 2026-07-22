@@ -595,14 +595,26 @@ GBrain 的建表、逐列补列、数据回填和 `user_version` 更新现在位
 
 ## 20. 网络安全补充（条件性 P1）
 
-`NetworkPolicy` 已实现默认拒绝、host/protocol/port/DNS 检查
-（`crates/fabric/src/types/network_policy.rs:53-104`）。但 `looks_like_ip` 只判断字符串是否
-像 IP，没有对 loopback、link-local/metadata、RFC1918 或 IPv6 ULA/loopback 分类
-（`network_policy.rs:210-227`）。
+`NetworkPolicy` 继续实现默认拒绝、host/protocol/port/DNS 检查
+（`crates/fabric/src/types/network_policy.rs:53-104`）。H7 没有把业务协议合并成万能服务，而是在
+Corpus 内加入最小 `EndpointPolicy`：公共、loopback 和显式可信私网是不同 trust class，公共
+地址策略拒绝 loopback、link-local/metadata、RFC1918、CGNAT、IPv6 ULA/loopback
+（`crates/corpus/src/tools/outbound.rs:12-145,179-225`）。
 
-风险是条件性的：默认拒绝时已有缓解；当 host/DNS 策略开放时，出站实现仍需在 DNS
-解析后及每次重定向后复验目标地址，避免私网目标与 DNS rebinding。该约束属于 Part I
-§6 的出站治理目标，而不是要求所有业务协议合并为一个服务。
+H7 先迁移 MCP 与 Google。策略在初次批准时解析并检查全部 DNS 结果，同时 reqwest 自定义
+resolver 在实际连接解析时再次检查，redirect 被统一禁用，超时被封顶为 30 秒
+（`crates/corpus/src/tools/outbound.rs:99-176`）。MCP 依据现有 `McpTrustLevel` 选择 endpoint
+trust class，并在 bearer/OAuth 构造前批准 endpoint；OAuth endpoint 也先批准再解析环境凭据
+（`crates/corpus/src/tools/mcp/client.rs:49-134,152-202`）。Google API 与 OAuth 同样在读取或发送
+credential 前批准请求 endpoint（`crates/corpus/src/tools/google/client.rs:91-145,257-278`、
+`crates/corpus/src/tools/google/oauth.rs:68-110,128-236`）。
+
+其余候选按收益复核后未混入 H7：Telegram transport 仍在 Gateway 内自行持有 client，且 token
+嵌入请求 path（`crates/gateway/src/telegram/mod.rs:22-80`），应作为下一次跨 crate transport port
+设计的首要候选；automation delivery 明确标为 parked/future 且多个 channel 仍是 placeholder
+（`crates/executive/src/impl/automation/delivery.rs:9-16,29-88`）；Qdrant 仅在
+`vector-qdrant` feature 下构造 client（`crates/mnemosyne/src/impl/vector_store.rs:142-163`）。
+这些路径没有被宣称已统一治理；H7 只完成计划要求的 MCP/Google 首批迁移与后续收益评估。
 
 ## 21. 错误可见性与有界存储
 

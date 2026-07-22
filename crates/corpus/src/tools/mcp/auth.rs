@@ -656,18 +656,25 @@ pub struct OAuthMetadata {
 /// returns non-200, or the response fails to parse; callers should fall
 /// back to statically configured endpoints.
 pub async fn discover_oauth_metadata(base_url: &str) -> Result<OAuthMetadata> {
+    discover_oauth_metadata_guarded(base_url, crate::tools::outbound::EndpointPolicy::public())
+        .await
+}
+
+pub(crate) async fn discover_oauth_metadata_guarded(
+    base_url: &str,
+    policy: crate::tools::outbound::EndpointPolicy,
+) -> Result<OAuthMetadata> {
     let url = format!(
         "{}/.well-known/oauth-authorization-server",
         base_url.trim_end_matches('/')
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        // Discovery carries no credential and redirects are still rejected:
-        // accepting metadata from a different origin would silently widen
-        // which authorization server controls the configured MCP endpoint.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
+    policy
+        .approve(&url)
+        .await
+        .context("OAuth discovery endpoint denied")?;
+    let client = policy
+        .client(std::time::Duration::from_secs(10))
         .context("failed to build OAuth discovery HTTP client")?;
 
     let resp = client
@@ -1333,7 +1340,12 @@ mod tests {
             }
         });
 
-        let metadata = discover_oauth_metadata(&base_url).await.unwrap();
+        let metadata = discover_oauth_metadata_guarded(
+            &base_url,
+            crate::tools::outbound::EndpointPolicy::local_loopback(),
+        )
+        .await
+        .unwrap();
         assert_eq!(metadata.issuer, base_url);
         assert_eq!(
             metadata.authorization_endpoint,
@@ -1390,7 +1402,11 @@ mod tests {
             }
         });
 
-        let result = discover_oauth_metadata(&base_url).await;
+        let result = discover_oauth_metadata_guarded(
+            &base_url,
+            crate::tools::outbound::EndpointPolicy::local_loopback(),
+        )
+        .await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("404"), "expected 404 in error: {err}");
@@ -1425,10 +1441,13 @@ mod tests {
                 .await;
         });
 
-        let error = discover_oauth_metadata(&base_url)
-            .await
-            .unwrap_err()
-            .to_string();
+        let error = discover_oauth_metadata_guarded(
+            &base_url,
+            crate::tools::outbound::EndpointPolicy::local_loopback(),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("302"), "unexpected redirect error: {error}");
         task.await.unwrap();
     }
@@ -1436,7 +1455,11 @@ mod tests {
     #[tokio::test]
     async fn discover_oauth_metadata_connection_refused_returns_error_not_panic() {
         let unreachable_url = "http://127.0.0.1:1";
-        let result = discover_oauth_metadata(unreachable_url).await;
+        let result = discover_oauth_metadata_guarded(
+            unreachable_url,
+            crate::tools::outbound::EndpointPolicy::local_loopback(),
+        )
+        .await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(

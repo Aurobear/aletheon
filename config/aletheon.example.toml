@@ -66,6 +66,7 @@ name = "gbrain"
 transport = "http"
 url = "http://127.0.0.1:9020/mcp"
 bearer_token_env = "GBRAIN_TOKEN"
+trust = "LocalTrusted"
 
 [daemon]
 socket_path = "/var/run/aletheon/aletheon.sock"

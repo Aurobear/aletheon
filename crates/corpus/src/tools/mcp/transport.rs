@@ -266,15 +266,33 @@ impl McpTransport {
         auth: Option<McpHttpAuth>,
         request_timeout_ms: u64,
     ) -> Self {
-        Self::StreamableHttp {
-            client: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect("static MCP HTTP client configuration must build"),
-            base_url: base_url.into(),
+        Self::streamable_http_guarded(
+            base_url,
             auth,
             request_timeout_ms,
-        }
+            crate::tools::outbound::EndpointPolicy::local_loopback(),
+        )
+        .expect("static MCP HTTP client configuration must build")
+    }
+
+    pub(crate) fn streamable_http_guarded(
+        base_url: impl Into<String>,
+        auth: Option<McpHttpAuth>,
+        request_timeout_ms: u64,
+        policy: crate::tools::outbound::EndpointPolicy,
+    ) -> Result<Self> {
+        let base_url = base_url.into();
+        policy
+            .validate_identity(&base_url)
+            .context("invalid MCP endpoint identity")?;
+        Ok(Self::StreamableHttp {
+            client: policy
+                .client(std::time::Duration::from_millis(request_timeout_ms))
+                .context("build guarded MCP HTTP client")?,
+            base_url,
+            auth,
+            request_timeout_ms,
+        })
     }
 
     /// Create an SSE transport.
@@ -287,10 +305,29 @@ impl McpTransport {
         request_timeout_ms: u64,
         notification_tx: mpsc::Sender<McpNotification>,
     ) -> Result<Self> {
+        Self::sse_guarded(
+            base_url,
+            auth,
+            request_timeout_ms,
+            notification_tx,
+            crate::tools::outbound::EndpointPolicy::local_loopback(),
+        )
+        .await
+    }
+
+    pub(crate) async fn sse_guarded(
+        base_url: impl Into<String>,
+        auth: Option<McpHttpAuth>,
+        request_timeout_ms: u64,
+        notification_tx: mpsc::Sender<McpNotification>,
+        policy: crate::tools::outbound::EndpointPolicy,
+    ) -> Result<Self> {
         let base_url = base_url.into();
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
+        policy
+            .validate_identity(&base_url)
+            .context("invalid MCP endpoint identity")?;
+        let client = policy
+            .client(std::time::Duration::from_millis(request_timeout_ms))
             .context("build MCP SSE client")?;
 
         let sse_url = format!("{}/sse", base_url.trim_end_matches('/'));

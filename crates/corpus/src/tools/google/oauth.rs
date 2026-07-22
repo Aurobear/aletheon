@@ -15,6 +15,8 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::tools::outbound::EndpointPolicy;
+
 pub const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 pub const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 pub const GOOGLE_REVOCATION_URL: &str = "https://oauth2.googleapis.com/revoke";
@@ -63,16 +65,44 @@ impl fmt::Debug for OAuthClientConfig {
 pub struct AsyncOAuthClient {
     config: OAuthClientConfig,
     client: reqwest::Client,
+    endpoint_policy: EndpointPolicy,
 }
 
 impl AsyncOAuthClient {
     pub fn new(config: OAuthClientConfig) -> Result<Self> {
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .build()
+        Self::with_endpoint_policy(config, EndpointPolicy::public())
+    }
+
+    #[cfg(test)]
+    fn new_local(config: OAuthClientConfig) -> Result<Self> {
+        Self::with_endpoint_policy(config, EndpointPolicy::local_loopback())
+    }
+
+    fn with_endpoint_policy(
+        config: OAuthClientConfig,
+        endpoint_policy: EndpointPolicy,
+    ) -> Result<Self> {
+        for endpoint in [
+            Some(config.auth_url.as_str()),
+            Some(config.token_url.as_str()),
+            config.revocation_url.as_deref(),
+            config.userinfo_url.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            endpoint_policy
+                .validate_identity(endpoint)
+                .context("OAuth endpoint identity denied")?;
+        }
+        let client = endpoint_policy
+            .client(Duration::from_secs(30))
             .context("building OAuth HTTP client")?;
-        Ok(Self { config, client })
+        Ok(Self {
+            config,
+            client,
+            endpoint_policy,
+        })
     }
 
     pub fn authorization_url(
@@ -110,6 +140,10 @@ impl AsyncOAuthClient {
         requested_scopes: &[String],
         now_secs: u64,
     ) -> Result<TokenEntry> {
+        self.endpoint_policy
+            .approve(&self.config.token_url)
+            .await
+            .context("OAuth token endpoint denied")?;
         let mut form = vec![
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -147,6 +181,10 @@ impl AsyncOAuthClient {
         requested_scopes: &[String],
         now_secs: u64,
     ) -> Result<TokenEntry> {
+        self.endpoint_policy
+            .approve(&self.config.token_url)
+            .await
+            .context("OAuth token endpoint denied")?;
         let refresh = current
             .refresh_token
             .as_deref()
@@ -192,6 +230,10 @@ impl AsyncOAuthClient {
             .revocation_url
             .as_deref()
             .context("OAuth revocation endpoint unavailable")?;
+        self.endpoint_policy
+            .approve(endpoint)
+            .await
+            .context("OAuth revocation endpoint denied")?;
         let response = self
             .client
             .post(endpoint)
@@ -209,6 +251,10 @@ impl AsyncOAuthClient {
             .userinfo_url
             .as_deref()
             .context("Google user-info endpoint unavailable")?;
+        self.endpoint_policy
+            .approve(endpoint)
+            .await
+            .context("Google user-info endpoint denied")?;
         let response = self
             .client
             .get(endpoint)
@@ -393,6 +439,29 @@ impl GoogleOAuthProvider {
         Ok(Self {
             oauth: AsyncOAuthClient::new(config)?,
             scopes,
+            pending: HashMap::new(),
+            tokens,
+            clock,
+        })
+    }
+
+    #[cfg(test)]
+    fn with_local_endpoints(
+        config: OAuthClientConfig,
+        scopes: Vec<ExternalScope>,
+        tokens: TokenStore,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
+        anyhow::ensure!(
+            !scopes.is_empty() && scopes.iter().all(|scope| scope.is_m6_allowed()),
+            "Google OAuth requested a non-read-only scope"
+        );
+        Ok(Self {
+            oauth: AsyncOAuthClient::new_local(config)?,
+            scopes: scopes
+                .into_iter()
+                .map(|scope| scope.oauth_name().to_owned())
+                .collect(),
             pending: HashMap::new(),
             tokens,
             clock,
@@ -711,7 +780,7 @@ mod tests {
     }
 
     fn async_client(endpoint: &str) -> AsyncOAuthClient {
-        AsyncOAuthClient::new(OAuthClientConfig {
+        AsyncOAuthClient::new_local(OAuthClientConfig {
             client_id: "client".into(),
             client_secret: Some("client-secret".into()),
             redirect_uri: "http://localhost/callback".into(),
@@ -760,7 +829,7 @@ mod tests {
         ])
         .await;
         let dir = tempfile::tempdir().unwrap();
-        let mut provider = GoogleOAuthProvider::with_endpoints(
+        let mut provider = GoogleOAuthProvider::with_local_endpoints(
             OAuthClientConfig {
                 client_id: "client".into(),
                 client_secret: None,
@@ -861,7 +930,7 @@ mod tests {
     async fn expired_state_is_consumed_before_network() {
         let dir = tempfile::tempdir().unwrap();
         let clock = Arc::new(TestClock::default());
-        let mut provider = GoogleOAuthProvider::with_endpoints(
+        let mut provider = GoogleOAuthProvider::with_local_endpoints(
             OAuthClientConfig {
                 client_id: "client".into(),
                 client_secret: None,
