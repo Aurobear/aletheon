@@ -1,4 +1,4 @@
-use dasein::r#impl::perception::visual_aggregator::{VisualAggregator, VisualAggregatorConfig};
+use dasein::perception::visual_aggregator::{VisualAggregator, VisualAggregatorConfig};
 
 #[test]
 fn integration_dedup_and_rate_limit() {

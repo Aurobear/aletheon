@@ -1,4 +1,4 @@
-use crate::r#impl::security::{PolicyEngine, PolicyVerdict};
+use fabric::security::policy::{PolicyEngine, PolicyVerdict};
 use fabric::self_field::{AwarenessRiskLevel, Verdict};
 use serde_json::Value;
 

@@ -15,7 +15,7 @@ use cognit::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHand
 use cognit::inference::scheduler::LlmScheduler;
 use cognit::testing::mock_llm::MockLlmProvider;
 use dasein::core::mutation::MutationLayer;
-use dasein::r#impl::mutation::MutationApprover;
+use dasein::mutation::MutationApprover;
 use fabric::evolution::*;
 use fabric::{LlmProvider, StopReason};
 use uuid::Uuid;

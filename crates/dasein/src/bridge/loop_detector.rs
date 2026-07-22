@@ -1,4 +1,4 @@
-use crate::r#impl::security::{LoopDetector, LoopDetectorConfig, LoopVerdict};
+use fabric::security::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
 use fabric::self_field::{AwarenessRiskLevel, Verdict};
 use fabric::tool::ToolResult;
 use parking_lot::Mutex;

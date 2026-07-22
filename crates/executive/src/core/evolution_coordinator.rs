@@ -14,7 +14,7 @@ use fabric::cognit::{ExecutionResult, ReflectionEntry, ReflectionTrigger};
 use fabric::dasein::Stimmung;
 use fabric::self_field::SelfAwareness;
 use fabric::Clock;
-use metacog::r#impl::morphogenesis::mutation_intent::MutationIntentGenerator;
+use metacog::evolution::MutationIntentGenerator;
 use metacog::{MetacogService, VerificationReceipt, VerifyMutation};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};

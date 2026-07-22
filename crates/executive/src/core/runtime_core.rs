@@ -31,7 +31,7 @@ use crate::host::daemon::handler::RequestHandler;
 use crate::host::daemon::DaemonConfig;
 use cognit::composition::provider_registry::ProviderRegistry;
 
-use dasein::r#impl::perception::PerceptionEvent;
+use dasein::perception::PerceptionEvent;
 
 /// The agent runtime core — all agent-level state, host-independent.
 pub struct RuntimeCore {
@@ -204,7 +204,7 @@ impl RuntimeCore {
             let enable_journald = perception_config.enable_journald;
             let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
             tokio::spawn(async move {
-                let mut manager = dasein::r#impl::perception::manager::PerceptionManager::new(
+                let mut manager = dasein::perception::manager::PerceptionManager::new(
                     event_tx,
                     watch_paths,
                     enable_journald,
