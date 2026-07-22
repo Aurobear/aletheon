@@ -133,8 +133,8 @@ pub struct ProductionHealthUseCases {
     started_at: fabric::MonoTime,
     active_connections: Arc<AtomicUsize>,
     daemon_cancel: CancellationToken,
-    telegram_task: Arc<Mutex<Option<Arc<tokio::task::JoinHandle<()>>>>>,
-    google_sync: Option<Arc<dyn BackgroundWorkerPort>>,
+    channel_task: Arc<Mutex<Option<Arc<tokio::task::JoinHandle<()>>>>>,
+    external_sync: Option<Arc<dyn BackgroundWorkerPort>>,
     goal_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     agent_recovery: crate::application::agent_control::AgentRecoveryReport,
 }
@@ -150,8 +150,8 @@ pub struct ProductionHealthResources {
     pub started_at: fabric::MonoTime,
     pub active_connections: Arc<AtomicUsize>,
     pub daemon_cancel: CancellationToken,
-    pub telegram_task: Arc<Mutex<Option<Arc<tokio::task::JoinHandle<()>>>>>,
-    pub google_sync: Option<Arc<dyn BackgroundWorkerPort>>,
+    pub channel_task: Arc<Mutex<Option<Arc<tokio::task::JoinHandle<()>>>>>,
+    pub external_sync: Option<Arc<dyn BackgroundWorkerPort>>,
     pub goal_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     pub agent_recovery: crate::application::agent_control::AgentRecoveryReport,
 }
@@ -169,8 +169,8 @@ impl ProductionHealthUseCases {
             started_at: resources.started_at,
             active_connections: resources.active_connections,
             daemon_cancel: resources.daemon_cancel,
-            telegram_task: resources.telegram_task,
-            google_sync: resources.google_sync,
+            channel_task: resources.channel_task,
+            external_sync: resources.external_sync,
             goal_worker: resources.goal_worker,
             agent_recovery: resources.agent_recovery,
         }
@@ -221,16 +221,16 @@ impl HealthUseCases for ProductionHealthUseCases {
             maximum_backup_age_secs,
         );
         self.registry.set(
-            "telegram",
-            match self.telegram_task.lock().await.as_ref() {
+            "channel",
+            match self.channel_task.lock().await.as_ref() {
                 Some(task) if task.is_finished() => ComponentHealth::degraded("worker_stopped"),
                 Some(_) => ComponentHealth::ready(),
                 None => ComponentHealth::disabled(),
             },
         );
         self.registry.set(
-            "google_sync",
-            match &self.google_sync {
+            "external_sync",
+            match &self.external_sync {
                 Some(sync) if sync.is_running().await => ComponentHealth::ready(),
                 Some(_) => ComponentHealth::degraded("worker_stopped"),
                 None => ComponentHealth::disabled(),
@@ -740,33 +740,33 @@ impl TurnUseCases for ProductionTurnUseCases {
 }
 
 #[derive(Debug, Error)]
-pub enum GoogleUseCaseError {
-    #[error("google_not_configured")]
+pub enum ExternalSourceUseCaseError {
+    #[error("external_source_not_configured")]
     Unavailable,
-    #[error("google_account_not_found")]
+    #[error("external_identity_not_found")]
     NotFound,
-    #[error("google_account_revoked_or_scope_denied")]
+    #[error("external_identity_revoked_or_scope_denied")]
     Forbidden,
-    #[error("google provider operation failed")]
+    #[error("external source operation failed")]
     Provider,
 }
 
 #[async_trait]
-pub trait GoogleUseCases: Send + Sync {
-    async fn authorization_start(&self) -> Result<serde_json::Value, GoogleUseCaseError>;
+pub trait ExternalSourceUseCases: Send + Sync {
+    async fn authorization_start(&self) -> Result<serde_json::Value, ExternalSourceUseCaseError>;
     async fn authorization_callback(
         &self,
         code: String,
         state: String,
         alias: Option<String>,
-    ) -> Result<serde_json::Value, GoogleUseCaseError>;
-    async fn accounts(&self) -> Result<Vec<serde_json::Value>, GoogleUseCaseError>;
-    async fn revoke(&self, account: String) -> Result<(bool, bool), GoogleUseCaseError>;
-    async fn refresh(&self, account: String) -> Result<GoogleRefresh, GoogleUseCaseError>;
+    ) -> Result<serde_json::Value, ExternalSourceUseCaseError>;
+    async fn accounts(&self) -> Result<Vec<serde_json::Value>, ExternalSourceUseCaseError>;
+    async fn revoke(&self, account: String) -> Result<(bool, bool), ExternalSourceUseCaseError>;
+    async fn refresh(&self, account: String) -> Result<ExternalRefreshStatus, ExternalSourceUseCaseError>;
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct GoogleRefresh {
+pub struct ExternalRefreshStatus {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,

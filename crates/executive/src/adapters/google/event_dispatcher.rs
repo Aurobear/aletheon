@@ -10,7 +10,7 @@ use crate::r#impl::goal::GoalCoordinator;
 use fabric::channel::{MessageContent, OutboundMessage};
 use fabric::{ConversationId, ExternalEvent};
 use gateway::registry::{EventCapabilityHandler, EventCapabilityRegistry, IntentKind};
-use gateway::store::ChannelStore;
+use gateway::ChannelStore;
 use std::path::Path;
 
 #[async_trait]
@@ -187,7 +187,7 @@ pub struct GoogleEventRouter {
     goals: Arc<GoalCoordinator>,
     notifications: Arc<dyn GoogleNotificationSink>,
     /// Event capabilities keyed by [`IntentKind`] (currently only
-    /// [`IntentKind::GmailIngest`]) — the channel-registry seam that
+    /// [`IntentKind::ExternalEventIngest`]) — the channel-registry seam that
     /// replaced the former hardcoded mail-ingress branch. Gmail's own
     /// stores/idempotency/security remain entirely inside the registered
     /// handler; this router only decides *whether* to invoke it.
@@ -217,8 +217,8 @@ impl GoogleEventRouter {
         self
     }
 
-    /// Register an [`EventCapabilityHandler`] (e.g. Gmail's `GmailIngestHandler`,
-    /// keyed by [`IntentKind::GmailIngest`]) that `deliver` invokes directly
+    /// Register an [`EventCapabilityHandler`] (e.g. Gmail's `ExternalEventIngestHandler`,
+    /// keyed by [`IntentKind::ExternalEventIngest`]) that `deliver` invokes directly
     /// for matching events — bypassing duplex `ChannelDispatcher::process`.
     pub fn with_mail_ingress(mut self, handler: Arc<dyn EventCapabilityHandler>) -> Self {
         self.event_capabilities.register(handler);
@@ -261,7 +261,7 @@ impl GoogleEventSink for GoogleEventRouter {
                 .map_err(|error| error.to_string())?
         };
         if matches!(event.event, ExternalEvent::MailReceived(_)) {
-            if let Some(handler) = self.event_capabilities.get(IntentKind::GmailIngest) {
+            if let Some(handler) = self.event_capabilities.get(IntentKind::ExternalEventIngest) {
                 handler
                     .handle(event, cancel)
                     .await
@@ -270,7 +270,7 @@ impl GoogleEventSink for GoogleEventRouter {
         }
         for subscription in subscriptions {
             self.goals
-                .wake_for_google_event(&subscription.principal_id, event)
+                .wake_for_external_event(&subscription.principal_id, event)
                 .map_err(|error| error.to_string())?;
             if let Some(conversation) = subscription.query.telegram_conversation_id {
                 self.notifications

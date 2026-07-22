@@ -13,7 +13,7 @@ use fabric::{
 use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
-use gateway::store::ChannelStore;
+use gateway::ChannelStore;
 use rusqlite::Connection;
 use std::collections::VecDeque;
 use std::path::PathBuf;

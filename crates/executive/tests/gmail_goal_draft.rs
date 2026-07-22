@@ -2,10 +2,10 @@ use corpus::tools::google::oauth::GoogleBinding;
 use executive::r#impl::approval::{ApprovalDecision, ApprovalResolutionContext};
 use executive::r#impl::artifact::{ArtifactRecord, ArtifactScanStatus};
 use executive::r#impl::channel::daemon_adapter::{
-    ApprovalRepositoryPort, DaemonGmailDraftApprovalExecutor,
+    ApprovalRepositoryPort, DaemonExternalDraftApprovalExecutor,
 };
 use executive::r#impl::channel::gmail::ingest::{
-    GmailIngestResult, GmailOriginalReference, IngestedAttachment,
+    ExternalEventIngestResult, GmailOriginalReference, IngestedAttachment,
 };
 use executive::r#impl::channel::gmail::sender_policy::{
     AuthenticationRequirement, GmailHeader, GmailSenderPolicy,
@@ -23,7 +23,7 @@ use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
 use gateway::registry::ApprovalResolver;
-use gateway::store::ChannelStore;
+use gateway::ChannelStore;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -104,8 +104,8 @@ impl Fixture {
             .1
     }
 
-    fn ingested(&self, id: &str, intent: &str) -> GmailIngestResult {
-        GmailIngestResult {
+    fn ingested(&self, id: &str, intent: &str) -> ExternalEventIngestResult {
+        ExternalEventIngestResult {
             body_text: intent.into(),
             original: GmailOriginalReference {
                 account_id: self.account,
@@ -447,7 +447,7 @@ async fn telegram_review_has_confirm_edit_reject_and_replayed_confirm_is_idempot
         .unwrap();
     let approval_repo = coordinator.lock().unwrap().approval_repository();
     let gmail_resolver: Arc<dyn ApprovalResolver> =
-        Arc::new(DaemonGmailDraftApprovalExecutor::new(coordinator));
+        Arc::new(DaemonExternalDraftApprovalExecutor::new(coordinator));
     let mut router = ChannelDispatcher::new(channels, Arc::new(NoTurn))
         .with_approval_port(Arc::new(ApprovalRepositoryPort::new(approval_repo)))
         .with_approval_resolver(ApprovalCategory::ActivateGoal, gmail_resolver);

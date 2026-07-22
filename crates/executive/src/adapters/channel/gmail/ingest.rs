@@ -23,7 +23,7 @@ pub struct GmailMimePart {
 }
 
 #[derive(Debug, Clone)]
-pub struct GmailIngestMessage {
+pub struct ExternalEventIngestMessage {
     pub account_id: ExternalIdentityId,
     pub message_id: String,
     pub thread_id: String,
@@ -32,7 +32,7 @@ pub struct GmailIngestMessage {
 }
 
 #[derive(Debug, Clone)]
-pub struct GmailIngestConfig {
+pub struct ExternalEventIngestConfig {
     pub max_depth: usize,
     pub max_parts: usize,
     pub max_attachments: usize,
@@ -42,7 +42,7 @@ pub struct GmailIngestConfig {
     pub allowed_attachment_mimes: HashSet<String>,
 }
 
-impl Default for GmailIngestConfig {
+impl Default for ExternalEventIngestConfig {
     fn default() -> Self {
         Self {
             max_depth: 8,
@@ -98,30 +98,30 @@ impl IngestedAttachment {
 }
 
 #[derive(Debug, Clone)]
-pub struct GmailIngestResult {
+pub struct ExternalEventIngestResult {
     pub body_text: String,
     pub original: GmailOriginalReference,
     pub attachments: Vec<IngestedAttachment>,
 }
 
 pub struct GmailMessageIngester {
-    config: GmailIngestConfig,
+    config: ExternalEventIngestConfig,
 }
 
 impl GmailMessageIngester {
-    pub fn new(config: GmailIngestConfig) -> anyhow::Result<Self> {
+    pub fn new(config: ExternalEventIngestConfig) -> anyhow::Result<Self> {
         validate_config(&config)?;
         Ok(Self { config })
     }
 
     pub async fn ingest(
         &self,
-        message: &GmailIngestMessage,
+        message: &ExternalEventIngestMessage,
         fetcher: &dyn GmailAttachmentFetcher,
         artifacts: &ArtifactStore,
         now_ms: i64,
         cancel: &CancellationToken,
-    ) -> anyhow::Result<GmailIngestResult> {
+    ) -> anyhow::Result<ExternalEventIngestResult> {
         validate_message(message, now_ms)?;
         let mut flattened = Vec::new();
         flatten(&message.root, 0, &self.config, &mut flattened)?;
@@ -219,7 +219,7 @@ impl GmailMessageIngester {
                 unavailable_reason: Some("unscanned".into()),
             });
         }
-        Ok(GmailIngestResult {
+        Ok(ExternalEventIngestResult {
             body_text,
             original: GmailOriginalReference {
                 account_id: message.account_id,
@@ -232,7 +232,7 @@ impl GmailMessageIngester {
     }
 }
 
-fn validate_config(config: &GmailIngestConfig) -> anyhow::Result<()> {
+fn validate_config(config: &ExternalEventIngestConfig) -> anyhow::Result<()> {
     anyhow::ensure!(
         (1..=16).contains(&config.max_depth),
         "invalid MIME depth cap"
@@ -261,7 +261,7 @@ fn validate_config(config: &GmailIngestConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn validate_message(message: &GmailIngestMessage, now_ms: i64) -> anyhow::Result<()> {
+fn validate_message(message: &ExternalEventIngestMessage, now_ms: i64) -> anyhow::Result<()> {
     anyhow::ensure!(
         now_ms >= 0 && message.source_timestamp_ms >= 0,
         "invalid message time"
@@ -278,7 +278,7 @@ fn validate_message(message: &GmailIngestMessage, now_ms: i64) -> anyhow::Result
 fn flatten<'a>(
     part: &'a GmailMimePart,
     depth: usize,
-    config: &GmailIngestConfig,
+    config: &ExternalEventIngestConfig,
     output: &mut Vec<&'a GmailMimePart>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(depth <= config.max_depth, "nested multipart depth exceeded");
@@ -311,7 +311,7 @@ fn is_attachment(part: &GmailMimePart) -> bool {
 
 fn attachment_rejection<'a>(
     part: &'a GmailMimePart,
-    config: &GmailIngestConfig,
+    config: &ExternalEventIngestConfig,
 ) -> Option<&'a str> {
     let filename = match part.filename.as_deref() {
         Some(filename) => filename,

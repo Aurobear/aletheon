@@ -6,7 +6,7 @@ gbrain	(?i)\bgbrain\b|Gbrain[A-Z]|GBRAIN_	crates/mnemosyne/src/backends/suppleme
 anthropic	(?i)\banthropic\b|Anthropic[A-Z]|ANTHROPIC_	crates/cognit/src/impl/llm/	inference provider	inference adapter id/capability	7
 openai	(?i)\bopenai\b|OpenAi[A-Z]|OPENAI_	crates/cognit/src/impl/llm/	inference provider	inference adapter id/capability	7
 ollama	(?i)\bollama\b|Ollama[A-Z]|OLLAMA_	crates/cognit/src/impl/llm/	inference provider	inference adapter id/capability	7
-telegram	(?i)\btelegram\b|Telegram[A-Z]|TELEGRAM_	crates/gateway/src/telegram/	channel provider	channel adapter id	6
+telegram	(?i)\btelegram\b|Telegram[A-Z]|TELEGRAM_	crates/gateway/src/adapters/telegram/	channel provider	channel adapter id	6
 ros	\bROS(?:2)?\b|\bRos[A-Z]|ROS_	crates/hardware/src/grpc/	robot middleware	generic embodiment diagnostics	6
 kuavo	(?i)\bkuavo\b|Kuavo[A-Z]|KUAVO_	crates/hardware/src/grpc/	robot vendor	device capability metadata	6
 pi_runtime	\bPi(?:Runtime|Attempt|Rpc|Coder|Session)\b|\bPI_CODER\b	crates/executive/src/adapters/runtime/	coding-runtime implementation	coding runtime adapter	3

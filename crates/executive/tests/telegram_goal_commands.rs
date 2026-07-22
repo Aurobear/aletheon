@@ -9,7 +9,7 @@ use fabric::channel::{
 use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
-use gateway::store::ChannelStore;
+use gateway::ChannelStore;
 use tokio::sync::Mutex;
 
 struct NoTurn;

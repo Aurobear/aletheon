@@ -1,13 +1,13 @@
-//! Google-read preflight capability.
+//! External-source read preflight capability.
 //!
-//! Detects bounded read-only Google intents (e.g. "today's events", "unread
+//! Detects bounded read-only external-source intents (e.g. "today's events", "unread
 //! mail") arriving as chat text and either asks the user to pick an account
 //! (no LLM involved) or rewrites the query with a
-//! `<trusted-google-account>` marker before the normal turn executor runs.
+//! `<trusted-external-account>` marker before the normal turn executor runs.
 //!
 //! This module is the *only* place in `channel/` allowed to know about
-//! Google. It is wired into [`super::chat::ChatHandler`] through the neutral
-//! [`ChatPreprocessor`] hook, and only when a Google integration is
+//! providers. It is wired into [`super::chat::ChatHandler`] through the neutral
+//! [`ChatPreprocessor`] hook, and only when a external-source integration is
 //! configured (see `bootstrap/channels.rs`). `dispatcher.rs` and
 //! `telegram/mod.rs` must stay free of any reference to it.
 
@@ -39,36 +39,36 @@ pub enum ChatPreprocess {
 }
 
 // ---------------------------------------------------------------------------
-// Google account directory
+// external account directory
 // ---------------------------------------------------------------------------
 
 #[async_trait]
-pub trait GoogleChannelAccountDirectory: Send + Sync {
+pub trait ExternalAccountDirectory: Send + Sync {
     async fn active_account_labels(&self, principal: &str) -> anyhow::Result<Vec<String>>;
 }
 
 // ---------------------------------------------------------------------------
-// GoogleReadPreprocessor
+// ExternalReadPreprocessor
 // ---------------------------------------------------------------------------
 
-/// [`ChatPreprocessor`] that gates bounded read-only Google intents behind
+/// [`ChatPreprocessor`] that gates bounded read-only external-source intents behind
 /// an explicit account choice (multiple active accounts) or wraps the query
-/// with a `<trusted-google-account>` marker (exactly one active account).
-/// Non-Google-read text passes through unchanged.
-pub struct GoogleReadPreprocessor {
-    accounts: Arc<dyn GoogleChannelAccountDirectory>,
+/// with a `<trusted-external-account>` marker (exactly one active account).
+/// Non-External-source read text passes through unchanged.
+pub struct ExternalReadPreprocessor {
+    accounts: Arc<dyn ExternalAccountDirectory>,
 }
 
-impl GoogleReadPreprocessor {
-    pub fn new(accounts: Arc<dyn GoogleChannelAccountDirectory>) -> Self {
+impl ExternalReadPreprocessor {
+    pub fn new(accounts: Arc<dyn ExternalAccountDirectory>) -> Self {
         Self { accounts }
     }
 }
 
 #[async_trait]
-impl ChatPreprocessor for GoogleReadPreprocessor {
+impl ChatPreprocessor for ExternalReadPreprocessor {
     async fn preprocess(&self, principal: &str, text: &str) -> anyhow::Result<ChatPreprocess> {
-        if !is_google_read_query(text) {
+        if !is_external_read_query(text) {
             return Ok(ChatPreprocess::Passthrough);
         }
         let labels = self.accounts.active_account_labels(principal).await?;
@@ -88,9 +88,9 @@ impl ChatPreprocessor for GoogleReadPreprocessor {
 // Pure helpers (moved from `telegram/mod.rs`)
 // ---------------------------------------------------------------------------
 
-/// Detect the bounded read-only Google intents that need an explicit account
+/// Detect the bounded read-only external-source intents that need an explicit account
 /// selection before entering the normal ReAct pipeline.
-pub(crate) fn is_google_read_query(text: &str) -> bool {
+pub(crate) fn is_external_read_query(text: &str) -> bool {
     let normalized = text.to_ascii_lowercase();
     [
         "today's events",
@@ -116,12 +116,12 @@ pub(crate) fn account_choice_prompt(labels: &[String]) -> String {
         .map(|(index, label)| format!("{}. {}", index + 1, truncate_label(label)))
         .collect::<Vec<_>>()
         .join("\n");
-    format!("Please choose a Google account before I run this read-only query:\n{choices}")
+    format!("Please choose a external account before I run this read-only query:\n{choices}")
 }
 
 pub(crate) fn selected_account_context(label: &str, query: &str) -> String {
     format!(
-        "<trusted-google-account>{}</trusted-google-account>\n{}",
+        "<trusted-external-account>{}</trusted-external-account>\n{}",
         truncate_label(label),
         query
     )

@@ -47,7 +47,7 @@ fn optional_result(result: anyhow::Result<Option<ConfiguredGoogleReadTools>>) ->
 }
 
 pub(super) fn compose_google(input: GoogleCompositionInput<'_>) -> GoogleComposition {
-    let composition = optional_result(super::google::register_configured_google_read_tools(
+    let composition = optional_result(super::google::register_configured_external_read_tools(
         input.tools,
         input.objective_db_path,
         input.clock,

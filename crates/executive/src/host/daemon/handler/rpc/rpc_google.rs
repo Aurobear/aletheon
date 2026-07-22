@@ -1,7 +1,7 @@
 //! Authenticated local Google account control-plane RPC.
 
 use super::RequestHandler;
-use crate::application::request_use_cases::GoogleUseCaseError;
+use crate::application::request_use_cases::ExternalSourceUseCaseError;
 use serde_json::{json, Value};
 
 const GOOGLE_INVALID_PARAMS: i64 = -32602;
@@ -79,14 +79,14 @@ impl RequestHandler {
     }
 }
 
-fn google_error(id: &Value, error: GoogleUseCaseError) -> Value {
+fn google_error(id: &Value, error: ExternalSourceUseCaseError) -> Value {
     match error {
-        GoogleUseCaseError::Unavailable => rpc_error(id, -32070, "google_not_configured"),
-        GoogleUseCaseError::NotFound => rpc_error(id, -32073, "google_account_not_found"),
-        GoogleUseCaseError::Forbidden => {
+        ExternalSourceUseCaseError::Unavailable => rpc_error(id, -32070, "google_not_configured"),
+        ExternalSourceUseCaseError::NotFound => rpc_error(id, -32073, "google_account_not_found"),
+        ExternalSourceUseCaseError::Forbidden => {
             rpc_error(id, -32073, "google_account_revoked_or_scope_denied")
         }
-        GoogleUseCaseError::Provider => rpc_error(id, -32074, "google_provider_operation_failed"),
+        ExternalSourceUseCaseError::Provider => rpc_error(id, -32074, "google_provider_operation_failed"),
     }
 }
 

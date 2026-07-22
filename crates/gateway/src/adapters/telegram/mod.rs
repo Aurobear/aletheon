@@ -13,7 +13,7 @@ use fabric::channel::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::dispatcher::{ChannelTransport, ProviderEnvelope};
+use crate::dispatcher::{ChannelTransport, ProviderEnvelope};
 use types::{
     GetUpdatesResponse, InlineKeyboardButton, InlineKeyboardMarkup, SendMessageRequest,
     SendMessageResponse,

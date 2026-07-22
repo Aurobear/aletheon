@@ -1,6 +1,6 @@
 use corpus::tools::google::oauth::GoogleBinding;
 use executive::r#impl::external::ExternalIdentityRepository;
-use executive::r#impl::goal::coordinator::{GoalCoordinator, GoogleEventWaitCondition};
+use executive::r#impl::goal::coordinator::{GoalCoordinator, ExternalEventWaitCondition};
 use executive::r#impl::goal::ObjectiveStore;
 use executive::r#impl::google::{
     DurableGoogleNotificationSink, GoogleCurrentTaskProjection, GoogleEventDispatcher,
@@ -13,7 +13,7 @@ use fabric::{
     ExternalEventId, ExternalIdentityId, ExternalObjectRef, ExternalProviderId, ExternalRecordRef,
     MailChange, MailMessageSummary, OpaqueCursor, OpaqueProviderObjectId, PrincipalId,
 };
-use gateway::store::ChannelStore;
+use gateway::ChannelStore;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -197,7 +197,7 @@ async fn subscriptions_route_once_wake_explicit_goals_and_keep_memory_as_proposa
             &serde_json::json!({"test":true}),
         )
         .unwrap();
-    let condition = GoogleEventWaitCondition {
+    let condition = ExternalEventWaitCondition {
         account_id: fixture.account,
         event_id: None,
         object_id: Some("message-1".into()),

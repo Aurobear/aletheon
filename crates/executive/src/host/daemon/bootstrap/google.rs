@@ -26,7 +26,7 @@ pub(super) type ConfiguredGoogleReadTools = (
     Option<Arc<GmailGoalEventIngress>>,
 );
 
-pub(super) fn register_configured_google_read_tools(
+pub(super) fn register_configured_external_read_tools(
     tools: &mut ToolRegistry,
     objective_db_path: &std::path::Path,
     clock: Arc<dyn Clock>,

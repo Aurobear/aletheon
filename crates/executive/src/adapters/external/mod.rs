@@ -143,7 +143,7 @@ impl GoogleIntegration {
 }
 
 #[async_trait]
-impl gateway::handlers::google_read::GoogleChannelAccountDirectory for GoogleIntegration {
+impl gateway::handlers::external_read::ExternalAccountDirectory for GoogleIntegration {
     async fn active_account_labels(&self, principal: &str) -> anyhow::Result<Vec<String>> {
         let bindings = self
             .repository
@@ -256,4 +256,4 @@ impl GoogleCredentialSource for ExecutiveGoogleCredentialSource {
     }
 }
 
-pub use google_use_cases::ProductionGoogleUseCases;
+pub use google_use_cases::ProductionExternalSourceUseCases;

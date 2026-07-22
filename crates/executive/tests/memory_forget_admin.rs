@@ -128,7 +128,7 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         pending_approvals: executive::service::admin_service::PendingApprovals::default(),
         session_approvals: executive::service::admin_service::ScopedApprovalCache::default(),
         daemon_cancel: CancellationToken::new(),
-        google_sync: None,
+        external_sync: None,
         gbrain_worker: None,
         goal_worker: None,
         runtime_shutdown: Arc::new(|| Box::pin(async { Ok(()) })),

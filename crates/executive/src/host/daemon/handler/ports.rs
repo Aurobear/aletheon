@@ -6,7 +6,7 @@ use mnemosyne::FactUseCases;
 
 use crate::application::legacy_session_service::LegacySessionUseCases;
 use crate::application::request_use_cases::{
-    GoogleUseCases, HealthUseCases, ReflectionUseCases, SessionLifecycleUseCases, TurnUseCases,
+    ExternalSourceUseCases, HealthUseCases, ReflectionUseCases, SessionLifecycleUseCases, TurnUseCases,
     WorkflowUseCases,
 };
 use crate::host::daemon::debug_handler::DebugHandler;
@@ -30,7 +30,7 @@ pub(crate) struct HandlerPorts {
     pub(crate) session_lifecycle: Arc<dyn SessionLifecycleUseCases>,
     pub(crate) health: Arc<dyn HealthUseCases>,
     pub(crate) reflection: Arc<dyn ReflectionUseCases>,
-    pub(crate) google: Arc<dyn GoogleUseCases>,
+    pub(crate) google: Arc<dyn ExternalSourceUseCases>,
     pub(crate) workflow: Arc<dyn WorkflowUseCases>,
     pub(crate) turn: Arc<dyn TurnUseCases>,
     pub(crate) session_input: Arc<crate::application::session_input::SessionInputCoordinator>,
@@ -53,7 +53,7 @@ impl HandlerPorts {
         session_lifecycle: Arc<dyn SessionLifecycleUseCases>,
         health: Arc<dyn HealthUseCases>,
         reflection: Arc<dyn ReflectionUseCases>,
-        google: Arc<dyn GoogleUseCases>,
+        google: Arc<dyn ExternalSourceUseCases>,
         workflow: Arc<dyn WorkflowUseCases>,
         turn: Arc<dyn TurnUseCases>,
         session_input: Arc<crate::application::session_input::SessionInputCoordinator>,

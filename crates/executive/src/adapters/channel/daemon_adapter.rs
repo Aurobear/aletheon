@@ -35,18 +35,18 @@ pub struct DaemonChannelApprovalExecutor {
     cancel: tokio_util::sync::CancellationToken,
 }
 
-pub struct DaemonGmailDraftApprovalExecutor {
+pub struct DaemonExternalDraftApprovalExecutor {
     coordinator: Arc<std::sync::Mutex<GmailGoalDraftCoordinator>>,
 }
 
-impl DaemonGmailDraftApprovalExecutor {
+impl DaemonExternalDraftApprovalExecutor {
     pub fn new(coordinator: Arc<std::sync::Mutex<GmailGoalDraftCoordinator>>) -> Self {
         Self { coordinator }
     }
 }
 
 #[async_trait::async_trait]
-impl ApprovalResolver for DaemonGmailDraftApprovalExecutor {
+impl ApprovalResolver for DaemonExternalDraftApprovalExecutor {
     async fn execute_resolved(
         &self,
         approval: &fabric::ApprovalSnapshot,

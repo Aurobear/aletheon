@@ -10,7 +10,7 @@ execd|crates/execd|platform|-|false|-
 executive|crates/executive|agora,cognit,corpus,dasein,fabric,gateway,hardware,kernel,metacog,mnemosyne,runtime|application,composition,core,host,impl,service,tools,user_runtime|true|adapters
 evolution_loop|examples/evolution_loop|cognit,corpus,dasein,executive,fabric,kernel,metacog,mnemosyne|-|false|-
 fabric|crates/fabric|-|contract,dasein,events,include,ipc,kernel,policy,primitives,protocol,security,types|false|-
-gateway|crates/gateway|fabric|dispatcher,effect,handlers,intent,notify,ports,registry,store,telegram|false|telegram
+gateway|crates/gateway|fabric|dispatcher,effect,handlers,intent,notify,ports,registry|false|adapters
 hardware|crates/hardware|fabric|broker,clock,command,deployment_gate,device,emergency_stop,grpc,lease,observation,provider,registry,safety,simulator,skill,telemetry|false|grpc
 interact|crates/interact|executive,fabric|acix,acp,host,tui|false|-
 kernel|crates/kernel|fabric|admission,capability,chronos,operation,process,runtime,space,supervision|false|-

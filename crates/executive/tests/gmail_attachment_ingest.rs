@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
 use executive::r#impl::artifact::ArtifactStore;
 use executive::r#impl::channel::gmail::ingest::{
-    GmailAttachmentFetcher, GmailIngestConfig, GmailIngestMessage, GmailMessageIngester,
+    GmailAttachmentFetcher, ExternalEventIngestConfig, ExternalEventIngestMessage, GmailMessageIngester,
     GmailMimePart,
 };
 use executive::r#impl::external::ExternalIdentityRepository;
@@ -50,8 +50,8 @@ impl Fixture {
         ArtifactStore::open(&self.db_path, &self.artifact_root).unwrap()
     }
 
-    fn message(&self, parts: Vec<GmailMimePart>) -> GmailIngestMessage {
-        GmailIngestMessage {
+    fn message(&self, parts: Vec<GmailMimePart>) -> ExternalEventIngestMessage {
+        ExternalEventIngestMessage {
             account_id: self.account,
             message_id: "message-1".into(),
             thread_id: "thread-1".into(),
@@ -164,7 +164,7 @@ async fn prefers_plain_strips_history_and_streams_unscanned_artifacts() {
     ]);
     let fetcher = fetcher([("attachment-pdf", pdf)]);
     let artifacts = fixture.artifacts();
-    let result = GmailMessageIngester::new(GmailIngestConfig::default())
+    let result = GmailMessageIngester::new(ExternalEventIngestConfig::default())
         .unwrap()
         .ingest(
             &message,
@@ -198,7 +198,7 @@ async fn sanitizes_html_and_lists_rejected_evidence_without_downloading() {
         attachment("unknown", "unknown.txt", "text/plain", None),
     ]);
     let fetcher = fetcher([]);
-    let result = GmailMessageIngester::new(GmailIngestConfig::default())
+    let result = GmailMessageIngester::new(ExternalEventIngestConfig::default())
         .unwrap()
         .ingest(
             &message,
@@ -227,7 +227,7 @@ async fn sanitizes_html_and_lists_rejected_evidence_without_downloading() {
 async fn malformed_bombs_partial_download_and_type_mismatch_fail_closed() {
     let fixture = Fixture::new();
     let mut malformed = fixture.message(vec![body("bad", "TEXT/PLAIN", b"bad")]);
-    assert!(GmailMessageIngester::new(GmailIngestConfig::default())
+    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
         .unwrap()
         .ingest(
             &malformed,
@@ -246,7 +246,7 @@ async fn malformed_bombs_partial_download_and_type_mismatch_fail_closed() {
         Some(30 * 1_048_576),
     )];
     let no_download = fetcher([]);
-    assert!(GmailMessageIngester::new(GmailIngestConfig::default())
+    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
         .unwrap()
         .ingest(
             &malformed,
@@ -271,14 +271,14 @@ async fn malformed_bombs_partial_download_and_type_mismatch_fail_closed() {
             parts: vec![nested],
         };
     }
-    let nested_message = GmailIngestMessage {
+    let nested_message = ExternalEventIngestMessage {
         account_id: fixture.account,
         message_id: "nested".into(),
         thread_id: "nested-thread".into(),
         source_timestamp_ms: 1_000,
         root: nested,
     };
-    assert!(GmailMessageIngester::new(GmailIngestConfig::default())
+    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
         .unwrap()
         .ingest(
             &nested_message,
@@ -296,7 +296,7 @@ async fn malformed_bombs_partial_download_and_type_mismatch_fail_closed() {
         "text/plain",
         Some(10),
     )]);
-    assert!(GmailMessageIngester::new(GmailIngestConfig::default())
+    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
         .unwrap()
         .ingest(
             &partial,
@@ -309,7 +309,7 @@ async fn malformed_bombs_partial_download_and_type_mismatch_fail_closed() {
         .is_err());
 
     let mismatch = fixture.message(vec![attachment("png", "image.png", "image/png", Some(4))]);
-    assert!(GmailMessageIngester::new(GmailIngestConfig::default())
+    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
         .unwrap()
         .ingest(
             &mismatch,
@@ -336,7 +336,7 @@ async fn attachment_without_filename_is_rejected_without_panicking_or_downloadin
     }]);
     let no_download = fetcher([]);
 
-    let result = GmailMessageIngester::new(GmailIngestConfig::default())
+    let result = GmailMessageIngester::new(ExternalEventIngestConfig::default())
         .unwrap()
         .ingest(
             &message,
@@ -365,7 +365,7 @@ async fn duplicates_cancellation_and_restart_midway_leave_no_partial_evidence() 
         attachment("two", "two.txt", "text/plain", Some(4)),
     ]);
     let data = b"data".to_vec();
-    let result = GmailMessageIngester::new(GmailIngestConfig::default())
+    let result = GmailMessageIngester::new(ExternalEventIngestConfig::default())
         .unwrap()
         .ingest(
             &message,
@@ -401,7 +401,7 @@ async fn duplicates_cancellation_and_restart_midway_leave_no_partial_evidence() 
         "text/plain",
         Some(6),
     )]);
-    assert!(GmailMessageIngester::new(GmailIngestConfig::default())
+    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
         .unwrap()
         .ingest(
             &cancel_message,

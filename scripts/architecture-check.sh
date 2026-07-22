@@ -118,6 +118,18 @@ for rel, body in production_rs():
     if re.search(r"\b(?:PiAttemptRequest|PiRuntime|PI_CODER_RUNTIME_ID)\b|contains\s*\([^\n]*[\"']pi", body, re.I):
         raise SystemExit(f"architecture-check: coding runtime identity leaked into application policy: {rel}")
 
+# Channel/source application code is provider-neutral. Concrete provider
+# vocabulary is confined to Gateway adapters, Corpus adapters, Executive
+# adapters/host compatibility, and the composition factory entry point.
+for rel, body in production_rs():
+    provider_leak = re.search(r"\b(?:Google|Gmail|Telegram)(?:[A-Z]\w*)?\b|\b(?:google|gmail|telegram)_", body)
+    if rel.startswith("crates/executive/src/application/") and provider_leak:
+        raise SystemExit(f"architecture-check: provider identity leaked into Executive application: {rel}")
+    if (rel.startswith("crates/gateway/src/") and
+            not rel.startswith("crates/gateway/src/adapters/") and
+            rel != "crates/gateway/src/lib.rs" and provider_leak):
+        raise SystemExit(f"architecture-check: provider identity leaked into Gateway core: {rel}")
+
 # Every explicit protocol and migration file has an owner before it can land.
 wire_paths = {line.split("\t")[2] for line in data_lines("wire-surfaces.tsv")}
 wire_candidates = set()

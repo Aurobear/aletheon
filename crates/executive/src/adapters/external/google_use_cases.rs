@@ -12,18 +12,18 @@ use serde_json::json;
 use tokio::sync::RwLock;
 
 use crate::application::request_use_cases::{
-    GoogleRefresh, GoogleUseCaseError, GoogleUseCases,
+    ExternalRefreshStatus, ExternalSourceUseCaseError, ExternalSourceUseCases,
 };
 use crate::adapters::external::GoogleIntegration;
 
-pub struct ProductionGoogleUseCases {
+pub struct ProductionExternalSourceUseCases {
     integration: Option<Arc<GoogleIntegration>>,
     corpus: Arc<dyn corpus::CorpusService>,
     capabilities: Arc<RwLock<Vec<fabric::CapabilityId>>>,
     clock: Arc<dyn Clock>,
 }
 
-impl ProductionGoogleUseCases {
+impl ProductionExternalSourceUseCases {
     pub fn new(
         integration: Option<Arc<GoogleIntegration>>,
         corpus: Arc<dyn corpus::CorpusService>,
@@ -38,11 +38,11 @@ impl ProductionGoogleUseCases {
         }
     }
 
-    fn context(&self) -> Result<(Arc<GoogleIntegration>, PrincipalId), GoogleUseCaseError> {
+    fn context(&self) -> Result<(Arc<GoogleIntegration>, PrincipalId), ExternalSourceUseCaseError> {
         Ok((
             self.integration
                 .clone()
-                .ok_or(GoogleUseCaseError::Unavailable)?,
+                .ok_or(ExternalSourceUseCaseError::Unavailable)?,
             PrincipalId(LOCAL_OWNER_PRINCIPAL.into()),
         ))
     }
@@ -121,13 +121,13 @@ impl ProductionGoogleUseCases {
 }
 
 #[async_trait]
-impl GoogleUseCases for ProductionGoogleUseCases {
-    async fn authorization_start(&self) -> Result<serde_json::Value, GoogleUseCaseError> {
+impl ExternalSourceUseCases for ProductionExternalSourceUseCases {
+    async fn authorization_start(&self) -> Result<serde_json::Value, ExternalSourceUseCaseError> {
         let (google, principal) = self.context()?;
         let start = google
             .start_authorization(&principal)
             .await
-            .map_err(|_| GoogleUseCaseError::Provider)?;
+            .map_err(|_| ExternalSourceUseCaseError::Provider)?;
         Ok(
             json!({"authorization_url":start.url,"state":start.state,"expires_at_secs":start.expires_at_secs}),
         )
@@ -137,18 +137,18 @@ impl GoogleUseCases for ProductionGoogleUseCases {
         code: String,
         state: String,
         alias: Option<String>,
-    ) -> Result<serde_json::Value, GoogleUseCaseError> {
+    ) -> Result<serde_json::Value, ExternalSourceUseCaseError> {
         let (google, principal) = self.context()?;
         let (identity, grant) = google
             .complete_authorization(&principal, &code, &state, alias, self.clock.wall_now().0)
             .await
-            .map_err(|_| GoogleUseCaseError::Provider)?;
+            .map_err(|_| ExternalSourceUseCaseError::Provider)?;
         if let Err(error) = self.register_read_tools(&google).await {
             tracing::warn!(%error, "Google account bound but tool registration failed");
         }
         Ok(safe_account(&identity, &grant))
     }
-    async fn accounts(&self) -> Result<Vec<serde_json::Value>, GoogleUseCaseError> {
+    async fn accounts(&self) -> Result<Vec<serde_json::Value>, ExternalSourceUseCaseError> {
         let (google, principal) = self.context()?;
         google
             .repository()
@@ -161,22 +161,22 @@ impl GoogleUseCases for ProductionGoogleUseCases {
                     .map(|(identity, grant)| safe_account(identity, grant))
                     .collect()
             })
-            .map_err(|_| GoogleUseCaseError::Provider)
+            .map_err(|_| ExternalSourceUseCaseError::Provider)
     }
-    async fn revoke(&self, account: String) -> Result<(bool, bool), GoogleUseCaseError> {
+    async fn revoke(&self, account: String) -> Result<(bool, bool), ExternalSourceUseCaseError> {
         let (google, principal) = self.context()?;
         let repository = google.repository();
         let identity = {
             let repository = repository.lock().unwrap();
             let id = repository
                 .resolve_account(&principal, &account)
-                .map_err(|_| GoogleUseCaseError::Provider)?
-                .ok_or(GoogleUseCaseError::NotFound)?;
+                .map_err(|_| ExternalSourceUseCaseError::Provider)?
+                .ok_or(ExternalSourceUseCaseError::NotFound)?;
             repository
                 .get(&principal, id)
-                .map_err(|_| GoogleUseCaseError::Provider)?
+                .map_err(|_| ExternalSourceUseCaseError::Provider)?
                 .map(|item| item.0)
-                .ok_or(GoogleUseCaseError::NotFound)?
+                .ok_or(ExternalSourceUseCaseError::NotFound)?
         };
         repository
             .lock()
@@ -187,7 +187,7 @@ impl GoogleUseCases for ProductionGoogleUseCases {
                 identity.version,
                 self.clock.wall_now().0,
             )
-            .map_err(|_| GoogleUseCaseError::Provider)?;
+            .map_err(|_| ExternalSourceUseCaseError::Provider)?;
         let provider = google
             .oauth()
             .lock()
@@ -197,19 +197,19 @@ impl GoogleUseCases for ProductionGoogleUseCases {
             .is_ok();
         Ok((true, provider))
     }
-    async fn refresh(&self, account: String) -> Result<GoogleRefresh, GoogleUseCaseError> {
+    async fn refresh(&self, account: String) -> Result<ExternalRefreshStatus, ExternalSourceUseCaseError> {
         let (google, principal) = self.context()?;
         let account_id = {
             let repository = google.repository();
             let repository = repository.lock().unwrap();
             let id = repository
                 .resolve_account(&principal, &account)
-                .map_err(|_| GoogleUseCaseError::Provider)?
-                .ok_or(GoogleUseCaseError::NotFound)?;
+                .map_err(|_| ExternalSourceUseCaseError::Provider)?
+                .ok_or(ExternalSourceUseCaseError::NotFound)?;
             let (identity, grant) = repository
                 .get(&principal, id)
-                .map_err(|_| GoogleUseCaseError::Provider)?
-                .ok_or(GoogleUseCaseError::NotFound)?;
+                .map_err(|_| ExternalSourceUseCaseError::Provider)?
+                .ok_or(ExternalSourceUseCaseError::NotFound)?;
             let active = identity.state == ExternalIdentityState::Active
                 && grant.state == GrantState::Active
                 && grant.scopes.iter().any(|scope| {
@@ -222,22 +222,22 @@ impl GoogleUseCases for ProductionGoogleUseCases {
                 })
                 && grant.scopes.iter().all(is_google_read_capability);
             if !active {
-                return Err(GoogleUseCaseError::Forbidden);
+                return Err(ExternalSourceUseCaseError::Forbidden);
             }
             id
         };
         match google.refresh_singleflight(account_id).await {
-            Ok(_) => Ok(GoogleRefresh {
+            Ok(_) => Ok(ExternalRefreshStatus {
                 status: "success".into(),
                 code: None,
             }),
             Err(corpus::tools::google::GoogleApiError::ReauthorizationRequired) => {
-                Ok(GoogleRefresh {
+                Ok(ExternalRefreshStatus {
                     status: "reauthorization_required".into(),
                     code: None,
                 })
             }
-            Err(error) => Ok(GoogleRefresh {
+            Err(error) => Ok(ExternalRefreshStatus {
                 status: "error".into(),
                 code: Some(error.to_string()),
             }),

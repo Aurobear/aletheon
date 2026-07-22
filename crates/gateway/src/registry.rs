@@ -26,13 +26,13 @@ pub enum IntentKind {
     Chat,
     GoalCommand,
     Unsupported,
-    /// Event-sourced Gmail ingest (`ExternalEvent::MailReceived`). Never
+    /// Event-sourced external event ingest (`ExternalEvent::MailReceived`). Never
     /// produced by [`classify_intent`](super::intent::classify_intent) —
-    /// this key exists only so Gmail ingest can be registered and looked up
+    /// this key exists only so external event ingest can be registered and looked up
     /// through the same [`IntentKind`] namespace as chat capabilities,
     /// without going through duplex [`super::dispatcher::ChannelDispatcher::process`].
     /// See [`EventCapabilityHandler`] / [`EventCapabilityRegistry`].
-    GmailIngest,
+    ExternalEventIngest,
 }
 
 impl From<&Intent> for IntentKind {
@@ -112,14 +112,14 @@ impl CapabilityRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// Event-capability seam (non-duplex; e.g. Gmail ingest)
+// Event-capability seam (non-duplex; e.g. external event ingest)
 // ---------------------------------------------------------------------------
 
 /// A capability triggered by an inbound *event* rather than a classified
-/// chat [`Intent`] — e.g. Gmail's `ExternalEvent::MailReceived` ingest.
+/// chat [`Intent`] — e.g. external source event `ExternalEvent::MailReceived` ingest.
 ///
 /// Deliberately separate from [`CapabilityHandler`]: event capabilities are
-/// invoked directly by their event source (see `google/event_dispatcher.rs`),
+/// invoked directly by their event source (see `external event adapter`),
 /// never through [`CapabilityRegistry::dispatch`] or
 /// `ChannelDispatcher::process` (no inbox dedup, no `complete_inbound`, no
 /// `transport.send`). Implementations keep their own stores, idempotency,
@@ -166,7 +166,7 @@ impl EventCapabilityRegistry {
 /// Executes the side effect of a resolved approval (post commit) and,
 /// optionally, revises a draft awaiting fresh confirmation.
 ///
-/// Replaces the former `ChannelApprovalExecutor` + `GmailDraftApprovalExecutor`
+/// Replaces the former `ChannelApprovalExecutor` + `ExternalDraftApprovalExecutor`
 /// traits and the `ActivateGoal` special-case fork in `execute_approval_action`:
 /// resolvers register per [`ApprovalCategory`], with an optional default for
 /// categories that don't need a dedicated resolver.
@@ -180,7 +180,7 @@ pub trait ApprovalResolver: Send + Sync {
     ) -> anyhow::Result<()>;
 
     /// Revise a draft awaiting fresh confirmation. Only meaningful for
-    /// resolvers that back editable drafts (e.g. Gmail's `ActivateGoal`
+    /// resolvers that back editable drafts (e.g. external source event `ActivateGoal`
     /// resolver); the default implementation is unsupported.
     async fn revise_draft(
         &self,
@@ -239,7 +239,7 @@ impl ApprovalResolverRegistry {
 
     /// Resolve a resolver registered specifically for `category`, ignoring
     /// the default. Used where a missing category-specific resolver must be
-    /// a hard error (e.g. Gmail's `ActivateGoal` resolver).
+    /// a hard error (e.g. external source event `ActivateGoal` resolver).
     pub fn resolve_category_only(
         &self,
         category: ApprovalCategory,

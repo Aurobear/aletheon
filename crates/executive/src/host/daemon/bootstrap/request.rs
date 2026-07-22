@@ -308,10 +308,10 @@ impl RequestHandler {
                 config: config.integrations.google.as_ref(),
             });
         let google = google_composition.integration;
-        let mut google_sync = google_composition.sync;
-        let google_sync_store = google_composition.sync_store;
+        let mut external_sync = google_composition.sync;
+        let external_sync_store = google_composition.sync_store;
         let gmail_ingress = google_composition.gmail_ingress;
-        if let (Some(handle), Some(store)) = (google_sync.as_mut(), google_sync_store) {
+        if let (Some(handle), Some(store)) = (external_sync.as_mut(), external_sync_store) {
             let goal_store = Arc::new(std::sync::Mutex::new(
                 ObjectiveStore::open(&objective_db_path)
                     .context("opening Google event Goal store")?,
@@ -334,7 +334,7 @@ impl RequestHandler {
             );
             if let Some(ingress) = gmail_ingress {
                 event_router = event_router.with_mail_ingress(Arc::new(
-                    crate::adapters::channel::handlers::gmail_ingest::GmailIngestHandler::new(
+                    crate::adapters::channel::handlers::gmail_ingest::ExternalEventIngestHandler::new(
                         ingress,
                     ),
                 ));
@@ -1099,7 +1099,7 @@ impl RequestHandler {
         };
         let goal_worker_enabled = goal_worker_task.is_some();
         let goal_worker_task = goal_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
-        let google_sync = google_sync.map(|handle| {
+        let external_sync = external_sync.map(|handle| {
             Arc::new(crate::adapters::google::GoogleSyncWorkerPort::new(handle))
                 as Arc<dyn crate::application::admin_service::BackgroundWorkerPort>
         });
@@ -1147,7 +1147,7 @@ impl RequestHandler {
                     pending_approvals: admin_pending_approvals.clone(),
                     session_approvals: admin_session_approvals,
                     daemon_cancel: cancel_token.clone(),
-                    google_sync: google_sync.clone(),
+                    external_sync: external_sync.clone(),
                     supplemental_memory_worker: supplemental_memory_worker_task.clone(),
                     goal_worker: goal_worker_task.clone(),
                     runtime_shutdown: Arc::new(move || {
@@ -1201,7 +1201,7 @@ impl RequestHandler {
         );
         let started_at = clock_2.mono_now();
         let health_registry = Arc::new(crate::r#impl::health::HealthRegistry::production_ready());
-        let telegram_task = Arc::new(Mutex::new(None));
+        let channel_task = Arc::new(Mutex::new(None));
         let request_facades = RequestFacadePorts::new(
             runtime.clone(),
             memory_group.episodic_memory.clone(),
@@ -1236,8 +1236,8 @@ impl RequestHandler {
                         started_at,
                         active_connections: active_connections.clone(),
                         daemon_cancel: cancel_token.clone(),
-                        telegram_task: telegram_task.clone(),
-                        google_sync: google_sync.clone(),
+                        channel_task: channel_task.clone(),
+                        external_sync: external_sync.clone(),
                         goal_worker: goal_worker_task.clone(),
                         agent_recovery: agent_recovery.clone(),
                     },
@@ -1253,9 +1253,9 @@ impl RequestHandler {
                 super::request_ports::reflection_engine_port(reflector.clone()),
             ),
         );
-        let google_use_cases: Arc<dyn crate::application::request_use_cases::GoogleUseCases> =
+        let google_use_cases: Arc<dyn crate::application::request_use_cases::ExternalSourceUseCases> =
             Arc::new(
-                crate::adapters::external::ProductionGoogleUseCases::new(
+                crate::adapters::external::ProductionExternalSourceUseCases::new(
                     google.clone(),
                     domains.corpus(),
                     granted_capabilities.clone(),
@@ -1358,7 +1358,7 @@ impl RequestHandler {
                 _cancel_for_telegram,
                 goal_worker_enabled.then_some(goal_progress_rx),
             );
-            *telegram_task.lock().await = Some(Arc::new(jh));
+            *channel_task.lock().await = Some(Arc::new(jh));
         } else {
             info!("Telegram channel disabled");
         }

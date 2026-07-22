@@ -2,9 +2,9 @@
 //! chat turn for [`Intent::Chat`].
 //!
 //! An optional [`ChatPreprocessor`] hook runs before the turn executor. The
-//! only current implementation is [`super::google_read::GoogleReadPreprocessor`],
-//! wired in only when a Google integration is configured — this handler
-//! itself carries no domain knowledge of Google.
+//! only current implementation is [`super::external_read::ExternalReadPreprocessor`],
+//! wired in only when a external-source integration is configured — this handler
+//! itself carries no domain knowledge of a concrete provider.
 
 use std::sync::Arc;
 
@@ -13,7 +13,7 @@ use fabric::channel::{InboundMessage, MessageContent, OutboundMessage};
 
 use crate::dispatcher::ChannelTurnExecutor;
 use crate::effect::OutboundEffect;
-use crate::handlers::google_read::{ChatPreprocess, ChatPreprocessor};
+use crate::handlers::external_read::{ChatPreprocess, ChatPreprocessor};
 use crate::intent::Intent;
 use crate::registry::{CapabilityHandler, HandlerContext, IntentKind};
 

@@ -409,7 +409,7 @@ pub struct AdminResources {
     pub pending_approvals: PendingApprovals,
     pub session_approvals: ScopedApprovalCache,
     pub daemon_cancel: CancellationToken,
-    pub google_sync: Option<Arc<dyn BackgroundWorkerPort>>,
+    pub external_sync: Option<Arc<dyn BackgroundWorkerPort>>,
     pub supplemental_memory_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     pub goal_worker: Option<Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>>,
     pub runtime_shutdown: Arc<dyn Fn() -> RuntimeShutdownFuture + Send + Sync>,
@@ -488,7 +488,7 @@ fn profile_switch_event(
 impl AdminUseCases for AdminService {
     async fn shutdown(&self) -> Result<(), AdminServiceError> {
         self.resources.daemon_cancel.cancel();
-        if let Some(sync) = &self.resources.google_sync {
+        if let Some(sync) = &self.resources.external_sync {
             sync.shutdown().await;
         }
         for (name, worker) in [

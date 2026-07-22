@@ -1,7 +1,7 @@
 //! Production bridge from durable Gmail history events to authenticated Goal drafts.
 
 use super::ingest::{
-    GmailAttachmentFetcher, GmailIngestConfig, GmailIngestMessage, GmailMessageIngester,
+    GmailAttachmentFetcher, ExternalEventIngestConfig, ExternalEventIngestMessage, GmailMessageIngester,
     GmailMimePart,
 };
 use super::sender_policy::{GmailHeader, GmailSenderPolicy};
@@ -181,7 +181,7 @@ impl GmailGoalEventIngress {
             return Ok(false);
         }
 
-        let ingest_message = GmailIngestMessage {
+        let ingest_message = ExternalEventIngestMessage {
             account_id: raw.account_id,
             message_id: raw.message_id.clone(),
             thread_id: raw.thread_id.clone(),
@@ -200,7 +200,7 @@ impl GmailGoalEventIngress {
                 None => store,
             })
             .map_err(|_| "gmail_ingress_artifact_store_unavailable".to_owned())?;
-        let ingested = GmailMessageIngester::new(GmailIngestConfig::default())
+        let ingested = GmailMessageIngester::new(ExternalEventIngestConfig::default())
             .map_err(|_| "gmail_ingress_policy_invalid".to_owned())?
             .ingest(
                 &ingest_message,

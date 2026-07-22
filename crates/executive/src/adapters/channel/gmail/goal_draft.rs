@@ -1,6 +1,6 @@
 //! Authenticated Gmail Goal drafts and Telegram confirmation boundary.
 
-use super::ingest::GmailIngestResult;
+use super::ingest::ExternalEventIngestResult;
 use super::sender_policy::GmailSenderPolicy;
 use super::{GmailClassification, GmailInboxRecord};
 use crate::r#impl::approval::{ApprovalCreate, ApprovalRepository};
@@ -69,7 +69,7 @@ impl GmailGoalDraftCoordinator {
         &mut self,
         inbox: &GmailInboxRecord,
         current_policy: &GmailSenderPolicy,
-        ingested: &GmailIngestResult,
+        ingested: &ExternalEventIngestResult,
         source_event_id: &str,
         now_ms: i64,
         expires_at_ms: i64,
@@ -510,7 +510,7 @@ impl DraftRow {
 fn validate_goal_ingress(
     inbox: &GmailInboxRecord,
     policy: &GmailSenderPolicy,
-    ingested: &GmailIngestResult,
+    ingested: &ExternalEventIngestResult,
     source_event_id: &str,
     now_ms: i64,
 ) -> anyhow::Result<()> {
@@ -585,7 +585,7 @@ fn goal_spec(intent: &str) -> GoalSpec {
     }
 }
 
-fn artifact_evidence(ingested: &GmailIngestResult) -> Vec<GmailDraftArtifactEvidence> {
+fn artifact_evidence(ingested: &ExternalEventIngestResult) -> Vec<GmailDraftArtifactEvidence> {
     ingested
         .attachments
         .iter()

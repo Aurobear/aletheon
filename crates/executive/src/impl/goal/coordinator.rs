@@ -41,7 +41,7 @@ pub enum GoalTickOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GoogleEventWaitCondition {
+pub struct ExternalEventWaitCondition {
     pub account_id: ExternalIdentityId,
     pub event_id: Option<ExternalEventId>,
     pub object_id: Option<String>,
@@ -49,7 +49,7 @@ pub struct GoogleEventWaitCondition {
     pub source_before_ms: Option<i64>,
 }
 
-impl GoogleEventWaitCondition {
+impl ExternalEventWaitCondition {
     pub fn key(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
@@ -319,7 +319,7 @@ impl GoalCoordinator {
     }
 
     /// Wake only goals with an explicit persisted external-event condition.
-    pub fn wake_for_google_event(
+    pub fn wake_for_external_event(
         &self,
         principal: &PrincipalId,
         event: &ExternalEventEnvelope,
@@ -341,7 +341,7 @@ impl GoalCoordinator {
             let Some(GoalWaitReason::ExternalEvent { key }) = &goal.wait_reason else {
                 continue;
             };
-            let Ok(condition) = serde_json::from_str::<GoogleEventWaitCondition>(key) else {
+            let Ok(condition) = serde_json::from_str::<ExternalEventWaitCondition>(key) else {
                 continue;
             };
             if !condition.matches(event) {
@@ -353,7 +353,7 @@ impl GoalCoordinator {
                 GoalState::Ready,
                 None,
                 &serde_json::json!({
-                    "action":"google_external_event_wake",
+                    "action":"external_event_wake",
                     "event_id":event.id.to_string(),
                     "object_id":event.object.object_id,
                 }),

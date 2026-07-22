@@ -17,7 +17,7 @@ use fabric::channel::{
 use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
-use gateway::store::{ChannelStore, InsertOutcome};
+use gateway::{ChannelStore, InsertOutcome};
 use tokio::sync::Mutex;
 
 // ---------------------------------------------------------------------------

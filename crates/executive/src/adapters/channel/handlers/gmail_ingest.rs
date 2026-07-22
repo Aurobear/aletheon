@@ -7,7 +7,7 @@
 //! `(account_id, message_id)` idempotency, or `GmailSenderPolicy`
 //! deny-by-default verification.
 //!
-//! Registered under [`IntentKind::GmailIngest`] in an
+//! Registered under [`IntentKind::ExternalEventIngest`] in an
 //! `EventCapabilityRegistry`, and invoked directly by
 //! `google/event_dispatcher.rs` on `MailReceived` — never through
 //! `ChannelDispatcher::process` (no inbox dedup,
@@ -28,20 +28,20 @@ use gateway::registry::{EventCapabilityHandler, IntentKind};
 use super::super::gmail::GmailGoalEventIngress;
 
 /// Thin [`EventCapabilityHandler`] wrapper around [`GmailGoalEventIngress`].
-pub struct GmailIngestHandler {
+pub struct ExternalEventIngestHandler {
     ingress: Arc<GmailGoalEventIngress>,
 }
 
-impl GmailIngestHandler {
+impl ExternalEventIngestHandler {
     pub fn new(ingress: Arc<GmailGoalEventIngress>) -> Self {
         Self { ingress }
     }
 }
 
 #[async_trait]
-impl EventCapabilityHandler for GmailIngestHandler {
+impl EventCapabilityHandler for ExternalEventIngestHandler {
     fn intent_kind(&self) -> IntentKind {
-        IntentKind::GmailIngest
+        IntentKind::ExternalEventIngest
     }
 
     async fn handle(

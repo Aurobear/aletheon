@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 use crate::adapters::channel::daemon_adapter::{
     ApprovalRepositoryPort, DaemonChannelApprovalExecutor, DaemonChannelGoalExecutor,
-    DaemonChannelTurnExecutor, DaemonGmailDraftApprovalExecutor,
+    DaemonChannelTurnExecutor, DaemonExternalDraftApprovalExecutor,
 };
 use crate::adapters::channel::gmail::GmailGoalDraftCoordinator;
 use crate::adapters::external::GoogleIntegration;
@@ -17,13 +17,12 @@ use crate::r#impl::goal::ObjectiveStore;
 use fabric::ApprovalCategory;
 use gateway::dispatcher::{ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, GoalProgress};
 use gateway::handlers::chat::ChatHandler;
-use gateway::handlers::google_read::{
-    ChatPreprocessor, GoogleChannelAccountDirectory, GoogleReadPreprocessor,
+use gateway::handlers::external_read::{
+    ChatPreprocessor, ExternalAccountDirectory, ExternalReadPreprocessor,
 };
 use gateway::handlers::greeting::GreetingHandler;
 use gateway::registry::{ApprovalResolver, CapabilityRegistry};
-use gateway::store::ChannelStore;
-use gateway::telegram::TelegramTransport;
+use gateway::ChannelStore;
 
 /// Build the Telegram long-poll channel transport, router, and spawn the
 /// poll loop. Returns the task handle for graceful shutdown.
@@ -66,7 +65,7 @@ pub(super) fn init_telegram_channel(
     }
 
     let poll_timeout = cfg.poll_timeout_secs.clamp(1, 50);
-    let transport = TelegramTransport::new(token, None, poll_timeout, cancel.clone());
+    let transport = gateway::build_telegram_transport(token, None, poll_timeout, cancel.clone());
 
     let turn_executor: Arc<dyn ChannelTurnExecutor> =
         Arc::new(DaemonChannelTurnExecutor::new(orchestrator));
@@ -78,8 +77,8 @@ pub(super) fn init_telegram_channel(
         .map(|id| fabric::channel::ConversationId(id.to_string()));
 
     let chat_preprocessor: Option<Arc<dyn ChatPreprocessor>> = google.map(|g| {
-        let accounts = g as Arc<dyn GoogleChannelAccountDirectory>;
-        Arc::new(GoogleReadPreprocessor::new(accounts)) as Arc<dyn ChatPreprocessor>
+        let accounts = g as Arc<dyn ExternalAccountDirectory>;
+        Arc::new(ExternalReadPreprocessor::new(accounts)) as Arc<dyn ChatPreprocessor>
     });
     let mut registry = CapabilityRegistry::new();
     registry.register(Arc::new(ChatHandler::new(turn_executor, chat_preprocessor)));
@@ -92,7 +91,7 @@ pub(super) fn init_telegram_channel(
         .with_approval_port(approval_port);
 
     let gmail_resolver: Arc<dyn ApprovalResolver> =
-        Arc::new(DaemonGmailDraftApprovalExecutor::new(gmail_goal_drafts));
+        Arc::new(DaemonExternalDraftApprovalExecutor::new(gmail_goal_drafts));
     dispatcher = dispatcher.with_approval_resolver(ApprovalCategory::ActivateGoal, gmail_resolver);
     if let Some(coordinator) = approved_apply {
         let resolver: Arc<dyn ApprovalResolver> = Arc::new(DaemonChannelApprovalExecutor::new(
@@ -120,7 +119,7 @@ pub(super) fn init_telegram_channel(
 /// Long-poll loop with jittered exponential backoff and cancellation.
 async fn telegram_poll_loop(
     mut router: ChannelDispatcher,
-    transport: TelegramTransport,
+    transport: Arc<dyn ChannelTransport>,
     mut cursor: Option<String>,
     approval_repository: Arc<std::sync::Mutex<crate::r#impl::approval::ApprovalRepository>>,
     approval_conversation: Option<fabric::channel::ConversationId>,
@@ -146,7 +145,7 @@ async fn telegram_poll_loop(
                 Ok(pending) => {
                     for approval in pending {
                         if let Err(error) = router
-                            .notify_approval(&transport, conversation.clone(), &approval, now_ms)
+                            .notify_approval(transport.as_ref(), conversation.clone(), &approval, now_ms)
                             .await
                         {
                             warn!(approval_id = %approval.id, error = %error, "Telegram approval notification failed");
@@ -159,7 +158,7 @@ async fn telegram_poll_loop(
             }
         }
 
-        if let Err(error) = router.flush_pending_outbox(&transport, 100).await {
+        if let Err(error) = router.flush_pending_outbox(transport.as_ref(), 100).await {
             warn!(error = %error, "Flushing durable Telegram outbox failed");
         }
 
@@ -198,7 +197,7 @@ async fn telegram_poll_loop(
                 sorted.sort_by_key(|e| e.message.message_id.0.parse::<i64>().unwrap_or(0));
                 for envelope in sorted {
                     let next_cursor = envelope.next_cursor.clone();
-                    match router.process(&transport, envelope).await {
+                    match router.process(transport.as_ref(), envelope).await {
                         Ok(()) => {
                             cursor = Some(next_cursor);
                         }
