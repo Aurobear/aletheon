@@ -250,7 +250,7 @@ async fn expired_token_refresh_is_singleflight_and_transcript_safe() {
         },
     );
     tokens.save().unwrap();
-    let provider = GoogleOAuthProvider::with_endpoints(
+    let provider = GoogleOAuthProvider::with_local_endpoints(
         OAuthClientConfig {
             client_id: "client".into(),
             client_secret: None,
@@ -305,7 +305,7 @@ async fn refresh_failure_returns_only_reauthorization_status() {
             token_type: "Bearer".into(),
         },
     );
-    let mut provider = GoogleOAuthProvider::with_endpoints(
+    let mut provider = GoogleOAuthProvider::with_local_endpoints(
         OAuthClientConfig {
             client_id: "client".into(),
             client_secret: None,

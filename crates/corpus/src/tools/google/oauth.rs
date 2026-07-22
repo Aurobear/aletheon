@@ -73,7 +73,6 @@ impl AsyncOAuthClient {
         Self::with_endpoint_policy(config, EndpointPolicy::public())
     }
 
-    #[cfg(test)]
     fn new_local(config: OAuthClientConfig) -> Result<Self> {
         Self::with_endpoint_policy(config, EndpointPolicy::local_loopback())
     }
@@ -445,8 +444,9 @@ impl GoogleOAuthProvider {
         })
     }
 
-    #[cfg(test)]
-    fn with_local_endpoints(
+    /// Construct a provider for an explicitly host-trusted loopback OAuth
+    /// service. Callers must not select this from model or request input.
+    pub fn with_local_endpoints(
         config: OAuthClientConfig,
         scopes: Vec<ExternalScope>,
         tokens: TokenStore,
