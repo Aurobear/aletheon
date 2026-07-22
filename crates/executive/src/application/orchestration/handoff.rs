@@ -78,7 +78,7 @@ impl HandoffStrategy {
                 .registry
                 .get(&current_agent_id)
                 .await
-                .ok_or_else(|| anyhow::anyhow!("Agent '{}' not found", current_agent_id))?;
+                .ok_or_else(|| anyhow::anyhow!("Agent '{current_agent_id}' not found"))?;
 
             info!(agent_id = %current_agent_id, handoff = handoff_count, "Executing with agent");
 

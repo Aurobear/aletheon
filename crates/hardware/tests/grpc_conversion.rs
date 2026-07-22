@@ -13,7 +13,7 @@ fn every_risk_class_converts() {
     ];
     for (wire_val, expected_debug) in &cases {
         let domain = convert::to_risk_class(*wire_val).unwrap();
-        assert_eq!(format!("{:?}", domain).as_str(), *expected_debug);
+        assert_eq!(format!("{domain:?}").as_str(), *expected_debug);
     }
 }
 
@@ -64,7 +64,7 @@ fn failure_reason_is_preserved_from_wire() {
         fabric::types::embodiment::SkillOutcome::Failed { reason } => {
             assert_eq!(reason, "obstacle detected");
         }
-        other => panic!("expected Failed, got {:?}", other),
+        other => panic!("expected Failed, got {other:?}"),
     }
 }
 

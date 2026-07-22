@@ -79,7 +79,7 @@ pub fn parse_skill_md(content: &str) -> anyhow::Result<(SkillManifest, String)> 
     let body = after_first[body_start..].trim().to_string();
 
     let manifest: SkillManifest = serde_yaml::from_str(frontmatter)
-        .map_err(|e| anyhow::anyhow!("Failed to parse SKILL.md frontmatter: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to parse SKILL.md frontmatter: {e}"))?;
 
     Ok((manifest, body))
 }

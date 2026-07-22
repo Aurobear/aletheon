@@ -15,7 +15,7 @@ pub fn to_risk_class(v: i32) -> Result<domain::RiskClass, String> {
         Ok(wire::RiskClass::Medium) => Ok(domain::RiskClass::Medium),
         Ok(wire::RiskClass::High) => Ok(domain::RiskClass::High),
         Ok(wire::RiskClass::Unspecified) | Err(_) => {
-            Err(format!("unknown wire RiskClass value: {}", v))
+            Err(format!("unknown wire RiskClass value: {v}"))
         }
     }
 }
@@ -31,7 +31,7 @@ pub fn to_skill_outcome(v: i32, failure_reason: String) -> Result<domain::SkillO
         Ok(wire::SkillOutcome::Cancelled) => Ok(domain::SkillOutcome::Cancelled),
         Ok(wire::SkillOutcome::TimedOut) => Ok(domain::SkillOutcome::TimedOut),
         Ok(wire::SkillOutcome::Unspecified) | Err(_) => {
-            Err(format!("unknown wire SkillOutcome value: {}", v))
+            Err(format!("unknown wire SkillOutcome value: {v}"))
         }
     }
 }
@@ -51,14 +51,14 @@ pub fn to_skill_result(sr: &wire::SkillResult) -> Result<domain::SkillResult, St
     let operation_id = sr
         .operation_id
         .parse()
-        .map_err(|e| format!("invalid operation_id in SkillResult: {}", e))?;
+        .map_err(|e| format!("invalid operation_id in SkillResult: {e}"))?;
     Ok(domain::SkillResult {
         operation_id,
         skill: domain::SkillId(sr.skill_id.clone()),
         device: domain::DeviceId(sr.device_id.clone()),
         outcome: to_skill_outcome(sr.outcome, sr.failure_reason.clone())?,
         duration_ms: sr.duration_ms,
-        evidence: sr.evidence.iter().map(|e| to_evidence_ref(e)).collect(),
+        evidence: sr.evidence.iter().map(to_evidence_ref).collect(),
     })
 }
 
@@ -68,7 +68,7 @@ pub fn to_skill_progress(sp: &wire::SkillProgress) -> Result<domain::SkillProgre
     let operation_id = sp
         .operation_id
         .parse()
-        .map_err(|e| format!("invalid operation_id in SkillProgress: {}", e))?;
+        .map_err(|e| format!("invalid operation_id in SkillProgress: {e}"))?;
     Ok(domain::SkillProgress {
         operation_id,
         skill: domain::SkillId(sp.skill_id.clone()),
@@ -120,7 +120,7 @@ pub fn to_observation(obs: &wire::Observation) -> Result<domain::EmbodiedObserva
             Some(obs.frame_ref.clone())
         },
         payload: struct_to_json(&obs.payload),
-        evidence: obs.evidence.iter().map(|e| to_evidence_ref(e)).collect(),
+        evidence: obs.evidence.iter().map(to_evidence_ref).collect(),
     })
 }
 

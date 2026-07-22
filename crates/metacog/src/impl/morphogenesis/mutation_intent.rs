@@ -261,8 +261,7 @@ impl MutationIntentGenerator {
                     "samples": sample,
                 }),
                 reason: format!(
-                    "{} learning entries collected. Proposing adaptation.",
-                    learned_count
+                    "{learned_count} learning entries collected. Proposing adaptation."
                 ),
                 reversible: true,
             });

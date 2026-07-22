@@ -134,8 +134,7 @@ fn summarize_old_tool_results(messages: &mut [Message]) {
                         .take(80)
                         .collect::<String>();
                     *content = format!(
-                        "[Tool result: {} chars, {} lines. Preview: {}]",
-                        char_count, line_count, first_line
+                        "[Tool result: {char_count} chars, {line_count} lines. Preview: {first_line}]"
                     );
                 }
             }
@@ -157,7 +156,7 @@ fn truncate_tool_call_args(messages: &mut [Message]) {
                             if s.len() > 200 {
                                 let original_len = s.len();
                                 truncate_utf8_bytes(s, 200);
-                                s.push_str(&format!("... [truncated from {} bytes]", original_len));
+                                s.push_str(&format!("... [truncated from {original_len} bytes]"));
                             }
                         }
                     }

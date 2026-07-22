@@ -14,6 +14,7 @@ impl Default for SpecEditor {
     }
 }
 
+#[allow(dead_code)]
 impl SpecEditor {
     pub fn new() -> Self {
         Self
@@ -180,7 +181,7 @@ impl SpecEditor {
                         rule.priority = priority as u32;
                     }
                 } else {
-                    bail!("Boundary rule '{}' not found for modification", id);
+                    bail!("Boundary rule '{id}' not found for modification");
                 }
             }
         }

@@ -84,7 +84,7 @@ impl TelegramTransport {
 
     /// Sanitise an error from the API so the response body is never included.
     fn sanitised_api_error(description: &str) -> String {
-        format!("Telegram API error: {}", description)
+        format!("Telegram API error: {description}")
     }
 
     // -- conversion ----------------------------------------------------------
@@ -189,7 +189,7 @@ impl ChannelTransport for TelegramTransport {
             let status = resp.status();
             // Drain and discard body — never log response content.
             let _ = resp.text().await;
-            bail!("Telegram getUpdates returned HTTP {}", status);
+            bail!("Telegram getUpdates returned HTTP {status}");
         }
 
         let body: GetUpdatesResponse = resp
@@ -231,9 +231,9 @@ impl ChannelTransport for TelegramTransport {
             MessageContent::Text { text } => text.clone(),
             MessageContent::Command { command, args } => {
                 if args.is_empty() {
-                    format!("/{}", command)
+                    format!("/{command}")
                 } else {
-                    format!("/{} {}", command, args)
+                    format!("/{command} {args}")
                 }
             }
         };
@@ -267,7 +267,7 @@ impl ChannelTransport for TelegramTransport {
         if !resp.status().is_success() {
             let status = resp.status();
             let _ = resp.text().await;
-            bail!("Telegram sendMessage returned HTTP {}", status);
+            bail!("Telegram sendMessage returned HTTP {status}");
         }
 
         let envelope: SendMessageResponse = resp
@@ -322,7 +322,7 @@ mod tests {
         let listener = TcpListener::bind(("127.0.0.1", port))
             .await
             .expect("bind mock server");
-        let base = format!("http://127.0.0.1:{}", port);
+        let base = format!("http://127.0.0.1:{port}");
 
         let handle = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept");
@@ -580,7 +580,7 @@ mod tests {
         let t = make_transport(base);
 
         let err = t.receive(None).await.unwrap_err();
-        let err_str = format!("{}", err);
+        let err_str = format!("{err}");
         assert!(err_str.contains("Telegram API error"));
         // The original description is present in sanitised form.
         assert!(err_str.contains("Forbidden: bot was blocked"));
@@ -595,7 +595,7 @@ mod tests {
         let t = make_transport(base);
 
         let err = t.receive(None).await.unwrap_err();
-        let err_str = format!("{}", err);
+        let err_str = format!("{err}");
         assert!(err_str.contains("HTTP 500"));
         // No token in error.
         assert!(!err_str.contains("test-token"));
@@ -643,7 +643,7 @@ mod tests {
             correlation_id: "corr-send-err".into(),
         };
         let err = t.send(&outbound).await.unwrap_err();
-        let err_str = format!("{}", err);
+        let err_str = format!("{err}");
         assert!(err_str.contains("Telegram API error"));
         assert!(err_str.contains("chat not found"));
         assert!(!err_str.contains("test-token"));

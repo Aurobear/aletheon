@@ -109,10 +109,10 @@ impl CoreMemory {
         let block = self
             .blocks
             .get_mut(label)
-            .ok_or_else(|| anyhow::anyhow!("Block '{}' not found", label))?;
+            .ok_or_else(|| anyhow::anyhow!("Block '{label}' not found"))?;
 
         if block.read_only {
-            anyhow::bail!("Block '{}' is read-only", label);
+            anyhow::bail!("Block '{label}' is read-only");
         }
 
         let new_value = if block.value.is_empty() {
@@ -139,14 +139,14 @@ impl CoreMemory {
         let block = self
             .blocks
             .get_mut(label)
-            .ok_or_else(|| anyhow::anyhow!("Block '{}' not found", label))?;
+            .ok_or_else(|| anyhow::anyhow!("Block '{label}' not found"))?;
 
         if block.read_only {
-            anyhow::bail!("Block '{}' is read-only", label);
+            anyhow::bail!("Block '{label}' is read-only");
         }
 
         if !block.value.contains(old) {
-            anyhow::bail!("Block '{}' does not contain '{}'", label, old);
+            anyhow::bail!("Block '{label}' does not contain '{old}'");
         }
 
         block.value = block.value.replacen(old, new, 1);
@@ -158,10 +158,10 @@ impl CoreMemory {
         let block = self
             .blocks
             .get_mut(label)
-            .ok_or_else(|| anyhow::anyhow!("Block '{}' not found", label))?;
+            .ok_or_else(|| anyhow::anyhow!("Block '{label}' not found"))?;
 
         if block.read_only {
-            anyhow::bail!("Block '{}' is read-only", label);
+            anyhow::bail!("Block '{label}' is read-only");
         }
 
         if new_content.len() > block.char_limit {
@@ -205,7 +205,7 @@ impl CoreMemory {
         for entry in reflections {
             // Extract user patterns from what_worked into "human" block
             for lesson in &entry.what_worked {
-                let snippet = format!("- {}", lesson);
+                let snippet = format!("- {lesson}");
                 if let Some(block) = self.blocks.get("human") {
                     if block.remaining_capacity() < snippet.len() + 1 {
                         self.truncate_oldest("human", snippet.len() + 1);
@@ -217,7 +217,7 @@ impl CoreMemory {
 
             // Extract agent knowledge from learned into "learned" block
             for lesson in &entry.learned {
-                let snippet = format!("- {}", lesson);
+                let snippet = format!("- {lesson}");
                 if let Some(block) = self.blocks.get("learned") {
                     if block.remaining_capacity() < snippet.len() + 1 {
                         self.truncate_oldest("learned", snippet.len() + 1);

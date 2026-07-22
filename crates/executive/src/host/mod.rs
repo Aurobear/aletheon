@@ -173,7 +173,7 @@ impl RuntimeHost for DaemonHost {
         let data_dir = &core.daemon_config.data_dir;
         tracing::info!(data_dir = %data_dir, "Creating data directory...");
         std::fs::create_dir_all(data_dir)
-            .map_err(|e| anyhow::anyhow!("Failed to create data dir '{}': {}", data_dir, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create data dir '{data_dir}': {e}"))?;
 
         // ── Startup log ─────────────────────────────────────────────
         tracing::info!(

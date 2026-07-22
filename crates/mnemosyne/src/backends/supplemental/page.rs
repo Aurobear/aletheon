@@ -159,7 +159,7 @@ impl SupplementalDocument {
             bail!("supplemental memory page exceeds byte limit");
         }
         let digest = Sha256::digest(metadata.record_id.as_bytes());
-        let slug = format!("aletheon/{kind}/{:x}", digest)[..(kind.len() + 10 + 32)].to_string();
+        let slug = format!("aletheon/{kind}/{digest:x}")[..(kind.len() + 10 + 32)].to_string();
         Ok(Self { slug, content })
     }
 

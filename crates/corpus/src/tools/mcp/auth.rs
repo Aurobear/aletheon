@@ -95,7 +95,7 @@ fn percent_encode(input: &str) -> String {
             b' ' => out.push('+'),
             _ => {
                 out.push('%');
-                out.push_str(&format!("{:02X}", byte));
+                out.push_str(&format!("{byte:02X}"));
             }
         }
     }
@@ -219,7 +219,7 @@ impl BearerTokenAuth {
         let token = self.token()?;
         match (&self.grant, &self.clock, target_url) {
             // No grant → always allow (backward compatible).
-            (None, _, _) => Some(format!("Bearer {}", token)),
+            (None, _, _) => Some(format!("Bearer {token}")),
             // Grant present but no URL → fail-closed.
             (Some(_), _, None) => None,
             // Grant present with URL → gate on approved_for.
@@ -231,7 +231,7 @@ impl BearerTokenAuth {
                         .iter()
                         .any(|additional| additional.approved_for(url, now))
                 {
-                    Some(format!("Bearer {}", token))
+                    Some(format!("Bearer {token}"))
                 } else {
                     None
                 }
@@ -245,7 +245,7 @@ impl BearerTokenAuth {
     /// without scoping. Used where the transport does not know the
     /// target URL (e.g. SSE long-poll setup).
     pub fn header_value(&self) -> Option<String> {
-        self.token().map(|t| format!("Bearer {}", t))
+        self.token().map(|t| format!("Bearer {t}"))
     }
 }
 
@@ -534,11 +534,7 @@ impl McpOAuthProvider {
         let result: Result<TokenEntry> = async {
             let age = now_epoch_secs(&*self.clock).saturating_sub(oauth_state.created_at);
             if age > STATE_MAX_AGE_SECS {
-                anyhow::bail!(
-                    "OAuth state expired (age {}s > {}s max)",
-                    age,
-                    STATE_MAX_AGE_SECS
-                );
+                anyhow::bail!("OAuth state expired (age {age}s > {STATE_MAX_AGE_SECS}s max)");
             }
             let entry = self.exchange_code(code, &oauth_state.pkce_verifier).await?;
             self.token_store
@@ -871,7 +867,7 @@ mod tests {
     fn display_redacts_token() {
         std::env::set_var("TEST_MCP_TOKEN_DISPLAY", "supersecret");
         let auth = BearerTokenAuth::new("TEST_MCP_TOKEN_DISPLAY");
-        let display = format!("{}", auth);
+        let display = format!("{auth}");
         assert!(!display.contains("supersecret"));
         assert!(display.contains("redacted"));
         std::env::remove_var("TEST_MCP_TOKEN_DISPLAY");

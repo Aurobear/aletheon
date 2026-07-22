@@ -135,7 +135,7 @@ impl WorldModel {
         }
 
         let total = entities.len();
-        lines.push(format!("{} entities active", total));
+        lines.push(format!("{total} entities active"));
 
         // Categorize by confidence
         let healthy = entities.values().filter(|e| e.confidence >= 0.7).count();
@@ -147,8 +147,7 @@ impl WorldModel {
 
         if degraded > 0 || lost > 0 {
             lines.push(format!(
-                "system health: {} healthy, {} degraded, {} lost",
-                healthy, degraded, lost
+                "system health: {healthy} healthy, {degraded} degraded, {lost} lost"
             ));
         } else {
             lines.push("system health: nominal".to_string());
@@ -282,7 +281,7 @@ mod tests {
     fn snapshot_limits_to_10() {
         let wm = make_wm(100);
         for i in 0..15 {
-            wm.update(make_obs(&format!("event_{}", i), "src"));
+            wm.update(make_obs(&format!("event_{i}"), "src"));
         }
         let snap = wm.snapshot();
         // Should contain newest 10
@@ -313,7 +312,7 @@ mod tests {
     fn recent_respects_limit() {
         let wm = make_wm(100);
         for i in 0..5 {
-            wm.update(make_obs(&format!("e{}", i), "src"));
+            wm.update(make_obs(&format!("e{i}"), "src"));
         }
         let recent = wm.recent(3);
         assert_eq!(recent.len(), 3);

@@ -94,7 +94,7 @@ impl ToolNameConfig {
         seen: &mut std::collections::HashSet<String>,
     ) -> String {
         let candidate = if self.enable_prefix {
-            format!("{}__{}", server_name, tool_name)
+            format!("{server_name}__{tool_name}")
         } else {
             tool_name.to_string()
         };
@@ -132,7 +132,7 @@ fn insert_with_numeric_suffix(base: &str, seen: &mut std::collections::HashSet<S
         return base.to_string();
     }
     for i in 2.. {
-        let candidate = format!("{}_{}", base, i);
+        let candidate = format!("{base}_{i}");
         if !seen.contains(&candidate) {
             seen.insert(candidate.clone());
             return candidate;
@@ -180,7 +180,7 @@ impl McpNotification {
 /// Returns `true` if the error represents an authentication/authorization
 /// failure (HTTP 401 or 403). Fallback must NOT happen for these.
 pub fn is_auth_error(err: &anyhow::Error) -> bool {
-    let msg = format!("{:?}", err);
+    let msg = format!("{err:?}");
     msg.contains("401") || msg.contains("403")
 }
 
@@ -342,7 +342,7 @@ impl McpTransport {
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            anyhow::bail!("SSE connection returned HTTP {}", status);
+            anyhow::bail!("SSE connection returned HTTP {status}");
         }
 
         let (event_tx, event_rx) = mpsc::channel::<String>(128);
@@ -427,7 +427,7 @@ impl McpTransport {
             })
             .await
             .map_err(|_elapsed| {
-                anyhow::anyhow!("MCP stdio request timed out after {}ms", timeout_ms)
+                anyhow::anyhow!("MCP stdio request timed out after {timeout_ms}ms")
             })?,
 
             Self::StreamableHttp {
@@ -538,7 +538,7 @@ impl McpTransport {
     /// Returns `true` when the error represents a transient failure that
     /// should be retried (5xx, 429, connection errors, timeouts).
     fn is_retryable(err: &anyhow::Error) -> bool {
-        let msg = format!("{:?}", err);
+        let msg = format!("{err:?}");
         // 5xx server errors are retryable
         if msg.contains("500") || msg.contains("502") || msg.contains("503") || msg.contains("504")
         {
@@ -611,8 +611,7 @@ impl McpTransport {
                 }
                 Err(_elapsed) => {
                     last_error = Some(anyhow::anyhow!(
-                        "MCP HTTP request timed out after {}ms",
-                        request_timeout_ms
+                        "MCP HTTP request timed out after {request_timeout_ms}ms"
                     ));
                 }
             }
@@ -676,8 +675,7 @@ impl McpTransport {
                         }
                         Err(_elapsed) => {
                             last_error = Some(anyhow::anyhow!(
-                                "MCP SSE request timed out after {}ms",
-                                request_timeout_ms
+                                "MCP SSE request timed out after {request_timeout_ms}ms"
                             ));
                         }
                     }
@@ -690,8 +688,7 @@ impl McpTransport {
                 }
                 Err(_elapsed) => {
                     last_error = Some(anyhow::anyhow!(
-                        "MCP SSE POST timed out after {}ms",
-                        request_timeout_ms
+                        "MCP SSE POST timed out after {request_timeout_ms}ms"
                     ));
                 }
             }
@@ -704,7 +701,7 @@ impl McpTransport {
         let response: Value =
             serde_json::from_str(raw).context("Failed to parse JSON-RPC response")?;
         if let Some(error) = response.get("error") {
-            return Err(anyhow::anyhow!("MCP error: {}", error));
+            return Err(anyhow::anyhow!("MCP error: {error}"));
         }
         Ok(response.get("result").cloned().unwrap_or(Value::Null))
     }
@@ -731,11 +728,11 @@ impl McpTransport {
         let status = response.status();
 
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            anyhow::bail!("Authentication failed: HTTP {}", status);
+            anyhow::bail!("Authentication failed: HTTP {status}");
         }
 
         if !status.is_success() {
-            anyhow::bail!("HTTP request failed: {}", status);
+            anyhow::bail!("HTTP request failed: {status}");
         }
 
         // Check content type: if SSE, read event stream; otherwise read JSON.

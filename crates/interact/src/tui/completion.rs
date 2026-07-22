@@ -86,7 +86,7 @@ impl CompletionPopup {
                 } else {
                     Style::default().fg(Color::White)
                 };
-                ListItem::new(Line::from(Span::styled(format!("  {} ", cmd), style)))
+                ListItem::new(Line::from(Span::styled(format!("  {cmd} "), style)))
             })
             .collect();
 

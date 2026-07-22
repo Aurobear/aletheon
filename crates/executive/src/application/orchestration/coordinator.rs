@@ -86,21 +86,21 @@ impl Coordinator {
         // 1. Hard deny — no override.
         if let Verdict::Deny { reason } = verdict {
             return Ok(ArbitrationResult::Deny {
-                reason: format!("SelfField denied: {}", reason),
+                reason: format!("SelfField denied: {reason}"),
             });
         }
 
         // 2. SelfField mandates sandbox.
         if let Verdict::SandboxFirst { reason } = verdict {
             return Ok(ArbitrationResult::SandboxFirst {
-                reason: format!("SelfField requires sandbox: {}", reason),
+                reason: format!("SelfField requires sandbox: {reason}"),
             });
         }
 
         // 3. SelfField mandates delay.
         if let Verdict::Delay { reason, until } = verdict {
             return Ok(ArbitrationResult::Delay {
-                reason: format!("SelfField delays: {}", reason),
+                reason: format!("SelfField delays: {reason}"),
                 until: until.clone(),
             });
         }
@@ -108,10 +108,7 @@ impl Coordinator {
         // 4. SelfField requires user confirmation.
         if let Verdict::RequireConfirmation { reason, risk_level } = verdict {
             return Ok(ArbitrationResult::AskConfirmation {
-                reason: format!(
-                    "SelfField requires confirmation (risk={:?}): {}",
-                    risk_level, reason
-                ),
+                reason: format!("SelfField requires confirmation (risk={risk_level:?}): {reason}"),
             });
         }
 

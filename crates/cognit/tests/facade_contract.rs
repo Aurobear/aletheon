@@ -1,9 +1,9 @@
+#![allow(dead_code)]
+
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use cognit::{
-    CognitErrorKind, CognitRetryDisposition, CognitiveSessionDependencies, HarnessConfig,
-};
+use cognit::CognitiveSessionDependencies;
 use fabric::{
     CapabilityCall, CapabilityResult, LlmProvider, LlmResponse, LlmStream, OperationId, ProcessId,
     ToolDefinition, TurnEvent, TurnEventSink, TurnRequest, TurnServices,

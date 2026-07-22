@@ -607,8 +607,8 @@ mod tests {
         lp.observe_compaction_outcome(&applied, Some(&sink));
 
         let after = compaction_metrics();
-        assert!(after.degenerate_total >= before.degenerate_total + 1);
-        assert!(after.evicted_messages_total >= before.evicted_messages_total + 1);
+        assert!(after.degenerate_total > before.degenerate_total);
+        assert!(after.evicted_messages_total > before.evicted_messages_total);
         assert_eq!(promoted.lock().unwrap().len(), 1);
         let events = sink.0.lock().unwrap();
         assert!(matches!(
@@ -641,7 +641,7 @@ mod tests {
             },
             None,
         );
-        assert!(compaction_metrics().sampler_error_total >= before.sampler_error_total + 1);
+        assert!(compaction_metrics().sampler_error_total > before.sampler_error_total);
     }
 
     struct ScriptedLlm {
@@ -725,7 +725,7 @@ mod tests {
                     let name = name.to_string();
                     async move {
                         executed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        (format!("ran {}", name), false)
+                        (format!("ran {name}"), false)
                     }
                 },
             )
@@ -762,7 +762,7 @@ mod tests {
                 let big_text = "x".repeat(10_000);
                 Ok(LlmResponse {
                     content: vec![ContentBlock::ToolUse {
-                        id: format!("call_{}", n),
+                        id: format!("call_{n}"),
                         name: "big_tool".into(),
                         input: serde_json::json!({"data": big_text}),
                     }],
@@ -836,7 +836,7 @@ mod tests {
                 |_id: &str, name: &str, _input: &serde_json::Value| {
                     let name = name.to_string();
                     let big = "y".repeat(10_000);
-                    async move { (format!("result_{}: {}", name, big), false) }
+                    async move { (format!("result_{name}: {big}"), false) }
                 },
             )
             .await

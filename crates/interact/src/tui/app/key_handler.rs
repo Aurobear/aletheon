@@ -66,7 +66,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                     .expect("typed approval response serializes");
                 use tokio::io::AsyncWriteExt;
                 let payload = serde_json::to_string(&resp).unwrap_or_default();
-                let framed = format!("{}\n", payload);
+                let framed = format!("{payload}\n");
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
                 app.chat.add_text(

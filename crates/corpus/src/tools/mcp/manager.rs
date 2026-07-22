@@ -174,7 +174,7 @@ mod tests {
     impl MockMcpState {
         fn with_token(token: &str) -> Self {
             Self {
-                expected_token: Some(format!("Bearer {}", token)),
+                expected_token: Some(format!("Bearer {token}")),
                 tools_list_response: json!({
                     "tools": [
                         {
@@ -437,7 +437,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "gbrain".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
@@ -454,7 +454,7 @@ mod tests {
 
         let mut mgr = McpManager::new(config);
         let result = mgr.connect_all().await;
-        assert!(result.is_ok(), "connect_all failed: {:?}", result);
+        assert!(result.is_ok(), "connect_all failed: {result:?}");
         assert_eq!(mgr.connected_count(), 1);
 
         // Verify auth header was sent
@@ -483,7 +483,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "gbrain".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
@@ -510,7 +510,7 @@ mod tests {
                 json!({"query": "servo", "source": "aurb"}),
             )
             .await;
-        assert!(result.is_ok(), "call_tool failed: {:?}", result);
+        assert!(result.is_ok(), "call_tool failed: {result:?}");
         let value = result.unwrap();
         assert_eq!(
             value
@@ -538,7 +538,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "gbrain".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
@@ -575,7 +575,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "gbrain".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
@@ -621,8 +621,7 @@ mod tests {
         let err_msg = format!("{}", call_result.unwrap_err());
         assert!(
             !err_msg.contains("secret-do-not-leak"),
-            "Error message leaked token: {}",
-            err_msg
+            "Error message leaked token: {err_msg}"
         );
 
         std::env::remove_var("TEST_401_TOKEN");
@@ -679,7 +678,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "gbrain".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: false,
@@ -716,7 +715,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "gbrain".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
@@ -772,7 +771,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "gbrain".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
@@ -791,7 +790,7 @@ mod tests {
         mgr.connect_all().await.unwrap();
 
         let result = mgr.read_resource("gbrain", "file:///docs/readme.md").await;
-        assert!(result.is_ok(), "read_resource failed: {:?}", result);
+        assert!(result.is_ok(), "read_resource failed: {result:?}");
         let content = result.unwrap();
         assert!(content.text.contains("Content of file:///docs/readme.md"));
         assert_eq!(content.uri, "file:///docs/readme.md");
@@ -810,7 +809,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "gbrain".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
@@ -847,7 +846,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "gbrain".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
@@ -907,7 +906,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "parallel-server".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
@@ -934,8 +933,7 @@ mod tests {
             assert_eq!(
                 cc,
                 ConcurrencyClass::ReadOnly,
-                "Tool from parallel-capable server should have ReadOnly concurrency class, got {:?}",
-                cc
+                "Tool from parallel-capable server should have ReadOnly concurrency class, got {cc:?}"
             );
         }
 
@@ -951,7 +949,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "refresh-server".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
@@ -994,7 +992,7 @@ mod tests {
             servers: vec![McpServerConfig {
                 name: "late-server".into(),
                 transport: McpTransportConfig::StreamableHttp {
-                    url: format!("http://{}/mcp", addr),
+                    url: format!("http://{addr}/mcp"),
                 },
                 trust: McpTrustLevel::LocalTrusted,
                 enabled: true,

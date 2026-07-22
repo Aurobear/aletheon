@@ -79,7 +79,7 @@ impl Tool for ToolSearchTool {
                     .catalog
                     .get_description(name)
                     .unwrap_or("(no description)");
-                format!("- {} (score: {:.2}): {}", name, score, desc)
+                format!("- {name} (score: {score:.2}): {desc}")
             })
             .collect();
 

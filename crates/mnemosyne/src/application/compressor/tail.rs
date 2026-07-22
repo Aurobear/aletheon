@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn test_long_conversation_splits() {
         let messages: Vec<Message> = (0..100)
-            .map(|i| Message::user(format!("message {}", i)))
+            .map(|i| Message::user(format!("message {i}")))
             .collect();
         let config = TailProtectionConfig {
             tail_token_budget: 100,

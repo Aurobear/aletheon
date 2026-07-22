@@ -110,7 +110,7 @@ fn initialize_has_version_and_capabilities_but_no_uid() {
     .unwrap();
     assert_eq!(value["type"], "initialize");
     assert_eq!(value["data"]["protocol_versions"], serde_json::json!([1]));
-    assert!(value.to_string().find("uid").is_none());
+    assert!(!value.to_string().contains("uid"));
 }
 
 #[test]

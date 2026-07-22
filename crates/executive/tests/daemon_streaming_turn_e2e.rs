@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 mod support {
     pub mod mock_llm_provider;
     pub mod test_aletheon_builder;

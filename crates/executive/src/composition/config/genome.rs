@@ -51,7 +51,7 @@ impl GenomeConfig {
         let mut parts: Vec<String> = self
             .care_weights
             .iter()
-            .map(|(k, v)| format!("  {}: {:.2}", k, v))
+            .map(|(k, v)| format!("  {k}: {v:.2}"))
             .collect();
         parts.sort();
         format!("Current care priorities:\n{}", parts.join("\n"))

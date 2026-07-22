@@ -86,7 +86,7 @@ impl ProviderRegistry {
             let provider = self
                 .providers
                 .get(provider_name)
-                .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", provider_name))?
+                .ok_or_else(|| anyhow::anyhow!("Provider '{provider_name}' not found"))?
                 .clone();
             return Ok((provider, model.to_string()));
         }
@@ -97,7 +97,7 @@ impl ProviderRegistry {
                 .providers
                 .get(provider_name)
                 .ok_or_else(|| {
-                    anyhow::anyhow!("Provider '{}' not found (alias '{}')", provider_name, spec)
+                    anyhow::anyhow!("Provider '{provider_name}' not found (alias '{spec}')")
                 })?
                 .clone();
             return Ok((provider, model.clone()));
@@ -122,7 +122,7 @@ impl ProviderRegistry {
         if spec.contains('/') || self.aliases.contains_key(spec) {
             return self.resolve(spec);
         }
-        anyhow::bail!("model alias '{}' not found", spec)
+        anyhow::bail!("model alias '{spec}' not found")
     }
 
     /// Create an LLM provider through the canonical factory.

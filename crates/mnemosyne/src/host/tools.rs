@@ -50,7 +50,7 @@ impl Tool for CoreMemoryAppendTool {
         let elapsed = self.clock.mono_now().0.saturating_sub(start);
         match mem.append(label, content) {
             Ok(_) => ToolResult {
-                content: format!("Appended to '{}'", label),
+                content: format!("Appended to '{label}'"),
                 is_error: false,
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
@@ -59,7 +59,7 @@ impl Tool for CoreMemoryAppendTool {
                 },
             },
             Err(e) => ToolResult {
-                content: format!("Error: {}", e),
+                content: format!("Error: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
@@ -114,7 +114,7 @@ impl Tool for CoreMemoryReplaceTool {
         let elapsed = self.clock.mono_now().0.saturating_sub(start);
         match mem.replace(label, old, new) {
             Ok(_) => ToolResult {
-                content: format!("Replaced in '{}'", label),
+                content: format!("Replaced in '{label}'"),
                 is_error: false,
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
@@ -123,7 +123,7 @@ impl Tool for CoreMemoryReplaceTool {
                 },
             },
             Err(e) => ToolResult {
-                content: format!("Error: {}", e),
+                content: format!("Error: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
@@ -164,7 +164,7 @@ impl MemorySearchTool {
                     } else {
                         line.to_string()
                     };
-                    results.push(format!("[core:{}] {}", label, preview));
+                    results.push(format!("[core:{label}] {preview}"));
                 }
             }
         }
@@ -195,7 +195,7 @@ impl MemorySearchTool {
                 }
             }
             Err(e) => {
-                results.push(format!("[fact:search error] {}", e));
+                results.push(format!("[fact:search error] {e}"));
             }
         }
         results
@@ -278,7 +278,7 @@ impl Tool for MemorySearchTool {
                     }
                 }
                 Err(e) => {
-                    all_results.push(format!("[recall:search error] {}", e));
+                    all_results.push(format!("[recall:search error] {e}"));
                 }
             }
         }

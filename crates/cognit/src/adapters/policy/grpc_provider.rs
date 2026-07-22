@@ -42,8 +42,7 @@ pub fn validate_policy_endpoint(endpoint: &str) -> Result<(), String> {
 
     if !is_loopback && !is_tls {
         return Err(format!(
-            "non-loopback endpoint '{}' must use TLS (https:// or grpcs://)",
-            endpoint
+            "non-loopback endpoint '{endpoint}' must use TLS (https:// or grpcs://)"
         ));
     }
     Ok(())

@@ -256,7 +256,7 @@ impl LlmScheduler {
     ) -> Result<LlmResponse> {
         let order = self.candidates(purpose, !tools.is_empty());
         if order.is_empty() {
-            anyhow::bail!("No healthy providers available for purpose {:?}", purpose);
+            anyhow::bail!("No healthy providers available for purpose {purpose:?}");
         }
 
         let mut last_err: Option<anyhow::Error> = None;
@@ -299,7 +299,7 @@ impl LlmScheduler {
         }
 
         Err(last_err
-            .unwrap_or_else(|| anyhow::anyhow!("All providers failed for purpose {:?}", purpose)))
+            .unwrap_or_else(|| anyhow::anyhow!("All providers failed for purpose {purpose:?}")))
     }
 
     /// Get the provider for task execution (Engine use).
@@ -335,7 +335,7 @@ impl LlmScheduler {
         let started = self.clock.mono_now();
         let result = match self.providers.get(name) {
             Some(p) => p.complete(&[Message::user("ping")], &[]).await.map(|_| ()),
-            None => Err(anyhow::anyhow!("unknown provider '{}'", name)),
+            None => Err(anyhow::anyhow!("unknown provider '{name}'")),
         };
         let latency_ms = self.clock.mono_now().0.saturating_sub(started.0);
         let health = ProviderHealth {

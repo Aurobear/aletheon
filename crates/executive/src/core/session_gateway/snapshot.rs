@@ -38,14 +38,13 @@ impl SnapshotBuilder {
 
         // Header
         md.push_str(&format!(
-            "# Aletheon Runtime Snapshot — session: {}\n\n",
-            session_id
+            "# Aletheon Runtime Snapshot — session: {session_id}\n\n"
         ));
 
         // Goal
         md.push_str("## Current Goal\n");
         match goal_tracker.current_goal_description() {
-            Some(desc) => md.push_str(&format!("- {}\n", desc)),
+            Some(desc) => md.push_str(&format!("- {desc}\n")),
             None => md.push_str("- *(no goal set)*\n"),
         }
         md.push('\n');
@@ -83,17 +82,17 @@ impl SnapshotBuilder {
         let perf_snapshot = perf.snapshot();
 
         md.push_str("## Health\n");
-        md.push_str(&format!("- Status: {}\n", health_status));
+        md.push_str(&format!("- Status: {health_status}\n"));
         md.push_str(&format!("- Uptime: {}\n", format_duration(uptime)));
         md.push_str(&format!(
             "- Iteration: {}/{}\n",
             iteration, config.max_iterations
         ));
-        md.push_str(&format!("- Consecutive errors: {}\n", consecutive_errors));
+        md.push_str(&format!("- Consecutive errors: {consecutive_errors}\n"));
 
         match &circuit_breaker_status {
-            CircuitBreakerStatus::Warning(msg) => md.push_str(&format!("- ⚠️ {}\n", msg)),
-            CircuitBreakerStatus::Tripped(msg) => md.push_str(&format!("- 🛑 {}\n", msg)),
+            CircuitBreakerStatus::Warning(msg) => md.push_str(&format!("- ⚠️ {msg}\n")),
+            CircuitBreakerStatus::Tripped(msg) => md.push_str(&format!("- 🛑 {msg}\n")),
             CircuitBreakerStatus::Ok => {}
         }
         md.push('\n');
@@ -104,7 +103,7 @@ impl SnapshotBuilder {
             md.push_str("- *(no tool calls yet)*\n");
         } else {
             for name in recent_tool_names.iter().rev().take(5) {
-                md.push_str(&format!("- [tool] {}\n", name));
+                md.push_str(&format!("- [tool] {name}\n"));
             }
         }
         md.push('\n');
@@ -123,7 +122,7 @@ impl SnapshotBuilder {
             tool_budget_max - tool_budget_remaining,
             tool_budget_max
         ));
-        md.push_str(&format!("- Messages: {}\n", message_count));
+        md.push_str(&format!("- Messages: {message_count}\n"));
         md.push('\n');
 
         // Open Errors
@@ -136,8 +135,7 @@ impl SnapshotBuilder {
         }
         if storm_breaker_failure_count > 0 {
             md.push_str(&format!(
-                "- {} unique failure patterns tracked (StormBreaker)\n",
-                storm_breaker_failure_count
+                "- {storm_breaker_failure_count} unique failure patterns tracked (StormBreaker)\n"
             ));
         }
         if perf_snapshot.error_count == 0 && storm_breaker_failure_count == 0 {
@@ -150,14 +148,14 @@ impl SnapshotBuilder {
         if !constraints.is_empty() {
             md.push_str("## Active Constraints\n");
             for c in constraints {
-                md.push_str(&format!("- {}\n", c));
+                md.push_str(&format!("- {c}\n"));
             }
             md.push('\n');
         }
 
         // Config summary
         md.push_str("## Active Configuration\n");
-        md.push_str(&format!("- Session: {}\n", session_id));
+        md.push_str(&format!("- Session: {session_id}\n"));
         md.push_str(&format!("- Max iterations: {}\n", config.max_iterations));
         md.push_str(&format!(
             "- Context window: {} tokens\n",
@@ -200,13 +198,13 @@ fn read_rss_kb() -> Option<u64> {
 fn format_duration(d: std::time::Duration) -> String {
     let secs = d.as_secs();
     if secs < 60 {
-        format!("{}s", secs)
+        format!("{secs}s")
     } else if secs < 3600 {
         format!("{}m {}s", secs / 60, secs % 60)
     } else {
         let h = secs / 3600;
         let m = (secs % 3600) / 60;
-        format!("{}h {}m", h, m)
+        format!("{h}h {m}m")
     }
 }
 

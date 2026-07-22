@@ -220,10 +220,10 @@ impl SimpleGlob {
 
     fn matches(&self, rel_path: &str) -> bool {
         let path_segments: Vec<&str> = rel_path.split('/').collect();
-        self.match_segments(&self.segments, &path_segments)
+        Self::match_segments(&self.segments, &path_segments)
     }
 
-    fn match_segments(&self, pattern: &[GlobSegment], path: &[&str]) -> bool {
+    fn match_segments(pattern: &[GlobSegment], path: &[&str]) -> bool {
         match (pattern.first(), path.first()) {
             // Both exhausted — match.
             (None, None) => true,
@@ -233,12 +233,12 @@ impl SimpleGlob {
             (Some(GlobSegment::Recursive), _) => {
                 let rest = &pattern[1..];
                 // `**` can match zero segments.
-                if self.match_segments(rest, path) {
+                if Self::match_segments(rest, path) {
                     return true;
                 }
                 // Or consume one path segment and try again.
                 for i in 1..=path.len() {
-                    if self.match_segments(rest, &path[i..]) {
+                    if Self::match_segments(rest, &path[i..]) {
                         return true;
                     }
                 }
@@ -247,7 +247,7 @@ impl SimpleGlob {
             // Literal segment.
             (Some(GlobSegment::Literal(lit)), Some(seg)) => {
                 if lit == *seg {
-                    self.match_segments(&pattern[1..], &path[1..])
+                    Self::match_segments(&pattern[1..], &path[1..])
                 } else {
                     false
                 }
@@ -255,7 +255,7 @@ impl SimpleGlob {
             // Wildcard segment — matches a single path component.
             (Some(GlobSegment::Wildcard(pat)), Some(seg)) => {
                 if wildcard_match(pat, seg) {
-                    self.match_segments(&pattern[1..], &path[1..])
+                    Self::match_segments(&pattern[1..], &path[1..])
                 } else {
                     false
                 }
@@ -341,7 +341,7 @@ mod tests {
         let scanner = GlobScanner::default();
         let results = scanner.scan(&["**/*.txt".to_string()], base);
 
-        assert_eq!(results.len(), 2, "Expected 2 .txt files, got {:?}", results);
+        assert_eq!(results.len(), 2, "Expected 2 .txt files, got {results:?}");
         let names: Vec<String> = results
             .iter()
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
@@ -393,7 +393,7 @@ mod tests {
         let scanner = GlobScanner::default();
         let results = scanner.scan(&["**/*.env".to_string(), "**/*.key".to_string()], base);
 
-        assert_eq!(results.len(), 2, "Expected 2 matches, got {:?}", results);
+        assert_eq!(results.len(), 2, "Expected 2 matches, got {results:?}");
     }
 
     #[test]

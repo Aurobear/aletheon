@@ -98,10 +98,7 @@ impl SelectorStrategy {
                 info!(agent_id = %fallback, "Selector using fallback agent");
                 Ok(fallback.clone())
             } else {
-                Err(anyhow::anyhow!(
-                    "LLM selected unknown agent: '{}'",
-                    selected
-                ))
+                Err(anyhow::anyhow!("LLM selected unknown agent: '{selected}'"))
             }
         }
     }
@@ -114,7 +111,7 @@ impl SelectorStrategy {
             .registry
             .get(&agent_id)
             .await
-            .ok_or_else(|| anyhow::anyhow!("Agent '{}' disappeared", agent_id))?;
+            .ok_or_else(|| anyhow::anyhow!("Agent '{agent_id}' disappeared"))?;
 
         let agent_read = agent.read().await;
         let msg = Message::user(message);

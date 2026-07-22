@@ -23,7 +23,7 @@ pub fn compose_turn_coordinator(
         event_spine.clone(),
         projections,
     ));
-    TurnCoordinator::from_components(kernel, read_store, store, event_spine, grok_hardening)
+    TurnCoordinator::from_components(kernel, store, grok_hardening)
 }
 
 pub fn compose_in_memory_turn_coordinator(

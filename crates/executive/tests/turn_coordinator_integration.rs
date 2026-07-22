@@ -138,8 +138,10 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
         .unwrap(),
     });
     let spine = Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap());
-    let mut hardening = executive::composition::config::GrokHardeningConfig::default();
-    hardening.compaction_v2 = true;
+    let hardening = executive::composition::config::GrokHardeningConfig {
+        compaction_v2: true,
+        ..Default::default()
+    };
     let coordinator = executive::testing::turn_coordinator::compose_with_event_spine(
         kernel.clone(),
         store.clone(),

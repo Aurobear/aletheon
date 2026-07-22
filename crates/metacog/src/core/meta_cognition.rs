@@ -73,7 +73,7 @@ impl MetaCognition {
                 intents: vec![MutationIntent {
                     target: "care.priorities".to_string(),
                     change: serde_json::json!({"action": "adjust", "magnitude": 0.1}),
-                    reason: format!("Angst: {:?}", facing),
+                    reason: format!("Angst: {facing:?}"),
                     reversible: true,
                 }],
             },
@@ -84,7 +84,7 @@ impl MetaCognition {
                 value: 0.8,
             },
             Stimmung::Neugier { curiosity_about } => EvolutionAction::InjectReflection {
-                content: format!("Explore: {}", curiosity_about),
+                content: format!("Explore: {curiosity_about}"),
             },
             _ => {
                 if turn - state.last_evolution_turn >= self.thresholds.evolution_interval {

@@ -47,9 +47,8 @@ impl StormBreaker {
 
             if *count >= self.failure_threshold {
                 return Some(format!(
-                    "⚠️ Storm breaker: {} has failed {} times with the same error. \
-                     Previous attempts did not work. Try a completely different approach.",
-                    tool_name, count
+                    "⚠️ Storm breaker: {tool_name} has failed {count} times with the same error. \
+                     Previous attempts did not work. Try a completely different approach."
                 ));
             }
         } else {
@@ -64,9 +63,8 @@ impl StormBreaker {
 
             if *count >= self.success_threshold {
                 return Some(format!(
-                    "⚠️ Storm breaker: {} has succeeded {} times in a row. \
-                     Verify the result is correct before continuing.",
-                    tool_name, count
+                    "⚠️ Storm breaker: {tool_name} has succeeded {count} times in a row. \
+                     Verify the result is correct before continuing."
                 ));
             }
         }

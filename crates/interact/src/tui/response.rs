@@ -181,7 +181,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::Error { message } => {
             app.chat
-                .add_text(ChatRole::System, format!("Error: {}", message));
+                .add_text(ChatRole::System, format!("Error: {message}"));
             app.streaming = false;
             app.status.waiting = false;
             app.app_state.streaming = false;
@@ -189,7 +189,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::AwarenessChanged { level, context } => {
             if let Ok(awareness_level) =
-                serde_json::from_str::<AwarenessLevel>(&format!("\"{}\"", level))
+                serde_json::from_str::<AwarenessLevel>(&format!("\"{level}\""))
             {
                 app.app_state
                     .awareness
@@ -219,7 +219,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             task,
             status,
         } => {
-            if let Ok(s) = serde_json::from_str::<SubAgentStatus>(&format!("\"{}\"", status)) {
+            if let Ok(s) = serde_json::from_str::<SubAgentStatus>(&format!("\"{status}\"")) {
                 let existing = app.sub_agents.iter_mut().find(|a| a.id == agent_id);
                 match existing {
                     Some(handle) => {
@@ -239,7 +239,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             }
         }
         ClientEvent::ModeChanged { new } => {
-            if let Ok(mode) = serde_json::from_str::<CollaborationMode>(&format!("\"{}\"", new)) {
+            if let Ok(mode) = serde_json::from_str::<CollaborationMode>(&format!("\"{new}\"")) {
                 app.app_state.mode = mode;
             }
         }
@@ -261,14 +261,12 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 .add_text(ChatRole::System, "Interrupted".to_string());
         }
         ClientEvent::BudgetExceeded { limit } => {
-            app.chat.add_text(
-                ChatRole::System,
-                format!("Budget exceeded: {} tokens", limit),
-            );
+            app.chat
+                .add_text(ChatRole::System, format!("Budget exceeded: {limit} tokens"));
         }
         ClientEvent::CircuitBreakerTripped { reason } => {
             app.chat
-                .add_text(ChatRole::System, format!("Circuit breaker: {}", reason));
+                .add_text(ChatRole::System, format!("Circuit breaker: {reason}"));
         }
         ClientEvent::CompactionTriggered => {
             // compaction is internal, just note it
@@ -375,8 +373,7 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
             .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        app.chat
-            .add_text(ChatRole::System, format!("Error: {}", err));
+        app.chat.add_text(ChatRole::System, format!("Error: {err}"));
     }
     // NOTE: Do NOT clear streaming/waiting here. The JSON-RPC result arrives
     // BEFORE the turn_done event. Clearing streaming here causes a visible UI
@@ -494,28 +491,28 @@ pub fn format_reflections(entries: &serde_json::Value) -> String {
         if let Some(arr) = entry.get("learned").and_then(|v| v.as_array()) {
             for l in arr {
                 if let Some(s) = l.as_str() {
-                    lines.push(format!("  learned: {}", s));
+                    lines.push(format!("  learned: {s}"));
                 }
             }
         }
         if let Some(arr) = entry.get("behavior_changes").and_then(|v| v.as_array()) {
             for c in arr {
                 if let Some(s) = c.as_str() {
-                    lines.push(format!("  changed: {}", s));
+                    lines.push(format!("  changed: {s}"));
                 }
             }
         }
         if let Some(arr) = entry.get("what_worked").and_then(|v| v.as_array()) {
             for w in arr {
                 if let Some(s) = w.as_str() {
-                    lines.push(format!("  worked: {}", s));
+                    lines.push(format!("  worked: {s}"));
                 }
             }
         }
         if let Some(arr) = entry.get("what_failed").and_then(|v| v.as_array()) {
             for f in arr {
                 if let Some(s) = f.as_str() {
-                    lines.push(format!("  failed: {}", s));
+                    lines.push(format!("  failed: {s}"));
                 }
             }
         }
@@ -529,7 +526,7 @@ pub fn format_genome(genome: &serde_json::Value) -> String {
     if let Some(s) = genome.as_str() {
         return s.to_string();
     }
-    serde_json::to_string_pretty(genome).unwrap_or_else(|_| format!("{:?}", genome))
+    serde_json::to_string_pretty(genome).unwrap_or_else(|_| format!("{genome:?}"))
 }
 
 /// Format evolution history for display.
@@ -544,15 +541,14 @@ pub fn format_evolution(evo: &serde_json::Value) -> String {
         let mut lines = Vec::new();
         lines.push(format!("=== Evolution History ({}) ===\n", arr.len()));
         for entry in arr {
-            lines.push(
-                serde_json::to_string_pretty(entry).unwrap_or_else(|_| format!("{:?}", entry)),
-            );
+            lines
+                .push(serde_json::to_string_pretty(entry).unwrap_or_else(|_| format!("{entry:?}")));
             lines.push(String::new());
         }
         return lines.join("\n");
     }
     // Handle object form with version/message fields
-    serde_json::to_string_pretty(evo).unwrap_or_else(|_| format!("{:?}", evo))
+    serde_json::to_string_pretty(evo).unwrap_or_else(|_| format!("{evo:?}"))
 }
 
 /// Format sessions list for display.
@@ -573,10 +569,7 @@ pub fn format_sessions(sessions: &serde_json::Value) -> String {
             .unwrap_or(0);
         let summary = entry.get("summary").and_then(|v| v.as_str()).unwrap_or("");
         let short_id = &id[..8.min(id.len())];
-        lines.push(format!(
-            "[{}] {} ({} turns) {}",
-            short_id, created, turns, summary
-        ));
+        lines.push(format!("[{short_id}] {created} ({turns} turns) {summary}"));
     }
     lines.join("\n")
 }
@@ -604,7 +597,7 @@ pub fn format_models(result: &serde_json::Value) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let marker = if name == current { " (current)" } else { "" };
-        lines.push(format!("  {}{} - {}", name, marker, desc));
+        lines.push(format!("  {name}{marker} - {desc}"));
     }
     lines.push(String::new());
     lines.push("Use /model <name> to switch.".to_string());
@@ -648,9 +641,9 @@ pub fn format_status(status: &serde_json::Value) -> String {
         "Session: {}",
         &session_id[..8.min(session_id.len())]
     ));
-    lines.push(format!("Turns: {}", turn_count));
-    lines.push(format!("Reflections: {}", reflection_count));
-    lines.push(format!("Evolutions: {}", evolution_count));
+    lines.push(format!("Turns: {turn_count}"));
+    lines.push(format!("Reflections: {reflection_count}"));
+    lines.push(format!("Evolutions: {evolution_count}"));
     lines.push(String::new());
     lines.push("Care Weights:".to_string());
 
@@ -658,14 +651,13 @@ pub fn format_status(status: &serde_json::Value) -> String {
         for care in cares {
             let topic = care.get("topic").and_then(|v| v.as_str()).unwrap_or("?");
             let weight = care.get("weight").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            lines.push(format!("  {}: {:.2}", topic, weight));
+            lines.push(format!("  {topic}: {weight:.2}"));
         }
     }
 
     lines.push(String::new());
     lines.push(format!(
-        "Boundary Rules: {} (immutable: {})",
-        boundary_rules, boundary_immutable
+        "Boundary Rules: {boundary_rules} (immutable: {boundary_immutable})"
     ));
 
     let focus_display = if attention_focus.is_empty() {
@@ -673,7 +665,7 @@ pub fn format_status(status: &serde_json::Value) -> String {
     } else {
         attention_focus
     };
-    lines.push(format!("Attention Focus: {}", focus_display));
+    lines.push(format!("Attention Focus: {focus_display}"));
 
     lines.join("\n")
 }
@@ -692,8 +684,7 @@ pub fn format_hooks(hooks: &serde_json::Value) -> String {
         let source = h.get("source").and_then(|v| v.as_str()).unwrap_or("?");
         let priority = h.get("priority").and_then(|v| v.as_i64()).unwrap_or(0);
         lines.push(format!(
-            "  {} [{}] (priority: {}, source: {})",
-            name, point, priority, source
+            "  {name} [{point}] (priority: {priority}, source: {source})"
         ));
     }
     lines.join("\n")
@@ -711,7 +702,7 @@ pub fn format_tools_list(tools: &serde_json::Value) -> String {
         let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("?");
         let desc = t.get("description").and_then(|v| v.as_str()).unwrap_or("");
         let short_desc = if desc.len() > 60 { &desc[..60] } else { desc };
-        lines.push(format!("  {} — {}", name, short_desc));
+        lines.push(format!("  {name} — {short_desc}"));
     }
     lines.join("\n")
 }
@@ -728,7 +719,7 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
         let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("?");
         let task = a.get("task").and_then(|v| v.as_str()).unwrap_or("?");
         let status = a.get("status").and_then(|v| v.as_str()).unwrap_or("?");
-        lines.push(format!("  {} [{}] — {}", id, status, task));
+        lines.push(format!("  {id} [{status}] — {task}"));
     }
     lines.join("\n")
 }

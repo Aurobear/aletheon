@@ -82,7 +82,7 @@ impl VisualAggregator {
             .camera_timestamps
             .entry(frame.camera_id.clone())
             .or_default();
-        while !timestamps.is_empty() && timestamps.front().map_or(true, |t| now_ms - t > 1000) {
+        while !timestamps.is_empty() && timestamps.front().is_none_or(|t| now_ms - t > 1000) {
             timestamps.pop_front();
         }
         if timestamps.len() >= self.config.max_hz {
@@ -161,7 +161,7 @@ mod tests {
 
     fn test_frame(camera: &str, sha256: &str, source_ms: i64) -> FrameRef {
         FrameRef {
-            uri: format!("artifact://sha256:{}", sha256),
+            uri: format!("artifact://sha256:{sha256}"),
             sha256: sha256.into(),
             mime_type: "image/jpeg".into(),
             width: 640,

@@ -291,7 +291,7 @@ mod tests {
     use super::*;
 
     fn make_skill_md(frontmatter: &str) -> String {
-        format!("---\n{}\n---\n\nSkill body here.", frontmatter)
+        format!("---\n{frontmatter}\n---\n\nSkill body here.")
     }
 
     #[test]

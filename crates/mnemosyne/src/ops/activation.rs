@@ -53,8 +53,7 @@ mod tests {
         let score = compute_activation(&entry, now());
         assert!(
             score > 0.7,
-            "fresh high-importance entry should have high activation: {}",
-            score
+            "fresh high-importance entry should have high activation: {score}"
         );
     }
 
@@ -96,11 +95,7 @@ mod tests {
     fn bounded_0_to_1() {
         let entry = ActivationEntry::new(1.0, 100, now());
         let score = compute_activation(&entry, now());
-        assert!(
-            (0.0..=1.0).contains(&score),
-            "score out of range: {}",
-            score
-        );
+        assert!((0.0..=1.0).contains(&score), "score out of range: {score}");
     }
 
     #[test]
@@ -113,9 +108,7 @@ mod tests {
         // But the very old entry should be significantly lower than the fresh one.
         assert!(
             score_old < score_fresh * 0.7,
-            "very old entry ({}) should be much lower than fresh ({})",
-            score_old,
-            score_fresh
+            "very old entry ({score_old}) should be much lower than fresh ({score_fresh})"
         );
     }
 

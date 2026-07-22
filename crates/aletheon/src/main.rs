@@ -411,8 +411,7 @@ fn init_tracing(target: &str) {
     } else {
         // Capture info-level logs from aletheon + key runtime subsystems
         EnvFilter::new(format!(
-            "{}=info,runtime=info,cognit=info,corpus=info",
-            target
+            "{target}=info,runtime=info,cognit=info,corpus=info"
         ))
     };
 

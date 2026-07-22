@@ -259,7 +259,7 @@ impl RequestHandler {
                     "result": {
                         "operation_id": operation_id_str,
                         "state": format!("{:?}", result.state),
-                        "exit": result.exit.map(|e| format!("{:?}", e)),
+                        "exit": result.exit.map(|e| format!("{e:?}")),
                     }
                 })
             }

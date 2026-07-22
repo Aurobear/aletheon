@@ -35,7 +35,7 @@ impl FrameRef {
             return Err("dimensions must be positive".into());
         }
         if self.width > MAX_DIMENSION || self.height > MAX_DIMENSION {
-            return Err(format!("dimensions exceed max {}", MAX_DIMENSION));
+            return Err(format!("dimensions exceed max {MAX_DIMENSION}"));
         }
         if self.sha256.len() != 64 || !self.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err("sha256 must be a 64-char hex string".into());

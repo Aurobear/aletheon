@@ -5,8 +5,8 @@ use std::{path::Path, sync::Mutex};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use fabric::{
-    AppendOutcome, ContentBlock, ItemId, ItemPayload, ItemRecord, Message, Role,
-    SessionAppendStore, SessionId, SessionRecord, SESSION_SCHEMA_VERSION,
+    AppendOutcome, ItemId, ItemRecord, SessionAppendStore, SessionId, SessionRecord,
+    SESSION_SCHEMA_VERSION,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
@@ -345,8 +345,10 @@ impl SessionAppendStore for CanonicalSessionStore {
 pub use crate::application::session_projection::project_messages;
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
+    use fabric::{ContentBlock, ItemPayload, Role};
 
     const MIGRATION_STEPS: [MigrationStep; 2] = [MigrationStep::Schema, MigrationStep::Version];
 

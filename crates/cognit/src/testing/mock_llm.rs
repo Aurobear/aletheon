@@ -201,7 +201,7 @@ mod tests {
         let first = stream.next().await.unwrap().unwrap();
         match first {
             StreamChunk::TextDelta { text } => assert_eq!(text, "streamed"),
-            other => panic!("Expected TextDelta, got {:?}", other),
+            other => panic!("Expected TextDelta, got {other:?}"),
         }
     }
 }

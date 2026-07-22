@@ -701,6 +701,12 @@ impl BudgetController for InMemoryBudgetController {
     }
 }
 
+fn durable_error(error: impl std::fmt::Display) -> AdmissionError {
+    AdmissionError::Denied {
+        reason: format!("durable budget persistence failed: {error}"),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1002,11 +1008,5 @@ mod tests {
         };
         let err = ctrl.reserve("agent-1", &req).await.unwrap_err();
         assert!(matches!(err, AdmissionError::BudgetExceeded));
-    }
-}
-
-fn durable_error(error: impl std::fmt::Display) -> AdmissionError {
-    AdmissionError::Denied {
-        reason: format!("durable budget persistence failed: {error}"),
     }
 }

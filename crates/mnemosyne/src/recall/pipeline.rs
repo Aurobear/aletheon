@@ -524,6 +524,7 @@ const fn sensitivity_ord(sensitivity: MemorySensitivity) -> u8 {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use chrono::Utc;

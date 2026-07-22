@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use executive::application::turn_coordinator::{ActiveTurnKey, TurnCoordinator, TurnExecution};
+use executive::application::turn_coordinator::{ActiveTurnKey, TurnExecution};
 use executive::application::turn_policy::TurnPolicy;
 use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use fabric::{

@@ -54,7 +54,7 @@ impl AuditChain {
         emergency_stop: bool,
         at_ms: i64,
     ) -> Result<u64, String> {
-        let mut entries = self.entries.lock().map_err(|e| format!("lock: {}", e))?;
+        let mut entries = self.entries.lock().map_err(|e| format!("lock: {e}"))?;
 
         let sequence = entries.len() as u64 + 1;
         let previous_hash = entries.back().map(|e| e.hash.clone()).unwrap_or_default();
@@ -73,7 +73,7 @@ impl AuditChain {
         if let Some(ref r) = recovery {
             hasher.update(r.as_bytes());
         }
-        hasher.update(&[safe_stop as u8, emergency_stop as u8]);
+        hasher.update([safe_stop as u8, emergency_stop as u8]);
         hasher.update(at_ms.to_le_bytes());
         hasher.update(previous_hash.as_bytes());
         let hash = format!("{:x}", hasher.finalize());
@@ -105,7 +105,7 @@ impl AuditChain {
 
     /// Verify the entire chain integrity.
     pub fn verify_chain(&self) -> Result<bool, String> {
-        let entries = self.entries.lock().map_err(|e| format!("lock: {}", e))?;
+        let entries = self.entries.lock().map_err(|e| format!("lock: {e}"))?;
         if entries.is_empty() {
             return Ok(true);
         }
@@ -139,7 +139,7 @@ impl AuditChain {
             if let Some(ref r) = entry.recovery {
                 hasher.update(r.as_bytes());
             }
-            hasher.update(&[entry.safe_stop as u8, entry.emergency_stop as u8]);
+            hasher.update([entry.safe_stop as u8, entry.emergency_stop as u8]);
             hasher.update(entry.at_ms.to_le_bytes());
             hasher.update(entry.previous_hash.as_bytes());
             let computed = format!("{:x}", hasher.finalize());
@@ -155,12 +155,16 @@ impl AuditChain {
 
     /// Export all entries (no credentials in audit records).
     pub fn export(&self) -> Result<Vec<AuditEntry>, String> {
-        let entries = self.entries.lock().map_err(|e| format!("lock: {}", e))?;
+        let entries = self.entries.lock().map_err(|e| format!("lock: {e}"))?;
         Ok(entries.iter().cloned().collect())
     }
 
     pub fn len(&self) -> usize {
         self.entries.lock().map(|e| e.len()).unwrap_or(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -171,7 +175,7 @@ mod tests {
     fn append_entry(chain: &AuditChain, seq_suffix: &str) -> u64 {
         chain
             .append(
-                format!("op-{}", seq_suffix),
+                format!("op-{seq_suffix}"),
                 "kuavo-01".into(),
                 "stance".into(),
                 1,

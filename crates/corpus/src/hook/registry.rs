@@ -596,7 +596,7 @@ mod tests {
 
         match reg.execute(&ctx).await {
             HookResult::Inject(text) => assert_eq!(text, "injected text"),
-            other => panic!("Expected Inject, got {:?}", other),
+            other => panic!("Expected Inject, got {other:?}"),
         }
     }
 
@@ -637,7 +637,7 @@ mod tests {
 
         match reg.execute(&ctx).await {
             HookResult::Block { reason } => assert!(reason.contains("not allowed")),
-            other => panic!("Expected Block, got {:?}", other),
+            other => panic!("Expected Block, got {other:?}"),
         }
     }
 
@@ -815,8 +815,7 @@ mod tests {
         // Should complete in roughly 30s, with some tolerance.
         assert!(
             elapsed < 60_000,
-            "Expected timeout ~30s, but took {} ms",
-            elapsed
+            "Expected timeout ~30s, but took {elapsed} ms"
         );
     }
 }

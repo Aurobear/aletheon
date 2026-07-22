@@ -24,6 +24,7 @@ pub struct SelfReader {
     version: Version,
 }
 
+#[allow(dead_code)]
 impl SelfReader {
     pub fn new() -> Self {
         Self {

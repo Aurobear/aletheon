@@ -179,7 +179,7 @@ async fn try_ripgrep(
 
     if lines.is_empty() {
         return Some(ToolResult {
-            content: format!("No matches found for '{}' in {}", query, path),
+            content: format!("No matches found for '{query}' in {path}"),
             is_error: false,
             metadata: ToolResultMeta {
                 execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
@@ -240,7 +240,7 @@ async fn try_grep(
 
     if lines.is_empty() {
         return Some(ToolResult {
-            content: format!("No matches found for '{}' in {}", query, path),
+            content: format!("No matches found for '{query}' in {path}"),
             is_error: false,
             metadata: ToolResultMeta {
                 execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
@@ -319,7 +319,7 @@ async fn try_find_grep(
 
     if lines.is_empty() {
         return Some(ToolResult {
-            content: format!("No files matching '{}' found in {}", query, path),
+            content: format!("No files matching '{query}' found in {path}"),
             is_error: false,
             metadata: ToolResultMeta {
                 execution_time_ms: clock.mono_now().0.saturating_sub(start.0),

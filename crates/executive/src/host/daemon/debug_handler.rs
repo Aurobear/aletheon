@@ -240,7 +240,7 @@ impl DebugHandler {
             .unwrap_or_else(|| {
                 // wall_now returns ms since epoch; convert to seconds for bag path
                 let ts = (self.clock.wall_now().0 / 1000) as u64;
-                PathBuf::from(format!("/tmp/aletheon/bag_{}.jsonl", ts))
+                PathBuf::from(format!("/tmp/aletheon/bag_{ts}.jsonl"))
             });
 
         let max_buffer = params
@@ -808,7 +808,7 @@ fn parse_level(s: &str) -> DebugLevel {
 fn format_duration(d: std::time::Duration) -> String {
     let secs = d.as_secs();
     if secs < 60 {
-        format!("{}s", secs)
+        format!("{secs}s")
     } else if secs < 3600 {
         format!("{}m{}s", secs / 60, secs % 60)
     } else {

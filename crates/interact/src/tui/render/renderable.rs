@@ -252,7 +252,7 @@ impl InputRenderable<'_> {
                 } else {
                     Style::default().fg(Color::White)
                 };
-                ListItem::new(Line::from(Span::styled(format!("  {} ", cmd), item_style)))
+                ListItem::new(Line::from(Span::styled(format!("  {cmd} "), item_style)))
             })
             .collect();
 

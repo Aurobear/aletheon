@@ -97,10 +97,7 @@ impl PrefixBuilder {
         // Find first differing byte
         for (i, (a, b)) in old.bytes().zip(new.bytes()).enumerate() {
             if a != b {
-                return Some(format!(
-                    "prefix differs at byte {}: {:02x} -> {:02x}",
-                    i, a, b
-                ));
+                return Some(format!("prefix differs at byte {i}: {a:02x} -> {b:02x}"));
             }
         }
         Some("prefix differs (unknown reason)".to_string())
@@ -115,7 +112,7 @@ mod tests {
     fn make_skill(name: &str, content: &str) -> LoadedSkill {
         LoadedSkill {
             name: name.to_string(),
-            description: format!("{} desc", name),
+            description: format!("{name} desc"),
             content: content.to_string(),
             source: "test".to_string(),
         }

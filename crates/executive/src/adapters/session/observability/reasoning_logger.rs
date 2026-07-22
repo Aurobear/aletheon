@@ -45,7 +45,7 @@ where
             chrono::DateTime::parse_from_rfc3339(v)
                 .or_else(|_| chrono::DateTime::parse_from_rfc3339(&v.replace(' ', "T")))
                 .map(|dt| WallTime(dt.timestamp_millis()))
-                .map_err(|e| E::custom(format!("invalid timestamp: {}", e)))
+                .map_err(|e| E::custom(format!("invalid timestamp: {e}")))
         }
 
         fn visit_i64<E: de::Error>(self, v: i64) -> Result<WallTime, E> {
@@ -90,7 +90,7 @@ impl ReasoningLogger {
         let session_id = session_id.into();
         fs::create_dir_all(log_dir).await?;
 
-        let log_path = log_dir.join(format!("reasoning-{}.jsonl", session_id));
+        let log_path = log_dir.join(format!("reasoning-{session_id}.jsonl"));
         let log_dir_owned = log_dir.to_path_buf();
         let spawn_clock = clock.clone();
 
@@ -176,7 +176,7 @@ fn rotate_path(original: &Path, clock: &dyn Clock) -> PathBuf {
     original
         .parent()
         .unwrap_or(Path::new("."))
-        .join(format!("{}_{}.{}", stem, ts, ext))
+        .join(format!("{stem}_{ts}.{ext}"))
 }
 
 /// Delete log files older than RETENTION_DAYS.

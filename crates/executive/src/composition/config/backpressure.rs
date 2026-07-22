@@ -32,8 +32,7 @@ impl BackpressureConfig {
     pub fn overload_message(&self) -> String {
         match self.max_concurrent_turns {
             Some(limit) => format!(
-                "server overloaded: {} concurrent turns already in-flight (limit: {limit})",
-                limit
+                "server overloaded: {limit} concurrent turns already in-flight (limit: {limit})"
             ),
             None => "server overloaded".to_string(),
         }

@@ -236,14 +236,13 @@ impl Evaluator {
         let adjustment_magnitude = (candidate.changes.len() as f64 / 5.0).min(1.0);
         if adjustment_magnitude > MAX_ADJUSTMENT_MAGNITUDE {
             weaknesses.push(format!(
-                "Adjustment magnitude {:.2} exceeds limit {:.2}",
-                adjustment_magnitude, MAX_ADJUSTMENT_MAGNITUDE
+                "Adjustment magnitude {adjustment_magnitude:.2} exceeds limit {MAX_ADJUSTMENT_MAGNITUDE:.2}"
             ));
         }
 
         // Strengths
         if safety_score >= SAFETY_THRESHOLD {
-            strengths.push(format!("Safety score {:.2} meets threshold", safety_score));
+            strengths.push(format!("Safety score {safety_score:.2} meets threshold"));
         }
         if test.tests_passed > 0 {
             strengths.push(format!("{} tests passed", test.tests_passed));
@@ -258,8 +257,7 @@ impl Evaluator {
         }
         if safety_score < SAFETY_THRESHOLD {
             weaknesses.push(format!(
-                "Safety score {:.2} below threshold {:.2}",
-                safety_score, SAFETY_THRESHOLD
+                "Safety score {safety_score:.2} below threshold {SAFETY_THRESHOLD:.2}"
             ));
         }
 

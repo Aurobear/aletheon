@@ -299,8 +299,7 @@ impl Tool for TaskUpdateTool {
             None => {
                 return ToolResult {
                     content: format!(
-                        "Invalid status '{}', expected: pending, in_progress, completed",
-                        status_str
+                        "Invalid status '{status_str}', expected: pending, in_progress, completed"
                     ),
                     is_error: true,
                     metadata: ToolResultMeta {
@@ -327,7 +326,7 @@ impl Tool for TaskUpdateTool {
                 },
             },
             None => ToolResult {
-                content: format!("Task not found: {}", id),
+                content: format!("Task not found: {id}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -473,7 +472,7 @@ impl Tool for TaskGetTool {
                 },
             },
             None => ToolResult {
-                content: format!("Task not found: {}", id),
+                content: format!("Task not found: {id}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),

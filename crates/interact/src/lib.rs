@@ -7,7 +7,6 @@
     clippy::ptr_arg,
     clippy::new_without_default,
     clippy::vec_init_then_push,
-    clippy::manual_checked_ops,
     clippy::empty_line_after_doc_comments,
     clippy::explicit_counter_loop,
     clippy::too_many_arguments,

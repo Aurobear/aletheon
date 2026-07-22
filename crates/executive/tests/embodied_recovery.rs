@@ -63,8 +63,7 @@ fn full_recovery_table() {
         let action = map_verification_to_recovery(&report, retries, replans);
         assert_eq!(
             action, expected,
-            "mismatch for {:?} r={} p={}",
-            decision, retries, replans
+            "mismatch for {decision:?} r={retries} p={replans}"
         );
     }
 }

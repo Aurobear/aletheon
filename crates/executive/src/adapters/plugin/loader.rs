@@ -172,8 +172,7 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             err.contains("Dependency cycle detected"),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
     }
 }

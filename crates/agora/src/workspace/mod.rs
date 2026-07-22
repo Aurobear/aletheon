@@ -201,7 +201,7 @@ impl Workspace {
     /// The rejection reason is recorded in the trace for auditability.
     pub fn reject(&mut self, proposal_id: Uuid, reason: RejectReason) -> Option<()> {
         let proposal = self.proposals.remove(&proposal_id)?;
-        let reason_str = format!("{:?}", reason);
+        let reason_str = format!("{reason:?}");
         self.trace.push(
             "proposal_rejected",
             serde_json::json!({

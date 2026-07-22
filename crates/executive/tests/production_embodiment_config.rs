@@ -109,11 +109,7 @@ fn all_errors_reported_together() {
         },
     };
     let err = c.validate().unwrap_err();
-    assert!(
-        err.len() > 3,
-        "should report multiple errors, got {:?}",
-        err
-    );
+    assert!(err.len() > 3, "should report multiple errors, got {err:?}");
 }
 
 #[test]
@@ -121,6 +117,6 @@ fn secret_ref_debug_never_exposes_values() {
     let s = SecretRef {
         env: "SECRET_TOKEN".into(),
     };
-    let debug = format!("{:?}", s);
+    let debug = format!("{s:?}");
     assert!(!debug.contains("SECRET_TOKEN_VALUE"));
 }

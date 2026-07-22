@@ -187,7 +187,7 @@ impl DiGraph {
             let node = self
                 .nodes
                 .get(node_id)
-                .ok_or_else(|| format!("node '{}' not found", node_id))?;
+                .ok_or_else(|| format!("node '{node_id}' not found"))?;
 
             // Check if all incoming edges are satisfied
             let incoming = self.incoming(node_id);
@@ -235,7 +235,7 @@ impl DiGraph {
                                 node_statuses
                                     .insert(node_id.clone(), NodeStatus::Failed(e.clone()));
                                 state.record(node_id, "failed", clock);
-                                return Err(format!("Node '{}' failed: {}", node_id, e));
+                                return Err(format!("Node '{node_id}' failed: {e}"));
                             }
                             OnExhausted::SkipNode => {
                                 node_statuses.insert(node_id.clone(), NodeStatus::Skipped);
@@ -247,8 +247,7 @@ impl DiGraph {
                                     .insert(node_id.clone(), NodeStatus::Failed(e.clone()));
                                 state.record(node_id, "escalated", clock);
                                 return Err(format!(
-                                    "Node '{}' needs human intervention: {}",
-                                    node_id, e
+                                    "Node '{node_id}' needs human intervention: {e}"
                                 ));
                             }
                         }
@@ -297,7 +296,7 @@ impl DiGraph {
                 let agent = registry
                     .get(agent_id)
                     .await
-                    .ok_or_else(|| format!("Agent '{}' not found", agent_id))?;
+                    .ok_or_else(|| format!("Agent '{agent_id}' not found"))?;
 
                 let agent = agent.write().await;
                 let msg = fabric::Message::user(format!(

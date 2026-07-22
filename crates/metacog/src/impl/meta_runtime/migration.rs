@@ -22,6 +22,7 @@ pub struct MigrationManager {
     lineage: Mutex<LineageTracker>,
 }
 
+#[allow(dead_code)]
 impl MigrationManager {
     pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
@@ -124,8 +125,7 @@ impl MigrationManager {
                 &to_version,
                 Some(&from_version),
                 &format!(
-                    "Migration: {} care changes, {} boundary changes applied",
-                    care_changes_applied, boundary_changes_applied
+                    "Migration: {care_changes_applied} care changes, {boundary_changes_applied} boundary changes applied"
                 ),
             );
         }

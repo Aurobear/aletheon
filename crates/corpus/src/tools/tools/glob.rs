@@ -85,7 +85,7 @@ impl Tool for GlobTool {
             Ok(p) => p,
             Err(e) => {
                 return ToolResult {
-                    content: format!("Error: invalid glob pattern '{}': {}", pattern, e),
+                    content: format!("Error: invalid glob pattern '{pattern}': {e}"),
                     is_error: true,
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),

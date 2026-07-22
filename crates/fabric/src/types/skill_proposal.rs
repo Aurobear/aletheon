@@ -40,7 +40,7 @@ impl SkillProposal {
     pub fn validate(&self) -> Result<(), String> {
         self.expected_outcome
             .validate()
-            .map_err(|e| format!("expected_outcome: {}", e))?;
+            .map_err(|e| format!("expected_outcome: {e}"))?;
         if self.confidence < 0.0 || self.confidence > 1.0 {
             return Err(format!("confidence out of range: {}", self.confidence));
         }

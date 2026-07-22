@@ -41,7 +41,7 @@ pub fn evaluate(
         .get("fault")
         .or_else(|| after.payload.get("safety_fault"))
     {
-        let reason = format!("safety fault detected: {}", fault);
+        let reason = format!("safety fault detected: {fault}");
         return VerificationReport {
             decision: VerificationDecision::Unsafe,
             evaluated_sequence: after.sequence,
@@ -111,7 +111,7 @@ fn eval_predicate(
             let observed = dot_get(current, path)?;
             let n = observed
                 .as_f64()
-                .ok_or_else(|| format!("path '{}' is not numeric: {}", path, observed))?;
+                .ok_or_else(|| format!("path '{path}' is not numeric: {observed}"))?;
             if let Some(min_val) = min {
                 if n < *min_val {
                     return Ok(false);
@@ -130,22 +130,21 @@ fn eval_predicate(
             max_delta,
         } => {
             let current_val = dot_get(current, path)?;
-            let current_n = current_val.as_f64().ok_or_else(|| {
-                format!("path '{}' current is not numeric: {}", path, current_val)
-            })?;
+            let current_n = current_val
+                .as_f64()
+                .ok_or_else(|| format!("path '{path}' current is not numeric: {current_val}"))?;
 
             let before_val = match before {
                 Some(b) => dot_get(b, path)?,
                 None => {
                     return Err(format!(
-                        "Change predicate requires before snapshot for path '{}'",
-                        path
+                        "Change predicate requires before snapshot for path '{path}'"
                     ))
                 }
             };
             let before_n = before_val
                 .as_f64()
-                .ok_or_else(|| format!("path '{}' before is not numeric: {}", path, before_val))?;
+                .ok_or_else(|| format!("path '{path}' before is not numeric: {before_val}"))?;
 
             let delta = current_n - before_n;
 
@@ -179,7 +178,7 @@ fn eval_predicate(
                 }
             }
             if reasons.len() == predicates.len() {
-                Err(format!("Any: all predicates errored: {:?}", reasons))
+                Err(format!("Any: all predicates errored: {reasons:?}"))
             } else {
                 Ok(false)
             }
@@ -188,19 +187,18 @@ fn eval_predicate(
 }
 
 /// Traverse a JSON object by dot-separated path. Arrays and escaped expressions are unsupported.
-fn dot_get<'a>(value: &'a serde_json::Value, path: &str) -> Result<serde_json::Value, String> {
+fn dot_get(value: &serde_json::Value, path: &str) -> Result<serde_json::Value, String> {
     let mut current = value;
     for segment in path.split('.') {
         match current {
             serde_json::Value::Object(map) => {
                 current = map
                     .get(segment)
-                    .ok_or_else(|| format!("path segment '{}' not found in {}", segment, path))?;
+                    .ok_or_else(|| format!("path segment '{segment}' not found in {path}"))?;
             }
             _ => {
                 return Err(format!(
-                    "path segment '{}' is not an object in path '{}'",
-                    segment, path
+                    "path segment '{segment}' is not an object in path '{path}'"
                 ))
             }
         }

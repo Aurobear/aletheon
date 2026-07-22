@@ -69,7 +69,7 @@ impl SessionDistiller {
 
             let text = extract_text_content(&msg);
             if !text.is_empty() {
-                turns.push(format!("[{}]: {}", role, text));
+                turns.push(format!("[{role}]: {text}"));
             }
         }
 
@@ -105,7 +105,7 @@ impl SessionDistiller {
                 &fact.content,
                 &fact.category,
                 &tags_str,
-                &format!("session:{}", session_id),
+                &format!("session:{session_id}"),
                 0.5,
                 "episodic",
                 14,
@@ -250,8 +250,7 @@ mod tests {
         let mut lines = Vec::new();
         for i in 0..2000 {
             lines.push(format!(
-                r#"{{"role":"user","content":"This is line number {} with some extra padding text to make it longer"}}"#,
-                i
+                r#"{{"role":"user","content":"This is line number {i} with some extra padding text to make it longer"}}"#
             ));
         }
         let jsonl = lines.join("\n");

@@ -49,6 +49,7 @@ pub enum HarnessKind {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod harness_kind_tests {
     use super::HarnessKind;
 

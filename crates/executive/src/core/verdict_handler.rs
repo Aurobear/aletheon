@@ -229,22 +229,22 @@ impl VerdictHandler for DefaultVerdictHandler {
                 }
             }
             Verdict::Deny { reason } => VerdictAction::ShortCircuit {
-                response: format!("Denied by SelfField: {}", reason),
+                response: format!("Denied by SelfField: {reason}"),
             },
             Verdict::RequireConfirmation { reason, risk_level } => {
                 if let Some(ref cb) = self.confirm_callback {
-                    if cb(reason, &format!("{:?}", risk_level)) {
+                    if cb(reason, &format!("{risk_level:?}")) {
                         VerdictAction::Proceed {
                             modified_intent: None,
                         }
                     } else {
                         VerdictAction::ShortCircuit {
-                            response: format!("User declined: {}", reason),
+                            response: format!("User declined: {reason}"),
                         }
                     }
                 } else {
                     VerdictAction::ShortCircuit {
-                        response: format!("Confirmation required (no handler): {}", reason),
+                        response: format!("Confirmation required (no handler): {reason}"),
                     }
                 }
             }
@@ -252,7 +252,7 @@ impl VerdictHandler for DefaultVerdictHandler {
                 reason: reason.clone(),
             },
             Verdict::Delay { reason, .. } => VerdictAction::ShortCircuit {
-                response: format!("Delayed: {}", reason),
+                response: format!("Delayed: {reason}"),
             },
         }
     }

@@ -116,7 +116,7 @@ impl ObjectiveStore {
 
         let new_version = current.version + 1;
         let wait_json = wait_reason.map(serde_json::to_string).transpose()?;
-        let event_type = format!("{:?}", next).to_lowercase();
+        let event_type = format!("{next:?}").to_lowercase();
         let payload_json = serde_json::to_string(event_payload)?;
 
         // Update the objectives row.

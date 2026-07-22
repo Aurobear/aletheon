@@ -34,7 +34,7 @@ impl EmbodimentWorldState {
     /// Ingest a new observation into the world state. Called from the
     /// embodiment observation pipeline.
     pub fn ingest(&self, device: DeviceId, snapshot: WorldSnapshot) -> Result<(), String> {
-        let mut devices = self.devices.write().map_err(|e| format!("lock: {}", e))?;
+        let mut devices = self.devices.write().map_err(|e| format!("lock: {e}"))?;
         if devices.len() >= self.max_devices && !devices.contains_key(&device) {
             return Err(format!("device limit {} reached", self.max_devices));
         }

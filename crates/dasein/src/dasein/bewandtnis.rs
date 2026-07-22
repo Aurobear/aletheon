@@ -375,7 +375,7 @@ mod tests {
 
         // Many broken -> anxiety
         for i in 0..4 {
-            let mut node = make_node(&format!("broken_{}", i), "broken");
+            let mut node = make_node(&format!("broken_{i}"), "broken");
             node.readiness = ReadinessState::PresentAtHand;
             world.add_entity(node);
         }

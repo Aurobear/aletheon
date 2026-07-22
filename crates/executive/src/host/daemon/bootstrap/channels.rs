@@ -43,7 +43,7 @@ pub(super) fn init_telegram_channel(
     let cursor: Option<String> = store.cursor("telegram").unwrap_or(None);
 
     if let Some(owner_id) = cfg.owner_user_id {
-        let external = format!("telegram:{}", owner_id);
+        let external = format!("telegram:{owner_id}");
         store
             .bind("telegram", &external, "owner", "active")
             .expect("binding Telegram owner");

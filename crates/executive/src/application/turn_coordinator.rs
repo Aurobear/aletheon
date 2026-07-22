@@ -6,10 +6,9 @@ use crate::composition::config::{BackpressureConfig, GrokHardeningConfig};
 use anyhow::{anyhow, Context, Result};
 use fabric::types::prompt_queue::{evaluate_cancel, PromptEnvelope, PromptKind, PromptState};
 use fabric::{
-    CancelReason, EventSpine, ItemId, ItemPayload, ItemRecord, MonoDeadline, OperationKind,
-    OperationManager, OperationRequest, PrincipalId, SessionAppendStore, SessionId, SessionRecord,
-    SessionStatus, ThreadId, TurnId, TurnMetrics, TurnRequest, TurnResult, TurnStop,
-    SESSION_SCHEMA_VERSION,
+    CancelReason, ItemId, ItemPayload, ItemRecord, MonoDeadline, OperationKind, OperationManager,
+    OperationRequest, PrincipalId, SessionAppendStore, SessionId, SessionRecord, SessionStatus,
+    ThreadId, TurnId, TurnMetrics, TurnRequest, TurnResult, TurnStop, SESSION_SCHEMA_VERSION,
 };
 use kernel::KernelRuntime;
 use tokio::sync::Mutex;
@@ -73,9 +72,7 @@ impl ActiveTurnKey {
 pub struct TurnCoordinator {
     kernel: Arc<KernelRuntime>,
     clock: Arc<dyn fabric::Clock>,
-    read_store: Arc<dyn SessionAppendStore>,
     store: Arc<dyn SessionAppendStore>,
-    event_spine: Arc<dyn EventSpine>,
     active: Arc<Mutex<HashMap<ActiveTurnKey, ActiveTurn>>>,
     grok_hardening: GrokHardeningConfig,
     backpressure: BackpressureConfig,
@@ -86,17 +83,13 @@ impl TurnCoordinator {
     /// Construct from application ports already decorated by composition.
     pub fn from_components(
         kernel: Arc<KernelRuntime>,
-        read_store: Arc<dyn SessionAppendStore>,
         store: Arc<dyn SessionAppendStore>,
-        event_spine: Arc<dyn EventSpine>,
         grok_hardening: GrokHardeningConfig,
     ) -> Self {
         Self {
             clock: kernel.clock(),
             kernel,
-            read_store,
             store,
-            event_spine,
             active: Arc::new(Mutex::new(HashMap::new())),
             grok_hardening,
             backpressure: BackpressureConfig::default(),
@@ -599,7 +592,7 @@ impl TurnCoordinator {
             if phase == WritePhase::TerminalFlush {
                 return Err(TerminalDurableWriteFailure { reason }.into());
             }
-            anyhow::bail!("append failed for phase {phase}: {}", reason);
+            anyhow::bail!("append failed for phase {phase}: {reason}");
         }
         *sequence += 1;
         Ok(())

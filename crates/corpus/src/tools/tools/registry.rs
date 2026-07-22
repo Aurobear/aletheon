@@ -144,7 +144,7 @@ impl Registry<Arc<dyn Tool>> for ToolRegistry {
         let name = self
             .id_map
             .remove(&id)
-            .ok_or_else(|| AgentError::not_found(&format!("{:?}", id)))?;
+            .ok_or_else(|| AgentError::not_found(&format!("{id:?}")))?;
         self.tools
             .remove(&name)
             .inspect(|_| {
@@ -369,8 +369,7 @@ mod tests {
         for name in expected {
             assert!(
                 names.contains(&name),
-                "expected tool '{}' not found in registry",
-                name
+                "expected tool '{name}' not found in registry"
             );
         }
     }

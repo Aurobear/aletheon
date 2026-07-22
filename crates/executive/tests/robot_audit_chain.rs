@@ -6,12 +6,12 @@ fn audit_chain_integrity() {
     for i in 0..50 {
         chain
             .append(
-                format!("op-{}", i),
+                format!("op-{i}"),
                 "kuavo-01".into(),
                 "stance".into(),
                 (i % 3) as u32,
                 "matched".into(),
-                Some(format!("verif-{}", i)),
+                Some(format!("verif-{i}")),
                 None,
                 i == 49,
                 false,

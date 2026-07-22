@@ -149,7 +149,7 @@ async fn try_ripgrep(
 
     if lines.is_empty() {
         return Some(SubprocessResult {
-            content: format!("No matches found for '{}' in {}", pattern, path),
+            content: format!("No matches found for '{pattern}' in {path}"),
             is_error: false,
             truncated: false,
         });
@@ -201,7 +201,7 @@ async fn try_grep(
 
     if lines.is_empty() {
         return Some(SubprocessResult {
-            content: format!("No matches found for '{}' in {}", pattern, path),
+            content: format!("No matches found for '{pattern}' in {path}"),
             is_error: false,
             truncated: false,
         });
@@ -367,8 +367,7 @@ mod tests {
             .count();
         assert!(
             match_lines <= 3,
-            "global limit not enforced: {} match lines",
-            match_lines
+            "global limit not enforced: {match_lines} match lines"
         );
         assert!(result.metadata.truncated, "expected truncated=true");
     }

@@ -193,7 +193,7 @@ fn messages_to_ollama(messages: &[Message]) -> Vec<ChatMessage> {
                     content, is_error, ..
                 } => {
                     if *is_error {
-                        Some(format!("[ERROR] {}", content))
+                        Some(format!("[ERROR] {content}"))
                     } else {
                         Some(content.clone())
                     }
@@ -445,7 +445,7 @@ impl LlmProvider for OllamaProvider {
                             }
                             Some(Err(e)) => {
                                 return Some((
-                                    Err(anyhow::anyhow!("Stream read error: {}", e)),
+                                    Err(anyhow::anyhow!("Stream read error: {e}")),
                                     state,
                                 ));
                             }

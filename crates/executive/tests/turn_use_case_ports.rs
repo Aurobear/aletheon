@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use executive::application::post_turn_projection::{
     PostTurnDispatch, PostTurnOutcome, PostTurnProjection,
 };
-use executive::application::turn_coordinator::{TurnCoordinator, TurnExecution};
+use executive::application::turn_coordinator::TurnExecution;
 use executive::application::turn_policy::TurnPolicy;
 use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use fabric::{

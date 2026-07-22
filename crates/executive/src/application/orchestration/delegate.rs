@@ -126,10 +126,7 @@ impl Tool for DelegateTool {
             None => {
                 let available = self.registry.list_ids().await.join(", ");
                 return ToolResult {
-                    content: format!(
-                        "Agent '{}' not found. Available agents: {}",
-                        agent_id, available
-                    ),
+                    content: format!("Agent '{agent_id}' not found. Available agents: {available}"),
                     is_error: true,
                     metadata: ToolResultMeta::default(),
                 };
@@ -142,7 +139,7 @@ impl Tool for DelegateTool {
         let full_task = if context.is_empty() {
             task.to_string()
         } else {
-            format!("{}\n\nContext: {}", task, context)
+            format!("{task}\n\nContext: {context}")
         };
 
         // Execute with budget tracking
@@ -170,7 +167,7 @@ impl Tool for DelegateTool {
             Err(e) => {
                 warn!(agent_id = %agent_id, error = %e, "Agent delegation failed");
                 ToolResult {
-                    content: format!("Delegation to '{}' failed: {}", agent_id, e),
+                    content: format!("Delegation to '{agent_id}' failed: {e}"),
                     is_error: true,
                     metadata: ToolResultMeta::default(),
                 }
@@ -209,7 +206,7 @@ mod tests {
             self.config.system_prompt.as_deref()
         }
         async fn handle_task(&self, task: &str) -> anyhow::Result<String> {
-            Ok(format!("MockAgent processed: {}", task))
+            Ok(format!("MockAgent processed: {task}"))
         }
     }
 

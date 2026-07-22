@@ -59,7 +59,7 @@ impl Tool for ProcessListTool {
                 }
             }
             Err(e) => ToolResult {
-                content: format!("Failed to list processes: {}", e),
+                content: format!("Failed to list processes: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),

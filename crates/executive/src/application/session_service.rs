@@ -439,47 +439,6 @@ impl SessionService {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn lifecycle_context_fragment_is_bounded_and_durable() {
-        let store: Arc<dyn SessionAppendStore> = Arc::new(
-            crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
-                .unwrap(),
-        );
-        let session_id = SessionId("context-session".into());
-        store
-            .create(SessionRecord {
-                schema_version: SESSION_SCHEMA_VERSION,
-                id: session_id.clone(),
-                parent: None,
-                created_at_ms: 1,
-                status: SessionStatus::Active,
-            })
-            .await
-            .unwrap();
-        let service = SessionService::new(store, Arc::new(Mutex::new(Default::default())));
-        let persisted = service
-            .persist_context_fragments(
-                &session_id,
-                TurnId::new(),
-                fabric::types::lifecycle::LifecyclePhase::BeforeTurnInput,
-                vec![("workspace".into(), "branch=feature".into())],
-            )
-            .await
-            .unwrap();
-        assert_eq!(persisted, 1);
-        let items = service.items(&session_id).await.unwrap();
-        assert!(matches!(
-            &items[0].payload,
-            ItemPayload::SystemNotice { content }
-                if content.contains("source=workspace") && content.contains("branch=feature")
-        ));
-    }
-}
-
 fn legacy_message_payloads(message: &Message) -> Vec<ItemPayload> {
     let mut payloads = Vec::new();
     for block in &message.content {
@@ -519,4 +478,45 @@ fn legacy_message_payloads(message: &Message) -> Vec<ItemPayload> {
         payloads.push(payload);
     }
     payloads
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn lifecycle_context_fragment_is_bounded_and_durable() {
+        let store: Arc<dyn SessionAppendStore> = Arc::new(
+            crate::adapters::session::canonical_store::CanonicalSessionStore::open(":memory:")
+                .unwrap(),
+        );
+        let session_id = SessionId("context-session".into());
+        store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 1,
+                status: SessionStatus::Active,
+            })
+            .await
+            .unwrap();
+        let service = SessionService::new(store, Arc::new(Mutex::new(Default::default())));
+        let persisted = service
+            .persist_context_fragments(
+                &session_id,
+                TurnId::new(),
+                fabric::types::lifecycle::LifecyclePhase::BeforeTurnInput,
+                vec![("workspace".into(), "branch=feature".into())],
+            )
+            .await
+            .unwrap();
+        assert_eq!(persisted, 1);
+        let items = service.items(&session_id).await.unwrap();
+        assert!(matches!(
+            &items[0].payload,
+            ItemPayload::SystemNotice { content }
+                if content.contains("source=workspace") && content.contains("branch=feature")
+        ));
+    }
 }

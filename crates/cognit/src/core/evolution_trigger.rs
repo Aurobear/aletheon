@@ -294,9 +294,9 @@ mod tests {
         let decision = trigger.check_should_evolve(&[]);
         match decision {
             EvolutionDecision::TriggerNow { reason } => {
-                assert!(reason.contains("First evolution"), "got: {}", reason);
+                assert!(reason.contains("First evolution"), "got: {reason}");
             }
-            other => panic!("Expected TriggerNow, got {:?}", other),
+            other => panic!("Expected TriggerNow, got {other:?}"),
         }
     }
 
@@ -311,9 +311,9 @@ mod tests {
         let decision = trigger.check_should_evolve(&reflections);
         match decision {
             EvolutionDecision::TriggerNow { reason } => {
-                assert!(reason.contains("consecutive failures"), "got: {}", reason);
+                assert!(reason.contains("consecutive failures"), "got: {reason}");
             }
-            other => panic!("Expected TriggerNow, got {:?}", other),
+            other => panic!("Expected TriggerNow, got {other:?}"),
         }
     }
 
@@ -340,9 +340,9 @@ mod tests {
         let decision = trigger.check_should_evolve(&reflections);
         match decision {
             EvolutionDecision::TriggerNow { reason } => {
-                assert!(reason.contains("Periodic"), "got: {}", reason);
+                assert!(reason.contains("Periodic"), "got: {reason}");
             }
-            other => panic!("Expected TriggerNow, got {:?}", other),
+            other => panic!("Expected TriggerNow, got {other:?}"),
         }
     }
 
@@ -373,9 +373,9 @@ mod tests {
         let decision = trigger.check_should_evolve(&reflections);
         match decision {
             EvolutionDecision::TriggerNow { reason } => {
-                assert!(reason.contains("confidence dropped"), "got: {}", reason);
+                assert!(reason.contains("confidence dropped"), "got: {reason}");
             }
-            other => panic!("Expected TriggerNow, got {:?}", other),
+            other => panic!("Expected TriggerNow, got {other:?}"),
         }
     }
 
@@ -404,9 +404,9 @@ mod tests {
         match decision {
             EvolutionDecision::TriggerNow { reason } => {
                 // Should be consecutive failures, not periodic
-                assert!(reason.contains("consecutive"), "got: {}", reason);
+                assert!(reason.contains("consecutive"), "got: {reason}");
             }
-            other => panic!("Expected TriggerNow, got {:?}", other),
+            other => panic!("Expected TriggerNow, got {other:?}"),
         }
     }
 

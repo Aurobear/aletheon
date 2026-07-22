@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use executive::application::harness_factory::CognitiveSessionFactory;
-use executive::application::turn_coordinator::{TurnCoordinator, TurnExecution};
+use executive::application::turn_coordinator::TurnExecution;
 use executive::application::turn_policy::*;
 use executive::application::{PostTurnPipeline, PreTurnPipeline};
 use executive::runtime::events::{EventReadFilter, SqliteEventSpine};

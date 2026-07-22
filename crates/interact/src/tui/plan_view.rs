@@ -84,7 +84,7 @@ impl PlanViewWidget {
                             CriticismSeverity::Info => ("i", Color::Cyan),
                         };
                         lines.push(Line::from(vec![
-                            Span::styled(format!("| {} ", icon), Style::default().fg(color)),
+                            Span::styled(format!("| {icon} "), Style::default().fg(color)),
                             Span::raw(format!("{:?}: {}", c.dimension, c.description)),
                         ]));
                     }

@@ -152,7 +152,7 @@ impl GenomeLoader {
             match old_care.get(topic) {
                 Some(&old_weight) if (old_weight - new_weight).abs() > f64::EPSILON => {
                     changes.push(GenomeChange {
-                        path: format!("care.weights.{}", topic),
+                        path: format!("care.weights.{topic}"),
                         change_type: ChangeType::Modified,
                         old_value: Some(serde_json::json!(old_weight)),
                         new_value: Some(serde_json::json!(new_weight)),
@@ -160,7 +160,7 @@ impl GenomeLoader {
                 }
                 None => {
                     changes.push(GenomeChange {
-                        path: format!("care.weights.{}", topic),
+                        path: format!("care.weights.{topic}"),
                         change_type: ChangeType::Added,
                         old_value: None,
                         new_value: Some(serde_json::json!(new_weight)),
@@ -174,7 +174,7 @@ impl GenomeLoader {
         for (topic, &old_weight) in &old_care {
             if !new_care.contains_key(topic) {
                 changes.push(GenomeChange {
-                    path: format!("care.weights.{}", topic),
+                    path: format!("care.weights.{topic}"),
                     change_type: ChangeType::Removed,
                     old_value: Some(serde_json::json!(old_weight)),
                     new_value: None,
@@ -218,7 +218,7 @@ impl GenomeLoader {
             match old_rules.get(id) {
                 Some(&old_action) if old_action != new_action => {
                     changes.push(GenomeChange {
-                        path: format!("boundary.rules.{}", id),
+                        path: format!("boundary.rules.{id}"),
                         change_type: ChangeType::Modified,
                         old_value: Some(serde_json::json!(old_action)),
                         new_value: Some(serde_json::json!(new_action)),
@@ -226,7 +226,7 @@ impl GenomeLoader {
                 }
                 None => {
                     changes.push(GenomeChange {
-                        path: format!("boundary.rules.{}", id),
+                        path: format!("boundary.rules.{id}"),
                         change_type: ChangeType::Added,
                         old_value: None,
                         new_value: Some(serde_json::json!(new_action)),
@@ -239,7 +239,7 @@ impl GenomeLoader {
         for (id, &old_action) in &old_rules {
             if !new_rules.contains_key(id) {
                 changes.push(GenomeChange {
-                    path: format!("boundary.rules.{}", id),
+                    path: format!("boundary.rules.{id}"),
                     change_type: ChangeType::Removed,
                     old_value: Some(serde_json::json!(old_action)),
                     new_value: None,
@@ -265,7 +265,7 @@ impl GenomeLoader {
             match old_subs.get(name) {
                 Some(&old_ver) if old_ver != new_ver => {
                     changes.push(GenomeChange {
-                        path: format!("topology.subsystems.{}.version", name),
+                        path: format!("topology.subsystems.{name}.version"),
                         change_type: ChangeType::Modified,
                         old_value: Some(serde_json::json!(old_ver)),
                         new_value: Some(serde_json::json!(new_ver)),
@@ -273,7 +273,7 @@ impl GenomeLoader {
                 }
                 None => {
                     changes.push(GenomeChange {
-                        path: format!("topology.subsystems.{}", name),
+                        path: format!("topology.subsystems.{name}"),
                         change_type: ChangeType::Added,
                         old_value: None,
                         new_value: Some(serde_json::json!(new_ver)),

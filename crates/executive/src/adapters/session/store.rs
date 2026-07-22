@@ -161,7 +161,7 @@ impl SessionStore {
     pub fn fork(&self, source_id: &str, new_id: &str) -> Result<SessionRecord> {
         let source = self
             .load(source_id)?
-            .ok_or_else(|| anyhow::anyhow!("source session not found: {}", source_id))?;
+            .ok_or_else(|| anyhow::anyhow!("source session not found: {source_id}"))?;
         self.save(new_id, &source.messages_json, &source.metadata_json)?;
         // Return the newly created record
         Ok(self.load(new_id)?.expect("just inserted; must exist"))
@@ -174,7 +174,7 @@ impl SessionStore {
             rusqlite::params![session_id],
         )?;
         if changed == 0 {
-            anyhow::bail!("session not found: {}", session_id);
+            anyhow::bail!("session not found: {session_id}");
         }
         Ok(())
     }

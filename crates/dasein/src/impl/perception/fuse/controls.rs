@@ -50,7 +50,7 @@ impl ControlsValidator {
             Some(name) => name,
             None => {
                 return ControlVerdict::Deny {
-                    reason: format!("Path is not under /controls/: {}", path),
+                    reason: format!("Path is not under /controls/: {path}"),
                 };
             }
         };
@@ -59,7 +59,7 @@ impl ControlsValidator {
         if !self.allowed_controls.contains(&control_name.to_string()) {
             warn!(path = path, "Write to unknown control denied");
             return ControlVerdict::Deny {
-                reason: format!("Unknown control: {}", control_name),
+                reason: format!("Unknown control: {control_name}"),
             };
         }
 
@@ -76,7 +76,7 @@ impl ControlsValidator {
         match std::str::from_utf8(data) {
             Ok(s) if s == "0" || s == "1" => ControlVerdict::Allow,
             Ok(s) => ControlVerdict::Deny {
-                reason: format!("Toggle control must be '0' or '1', got: '{}'", s),
+                reason: format!("Toggle control must be '0' or '1', got: '{s}'"),
             },
             Err(_) => ControlVerdict::Deny {
                 reason: "Toggle control data must be valid UTF-8".to_string(),
@@ -99,7 +99,7 @@ impl ControlsValidator {
         match content.parse::<toml::Value>() {
             Ok(_) => ControlVerdict::Allow,
             Err(e) => ControlVerdict::Deny {
-                reason: format!("Invalid TOML: {}", e),
+                reason: format!("Invalid TOML: {e}"),
             },
         }
     }

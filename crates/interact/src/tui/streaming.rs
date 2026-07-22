@@ -262,7 +262,7 @@ impl StreamController {
             let elapsed = elapsed_ms as f64 / 1000.0;
             if self.thinking_collapsed {
                 self.committed
-                    .push_str(&format!("✻ Thought for {:.1}s\n\n", elapsed));
+                    .push_str(&format!("✻ Thought for {elapsed:.1}s\n\n"));
             } else {
                 self.committed.push_str(&self.format_thinking_expanded());
             }
@@ -282,9 +282,9 @@ impl StreamController {
         };
         let mut result = String::from("✻ Thinking...\n");
         for line in display_lines {
-            result.push_str(&format!("│ {}\n", line));
+            result.push_str(&format!("│ {line}\n"));
         }
-        result.push_str(&format!("({:.1}s)\n\n", elapsed));
+        result.push_str(&format!("({elapsed:.1}s)\n\n"));
         result
     }
 }

@@ -24,16 +24,13 @@ impl std::str::FromStr for EntryType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (prefix, path) = s.split_once(':').ok_or_else(|| {
-            format!(
-                "Entry '{}' missing type prefix (expected 'cmd:', 'native:', 'wasm:')",
-                s
-            )
+            format!("Entry '{s}' missing type prefix (expected 'cmd:', 'native:', 'wasm:')")
         })?;
         match prefix {
             "cmd" => Ok(Self::Cmd(path.to_string())),
             "native" => Ok(Self::Native(path.to_string())),
             "wasm" => Ok(Self::Wasm(path.to_string())),
-            other => Err(format!("Unknown entry type '{}'", other)),
+            other => Err(format!("Unknown entry type '{other}'")),
         }
     }
 }

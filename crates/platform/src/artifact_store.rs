@@ -54,7 +54,7 @@ struct ArtifactEntry {
 
 impl ArtifactStore {
     pub fn new(config: ArtifactStoreConfig) -> Result<Self, String> {
-        fs::create_dir_all(&config.root).map_err(|e| format!("create root: {}", e))?;
+        fs::create_dir_all(&config.root).map_err(|e| format!("create root: {e}"))?;
         Ok(Self {
             config,
             state: Mutex::new(StoreState::default()),
@@ -71,7 +71,7 @@ impl ArtifactStore {
             .iter()
             .any(|m| m == mime_type)
         {
-            return Err(format!("MIME type not allowed: {}", mime_type));
+            return Err(format!("MIME type not allowed: {mime_type}"));
         }
         // Validate size
         if data.len() as u64 > self.config.max_file_bytes {
@@ -91,7 +91,7 @@ impl ArtifactStore {
 
         let artifact_path = self.config.root.join(&hash);
 
-        let mut state = self.state.lock().map_err(|e| format!("lock: {}", e))?;
+        let mut state = self.state.lock().map_err(|e| format!("lock: {e}"))?;
 
         // Content-addressed dedup
         if state.entries.contains_key(&hash) {
@@ -109,13 +109,13 @@ impl ArtifactStore {
         }
 
         // Atomic write: write to temp, then rename
-        let tmp_path = self.config.root.join(format!(".tmp_{}", hash));
+        let tmp_path = self.config.root.join(format!(".tmp_{hash}"));
         {
-            let mut f = fs::File::create(&tmp_path).map_err(|e| format!("create tmp: {}", e))?;
-            f.write_all(data).map_err(|e| format!("write: {}", e))?;
-            f.sync_all().map_err(|e| format!("sync: {}", e))?;
+            let mut f = fs::File::create(&tmp_path).map_err(|e| format!("create tmp: {e}"))?;
+            f.write_all(data).map_err(|e| format!("write: {e}"))?;
+            f.sync_all().map_err(|e| format!("sync: {e}"))?;
         }
-        fs::rename(&tmp_path, &artifact_path).map_err(|e| format!("rename: {}", e))?;
+        fs::rename(&tmp_path, &artifact_path).map_err(|e| format!("rename: {e}"))?;
 
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -138,16 +138,16 @@ impl ArtifactStore {
 
     /// Open a stored artifact for reading. Returns a file handle.
     pub fn open_read(&self, sha256: &str) -> Result<fs::File, String> {
-        let state = self.state.lock().map_err(|e| format!("lock: {}", e))?;
+        let state = self.state.lock().map_err(|e| format!("lock: {e}"))?;
         let entry = state
             .entries
             .get(sha256)
-            .ok_or_else(|| format!("artifact not found: {}", sha256))?;
+            .ok_or_else(|| format!("artifact not found: {sha256}"))?;
         // Reject path traversal
         if sha256.contains("..") || sha256.contains('/') || sha256.contains('\\') {
             return Err("invalid sha256".into());
         }
-        fs::File::open(&entry.path).map_err(|e| format!("open: {}", e))
+        fs::File::open(&entry.path).map_err(|e| format!("open: {e}"))
     }
 
     /// Verify artifact integrity by recomputing its hash.
@@ -155,7 +155,7 @@ impl ArtifactStore {
         let data = {
             let mut f = self.open_read(sha256)?;
             let mut buf = Vec::new();
-            std::io::Read::read_to_end(&mut f, &mut buf).map_err(|e| format!("read: {}", e))?;
+            std::io::Read::read_to_end(&mut f, &mut buf).map_err(|e| format!("read: {e}"))?;
             buf
         };
         let mut hasher = Sha256::new();
@@ -177,7 +177,7 @@ impl ArtifactStore {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_millis() as i64);
-        let mut state = self.state.lock().map_err(|e| format!("lock: {}", e))?;
+        let mut state = self.state.lock().map_err(|e| format!("lock: {e}"))?;
         let expired: Vec<String> = state
             .entries
             .iter()

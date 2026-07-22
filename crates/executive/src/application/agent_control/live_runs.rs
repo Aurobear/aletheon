@@ -269,6 +269,24 @@ fn invalid(message: &str) -> AgentControlError {
     }
 }
 
+impl LiveAgentRuns {
+    pub async fn insert(&self, agent: AgentId, run: LiveAgentRun) -> bool {
+        self.runs.write().await.insert(agent, run).is_none()
+    }
+
+    pub async fn get(&self, agent: AgentId) -> Option<LiveAgentRun> {
+        self.runs.read().await.get(&agent).cloned()
+    }
+
+    pub async fn remove(&self, agent: AgentId) -> Option<LiveAgentRun> {
+        self.runs.write().await.remove(&agent)
+    }
+
+    pub async fn all(&self) -> Vec<LiveAgentRun> {
+        self.runs.read().await.values().cloned().collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -555,23 +573,5 @@ mod tests {
         );
         assert!(!parent.covers(&excessive));
         assert!(!parent.accepts_budget(&excessive));
-    }
-}
-
-impl LiveAgentRuns {
-    pub async fn insert(&self, agent: AgentId, run: LiveAgentRun) -> bool {
-        self.runs.write().await.insert(agent, run).is_none()
-    }
-
-    pub async fn get(&self, agent: AgentId) -> Option<LiveAgentRun> {
-        self.runs.read().await.get(&agent).cloned()
-    }
-
-    pub async fn remove(&self, agent: AgentId) -> Option<LiveAgentRun> {
-        self.runs.write().await.remove(&agent)
-    }
-
-    pub async fn all(&self) -> Vec<LiveAgentRun> {
-        self.runs.read().await.values().cloned().collect()
     }
 }

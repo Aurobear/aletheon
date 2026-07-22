@@ -18,8 +18,7 @@ fn endpoint_validation_table() {
         assert_eq!(
             validate_policy_endpoint(endpoint).is_ok(),
             expected,
-            "endpoint: {}",
-            endpoint
+            "endpoint: {endpoint}"
         );
     }
 }
@@ -47,5 +46,5 @@ async fn stub_produces_valid_proposal() {
     assert!(!proposals[0]
         .parameters
         .as_object()
-        .map_or(false, |p| p.contains_key("joint")));
+        .is_some_and(|p| p.contains_key("joint")));
 }

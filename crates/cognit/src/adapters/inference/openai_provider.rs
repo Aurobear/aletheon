@@ -218,7 +218,7 @@ fn content_blocks_to_openai_parts(blocks: &[ContentBlock]) -> Vec<serde_json::Va
             ContentBlock::Image { source } => {
                 let url = match source {
                     ImageSource::Base64 { media_type, data } => {
-                        format!("data:{};base64,{}", media_type, data)
+                        format!("data:{media_type};base64,{data}")
                     }
                     ImageSource::Url { url } => url.clone(),
                 };
@@ -273,7 +273,7 @@ fn messages_to_chat(messages: &[Message]) -> Vec<ChatMessage> {
                         } = block
                         {
                             let text = if *is_error {
-                                format!("[ERROR] {}", content)
+                                format!("[ERROR] {content}")
                             } else {
                                 content.clone()
                             };

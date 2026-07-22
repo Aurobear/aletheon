@@ -46,7 +46,7 @@ impl PluginRuntime {
             Some("native") => Err(anyhow::anyhow!("Native (.so) plugins not yet implemented")),
             Some("wasm") => Err(anyhow::anyhow!("WASM plugins not yet implemented")),
             Some("agent") => Err(anyhow::anyhow!("Agent plugins not yet implemented")),
-            _ => Err(anyhow::anyhow!("Unknown plugin entry type: {}", entry)),
+            _ => Err(anyhow::anyhow!("Unknown plugin entry type: {entry}")),
         }
     }
 

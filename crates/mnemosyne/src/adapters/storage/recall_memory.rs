@@ -274,7 +274,7 @@ impl RecallMemory {
              LIMIT ?2",
         )?;
 
-        let pattern = format!("%{}%", query);
+        let pattern = format!("%{query}%");
         let entries = stmt
             .query_map(rusqlite::params![pattern, limit as i64], |row| {
                 Ok(MemoryEntry {
@@ -372,7 +372,7 @@ fn sanitize_fts_query(query: &str) -> String {
                 return String::new();
             }
             // Use prefix matching: "word*" matches word, words, workflow, etc.
-            format!("\"{}*\"", clean)
+            format!("\"{clean}*\"")
         })
         .filter(|s| !s.is_empty())
         .collect();

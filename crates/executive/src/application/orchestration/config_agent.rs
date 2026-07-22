@@ -222,7 +222,7 @@ impl Agent for ConfigAgent {
                     (result.output, result.is_error)
                 } else {
                     (
-                        format!("Error: tool '{}' not available to this agent", name),
+                        format!("Error: tool '{name}' not available to this agent"),
                         true,
                     )
                 };

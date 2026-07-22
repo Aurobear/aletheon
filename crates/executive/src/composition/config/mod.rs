@@ -638,6 +638,9 @@ fn merge_value(base: &mut toml::Value, overlay: toml::Value) {
     }
 }
 
+#[allow(dead_code)]
+fn _typed_path(_: PathBuf) {}
+
 #[cfg(test)]
 mod legacy_environment_tests {
     use super::{merge_layers, normalize_legacy_environment, ConfigLayer};
@@ -706,15 +709,10 @@ mod legacy_environment_tests {
         }])
         .unwrap();
 
-        assert_eq!(
-            loaded.value.memory.supplemental.write_source,
-            "legacy-source"
-        );
-        assert_eq!(loaded.value.memory.supplemental.request_timeout_ms, 250);
+        let memory = &loaded.value.memory;
+        assert_eq!(memory.supplemental.write_source, "legacy-source");
+        assert_eq!(memory.supplemental.request_timeout_ms, 250);
         assert!(loaded.value.deployment.integrations.supplemental_memory);
         assert_eq!(loaded.value.deployment.quotas.supplemental_spool_items, 42);
     }
 }
-
-#[allow(dead_code)]
-fn _typed_path(_: PathBuf) {}

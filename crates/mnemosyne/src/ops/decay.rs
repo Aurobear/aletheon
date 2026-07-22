@@ -61,8 +61,7 @@ mod tests {
         // Should be approximately 0.5 (half-life = 7 days)
         assert!(
             (strength - 0.5).abs() < 0.05,
-            "strength after 1 week: {}",
-            strength
+            "strength after 1 week: {strength}"
         );
     }
 
@@ -71,7 +70,7 @@ mod tests {
         let now = 1700000000;
         let month_ago = now - 30 * 86400;
         let strength = compute_strength(1.0, DEFAULT_DECAY_RATE, month_ago, now);
-        assert!(strength < 0.1, "strength after 1 month: {}", strength);
+        assert!(strength < 0.1, "strength after 1 month: {strength}");
     }
 
     #[test]

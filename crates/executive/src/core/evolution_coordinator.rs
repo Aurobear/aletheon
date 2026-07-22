@@ -285,7 +285,7 @@ impl EvolutionCoordinator {
     pub fn negativity_from_stimmung(mood: &Stimmung) -> Option<NegativitySignal> {
         match mood {
             Stimmung::Angst { facing } => Some(NegativitySignal {
-                source: NegativitySource::Angst(format!("{:?}", facing)),
+                source: NegativitySource::Angst(format!("{facing:?}")),
                 depth: match facing {
                     fabric::dasein::AngstSource::Nothingness => 1.0,
                     fabric::dasein::AngstSource::Finitude => 0.9,
@@ -293,7 +293,7 @@ impl EvolutionCoordinator {
                     fabric::dasein::AngstSource::Responsibility => 0.7,
                 },
                 should_force_evolution: true,
-                description: format!("Angst facing {:?} — existential negativity", facing),
+                description: format!("Angst facing {facing:?} — existential negativity"),
             }),
             Stimmung::Langeweile {
                 depth: fabric::dasein::BoredomDepth::Deep,
@@ -307,7 +307,7 @@ impl EvolutionCoordinator {
                 source: NegativitySource::WorldDisclosed(because.clone()),
                 depth: 0.4,
                 should_force_evolution: false,
-                description: format!("Dejected — world disclosed negatively: {}", because),
+                description: format!("Dejected — world disclosed negatively: {because}"),
             }),
             _ => None,
         }

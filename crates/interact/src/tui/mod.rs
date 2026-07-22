@@ -119,9 +119,7 @@ pub async fn run_with_workspace_config(
         Ok(s) => s,
         Err(e) => {
             return Err(anyhow::anyhow!(
-                "Cannot connect to daemon at {}: {}\n\nStart the daemon first:\n  aletheon daemon &",
-                socket_path,
-                e
+                "Cannot connect to daemon at {socket_path}: {e}\n\nStart the daemon first:\n  aletheon daemon &"
             ));
         }
     };
@@ -314,7 +312,7 @@ impl App {
     ) -> Self {
         let mut skill_loader = SkillLoader::new(SkillLoader::default_dir());
         if let Err(e) = skill_loader.load_all() {
-            eprintln!("Warning: failed to load skills: {}", e);
+            eprintln!("Warning: failed to load skills: {e}");
         }
         let mut status = StatusBar::new(caps.clone());
         status.connected = true;

@@ -739,7 +739,7 @@ impl UnixServer {
             }
         }
 
-        anyhow::bail!("Access denied: uid {} not in aletheon group", peer_uid)
+        anyhow::bail!("Access denied: uid {peer_uid} not in aletheon group")
     }
 
     /// Handle a single client connection. Reads JSON-RPC requests from the

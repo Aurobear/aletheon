@@ -15,7 +15,7 @@ pub(super) async fn write_request(app: &mut App, request: ClientRpcRequest) {
         .to_json_rpc(Some(1))
         .expect("typed client request serializes");
     let payload = serde_json::to_string(&request).unwrap_or_default();
-    let framed = format!("{}\n", payload);
+    let framed = format!("{payload}\n");
     let _ = app.stream.write_all(framed.as_bytes()).await;
     let _ = app.stream.flush().await;
 }
@@ -59,7 +59,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                     Some(text) if !text.is_empty() => {
                         let encoded = base64_encode(&text);
                         // OSC 52: set clipboard to base64-encoded text
-                        let osc = format!("\x1b]52;c;{}\x1b\\", encoded);
+                        let osc = format!("\x1b]52;c;{encoded}\x1b\\");
                         io::stdout().write_all(osc.as_bytes()).ok();
                         io::stdout().flush().ok();
                         app.chat
@@ -121,7 +121,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                 }
                 send_request(app, ClientRpcRequest::resume(id.clone())).await;
                 app.chat
-                    .add_text(ChatRole::System, format!("恢复会话 {}...", id));
+                    .add_text(ChatRole::System, format!("恢复会话 {id}..."));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
@@ -211,7 +211,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                     app.chat.add_text(ChatRole::System, msg);
                 } else {
                     app.chat
-                        .add_text(ChatRole::System, format!("Agent not found: {}", id));
+                        .add_text(ChatRole::System, format!("Agent not found: {id}"));
                 }
                 return;
             }
@@ -243,7 +243,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                     Some(s) => s.clone(),
                     None => {
                         app.chat
-                            .add_text(ChatRole::System, format!("Unknown skill: /{}", name));
+                            .add_text(ChatRole::System, format!("Unknown skill: /{name}"));
                         return;
                     }
                 };
@@ -294,7 +294,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                 write_request(app, ClientRpcRequest::agent_profile_set(name.clone())).await;
                 app.chat.add_text(
                     ChatRole::System,
-                    format!("Switching agent profile to: {}", name),
+                    format!("Switching agent profile to: {name}"),
                 );
                 return;
             }
@@ -305,7 +305,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                     Some(s) => s.clone(),
                     None => {
                         app.chat
-                            .add_text(ChatRole::System, format!("未知技能: /{}", name));
+                            .add_text(ChatRole::System, format!("未知技能: /{name}"));
                         return;
                     }
                 };
@@ -337,7 +337,7 @@ pub async fn submit_message(app: &mut App, text: String) {
 pub async fn send_to_daemon(app: &mut App, text: &str) {
     let msg = crate::tui::chat_request(text, &app.workspace);
     let payload = serde_json::to_string(&msg).unwrap_or_default();
-    let framed = format!("{}\n", payload);
+    let framed = format!("{payload}\n");
 
     if app.stream.write_all(framed.as_bytes()).await.is_err() {
         app.chat

@@ -129,8 +129,7 @@ impl AdvancedCompressor {
 
         let mut compacted = Vec::new();
         compacted.push(Message::system(format!(
-            "{}\n{}\n[End Summary]",
-            SUMMARY_PREFIX, summary
+            "{SUMMARY_PREFIX}\n{summary}\n[End Summary]"
         )));
         compacted.extend(protected_initial_user);
         compacted.extend_from_slice(tail_messages);
@@ -247,8 +246,7 @@ impl AdvancedCompressor {
 
         let mut compacted = Vec::new();
         compacted.push(Message::system(format!(
-            "{}\n{}\n[End Summary]",
-            SUMMARY_PREFIX, summary
+            "{SUMMARY_PREFIX}\n{summary}\n[End Summary]"
         )));
         compacted.extend(protected_initial_user);
         compacted.extend_from_slice(tail_messages);
@@ -397,7 +395,7 @@ mod tests {
         for i in 0..10 {
             messages.push(Message::assistant(format!("response {}", "x".repeat(5000))));
             messages.push(Message::tool_result(
-                format!("tool_{}", i),
+                format!("tool_{i}"),
                 "y".repeat(5000),
                 false,
             ));
@@ -571,7 +569,7 @@ mod tests {
         for i in 0..10 {
             messages.push(Message::assistant(format!("response {}", "x".repeat(5000))));
             messages.push(Message::tool_result(
-                format!("tool_{}", i),
+                format!("tool_{i}"),
                 "y".repeat(5000),
                 false,
             ));

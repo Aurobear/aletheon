@@ -114,7 +114,7 @@ impl StateProvider for LiveStateProvider {
                 });
                 Ok(serde_json::to_string_pretty(&info)?.into_bytes())
             }
-            _ => anyhow::bail!("Unknown sensor: {}", sensor),
+            _ => anyhow::bail!("Unknown sensor: {sensor}"),
         }
     }
 
@@ -126,7 +126,7 @@ impl StateProvider for LiveStateProvider {
                 let tools = serde_json::json!([]);
                 Ok(serde_json::to_string_pretty(&tools)?.into_bytes())
             }
-            _ => anyhow::bail!("Unknown context type: {}", ctx_type),
+            _ => anyhow::bail!("Unknown context type: {ctx_type}"),
         }
     }
 
@@ -134,7 +134,7 @@ impl StateProvider for LiveStateProvider {
         match log_type {
             "agent" => Ok(b"# Agent Log\n\nNo log entries.\n".to_vec()),
             "audit" => Ok(b"".to_vec()),
-            _ => anyhow::bail!("Unknown log type: {}", log_type),
+            _ => anyhow::bail!("Unknown log type: {log_type}"),
         }
     }
 
@@ -175,7 +175,7 @@ impl MockStateProvider {
     /// Pre-set an error response for a key.
     pub async fn set_error(&self, key: &str, msg: &str) {
         let mut responses = self.responses.write().await;
-        responses.insert(key.to_string(), Err(anyhow::anyhow!("{}", msg)));
+        responses.insert(key.to_string(), Err(anyhow::anyhow!("{msg}")));
     }
 
     /// Get all recorded call keys (for assertions).
@@ -200,9 +200,9 @@ impl MockStateProvider {
             Some(Ok(data)) => Ok(data.clone()),
             Some(Err(_)) => {
                 // Clone the error message since anyhow::Error isn't Clone
-                Err(anyhow::anyhow!("mock error for key: {}", key))
+                Err(anyhow::anyhow!("mock error for key: {key}"))
             }
-            None => anyhow::bail!("No mock response for key: {}", key),
+            None => anyhow::bail!("No mock response for key: {key}"),
         }
     }
 }
@@ -216,19 +216,19 @@ impl Default for MockStateProvider {
 #[async_trait]
 impl StateProvider for MockStateProvider {
     async fn get_sensor_data(&self, sensor: &str) -> Result<Vec<u8>> {
-        self.lookup(&format!("sensor:{}", sensor)).await
+        self.lookup(&format!("sensor:{sensor}")).await
     }
 
     async fn get_context(&self, ctx_type: &str) -> Result<Vec<u8>> {
-        self.lookup(&format!("context:{}", ctx_type)).await
+        self.lookup(&format!("context:{ctx_type}")).await
     }
 
     async fn get_log(&self, log_type: &str) -> Result<Vec<u8>> {
-        self.lookup(&format!("log:{}", log_type)).await
+        self.lookup(&format!("log:{log_type}")).await
     }
 
     async fn get_agent_status(&self, agent_id: &str) -> Result<Vec<u8>> {
-        self.lookup(&format!("agent:{}", agent_id)).await
+        self.lookup(&format!("agent:{agent_id}")).await
     }
 }
 

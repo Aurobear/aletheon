@@ -39,10 +39,7 @@ impl RuntimeSelector {
             .collect::<Vec<_>>();
         candidates.sort();
         candidates.into_iter().next().ok_or_else(|| {
-            format!(
-                "no runtime matches selector and required capabilities: {:?}",
-                required_all
-            )
+            format!("no runtime matches selector and required capabilities: {required_all:?}")
         })
     }
 }

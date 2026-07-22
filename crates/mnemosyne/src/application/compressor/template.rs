@@ -118,15 +118,15 @@ fn format_messages(messages: &[Message]) -> String {
                 .map(|c| match c {
                     ContentBlock::Text { text } => text.clone(),
                     ContentBlock::ToolUse { name, input, .. } => {
-                        format!("[Tool Call: {}({})]", name, input)
+                        format!("[Tool Call: {name}({input})]")
                     }
                     ContentBlock::ToolResult { content, .. } => {
-                        format!("[Tool Result: {}]", content)
+                        format!("[Tool Result: {content}]")
                     }
                     _ => String::new(),
                 })
                 .collect();
-            format!("{}: {}", role, content)
+            format!("{role}: {content}")
         })
         .collect::<Vec<_>>()
         .join("\n")

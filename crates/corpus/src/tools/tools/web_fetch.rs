@@ -96,7 +96,7 @@ impl Tool for WebFetchTool {
         {
             if let Err(reason) = self.network_policy.allows_url(&url) {
                 return ToolResult {
-                    content: format!("Error: Network policy blocked URL: {}", reason),
+                    content: format!("Error: Network policy blocked URL: {reason}"),
                     is_error: true,
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -133,7 +133,7 @@ impl Tool for WebFetchTool {
             }
             _ => {
                 return ToolResult {
-                    content: format!("Error: unsupported method '{}'. Use GET or POST.", method),
+                    content: format!("Error: unsupported method '{method}'. Use GET or POST."),
                     is_error: true,
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -191,7 +191,7 @@ impl Tool for WebFetchTool {
                         }
                     }
                     Err(e) => ToolResult {
-                        content: format!("Error reading response body: {}", e),
+                        content: format!("Error reading response body: {e}"),
                         is_error: true,
                         metadata: ToolResultMeta {
                             execution_time_ms: elapsed,
@@ -202,7 +202,7 @@ impl Tool for WebFetchTool {
                 }
             }
             Err(e) => ToolResult {
-                content: format!("Error fetching URL '{}': {}", url, e),
+                content: format!("Error fetching URL '{url}': {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,

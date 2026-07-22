@@ -371,8 +371,7 @@ mod tests {
                     &result[0].1.extensions[0],
                     AwarenessExtension::SelfState { .. }
                 ),
-                "expected SelfState extension for {}",
-                expected_name
+                "expected SelfState extension for {expected_name}"
             );
         }
     }

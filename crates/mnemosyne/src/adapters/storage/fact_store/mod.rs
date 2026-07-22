@@ -338,7 +338,7 @@ pub(crate) fn sanitize_fts_query(query: &str) -> String {
             if clean.is_empty() {
                 return String::new();
             }
-            format!("\"{}*\"", clean)
+            format!("\"{clean}*\"")
         })
         .filter(|s| !s.is_empty())
         .collect();

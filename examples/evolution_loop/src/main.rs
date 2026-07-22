@@ -195,12 +195,12 @@ async fn main() -> Result<()> {
                                 }
                             }
                             Err(e) => {
-                                println!("  [Handler Error] {}", e);
+                                println!("  [Handler Error] {e}");
                             }
                         }
                     }
                     Err(e) => {
-                        println!("  [Deserialization Error] {}", e);
+                        println!("  [Deserialization Error] {e}");
                     }
                 }
                 true

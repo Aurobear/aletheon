@@ -48,15 +48,13 @@ impl Default for GrpcProviderConfig {
 pub struct GrpcEmbodimentProvider {
     client: EmbodimentGatewayClient<Channel>,
     config: GrpcProviderConfig,
-    /// Cached capabilities from the handshake.
-    device_ids: Vec<String>,
 }
 
 impl GrpcEmbodimentProvider {
     /// Connect to the bridge and perform a capabilities handshake.
     pub async fn connect(config: GrpcProviderConfig) -> Result<Self, ProviderError> {
         let endpoint = tonic::transport::Endpoint::from_shared(config.endpoint.clone())
-            .map_err(|e| ProviderError::Rejected(format!("invalid endpoint: {}", e)))?
+            .map_err(|e| ProviderError::Rejected(format!("invalid endpoint: {e}")))?
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout);
 
@@ -77,7 +75,7 @@ impl GrpcEmbodimentProvider {
                 }),
             })
             .await
-            .map_err(|s| map_status(s))?
+            .map_err(map_status)?
             .into_inner();
 
         if caps.protocol_version != config.protocol_version {
@@ -87,11 +85,7 @@ impl GrpcEmbodimentProvider {
             )));
         }
 
-        Ok(Self {
-            client,
-            config,
-            device_ids: caps.device_ids,
-        })
+        Ok(Self { client, config })
     }
 
     fn build_meta(&self) -> RequestMeta {
@@ -121,7 +115,7 @@ impl EmbodimentProvider for GrpcEmbodimentProvider {
                 device_id: device.0.clone(),
             })
             .await
-            .map_err(|s| map_status(s))?
+            .map_err(map_status)?
             .into_inner();
 
         if let Some(error) = resp.error {
@@ -151,7 +145,7 @@ impl EmbodimentProvider for GrpcEmbodimentProvider {
                 device_id: device.0.clone(),
             })
             .await
-            .map_err(|s| map_status(s))?
+            .map_err(map_status)?
             .into_inner();
 
         if let Some(error) = resp.error {
@@ -189,7 +183,7 @@ impl EmbodimentProvider for GrpcEmbodimentProvider {
             .clone()
             .execute_skill(wire_request)
             .await
-            .map_err(|s| map_status(s))?
+            .map_err(map_status)?
             .into_inner();
 
         let mut final_result: Option<SkillResult> = None;
@@ -249,7 +243,7 @@ impl EmbodimentProvider for GrpcEmbodimentProvider {
                 device_id: device.0.clone(),
             })
             .await
-            .map_err(|s| map_status(s))?
+            .map_err(map_status)?
             .into_inner();
 
         if let Some(error) = resp.error {
@@ -271,7 +265,7 @@ impl EmbodimentProvider for GrpcEmbodimentProvider {
                 reason: "requested".into(),
             })
             .await
-            .map_err(|s| map_status(s))?
+            .map_err(map_status)?
             .into_inner();
 
         if let Some(error) = resp.error {

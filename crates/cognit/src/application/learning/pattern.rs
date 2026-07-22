@@ -106,7 +106,7 @@ impl PatternExtractor {
         for (prefix, group) in by_prefix {
             if group.len() >= self.min_occurrences {
                 patterns.push(ErrorPattern {
-                    condition: format!("error contains '{}'", prefix),
+                    condition: format!("error contains '{prefix}'"),
                     examples: group.iter().map(|o| o.result_summary.clone()).collect(),
                     confidence: group.len() as f64 / errors.len() as f64,
                 });

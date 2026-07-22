@@ -181,7 +181,7 @@ async fn failure_triggers_evolution() {
     for i in 0..3 {
         let summary = coordinator
             .post_turn(
-                &format!("task {}", i),
+                &format!("task {i}"),
                 "error output",
                 false, // failure
                 5,     // tool_calls
@@ -194,11 +194,10 @@ async fn failure_triggers_evolution() {
             .await
             .unwrap();
 
-        assert!(summary.reflected, "turn {} should reflect", i);
+        assert!(summary.reflected, "turn {i} should reflect");
         assert!(
             summary.evolution_triggered,
-            "turn {} should trigger evolution on failure",
-            i
+            "turn {i} should trigger evolution on failure"
         );
     }
 
@@ -242,7 +241,7 @@ async fn periodic_trigger_at_n_turns() {
     for i in 1..=5 {
         let summary = coordinator
             .post_turn(
-                &format!("task {}", i),
+                &format!("task {i}"),
                 "ok output",
                 true, // success
                 3,    // tool_calls
@@ -299,7 +298,7 @@ async fn sliding_window_eviction() {
     for i in 1..=10 {
         let summary = coordinator
             .post_turn(
-                &format!("task {}", i),
+                &format!("task {i}"),
                 "ok",
                 true, // success
                 1,    // tool_calls

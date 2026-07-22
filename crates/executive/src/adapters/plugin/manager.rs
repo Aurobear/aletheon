@@ -191,7 +191,7 @@ impl PluginManager {
             info!(id = plugin_id, "Plugin unloaded");
             Ok(())
         } else {
-            Err(format!("Plugin '{}' not found", plugin_id))
+            Err(format!("Plugin '{plugin_id}' not found"))
         }
     }
 

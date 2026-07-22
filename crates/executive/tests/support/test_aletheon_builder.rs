@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Deterministic builder for fully wired, isolated test Aletheon instances.
 //!
 //! Constructs a `TurnCoordinator` with in-memory stores and an injectable

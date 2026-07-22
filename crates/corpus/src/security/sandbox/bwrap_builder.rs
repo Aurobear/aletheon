@@ -224,8 +224,7 @@ mod tests {
             bind_positions
                 .iter()
                 .any(|&i| args[i + 1] == "/tmp/work" && args[i + 2] == "/tmp/work"),
-            "Expected --bind /tmp/work /tmp/work in args: {:?}",
-            args
+            "Expected --bind /tmp/work /tmp/work in args: {args:?}"
         );
     }
 

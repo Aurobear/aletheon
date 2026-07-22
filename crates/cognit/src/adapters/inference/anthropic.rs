@@ -224,15 +224,13 @@ fn messages_to_api(messages: &[Message]) -> Vec<ApiMessage> {
                 } else {
                     serde_json::to_value(&m.content).unwrap_or_default()
                 }
-            } else {
-                if m.content.len() == 1 {
-                    match &m.content[0] {
-                        ContentBlock::Text { text } => serde_json::json!(text),
-                        _ => serde_json::to_value(&m.content).unwrap_or_default(),
-                    }
-                } else {
-                    serde_json::to_value(&m.content).unwrap_or_default()
+            } else if m.content.len() == 1 {
+                match &m.content[0] {
+                    ContentBlock::Text { text } => serde_json::json!(text),
+                    _ => serde_json::to_value(&m.content).unwrap_or_default(),
                 }
+            } else {
+                serde_json::to_value(&m.content).unwrap_or_default()
             };
             ApiMessage {
                 role: role.to_string(),

@@ -19,7 +19,6 @@
     clippy::ptr_arg,
     clippy::new_without_default,
     clippy::vec_init_then_push,
-    clippy::manual_checked_ops,
     clippy::module_inception,
     clippy::too_many_arguments,
     clippy::wrong_self_convention,

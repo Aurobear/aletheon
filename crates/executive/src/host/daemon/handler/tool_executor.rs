@@ -227,14 +227,14 @@ impl TurnToolExecutor {
                 action: name.clone(),
                 parameters: input.clone(),
                 source: IntentSource::Body,
-                description: format!("Tool call: {}", name),
+                description: format!("Tool call: {name}"),
             };
             let sf_ctx = AbiContext::new(&session_id, working_dir.clone());
             let sf = self_field_arc.lock().await;
             match sf.review(&tool_intent, &sf_ctx).await {
                 Ok(Verdict::Deny { reason }) => {
                     let _ = sf
-                        .narrate("tool_blocked", &format!("{}: {}", name, reason))
+                        .narrate("tool_blocked", &format!("{name}: {reason}"))
                         .await;
                     return self.error_result(
                         request,
@@ -275,7 +275,7 @@ impl TurnToolExecutor {
             let mut sb = storm_breaker_arc.lock().await;
             if let Some(directive) = sb.record(&name, is_error, &content) {
                 let mut mq = memory_queue_arc.lock().await;
-                mq.push(format!("\n[Storm Breaker] {}\n", directive));
+                mq.push(format!("\n[Storm Breaker] {directive}\n"));
             }
         }
 

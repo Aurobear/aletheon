@@ -39,7 +39,7 @@ impl ChannelTurnExecutor for FakeTurnExecutor {
         _correlation_id: &str,
     ) -> anyhow::Result<String> {
         self.calls.lock().await.push(message.to_string());
-        Ok(format!("reply:{}", message))
+        Ok(format!("reply:{message}"))
     }
 }
 

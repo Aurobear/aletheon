@@ -228,7 +228,6 @@ Respond with JSON array of rules:
 ]
 
 Only extract rules that are genuinely useful. Return empty array [] if no patterns found."#,
-            summary = summary,
         );
 
         let messages = vec![Message {

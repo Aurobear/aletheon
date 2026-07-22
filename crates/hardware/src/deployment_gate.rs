@@ -142,6 +142,22 @@ fn validate_production_gate(input: &DeploymentGateInput) -> DeploymentGateResult
     }
 }
 
+impl Default for DeploymentGateInput {
+    fn default() -> Self {
+        Self {
+            namespace: DeviceNamespace::Simulation,
+            device_id: String::new(),
+            device_serial: String::new(),
+            endpoint_identity: String::new(),
+            manifest_digest: String::new(),
+            limits_digest: String::new(),
+            evidence_digest: String::new(),
+            evidence_expiry_ms: 0,
+            now_ms: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,21 +224,5 @@ mod tests {
     #[test]
     fn valid_production_passes() {
         assert!(validate_gate(&valid_input(DeviceNamespace::Production)).passed);
-    }
-}
-
-impl Default for DeploymentGateInput {
-    fn default() -> Self {
-        Self {
-            namespace: DeviceNamespace::Simulation,
-            device_id: String::new(),
-            device_serial: String::new(),
-            endpoint_identity: String::new(),
-            manifest_digest: String::new(),
-            limits_digest: String::new(),
-            evidence_digest: String::new(),
-            evidence_expiry_ms: 0,
-            now_ms: 0,
-        }
     }
 }

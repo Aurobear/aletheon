@@ -923,6 +923,21 @@ impl ProcessManager for KernelRuntime {
     }
 }
 
+#[async_trait::async_trait]
+impl OperationManager for KernelRuntime {
+    async fn submit(&self, request: OperationRequest) -> anyhow::Result<OperationHandle> {
+        self.submit_operation(request).await
+    }
+
+    async fn cancel(&self, id: OperationId, reason: CancelReason) -> anyhow::Result<()> {
+        self.cancel_operation(id, reason).await
+    }
+
+    async fn wait(&self, id: OperationId) -> anyhow::Result<OperationResult> {
+        self.wait_operation(id).await
+    }
+}
+
 #[cfg(test)]
 mod connection_cleanup_tests {
     use super::*;
@@ -970,20 +985,5 @@ mod connection_cleanup_tests {
             runtime.inspect_process(background.id).await.unwrap().state,
             fabric::ProcessState::Running
         );
-    }
-}
-
-#[async_trait::async_trait]
-impl OperationManager for KernelRuntime {
-    async fn submit(&self, request: OperationRequest) -> anyhow::Result<OperationHandle> {
-        self.submit_operation(request).await
-    }
-
-    async fn cancel(&self, id: OperationId, reason: CancelReason) -> anyhow::Result<()> {
-        self.cancel_operation(id, reason).await
-    }
-
-    async fn wait(&self, id: OperationId) -> anyhow::Result<OperationResult> {
-        self.wait_operation(id).await
     }
 }

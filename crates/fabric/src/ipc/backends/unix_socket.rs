@@ -97,19 +97,18 @@ impl UnixSocketBackend {
         // Ensure parent directory exists.
         if let Some(parent) = self.socket_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                IpcProbeError::Other(format!("Failed to create socket directory: {}", e))
+                IpcProbeError::Other(format!("Failed to create socket directory: {e}"))
             })?;
         }
 
         // Remove stale socket file if present.
         if self.socket_path.exists() {
-            std::fs::remove_file(&self.socket_path).map_err(|e| {
-                IpcProbeError::Other(format!("Failed to remove stale socket: {}", e))
-            })?;
+            std::fs::remove_file(&self.socket_path)
+                .map_err(|e| IpcProbeError::Other(format!("Failed to remove stale socket: {e}")))?;
         }
 
         let listener = UnixListener::bind(&self.socket_path)
-            .map_err(|e| IpcProbeError::Other(format!("Failed to bind unix socket: {}", e)))?;
+            .map_err(|e| IpcProbeError::Other(format!("Failed to bind unix socket: {e}")))?;
 
         info!(path = %self.socket_path.display(), "Unix socket IPC listening");
 
@@ -157,9 +156,7 @@ impl UnixSocketBackend {
 
             if len > MAX_MESSAGE_SIZE {
                 return Err(anyhow::anyhow!(
-                    "Message too large: {} bytes (max {})",
-                    len,
-                    MAX_MESSAGE_SIZE
+                    "Message too large: {len} bytes (max {MAX_MESSAGE_SIZE})"
                 ));
             }
 
@@ -169,7 +166,7 @@ impl UnixSocketBackend {
 
             // Deserialize.
             let msg: AgentMessage = bincode::deserialize(&payload)
-                .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e}"))?;
 
             // Route to target agent(s).
             let senders = senders.read().await;
@@ -201,7 +198,7 @@ impl UnixSocketBackend {
         use tokio::io::AsyncWriteExt;
 
         let bytes = bincode::serialize(msg)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize message: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to serialize message: {e}"))?;
         let len = (bytes.len() as u32).to_be_bytes();
 
         stream.write_all(&len).await?;
@@ -225,11 +222,11 @@ impl IpcBackend for UnixSocketBackend {
     async fn send(&self, message: &AgentMessage) -> Result<(), IpcProbeError> {
         let mut stream = UnixStream::connect(&self.socket_path)
             .await
-            .map_err(|e| IpcProbeError::Other(format!("Connect failed: {}", e)))?;
+            .map_err(|e| IpcProbeError::Other(format!("Connect failed: {e}")))?;
 
         Self::write_message(&mut stream, message)
             .await
-            .map_err(|e| IpcProbeError::Other(format!("Send failed: {}", e)))
+            .map_err(|e| IpcProbeError::Other(format!("Send failed: {e}")))
     }
 
     async fn recv(&self) -> Result<AgentMessage, IpcProbeError> {

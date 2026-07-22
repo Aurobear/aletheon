@@ -82,8 +82,6 @@ pub struct ResolvedPiConfig {
     pub network_enabled: bool,
 }
 
-/// JSON request accepted by the stable `pi-coder` runtime.
-
 /// A configured runtime is constructible only after executable and isolation checks pass.
 pub struct PiRuntime {
     config: ResolvedPiConfig,

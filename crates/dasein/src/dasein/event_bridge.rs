@@ -71,7 +71,7 @@ impl DaseinEventBridge {
                         .unwrap_or("unknown");
                     DaseinEvent::SystemEvent {
                         source: "tool_execution".to_string(),
-                        content: format!("{}: {}", tool_name, status),
+                        content: format!("{tool_name}: {status}"),
                     }
                 },
             );
@@ -92,7 +92,7 @@ impl DaseinEventBridge {
                     let content = json.get("content").and_then(|v| v.as_str()).unwrap_or("");
                     DaseinEvent::SystemEvent {
                         source: "memory".to_string(),
-                        content: format!("[{}] {}", memory_type, content),
+                        content: format!("[{memory_type}] {content}"),
                     }
                 },
             );
@@ -112,7 +112,7 @@ impl DaseinEventBridge {
                         .unwrap_or("unknown");
                     DaseinEvent::SystemEvent {
                         source: "evolution".to_string(),
-                        content: format!("evolution triggered: {}", reason),
+                        content: format!("evolution triggered: {reason}"),
                     }
                 },
             );

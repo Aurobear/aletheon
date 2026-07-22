@@ -156,15 +156,13 @@ impl ReflectionEngine {
                 SpecVerdict::SpecDeviation { detail } => {
                     warn!(detail = detail.as_str(), "Spec deviation detected");
                     ReflectionRecommendation::AdjustStrategy(format!(
-                        "Spec deviation: {}. Fix the spec, not the code.",
-                        detail
+                        "Spec deviation: {detail}. Fix the spec, not the code."
                     ))
                 }
                 SpecVerdict::AgentEnhancement { detail } => {
                     info!(detail = detail.as_str(), "Agent enhancement detected");
                     ReflectionRecommendation::AdjustStrategy(format!(
-                        "Agent enhancement: {}. Review: absorb into spec if reasonable, reject if not.",
-                        detail
+                        "Agent enhancement: {detail}. Review: absorb into spec if reasonable, reject if not."
                     ))
                 }
                 SpecVerdict::OnTrack => ReflectionRecommendation::Continue,
@@ -174,10 +172,10 @@ impl ReflectionEngine {
         let status_str = match &recommendation {
             ReflectionRecommendation::Continue => "Continuing...".to_string(),
             ReflectionRecommendation::AdjustStrategy(s) => {
-                format!("Adjusting: {}", s)
+                format!("Adjusting: {s}")
             }
             ReflectionRecommendation::Stop(reason) => {
-                format!("Stopping: {:?}", reason)
+                format!("Stopping: {reason:?}")
             }
         };
 
@@ -219,10 +217,7 @@ impl ReflectionEngine {
                     || constraint_lower.contains(&action.to_lowercase())
                 {
                     return SpecVerdict::SpecDeviation {
-                        detail: format!(
-                            "Action '{}' may violate constraint '{}'",
-                            action, constraint
-                        ),
+                        detail: format!("Action '{action}' may violate constraint '{constraint}'"),
                     };
                 }
             }
