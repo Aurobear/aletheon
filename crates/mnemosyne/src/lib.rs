@@ -14,6 +14,7 @@ pub mod embodied_episode;
 pub mod fact_service;
 pub mod r#impl;
 pub mod knowledge_graph;
+pub mod lifecycle;
 pub mod model;
 pub mod observability;
 pub mod ops;

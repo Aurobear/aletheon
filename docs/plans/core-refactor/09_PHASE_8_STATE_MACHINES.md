@@ -100,9 +100,16 @@ bash scripts/cargo-agent.sh test -p executive --test conscious_action_outcome
 
 ## Work package 8c: Mnemosyne Service
 
-- [ ] Model local write, projection, recall, supplemental recall/write, reconciliation, retention, and degraded states.
-- [ ] Preserve local-memory availability when optional supplemental transport is absent.
-- [ ] Isolate repository and supplemental transport effects.
+- [x] Model local write, projection, recall, supplemental recall/write, reconciliation, retention, and degraded states.
+- [x] Preserve local-memory availability when optional supplemental transport is absent.
+- [x] Isolate repository and supplemental transport effects.
+
+Evidence: `crates/mnemosyne/src/STATE_MACHINE.md` documents local-first ordering,
+budgets, persistence, and recovery. `lifecycle.rs` owns the pure reducer and single
+mutation entry. `CompositeMemoryService` executes local and optional supplemental
+effects through their traits; `DefaultMemoryService` routes reconciliation and
+retention through the same lifecycle. Full crate tests include durable spool,
+reconciliation, retention, restart, and supplemental-outage/local-recall coverage.
 
 Validation:
 

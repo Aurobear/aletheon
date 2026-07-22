@@ -968,18 +968,35 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {
-        let now_ms = self.clock.wall_now().0.max(0) as u64;
-        if let Some(repository) = &self.consolidation {
-            if matches!(scope, MemoryScope::Session(_) | MemoryScope::Goal(_)) {
-                // A scoped consolidate request is the existing contract's explicit
-                // lifecycle boundary. Periodic Global consolidation cannot infer that
-                // an active Session or Goal has completed.
-                repository.complete_scope(&scope, now_ms)?;
+        let mut lifecycle = crate::lifecycle::MemoryOperationLifecycle::default();
+        lifecycle.apply(crate::lifecycle::MemoryOperationEvent::BeginReconciliation)?;
+        let result: anyhow::Result<()> = async {
+            let now_ms = self.clock.wall_now().0.max(0) as u64;
+            if let Some(repository) = &self.consolidation {
+                if matches!(scope, MemoryScope::Session(_) | MemoryScope::Goal(_)) {
+                    // A scoped consolidate request is the existing contract's explicit
+                    // lifecycle boundary. Periodic Global consolidation cannot infer that
+                    // an active Session or Goal has completed.
+                    repository.complete_scope(&scope, now_ms)?;
+                }
+            }
+            self.advance_consolidation(&scope, now_ms)?;
+            self.fact_store.lock().await.decay_stale()?;
+            Ok(())
+        }
+        .await;
+        match result {
+            Ok(()) => {
+                lifecycle.apply(
+                    crate::lifecycle::MemoryOperationEvent::ReconciliationFinished,
+                )?;
+                Ok(())
+            }
+            Err(error) => {
+                lifecycle.apply(crate::lifecycle::MemoryOperationEvent::Fail)?;
+                Err(error)
             }
         }
-        self.advance_consolidation(&scope, now_ms)?;
-        self.fact_store.lock().await.decay_stale()?;
-        Ok(())
     }
 
     async fn preview_forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
@@ -987,11 +1004,26 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        let mut lifecycle = crate::lifecycle::MemoryOperationLifecycle::default();
+        lifecycle.apply(crate::lifecycle::MemoryOperationEvent::BeginRetention)?;
         let repository = self
             .retention
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("retention repository is unavailable"))?;
-        repository.forget(&policy, self.clock.wall_now().0.max(0))
+            .ok_or_else(|| anyhow::anyhow!("retention repository is unavailable"));
+        let result = match repository {
+            Ok(repository) => repository.forget(&policy, self.clock.wall_now().0.max(0)),
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(receipt) => {
+                lifecycle.apply(crate::lifecycle::MemoryOperationEvent::RetentionFinished)?;
+                Ok(receipt)
+            }
+            Err(error) => {
+                lifecycle.apply(crate::lifecycle::MemoryOperationEvent::Fail)?;
+                Err(error)
+            }
+        }
     }
 
     async fn synthesize(&self, request: SynthesisRequest) -> anyhow::Result<SynthesisResult> {
