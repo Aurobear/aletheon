@@ -18,6 +18,14 @@ export ALETHEON_CARGO_TARGET_MAX_GIB="$max_gib"
 
 mkdir -p -- "$cache_root" "$target_dir"
 
+# `cargo metadata` only reads manifests and the lockfile. It neither compiles
+# nor mutates the shared target directory, so serializing it behind a long
+# workspace test makes independent architecture jobs appear stalled without
+# protecting any build artifact.
+if [[ ${1:-} == metadata || ( ${1:-} == +* && ${2:-} == metadata ) ]]; then
+  exec cargo "$@"
+fi
+
 # Keep the lock in the supervising `flock` process and close its descriptor in
 # Cargo. Otherwise hook/test subprocesses can inherit the descriptor, outlive
 # Cargo, and make every later agent wait forever on an apparently stale lock.

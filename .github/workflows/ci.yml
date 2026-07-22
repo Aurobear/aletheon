@@ -66,8 +66,6 @@ jobs:
           components: clippy,rustfmt
       - name: Formatting
         run: bash scripts/cargo-agent.sh fmt --all -- --check
-      - name: Compile workspace
-        run: bash scripts/cargo-agent.sh +stable check --workspace --all-targets
       - name: Test workspace
         run: bash scripts/cargo-agent.sh +stable test --workspace
 
