@@ -3,6 +3,9 @@
 //! All gRPC types are confined to this module. Nothing outside `hardware::grpc`
 //! may import protobuf generated types directly.
 
+pub mod convert;
+pub mod error;
+
 /// Generated wire types from `gateway.proto`.
 /// Public only for integration test accessibility; proto types must not
 /// leak into other crates.
