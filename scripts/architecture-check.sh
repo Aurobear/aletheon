@@ -20,6 +20,141 @@ path_actual=$(mktemp)
 trap 'rm -f "$actual" "$dep_actual" "$path_actual" "$actual.new" "$actual.stale" "$dep_actual.new" "$dep_actual.stale" "$path_actual.new" "$path_actual.stale"' EXIT
 cd "$ROOT"
 
+# Phase 0 architecture inventory and semantic ratchets.  The inventories are
+# deliberately data files: later refactor phases update ownership and lower
+# metrics without having to rewrite this checker.
+if [[ ${ARCH_SKIP_PHASE0_GATES:-0} != 1 && -d config/architecture ]]; then
+python3 - <<'PY'
+from __future__ import annotations
+
+import os
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+root = Path.cwd()
+cfg = root / "config/architecture"
+
+def data_lines(name: str):
+    path = cfg / name
+    if not path.is_file():
+        raise SystemExit(f"architecture-check: missing Phase 0 inventory {path}")
+    return [line for line in path.read_text().splitlines()
+            if line.strip() and not line.startswith("#")]
+
+def production_rs():
+    for path in sorted((root / "crates").rglob("*.rs")):
+        rel = path.relative_to(root).as_posix()
+        if "/tests/" in rel or "/examples/" in rel:
+            continue
+        yield rel, path.read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+
+# A new workspace crate or a new top-level impl tree requires an ownership
+# decision rather than silently inheriting a neighbouring crate's policy.
+boundary_rows = [line.split("|") for line in data_lines("module-boundaries.txt")
+                 if not line.startswith("ownership|")]
+recorded_crates = {row[0] for row in boundary_rows}
+recorded_impl = {row[0] for row in boundary_rows if len(row) > 4 and row[4] == "true"}
+workspace = tomllib.loads((root / "Cargo.toml").read_text()).get("workspace", {})
+actual_crates = set()
+for member in workspace.get("members", []):
+    for manifest in root.glob(f"{member}/Cargo.toml"):
+        actual_crates.add(tomllib.loads(manifest.read_text())["package"]["name"])
+actual_impl = {p.parent.parent.name for p in (root / "crates").glob("*/src/impl") if p.is_dir()}
+if actual_crates != recorded_crates:
+    raise SystemExit("architecture-check: workspace crate inventory differs; "
+                     f"added={sorted(actual_crates-recorded_crates)}, removed={sorted(recorded_crates-actual_crates)}")
+if actual_impl != recorded_impl:
+    raise SystemExit("architecture-check: top-level impl inventory differs; "
+                     f"added={sorted(actual_impl-recorded_impl)}, removed={sorted(recorded_impl-actual_impl)}")
+
+# Every explicit protocol and migration file has an owner before it can land.
+wire_paths = {line.split("\t")[2] for line in data_lines("wire-surfaces.tsv")}
+wire_candidates = set()
+for path in (root / "crates").rglob("*.proto"):
+    wire_candidates.add(path.relative_to(root).as_posix())
+for rel in ("crates/execd/src/protocol.rs", "crates/executive/src/impl/core_rpc/protocol.rs"):
+    if (root / rel).is_file(): wire_candidates.add(rel)
+for path in (root / "crates/fabric/src/protocol").glob("*.rs"):
+    wire_candidates.add(path.relative_to(root).as_posix())
+missing_wire = sorted(wire_candidates - wire_paths)
+if missing_wire:
+    raise SystemExit("architecture-check: unregistered wire surface: " + ", ".join(missing_wire))
+
+persistence_paths = {line.split("\t")[2] for line in data_lines("persistence-surfaces.tsv")}
+migration_candidates = set()
+for path in (root / "crates").rglob("*"):
+    if not path.is_file(): continue
+    rel = path.relative_to(root).as_posix()
+    if ("/migrations/" in rel and path.suffix in {".sql", ".rs"}) or path.name in {"migration.rs", "migrations.rs"}:
+        migration_candidates.add(rel)
+missing_persistence = sorted(migration_candidates - persistence_paths)
+if missing_persistence:
+    raise SystemExit("architecture-check: unregistered persistence migration: " + ", ".join(missing_persistence))
+
+sources = list(production_rs())
+core_prefixes = ("crates/fabric/", "crates/kernel/", "crates/executive/src/service/",
+                 "crates/executive/src/impl/goal/", "crates/cognit/src/harness/")
+def core(rel):
+    return rel.startswith(core_prefixes) or any(part in rel.split("/") for part in ("domain", "contract", "application"))
+
+identifier_rules = []
+for line in data_lines("external-identifiers.txt"):
+    name, pattern, allowed, *_ = line.split("\t")
+    identifier_rules.append((name, re.compile(pattern), tuple(x for x in allowed.split(",") if x != "-")))
+
+metrics = {
+    "CORE_EXTERNAL_IDENTIFIER_HITS": 0,
+    "PUBLIC_IMPL_ADAPTER_EXPORTS": 0,
+    "CROSS_CRATE_IMPL_REFERENCES": 0,
+    "PROVIDER_NAME_BRANCHES": 0,
+    "URL_PROVIDER_INFERENCE": 0,
+    "PROVIDER_ERROR_TEXT_BRANCHES": 0,
+    "FORBIDDEN_INFRA_IMPORTS": 0,
+    "CORE_OPAQUE_VALUE_INSPECTIONS": 0,
+}
+for rel, body in sources:
+    lines = body.splitlines()
+    if core(rel):
+        for line in lines:
+            if any(rx.search(line) and not any(rel.startswith(p) for p in allowed)
+                   for _, rx, allowed in identifier_rules):
+                metrics["CORE_EXTERNAL_IDENTIFIER_HITS"] += 1
+    metrics["PUBLIC_IMPL_ADAPTER_EXPORTS"] += sum(bool(re.search(r"\bpub\s+(?:mod|use)\s+(?:r#impl|impl|adapter|adapters)\b", line)) for line in lines)
+    metrics["CROSS_CRATE_IMPL_REFERENCES"] += sum(bool(re.search(r"\b(?:agora|cognit|corpus|dasein|executive|gateway|hardware|metacog|mnemosyne)::(?:r#impl|impl)::", line)) for line in lines)
+    if (core(rel) and not any(part in rel for part in
+            ("/adapter/", "/adapters/", "/impl/", "/composition/", "/factory", "/registry"))):
+        metrics["PROVIDER_NAME_BRANCHES"] += sum(bool(re.search(r"(?:match\s+\w*provider|contains\s*\([^)]*provider|provider[^\n]*(?:==|!=)\s*\")", line, re.I)) for line in lines)
+        metrics["URL_PROVIDER_INFERENCE"] += sum(bool(re.search(r"(?:url|endpoint).*(?:contains|starts_with).*(?:provider|anthropic|openai|ollama)", line, re.I)) for line in lines)
+        metrics["PROVIDER_ERROR_TEXT_BRANCHES"] += sum(bool(re.search(r"(?:error|message).*(?:contains|starts_with).*(?:provider|anthropic|openai|ollama)", line, re.I)) for line in lines)
+        metrics["FORBIDDEN_INFRA_IMPORTS"] += sum(bool(re.search(r"(?:use\s+[^;]*(?:::adapter|::r#impl|::impl)|\b(?:sqlx|reqwest|tonic)::)", line)) for line in lines)
+        metrics["CORE_OPAQUE_VALUE_INSPECTIONS"] += sum(bool(re.search(r"(?:serde_json::Value|\bValue\b).*(?:\.get\(|\[\s*\")|(?:\.get\(|\[\s*\").*(?:serde_json::Value|\bValue\b)", line)) for line in lines)
+
+if os.environ.get("ARCH_PRINT_PHASE0_METRICS") == "1":
+    for key in sorted(metrics): print(f"{key}={metrics[key]}")
+    sys.exit(0)
+
+baseline = {}
+for line in data_lines("metrics.env"):
+    key, value = line.split("=", 1); baseline[key] = int(value)
+if set(metrics) != set(baseline):
+    raise SystemExit(f"architecture-check: metrics inventory keys differ; current={sorted(metrics)}, baseline={sorted(baseline)}")
+changed = [(key, baseline[key], metrics[key]) for key in sorted(metrics) if baseline[key] != metrics[key]]
+if changed:
+    detail = ", ".join(f"{key}:{old}->{new}" for key, old, new in changed)
+    raise SystemExit("architecture-check: Phase 0 metric changed; update/lower the reviewed baseline: " + detail)
+
+# Compatibility exceptions are individually counted and ratcheted.
+for row in data_lines("compatibility-debt.tsv"):
+    debt_id, rel, pattern, _, _, expected, _ = row.split("\t")
+    path = root / rel
+    actual = len(re.findall(pattern, path.read_text(errors="replace"))) if path.is_file() else 0
+    if actual != int(expected):
+        raise SystemExit(f"architecture-check: compatibility debt {debt_id} changed {expected}->{actual}; update/lower its reviewed baseline")
+PY
+fi
+
 # Q01 deletion gates: application-layer discovery belongs only to Executive,
 # and only ExtensionService may translate discovery into Corpus activation.
 if [[ ${ARCH_SKIP_DELETION_GATES:-0} != 1 ]]; then
