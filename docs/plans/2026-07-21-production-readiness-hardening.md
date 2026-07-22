@@ -1,7 +1,7 @@
 # Aletheon Production Readiness Hardening Plan
 
 > **Date:** 2026-07-21（2026-07-22 校正）
-> **Status:** Active；H0–H10 已完成，H11 进行中
+> **Status:** H0–H11 implementation complete；等待最终 SER8 部署验收
 > **Role:** 唯一可执行 hardening 队列
 > **Companion evidence:** `docs/plans/2026-07-21-aletheon-coupling-and-external-interface-audit.md`
 > **Accepted baseline:** `docs/deployment/ser8-acceptance-2026-07-21.md`
@@ -75,7 +75,7 @@ SER8 单机验收已经证明真实 inference、Pi、coding diff、durable memor
 | H8 | **PASS** | `docs/deployment/hardening-h8-runtime-paths-2026-07-22.md` |
 | H9 | **PASS** | `docs/deployment/hardening-h9-pi-governance-evidence-2026-07-22.md` |
 | H10 | **PASS** | `docs/deployment/hardening-h10-coding-e2e-2026-07-22.md` |
-| H11 | Ongoing | Executive composition 收缩 |
+| H11 | **PASS** | `docs/deployment/hardening-h11-executive-composition-2026-07-22.md` |
 
 ```text
 H0 事实基线

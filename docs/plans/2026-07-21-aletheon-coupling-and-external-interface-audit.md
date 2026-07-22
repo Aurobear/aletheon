@@ -648,6 +648,17 @@ memory projection 与临时 artifact 删除是明确的 best-effort 路径，但
 
 ## 22. 已验证的健康行为与排除项
 
+- H11 已把 inference、memory、optional integrations、agents、tools、sessions 分别收敛为
+  typed composition input/output；`request.rs` 保留构造顺序和跨 unit 资源传递，不把 MCP、security
+  或 settlement 顺带按行数拆分（`crates/executive/src/impl/daemon/bootstrap/request.rs:73-80,123-126,260-313,844-881`、
+  `crates/executive/src/impl/daemon/bootstrap/inference.rs:9-22`、
+  `crates/executive/src/impl/daemon/bootstrap/memory.rs:11-40`、
+  `crates/executive/src/impl/daemon/bootstrap/integrations.rs:13-63`、
+  `crates/executive/src/impl/daemon/bootstrap/agents.rs:12-65`、
+  `crates/executive/src/impl/daemon/bootstrap/tools.rs:11-45`、
+  `crates/executive/src/impl/daemon/bootstrap/sessions.rs:12-55`）。各 unit 的构造或失败/降级契约
+  均有独立测试；Google disabled 与 degraded 是不同结果且失败不终止 core bootstrap
+  （`crates/executive/src/impl/daemon/bootstrap/integrations.rs:65-85`）。
 - H10 以 disposable Git repository 串起 goal、固定 Pi contract executor、生产 verifier、
   approval、生产 `git apply` 与 settled receipt；测试同时证明 diff hash 篡改、真实 verifier
   失败和重复 consume 均不会绕过闭环
