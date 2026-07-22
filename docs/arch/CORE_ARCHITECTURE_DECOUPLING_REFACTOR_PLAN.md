@@ -2,7 +2,7 @@
 
 **状态：** 设计基线
 
-**日期：** 2026-07-22
+**日期：** 2026-07-23
 
 **适用范围：** Aletheon 主仓库
 **目标：** 在保持现有业务能力、部署兼容性和安全约束的前提下，建立低耦合、可替换、可验证的核心架构，并将外部项目专属名称与接口限制在明确的边界适配器内。
@@ -243,6 +243,33 @@ adapters -------┘
 
 不得继续把互不相关的实现放入含义模糊的顶层 `impl`。迁移期间可以保留旧路径，但新代码必须进入目标分层。
 
+> 附注：`impl` 是 Rust 关键字，`src/impl/` 目录实际依赖 `r#impl` 或路径属性才能编译，本身即是应当改名的信号之一。目标目录名（`adapters`、`composition` 等）不与关键字冲突。
+
+### 4.2 进程与 wire 边界
+
+分层图中的 `Host` 是架构角色，不等于一个具体进程。当前仓库至少包含 `aletheon` host/CLI 进程和 `execd` 执行进程；`interact` 是由上层 host 使用的客户端/UI library，`platform` 是提供文件系统、进程、PTY、沙箱等 OS capability 的 library，而不是独立进程。证据分别见 `crates/aletheon/Cargo.toml:9-11`、`crates/execd/src/main.rs`、`crates/platform/src/lib.rs:1-20`。
+
+**这样区分的原因：** 如果把 library 误写成进程，就会把普通 Rust 调用误当作 wire contract，导致错误的版本升级、序列化兼容和部署假设；反过来，如果把真实进程边界当成内部调用，则可能在重构 DTO 时静默破坏旧客户端或 sidecar。
+
+当前需要分别治理的边界包括：
+
+| 边界 | 参与方 | 协议 owner / 版本依据 | 变更纪律 |
+|---|---|---|---|
+| 客户端协议 | `aletheon`/`interact` ↔ Executive daemon | `crates/fabric/src/protocol/client.rs` 的 `CLIENT_PROTOCOL_VERSION` | 修改该协议暴露类型时 bump 客户端协议版本，并兼容或明确拒绝旧版本 |
+| 执行进程协议 | Executive/host ↔ `execd` | `crates/execd/src/protocol.rs` | 由 execd 协议 owner 定义兼容和版本策略，不复用客户端协议版本 |
+| Embodiment 协议 | Hardware provider ↔ 外部 bridge | Hardware protobuf/gRPC contract | 按 protobuf service/message 兼容规则演进 |
+| MCP 协议 | Corpus ↔ MCP server | MCP 标准协议及本项目工具 schema | 标准协议版本与工具 schema 分别治理 |
+| 持久化格式 | service/repository ↔ SQLite/spool/artifact | 各 schema/version/migration owner | 使用数据库或事件 schema migration，不使用客户端协议版本 |
+
+因此 Fabric 类型必须先分为 `wire-exposed` 和 `internal-shared`，并为每个 `wire-exposed` 类型记录具体 `protocol_owner`：
+
+| 分类 | 含义 | 改动纪律 |
+|---|---|---|
+| `wire-exposed` | 出现在某一明确跨进程或持久化序列化路径 | 跟随其 `protocol_owner` 的版本与兼容策略，不统一绑定 `CLIENT_PROTOCOL_VERSION` |
+| `internal-shared` | 仅在同一进程内跨 crate 共享，不越过 wire/持久化边界 | 可按内部 DTO 迁移，无需协议版本流程 |
+
+Phase 1 / Phase 6 改动 Fabric DTO 前，必须先产出该分类（见 §19 wire 面清单）。未分类的 Fabric 类型默认按 `wire-exposed` 从严处理，原因是漏做一次兼容迁移的损失高于多做一次边界核对。
+
 ---
 
 ## 5. 核心端口与通用模型
@@ -395,6 +422,8 @@ Cancelled
 
 可观测性允许记录 adapter ID 和部署实例 ID，以便诊断；这不构成业务耦合。任何日志字段都不得参与业务分支。
 
+该约束同样适用于 metrics 与 trace span：span 名称、metric label 可以携带 adapter ID / 部署实例名以便排障，但告警规则、重试逻辑或任何业务分支都不得以这些名称为条件。
+
 ---
 
 ## 8. 公共 API 与可见性约束
@@ -437,6 +466,20 @@ Cancelled
 | `CompositionState` | 构造期已解析依赖集合 |
 
 禁止新增没有明确语义的 `RuntimeCore`、`CoreRuntime`、`SystemRuntime` 组合。现有命名在对应模块发生实质重构时迁移，不进行无收益的全局一次性改名。
+
+上表是目标词汇表，落地前必须先把**现状名映射到目标名并指定 owner crate**，否则本节仍是愿望而非计划。映射基线（在 Phase 0 产出、随迁移更新）：
+
+| 现状（crate/模块） | 目标名词 | owner crate | 处置 |
+|---|---|---|---|
+| 独立 `runtime` crate | `RuntimeContract`（crate 名暂不改） | runtime | 保留 manifest、capability、interaction/workspace/tool-governance 描述与 deterministic selector；不拥有实例、进程生命周期、准入或 adapter 构造 |
+| Kernel runtime（`crates/kernel`） | `KernelLifecycle` / `KernelServices` | kernel | 保留 process/operation/supervision/admission/budget/lease 的唯一治理 owner；实质重构时再迁移类型名 |
+| Executive runtime（`crates/executive/src/impl/runtime`） | `AgentRuntime` + adapter | executive | Phase 3 迁移 |
+| `UserRuntimeConfig`（`crates/executive/src/user_runtime`） | 归入 `DomainConfig` | executive composition | Phase 4 迁移 |
+| system core runtime / runtime core | `CompositionState` / `DomainServices` | executive composition | Phase 2 迁移 |
+
+**保留独立 runtime crate 的原因：** 当前该 crate 只定义 `RuntimeManifest`、`RuntimeCapability` 和 `RuntimeSelector`，且 selector 明确声明 Executive 仍是 registry/admission authority，见 `crates/runtime/src/lib.rs:1-9`、`crates/runtime/src/manifest.rs:40-49`、`crates/runtime/src/selector.rs:10-13`。它已经接近一个稳定、无基础设施依赖的 contract crate；把它并入 Executive 会让通用能力描述反向依赖 application/composition，增加而不是减少耦合。是否将 crate 物理改名为 `runtime-contract` 只在 Phase 10 根据收益复评，不阻塞 Phase 2。
+
+**不把 KernelRuntime 改称 HostRuntime 的原因：** `KernelRuntime` 当前拥有 process/operation table、supervision、admission、budget、lease 和 mailbox，见 `crates/kernel/src/runtime.rs:25-48`；这些是受治理的生命周期权威，而 OS 文件系统、PTY、进程后端和沙箱 capability 已由 Platform 拥有，见 `crates/platform/src/lib.rs:1-37`。使用 `HostRuntime` 会混淆治理权威与 OS host adapter。
 
 ---
 
@@ -538,7 +581,9 @@ adapter contract tests
 - 根据 URL 识别实现；
 - 根据厂商错误字符串确定重试；
 - 硬编码外部 endpoint；
-- 使用无边界 `serde_json::Value` 穿透 adapter。
+- 使用无边界 `serde_json::Value` 让 provider 语义穿透 adapter 进入核心分支。
+
+> `serde_json::Value` 豁免：MCP tool 调用参数/结果等本质开放的 JSON 允许作为 **adapter 内部载荷** 或 **显式类型化的 passthrough 信封**（如 `OpaqueToolPayload(Value)`）存在。禁止的是：核心 service 直接 `match`/读取 `Value` 内部字段来决定业务行为，或用 `Value` 规避定义稳定 DTO。门禁按“核心路径是否读取 Value 内部结构”判定，而非“是否出现 Value 类型”。
 
 ---
 
@@ -598,17 +643,52 @@ bash scripts/cargo-agent.sh <cargo arguments>
 
 ## 13. 分阶段迁移计划
 
-### 阶段 0：架构基线与防扩散
+各阶段并非等量，也不是纯线性。下表给出体量、blast-radius 与并行性，用于排期与多任务分工；实际依赖 DAG 见其后。
 
-**目标：** 在修改现有耦合前，阻止新增同类问题。
+| 阶段 | 体量 | blast-radius | 硬前置 | 可并行 |
+|---|---|---|---|---|
+| 0 架构决策、风险盘点与防扩散门禁 | 中 | 全仓库（不改业务逻辑） | 无 | — |
+| 1 Fabric 契约纯化 | 大 | 高（跨进程 wire + 持久化事件） | 0 | 与 8 部分并行 |
+| 2 Executive 分层 | **特大** | 高（几乎所有下游阶段的地基） | 0 | 不建议与他阶段并行 |
+| 3 Coding runtime 解耦 | 中 | 中 | 2 | 与 5 并行 |
+| 4 配置所有权 | 大 | 中 | 2 | 与 5、6 部分并行 |
+| 5 Supplemental memory | 中 | 低 | 2 | 与 3、4 并行 |
+| 6 Channel/Identity/信息源 | 大 | 高（含安全敏感 OAuth） | 1、2 | 与 3、5 部分并行 |
+| 7 Inference adapter 私有化 | 中 | 中 | 2 | 与 5、6 部分并行 |
+| 8 大模块状态机化 | **特大** | 中（局部但深） | 无强前置（逐个做） | 可穿插 |
+| 9 公共 API 收缩 | 中 | 高（跨 crate import） | 1–7 | 收尾，不并行 |
+| 10 全局验证/复评 | 小 | — | 9 | — |
+
+依赖 DAG（→ 表示硬前置）：
+
+```text
+0 → 1 ─────────────┐
+0 → 2 → 3          ├→ 9 → 10
+        2 → 4      │
+        2 → 5      │
+    1,2 → 6        │
+        2 → 7      │
+8（独立，可穿插）──┘
+```
+
+要点：**Phase 2 是关键路径上体量最大的单点**，其余多数阶段等它；而 3/5/4/7 在 2 完成后彼此高度独立，应并行以缩短总工期，不要按 3→4→5→6→7 串行执行。
+
+### 阶段 0：架构决策、风险盘点与防扩散
+
+**目标：** 在修改现有耦合前，确定 owner 与兼容边界、量化当前风险，并阻止新增同类问题。
+
+**这样安排的原因：** 仅增加名称 grep 无法保护持久化、跨进程协议和安全语义；但 Phase 0 也不应改变业务行为，否则基线和迁移混在同一阶段，后续无法判断回归来自门禁还是逻辑变化。
 
 工作内容：
 
-1. 提交分层、目录语义和 runtime 词汇表；
+1. 提交分层、目录语义和 runtime owner 词汇表；
 2. 建立外部标识边界清单；
-3. 增加依赖、import、公开导出和名称泄漏门禁；
-4. 建立 compatibility/allowlist 台账；
-5. 记录当前依赖基线，只允许后续减少违规。
+3. 产出 wire surface 与 protocol owner 清单；
+4. 产出 persistence surface 与 migration owner 清单；
+5. 增加依赖、import、公开导出和名称泄漏门禁；
+6. 建立 compatibility/allowlist 台账；
+7. 记录量化基线，只允许后续减少违规；
+8. 为每类门禁提供会失败的 fixture，证明 CI 能识别回退。
 
 验收：架构检查能够在测试 fixture 中捕获新增违规，并且不要求先完成后续迁移。
 
@@ -625,7 +705,11 @@ bash scripts/cargo-agent.sh <cargo arguments>
 5. 保留旧序列化格式的显式兼容转换；
 6. 禁止新代码导入 `fabric::google`。
 
-验收：新增第二个同类 provider 不需要修改 Fabric enum；Fabric contract test 不引用 Google fixture。
+**持久化前置：** `ExternalEvent` 当前带 `EXTERNAL_EVENT_SCHEMA_VERSION` 且内嵌 `GmailMessageSummary`（见 `crates/fabric/src/types/external_event.rs`），已落盘的事件/spool 会被本阶段打穿。开工前必须完成 §19 持久化面清单中受本阶段影响的条目，并实现双读或版本化迁移。
+
+**安全前置：** `ExternalScope` 内嵌 `is_write()` / `is_m6_allowed()` 安全语义（`crates/fabric/src/types/external_identity.rs`）。scope 迁入 adapter 时，写权限门控与 M6 白名单必须一并迁移且行为不变，需配套 scope 门控回归测试。本阶段结束前需一次安全评审 checkpoint。
+
+验收：新增第二个同类 provider 不需要修改 Fabric enum；Fabric contract test 不引用 Google fixture；scope 门控回归测试通过；受影响持久化格式的迁移测试通过。
 
 ### 阶段 2：Executive 分层
 
@@ -698,7 +782,9 @@ bash scripts/cargo-agent.sh <cargo arguments>
 4. 业务层只使用 normalized identity、message、event；
 5. provider cursor 与错误保持 opaque/normalized。
 
-验收：核心渠道和信息源用例全部通过 fake port 测试。
+**安全前置：** 本阶段搬迁 OAuth 授权、token store 与 credential 处理，属安全敏感改动。credential 边界、fail-closed、token 落盘加密/权限必须保持不变；结束前需一次安全评审 checkpoint，并验证 credential 不出现在共享 DTO、事件与诊断中。
+
+验收：核心渠道和信息源用例全部通过 fake port 测试；credential 边界与 fail-closed 行为回归测试通过。
 
 ### 阶段 7：Inference adapter 私有化
 
@@ -855,6 +941,20 @@ bash scripts/cargo-agent.sh <cargo arguments>
 - 在一次提交中重构多个状态机；
 - 为追求“零名称”牺牲部署可读性和诊断能力。
 
+### 17.1 范围边界
+
+本方案按改动性质划分范围，而不是简单划分“在/不在”。这样做的原因是：外部耦合横跨 contract、adapter 和 wire；完全排除 Corpus、Runtime 或 Kernel 会与 Phase 3/8 冲突，而把所有 crate 都列为主要重构范围又会造成无边界扩张。
+
+| 范围类别 | crate | 允许的改动 |
+|---|---|---|
+| 主要重构范围 | `fabric`、`executive`、`cognit`、`mnemosyne`、`hardware`、`gateway` | 按 Phase 1–9 调整契约、application、composition、adapter 和公开 API |
+| 专项触及范围 | `corpus` | 仅处理 Google/外部信息源 adapter、MCP adapter 以及 Phase 8 明确列出的 MCP client/auth 状态机 |
+| 专项触及范围 | `runtime` | 固定 RuntimeContract owner，按 Phase 3 调整 manifest/capability contract；不并入 Executive |
+| 专项触及范围 | `kernel` | 仅核对生命周期治理 owner 和必要的术语/facade；不把 KernelRuntime 重构成 Host adapter |
+| 兼容验证范围 | `interact`、`aletheon`、`execd` | 仅在所属 wire contract 改动时适配、验证或明确拒绝旧版本 |
+| 兼容验证范围 | `platform` | 作为 OS host capability owner 核对依赖边；除非具体 adapter 迁移需要，不主动重构内部结构 |
+| 明确不主动重构 | `agora`、`dasein`、`metacog` | 仅在编译或稳定 facade 迁移所必需时做最小调用点调整，并单独登记原因 |
+
 ---
 
 ## 18. 后续文档与实施方式
@@ -871,3 +971,42 @@ bash scripts/cargo-agent.sh <cargo arguments>
 - 进入下一阶段的门槛。
 
 实施顺序不得跳过阶段 0 的防扩散门禁。阶段 1 至阶段 7 可以在依赖明确时细分，但共享契约迁移必须先于删除兼容类型，应用端口必须先于移动具体 adapter，稳定 facade 必须先于收缩公共 API。
+
+---
+
+## 19. 实施前必产出的基线（Phase 0 前置产物）
+
+以下三张表是本方案从“原则”落到“可执行”的关键，必须在 Phase 0 产出并随迁移更新。缺任何一张，对应阶段不得开工。
+
+### 19.1 持久化面清单（最高风险）
+
+枚举所有已落盘/跨会话格式，标注受影响阶段与迁移策略。候选面（Phase 0 补全并核对）：
+
+| 持久化面 | 位置/证据 | 版本机制 | 受影响阶段 | 策略 |
+|---|---|---|---|---|
+| 外部事件 | `crates/fabric/src/types/external_event.rs`（`EXTERNAL_EVENT_SCHEMA_VERSION`，内嵌 `GmailMessageSummary`） | 有 schema version | 1 | 双读 + 版本化迁移 |
+| gbrain spool | 配置：`crates/cognit/src/config/mod.rs`；schema owner：`crates/mnemosyne/src/backends/gbrain/migrations.rs:92` | 已有 SQLite migration；完整版本路径由 Phase 0 清点 | 5 | compatibility 读旧、写新，并验证现有 migration 幂等性 |
+| agent run repo | `crates/executive/src/service/agent_control/sqlite_repository.rs:31` | Phase 0 检查 schema/migration 机制并记录结果 | 2、3 | 先冻结现有 schema；只有 DTO 落盘形态变化时增加版本化 migration |
+| OAuth token store | Corpus credential/token store 与 Executive external composition | Phase 0 追踪实际表/文件 owner，不凭配置推断 | 6 | 加密、文件权限和 fail-closed 行为不变，增加迁移与泄漏回归测试 |
+| memory store | Mnemosyne repository/backends | Phase 0 按 backend 列出 schema/version owner | 5 | 仅迁移被 supplemental-memory 命名或 DTO 变化影响的格式 |
+
+每条必须满足 §14 第 4 项：幂等、可检测版本、失败保持原数据；同时满足 §14 第 9–10 项：不可静默 fallback，安全相关行为保持 fail closed。
+
+### 19.2 wire 面分类
+
+把 Fabric 中所有跨边界类型分为 `wire-exposed` / `internal-shared`（判据见 §4.2）。至少覆盖 `protocol::client`、`external_event`、`external_identity`、`channel`、`llm_types`。每个 `wire-exposed` 条目必须记录参与方、序列化路径、`protocol_owner`、当前版本机制和兼容策略；只有属于客户端协议的类型才绑定 `CLIENT_PROTOCOL_VERSION`，其他类型跟随各自的 execd、protobuf、MCP、事件或数据库 schema owner。
+
+### 19.3 量化基线指标
+
+Phase 0 提交一次快照，每阶段出 delta，用数字而非清单勾选证明耦合下降。至少包含：
+
+| 指标 | 采集方式 | 目标趋势 |
+|---|---|---|
+| core 路径外部产品名命中数 | 门禁 grep（§11.3 路径集） | → 0 |
+| `pub` 的 `impl`/adapter 项数 | 模块可见性扫描 | 下降 |
+| domain/application 对 reqwest/rusqlite/dirs 的依赖边 | cargo 依赖分析 | → 0 |
+| `contains(provider)` / `match provider_name` 命中数 | 门禁 grep（当前已知：`agent_control/mod.rs:747`） | → 0 |
+| Fabric 外部供应商类型数 | 类型扫描 | → 0 |
+| 兼容 allowlist 条目数与调用点数 | allowlist 台账 | 只减不增 |
+
+这些指标应接入 `scripts/architecture-check.sh` 的基线，使“回退”在 CI 中可被机械拦截。
