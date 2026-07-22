@@ -1,9 +1,16 @@
 # frozen_commit=efde4ca11a7c45a72ce7a03fee4cdd0c3c9d8e1e
 # id	path	pattern	reason	canonical_replacement	baseline_count	exit_phase
-external-event-v1-provider	crates/fabric/src/types/external_event.rs	Google\|	persisted v1 dedup material used enum Debug output	retire after persisted v1 migration window	2	10
-external-event-v1-file-kind	crates/fabric/src/types/external_event.rs	drive_file_	persisted v1 event tags require aliases and integrity reconstruction	retire after persisted v1 migration window	6	10
 cognit-public-impl	crates/cognit/src/lib.rs	pub mod r#impl	legacy concrete inference implementation is public	private adapters behind inference port	1	7
+executive-application-moved-facades	crates/executive/src/application/mod.rs	#\[deprecated\(note	legacy application paths for moved session helpers	crate root and compatibility host paths	2	9
+executive-core-config-facade	crates/executive/src/core/mod.rs	#\[deprecated\(note = "use executive::composition::config"\)\]	legacy core config path remains public	executive::composition::config	1	9
+executive-impl-facades	crates/executive/src/impl/mod.rs	#\[deprecated\(note	legacy implementation paths remain for downstream callers	canonical application, adapter, composition, and host paths	8	9
+executive-prefix-builder-facade	crates/executive/src/host/daemon/mod.rs	#\[deprecated\(note = "use executive::composition::prefix_builder"\)\]	legacy daemon composition path remains public	executive::composition::prefix_builder	1	9
 executive-public-impl	crates/executive/src/lib.rs	pub mod r#impl	legacy implementation tree is public	stable facade plus private adapter/composition	1	9
+executive-service-facade	crates/executive/src/service.rs	#\[deprecated\(note	legacy service root remains public	executive::application	1	9
+executive-sqlite-repository-facade	crates/executive/src/application/agent_control/mod.rs	#\[deprecated\(note = "use executive::adapters::agent_control"\)\]	legacy concrete repository path remains public	private adapter through composition	1	9
+executive-user-runtime-facade	crates/executive/src/user_runtime.rs	#\[deprecated\(note	legacy user runtime root remains public	executive::composition::user_runtime	1	9
+external-event-v1-file-kind	crates/fabric/src/types/external_event.rs	drive_file_	persisted v1 event tags require aliases and integrity reconstruction	retire after persisted v1 migration window	6	10
+external-event-v1-provider	crates/fabric/src/types/external_event.rs	Google\|	persisted v1 dedup material used enum Debug output	retire after persisted v1 migration window	2	10
 gbrain-config	crates/cognit/src/config/mod.rs	GbrainMemoryConfig	legacy supplemental-memory product name	SupplementalMemoryConfig	2	5
+pi-runtime-types	crates/executive/src/adapters/runtime/pi.rs	PiRuntime	legacy coding-runtime implementation name	private coding runtime adapter	24	3
 telegram-config	crates/cognit/src/config/mod.rs	TelegramConfig	channel configuration owned by cognitive core	channel adapter configuration	12	6
-pi-runtime-types	crates/executive/src/impl/runtime/pi.rs	PiRuntime	legacy coding-runtime implementation name	private coding runtime adapter	24	3

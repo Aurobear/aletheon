@@ -11,8 +11,8 @@ use fabric::{
 use tracing::info;
 
 use crate::core::SystemCoreRuntime;
-use crate::r#impl::core_rpc::CoreRpcClient;
-use crate::user_runtime::{UserRuntime, UserRuntimeConfig};
+use crate::host::core_rpc::CoreRpcClient;
+use crate::composition::user_runtime::{UserRuntime, UserRuntimeConfig};
 use crate::ExecSessionBuilder;
 
 #[derive(Debug, Clone)]

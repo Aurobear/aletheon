@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use fabric::SpineEvent;
 
-use crate::service::event_projection::{
+use crate::application::event_projection::{
     EventProjection, EventProjectionSink, ProjectionAdvanceReport, ProjectionFailure,
     ProjectionLag, SqliteProjectionStore,
 };
@@ -20,7 +20,7 @@ pub struct DefaultEventProjectionSet {
 impl DefaultEventProjectionSet {
     pub fn open(
         path: impl AsRef<Path>,
-    ) -> Result<Self, crate::service::event_projection::ProjectionError> {
+    ) -> Result<Self, crate::application::event_projection::ProjectionError> {
         Ok(Self {
             store: Arc::new(SqliteProjectionStore::open(path)?),
         })

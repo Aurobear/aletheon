@@ -1,10 +1,11 @@
+use executive::composition::skill_admin::DefaultSkillAdmin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use corpus::security::approval::ApprovalDecision;
 use executive::service::admin_service::{
     AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases,
-    ApprovalOwner, DefaultSkillAdmin, ModeChange, PendingApprovals, ScopedApprovalCache,
+    ApprovalOwner, ModeChange, PendingApprovals, ScopedApprovalCache,
     SkillAdminPort, TransientApprovalRequest,
 };
 use fabric::ui_event::{CollaborationMode, InterruptReason};

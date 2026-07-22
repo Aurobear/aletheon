@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::application::event_projection::EventProjectionSink;
 use crate::r#impl::goal::{GoalCompletionSummary, GoalProjectionEvidence};
-use crate::service::event_projection::EventProjectionSink;
 
 const MAX_DECISION_BODY_BYTES: usize = 64 * 1024;
 const MEMORY_SOURCE_EVENT_NAMESPACE: Uuid = Uuid::from_u128(0xf783b8b3_4109_40cc_a8d3_191011d122c1);

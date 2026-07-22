@@ -123,6 +123,10 @@ cat > "$phase0/config/architecture/module-boundaries.txt" <<'EOF'
 # frozen_commit=fixture
 fabric|crates/fabric|-|protocol|false|adapter
 EOF
+cat > "$phase0/config/architecture/executive-layers.tsv" <<'EOF'
+# frozen_commit=fixture
+# fixture has no Executive crate
+EOF
 cat > "$phase0/config/architecture/external-identifiers.txt" <<'EOF'
 # frozen_commit=fixture
 evil	\bEvilCorp\b	crates/fabric/src/adapter/	fixture external name	neutral contract	1
@@ -144,6 +148,7 @@ cat > "$phase0/config/architecture/metrics.env" <<'EOF'
 CORE_EXTERNAL_IDENTIFIER_HITS=0
 CORE_OPAQUE_VALUE_INSPECTIONS=0
 CROSS_CRATE_IMPL_REFERENCES=0
+FABRIC_PROVIDER_TYPES=0
 FORBIDDEN_INFRA_IMPORTS=0
 PROVIDER_ERROR_TEXT_BRANCHES=0
 PROVIDER_NAME_BRANCHES=0
@@ -206,10 +211,10 @@ fi
 if git -C "$ROOT" grep -n 'PrincipalId(session_id)' -- crates; then
   echo 'session id is still used as a principal' >&2; exit 1
 fi
-if git -C "$ROOT" grep -n 'default_session_id.lock' -- crates/executive/src/service/daemon_turn; then
+if git -C "$ROOT" grep -n 'default_session_id.lock' -- crates/executive/src/application/daemon_turn; then
   echo 'turn path still rereads the default session' >&2; exit 1
 fi
-if grep -qE 'ProviderRegistry|api_key|api_url' "$ROOT/crates/executive/src/user_runtime/mod.rs"; then
+if grep -qE 'ProviderRegistry|api_key|api_url' "$ROOT/crates/executive/src/composition/user_runtime/mod.rs"; then
   echo 'user runtime exposes machine provider authority' >&2; exit 1
 fi
 if grep -qE 'RequestHandler|ToolRegistry|Sandbox' "$ROOT/crates/executive/src/core/system_core_runtime.rs"; then

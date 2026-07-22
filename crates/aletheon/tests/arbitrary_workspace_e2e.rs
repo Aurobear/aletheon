@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use executive::r#impl::core_rpc::{CorePeerPolicy, CoreRpcServer};
+use executive::host::core_rpc::{CorePeerPolicy, CoreRpcServer};
 use executive::service::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
 use executive::{
     ContentBlock, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk, Usage,

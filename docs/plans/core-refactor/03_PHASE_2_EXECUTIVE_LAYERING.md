@@ -39,11 +39,11 @@ Primary paths:
 
 ## Task 1: Freeze behavior and dependency map
 
-- [ ] Generate a file-to-layer mapping for every Executive production module.
-- [ ] Classify each as domain, application, adapter, composition, host, or compatibility.
-- [ ] Identify concrete store/provider/parser imports in service/use-case paths.
-- [ ] Add tests that freeze request, turn, goal, agent-control, daemon bootstrap, client protocol, and host-launch behavior.
-- [ ] Confirm no persistence/wire changes are included in this phase.
+- [x] Generate a file-to-layer mapping for every Executive production module.
+- [x] Classify each as domain, application, adapter, composition, host, or compatibility.
+- [x] Identify concrete store/provider/parser imports in service/use-case paths.
+- [x] Add tests that freeze request, turn, goal, agent-control, daemon bootstrap, client protocol, and host-launch behavior.
+- [x] Confirm no persistence/wire changes are included in this phase.
 
 ## Task 2: Create target facades and application ports
 
@@ -57,10 +57,10 @@ host/
 compatibility/
 ```
 
-- [ ] Define application ports around existing concrete repository/provider dependencies.
-- [ ] Re-export stable use-case/facade types from crate root, never whole module trees.
-- [ ] Keep domain state in its owning domain crate when possible; do not duplicate it in Executive.
-- [ ] Add compile-time tests proving application modules cannot import adapters.
+- [x] Define application ports around existing concrete repository/provider dependencies.
+- [x] Re-export stable use-case/facade types from crate root, never whole module trees.
+- [x] Keep domain state in its owning domain crate when possible; do not duplicate it in Executive.
+- [x] Add compile-time tests proving application modules cannot import adapters.
 
 ## Task 3: Move composition ownership
 
@@ -72,9 +72,9 @@ Move or facade:
 - provider/runtime/backend factories
 - registries and bootstrap dependency construction
 
-- [ ] `match adapter_id` exists only in composition registry/factory.
-- [ ] Composition produces validated DomainConfig and adapter constructor inputs.
-- [ ] Business environment reads remain exclusively in composition.
+- [x] `match adapter_id` exists only in composition registry/factory.
+- [x] Composition produces validated DomainConfig and adapter constructor inputs.
+- [x] Business environment reads remain exclusively in composition.
 
 ## Task 4: Move concrete adapters
 
@@ -84,24 +84,24 @@ Classify and migrate concrete code from `impl/`:
 external/google/channel/gbrain/runtime repositories and clients -> adapters
 ```
 
-- [ ] Application sees trait objects or generic ports, not concrete types.
-- [ ] Adapter errors normalize at the boundary.
-- [ ] Concrete SQLite repositories live under adapters.
-- [ ] No adapter owns authorization decisions.
+- [x] Application sees trait objects or generic ports, not concrete types.
+- [x] Adapter errors normalize at the boundary.
+- [x] Concrete SQLite repositories live under adapters.
+- [x] No adapter owns authorization decisions.
 
 ## Task 5: Consolidate host lifecycle
 
-- [ ] Move daemon server, RPC transport, signal/process lifecycle, and host launch wiring under host.
-- [ ] Host delegates every use case to application ports.
-- [ ] Host does not contain domain rules, provider selection, authorization, or storage-policy name matching.
-- [ ] Preserve `CLIENT_PROTOCOL_VERSION` behavior and socket/systemd paths.
+- [x] Move daemon server, RPC transport, signal/process lifecycle, and host launch wiring under host.
+- [x] Host delegates every use case to application ports.
+- [x] Host does not contain domain rules, provider selection, authorization, or storage-policy name matching.
+- [x] Preserve `CLIENT_PROTOCOL_VERSION` behavior and socket/systemd paths.
 
 ## Task 6: Compatibility paths and ratchets
 
-- [ ] Add temporary deprecated re-exports only where current cross-crate callers require them.
-- [ ] Every re-export has canonical path, call count, and deletion phase.
-- [ ] New imports of `executive::r#impl` fail the architecture gate.
-- [ ] Do not physically remove all `impl/` content yet if Phases 3–7 still own semantic migrations.
+- [x] Add temporary deprecated re-exports only where current cross-crate callers require them.
+- [x] Every re-export has canonical path, call count, and deletion phase.
+- [x] New imports of `executive::r#impl` fail the architecture gate.
+- [x] Do not physically remove all `impl/` content yet if Phases 3–7 still own semantic migrations.
 
 ## Validation
 
@@ -123,3 +123,11 @@ Expected: PASS with unchanged external behavior and decreasing concrete imports 
 3. `refactor(executive): isolate concrete adapters`
 4. `refactor(executive): separate daemon host lifecycle`
 5. `chore(arch): prevent Executive layer regressions`
+
+## Completion evidence (2026-07-23)
+
+- Every production Executive Rust module is classified in `config/architecture/executive-layers.tsv`; the architecture checker rejects missing, stale, or invalid assignments.
+- Application-to-host and application-to-adapter imports are rejected, with one counted deprecated SQLite compatibility facade scheduled for Phase 9 removal.
+- Concrete external, channel, runtime, artifact, Agent Control, and supplemental-memory integrations live under `adapters/`; configuration and construction live under `composition/`; daemon and Core RPC lifecycle live under `host/`.
+- Compatibility facades and their deletion phases are counted in `config/architecture/compatibility-debt.tsv`.
+- All commands in **Validation** pass. Wire and persistence inventories changed only to follow ownership-preserving file moves; protocol and schema behavior were not changed.

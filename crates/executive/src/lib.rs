@@ -10,6 +10,11 @@
     clippy::manual_strip
 )]
 
+pub mod application;
+#[doc(hidden)]
+pub(crate) mod adapters;
+pub mod composition;
+pub(crate) mod compatibility;
 pub mod core;
 pub mod r#impl;
 pub mod service;
@@ -20,7 +25,7 @@ pub mod host;
 pub use kernel;
 
 // Re-export from core for backward compatibility
-pub use core::config::{
+pub use composition::config::{
     AgentConfig, AppConfig, DaemonConfig, ExecutiveConfig, HooksConfig, McpServerConfig,
     MemoryConfig, PluginsConfig, ProviderConfig, SandboxConfig, Transport,
 };
@@ -36,7 +41,7 @@ pub use r#impl::plugin;
 pub use r#impl::session;
 
 // ── Re-exports for CLI exec path (bin crate uses these via executive) ───
-pub use crate::service::exec_session::ExecSessionBuilder;
+pub use crate::composition::exec_session::ExecSessionBuilder;
 pub use fabric::types::admission::RiskLevel;
 pub use fabric::{
     AdmissionController, AdmissionRequest, CapabilityId, CapabilityRequest, CapabilityResult,

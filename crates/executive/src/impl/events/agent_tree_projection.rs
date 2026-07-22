@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::service::event_projection::{EventProjection, ProjectionDescriptor, ProjectionError};
+use crate::application::event_projection::{
+    EventProjection, ProjectionDescriptor, ProjectionError,
+};
 use fabric::{EventPayload, SpineEvent};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

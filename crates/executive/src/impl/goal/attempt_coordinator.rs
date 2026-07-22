@@ -6,12 +6,12 @@
 use super::budget::{GoalBudgetError, GoalBudgetRequest};
 use super::transition::GoalTransitionError;
 use super::{GoalAttempt, GoalFrame, ObjectiveStore, RetryDecision, RetryPolicy};
-use crate::core::runtime_registry::RuntimeRegistry;
-use crate::r#impl::approval::{ApprovalCreate, ApprovalRepository};
-use crate::r#impl::runtime::{PiAttemptRequest, PI_CODER_RUNTIME_ID};
-use crate::service::verification::{
+use crate::application::verification::{
     CapabilityAuditSummary, VerificationContext, VerificationSelection, VerificationService,
 };
+use crate::core::runtime_registry::RuntimeRegistry;
+use crate::r#impl::approval::{ApprovalCreate, ApprovalRepository};
+use crate::adapters::runtime::{PiAttemptRequest, PI_CODER_RUNTIME_ID};
 use async_trait::async_trait;
 use base64::Engine;
 use fabric::{

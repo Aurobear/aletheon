@@ -10,7 +10,7 @@ use fabric::{
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
-use crate::service::turn_recovery::{RecoveryClassification, TurnRecoveryStore};
+use crate::application::turn_recovery::{RecoveryClassification, TurnRecoveryStore};
 
 pub struct CanonicalSessionStore {
     connection: Mutex<Connection>,
@@ -356,7 +356,7 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
     }
     // Canonical records remain immutable. Normalize only the model-facing
     // projection so an orphan result is never exposed during resume/replay.
-    let normalized = crate::service::compaction_normalize::normalize_tool_pairs(
+    let normalized = crate::application::compaction_normalize::normalize_tool_pairs(
         items.iter().map(|item| item.payload.clone()).collect(),
     );
     for payload in &normalized.items {
@@ -655,10 +655,10 @@ mod tests {
         let store = CanonicalSessionStore::open(":memory:").unwrap();
         create_incomplete_turn(&store, "session-a").await;
         create_incomplete_turn(&store, "session-b").await;
-        let mut hardening = crate::core::config::GrokHardeningConfig::default();
+        let mut hardening = crate::composition::config::GrokHardeningConfig::default();
         hardening.compaction_v2 = true;
 
-        let report = crate::service::turn_recovery::scan_incomplete_turns(&store, &hardening)
+        let report = crate::application::turn_recovery::scan_incomplete_turns(&store, &hardening)
             .await
             .unwrap();
 
@@ -789,10 +789,10 @@ mod tests {
             persist_until_crash(&path, boundary, &session).await;
 
             let reopened = CanonicalSessionStore::open(&path).unwrap();
-            let mut hardening = crate::core::config::GrokHardeningConfig::default();
+            let mut hardening = crate::composition::config::GrokHardeningConfig::default();
             hardening.compaction_v2 = true;
             let report =
-                crate::service::turn_recovery::scan_incomplete_turns(&reopened, &hardening)
+                crate::application::turn_recovery::scan_incomplete_turns(&reopened, &hardening)
                     .await
                     .unwrap();
             assert_eq!(report.incomplete_turns.len(), 1);

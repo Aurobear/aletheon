@@ -10,7 +10,7 @@ use fabric::types::workspace_checkpoint::{
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
-use crate::service::workspace_checkpoint::CheckpointStore;
+use crate::application::workspace_checkpoint::CheckpointStore;
 
 pub struct SqliteCheckpointStore {
     connection: Mutex<Connection>,

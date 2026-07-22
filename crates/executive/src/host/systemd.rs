@@ -20,8 +20,8 @@ use tracing;
 
 use crate::core::runtime_core::RuntimeCore;
 use crate::host::load_dotenv;
-use crate::r#impl::daemon::mcp_embedded::McpEmbedded;
-use crate::r#impl::daemon::server;
+use crate::host::daemon::mcp_embedded::McpEmbedded;
+use crate::host::daemon::server;
 
 /// Send a status message to systemd via the notification socket.
 ///

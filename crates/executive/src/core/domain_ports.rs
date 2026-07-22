@@ -9,7 +9,7 @@ pub struct DomainPorts {
     agora: Arc<dyn AgoraService>,
     metacog: Arc<dyn metacog::MetacogService>,
     corpus: Arc<dyn corpus::CorpusService>,
-    cognition: Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
+    cognition: Arc<dyn crate::application::harness_factory::CognitiveSessionFactory>,
 }
 
 impl DomainPorts {
@@ -17,7 +17,7 @@ impl DomainPorts {
         agora: Arc<dyn AgoraService>,
         metacog: Arc<dyn metacog::MetacogService>,
         corpus: Arc<dyn corpus::CorpusService>,
-        cognition: Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>,
+        cognition: Arc<dyn crate::application::harness_factory::CognitiveSessionFactory>,
     ) -> Self {
         Self {
             agora,
@@ -39,7 +39,9 @@ impl DomainPorts {
         self.corpus.clone()
     }
 
-    pub fn cognition(&self) -> Arc<dyn crate::service::harness_factory::CognitiveSessionFactory> {
+    pub fn cognition(
+        &self,
+    ) -> Arc<dyn crate::application::harness_factory::CognitiveSessionFactory> {
         self.cognition.clone()
     }
 }

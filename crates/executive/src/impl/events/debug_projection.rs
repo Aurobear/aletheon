@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::service::event_projection::{EventProjection, ProjectionDescriptor, ProjectionError};
+use crate::application::event_projection::{
+    EventProjection, ProjectionDescriptor, ProjectionError,
+};
 use fabric::{EventPayload, EventVisibility, SpineEvent};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

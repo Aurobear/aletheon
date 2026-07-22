@@ -6,7 +6,9 @@ use fabric::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::service::event_projection::{EventProjection, ProjectionDescriptor, ProjectionError};
+use crate::application::event_projection::{
+    EventProjection, ProjectionDescriptor, ProjectionError,
+};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PublicSessionState {

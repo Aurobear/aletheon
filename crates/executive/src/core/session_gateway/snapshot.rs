@@ -3,7 +3,7 @@
 //! Used by `SessionGateway::handle_snapshot()` to produce a human/Claude-readable
 //! overview of the agent's current "mental state".
 
-use crate::core::config::ExecutiveConfig;
+use crate::composition::config::ExecutiveConfig;
 use cognit::harness::linear::circuit_breaker::CircuitBreakerStatus;
 use cognit::harness::linear::goal_tracker::GoalTracker;
 use fabric::kernel::debug_bus::PerfCounter;

@@ -93,7 +93,7 @@ impl AgentRegistry {
         agents_dir: &Path,
         all_tools: &[Box<dyn Tool>],
         llm_factory: &dyn Fn() -> anyhow::Result<Box<dyn LlmProvider>>,
-        capability: Arc<dyn crate::service::CapabilityService>,
+        capability: Arc<dyn crate::application::CapabilityService>,
     ) -> Self {
         let registry = Self::new();
 

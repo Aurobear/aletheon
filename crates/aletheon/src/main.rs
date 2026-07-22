@@ -303,7 +303,7 @@ async fn main() -> Result<()> {
 // ── Config & Doctor handlers ────────────────────────────────────────────────
 
 async fn handle_config(sub: &ConfigSub) -> Result<()> {
-    use executive::core::config;
+    use executive::composition::config;
     match sub {
         ConfigSub::Effective {
             config,
@@ -354,7 +354,7 @@ async fn handle_doctor(
     config_path: Option<&std::path::Path>,
     project_dir: Option<&std::path::Path>,
 ) -> Result<()> {
-    use executive::core::config;
+    use executive::composition::config;
     use executive::r#impl::doctor::DoctorReport;
     let loaded = if let Some(path) = config_path {
         let txt = std::fs::read_to_string(path)?;

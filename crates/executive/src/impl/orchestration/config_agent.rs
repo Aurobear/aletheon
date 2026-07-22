@@ -5,7 +5,7 @@ use std::path::Path;
 use tracing::info;
 
 use super::agent::{Agent, Capability};
-use crate::service::CapabilityService;
+use crate::application::CapabilityService;
 use corpus::tools::tools::Tool;
 use fabric::message::{ContentBlock, Message};
 use fabric::{LlmProvider, ToolDefinition};

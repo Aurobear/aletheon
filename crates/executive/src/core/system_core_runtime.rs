@@ -12,8 +12,8 @@ use cognit::r#impl::provider_registry::ProviderRegistry;
 use fabric::{LlmResponse, LlmStream};
 use tokio_util::sync::CancellationToken;
 
-use crate::r#impl::core_rpc::{CorePeerPolicy, CoreRpcServer};
-use crate::service::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
+use crate::application::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
+use crate::host::core_rpc::{CorePeerPolicy, CoreRpcServer};
 
 /// A model specification after authoritative machine-registry resolution.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,10 +107,10 @@ impl SystemCoreRuntime {
         // Passing no project directory is intentional: the system core may read
         // machine/user configuration layers plus an explicit operator file, but
         // never configuration from the caller's current workspace.
-        let app_config = crate::core::config::load_for_host(None, config_path)?.value;
-        let crate::core::config::AppConfig {
+        let app_config = crate::composition::config::load_for_host(None, config_path)?.value;
+        let crate::composition::config::AppConfig {
             telegram,
-            memory: crate::core::config::MemoryConfig { gbrain, .. },
+            memory: crate::composition::config::MemoryConfig { gbrain, .. },
             mcp_servers,
             ..
         } = &app_config;

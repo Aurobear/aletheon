@@ -5,7 +5,7 @@
 
 use serde::Serialize;
 
-use crate::core::config::{AppConfig, LoadedConfig};
+use crate::composition::config::{AppConfig, LoadedConfig};
 use crate::core::deploy::{DeploymentInfo, DeploymentManifest};
 
 const MAX_DOCTOR_MCP_SERVERS: usize = 64;
@@ -84,7 +84,7 @@ pub struct DoctorReport {
     pub writer_health: WriterHealth,
 
     /// Bounded summary of the latest all-session startup recovery scan.
-    pub turn_recovery: crate::service::turn_recovery::TurnRecoveryHealth,
+    pub turn_recovery: crate::application::turn_recovery::TurnRecoveryHealth,
 
     /// Daemon daemon_version for diagnostics.
     pub daemon_version: &'static str,
@@ -210,11 +210,12 @@ impl DoctorReport {
                 }
             }
         };
-        let turn_recovery = match crate::service::turn_recovery::read_recovery_health(&data_dir) {
+        let turn_recovery = match crate::application::turn_recovery::read_recovery_health(&data_dir)
+        {
             Ok(health) => health,
             Err(error) => {
                 warnings.push(format!("turn recovery health unavailable: {error}"));
-                crate::service::turn_recovery::TurnRecoveryHealth::default()
+                crate::application::turn_recovery::TurnRecoveryHealth::default()
             }
         };
 
@@ -272,7 +273,7 @@ fn config_validity_is_ok(_config: &AppConfig) -> bool {
 }
 
 fn writer_health_at(data_dir: &std::path::Path) -> anyhow::Result<WriterHealth> {
-    let snapshot = crate::service::durable_write::read_writer_health(data_dir)?;
+    let snapshot = crate::application::durable_write::read_writer_health(data_dir)?;
     Ok(WriterHealth {
         status: if snapshot.writes_succeeding && snapshot.recent_failures == 0 {
             "healthy".into()
@@ -287,7 +288,7 @@ fn writer_health_at(data_dir: &std::path::Path) -> anyhow::Result<WriterHealth> 
 
 #[cfg(test)]
 mod tests {
-    use crate::core::config::merge_layers;
+    use crate::composition::config::merge_layers;
 
     use super::*;
 
@@ -352,7 +353,7 @@ mod tests {
     #[test]
     fn doctor_reads_persisted_writer_failure_health() {
         let temp = tempfile::tempdir().unwrap();
-        let snapshot = crate::service::durable_write::WriterHealthSnapshot {
+        let snapshot = crate::application::durable_write::WriterHealthSnapshot {
             recent_failures: 1,
             writes_succeeding: false,
             last_failure_phase: Some("terminal_flush".into()),
@@ -372,13 +373,13 @@ mod tests {
     #[test]
     fn doctor_reads_bounded_turn_recovery_summary() {
         let temp = tempfile::tempdir().unwrap();
-        let report = crate::service::turn_recovery::TurnRecoveryReport {
+        let report = crate::application::turn_recovery::TurnRecoveryReport {
             sessions_scanned: 4,
             turns_scanned: 9,
             incomplete_turns: Vec::new(),
         };
-        crate::service::turn_recovery::persist_recovery_health(temp.path(), &report).unwrap();
-        let health = crate::service::turn_recovery::read_recovery_health(temp.path()).unwrap();
+        crate::application::turn_recovery::persist_recovery_health(temp.path(), &report).unwrap();
+        let health = crate::application::turn_recovery::read_recovery_health(temp.path()).unwrap();
         assert_eq!(health.sessions_scanned, 4);
         assert_eq!(health.turns_scanned, 9);
         assert_eq!(health.incomplete_turns_recovered, 0);

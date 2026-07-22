@@ -6,8 +6,7 @@ use fabric::tool::{
     ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta,
 };
 use fabric::{
-    CalendarQuery, ExternalIdentityId, MailQuery, OpaqueCursor, PrincipalId,
-    LOCAL_OWNER_PRINCIPAL,
+    CalendarQuery, ExternalIdentityId, MailQuery, OpaqueCursor, PrincipalId, LOCAL_OWNER_PRINCIPAL,
 };
 use serde::Deserialize;
 use std::sync::Arc;

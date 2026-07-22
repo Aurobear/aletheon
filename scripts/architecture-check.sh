@@ -69,12 +69,40 @@ if actual_impl != recorded_impl:
     raise SystemExit("architecture-check: top-level impl inventory differs; "
                      f"added={sorted(actual_impl-recorded_impl)}, removed={sorted(recorded_impl-actual_impl)}")
 
+# Executive files have an explicit target-layer owner.  This makes moves
+# reviewable and prevents new modules from silently landing in the legacy tree.
+layer_rows = [line.split("\t") for line in data_lines("executive-layers.tsv")]
+recorded_layers = {row[0]: row[1] for row in layer_rows}
+allowed_layers = {"domain", "application", "adapter", "composition", "host", "compatibility"}
+invalid_layers = sorted((path, layer) for path, layer in recorded_layers.items()
+                        if layer not in allowed_layers)
+if invalid_layers:
+    raise SystemExit(f"architecture-check: invalid Executive layer assignments: {invalid_layers}")
+actual_executive = {p.relative_to(root).as_posix()
+                    for p in (root / "crates/executive/src").rglob("*.rs")}
+if actual_executive != set(recorded_layers):
+    raise SystemExit("architecture-check: Executive layer inventory differs; "
+                     f"added={sorted(actual_executive-set(recorded_layers))}, "
+                     f"removed={sorted(set(recorded_layers)-actual_executive)}")
+
+# Application code may depend on ports and domain contracts, never host or
+# concrete adapters.  The sole exception is a deprecated compatibility shim
+# retained for the legacy SQLite repository path until Phase 9.
+for rel in sorted(path for path, layer in recorded_layers.items() if layer == "application"):
+    body = (root / rel).read_text(errors="replace").split("#[cfg(test)]", 1)[0]
+    for lineno, line in enumerate(body.splitlines(), 1):
+        if re.search(r"crate::(?:adapters|host)::", line):
+            sqlite_shim = (rel == "crates/executive/src/application/agent_control/mod.rs"
+                           and "crate::adapters::agent_control::sqlite_repository" in line)
+            if not sqlite_shim:
+                raise SystemExit(f"architecture-check: Executive application imports a concrete/host layer at {rel}:{lineno}")
+
 # Every explicit protocol and migration file has an owner before it can land.
 wire_paths = {line.split("\t")[2] for line in data_lines("wire-surfaces.tsv")}
 wire_candidates = set()
 for path in (root / "crates").rglob("*.proto"):
     wire_candidates.add(path.relative_to(root).as_posix())
-for rel in ("crates/execd/src/protocol.rs", "crates/executive/src/impl/core_rpc/protocol.rs"):
+for rel in ("crates/execd/src/protocol.rs", "crates/executive/src/host/core_rpc/protocol.rs"):
     if (root / rel).is_file(): wire_candidates.add(rel)
 for path in (root / "crates/fabric/src/protocol").glob("*.rs"):
     wire_candidates.add(path.relative_to(root).as_posix())
@@ -94,7 +122,7 @@ if missing_persistence:
     raise SystemExit("architecture-check: unregistered persistence migration: " + ", ".join(missing_persistence))
 
 sources = list(production_rs())
-core_prefixes = ("crates/fabric/", "crates/kernel/", "crates/executive/src/service/",
+core_prefixes = ("crates/fabric/", "crates/kernel/", "crates/executive/src/application/",
                  "crates/executive/src/impl/goal/", "crates/cognit/src/harness/")
 def core(rel):
     return rel.startswith(core_prefixes) or any(part in rel.split("/") for part in ("domain", "contract", "application"))
@@ -200,7 +228,7 @@ if rg -n '\b(AppConfig|load_layered)\b|ALETHEON__|/etc/aletheon/config\.toml' \
 fi
 extension_activation_outside_owner=$(rg -l '\bActivationRequest\b' \
   crates/executive/src crates/aletheon/src -g '*.rs' \
-  | grep -v '^crates/executive/src/service/extension_service.rs$' || true)
+  | grep -v '^crates/executive/src/application/extension_service.rs$' || true)
 if [[ -n "$extension_activation_outside_owner" ]]; then
   echo "architecture-check: extension activation bypasses Executive ExtensionService:" >&2
   echo "$extension_activation_outside_owner" >&2
@@ -235,7 +263,7 @@ fi
 h3_business_env_reads=$(rg -n \
   'std::env::(?:var|var_os)\("(?:AGENT_(?:WORKING_DIR|DATA_DIR|SYSTEM_PROMPT|SANDBOX_PREFERENCE)|ALETHEON_CONSCIOUS_ARBITRATION_MODE|ALETHEON_GOOGLE_(?:CLIENT_ID|CLIENT_SECRET|REDIRECT_URI|DRIVE_SYNC_ENABLED|DRIVE_FILE_IDS)|ALETHEON_GMAIL_INGRESS_POLICY_FILE|SEARCH_API_(?:URL|KEY))"' \
   crates -g '*.rs' \
-  | grep -v '^crates/executive/src/core/config/' || true)
+  | grep -v '^crates/executive/src/composition/config/' || true)
 if [[ -n "$h3_business_env_reads" ]]; then
   echo "architecture-check: business environment parsing bypasses typed bootstrap config:" >&2
   echo "$h3_business_env_reads" >&2
@@ -320,7 +348,7 @@ PY
 scan legacy_event 'use fabric::(envelope|primitives::comm)|\bEnvelope::' crates -g '!**/tests/**'
 scan concrete_clock 'SystemClock::new\(' crates/dasein crates/agora crates/cognit crates/mnemosyne crates/metacog crates/interact -g '!**/tests/**'
 scan core_systems_field '\.(runtime|domain|infra|orchestration|memory)\.' crates/executive/src crates/aletheon/src \
-  -g '!**/service/admin_service.rs' -g '!**/service/post_turn_projection.rs'
+  -g '!**/application/admin_service.rs' -g '!**/application/post_turn_projection.rs'
 scan duplicate_kernel 'executive::impl::kernel|crate::impl::kernel' crates
 scan raw_process 'tokio::process::Command' crates/dasein/src crates/executive/src
 # Concrete stores and registries are permitted only in private composition roots.
@@ -333,9 +361,9 @@ pattern = re.compile(r"mnemosyne::.*(?:Store|Database)|corpus::.*(?:Registry|Run
 for path in Path("crates/executive/src").rglob("*.rs"):
     name = str(path)
     if (
-        "/impl/daemon/bootstrap/" in name
+        "/host/daemon/bootstrap/" in name
         or name == "crates/executive/src/impl/exec_corpus.rs"
-        or name == "crates/executive/src/service/conscious_workspace.rs"
+        or name == "crates/executive/src/application/conscious_workspace.rs"
     ):
         continue
     production = path.read_text().split("#[cfg(test)]", 1)[0]
@@ -353,17 +381,17 @@ python3 - <<'PY'
 from pathlib import Path
 
 files = [
-    "crates/executive/src/impl/daemon/handler/mod.rs",
-    "crates/executive/src/impl/daemon/handler/init.rs",
-    "crates/executive/src/impl/daemon/handler/ports.rs",
-    "crates/executive/src/impl/daemon/handler/tool_executor.rs",
-    "crates/executive/src/impl/daemon/mcp_embedded.rs",
-    "crates/executive/src/impl/runtime/provider_worker.rs",
-    "crates/executive/src/service/request_use_cases.rs",
-    "crates/executive/src/service/admin_service.rs",
-    "crates/executive/src/service/post_turn_projection.rs",
-    "crates/executive/src/service/turn_pipeline.rs",
-    "crates/executive/src/service/turn_runtime_ports.rs",
+    "crates/executive/src/host/daemon/handler/mod.rs",
+    "crates/executive/src/host/daemon/handler/init.rs",
+    "crates/executive/src/host/daemon/handler/ports.rs",
+    "crates/executive/src/host/daemon/handler/tool_executor.rs",
+    "crates/executive/src/host/daemon/mcp_embedded.rs",
+    "crates/executive/src/adapters/runtime/provider_worker.rs",
+    "crates/executive/src/application/request_use_cases.rs",
+    "crates/executive/src/application/admin_service.rs",
+    "crates/executive/src/application/post_turn_projection.rs",
+    "crates/executive/src/application/turn_pipeline.rs",
+    "crates/executive/src/application/turn_runtime_ports.rs",
 ]
 forbidden = [
     "mnemosyne::FactStore",
@@ -386,7 +414,7 @@ for name in files:
 if violations:
     raise SystemExit("architecture-check: domain facade bypass:\n" + "\n".join(violations))
 
-request_use_cases = Path("crates/executive/src/service/request_use_cases.rs")
+request_use_cases = Path("crates/executive/src/application/request_use_cases.rs")
 request_source = request_use_cases.read_text().split("#[cfg(test)]", 1)[0]
 required_request_ports = [
     "Arc<dyn ExecutiveRuntimePort>",
@@ -417,7 +445,7 @@ if missing or concrete:
         "architecture-check: request use-case authority:\n" + "\n".join(details)
     )
 
-turn_runtime = Path("crates/executive/src/service/turn_runtime_ports.rs")
+turn_runtime = Path("crates/executive/src/application/turn_runtime_ports.rs")
 turn_source = turn_runtime.read_text().split("#[cfg(test)]", 1)[0]
 required_turn_ports = [
     "Arc<dyn TurnHookPort>",
@@ -454,7 +482,7 @@ if missing or concrete:
         "architecture-check: turn runtime authority:\n" + "\n".join(details)
     )
 
-exec_session = Path("crates/executive/src/service/exec_session.rs")
+exec_session = Path("crates/executive/src/composition/exec_session.rs")
 exec_source = exec_session.read_text().split("#[cfg(test)]", 1)[0]
 if "compose_exec_corpus" not in exec_source:
     raise SystemExit("architecture-check: exec session misses private Corpus composition")
@@ -482,12 +510,12 @@ python3 - <<'PY'
 from pathlib import Path
 
 paths = [
-    Path("crates/executive/src/service/pre_turn.rs"),
-    Path("crates/executive/src/service/context_assembler.rs"),
-    Path("crates/executive/src/service/conscious_workspace.rs"),
+    Path("crates/executive/src/application/pre_turn.rs"),
+    Path("crates/executive/src/application/context_assembler.rs"),
+    Path("crates/executive/src/application/conscious_workspace.rs"),
     Path("crates/executive/src/impl/conscious/memory_processor.rs"),
-    Path("crates/executive/src/service/turn_pipeline.rs"),
-    Path("crates/executive/src/impl/daemon/prefix_builder.rs"),
+    Path("crates/executive/src/application/turn_pipeline.rs"),
+    Path("crates/executive/src/composition/prefix_builder.rs"),
 ]
 paths.extend(Path("crates/cognit/src").rglob("*.rs"))
 forbidden = [
@@ -525,7 +553,7 @@ required = [
     "crates/mnemosyne/src/consolidation/repository.rs",
     "crates/mnemosyne/src/consolidation/extractor.rs",
     "crates/mnemosyne/src/consolidation/consolidator.rs",
-    "crates/executive/src/service/memory_consolidation_worker.rs",
+    "crates/executive/src/application/memory_consolidation_worker.rs",
 ]
 missing = [path for path in required if not Path(path).is_file()]
 if missing:
@@ -584,7 +612,7 @@ for path in Path("crates").rglob("*.rs"):
         print(path)
 PY
 )
-if [[ "$agent_control_impls" != "crates/executive/src/service/agent_control/mod.rs" ]]; then
+if [[ "$agent_control_impls" != "crates/executive/src/application/agent_control/mod.rs" ]]; then
   echo "architecture-check: AgentControlPort has a non-authoritative implementation:" >&2
   echo "$agent_control_impls" >&2
   exit 1
@@ -593,13 +621,13 @@ if rg -n '\bSubAgentSpawner\b' crates/corpus/src -g '*.rs'; then
   echo "architecture-check: Corpus bypasses AgentControlPort through SubAgentSpawner" >&2
   exit 1
 fi
-if rg -n '\bExecuteSubAgentFn\b' crates/corpus/src crates/executive/src/impl/daemon/bootstrap \
-  crates/executive/src/service/agent_control -g '*.rs'; then
+if rg -n '\bExecuteSubAgentFn\b' crates/corpus/src crates/executive/src/host/daemon/bootstrap \
+  crates/executive/src/application/agent_control -g '*.rs'; then
   echo "architecture-check: Agent execution closure bypasses AgentControlPort" >&2
   exit 1
 fi
-if rg -n '\.complete\(' crates/executive/src/impl/daemon/bootstrap \
-  crates/executive/src/service/agent_control -g '*.rs'; then
+if rg -n '\.complete\(' crates/executive/src/host/daemon/bootstrap \
+  crates/executive/src/application/agent_control -g '*.rs'; then
   echo "architecture-check: Agent/bootstrap path owns a direct provider loop" >&2
   exit 1
 fi
@@ -619,8 +647,8 @@ fi
 # through the C01 port. It must never commit/broadcast Agora state, transition
 # Dasein, or write global memory directly.
 if rg -n 'AgoraOps|\.commit\(|broadcast_selection|integrate_broadcast|DaseinWorkspacePort|MemoryService|\.record\(' \
-  crates/executive/src/service/agent_control/candidate_projection.rs \
-  crates/executive/src/impl/runtime/native_cognit.rs; then
+  crates/executive/src/application/agent_control/candidate_projection.rs \
+  crates/executive/src/adapters/runtime/native_cognit.rs; then
   echo "architecture-check: child Agent bypasses C01 candidate admission" >&2
   exit 1
 fi
@@ -628,7 +656,7 @@ fi
 # G07 deletion gate: Kernel owns the registry and AgentControl owns the only
 # application-level live Agent mailbox registration adapter.
 mailbox_registration_outside_owner=$(rg -l 'register_process_mailbox' crates -g '*.rs' -g '!**/tests/**' \
-  | grep -Ev '^crates/(kernel/src/runtime\.rs|executive/src/service/agent_control/mod\.rs)$' || true)
+  | grep -Ev '^crates/(kernel/src/runtime\.rs|executive/src/application/agent_control/mod\.rs)$' || true)
 if [[ -n "$mailbox_registration_outside_owner" ]]; then
   echo "architecture-check: live Agent mailbox ownership escaped Kernel/AgentControl:" >&2
   echo "$mailbox_registration_outside_owner" >&2
@@ -641,7 +669,7 @@ fi
 
 # G08 production must use validated, Kernel-backed hierarchical admission;
 # the compatibility semaphore constructor is restricted to focused tests.
-if rg -n 'BoundedAgentAdmission::new\(' crates/executive/src/impl/daemon/bootstrap -g '*.rs'; then
+if rg -n 'BoundedAgentAdmission::new\(' crates/executive/src/host/daemon/bootstrap -g '*.rs'; then
   echo "architecture-check: production Agent admission bypasses typed Kernel-backed config" >&2
   exit 1
 fi
@@ -649,11 +677,11 @@ fi
 # G10 recovery must reconcile durable metadata; it may never call the ordinary
 # launch/provider path, which would replay ambiguous work after a crash.
 if rg -n '\.launch\(|\.run_in_context\(|provider.*\.complete\(' \
-  crates/executive/src/service/agent_control/recovery.rs; then
+  crates/executive/src/application/agent_control/recovery.rs; then
   echo "architecture-check: Agent recovery replays ordinary runtime/provider work" >&2
   exit 1
 fi
-if ! rg -q 'reconcile_startup' crates/executive/src/impl/daemon/bootstrap/request.rs crates/executive/src/impl/daemon/bootstrap/services.rs; then
+if ! rg -q 'reconcile_startup' crates/executive/src/host/daemon/bootstrap/request.rs crates/executive/src/host/daemon/bootstrap/services.rs; then
   echo "architecture-check: daemon startup skips durable Agent reconciliation" >&2
   exit 1
 fi
@@ -662,15 +690,15 @@ fi
 # only broader-scope write is the reviewed promotion module. Agent runtime and
 # candidate projection code may not directly mutate root memory or Dasein.
 agent_memory_bypass=$(rg -l 'MemoryScope::(Global|Principal|Session)|ApprovedCore|Dasein(Core|Ledger)|\.consolidate\(' \
-  crates/executive/src/service/agent_control crates/executive/src/impl/runtime -g '*.rs' \
-  | grep -Ev '^crates/executive/src/service/agent_control/memory\.rs$' || true)
+  crates/executive/src/application/agent_control crates/executive/src/adapters/runtime -g '*.rs' \
+  | grep -Ev '^crates/executive/src/application/agent_control/memory\.rs$' || true)
 if [[ -n "$agent_memory_bypass" ]]; then
   echo "architecture-check: child Agent escaped reviewed memory promotion:" >&2
   echo "$agent_memory_bypass" >&2
   exit 1
 fi
 if rg -n 'MemoryScope::(Agent|Task)\([^)]*(request|input|argument|scope)' \
-  crates/mnemosyne/src/agent_scope.rs crates/executive/src/service/agent_control -g '*.rs'; then
+  crates/mnemosyne/src/agent_scope.rs crates/executive/src/application/agent_control -g '*.rs'; then
   echo "architecture-check: child Agent scope is derived from caller-provided data" >&2
   exit 1
 fi
@@ -698,8 +726,8 @@ if [[ -e crates/executive/src/core/core_systems.rs ]] || \
 fi
 if rg -n '\bAgoraOps\b' \
   crates/executive/src/core/domain_ports.rs \
-  crates/executive/src/service/turn_pipeline.rs \
-  crates/executive/src/service/exec_session.rs; then
+  crates/executive/src/application/turn_pipeline.rs \
+  crates/executive/src/composition/exec_session.rs; then
   echo "architecture-check: production composition bypasses authoritative AgoraService" >&2
   exit 1
 fi
@@ -708,17 +736,17 @@ if rg -n 'pub async fn (publish|update)\(' crates/agora/src/ops/mod.rs; then
   exit 1
 fi
 composition_outside_bootstrap=$(rg -l '\bDaemonComposition\b' crates/executive/src -g '*.rs' \
-  | grep -v '^crates/executive/src/impl/daemon/bootstrap/' || true)
+  | grep -v '^crates/executive/src/host/daemon/bootstrap/' || true)
 if [[ -n "$composition_outside_bootstrap" ]]; then
   echo "architecture-check: private daemon composition escaped bootstrap:" >&2
   echo "$composition_outside_bootstrap" >&2
   exit 1
 fi
-if (( $(wc -l < crates/executive/src/impl/daemon/handler/init.rs) > 250 )); then
+if (( $(wc -l < crates/executive/src/host/daemon/handler/init.rs) > 250 )); then
   echo "architecture-check: handler/init.rs is no longer a thin compatibility layer" >&2
   exit 1
 fi
-if (( $(wc -l < crates/executive/src/impl/daemon/bootstrap/request.rs) > 2000 )); then
+if (( $(wc -l < crates/executive/src/host/daemon/bootstrap/request.rs) > 2000 )); then
   echo "architecture-check: bootstrap/request.rs exceeded its composition bound" >&2
   exit 1
 fi
@@ -732,12 +760,12 @@ if ! rg -q 'elevated forget requires a matching dry-run preview' crates/mnemosyn
   exit 1
 fi
 if rg -n '\.forget_memory\(' crates/executive/src -g '*.rs' \
-  | grep -v '^crates/executive/src/service/admin_service.rs:'; then
+  | grep -v '^crates/executive/src/application/admin_service.rs:'; then
   echo "architecture-check: governed memory forgetting escaped the admin service" >&2
   exit 1
 fi
 for stage in channels google runtime storage; do
-  if (( $(wc -l < "crates/executive/src/impl/daemon/bootstrap/${stage}.rs") > 700 )); then
+  if (( $(wc -l < "crates/executive/src/host/daemon/bootstrap/${stage}.rs") > 700 )); then
     echo "architecture-check: bootstrap/${stage}.rs exceeded its stage bound" >&2
     exit 1
   fi
@@ -797,7 +825,7 @@ fi
   rg -l 'pub struct TurnPipeline' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#turn_path|#; s#$#|TurnPipeline#' || true
   rg -l 'impl TurnServices for ExecTurnServices' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#capability_path|#; s#$#|ExecTurnServices#' || true
   rg -l 'CapabilityInvoker for' crates -g '*.rs' -g '!**/tests/**' 2>/dev/null \
-    | grep -v 'crates/executive/src/service/governed_capability.rs' \
+    | grep -v 'crates/executive/src/application/governed_capability.rs' \
     | sed 's#^#capability_path|#; s#$#|CapabilityInvoker#' || true
   rg -l '\bAdmissionRequest \{' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#capability_path|#; s#$#|manual_admission#' || true
 } | sort -u > "$path_actual"

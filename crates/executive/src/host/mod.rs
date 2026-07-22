@@ -12,6 +12,8 @@
 //! - Object-safe: `serve` takes `self: Box<Self>` for ownership transfer
 
 pub mod container;
+pub mod core_rpc;
+pub mod daemon;
 pub mod launcher;
 pub mod systemd;
 
@@ -23,8 +25,8 @@ use std::path::PathBuf;
 use tracing::info;
 
 use crate::core::runtime_core::RuntimeCore;
-use crate::r#impl::daemon::mcp_embedded::McpEmbedded;
-use crate::r#impl::daemon::server;
+use self::daemon::mcp_embedded::McpEmbedded;
+use self::daemon::server;
 
 /// Load .env file (simple KEY=VALUE parser, no shell expansion).
 pub fn load_dotenv(path: &PathBuf) {

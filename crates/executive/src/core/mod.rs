@@ -1,5 +1,8 @@
 pub mod checkpoint;
-pub mod config;
+#[deprecated(note = "use executive::composition::config")]
+pub mod config {
+    pub use crate::composition::config::*;
+}
 pub(crate) mod corpus_group;
 pub mod deploy;
 pub mod domain_ports;

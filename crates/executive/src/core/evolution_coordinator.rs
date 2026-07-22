@@ -6,7 +6,7 @@
 //! 3. Periodically triggers the morphogenesis pipeline
 //! 4. Records successful migrations to the lineage tracker
 
-use crate::core::config::GenomeConfig;
+use crate::composition::config::GenomeConfig;
 use anyhow::Result;
 use cognit::core::awareness_signal::{signals_to_awareness, AwarenessSignal};
 use cognit::core::reflector::Reflector;

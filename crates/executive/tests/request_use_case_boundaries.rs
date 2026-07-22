@@ -16,7 +16,7 @@ fn rust_files(root: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn request_handler_owns_only_ports_and_protocol_state() {
-    let source = fs::read_to_string("src/impl/daemon/handler/mod.rs").expect("handler source");
+    let source = fs::read_to_string("src/host/daemon/handler/mod.rs").expect("handler source");
     let start = source
         .find("pub struct RequestHandler")
         .expect("RequestHandler");
@@ -42,7 +42,7 @@ fn request_handler_owns_only_ports_and_protocol_state() {
 
 #[test]
 fn rpc_adapters_do_not_touch_domain_implementation_details() {
-    let root = Path::new("src/impl/daemon/handler/rpc");
+    let root = Path::new("src/host/daemon/handler/rpc");
     let forbidden = [
         "subsystems",
         "CoreSystems",
@@ -72,7 +72,7 @@ fn rpc_adapters_do_not_touch_domain_implementation_details() {
 
 #[test]
 fn handler_ports_cover_every_rpc_family() {
-    let source = fs::read_to_string("src/impl/daemon/handler/ports.rs").expect("ports source");
+    let source = fs::read_to_string("src/host/daemon/handler/ports.rs").expect("ports source");
     for field in [
         "facts",
         "goals",

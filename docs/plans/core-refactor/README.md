@@ -13,9 +13,9 @@ This directory is the complete execution package for implementing
 
 ## Progress tracker
 
-- [ ] Phase 0 — architecture baseline and gates
-- [ ] Phase 1 — Fabric contract purification
-- [ ] Phase 2 — Executive layering
+- [x] Phase 0 — architecture baseline and gates
+- [x] Phase 1 — Fabric contract purification
+- [x] Phase 2 — Executive layering
 - [ ] Phase 3 — coding runtime decoupling
 - [ ] Phase 4 — configuration ownership
 - [ ] Phase 5 — supplemental memory generalization

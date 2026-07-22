@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use fabric::{PrincipalId, PromptEnvelope, PromptId, PromptState, ThreadId};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
-use crate::service::session_input::PromptQueueStore;
+use crate::application::session_input::PromptQueueStore;
 
 pub struct SqlitePromptQueueStore {
     connection: Mutex<Connection>,
@@ -173,7 +173,7 @@ impl PromptQueueStore for SqlitePromptQueueStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::session_input::SessionInputCoordinator;
+    use crate::application::session_input::SessionInputCoordinator;
     use fabric::{ConnectionId, PromptKind};
     use std::sync::Arc;
     use uuid::Uuid;

@@ -8,7 +8,7 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use executive::{core::runtime_core::RuntimeCore, r#impl::daemon::server::ConnectionContext};
+use executive::{core::runtime_core::RuntimeCore, host::daemon::server::ConnectionContext};
 use fabric::{
     protocol::client::{ClientEvent, EventCursor, ItemEvent, ItemPhase, UiSnapshot},
     ApprovalPolicy, ConnectionId, ItemRecord, LocalOsPrincipal, PermissionProfileId,
@@ -26,7 +26,7 @@ use tokio::{
 use executive::host::launcher::WorkspaceLaunch;
 
 struct ExecutiveAcpBackend {
-    handler: executive::r#impl::daemon::handler::RequestHandler,
+    handler: executive::host::daemon::handler::RequestHandler,
     connection: ConnectionContext,
     active_session: Arc<Mutex<Option<String>>>,
 }

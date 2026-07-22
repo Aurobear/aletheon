@@ -87,7 +87,7 @@ fn system_core_surface_exposes_no_user_execution_authority() {
     for forbidden in ["RequestHandler", "ToolRegistry", "Sandbox"] {
         assert!(!core.contains(forbidden), "core contains {forbidden}");
     }
-    let user = include_str!("../src/user_runtime/mod.rs");
+    let user = include_str!("../src/composition/user_runtime/mod.rs");
     for forbidden in ["ProviderRegistry", "credential loading"] {
         assert!(
             !user.contains(forbidden),

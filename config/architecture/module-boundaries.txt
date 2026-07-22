@@ -7,7 +7,7 @@ cognit|crates/cognit|fabric,kernel|bridge,config,core,harness,impl,ports,testing
 corpus|crates/corpus|fabric,kernel,platform|acix,catalog,core,drivers,hook,security,service,skill,tools|false|drivers
 dasein|crates/dasein|fabric,kernel|bridge,core,dasein,impl,testing|true|-
 execd|crates/execd|platform|-|false|-
-executive|crates/executive|agora,cognit,corpus,dasein,fabric,gateway,hardware,kernel,metacog,mnemosyne,runtime|core,host,impl,service,tools,user_runtime|true|-
+executive|crates/executive|agora,cognit,corpus,dasein,fabric,gateway,hardware,kernel,metacog,mnemosyne,runtime|application,composition,core,host,impl,service,tools,user_runtime|true|adapters
 evolution_loop|examples/evolution_loop|cognit,corpus,dasein,executive,fabric,kernel,metacog,mnemosyne|-|false|-
 fabric|crates/fabric|-|contract,dasein,events,include,ipc,kernel,policy,primitives,protocol,security,types|false|-
 gateway|crates/gateway|fabric|dispatcher,effect,handlers,intent,notify,ports,registry,store,telegram|false|telegram

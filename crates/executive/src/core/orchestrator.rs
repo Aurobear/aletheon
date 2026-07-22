@@ -1,4 +1,4 @@
-use crate::core::config::{ExecutiveConfig, GenomeConfig};
+use crate::composition::config::{ExecutiveConfig, GenomeConfig};
 use crate::core::evolution_coordinator::{EvolutionConfig, EvolutionCoordinator, EvolutionSummary};
 use crate::core::mode_router::ModeRouter;
 use crate::core::runtime_registry::RuntimeRegistry;
