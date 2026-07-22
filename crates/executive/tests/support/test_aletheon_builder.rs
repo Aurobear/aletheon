@@ -21,9 +21,9 @@ use std::sync::Arc;
 
 use executive::runtime::events::SqliteEventSpine;
 use executive::runtime::session::canonical_store::CanonicalSessionStore;
-use executive::service::harness_factory::LinearCognitiveSessionFactory;
-use executive::service::session_input::SessionInputCoordinator;
-use executive::service::turn_coordinator::TurnCoordinator;
+use executive::application::harness_factory::LinearCognitiveSessionFactory;
+use executive::application::session_input::SessionInputCoordinator;
+use executive::application::turn_coordinator::TurnCoordinator;
 use fabric::{Clock, SessionAppendStore};
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
@@ -76,7 +76,7 @@ impl TestAletheonBuilder {
         let event_spine =
             Arc::new(SqliteEventSpine::open(":memory:").expect("in-memory event spine"));
         let coordinator =
-            TurnCoordinator::with_event_spine(kernel.clone(), store.clone(), event_spine.clone());
+            executive::testing::turn_coordinator::compose_with_event_spine(kernel.clone(), store.clone(), event_spine.clone(), executive::composition::config::GrokHardeningConfig::default());
         let cognitive_sessions = Arc::new(LinearCognitiveSessionFactory::new(
             cognit::HarnessConfig::default(),
             clock.clone() as Arc<dyn Clock>,
@@ -104,7 +104,7 @@ impl Default for TestAletheonBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use executive::service::turn_policy::TurnPolicy;
+    use executive::application::turn_policy::TurnPolicy;
     use fabric::{ItemPayload, SpawnSpec, TurnMetrics, TurnResult, TurnStop};
 
     fn request(session: &str, process_id: fabric::ProcessId) -> fabric::TurnRequest {
@@ -165,7 +165,7 @@ mod tests {
                 |request, _cancel| {
                     let output = request.input.clone();
                     async move {
-                        Ok(executive::service::turn_coordinator::TurnExecution {
+                        Ok(executive::application::turn_coordinator::TurnExecution {
                             result: TurnResult {
                                 output: format!("answer: {output}"),
                                 stop: TurnStop::Completed,

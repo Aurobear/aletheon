@@ -11,8 +11,8 @@ pub enum StorageClass {
     Worktrees,
     Audit,
     Sessions,
-    Google,
-    GbrainSpool,
+    ExternalProvider,
+    SupplementalSpool,
     Total,
 }
 

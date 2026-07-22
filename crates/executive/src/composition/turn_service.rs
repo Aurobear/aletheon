@@ -36,7 +36,12 @@ impl TurnService {
     ) -> Self {
         let store =
             Arc::new(CanonicalSessionStore::open(":memory:").expect("in-memory session store"));
-        let coordinator = Arc::new(TurnCoordinator::new(kernel.clone(), store));
+        let coordinator = Arc::new(
+            crate::composition::turn_coordinator::compose_in_memory_turn_coordinator(
+                kernel.clone(),
+                store,
+            ),
+        );
         Self {
             services,
             pre_turn,
@@ -109,7 +114,7 @@ impl TurnService {
                 }) {
                     history.pop();
                 }
-                let canonical_seed = crate::adapters::session::canonical_store::project_messages(&history)?;
+                let canonical_seed = crate::application::session_projection::project_messages(&history)?;
                 let recording = RecordingTurnServices::new(services, canonical_seed);
                 let request = pre_turn.run(request, &recording).await?;
                 let mut session = factory

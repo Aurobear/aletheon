@@ -1,5 +1,6 @@
-use executive::service::agent_control::{
-    AgentRunRecord, AgentRunRepository, SqliteAgentRunRepository,
+use executive::testing::agent_control::SqliteAgentRunRepository;
+use executive::application::agent_control::{
+    AgentRunRecord, AgentRunRepository,
 };
 use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
 use fabric::ipc::mailbox::{InProcessMailbox, Mailbox};
@@ -52,7 +53,7 @@ fn run(root: AgentId) -> AgentRunRecord {
             last_error: None,
         },
         request_hash: SqliteAgentRunRepository::request_hash(&request).unwrap(),
-        workspace_id: executive::service::agent_control::agent_workspace_id(root),
+        workspace_id: executive::application::agent_control::agent_workspace_id(root),
         root_process_id: process,
         broadcast_refs: vec![],
         request,
@@ -222,4 +223,4 @@ async fn normal_overload_never_drops_the_reserved_high_priority_signal() {
 }
 use std::sync::Arc;
 
-use executive::service::agent_control::AgentMailboxBridge;
+use executive::application::agent_control::AgentMailboxBridge;

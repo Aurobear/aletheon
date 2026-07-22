@@ -1185,10 +1185,10 @@ impl RequestHandler {
                 },
             ));
         let legacy_sessions: Arc<
-            dyn crate::application::legacy_session_service::LegacySessionUseCases,
+            dyn crate::compatibility::legacy_session_service::LegacySessionUseCases,
         > = Arc::new(
-            crate::application::legacy_session_service::LegacySessionService::new(
-                crate::application::legacy_session_service::LegacySessionResources {
+            crate::compatibility::legacy_session_service::LegacySessionService::new(
+                crate::compatibility::legacy_session_service::LegacySessionResources {
                     registry: sessions.clone(),
                     created_at: session_created_at,
                     data_dir: data_dir.clone(),

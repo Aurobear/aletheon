@@ -83,76 +83,14 @@ pub struct TurnCoordinator {
 }
 
 impl TurnCoordinator {
-    pub fn new(kernel: Arc<KernelRuntime>, store: Arc<dyn SessionAppendStore>) -> Self {
-        let event_spine = Arc::new(
-            crate::adapters::events::SqliteEventSpine::open(":memory:")
-                .expect("in-memory event spine"),
-        );
-        let projections = Arc::new(crate::adapters::events::DefaultEventProjectionSet::in_memory());
-        Self::with_components(kernel, store, event_spine, projections)
-    }
-
-    pub fn new_with_grok(
-        kernel: Arc<KernelRuntime>,
-        store: Arc<dyn SessionAppendStore>,
-        grok_hardening: GrokHardeningConfig,
-    ) -> Self {
-        let event_spine = Arc::new(
-            crate::adapters::events::SqliteEventSpine::open(":memory:")
-                .expect("in-memory event spine"),
-        );
-        let projections = Arc::new(crate::adapters::events::DefaultEventProjectionSet::in_memory());
-        Self::with_components_and_grok(kernel, store, event_spine, projections, grok_hardening)
-    }
-
-    pub fn with_event_spine(
-        kernel: Arc<KernelRuntime>,
-        store: Arc<dyn SessionAppendStore>,
-        event_spine: Arc<dyn EventSpine>,
-    ) -> Self {
-        let projections = Arc::new(crate::adapters::events::DefaultEventProjectionSet::in_memory());
-        Self::with_components(kernel, store, event_spine, projections)
-    }
-
-    pub fn with_event_spine_and_grok(
-        kernel: Arc<KernelRuntime>,
-        store: Arc<dyn SessionAppendStore>,
-        event_spine: Arc<dyn EventSpine>,
-        grok_hardening: GrokHardeningConfig,
-    ) -> Self {
-        let projections = Arc::new(crate::adapters::events::DefaultEventProjectionSet::in_memory());
-        Self::with_components_and_grok(kernel, store, event_spine, projections, grok_hardening)
-    }
-
-    fn with_components(
+    /// Construct from application ports already decorated by composition.
+    pub fn from_components(
         kernel: Arc<KernelRuntime>,
         read_store: Arc<dyn SessionAppendStore>,
+        store: Arc<dyn SessionAppendStore>,
         event_spine: Arc<dyn EventSpine>,
-        projections: Arc<dyn super::event_projection::EventProjectionSink>,
-    ) -> Self {
-        Self::with_components_and_grok(
-            kernel,
-            read_store,
-            event_spine,
-            projections,
-            GrokHardeningConfig::default(),
-        )
-    }
-
-    fn with_components_and_grok(
-        kernel: Arc<KernelRuntime>,
-        read_store: Arc<dyn SessionAppendStore>,
-        event_spine: Arc<dyn EventSpine>,
-        projections: Arc<dyn super::event_projection::EventProjectionSink>,
         grok_hardening: GrokHardeningConfig,
     ) -> Self {
-        let store: Arc<dyn SessionAppendStore> = Arc::new(
-            crate::adapters::session::event_sourced_store::EventSourcedSessionStore::new(
-                read_store.clone(),
-                event_spine.clone(),
-                projections,
-            ),
-        );
         Self {
             clock: kernel.clock(),
             kernel,
@@ -164,20 +102,6 @@ impl TurnCoordinator {
             backpressure: BackpressureConfig::default(),
             session_input: Arc::new(super::session_input::SessionInputCoordinator::in_memory()),
         }
-    }
-
-    pub fn with_event_projections(
-        mut self,
-        projections: Arc<dyn super::event_projection::EventProjectionSink>,
-    ) -> Self {
-        self.store = Arc::new(
-            crate::adapters::session::event_sourced_store::EventSourcedSessionStore::new(
-                self.read_store.clone(),
-                self.event_spine.clone(),
-                projections,
-            ),
-        );
-        self
     }
 
     pub fn store(&self) -> Arc<dyn SessionAppendStore> {

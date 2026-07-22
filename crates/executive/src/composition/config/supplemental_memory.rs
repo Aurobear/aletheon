@@ -77,8 +77,3 @@ fn default_retry_age_secs() -> u64 { 86_400 }
 fn default_schema_fixture() -> String { "config/gbrain/tools-schema.json".into() }
 fn default_schema_version() -> String { "v0.42.59.0".into() }
 fn default_outbox_dir() -> String { "~/.aletheon/gbrain-outbox".into() }
-
-#[deprecated(note = "use SupplementalMemoryConfig")]
-pub type McpMemoryConfig = SupplementalMemoryConfig;
-#[deprecated(note = "use SupplementalMemoryConfig")]
-pub type GbrainMemoryConfig = SupplementalMemoryConfig;

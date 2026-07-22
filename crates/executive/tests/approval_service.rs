@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use executive::approval::{ApprovalCreate, ApprovalDecision, ApprovalRepository};
 use executive::goal::ObjectiveStore;
-use executive::service::admin_service::{ApprovalOwner, PendingApprovals, ScopedApprovalCache};
-use executive::service::approval_service::{
+use executive::application::admin_service::{ApprovalOwner, PendingApprovals, ScopedApprovalCache};
+use executive::application::approval_service::{
     ApprovalContext, ApprovalService, ApprovalServiceError, ApprovalUseCases,
     ResolveApprovalRequest,
 };

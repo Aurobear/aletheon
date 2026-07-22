@@ -18,7 +18,9 @@ use crate::application::agent_control::repository::{
     AgentMessageRecord, AgentResourceLease, AgentResourceLeaseKind, AgentRunRecord,
     AgentRunRepository,
 };
-use crate::application::agent_control::{reduce_agent_status_transition, AgentLifecycleEffect};
+use crate::application::agent_control::{
+    agent_spawn_request_hash, reduce_agent_status_transition, AgentLifecycleEffect,
+};
 
 const MIGRATION: &str = include_str!("migrations/001_agent_runs.sql");
 const MESSAGE_MIGRATION: &str = include_str!("migrations/002_agent_messages.sql");
@@ -70,9 +72,7 @@ impl SqliteAgentRunRepository {
     }
 
     pub fn request_hash(request: &AgentSpawnRequest) -> Result<String, AgentControlError> {
-        request.validate()?;
-        let encoded = serde_json::to_vec(request).map_err(persistence)?;
-        Ok(format!("{:x}", Sha256::digest(encoded)))
+        agent_spawn_request_hash(request)
     }
 }
 

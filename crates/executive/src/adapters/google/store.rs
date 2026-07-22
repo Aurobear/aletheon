@@ -1,6 +1,6 @@
 //! Atomic normalized Google event, projection, outbox, and cursor persistence.
 
-use crate::application::goal::migrations;
+use crate::compatibility::persistence_migrations as migrations;
 use fabric::{ExternalEventEnvelope, ExternalEventId, ExternalIdentityId, PrincipalId};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};

@@ -11,7 +11,7 @@ mod attempt_coordinator;
 mod budget;
 pub mod coordinator;
 mod frame;
-pub(crate) mod migrations;
+pub(crate) use crate::compatibility::persistence_migrations as migrations;
 mod retry;
 pub(crate) mod store;
 mod summary;

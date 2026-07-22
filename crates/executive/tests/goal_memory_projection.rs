@@ -10,7 +10,7 @@ use executive::goal::{
 use executive::application::memory_projection::{
     ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
 };
-use executive::service::event_projection::SqliteProjectionStore;
+use executive::application::event_projection::SqliteProjectionStore;
 use fabric::{ApprovalId, EventSpine, EventTreeId, GoalId, SpineEvent, UnsequencedEvent};
 use mnemosyne::MemorySensitivity;
 use uuid::Uuid;
@@ -209,7 +209,7 @@ impl EventSpine for FailingSpine {
 async fn spine_outage_is_sanitized_and_does_not_change_source_result() {
     let projection = MemoryProjection::new(
         Arc::new(FailingSpine),
-        Arc::new(executive::service::event_projection::NoopEventProjectionSink),
+        Arc::new(executive::application::event_projection::NoopEventProjectionSink),
     );
     assert_eq!(
         projection

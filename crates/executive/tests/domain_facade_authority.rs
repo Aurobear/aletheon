@@ -17,7 +17,7 @@ fn domain_ports_retain_only_authoritative_facades() {
         "Arc<dyn AgoraService>",
         "Arc<dyn metacog::MetacogService>",
         "Arc<dyn corpus::CorpusService>",
-        "Arc<dyn crate::service::harness_factory::CognitiveSessionFactory>",
+        "Arc<dyn crate::application::harness_factory::CognitiveSessionFactory>",
     ] {
         assert!(
             source.contains(contract),

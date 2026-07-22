@@ -1,6 +1,6 @@
 //! Integration tests for embodied recovery mapping.
 
-use executive::service::embodied_recovery::{
+use executive::application::embodied_recovery::{
     map_verification_to_recovery, RecoveryAction, MAX_REPLANS, MAX_RETRIES,
 };
 use fabric::types::outcome_verification::{VerificationDecision, VerificationReport};

@@ -1,7 +1,8 @@
+use executive::testing::agent_control::SqliteAgentRunRepository;
 use std::sync::Arc;
 
-use executive::service::agent_control::{
-    AgentRunRecord, AgentRunRepository, SqliteAgentRunRepository,
+use executive::application::agent_control::{
+    AgentRunRecord, AgentRunRepository,
 };
 use fabric::{
     AgentBroadcastRef, AgentBudget, AgentContextFork, AgentHandle, AgentId, AgentProfileId,
@@ -65,7 +66,7 @@ fn record(root: AgentId, parent: Option<AgentId>, created_at_ms: i64) -> AgentRu
             last_error: None,
         },
         request_hash: SqliteAgentRunRepository::request_hash(&request).unwrap(),
-        workspace_id: executive::service::agent_control::agent_workspace_id(agent),
+        workspace_id: executive::application::agent_control::agent_workspace_id(agent),
         root_process_id: process_id,
         broadcast_refs: request.broadcast_refs.clone(),
         request,
@@ -156,7 +157,7 @@ async fn repository_migrates_pre_workspace_rows_without_losing_runs() {
     let migrated = repository.get(root).await.unwrap().unwrap();
     assert_eq!(
         migrated.workspace_id,
-        executive::service::agent_control::agent_workspace_id(root)
+        executive::application::agent_control::agent_workspace_id(root)
     );
     assert_eq!(
         migrated.root_process_id,

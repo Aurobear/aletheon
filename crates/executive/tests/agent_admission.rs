@@ -1,5 +1,5 @@
 use cognit::config::AgentAdmissionConfig;
-use executive::service::agent_control::{
+use executive::application::agent_control::{
     AgentAdmissionPort, AgentAdmissionRequest, AgentStorageRequest, BoundedAgentAdmission,
 };
 use fabric::{

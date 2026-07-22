@@ -5,12 +5,12 @@ use async_trait::async_trait;
 use executive::testing::coding_runtime::{
     AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources, ResolvedAgentProfile,
 };
-use executive::service::agent_control::{
+use executive::application::agent_control::{
     AgentContextProjection, AgentEventSink, AgentRuntimeEvent, AgentRuntimeInbox,
     AgentRuntimeInput, AgentRuntimeLauncher,
 };
-use executive::service::harness_factory::LinearCognitiveSessionFactory;
-use executive::service::{CapabilityExecutionContext, CapabilityService};
+use executive::application::harness_factory::LinearCognitiveSessionFactory;
+use executive::application::{CapabilityExecutionContext, CapabilityService};
 use fabric::{
     AgentApprovalPolicy, AgentBudget, AgentContextFork, AgentControlErrorKind, AgentHandle,
     AgentId, AgentMessageKind, AgentMessagePayload, AgentProfile, AgentProfileId,

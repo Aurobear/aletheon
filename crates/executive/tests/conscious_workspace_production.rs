@@ -2,9 +2,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use executive::service::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
-use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
-use executive::service::governed_capability::{
+use executive::application::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
+use executive::application::dasein_workspace_adapter::DaseinWorkspaceAdapter;
+use executive::application::governed_capability::{
     GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
 };
 use fabric::{

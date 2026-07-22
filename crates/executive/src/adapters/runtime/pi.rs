@@ -83,8 +83,6 @@ pub struct ResolvedPiConfig {
 }
 
 /// JSON request accepted by the stable `pi-coder` runtime.
-#[deprecated(note = "use executive::application::coding_runtime::CodingAttemptRequest")]
-pub type PiAttemptRequest = crate::application::coding_runtime::CodingAttemptRequest;
 
 /// A configured runtime is constructible only after executable and isolation checks pass.
 pub struct PiRuntime {

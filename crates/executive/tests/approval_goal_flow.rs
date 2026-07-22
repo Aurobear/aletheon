@@ -6,7 +6,7 @@ use executive::goal::{
 };
 use executive::application::coding_runtime::CodingAttemptRequest;
 const TEST_CODING_RUNTIME_ID: &str = "fake-coding-runtime";
-use executive::service::verification::{VerificationCheckKind, VerificationContext};
+use executive::application::verification::{VerificationCheckKind, VerificationContext};
 use fabric::*;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};

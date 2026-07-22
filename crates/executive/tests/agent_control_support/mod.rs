@@ -1,12 +1,14 @@
 #![allow(dead_code)]
 
+use executive::testing::agent_control::SqliteAgentRunRepository;
+
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use executive::service::agent_control::{
+use executive::application::agent_control::{
     AgentControlService, AgentEventSink, AgentRuntimeInput, AgentRuntimeLauncher,
-    AgentRuntimeRegistry, BoundedAgentAdmission, SqliteAgentRunRepository,
+    AgentRuntimeRegistry, BoundedAgentAdmission,
 };
 use fabric::{
     AgentBudget, AgentContextFork, AgentControlError, AgentControlErrorKind, AgentControlPort,
@@ -117,6 +119,7 @@ pub fn fixture(max_concurrent: usize, launcher: Arc<dyn AgentRuntimeLauncher>) -
         repository.clone(),
         admission.clone(),
         runtimes.clone(),
+        Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap()),
     ));
     Fixture {
         port: service.clone(),

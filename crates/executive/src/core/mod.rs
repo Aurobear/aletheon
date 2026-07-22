@@ -1,8 +1,4 @@
 pub mod checkpoint;
-#[deprecated(note = "use executive::composition::config")]
-pub mod config {
-    pub use crate::composition::config::*;
-}
 pub(crate) mod corpus_group;
 pub mod deploy;
 pub mod domain_ports;
@@ -22,7 +18,7 @@ pub mod sub_agent;
 pub mod system_core_runtime;
 pub mod verdict_handler;
 
-pub use config::{
+pub use crate::composition::config::{
     AgentConfig, AppConfig, DaemonConfig, ExecutiveConfig, McpServerConfig, MemoryConfig,
     PluginsConfig, ProviderConfig, SandboxConfig, Transport,
 };

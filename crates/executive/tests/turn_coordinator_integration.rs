@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use executive::service::turn_coordinator::TurnExecution;
-use executive::service::turn_policy::TurnPolicy;
+use executive::application::turn_coordinator::TurnExecution;
+use executive::application::turn_policy::TurnPolicy;
 use fabric::{
     ItemPayload, OperationKind, OperationState, SessionAppendStore, SessionId, TurnMetrics,
     TurnRequest, TurnResult, TurnStop,
@@ -136,10 +136,10 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
             .unwrap(),
     });
     let spine = Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap());
-    let mut hardening = executive::core::config::GrokHardeningConfig::default();
+    let mut hardening = executive::composition::config::GrokHardeningConfig::default();
     hardening.compaction_v2 = true;
     let coordinator =
-        executive::service::turn_coordinator::TurnCoordinator::with_event_spine_and_grok(
+        executive::testing::turn_coordinator::compose_with_event_spine(
             kernel.clone(),
             store.clone(),
             spine,

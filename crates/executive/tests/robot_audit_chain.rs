@@ -1,4 +1,4 @@
-use executive::service::robot_audit::AuditChain;
+use executive::application::robot_audit::AuditChain;
 
 #[test]
 fn audit_chain_integrity() {

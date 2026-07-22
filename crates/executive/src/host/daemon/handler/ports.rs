@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use mnemosyne::FactUseCases;
 
-use crate::application::legacy_session_service::LegacySessionUseCases;
+use crate::compatibility::legacy_session_service::LegacySessionUseCases;
 use crate::application::request_use_cases::{
     ExternalSourceUseCases, HealthUseCases, ReflectionUseCases, SessionLifecycleUseCases, TurnUseCases,
     WorkflowUseCases,

@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use executive::host::daemon::session_manager::SessionManager;
 use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::runtime::session::store::SessionStore;
-use executive::service::legacy_session_service::{
+use executive::host::legacy_session::{
     LegacySessionResources, LegacySessionService, LegacySessionUseCases,
 };
-use executive::service::session_service::SessionService;
+use executive::application::session_service::SessionService;
 use fabric::{
     Clock, ContentBlock, LlmProvider, LlmResponse, LlmStream, Message, SessionAppendStore,
     SessionId, StopReason, ToolDefinition, Usage,

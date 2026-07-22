@@ -737,7 +737,7 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
 mod tests {
     use super::{deduplicate_consecutive_text, handle_event};
     use crate::tui::{chat::ChatEntry, host_time::ClientClock, term_compat::TermCaps, App};
-    use executive::service::{tool_stream_bridge::ToolStreamHandle, turn_pipeline};
+    use executive::application::{tool_stream_bridge::ToolStreamHandle, turn_pipeline};
     use fabric::{
         ipc::{StreamConfig, TurnEventStream, TurnEventV1},
         ToolProgress, ToolResult, ToolResultMeta,
@@ -863,7 +863,7 @@ mod tests {
             TurnEventStream::new(StreamConfig::turn_events(16));
         let bridge_sender = daemon_sender.clone();
         let bridge = tokio::spawn(async move {
-            executive::service::tool_stream_bridge::bridge_tool_stream(
+            executive::application::tool_stream_bridge::bridge_tool_stream(
                 event_rx,
                 bridge_sender,
                 "bash_exec".into(),

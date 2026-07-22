@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use executive::core::config::{
+use executive::composition::config::{
     merge_layers, schema, AppConfig, ConfigLayer, ConfigSource, ConfigSourceKind,
     EnvironmentCredentialResolver, Transport,
 };

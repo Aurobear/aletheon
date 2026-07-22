@@ -8,7 +8,7 @@ use super::RequestHandler;
 use serde_json::json;
 use tracing::info;
 
-use crate::application::legacy_session_service::LegacySessionSnapshot;
+use crate::compatibility::legacy_session_service::LegacySessionSnapshot;
 
 impl RequestHandler {
     pub(super) async fn handle_clear(
@@ -239,7 +239,7 @@ impl RequestHandler {
             Ok(session_id) => {
                 json!({"jsonrpc":"2.0", "id":id, "result":{"session_id":session_id,"status":"switched"}})
             }
-            Err(crate::application::legacy_session_service::LegacySessionError::NotFound(_)) => {
+            Err(crate::compatibility::legacy_session_service::LegacySessionError::NotFound(_)) => {
                 json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32021,"message":format!("Session not found: {target}")}})
             }
             Err(error) => {

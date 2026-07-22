@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use executive::service::admin_service::{
+use executive::application::admin_service::{
     AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases, ModeChange,
     SkillAdminPort,
 };
-use executive::service::request_use_cases::{ProductionMemoryAdminUseCases, RetentionAdminPort};
+use executive::application::request_use_cases::{ProductionMemoryAdminUseCases, RetentionAdminPort};
 use mnemosyne::{
     ForgetAuthority, ForgetPolicy, ForgetReceipt, ForgetSelector, MemoryAuthority, MemoryKind,
     MemoryMetadata, MemoryRecord, MemoryRecordId, MemoryScope, MemoryService, MemoryStatus,
@@ -125,8 +125,8 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         skills: Arc::new(NoopSkills),
         tool_catalog: Arc::new(|| Box::pin(async { vec![] })),
         hook_catalog: Arc::new(|| Box::pin(async { vec![] })),
-        pending_approvals: executive::service::admin_service::PendingApprovals::default(),
-        session_approvals: executive::service::admin_service::ScopedApprovalCache::default(),
+        pending_approvals: executive::application::admin_service::PendingApprovals::default(),
+        session_approvals: executive::application::admin_service::ScopedApprovalCache::default(),
         daemon_cancel: CancellationToken::new(),
         external_sync: None,
         supplemental_memory_worker: None,
@@ -137,7 +137,7 @@ async fn authenticated_admin_requires_preview_and_returns_durable_receipt() {
         agent_profiles: None,
         current_profile: None,
         profile_switch_events: Arc::new(
-            executive::service::admin_service::NoopProfileSwitchEventSink,
+            executive::application::admin_service::NoopProfileSwitchEventSink,
         ),
         deployment_rollback: None,
     });

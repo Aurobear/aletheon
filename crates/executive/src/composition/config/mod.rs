@@ -28,9 +28,9 @@ pub use cognit::config::{
     DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig,
     RoleRuntimeConfig,
 };
-pub use channel::{TelegramChannelConfig, TelegramConfig};
-pub use coding::{CodingRuntimeConfig, PiRuntimeConfig};
-pub use supplemental_memory::{GbrainMemoryConfig, McpMemoryConfig, MemoryConfig, SupplementalMemoryConfig};
+pub use channel::TelegramChannelConfig;
+pub use coding::CodingRuntimeConfig;
+pub use supplemental_memory::{MemoryConfig, SupplementalMemoryConfig};
 pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
 pub use genome::GenomeConfig;
 pub use grok_hardening::GrokHardeningConfig;
@@ -91,9 +91,9 @@ pub struct AppConfig {
     pub hooks: HooksConfig,
     pub perception: PerceptionConfig,
     pub evolution: EvolutionSettings,
-    pub telegram: TelegramConfig,
+    pub telegram: TelegramChannelConfig,
     pub goal_runtime: Option<GoalRuntimeConfig>,
-    pub pi_runtime: PiRuntimeConfig,
+    pub pi_runtime: CodingRuntimeConfig,
     pub deployment: DeploymentConfig,
     pub grok_hardening: GrokHardeningConfig,
     /// D2-M5-T2: overload/backpressure limits (default unlimited).

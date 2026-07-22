@@ -27,8 +27,8 @@ use crate::application::governed_capability::{
     CapabilityRuntimeFactory, RegistryAuthorityProvider, TurnCapabilityInvoker,
 };
 use crate::application::inference_port::{InferencePort, PortLlmProvider};
-use crate::application::turn_coordinator::TurnCoordinator;
-use crate::application::{PostTurnPipeline, PreTurnPipeline, TurnService};
+use crate::application::{PostTurnPipeline, PreTurnPipeline};
+use crate::composition::TurnService;
 use crate::adapters::session::canonical_store::CanonicalSessionStore;
 
 /// Builder for a CLI `exec` session (non-daemon, single-turn).
@@ -197,12 +197,13 @@ impl ExecSessionBuilder {
             user_paths.state_root.join("exec-event-projections.db"),
         )?);
         let coordinator = Arc::new(
-            TurnCoordinator::with_event_spine(
+            crate::composition::turn_coordinator::compose_turn_coordinator(
                 kernel.clone(),
                 Arc::new(CanonicalSessionStore::open(session_db)?),
                 event_spine,
-            )
-            .with_event_projections(event_projections),
+                event_projections,
+                crate::composition::config::GrokHardeningConfig::default(),
+            ),
         );
 
         let services = Arc::new(ExecTurnServices {

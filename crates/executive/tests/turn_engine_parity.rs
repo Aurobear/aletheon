@@ -6,11 +6,11 @@
 //! In W1-05 (migration) the harness is extended to compare daemon/
 //! CLI/child execution through the real engine.
 
-use executive::service::turn_engine::{
+use executive::application::turn_engine::{
     TurnEngine, TurnEngineContext, TurnEngineError, TurnEngineEventSink, TurnEngineParitySnapshot,
     TurnEngineRequest, TurnEngineResult, TurnEngineStatus,
 };
-use executive::service::turn_runtime_ports::ResolvedTurnProfile;
+use executive::application::turn_runtime_ports::ResolvedTurnProfile;
 use fabric::{AgentApprovalPolicy, MonoDeadlineMillis};
 use std::sync::Arc;
 
@@ -154,7 +154,7 @@ fn snapshot_of(result: &TurnEngineResult) -> TurnEngineParitySnapshot {
 #[test]
 fn daemon_mapping_matches_engine_result_snapshot() {
     let turn_id = fabric::TurnId::new();
-    let mapped = executive::service::daemon_turn_engine::map_pipeline_response(
+    let mapped = executive::application::daemon_turn_engine::map_pipeline_response(
         turn_id,
         &serde_json::json!({
             "result": {

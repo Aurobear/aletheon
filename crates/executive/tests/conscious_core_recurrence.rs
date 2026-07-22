@@ -7,13 +7,13 @@ use agora::{
     SqliteBroadcastStore,
 };
 use async_trait::async_trait;
-use executive::service::conscious_core_coordinator::{
+use executive::application::conscious_core_coordinator::{
     ConsciousCoreConfig, ConsciousCoreCoordinator,
 };
-use executive::service::conscious_core_ports::{
+use executive::application::conscious_core_ports::{
     CandidateAdmissionStatus, CandidateCause, CandidateSubmission, ConsciousCandidatePort,
 };
-use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
+use executive::application::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use fabric::dasein::{
     ExperienceProvenance, ExperienceSource, InterpretedExperience, SelfEventId,
     SelfTransitionRequest, SelfVersion,

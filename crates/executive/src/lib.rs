@@ -16,9 +16,7 @@ pub(crate) mod adapters;
 pub mod composition;
 pub(crate) mod compatibility;
 pub mod core;
-pub mod service;
 pub mod tools;
-pub mod user_runtime;
 
 pub mod host;
 pub use kernel;
@@ -33,7 +31,7 @@ pub use core::verdict_handler::DefaultVerdictHandler;
 pub use kernel::admission::ProductionAdmissionController;
 
 // Stable application facades.
-pub use application::{approval, automation, conscious, goal, orchestration};
+pub use application::{approval, conscious, goal, orchestration};
 
 /// Composition-only runtime handles.
 ///
@@ -70,6 +68,12 @@ pub mod runtime {
 /// composition.
 #[doc(hidden)]
 pub mod testing {
+    pub mod turn_coordinator {
+        pub use crate::composition::turn_coordinator::*;
+    }
+    pub mod agent_control {
+        pub use crate::adapters::agent_control::sqlite_repository::*;
+    }
     pub mod artifact {
         pub use crate::adapters::artifact::*;
     }
@@ -91,6 +95,7 @@ pub mod testing {
 }
 
 pub use runtime::AgentRuntime;
+pub use composition::TurnService;
 
 // ── Re-exports for CLI exec path (bin crate uses these via executive) ───
 pub use crate::composition::exec_session::ExecSessionBuilder;

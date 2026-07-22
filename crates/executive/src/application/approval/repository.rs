@@ -1,4 +1,4 @@
-use crate::application::goal::migrations;
+use crate::compatibility::persistence_migrations as migrations;
 use fabric::{
     ApprovalArtifactRef, ApprovalCategory, ApprovalContractError, ApprovalId, ApprovalResolution,
     ApprovalRisk, ApprovalSnapshot, ApprovalStatus, ApprovalSubject, AttemptId, CodingJobId,

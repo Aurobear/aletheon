@@ -1,4 +1,5 @@
-use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
+use executive::application::{PostTurnPipeline, PreTurnPipeline};
+use executive::TurnService;
 use fabric::{NoopTurnEventSink, OperationId, ProcessId, StubTurnServices, TurnRequest, TurnStop};
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;

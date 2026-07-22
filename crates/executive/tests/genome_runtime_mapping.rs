@@ -2,7 +2,7 @@
 
 //! Integration tests for Genome -> Runtime behavior mapping.
 
-use executive::core::config::{ExecutiveConfig, GenomeConfig};
+use executive::composition::config::{ExecutiveConfig, GenomeConfig};
 use executive::core::orchestrator::AletheonExecutive;
 
 #[test]

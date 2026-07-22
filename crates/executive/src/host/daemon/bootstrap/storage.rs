@@ -66,7 +66,7 @@ pub(super) fn deployment_storage_quota(
             },
         ),
         (
-            StorageClass::Google,
+            StorageClass::ExternalProvider,
             StorageRoot {
                 path: paths.state.clone(),
                 limit: StorageLimit {
@@ -77,7 +77,7 @@ pub(super) fn deployment_storage_quota(
             },
         ),
         (
-            StorageClass::GbrainSpool,
+            StorageClass::SupplementalSpool,
             StorageRoot {
                 path: paths.mnemosyne.clone(),
                 limit: StorageLimit {

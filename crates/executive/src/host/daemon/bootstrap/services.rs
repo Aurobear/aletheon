@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use super::request_ports::{post_turn_runtime_port, TurnRuntimeFacadePorts};
-use crate::application::agent_control::SqliteAgentRunRepository;
+use crate::adapters::agent_control::SqliteAgentRunRepository;
 use crate::composition::config::GrokHardeningConfig;
 use crate::core::session_gateway::{ParamRegistry, SessionGateway};
 use crate::core::DomainPorts;
@@ -90,6 +90,7 @@ pub(super) async fn build_agent_services(
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?,
             ),
             agent_runtimes,
+            canonical_event_spine.clone(),
         )
         .with_budget_controller(kernel.budget_controller())
         .with_event_spine(canonical_event_spine.clone())
@@ -282,13 +283,13 @@ pub(super) async fn build_turn_services(
         Arc::new(crate::application::session_input::SessionInputCoordinator::in_memory())
     };
     let coordinator = Arc::new(
-        crate::application::turn_coordinator::TurnCoordinator::with_event_spine_and_grok(
+        crate::composition::turn_coordinator::compose_turn_coordinator(
             kernel.clone(),
             Arc::new(canonical_store),
             canonical_event_spine.clone(),
+            event_projections.clone(),
             grok_hardening.clone(),
         )
-        .with_event_projections(event_projections.clone())
         .with_backpressure(config.backpressure.clone())
         .with_session_input(session_input.clone()),
     );

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use corpus::security::approval::ApprovalDecision;
-use executive::service::admin_service::{
+use executive::application::admin_service::{
     AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases,
     ApprovalOwner, ModeChange, PendingApprovals, ScopedApprovalCache,
     SkillAdminPort, TransientApprovalRequest,
@@ -38,7 +38,7 @@ fn test_runtime() -> Arc<dyn AdminRuntimePort> {
 }
 
 fn noop_runtime_shutdown(
-) -> Arc<dyn Fn() -> executive::service::admin_service::RuntimeShutdownFuture + Send + Sync> {
+) -> Arc<dyn Fn() -> executive::application::admin_service::RuntimeShutdownFuture + Send + Sync> {
     Arc::new(|| Box::pin(async { Ok(()) }))
 }
 
@@ -55,7 +55,7 @@ fn setup(skills_dir: std::path::PathBuf) -> (AdminService, CancellationToken, Ar
 
 fn setup_with_rollback(
     skills_dir: std::path::PathBuf,
-    deployment_rollback: Option<Arc<dyn executive::service::admin_service::DeploymentRollbackPort>>,
+    deployment_rollback: Option<Arc<dyn executive::application::admin_service::DeploymentRollbackPort>>,
 ) -> (AdminService, CancellationToken, Arc<Mutex<String>>) {
     let cancellation = CancellationToken::new();
     let cached_prefix = Arc::new(Mutex::new(String::new()));
@@ -81,7 +81,7 @@ fn setup_with_rollback(
         agent_profiles: None,
         current_profile: None,
         profile_switch_events: Arc::new(
-            executive::service::admin_service::NoopProfileSwitchEventSink,
+            executive::application::admin_service::NoopProfileSwitchEventSink,
         ),
         deployment_rollback,
     });
@@ -167,7 +167,7 @@ async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
         agent_profiles: None,
         current_profile: None,
         profile_switch_events: Arc::new(
-            executive::service::admin_service::NoopProfileSwitchEventSink,
+            executive::application::admin_service::NoopProfileSwitchEventSink,
         ),
         deployment_rollback: None,
     });
@@ -249,7 +249,7 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
         agent_profiles: None,
         current_profile: None,
         profile_switch_events: Arc::new(
-            executive::service::admin_service::NoopProfileSwitchEventSink,
+            executive::application::admin_service::NoopProfileSwitchEventSink,
         ),
         deployment_rollback: None,
     });
@@ -356,13 +356,13 @@ async fn approval_with_closed_consumer_reports_terminal_non_delivery() {
         .unwrap();
     assert_eq!(
         resolved.delivery,
-        executive::service::admin_service::ApprovalDecisionDelivery::ConsumerGone
+        executive::application::admin_service::ApprovalDecisionDelivery::ConsumerGone
     );
     assert!(matches!(
         pending
             .resolve(&owner, &approval_id, ApprovalDecision::Approve)
             .await,
-        Err(executive::service::admin_service::PendingApprovalError::NotFound)
+        Err(executive::application::admin_service::PendingApprovalError::NotFound)
     ));
 }
 

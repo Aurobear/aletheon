@@ -3,19 +3,19 @@
 agora|crates/agora|fabric,kernel|attention,blackboard,broadcast,competition,ops,persistence,scratchpad,task_graph,trace,workspace|false|-
 basic_agent|examples/basic_agent|executive,fabric|-|false|-
 aletheon|crates/aletheon|executive,fabric,interact|workspace|false|-
-cognit|crates/cognit|fabric,kernel|bridge,composition,config,core,harness,impl,ports,testing|true|adapters
+cognit|crates/cognit|fabric,kernel|bridge,composition,config,core,event_handlers,harness,inference,learning,policy,ports,testing|false|adapters
 corpus|crates/corpus|fabric,kernel,platform|acix,catalog,core,drivers,hook,security,service,skill,tools|false|drivers
-dasein|crates/dasein|fabric,kernel|bridge,core,dasein,impl,testing|true|-
+dasein|crates/dasein|fabric,kernel|bridge,core,dasein,mutation,perception,testing|true|-
 execd|crates/execd|platform|-|false|-
-executive|crates/executive|agora,cognit,corpus,dasein,fabric,gateway,hardware,kernel,metacog,mnemosyne,runtime|application,composition,core,host,impl,service,tools,user_runtime|true|adapters
+executive|crates/executive|agora,cognit,corpus,dasein,fabric,gateway,hardware,kernel,metacog,mnemosyne,runtime|application,composition,core,host,runtime,service,testing,tools,user_runtime|false|adapters
 evolution_loop|examples/evolution_loop|cognit,corpus,dasein,executive,fabric,kernel,metacog,mnemosyne|-|false|-
 fabric|crates/fabric|-|contract,dasein,events,include,ipc,kernel,policy,primitives,protocol,security,types|false|-
 gateway|crates/gateway|fabric|dispatcher,effect,handlers,intent,notify,ports,registry|false|adapters
 hardware|crates/hardware|fabric|broker,clock,command,deployment_gate,device,emergency_stop,grpc,lease,observation,provider,registry,safety,simulator,skill,telemetry|false|grpc
 interact|crates/interact|executive,fabric|acix,acp,host,tui|false|-
 kernel|crates/kernel|fabric|admission,capability,chronos,operation,process,runtime,space,supervision|false|-
-metacog|crates/metacog|fabric,kernel|bridge,core,hil_evidence_verifier,impl,outcome_verifier,service|true|-
-mnemosyne|crates/mnemosyne|fabric,kernel|agent_scope,backends,composite_service,consolidation,credential,embodied_episode,fact_service,impl,knowledge_graph,model,observability,ops,projection,promotion,retention,service,testing|true|backends
+metacog|crates/metacog|fabric,kernel|bridge,core,evolution,hil_evidence_verifier,outcome_verifier,service|true|-
+mnemosyne|crates/mnemosyne|fabric,kernel|agent_scope,composite_service,consolidation,credential,embodied_episode,fact_service,knowledge_graph,lifecycle,memory_tools,model,observability,ops,projection,promotion,retention,runtime,service,supplemental,testing|false|backends
 platform|crates/platform|-|artifact_store,backend,desktop,error,filesystem,manifest,path,process,pty,receipt,registry,sandbox,selector,service,structured_patch|false|-
 runtime|crates/runtime|-|manifest,selector|false|-
 # ownership|owner|responsibility

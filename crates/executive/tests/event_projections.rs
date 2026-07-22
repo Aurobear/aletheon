@@ -3,7 +3,7 @@ use executive::runtime::events::{
     memory_job_projection::MemoryJobProjection, metrics_projection::MetricsProjection,
     session_projection::SessionProjection,
 };
-use executive::service::event_projection::{
+use executive::application::event_projection::{
     EventProjection, EventProjectionSink, SqliteProjectionStore,
 };
 use fabric::{

@@ -16,6 +16,7 @@ use fabric::{
 use kernel::chronos::SystemTimer;
 use kernel::operation::OperationScope;
 use kernel::KernelRuntime;
+use sha2::{Digest, Sha256};
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
 
@@ -31,9 +32,15 @@ pub mod memory;
 pub mod recovery;
 pub mod repository;
 pub mod settlement;
-#[deprecated(note = "use executive::adapters::agent_control")]
-pub mod sqlite_repository {
-    pub use crate::adapters::agent_control::sqlite_repository::*;
+
+pub(crate) fn agent_spawn_request_hash(
+    request: &AgentSpawnRequest,
+) -> Result<String, AgentControlError> {
+    request.validate()?;
+    let encoded = serde_json::to_vec(request).map_err(|error| {
+        control_error(AgentControlErrorKind::Persistence, error.to_string())
+    })?;
+    Ok(format!("{:x}", Sha256::digest(encoded)))
 }
 
 pub use admission::{
@@ -78,7 +85,6 @@ pub use settlement::{
     SettlementRequest, SettlementResourcePort, SpineSettlementEvidenceSink,
     SqliteSettlementReceiptStore,
 };
-pub use sqlite_repository::SqliteAgentRunRepository;
 
 const DEFAULT_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 const MAILBOX_CAPACITY: usize = 64;
@@ -177,11 +183,8 @@ impl AgentControlService {
         repository: Arc<dyn AgentRunRepository>,
         admission: Arc<dyn AgentAdmissionPort>,
         runtimes: Arc<AgentRuntimeRegistry>,
+        event_spine: Arc<dyn EventSpine>,
     ) -> Self {
-        let event_spine = Arc::new(
-            crate::adapters::events::SqliteEventSpine::open(":memory:")
-                .expect("in-memory Agent event spine"),
-        );
         Self {
             kernel,
             clock,
@@ -755,7 +758,7 @@ impl AgentControlPort for AgentControlService {
         let identity = self.validated_parent(&request).await?;
         let agent_id = identity.agent_id;
         let workspace_id = agent_workspace_id(agent_id);
-        let request_hash = SqliteAgentRunRepository::request_hash(&request)?;
+        let request_hash = agent_spawn_request_hash(&request)?;
         let requirements = launcher.resource_requirements().validate().map_err(|message| {
             control_error(AgentControlErrorKind::Capacity, message)
         })?;

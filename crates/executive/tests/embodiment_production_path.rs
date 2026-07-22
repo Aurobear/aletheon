@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use executive::service::embodiment_authority::build_embodiment_invoker;
-use executive::service::embodiment_progress::RecordingEmbodimentProgress;
-use executive::service::embodiment_service::EmbodimentService;
+use executive::application::embodiment_authority::build_embodiment_invoker;
+use executive::application::embodiment_progress::RecordingEmbodimentProgress;
+use executive::application::embodiment_service::EmbodimentService;
 use fabric::types::embodiment::{
     DeviceId, EmbodimentExecutionPort, SkillId, SkillOutcome, SkillRequest,
 };

@@ -1,4 +1,4 @@
-use executive::service::context_assembler::{
+use executive::application::context_assembler::{
     working_directory_policy_prompt, ContextAssembler, ContextAssemblyError, ContextFragments,
     ContextSource, ProductionContextSource,
 };

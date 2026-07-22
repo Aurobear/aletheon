@@ -9,8 +9,9 @@ use executive::goal::{
     AttemptCoordinationOutcome, AttemptExecutor, AttemptRequest, GoalCoordinator, ObjectiveStore,
     RetryPolicy,
 };
-use executive::testing::coding_runtime::{PiAttemptRequest, PI_CODER_RUNTIME_ID};
-use executive::service::verification::{
+use executive::application::coding_runtime::CodingAttemptRequest;
+use executive::testing::coding_runtime::PI_CODER_RUNTIME_ID;
+use executive::application::verification::{
     ArchitecturePolicy, VerificationService, VerificationServiceConfig,
 };
 use fabric::*;
@@ -50,7 +51,7 @@ impl AttemptExecutor for FixedCodingExecutor {
         task: &str,
         _: CancellationToken,
     ) -> Result<RuntimeResult, RuntimeFailure> {
-        let request: PiAttemptRequest = serde_json::from_str(task).unwrap();
+        let request: CodingAttemptRequest = serde_json::from_str(task).unwrap();
         let relative = PathBuf::from(format!("job-{}", request.job.job_id.0));
         let worktree = self.worktree_base.join(&relative);
         git(
@@ -221,7 +222,7 @@ impl Fixture {
             runtime_id: RuntimeId(PI_CODER_RUNTIME_ID.into()),
             escalation_runtime_id: None,
             role: CognitiveRole::Worker,
-            task: serde_json::to_string(&PiAttemptRequest {
+            task: serde_json::to_string(&CodingAttemptRequest {
                 job,
                 task_input: "change value".into(),
             })

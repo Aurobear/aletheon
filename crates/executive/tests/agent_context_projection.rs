@@ -1,7 +1,7 @@
 mod agent_control_support;
 
 use agent_control_support::{fixture, spawn_request, TestLauncher};
-use executive::service::agent_control::{
+use executive::application::agent_control::{
     AgentContextItemKind, AgentContextProjection, AgentContextProjectionBuilder, AgentRunRepository,
 };
 use fabric::{

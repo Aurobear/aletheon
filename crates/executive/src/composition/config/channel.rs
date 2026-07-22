@@ -32,6 +32,3 @@ impl TelegramChannelConfig {
         errors
     }
 }
-
-#[deprecated(note = "use TelegramChannelConfig")]
-pub type TelegramConfig = TelegramChannelConfig;

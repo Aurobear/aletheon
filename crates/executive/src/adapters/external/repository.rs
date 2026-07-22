@@ -1,4 +1,4 @@
-use crate::application::goal::migrations;
+use crate::compatibility::persistence_migrations as migrations;
 use async_trait::async_trait;
 use corpus::tools::google::{
     canonical_google_capability, is_google_read_capability, validate_google_read_grant,

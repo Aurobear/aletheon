@@ -1338,8 +1338,9 @@ mod tests {
     async fn crash_recovery_settlement_reopens_idempotently_and_owner_checks_leases() {
         use super::super::{
             agent_workspace_id, AgentResourceLease, AgentResourceLeaseKind, AgentRunRecord,
-            AgentRunRepository, SqliteAgentRunRepository,
+            AgentRunRepository,
         };
+        use crate::adapters::agent_control::SqliteAgentRunRepository;
         use fabric::{
             AgentBudget, AgentContextFork, AgentHandle, AgentProfileId, AgentRunStatus,
             AgentSnapshot, AgentSpawnRequest, OperationId, ProcessId, RuntimeId,

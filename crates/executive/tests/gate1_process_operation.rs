@@ -25,7 +25,8 @@
 
 mod turn_request_support;
 
-use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
+use executive::application::{PostTurnPipeline, PreTurnPipeline};
+use executive::TurnService;
 use fabric::{
     CancelReason, MonoDeadlineMillis, NoopTurnEventSink, OperationExitReason, OperationId,
     OperationKind, OperationRequest, OperationState, ProcessId, ProcessSignal, ProcessState,

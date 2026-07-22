@@ -2,7 +2,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use executive::composition::config::CodingRuntimeConfig;
 use executive::core::sub_agent::SubAgentRuntime;
-use executive::testing::coding_runtime::{PiAttemptRequest, PiRuntime};
+use executive::application::coding_runtime::CodingAttemptRequest;
+use executive::testing::coding_runtime::PiRuntime;
 use fabric::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
     SandboxResult,
@@ -152,8 +153,8 @@ impl Fixture {
         }
     }
 
-    fn request(&self, output_cap: usize, timeout_ms: u64, task_input: &str) -> PiAttemptRequest {
-        PiAttemptRequest {
+    fn request(&self, output_cap: usize, timeout_ms: u64, task_input: &str) -> CodingAttemptRequest {
+        CodingAttemptRequest {
             job: CodingJobSpec {
                 job_id: CodingJobId::new(),
                 goal_id: GoalId(7),
@@ -207,7 +208,7 @@ fn git_output(repository: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().into()
 }
 
-fn encoded(request: &PiAttemptRequest) -> String {
+fn encoded(request: &CodingAttemptRequest) -> String {
     serde_json::to_string(request).unwrap()
 }
 
@@ -221,7 +222,7 @@ fn report(evidence: &[fabric::AttemptEvidence]) -> CodingJobReport {
 
 fn capability_audit(
     evidence: &[fabric::AttemptEvidence],
-) -> executive::service::verification::CapabilityAuditSummary {
+) -> executive::application::verification::CapabilityAuditSummary {
     let item = evidence
         .iter()
         .find(|item| item.kind == "coding_capability_audit")

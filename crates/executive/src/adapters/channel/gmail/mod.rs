@@ -9,7 +9,7 @@ pub mod sender_policy;
 
 use self::classifier::{classify_verified_subject, GmailClassification};
 use self::sender_policy::{GmailHeader, GmailSenderPolicy};
-use crate::application::goal::migrations;
+use crate::compatibility::persistence_migrations as migrations;
 pub use event_ingress::{load_gmail_ingress_policies, GmailGoalEventIngress, GmailIngressPolicy};
 use fabric::{ExternalIdentityId, PrincipalId};
 pub use goal_draft::{GmailGoalDraft, GmailGoalDraftCoordinator};

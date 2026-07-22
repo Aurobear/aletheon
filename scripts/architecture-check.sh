@@ -112,8 +112,7 @@ for rel in sorted(path for path, layer in recorded_layers.items() if layer == "a
 # Goal and Agent Control must make policy decisions from neutral request and
 # resource contracts rather than a runtime name.
 for rel, body in production_rs():
-    if not (rel.startswith("crates/executive/src/application/") or
-            rel.startswith("crates/executive/src/impl/goal/")):
+    if not (rel.startswith("crates/executive/src/application/")):
         continue
     if re.search(r"\b(?:PiAttemptRequest|PiRuntime|PI_CODER_RUNTIME_ID)\b|contains\s*\([^\n]*[\"']pi", body, re.I):
         raise SystemExit(f"architecture-check: coding runtime identity leaked into application policy: {rel}")
@@ -164,7 +163,7 @@ if missing_persistence:
 
 sources = list(production_rs())
 core_prefixes = ("crates/fabric/", "crates/kernel/", "crates/executive/src/application/",
-                 "crates/executive/src/impl/goal/", "crates/cognit/src/harness/")
+                 "crates/cognit/src/harness/")
 def core(rel):
     return rel.startswith(core_prefixes) or any(part in rel.split("/") for part in ("domain", "contract", "application"))
 
@@ -403,7 +402,7 @@ for path in Path("crates/executive/src").rglob("*.rs"):
     name = str(path)
     if (
         "/host/daemon/bootstrap/" in name
-        or name == "crates/executive/src/impl/exec_corpus.rs"
+        or name == "crates/executive/src/composition/exec_corpus.rs"
         or name == "crates/executive/src/application/conscious_workspace.rs"
     ):
         continue
@@ -554,7 +553,7 @@ paths = [
     Path("crates/executive/src/application/pre_turn.rs"),
     Path("crates/executive/src/application/context_assembler.rs"),
     Path("crates/executive/src/application/conscious_workspace.rs"),
-    Path("crates/executive/src/impl/conscious/memory_processor.rs"),
+    Path("crates/executive/src/application/conscious/memory_processor.rs"),
     Path("crates/executive/src/application/turn_pipeline.rs"),
     Path("crates/executive/src/composition/prefix_builder.rs"),
 ]
@@ -575,7 +574,7 @@ for path in paths:
     for needle in forbidden:
         if needle in production:
             violations.append(f"{path}: {needle}")
-memory_adapter = Path("crates/executive/src/impl/conscious/memory_processor.rs").read_text()
+memory_adapter = Path("crates/executive/src/application/conscious/memory_processor.rs").read_text()
 if "DefaultMemoryWorkspaceProjector.project" not in memory_adapter:
     violations.append("conscious memory adapter: missing Mnemosyne bounded projector")
 if violations:

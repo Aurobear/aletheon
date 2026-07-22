@@ -18,6 +18,11 @@ pub mod doctor;
 pub mod launcher;
 pub mod systemd;
 
+/// Legacy wire-protocol use cases retained only for host compatibility.
+pub mod legacy_session {
+    pub use crate::compatibility::legacy_session_service::*;
+}
+
 use anyhow::{Context, Result};
 use fabric::Timer;
 use kernel::chronos::SystemTimer;

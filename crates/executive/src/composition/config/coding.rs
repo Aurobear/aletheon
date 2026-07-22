@@ -52,7 +52,3 @@ fn default_true() -> bool { true }
 fn default_timeout_ms() -> u64 { 30 * 60 * 1_000 }
 fn default_protocol_version() -> u32 { 3 }
 fn default_max_output_bytes() -> usize { 1024 * 1024 }
-
-/// Source compatibility only; deployment decoding keeps the `pi_runtime` key.
-#[deprecated(note = "use CodingRuntimeConfig")]
-pub type PiRuntimeConfig = CodingRuntimeConfig;

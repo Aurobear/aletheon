@@ -108,11 +108,11 @@ pub enum TurnEngineError {
 /// contract.  `TurnService` remains an internal detail and will be inlined
 /// when all three entry points have been migrated (W1-05).
 pub struct SessionTurnEngine {
-    inner: crate::application::turn_service::TurnService,
+    inner: crate::composition::turn_service::TurnService,
 }
 
 impl SessionTurnEngine {
-    pub fn new(inner: crate::application::turn_service::TurnService) -> Self {
+    pub fn new(inner: crate::composition::turn_service::TurnService) -> Self {
         Self { inner }
     }
 }

@@ -35,10 +35,10 @@ fn context_projection_receipt_matches_checked_in_snapshot() {
 
 #[test]
 fn app_config_schema_matches_checked_in_repository_snapshot() {
-    let generated = executive::core::config::schema::generated_schema_json();
+    let generated = executive::composition::config::schema::generated_schema_json();
     assert_eq!(
         generated,
-        executive::core::config::schema::generated_schema_json(),
+        executive::composition::config::schema::generated_schema_json(),
         "schema generation must be deterministic"
     );
     let checked_in = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

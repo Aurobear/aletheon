@@ -67,10 +67,11 @@ impl DaemonTurnTestBuilder {
         let store: Arc<dyn SessionAppendStore> =
             Arc::new(CanonicalSessionStore::open(":memory:").expect("test session store"));
         let spine = Arc::new(SqliteEventSpine::open(":memory:").expect("test event spine"));
-        let coordinator = Arc::new(TurnCoordinator::with_event_spine(
+        let coordinator = Arc::new(crate::composition::turn_coordinator::compose_with_event_spine(
             kernel.clone(),
             store.clone(),
             spine,
+            crate::composition::config::GrokHardeningConfig::default(),
         ));
         let session_service = Arc::new(SessionService::new(
             store.clone(),

@@ -11,7 +11,7 @@ use fabric::{
 use rusqlite::{params, Connection, OptionalExtension};
 use tokio::sync::Mutex;
 
-use crate::adapters::session::canonical_store::project_messages;
+use crate::application::session_projection::project_messages;
 
 use super::turn_coordinator::{ActiveTurn, ActiveTurnKey};
 

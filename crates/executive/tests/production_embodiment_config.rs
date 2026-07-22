@@ -1,7 +1,7 @@
 //! Tests for production embodiment config validation.
 
-use executive::core::config::ProductionEmbodimentConfig;
-use executive::core::config::SecretRef;
+use executive::composition::config::ProductionEmbodimentConfig;
+use executive::composition::config::SecretRef;
 
 fn valid_config() -> ProductionEmbodimentConfig {
     ProductionEmbodimentConfig {

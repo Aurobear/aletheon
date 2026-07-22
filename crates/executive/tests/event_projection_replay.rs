@@ -5,7 +5,7 @@ use executive::runtime::events::{
     memory_job_projection::MemoryJobProjection, metrics_projection::MetricsProjection,
     session_projection::SessionProjection,
 };
-use executive::service::event_projection::{EventProjection, SqliteProjectionStore};
+use executive::application::event_projection::{EventProjection, SqliteProjectionStore};
 use fabric::{
     EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, EventId, EventIdentity, EventPayload,
     EventPosition, EventTreeId, EventVisibility, ItemId, ItemPayload, ItemRecord, NamespaceId,
