@@ -50,7 +50,7 @@ pub struct DaemonConfig {
     /// Hook script configuration from the `hooks` config section.
     pub hooks: crate::composition::config::HooksConfig,
     /// Telegram owner-only control channel configuration.
-    pub telegram: cognit::config::TelegramConfig,
+    pub telegram: crate::composition::config::TelegramChannelConfig,
     /// gbrain shared memory integration configuration.
     pub gbrain_memory: cognit::config::McpMemoryConfig,
     /// Typed deployment paths, quotas, integrations, and health policy.

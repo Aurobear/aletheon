@@ -62,7 +62,7 @@ impl RequestHandler {
         model_routing: crate::composition::config::ModelRoutingConfig,
         model_aliases: HashMap<String, String>,
         goal_runtime: cognit::config::GoalRuntimeConfig,
-        pi_runtime: cognit::config::PiRuntimeConfig,
+        pi_runtime: crate::composition::config::CodingRuntimeConfig,
         grok_hardening: crate::composition::config::GrokHardeningConfig,
         sandbox_profiles: fabric::SandboxProfiles,
         network_policy: fabric::network_policy::NetworkPolicy,

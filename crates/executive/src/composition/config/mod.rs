@@ -4,6 +4,8 @@
 //! merges, validates, and reports application layers.
 
 mod agent;
+mod channel;
+mod coding;
 pub mod backpressure;
 pub mod diagnostics;
 mod genome;
@@ -23,13 +25,15 @@ pub use cognit::config::{
     AgentAdmissionConfig, BackupMode, CognitConfig, DeploymentBackupConfig, DeploymentConfig,
     DeploymentHealthConfig, DeploymentIntegrationsConfig, DeploymentMode, DeploymentPathsConfig,
     DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig, McpMemoryConfig,
-    PiRuntimeConfig, RoleRuntimeConfig,
+    RoleRuntimeConfig,
 };
+pub use channel::{TelegramChannelConfig, TelegramConfig};
+pub use coding::{CodingRuntimeConfig, PiRuntimeConfig};
 pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
 pub use genome::GenomeConfig;
 pub use grok_hardening::GrokHardeningConfig;
 pub use infra::{
-    DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig, TelegramConfig,
+    DaemonConfig, McpServerConfig, MemoryConfig, PluginsConfig, SandboxConfig,
 };
 pub use integrations::{
     CredentialResolver, EmbodimentProviderConfig, EnvironmentCredentialResolver,

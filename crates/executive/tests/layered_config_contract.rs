@@ -169,6 +169,26 @@ fn checked_in_schema_is_deterministic() {
 }
 
 #[test]
+fn legacy_channel_and_coding_keys_decode_to_canonical_owned_types() {
+    let config: AppConfig = toml::from_str(
+        r#"
+[telegram]
+enabled = false
+poll_timeout_secs = 12
+
+[pi_runtime]
+enabled = false
+json_protocol_version = 3
+"#,
+    )
+    .unwrap();
+    let _: &executive::composition::config::TelegramChannelConfig = &config.telegram;
+    let _: &executive::composition::config::CodingRuntimeConfig = &config.pi_runtime;
+    assert_eq!(config.telegram.poll_timeout_secs, 12);
+    assert_eq!(config.pi_runtime.json_protocol_version, 3);
+}
+
+#[test]
 fn checked_in_leju_deepseek_uses_the_openai_transport() {
     for relative_path in [
         "../../config/default.toml",

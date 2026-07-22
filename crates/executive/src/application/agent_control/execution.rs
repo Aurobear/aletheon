@@ -454,13 +454,13 @@ pub struct CompatibilityRuntimeLauncher {
 
 impl CompatibilityRuntimeLauncher {
     pub fn new(backend: Arc<dyn SubAgentRuntime>) -> Self {
-        Self { backend: runtime }
+        Self { backend }
     }
 }
 
 #[async_trait]
 impl AgentRuntimeLauncher for CompatibilityRuntimeLauncher {
-    fn resource_requirements(&self) -> backend::RuntimeResourceRequirements {
+    fn resource_requirements(&self) -> runtime::RuntimeResourceRequirements {
         self.backend.resource_requirements()
     }
 
@@ -483,7 +483,7 @@ impl AgentRuntimeLauncher for CompatibilityRuntimeLauncher {
             working_dir: std::env::current_dir().unwrap_or_default(),
         };
         let result = self
-            .runtime
+            .backend
             .run_attempt_in_context(&input.request.task, input.cancellation, context)
             .await
             .map_err(|failure| AgentControlError {

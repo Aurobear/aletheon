@@ -41,11 +41,11 @@ For every AppConfig field record:
 raw key | compatibility aliases | normalized owner | consumer | secret? | default | validation
 ```
 
-- [ ] Identify Telegram/channel fields currently owned by Cognit.
-- [ ] Identify Pi/coding runtime fields currently owned by Cognit.
-- [ ] Identify GBrain/supplemental fields for Phase 5.
-- [ ] Identify provider/inference fields for Phase 7.
-- [ ] Identify deployment paths/env reads mixed into domain configs.
+- [x] Identify Telegram/channel fields currently owned by Cognit.
+- [x] Identify Pi/coding runtime fields currently owned by Cognit.
+- [x] Identify GBrain/supplemental fields for Phase 5.
+- [x] Identify provider/inference fields for Phase 7.
+- [x] Identify deployment paths/env reads mixed into domain configs.
 
 ## Task 2: Define the one-way config pipeline
 
@@ -55,34 +55,34 @@ Implement/facade:
 DeploymentConfig -> NormalizedConfig -> DomainConfig + AdapterBuildConfig
 ```
 
-- [ ] Only composition reads files and business environment variables.
-- [ ] Compatibility aliases exist only in DeploymentConfig decoding.
-- [ ] NormalizedConfig has canonical names and validated URLs/IDs/bounds.
-- [ ] DomainConfig contains policy only, no SecretRef, endpoint, env name, or deployment path.
-- [ ] AdapterBuildConfig may contain SecretRef; resolved plaintext never returns to config.
+- [x] Only composition reads files and business environment variables.
+- [x] Compatibility aliases exist only in DeploymentConfig decoding.
+- [x] NormalizedConfig has canonical names and validated URLs/IDs/bounds.
+- [x] DomainConfig contains policy only, no SecretRef, endpoint, env name, or deployment path.
+- [x] AdapterBuildConfig may contain SecretRef; resolved plaintext never returns to config.
 
 ## Task 3: Move channel and coding settings
 
-- [ ] Move TelegramConfig to Gateway adapter/composition ownership.
-- [ ] Move Pi/coding configuration to Executive coding adapter ownership.
-- [ ] Preserve old TOML/env inputs through deterministic compatibility conversion.
-- [ ] Add old-config -> canonical-config snapshot tests.
-- [ ] Remove channel/coding types from Cognit public config API.
+- [x] Move TelegramConfig to Gateway adapter/composition ownership.
+- [x] Move Pi/coding configuration to Executive coding adapter ownership.
+- [x] Preserve old TOML/env inputs through deterministic compatibility conversion.
+- [x] Add old-config -> canonical-config snapshot tests.
+- [x] Remove channel/coding types from Cognit public config API.
 
 ## Task 4: Static adapter registry
 
-- [ ] Define validated AdapterId and IntegrationKind.
-- [ ] Permit adapter-ID constructor matching only inside composition registry/factory.
-- [ ] Reject unknown adapter IDs explicitly.
-- [ ] Remove URL suffix/provider inference.
-- [ ] Do not introduce a dynamic plugin ABI.
+- [x] Define validated AdapterId and IntegrationKind.
+- [x] Permit adapter-ID constructor matching only inside composition registry/factory.
+- [x] Reject unknown adapter IDs explicitly.
+- [x] Remove URL suffix/provider inference.
+- [x] Do not introduce a dynamic plugin ABI.
 
 ## Task 5: Schema and diagnostics
 
-- [ ] Regenerate `config/schema/aletheon-config.schema.json` through the repository-supported command/test.
-- [ ] Verify unknown fields fail and compatibility aliases normalize.
-- [ ] Verify Debug/log output redacts resolved values.
-- [ ] Ensure invalid configured optional integrations fail closed rather than silently disappear.
+- [x] Regenerate `config/schema/aletheon-config.schema.json` through the repository-supported command/test.
+- [x] Verify unknown fields fail and compatibility aliases normalize.
+- [x] Verify Debug/log output redacts resolved values.
+- [x] Ensure invalid configured optional integrations fail closed rather than silently disappear.
 
 ## Validation
 
@@ -101,3 +101,10 @@ bash tests/architecture_check.sh
 3. `refactor(config): return channel and coding settings to adapter owners`
 4. `refactor(composition): centralize static adapter construction`
 5. `chore(config): regenerate schema and enforce ownership gates`
+
+## Completion evidence (2026-07-23)
+
+- `config/architecture/config-ownership.tsv` records every AppConfig raw key, compatibility shape, normalized owner, consumer, secret handling, default, and validation; the architecture gate rejects inventory drift.
+- Channel and coding deployment types now belong to Executive composition and their adapter consumers; Cognit no longer exports either unrelated type. Legacy `[telegram]` and `[pi_runtime]` inputs deterministically decode into canonical owned types.
+- Composition contains a validated closed-world `AdapterId`/`IntegrationKind` registry; malformed and unknown IDs fail closed and no dynamic ABI was introduced.
+- The checked-in AppConfig schema was regenerated. Layer precedence, unknown-field rejection, credential redaction, optional-integration preflight, private composition, Cognit config, Gateway, and architecture tests pass.

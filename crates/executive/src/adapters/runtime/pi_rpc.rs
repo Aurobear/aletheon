@@ -48,7 +48,7 @@ pub struct PiRpcRuntime {
 
 impl PiRpcRuntime {
     pub fn prepare(
-        source: &cognit::config::PiRuntimeConfig,
+        source: &crate::composition::config::CodingRuntimeConfig,
         sandbox: Arc<dyn SandboxBackend>,
         clock: Arc<dyn fabric::Clock>,
         credential_environment: BTreeMap<String, String>,

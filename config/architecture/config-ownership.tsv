@@ -1,0 +1,25 @@
+# frozen_commit=790158b
+# raw_key	compatibility_aliases	normalized_owner	consumer	secret	default	validation
+agent	-	executive.composition	cognit	no	AgentConfig::default	admission bounds
+providers	-	executive.composition	cognit.inference	reference-only	empty	provider name, URL, transport
+model_aliases	-	executive.composition	cognit.inference	no	empty	model reference resolution
+model_routing	-	executive.composition	cognit.inference	no	default	alias resolution
+sandbox	-	executive.composition	corpus.security	no	default	fail-closed isolation policy
+mcp_servers	-	executive.composition	corpus.mcp	credential-reference	empty	server transport and auth
+plugins	-	executive.composition	executive.plugin	no	default	manifest policy
+memory	gbrain nested legacy shape	executive.composition	mnemosyne and supplemental adapter	credential-reference	default	bounded delivery and storage
+daemon	-	executive.composition	executive.host	no	default	socket and lifecycle bounds
+hooks	-	executive.composition	dasein hook policy	no	default	policy validation
+perception	-	executive.composition	executive application	no	default	path policy
+evolution	-	executive.composition	metacog	no	default	threshold bounds
+telegram	-	executive.composition	executive channel adapter	credential-reference	disabled	owner ID and token reference
+goal_runtime	-	executive.composition	executive goal composition	no	none	worker/reviewer routes
+pi_runtime	legacy key retained	executive.composition	executive coding adapter	process-env allowlist	disabled	executable pin, protocol, sandbox, bounds
+deployment	-	executive.composition	executive host	secret-file references	default	mode, paths, quotas
+grok_hardening	-	executive.composition	executive inference composition	no	default	policy bounds
+backpressure	-	executive.composition	executive application	no	unlimited	capacity bounds
+sandbox_profiles	-	executive.composition	fabric sandbox policy	no	default	profile resolution
+network_policy	-	executive.composition	fabric network policy	no	deny/default	host authority
+agent_profiles	-	executive.composition	executive agent composition	no	default	profile overrides
+bootstrap	-	executive.composition	executive host	credential-reference	default	typed bootstrap validation
+integrations	-	executive.composition	executive adapter factories	SecretRef only	disabled	adapter-specific fail-closed resolution

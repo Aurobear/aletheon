@@ -110,8 +110,11 @@ crates/executive/src/application/workspace_trust.rs	application	executive	use-ca
 crates/executive/src/application/world_state.rs	application	executive	use-case orchestration and ports
 crates/executive/src/compatibility/legacy_session_service.rs	compatibility	executive	legacy public path or crate facade
 crates/executive/src/compatibility/mod.rs	compatibility	executive	legacy public path or crate facade
+crates/executive/src/composition/adapter_registry.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/agent.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/backpressure.rs	composition	executive	configuration and dependency construction
+crates/executive/src/composition/config/channel.rs	composition	executive	configuration and dependency construction
+crates/executive/src/composition/config/coding.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/diagnostics.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/genome.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/grok_hardening.rs	composition	executive	configuration and dependency construction

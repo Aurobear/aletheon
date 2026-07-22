@@ -28,7 +28,7 @@ use gateway::telegram::TelegramTransport;
 /// Build the Telegram long-poll channel transport, router, and spawn the
 /// poll loop. Returns the task handle for graceful shutdown.
 pub(super) fn init_telegram_channel(
-    cfg: &cognit::config::TelegramConfig,
+    cfg: &crate::composition::config::TelegramChannelConfig,
     data_dir: PathBuf,
     orchestrator: Arc<crate::application::DaemonTurnOrchestrator>,
     objective_store: Arc<Mutex<ObjectiveStore>>,

@@ -85,6 +85,17 @@ if actual_executive != set(recorded_layers):
                      f"added={sorted(actual_executive-set(recorded_layers))}, "
                      f"removed={sorted(set(recorded_layers)-actual_executive)}")
 
+# Every raw AppConfig key has an explicit normalized owner and consumer.
+if actual_executive:
+    config_rows = [line.split("\t") for line in data_lines("config-ownership.tsv")]
+    recorded_config = {row[0] for row in config_rows}
+    config_source = (root / "crates/executive/src/composition/config/mod.rs").read_text()
+    app_body = config_source.split("pub struct AppConfig {", 1)[1].split("\n}", 1)[0]
+    actual_config = set(re.findall(r"^\s*pub\s+(\w+)\s*:", app_body, re.M))
+    if actual_config != recorded_config:
+        raise SystemExit("architecture-check: AppConfig ownership inventory differs; "
+                         f"added={sorted(actual_config-recorded_config)}, "
+                         f"removed={sorted(recorded_config-actual_config)}")
 # Application code may depend on ports and domain contracts, never host or
 # concrete adapters.  The sole exception is a deprecated compatibility shim
 # retained for the legacy SQLite repository path until Phase 9.

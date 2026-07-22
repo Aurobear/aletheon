@@ -6,7 +6,7 @@ use crate::core::sub_agent::SubAgentRuntime;
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use base64::Engine;
-use cognit::config::PiRuntimeConfig;
+use crate::composition::config::CodingRuntimeConfig;
 use corpus::tools::subagent::{
     CommandRequest, CommandRunner, WorktreeManager, WorktreeManagerConfig,
 };
@@ -53,7 +53,7 @@ pub fn pi_environment_from_process() -> BTreeMap<String, String> {
 
 pub fn register_pi_runtime(
     registry: &mut RuntimeRegistry,
-    config: &PiRuntimeConfig,
+    config: &CodingRuntimeConfig,
     sandbox: Option<Arc<dyn SandboxBackend>>,
     clock: Arc<dyn Clock>,
 ) -> Result<bool> {
@@ -113,7 +113,7 @@ impl PiRuntime {
     }
 
     pub fn prepare(
-        config: &PiRuntimeConfig,
+        config: &CodingRuntimeConfig,
         sandbox: Arc<dyn SandboxBackend>,
         clock: Arc<dyn Clock>,
     ) -> Result<Option<Self>> {
@@ -335,7 +335,7 @@ pub(super) fn pi_sandbox_policy(
     Ok(policy)
 }
 
-fn resolve_executable(config: &PiRuntimeConfig) -> Result<PathBuf> {
+fn resolve_executable(config: &CodingRuntimeConfig) -> Result<PathBuf> {
     if config.executable.as_os_str().is_empty() {
         bail!("Pi runtime executable is missing");
     }
@@ -844,12 +844,12 @@ mod tests {
         })
     }
 
-    fn enabled_config(fixture: &TempDir) -> PiRuntimeConfig {
+    fn enabled_config(fixture: &TempDir) -> CodingRuntimeConfig {
         let executable = fixture.path().join("pi");
         std::fs::write(&executable, b"#!/bin/sh\n").unwrap();
         let worktree_base = fixture.path().join("worktrees");
         std::fs::create_dir_all(&worktree_base).unwrap();
-        PiRuntimeConfig {
+        CodingRuntimeConfig {
             enabled: true,
             executable: executable.clone(),
             fixed_args: vec![
@@ -878,7 +878,7 @@ mod tests {
         let mut registry = RuntimeRegistry::new();
         assert!(!register_pi_runtime(
             &mut registry,
-            &PiRuntimeConfig::default(),
+            &CodingRuntimeConfig::default(),
             None,
             Arc::new(kernel::chronos::TestClock::default()),
         )

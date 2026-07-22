@@ -187,7 +187,7 @@ pub(super) async fn build_turn_services(
     event_bus: Option<Arc<fabric::CanonicalEventBus>>,
     config: &DaemonConfig,
     grok_hardening: GrokHardeningConfig,
-    pi_runtime: &cognit::config::PiRuntimeConfig,
+    pi_runtime: &crate::composition::config::CodingRuntimeConfig,
     pi_work_allowed: bool,
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SessionManager>>>>>,
     session_id: &str,

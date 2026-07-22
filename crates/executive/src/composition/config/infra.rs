@@ -6,5 +6,4 @@ pub use cognit::config::DaemonConfig;
 pub use cognit::config::MemoryConfig;
 pub use cognit::config::PluginsConfig;
 pub use cognit::config::SandboxConfig;
-pub use cognit::config::TelegramConfig;
 pub use corpus::tools::mcp::config::McpServerConfig;

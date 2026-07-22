@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use cognit::config::PiRuntimeConfig;
+use executive::composition::config::CodingRuntimeConfig;
 use executive::core::sub_agent::SubAgentRuntime;
 use executive::r#impl::runtime::{PiAttemptRequest, PiRuntime};
 use fabric::sandbox::{

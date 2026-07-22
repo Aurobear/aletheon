@@ -224,6 +224,86 @@
       ],
       "type": "string"
     },
+    "CodingRuntimeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_paths": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "executable": {
+          "default": "",
+          "type": "string"
+        },
+        "executable_sha256": {
+          "default": "",
+          "type": "string"
+        },
+        "fixed_args": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forbidden_paths": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "json_protocol_version": {
+          "default": 3,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_output_bytes": {
+          "default": 1048576,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "network_enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "package_version": {
+          "default": "",
+          "type": "string"
+        },
+        "require_namespace_isolation": {
+          "default": true,
+          "type": "boolean"
+        },
+        "timeout_ms": {
+          "default": 1800000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "trusted_executable_dir": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "worktree_base": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "DaemonConfig": {
       "additionalProperties": false,
       "description": "Daemon runtime settings.",
@@ -855,7 +935,7 @@
       "type": "object"
     },
     "HarnessKind": {
-      "description": "Selects which concrete harness implementation `build_harness` constructs.\n\nPhase 2 fallback (see RFC-018): `ReActLoop::run` is generic over\n`<L: LlmProvider, F: Fn(...) -> Fut, Fut: Future>`, which is not\nobject-safe (generic methods cannot be part of a `dyn Trait`). Rather than\nforce an incompatible trait-object seam, this factory keeps `ReActLoop` as\na concrete return type and provides the config-selected construction seam:\nadding a new harness kind means adding a variant here and a construction\narm in `build_harness`, without touching `executive`'s call sites beyond\nthe `HarnessKind` selection itself.\n\nSelectable from TOML via `harness_kind = \"linear\"` (see\n`executive::core::config::ExecutiveConfig::harness_kind`).",
+      "description": "Selects which concrete harness implementation `build_harness` constructs.\n\nPhase 2 fallback (see RFC-018): `ReActLoop::run` is generic over\n`<L: LlmProvider, F: Fn(...) -> Fut, Fut: Future>`, which is not\nobject-safe (generic methods cannot be part of a `dyn Trait`). Rather than\nforce an incompatible trait-object seam, this factory keeps `ReActLoop` as\na concrete return type and provides the config-selected construction seam:\nadding a new harness kind means adding a variant here and a construction\narm in `build_harness`, without touching `executive`'s call sites beyond\nthe `HarnessKind` selection itself.\n\nSelectable from TOML via `harness_kind = \"linear\"` (see\n`executive::composition::config::ExecutiveConfig::harness_kind`).",
       "oneOf": [
         {
           "enum": [
@@ -1564,91 +1644,6 @@
       },
       "type": "object"
     },
-    "PiRuntimeConfig": {
-      "additionalProperties": false,
-      "description": "Fail-closed configuration for the isolated Pi coding runtime.",
-      "properties": {
-        "allowed_paths": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "enabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "executable": {
-          "default": "",
-          "type": "string"
-        },
-        "executable_sha256": {
-          "default": "",
-          "description": "Lowercase SHA-256 of the trusted Pi executable.",
-          "type": "string"
-        },
-        "fixed_args": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "forbidden_paths": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "json_protocol_version": {
-          "default": 3,
-          "description": "Expected Pi JSON session header version.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "max_output_bytes": {
-          "default": 1048576,
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "network_enabled": {
-          "default": false,
-          "description": "Pi has no network access by default. Trusted daemon configuration may\nopt in for the independently authenticated model transport.",
-          "type": "boolean"
-        },
-        "package_version": {
-          "default": "",
-          "description": "Pinned upstream package version recorded in attempt evidence.",
-          "type": "string"
-        },
-        "require_namespace_isolation": {
-          "default": true,
-          "type": "boolean"
-        },
-        "timeout_ms": {
-          "default": 1800000,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "trusted_executable_dir": {
-          "default": null,
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "worktree_base": {
-          "default": "",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "PluginsConfig": {
       "additionalProperties": false,
       "description": "Plugin directories.",
@@ -2004,12 +1999,10 @@
       ],
       "type": "object"
     },
-    "TelegramConfig": {
+    "TelegramChannelConfig": {
       "additionalProperties": false,
-      "description": "Telegram bot configuration for owner-only control channel.\n\nThe config stores the environment-variable NAME, never the token value itself.\nThe runtime reads the token from that env var at startup.",
       "properties": {
         "bot_token_env": {
-          "description": "Environment variable name that holds the bot token.\nExample value: `\"ALETHEON_TELEGRAM_BOT_TOKEN\"`.",
           "type": [
             "string",
             "null"
@@ -2017,11 +2010,9 @@
         },
         "enabled": {
           "default": false,
-          "description": "Master switch. When false (default), the Telegram bot is not started.",
           "type": "boolean"
         },
         "owner_user_id": {
-          "description": "Owner's Telegram user ID. Only messages from this user are accepted.",
           "format": "int64",
           "type": [
             "integer",
@@ -2030,7 +2021,6 @@
         },
         "poll_timeout_secs": {
           "default": 10,
-          "description": "Polling timeout in seconds (clamped to 1–50).",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -2333,7 +2323,7 @@
       }
     },
     "pi_runtime": {
-      "$ref": "#/$defs/PiRuntimeConfig",
+      "$ref": "#/$defs/CodingRuntimeConfig",
       "default": {
         "allowed_paths": [],
         "enabled": false,
@@ -2380,7 +2370,7 @@
       "description": "S1 sandbox profiles (from trusted daemon config, never from repo)."
     },
     "telegram": {
-      "$ref": "#/$defs/TelegramConfig",
+      "$ref": "#/$defs/TelegramChannelConfig",
       "default": {
         "bot_token_env": null,
         "enabled": false,

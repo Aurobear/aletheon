@@ -192,7 +192,7 @@ done
 
     let policy = WorkspacePolicy::from_resolved_roots(workspace.clone(), vec![]).unwrap();
     let executable_sha256 = format!("{:x}", Sha256::digest(std::fs::read(&script).unwrap()));
-    let config = cognit::config::PiRuntimeConfig {
+    let config = executive::composition::config::CodingRuntimeConfig {
         enabled: true,
         executable: script.clone(),
         trusted_executable_dir: None,
@@ -321,7 +321,7 @@ done
     )
     .unwrap();
     let executable_sha256 = format!("{:x}", Sha256::digest(std::fs::read(&script).unwrap()));
-    let config = cognit::config::PiRuntimeConfig {
+    let config = executive::composition::config::CodingRuntimeConfig {
         enabled: true,
         executable: script.clone(),
         trusted_executable_dir: None,
