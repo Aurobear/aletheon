@@ -843,33 +843,28 @@ impl RequestHandler {
         );
         let agent_runtimes =
             Arc::new(crate::service::agent_control::AgentRuntimeRegistry::default());
-        let agent_profiles_for_tools;
-        let agent_profile_registry;
-
         // Ordinary child Agents use one Cognit session runtime. Goal worker
         // and reviewer attempts remain explicit ProviderWorkerRuntime routes.
-        {
+        let agent_composition = {
             // Stable agent control definitions must be visible to
             // load_agent_profiles so profiles can list them in `allowed_tools`
             // before the AgentControlService runtime is constructed.
             let mut definitions = corpus_group.tools.lock().await.definitions();
             definitions
                 .extend(corpus::tools::tools::agent_control::AgentControlTools::definitions());
-            let (profiles, tool_profiles) = super::runtime::load_agent_profiles(
-                &aletheon_dir.join("agents"),
-                inference.clone(),
-                llm.clone(),
-                &definitions,
-                &runtime_config_snapshot,
-                &agent_profiles,
-            )?;
-            agent_profiles_for_tools = tool_profiles;
-            agent_profile_registry = profiles.clone();
+            let composition = super::agents::compose(super::agents::AgentCompositionInput {
+                agents_dir: &aletheon_dir.join("agents"),
+                inference: inference.clone(),
+                default_llm: llm.clone(),
+                definitions: &definitions,
+                runtime_config: &runtime_config_snapshot,
+                profiles_config: &agent_profiles,
+            })?;
             let native = Arc::new(crate::r#impl::runtime::NativeCognitRuntime::new(
                 crate::r#impl::runtime::NativeCognitRuntimeResources {
                     sessions: domains.cognition(),
                     capabilities: capability_service.clone(),
-                    profiles,
+                    profiles: composition.profiles.clone(),
                     clock: clock.clone(),
                     conscious_actions: Some(conscious_registry.clone()),
                     conscious_candidates: Some(conscious_registry.clone()),
@@ -879,23 +874,11 @@ impl RequestHandler {
                 crate::r#impl::runtime::NativeCognitRuntime::runtime_id(),
                 native,
             )?;
-        }
-        let active_profile_name = if !agent_profiles.default.trim().is_empty() {
-            agent_profiles.default.clone()
-        } else if agent_profile_registry.resolve_by_name("code-agent").is_ok() {
-            "code-agent".to_owned()
-        } else {
-            let mut names = agent_profile_registry.names();
-            names.sort();
-            names
-                .into_iter()
-                .next()
-                .context("no Agent profile is available for the main turn")?
+            composition
         };
-        agent_profile_registry
-            .resolve_by_name(&active_profile_name)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let active_profile = Arc::new(Mutex::new(active_profile_name));
+        let agent_profiles_for_tools = agent_composition.tool_profiles;
+        let agent_profile_registry = agent_composition.profiles;
+        let active_profile = Arc::new(Mutex::new(agent_composition.active_profile_name));
 
         // Goal worker/reviewer runtimes are opt-in and strictly alias-resolved.
         // Missing routes fail startup only when Goal execution is enabled.

@@ -3,6 +3,7 @@
 //! Construction code in this module is the only production code allowed to
 //! know the concrete implementations behind the request and turn ports.
 
+mod agents;
 mod approval_gate;
 mod channels;
 mod extensions;
