@@ -8,6 +8,7 @@ mod channels;
 mod extensions;
 mod google;
 mod inference;
+mod integrations;
 mod memory;
 mod params;
 mod request;

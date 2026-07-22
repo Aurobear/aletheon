@@ -297,25 +297,20 @@ impl RequestHandler {
         let recall_memory = tool_composition.memory.recall;
         let fact_store = tool_composition.memory.facts;
         let external_artifact_root = data_dir.join("external-artifacts");
-        let (google, mut google_sync, google_sync_store, gmail_ingress) =
-            match super::google::register_configured_google_read_tools(
-                &mut tools,
-                &objective_db_path,
-                clock.clone(),
-                &cancel_token,
-                &external_artifact_root,
-                storage_quota.clone(),
-                config.integrations.google.as_ref(),
-            ) {
-                Ok(Some((integration, sync, store, gmail_ingress))) => {
-                    (Some(integration), Some(sync), Some(store), gmail_ingress)
-                }
-                Ok(None) => (None, None, None, None),
-                Err(error) => {
-                    warn!(error = %error, "Google read integration disabled");
-                    (None, None, None, None)
-                }
-            };
+        let google_composition =
+            super::integrations::compose_google(super::integrations::GoogleCompositionInput {
+                tools: &mut tools,
+                objective_db_path: &objective_db_path,
+                clock: clock.clone(),
+                cancel: &cancel_token,
+                artifact_root: &external_artifact_root,
+                storage_quota: storage_quota.clone(),
+                config: config.integrations.google.as_ref(),
+            });
+        let google = google_composition.integration;
+        let mut google_sync = google_composition.sync;
+        let google_sync_store = google_composition.sync_store;
+        let gmail_ingress = google_composition.gmail_ingress;
         if let (Some(handle), Some(store)) = (google_sync.as_mut(), google_sync_store) {
             let goal_store = Arc::new(std::sync::Mutex::new(
                 ObjectiveStore::open(&objective_db_path)
