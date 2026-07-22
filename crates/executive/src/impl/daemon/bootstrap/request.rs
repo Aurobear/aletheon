@@ -21,7 +21,6 @@ use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
 use fabric::CanonicalEventBus;
 use fabric::Clock;
-use fabric::LlmProvider;
 use fabric::Registry;
 use fabric::Version;
 use fabric::{Subsystem, SubsystemContext};
@@ -40,7 +39,7 @@ use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
 use crate::r#impl::goal::ObjectiveStore;
 use crate::r#impl::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
 use crate::r#impl::runtime::{pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime};
-use crate::service::inference_port::{InferencePort, PortLlmProvider};
+use crate::service::inference_port::InferencePort;
 use crate::service::CapabilityService;
 use corpus::hook::builtin::audit_hook;
 use corpus::security::storm_breaker::StormBreaker;
@@ -74,10 +73,11 @@ impl RequestHandler {
         event_bus: Option<Arc<CanonicalEventBus>>,
         cancel_token: CancellationToken,
     ) -> anyhow::Result<Self> {
-        let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::new(
-            inference.clone(),
-            config.model.clone(),
-        ));
+        let llm = super::inference::compose(super::inference::InferenceCompositionInput {
+            port: inference.clone(),
+            model_spec: config.model.clone(),
+        })
+        .provider;
         info!(provider = llm.name(), "LLM provider initialized");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
 
