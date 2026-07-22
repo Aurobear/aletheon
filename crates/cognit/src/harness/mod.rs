@@ -36,11 +36,28 @@ pub use session::{
 ///
 /// Selectable from TOML via `harness_kind = "linear"` (see
 /// `executive::core::config::ExecutiveConfig::harness_kind`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum HarnessKind {
     #[default]
     Linear,
+}
+
+#[cfg(test)]
+mod harness_kind_tests {
+    use super::HarnessKind;
+
+    #[test]
+    fn robot_is_rejected_until_robot_harness_exists() {
+        assert!(serde_json::from_str::<HarnessKind>(r#""robot""#).is_err());
+    }
+
+    #[test]
+    fn linear_remains_default() {
+        assert_eq!(HarnessKind::default(), HarnessKind::Linear);
+    }
 }
 
 /// Construct a harness for the given `kind`.

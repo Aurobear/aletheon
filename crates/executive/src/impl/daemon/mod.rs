@@ -58,6 +58,8 @@ pub struct DaemonConfig {
     pub agent_admission: cognit::config::AgentAdmissionConfig,
     /// 0 = unlimited agent iterations; populated from AppConfig.agent.max_iterations.
     pub agent_max_iterations: usize,
+    /// Cognitive harness selected by the typed root application config.
+    pub harness_kind: cognit::harness::HarnessKind,
     /// Secret-safe integration settings resolved by the host startup preflight.
     pub integrations: crate::core::config::ResolvedIntegrations,
 }

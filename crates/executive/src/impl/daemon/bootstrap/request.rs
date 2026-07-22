@@ -488,9 +488,16 @@ impl RequestHandler {
             // Wave 0: honor configured agent iteration cap (0 = unlimited)
             // instead of the hardcoded Default (50).
             max_iterations: config.agent_max_iterations,
+            harness_kind: config.harness_kind,
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
+        tracing::info!(
+            harness = crate::service::harness_factory::selected_harness_kind(
+                runtime_config_snapshot.harness_kind
+            ),
+            "cognitive harness selected from config"
+        );
         let cognitive_sessions: Arc<dyn crate::service::harness_factory::CognitiveSessionFactory> =
             Arc::new(
                 crate::service::harness_factory::LinearCognitiveSessionFactory::new(

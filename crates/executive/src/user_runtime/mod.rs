@@ -93,6 +93,7 @@ impl UserRuntimeConfig {
             backpressure: app.backpressure.clone(),
             agent_admission: app.agent.admission.clone(),
             agent_max_iterations: app.agent.max_iterations,
+            harness_kind: app.agent.harness_kind,
             integrations,
         };
         Ok(Self {
