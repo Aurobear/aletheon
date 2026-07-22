@@ -93,3 +93,20 @@ repository_file = "/etc/aletheon/credentials/restic-repository"
 minimum_free_bytes = 5368709120
 maximum_backup_age_secs = 129600
 maximum_sync_lag_secs = 3600
+
+# To enable Google, set deployment.integrations.google=true and provide these
+# non-secret values. Public OAuth clients do not require client_secret.
+[integrations.google]
+client_type = "public"
+# client_id = "...apps.googleusercontent.com"
+# redirect_uri = "http://127.0.0.1:8080/oauth/callback"
+# client_secret = { env = "ALETHEON_GOOGLE_CLIENT_SECRET" }
+drive_sync_enabled = false
+drive_file_ids = []
+
+# Search is independently optional. Enabling it makes both api_url and api_key
+# mandatory during startup preflight.
+[integrations.search]
+enabled = false
+# api_url = "https://search.example.invalid/v1/search"
+# api_key = { env = "ALETHEON_SEARCH_API_KEY" }

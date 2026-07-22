@@ -5,6 +5,7 @@
 //! stay within their declared limits across restarts.
 
 use super::{GoalBudgetUsage, GoalId, ObjectiveStore};
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
@@ -274,6 +275,33 @@ impl ObjectiveStore {
             .map_err(|e| GoalBudgetError::Storage(e.to_string()))?;
 
         if changed == 0 {
+            let existing = self
+                .db
+                .query_row(
+                    "SELECT input_tokens,output_tokens,cost_usd,attempts,status
+                     FROM goal_budget_ledger WHERE reservation_id=?1",
+                    rusqlite::params![reservation_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, u64>(0)?,
+                            row.get::<_, u64>(1)?,
+                            row.get::<_, f64>(2)?,
+                            row.get::<_, u32>(3)?,
+                            row.get::<_, String>(4)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|error| GoalBudgetError::Storage(error.to_string()))?;
+            if existing.is_some_and(|(input, output, cost, attempts, status)| {
+                status == "settled"
+                    && input == actual.input_tokens
+                    && output == actual.output_tokens
+                    && cost.to_bits() == actual.cost_usd.to_bits()
+                    && attempts == actual.attempts
+            }) {
+                return Ok(());
+            }
             return Err(GoalBudgetError::ReservationNotFound(reservation_id.into()));
         }
         Ok(())
@@ -561,7 +589,20 @@ mod tests {
             )
             .unwrap();
 
-        // Cannot settle again.
+        // An exact replay is idempotent for restart recovery.
+        store
+            .settle_goal_budget(
+                &res.reservation_id,
+                GoalBudgetUsage {
+                    input_tokens: 450,
+                    output_tokens: 200,
+                    cost_usd: 0.0,
+                    attempts: 1,
+                },
+            )
+            .unwrap();
+
+        // A conflicting replay remains fail closed.
         let err = store
             .settle_goal_budget(&res.reservation_id, GoalBudgetUsage::default())
             .unwrap_err();

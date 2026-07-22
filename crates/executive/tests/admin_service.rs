@@ -328,6 +328,43 @@ async fn disconnect_cancels_only_connection_owned_pending_approvals() {
     assert_eq!(live_rx.await.unwrap(), ApprovalDecision::Approve);
 }
 
+#[tokio::test]
+async fn approval_with_closed_consumer_reports_terminal_non_delivery() {
+    let pending = PendingApprovals::default();
+    let connection = fabric::ConnectionId::new();
+    let owner = ApprovalOwner::new(
+        fabric::PrincipalId::local_uid(1001),
+        fabric::ThreadId("thread-closed".into()),
+    );
+    let (sender, receiver) = oneshot::channel();
+    let approval_id = pending
+        .insert(
+            owner.clone(),
+            fabric::TurnId::new(),
+            "call-closed".into(),
+            "bash_exec".into(),
+            connection,
+            sender,
+        )
+        .await;
+    drop(receiver);
+
+    let resolved = pending
+        .resolve(&owner, &approval_id, ApprovalDecision::Approve)
+        .await
+        .unwrap();
+    assert_eq!(
+        resolved.delivery,
+        executive::service::admin_service::ApprovalDecisionDelivery::ConsumerGone
+    );
+    assert!(matches!(
+        pending
+            .resolve(&owner, &approval_id, ApprovalDecision::Approve)
+            .await,
+        Err(executive::service::admin_service::PendingApprovalError::NotFound)
+    ));
+}
+
 #[test]
 fn admin_rpc_has_no_concrete_runtime_registry_or_lock_access() {
     let source = include_str!("../src/impl/daemon/handler/rpc/rpc_admin.rs");

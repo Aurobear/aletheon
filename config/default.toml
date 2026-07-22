@@ -143,3 +143,11 @@ mode = "disabled"
 minimum_free_bytes = 5368709120
 maximum_backup_age_secs = 129600
 maximum_sync_lag_secs = 3600
+
+# Optional external adapters are disabled by default. Their credentials are
+# references to host-owned environment variables, never inline secret values.
+[integrations.google]
+client_type = "public"
+
+[integrations.search]
+enabled = false

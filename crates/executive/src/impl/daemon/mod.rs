@@ -58,6 +58,8 @@ pub struct DaemonConfig {
     pub agent_admission: cognit::config::AgentAdmissionConfig,
     /// 0 = unlimited agent iterations; populated from AppConfig.agent.max_iterations.
     pub agent_max_iterations: usize,
+    /// Secret-safe integration settings resolved by the host startup preflight.
+    pub integrations: crate::core::config::ResolvedIntegrations,
 }
 
 pub fn parse_conscious_arbitration_mode(
@@ -70,16 +72,6 @@ pub fn parse_conscious_arbitration_mode(
         Some(_) => Err(anyhow::anyhow!(
             "ALETHEON_CONSCIOUS_ARBITRATION_MODE must be 'observe' or 'enforce'"
         )),
-    }
-}
-
-pub fn conscious_arbitration_mode_from_env() -> anyhow::Result<fabric::ConsciousArbitrationMode> {
-    match std::env::var("ALETHEON_CONSCIOUS_ARBITRATION_MODE") {
-        Ok(value) => parse_conscious_arbitration_mode(Some(&value)),
-        Err(std::env::VarError::NotPresent) => parse_conscious_arbitration_mode(None),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            anyhow::bail!("ALETHEON_CONSCIOUS_ARBITRATION_MODE must contain valid Unicode")
-        }
     }
 }
 

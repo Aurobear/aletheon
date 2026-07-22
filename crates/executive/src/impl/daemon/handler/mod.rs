@@ -30,6 +30,8 @@ pub struct RequestHandler {
     pub(crate) grok_hardening: GrokHardeningConfig,
     /// Principal-scoped gate for repository-provided executable configuration.
     pub(crate) workspace_trust: Arc<crate::service::workspace_trust::WorkspaceTrustResolver>,
+    /// Retained optional MCP runtime for health projection and bounded shutdown.
+    pub(crate) mcp: Option<Arc<corpus::tools::mcp::manager::McpManager>>,
 }
 
 impl RequestHandler {
@@ -196,6 +198,12 @@ impl RequestHandler {
 
     /// Complete daemon-owned subsystem shutdown after transports stop accepting work.
     pub async fn shutdown_runtime(&self) -> anyhow::Result<()> {
+        if let Some(mcp) = &self.mcp {
+            let report = mcp.shutdown(std::time::Duration::from_secs(5)).await;
+            if !report.aborted_tasks.is_empty() {
+                tracing::warn!(tasks = ?report.aborted_tasks, "MCP shutdown aborted non-cooperative tasks after timeout");
+            }
+        }
         self.ports
             .admin
             .shutdown()

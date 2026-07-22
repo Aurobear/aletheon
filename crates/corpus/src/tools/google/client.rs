@@ -9,6 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+use crate::tools::outbound::EndpointPolicy;
+
 pub const MAX_GOOGLE_RESPONSE_BYTES: usize = 1_048_576;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -74,6 +76,7 @@ pub struct GoogleApiClient {
     client: reqwest::Client,
     credentials: Arc<dyn GoogleCredentialSource>,
     endpoints: GoogleApiEndpoints,
+    endpoint_policy: EndpointPolicy,
 }
 
 impl fmt::Debug for GoogleApiClient {
@@ -90,15 +93,40 @@ impl GoogleApiClient {
         credentials: Arc<dyn GoogleCredentialSource>,
         endpoints: GoogleApiEndpoints,
     ) -> Result<Self, GoogleApiError> {
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .build()
+        Self::with_endpoint_policy(credentials, endpoints, EndpointPolicy::public())
+    }
+
+    /// Explicit loopback-only transport for controlled local fixtures and
+    /// development adapters. Production Google endpoints use [`Self::new`].
+    pub fn new_local(
+        credentials: Arc<dyn GoogleCredentialSource>,
+        endpoints: GoogleApiEndpoints,
+    ) -> Result<Self, GoogleApiError> {
+        Self::with_endpoint_policy(credentials, endpoints, EndpointPolicy::local_loopback())
+    }
+
+    fn with_endpoint_policy(
+        credentials: Arc<dyn GoogleCredentialSource>,
+        endpoints: GoogleApiEndpoints,
+        endpoint_policy: EndpointPolicy,
+    ) -> Result<Self, GoogleApiError> {
+        for endpoint in [
+            &endpoints.gmail_base,
+            &endpoints.calendar_base,
+            &endpoints.drive_base,
+        ] {
+            endpoint_policy
+                .validate_identity(endpoint)
+                .map_err(|_| GoogleApiError::InvalidRequest)?;
+        }
+        let client = endpoint_policy
+            .client(Duration::from_secs(30))
             .map_err(|_| GoogleApiError::ProviderUnavailable)?;
         Ok(Self {
             client,
             credentials,
             endpoints,
+            endpoint_policy,
         })
     }
 
@@ -114,6 +142,7 @@ impl GoogleApiClient {
         url: reqwest::Url,
         cancel: &CancellationToken,
     ) -> Result<T, GoogleApiError> {
+        self.approve_request_endpoint(&url).await?;
         let mut token = self
             .credentials
             .access_token(principal, account, required_scope)
@@ -165,6 +194,7 @@ impl GoogleApiClient {
         if max_bytes == 0 || max_bytes > 16 * 1_048_576 {
             return Err(GoogleApiError::InvalidRequest);
         }
+        self.approve_request_endpoint(&url).await?;
         let mut token = self
             .credentials
             .access_token(principal, account, required_scope)
@@ -222,6 +252,29 @@ impl GoogleApiClient {
                 _ => return Err(GoogleApiError::ProviderUnavailable),
             }
         }
+    }
+
+    async fn approve_request_endpoint(&self, url: &reqwest::Url) -> Result<(), GoogleApiError> {
+        let approved_authority = [
+            &self.endpoints.gmail_base,
+            &self.endpoints.calendar_base,
+            &self.endpoints.drive_base,
+        ]
+        .iter()
+        .filter_map(|endpoint| reqwest::Url::parse(endpoint).ok())
+        .any(|endpoint| {
+            endpoint.scheme() == url.scheme()
+                && endpoint.host_str() == url.host_str()
+                && endpoint.port_or_known_default() == url.port_or_known_default()
+        });
+        if !approved_authority {
+            return Err(GoogleApiError::InvalidRequest);
+        }
+        self.endpoint_policy
+            .approve(url.as_str())
+            .await
+            .map(|_| ())
+            .map_err(|_| GoogleApiError::ProviderUnavailable)
     }
 }
 

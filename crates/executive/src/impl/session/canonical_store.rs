@@ -16,6 +16,14 @@ pub struct CanonicalSessionStore {
     connection: Mutex<Connection>,
 }
 
+const DATABASE_SCHEMA_VERSION: i64 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MigrationStep {
+    Schema,
+    Version,
+}
+
 pub fn default_session_db_path() -> std::path::PathBuf {
     fabric::paths::xdg_data_dir().join("sessions-v1.db")
 }
@@ -28,31 +36,7 @@ pub fn session_db_path(state_root: &Path) -> std::path::PathBuf {
 impl CanonicalSessionStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path)?;
-        connection.execute_batch(
-            "PRAGMA foreign_keys = ON;
-             CREATE TABLE IF NOT EXISTS sessions(
-               session_id TEXT PRIMARY KEY,
-               schema_version INTEGER NOT NULL,
-               record_json TEXT NOT NULL,
-               next_sequence INTEGER NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS session_items(
-               session_id TEXT NOT NULL,
-               sequence INTEGER NOT NULL,
-               item_id TEXT NOT NULL UNIQUE,
-               turn_id TEXT NOT NULL,
-               item_json TEXT NOT NULL,
-               PRIMARY KEY(session_id, sequence),
-               FOREIGN KEY(session_id) REFERENCES sessions(session_id)
-             );
-             CREATE TABLE IF NOT EXISTS recovered_turns(
-               session_id TEXT NOT NULL,
-               turn_id TEXT NOT NULL,
-               classification TEXT NOT NULL,
-               PRIMARY KEY(session_id, turn_id),
-               FOREIGN KEY(session_id) REFERENCES sessions(session_id)
-             );",
-        )?;
+        migrate(&connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -84,6 +68,72 @@ impl CanonicalSessionStore {
         }
         Ok(())
     }
+}
+
+fn migrate(connection: &Connection) -> Result<()> {
+    migrate_with_step_hook(connection, |_| Ok(()))
+}
+
+fn migrate_with_step_hook(
+    connection: &Connection,
+    mut after_step: impl FnMut(MigrationStep) -> Result<()>,
+) -> Result<()> {
+    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    let current: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if current > DATABASE_SCHEMA_VERSION {
+        bail!(
+            "session database schema version {current} is newer than supported {DATABASE_SCHEMA_VERSION}"
+        );
+    }
+
+    if current < DATABASE_SCHEMA_VERSION {
+        // SQLite DDL and the version marker share one transaction. An
+        // interruption therefore leaves either the previous database or a
+        // complete v1 schema, never a version that overstates its structure.
+        let tx = rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+        tx.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE IF NOT EXISTS sessions(
+               session_id TEXT PRIMARY KEY,
+               schema_version INTEGER NOT NULL,
+               record_json TEXT NOT NULL,
+               next_sequence INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS session_items(
+               session_id TEXT NOT NULL,
+               sequence INTEGER NOT NULL,
+               item_id TEXT NOT NULL UNIQUE,
+               turn_id TEXT NOT NULL,
+               item_json TEXT NOT NULL,
+               PRIMARY KEY(session_id, sequence),
+               FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+             );
+             CREATE TABLE IF NOT EXISTS recovered_turns(
+               session_id TEXT NOT NULL,
+               turn_id TEXT NOT NULL,
+               classification TEXT NOT NULL,
+               PRIMARY KEY(session_id, turn_id),
+               FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+             );",
+        )?;
+        after_step(MigrationStep::Schema)?;
+        tx.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;
+        after_step(MigrationStep::Version)?;
+        tx.commit()?;
+    }
+
+    // A database that claims a supported version but has a partial or foreign
+    // layout must fail closed before it is placed on a production path.
+    connection
+        .prepare("SELECT session_id,schema_version,record_json,next_sequence FROM sessions LIMIT 0")
+        .context("session database v1 sessions schema is incomplete")?;
+    connection
+        .prepare("SELECT session_id,sequence,item_id,turn_id,item_json FROM session_items LIMIT 0")
+        .context("session database v1 session_items schema is incomplete")?;
+    connection
+        .prepare("SELECT session_id,turn_id,classification FROM recovered_turns LIMIT 0")
+        .context("session database v1 recovered_turns schema is incomplete")?;
+    Ok(())
 }
 
 #[async_trait]
@@ -344,6 +394,182 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MIGRATION_STEPS: [MigrationStep; 2] = [MigrationStep::Schema, MigrationStep::Version];
+
+    fn legacy_schema(connection: &Connection) {
+        connection
+            .execute_batch(
+                "CREATE TABLE sessions(
+                   session_id TEXT PRIMARY KEY,
+                   schema_version INTEGER NOT NULL,
+                   record_json TEXT NOT NULL,
+                   next_sequence INTEGER NOT NULL
+                 );
+                 CREATE TABLE session_items(
+                   session_id TEXT NOT NULL,
+                   sequence INTEGER NOT NULL,
+                   item_id TEXT NOT NULL UNIQUE,
+                   turn_id TEXT NOT NULL,
+                   item_json TEXT NOT NULL,
+                   PRIMARY KEY(session_id, sequence),
+                   FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+                 );
+                 CREATE TABLE recovered_turns(
+                   session_id TEXT NOT NULL,
+                   turn_id TEXT NOT NULL,
+                   classification TEXT NOT NULL,
+                   PRIMARY KEY(session_id, turn_id),
+                   FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+                 );",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn every_database_migration_step_failure_rolls_back_and_reopen_completes() {
+        for failed_step in MIGRATION_STEPS {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("sessions.db");
+            let connection = Connection::open(&path).unwrap();
+            let error = migrate_with_step_hook(&connection, |step| {
+                if step == failed_step {
+                    bail!("injected failure at {step:?}");
+                }
+                Ok(())
+            });
+            assert!(error.is_err(), "step {failed_step:?} did not fail");
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                0,
+                "version advanced at {failed_step:?}"
+            );
+            drop(connection);
+
+            let reopened = CanonicalSessionStore::open(&path).unwrap();
+            assert_eq!(
+                reopened
+                    .connection
+                    .lock()
+                    .unwrap()
+                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                DATABASE_SCHEMA_VERSION
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_unversioned_database_fixture_is_upgraded_without_record_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("sessions.db");
+        let connection = Connection::open(&path).unwrap();
+        legacy_schema(&connection);
+        let session = SessionRecord {
+            schema_version: SESSION_SCHEMA_VERSION,
+            id: SessionId("legacy-session".into()),
+            parent: None,
+            created_at_ms: 17,
+            status: fabric::SessionStatus::Active,
+        };
+        connection
+            .execute(
+                "INSERT INTO sessions(session_id,schema_version,record_json,next_sequence) VALUES(?1,?2,?3,1)",
+                params![session.id.0, session.schema_version, serde_json::to_string(&session).unwrap()],
+            )
+            .unwrap();
+        drop(connection);
+
+        let store = CanonicalSessionStore::open(&path).unwrap();
+        assert_eq!(
+            store
+                .connection
+                .lock()
+                .unwrap()
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            DATABASE_SCHEMA_VERSION
+        );
+        assert_eq!(
+            store.load_session(&session.id).await.unwrap(),
+            Some(session)
+        );
+    }
+
+    #[tokio::test]
+    async fn record_schema_validation_remains_independent_from_database_version() {
+        let store = CanonicalSessionStore::open(":memory:").unwrap();
+        let session_id = SessionId("unsupported-record".into());
+        let error = store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION + 1,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 0,
+                status: fabric::SessionStatus::Active,
+            })
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("unsupported session schema"));
+
+        store
+            .create(SessionRecord {
+                schema_version: SESSION_SCHEMA_VERSION,
+                id: session_id.clone(),
+                parent: None,
+                created_at_ms: 0,
+                status: fabric::SessionStatus::Active,
+            })
+            .await
+            .unwrap();
+        let error = store
+            .append(
+                &session_id,
+                1,
+                ItemRecord {
+                    schema_version: SESSION_SCHEMA_VERSION + 1,
+                    id: ItemId::new(),
+                    session_id: session_id.clone(),
+                    turn_id: fabric::TurnId::new(),
+                    sequence: 1,
+                    created_at_ms: 0,
+                    payload: ItemPayload::UserMessage {
+                        content: "unsupported".into(),
+                    },
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("unsupported item schema"));
+    }
+
+    #[test]
+    fn newer_or_incomplete_claimed_database_schema_fails_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let newer = temp.path().join("newer.db");
+        let connection = Connection::open(&newer).unwrap();
+        connection.pragma_update(None, "user_version", 99).unwrap();
+        drop(connection);
+        let error = match CanonicalSessionStore::open(&newer) {
+            Ok(_) => panic!("newer database unexpectedly opened"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("newer than supported"));
+
+        let incomplete = temp.path().join("incomplete.db");
+        let connection = Connection::open(&incomplete).unwrap();
+        connection
+            .execute_batch("CREATE TABLE sessions(session_id TEXT); PRAGMA user_version=1;")
+            .unwrap();
+        drop(connection);
+        let error = match CanonicalSessionStore::open(&incomplete) {
+            Ok(_) => panic!("incomplete database unexpectedly opened"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("sessions schema is incomplete"));
+    }
 
     async fn create_incomplete_turn(
         store: &CanonicalSessionStore,

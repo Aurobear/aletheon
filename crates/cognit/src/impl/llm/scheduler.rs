@@ -14,8 +14,8 @@ use fabric::message::Message;
 use fabric::Clock;
 
 use super::provider::{LlmProvider, LlmResponse, ToolDefinition};
-use super::provider_factory::create_provider_by_kind;
-use crate::config::{ProviderConfig, Transport};
+use super::provider_factory::{create_provider, ProviderBuildOptions};
+use crate::config::{ProviderConfig, ProviderTimeoutConfig};
 
 /// How a provider error should be handled during retry/failover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,10 +84,7 @@ pub struct RoutingRule {
 /// Configuration for a single LLM provider.
 #[derive(Debug, Clone)]
 pub struct SchedulerProviderConfig {
-    pub name: String,
-    pub base_url: String,
-    pub api_key: String,
-    pub kind: String, // "anthropic" | "openai" | "ollama"
+    pub definition: ProviderConfig,
     pub model: String,
 }
 
@@ -96,6 +93,8 @@ pub struct SchedulerProviderConfig {
 pub struct SchedulerConfig {
     pub providers: Vec<SchedulerProviderConfig>,
     pub routing: Vec<RoutingRule>,
+    pub max_tokens: u32,
+    pub provider_timeouts: ProviderTimeoutConfig,
 }
 
 /// Centralized LLM scheduler with purpose-based routing and failover.
@@ -160,21 +159,15 @@ impl LlmScheduler {
     pub fn new(config: &SchedulerConfig, clock: Arc<dyn Clock>) -> Result<Self> {
         let mut providers = HashMap::new();
         for pc in &config.providers {
-            let provider_config = ProviderConfig {
-                name: pc.name.clone(),
-                base_url: pc.base_url.clone(),
-                api_key: resolve_api_key(&pc.api_key, &pc.name),
-                transport: match pc.kind.as_str() {
-                    "anthropic" => Transport::Anthropic,
-                    "ollama" => Transport::Openai,
-                    _ => Transport::Openai,
+            let provider = create_provider(
+                &pc.definition,
+                &pc.model,
+                ProviderBuildOptions {
+                    max_tokens: config.max_tokens,
+                    timeouts: config.provider_timeouts,
                 },
-                models: vec![pc.model.clone()],
-                max_context_length: None,
-                pricing: None,
-            };
-            let provider = create_provider_by_kind(&pc.kind, &provider_config, &pc.model)?;
-            providers.insert(pc.name.clone(), provider);
+            )?;
+            providers.insert(pc.definition.name.clone(), provider);
         }
 
         let mut routing = HashMap::new();
@@ -185,10 +178,14 @@ impl LlmScheduler {
         let default_provider = config
             .providers
             .first()
-            .map(|p| p.name.clone())
+            .map(|p| p.definition.name.clone())
             .unwrap_or_default();
 
-        let failover_order: Vec<String> = config.providers.iter().map(|p| p.name.clone()).collect();
+        let failover_order: Vec<String> = config
+            .providers
+            .iter()
+            .map(|p| p.definition.name.clone())
+            .collect();
 
         Ok(Self {
             providers,
@@ -395,15 +392,6 @@ impl LlmScheduler {
     }
 }
 
-/// Resolve API key: config value first, then env var `<NAME>_API_KEY`.
-fn resolve_api_key(api_key: &str, provider_name: &str) -> String {
-    if !api_key.is_empty() {
-        return api_key.to_string();
-    }
-    let env_name = format!("{}_API_KEY", provider_name.to_uppercase().replace('-', "_"));
-    std::env::var(&env_name).unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::provider::{LlmResponse, LlmStream, StopReason, Usage};
@@ -412,31 +400,26 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
-    fn test_resolve_api_key_from_config() {
-        assert_eq!(resolve_api_key("sk-secret", "test"), "sk-secret");
-    }
-
-    #[test]
-    fn test_resolve_api_key_from_env() {
-        // When api_key is empty, falls back to env var
-        let result = resolve_api_key("", "nonexistent_provider_xyz");
-        assert_eq!(result, ""); // env var not set
-    }
-
-    #[test]
     fn test_scheduler_config_construction() {
         let config = SchedulerConfig {
             providers: vec![SchedulerProviderConfig {
-                name: "executor".to_string(),
-                base_url: "https://api.openai.com".to_string(),
-                api_key: "sk-test".to_string(),
-                kind: "openai".to_string(),
+                definition: ProviderConfig {
+                    name: "executor".to_string(),
+                    base_url: "https://api.openai.com".to_string(),
+                    api_key: "sk-test".to_string(),
+                    transport: crate::config::Transport::Openai,
+                    models: vec!["gpt-4o".to_string()],
+                    max_context_length: None,
+                    pricing: None,
+                },
                 model: "gpt-4o".to_string(),
             }],
             routing: vec![RoutingRule {
                 purpose: LlmPurpose::Execute,
                 provider_name: "executor".to_string(),
             }],
+            max_tokens: 4_096,
+            provider_timeouts: ProviderTimeoutConfig::default(),
         };
         assert_eq!(config.providers.len(), 1);
         assert_eq!(config.routing.len(), 1);

@@ -1,4 +1,4 @@
-use crate::r#impl::inference::{InferenceConfig, InferenceRouter, ProviderConfig};
+use crate::r#impl::inference::{InferenceCandidate, InferenceConfig, InferenceRouter};
 
 /// Bridges InferenceRouter into CognitCore.
 ///
@@ -10,7 +10,7 @@ pub struct InferenceBridge {
 
 impl InferenceBridge {
     /// Create a bridge from an InferenceConfig.
-    /// Internally builds default Local + Cloud ProviderConfigs.
+    /// Internally builds default local and cloud routing candidates.
     pub fn new(config: InferenceConfig) -> Self {
         Self {
             router: InferenceRouter::from_config(&config),
@@ -18,7 +18,7 @@ impl InferenceBridge {
     }
 
     /// Select the optimal provider for a given message text.
-    pub fn select_provider(&self, message: &str) -> &ProviderConfig {
+    pub fn select_provider(&self, message: &str) -> &InferenceCandidate {
         self.router.select_provider(message)
     }
 

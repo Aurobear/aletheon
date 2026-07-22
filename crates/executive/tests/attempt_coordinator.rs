@@ -496,3 +496,47 @@ async fn begin_persistence_failure_revokes_budget_before_any_runtime_call() {
     ));
     assert_eq!(h.executor.calls.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn settlement_failure_retries_terminal_attempt_without_runtime_reinvocation() {
+    let h = harness(default_budget(), vec![Ok(success())]);
+    let injector = rusqlite::Connection::open(h._file.path()).unwrap();
+    injector
+        .execute_batch(
+            "CREATE TRIGGER fail_test_budget_settlement
+             BEFORE UPDATE OF status ON goal_budget_ledger
+             WHEN NEW.status='settled'
+             BEGIN SELECT RAISE(ABORT, 'injected settlement failure'); END;",
+        )
+        .unwrap();
+
+    let first = h
+        .coordinator
+        .execute_one(request(&h.store, h.goal_id, 1), CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(matches!(first, AttemptCoordinatorError::Budget(_)));
+    let attempts = h
+        .store
+        .lock()
+        .unwrap()
+        .attempts_for_goal(h.goal_id, usize::MAX)
+        .unwrap();
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].status, fabric::AttemptStatus::Succeeded);
+    assert_eq!(attempts[0].evidence[0].content, "12 passed");
+
+    injector
+        .execute_batch("DROP TRIGGER fail_test_budget_settlement;")
+        .unwrap();
+    let recovered = h
+        .coordinator
+        .execute_one(request(&h.store, h.goal_id, 1), CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(matches!(
+        recovered,
+        AttemptCoordinationOutcome::Succeeded { .. }
+    ));
+    assert_eq!(h.executor.calls.load(Ordering::SeqCst), 1);
+}

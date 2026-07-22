@@ -41,7 +41,11 @@ impl UserRuntimeConfig {
         enable_evolution: bool,
         enable_execd: bool,
     ) -> anyhow::Result<Self> {
-        let mut app = crate::core::config::load_for_host(None, config_path)?.value;
+        let loaded = crate::core::config::load_for_host(None, config_path)?;
+        let integrations = loaded
+            .preflight_integrations(&crate::core::config::EnvironmentCredentialResolver)
+            .context("optional integration startup preflight")?;
+        let mut app = loaded.value;
         // CLI activation is additive: an absent flag preserves the layered
         // config value, while `--execd` can only enable the backend.
         apply_execd_override(&mut app.grok_hardening, enable_execd);
@@ -77,7 +81,8 @@ impl UserRuntimeConfig {
             data_dir: paths.state_root.to_string_lossy().into_owned(),
             system_prompt: app.agent.system_prompt.clone(),
             sandbox_preference: "auto".into(),
-            conscious_arbitration_mode: crate::r#impl::daemon::conscious_arbitration_mode_from_env(
+            conscious_arbitration_mode: crate::r#impl::daemon::parse_conscious_arbitration_mode(
+                app.bootstrap.conscious_arbitration_mode.as_deref(),
             )?,
             enable_evolution,
             mcp_servers: crate::core::mcp_config::convert_mcp_servers(&app.mcp_servers),
@@ -88,6 +93,7 @@ impl UserRuntimeConfig {
             backpressure: app.backpressure.clone(),
             agent_admission: app.agent.admission.clone(),
             agent_max_iterations: app.agent.max_iterations,
+            integrations,
         };
         Ok(Self {
             request,

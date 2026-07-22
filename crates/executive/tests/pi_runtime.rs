@@ -219,6 +219,16 @@ fn report(evidence: &[fabric::AttemptEvidence]) -> CodingJobReport {
     serde_json::from_str(&item.content).unwrap()
 }
 
+fn capability_audit(
+    evidence: &[fabric::AttemptEvidence],
+) -> executive::service::verification::CapabilityAuditSummary {
+    let item = evidence
+        .iter()
+        .find(|item| item.kind == "coding_capability_audit")
+        .expect("capability audit evidence");
+    serde_json::from_str(&item.content).unwrap()
+}
+
 #[tokio::test]
 async fn successful_attempt_isolated_from_main_and_returns_structured_report() {
     let fixture = Fixture::new(
@@ -251,7 +261,33 @@ printf '%s\n' \
         .any(|item| item.kind == "pi_build_identity"));
     assert_eq!(report.changed_files.len(), 1);
     assert_eq!(report.changed_files[0].path, PathBuf::from("src/lib.rs"));
-    assert!(report.diff_sha256.is_some());
+    let diff_evidence = result
+        .evidence
+        .iter()
+        .find(|item| item.kind == "coding_diff_base64")
+        .unwrap();
+    let diff = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &diff_evidence.content,
+    )
+    .unwrap();
+    let diff_sha256 = format!("{:x}", Sha256::digest(&diff));
+    assert_eq!(report.diff_sha256.as_deref(), Some(diff_sha256.as_str()));
+    assert_eq!(
+        report.diff_artifact,
+        Some(PathBuf::from("coding-diffs").join(format!("{}.diff", request.job.job_id.0)))
+    );
+    let audit = capability_audit(&result.evidence);
+    assert!(audit.audit_present);
+    assert_eq!(
+        audit.observed_capabilities,
+        vec![
+            "filesystem_isolation",
+            "network_isolation",
+            "resource_limits"
+        ]
+    );
+    assert_eq!(audit.unavailable_capabilities, vec!["seccomp_filter"]);
     assert_eq!(
         std::fs::read_to_string(fixture.repository.join("src/lib.rs")).unwrap(),
         "pub fn value() -> u8 { 1 }\n"

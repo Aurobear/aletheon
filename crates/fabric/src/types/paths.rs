@@ -421,11 +421,27 @@ pub fn socket_path() -> PathBuf {
 }
 
 pub fn xdg_config_dir() -> PathBuf {
-    home_dir().join(".config").join("aletheon")
+    std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".config"))
+        .join("aletheon")
 }
 
 pub fn xdg_data_dir() -> PathBuf {
-    home_dir().join(".local").join("share").join("aletheon")
+    std::env::var_os("XDG_DATA_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".local/share"))
+        .join("aletheon")
+}
+
+pub fn xdg_cache_dir() -> PathBuf {
+    std::env::var_os("XDG_CACHE_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".cache"))
+        .join("aletheon")
 }
 
 pub fn user_hooks_dir() -> PathBuf {
@@ -473,9 +489,10 @@ pub fn env_file() -> PathBuf {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var("HOME")
+    std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .unwrap_or_else(|| PathBuf::from("/nonexistent/aletheon-missing-home"))
 }
 
 #[cfg(test)]

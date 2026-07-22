@@ -137,7 +137,7 @@ fn client(endpoint: &str) -> (GoogleApiClient, PrincipalId, ExternalIdentityId) 
         owner: principal.clone(),
         account,
     });
-    let client = GoogleApiClient::new(
+    let client = GoogleApiClient::new_local(
         credentials,
         GoogleApiEndpoints {
             gmail_base: endpoint.into(),

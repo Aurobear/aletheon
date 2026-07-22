@@ -667,12 +667,13 @@ fn default_system_prompt() -> String {
 }
 
 /// Wire protocol between client and LLM server.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum Transport {
     Openai,
     Anthropic,
+    Ollama,
     #[default]
     Auto,
 }
@@ -699,7 +700,7 @@ pub struct ProviderConfig {
 }
 
 /// Optional static per-provider pricing (USD per 1K tokens) for cost accounting.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderPricing {
     pub input_per_1k: f64,

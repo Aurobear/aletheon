@@ -148,6 +148,13 @@ impl ToolRegistry {
     /// Construct the built-in registry with daemon-trusted network authority.
     /// The policy is host configuration, never tool/model input.
     pub fn with_network_policy(policy: fabric::network_policy::NetworkPolicy) -> Self {
+        Self::with_network_policy_and_search(policy, None)
+    }
+
+    pub fn with_network_policy_and_search(
+        policy: fabric::network_policy::NetworkPolicy,
+        search: Option<super::web_search::WebSearchConfig>,
+    ) -> Self {
         let mut registry = Self::new();
         // Register built-in tools — panics on duplicate names (should never happen)
         registry
@@ -199,7 +206,9 @@ impl ToolRegistry {
             .expect("duplicate built-in tool");
         registry
             .register(Arc::new(
-                super::web_search::WebSearchTool::new().with_network_policy(policy),
+                super::web_search::WebSearchTool::new()
+                    .with_network_policy(policy)
+                    .with_config(search),
             ))
             .expect("duplicate built-in tool");
         // Task tools share a single TaskStore.

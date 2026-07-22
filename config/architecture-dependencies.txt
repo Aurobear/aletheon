@@ -5,7 +5,6 @@ dependency|aletheon|interact
 dependency|basic_agent|executive
 dependency|basic_agent|fabric
 dependency|cognit|fabric
-dependency|cognit|kernel
 dependency|corpus|fabric
 dependency|corpus|kernel
 dependency|corpus|platform
@@ -25,7 +24,6 @@ dependency|executive|cognit
 dependency|executive|corpus
 dependency|executive|dasein
 dependency|executive|fabric
-dependency|executive|hardware
 dependency|executive|kernel
 dependency|executive|metacog
 dependency|executive|mnemosyne

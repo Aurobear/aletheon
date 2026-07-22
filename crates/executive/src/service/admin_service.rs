@@ -98,6 +98,13 @@ pub enum PendingApprovalError {
 pub struct ResolvedPendingApproval {
     pub owner: ApprovalOwner,
     pub tool: String,
+    pub delivery: ApprovalDecisionDelivery,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApprovalDecisionDelivery {
+    Delivered,
+    ConsumerGone,
 }
 
 #[derive(Clone, Default)]
@@ -153,10 +160,19 @@ impl PendingApprovals {
         let record = pending
             .remove(&key)
             .expect("pending key was selected while holding the same lock");
-        let _ = record.respond.send(decision);
+        let delivery = if record.respond.send(decision).is_ok() {
+            ApprovalDecisionDelivery::Delivered
+        } else {
+            warn!(
+                approval_id,
+                "approval decision consumer was already gone; pending request closed"
+            );
+            ApprovalDecisionDelivery::ConsumerGone
+        };
         Ok(ResolvedPendingApproval {
             owner: key.owner,
             tool: record.tool,
+            delivery,
         })
     }
 
@@ -203,7 +219,12 @@ impl PendingApprovals {
             .collect::<Vec<_>>();
         for key in &keys {
             if let Some(record) = pending.remove(key) {
-                let _ = record.respond.send(ApprovalDecision::Deny);
+                if record.respond.send(ApprovalDecision::Deny).is_err() {
+                    warn!(
+                        approval_id = key.approval_id,
+                        "disconnected approval consumer was already gone"
+                    );
+                }
             }
         }
         keys.len()
@@ -540,6 +561,9 @@ impl AdminUseCases for AdminService {
             )
             .await
             .map_err(|error| AdminServiceError::Operation(error.to_string()))?;
+        if resolved.delivery == ApprovalDecisionDelivery::ConsumerGone {
+            return Ok(false);
+        }
         if decision == ApprovalDecision::ApproveForSession {
             self.resources
                 .session_approvals

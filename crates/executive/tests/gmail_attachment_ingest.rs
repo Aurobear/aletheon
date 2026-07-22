@@ -323,6 +323,40 @@ async fn malformed_bombs_partial_download_and_type_mismatch_fail_closed() {
 }
 
 #[tokio::test]
+async fn attachment_without_filename_is_rejected_without_panicking_or_downloading() {
+    let fixture = Fixture::new();
+    let message = fixture.message(vec![GmailMimePart {
+        part_id: "nameless".into(),
+        mime_type: "text/plain".into(),
+        filename: None,
+        declared_size: None,
+        inline_body: None,
+        attachment_id: Some("attachment-nameless".into()),
+        parts: Vec::new(),
+    }]);
+    let no_download = fetcher([]);
+
+    let result = GmailMessageIngester::new(GmailIngestConfig::default())
+        .unwrap()
+        .ingest(
+            &message,
+            &no_download,
+            &fixture.artifacts(),
+            2_000,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("malformed attachment must be represented as rejected evidence");
+
+    assert_eq!(no_download.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(result.attachments.len(), 1);
+    assert_eq!(
+        result.attachments[0].unavailable_reason.as_deref(),
+        Some("missing_filename")
+    );
+}
+
+#[tokio::test]
 async fn duplicates_cancellation_and_restart_midway_leave_no_partial_evidence() {
     let fixture = Fixture::new();
     let message = fixture.message(vec![

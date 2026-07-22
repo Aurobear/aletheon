@@ -1,18 +1,21 @@
 use serde::{Deserialize, Serialize};
 
-/// Type of inference provider.
+/// Scheduling class for an inference candidate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ProviderType {
+pub enum ProviderClass {
     Local,
     Cloud,
 }
 
-/// Configuration for an inference provider.
+/// A model candidate used only by the heuristic inference router.
+///
+/// This is deliberately not the canonical provider configuration. Transport,
+/// credentials, timeouts and pricing are owned by `crate::config::ProviderConfig`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderConfig {
+pub struct InferenceCandidate {
     pub id: String,
     pub name: String,
-    pub provider_type: ProviderType,
+    pub provider_class: ProviderClass,
     pub model: String,
     pub api_url: Option<String>,
     pub max_context_length: usize,

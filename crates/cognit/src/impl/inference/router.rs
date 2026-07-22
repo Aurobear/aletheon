@@ -1,11 +1,11 @@
 use super::classifier::{Complexity, IntentClassifier};
-use super::provider_config::{ProviderConfig, ProviderType};
+use super::provider_config::{InferenceCandidate, ProviderClass};
 use super::InferenceConfig;
 use tracing::debug;
 
 /// Routes inference requests to appropriate providers.
 pub struct InferenceRouter {
-    providers: Vec<ProviderConfig>,
+    providers: Vec<InferenceCandidate>,
     classifier: IntentClassifier,
     /// Model identifier for local provider (from InferenceConfig).
     local_model: String,
@@ -18,7 +18,7 @@ pub struct InferenceRouter {
 }
 
 impl InferenceRouter {
-    pub fn new(providers: Vec<ProviderConfig>) -> Self {
+    pub fn new(providers: Vec<InferenceCandidate>) -> Self {
         Self {
             providers,
             classifier: IntentClassifier::new(),
@@ -32,20 +32,20 @@ impl InferenceRouter {
     /// Create an InferenceRouter from an InferenceConfig, building default providers.
     pub fn from_config(config: &InferenceConfig) -> Self {
         let providers = vec![
-            ProviderConfig {
+            InferenceCandidate {
                 id: "local".into(),
                 name: config.local_model.clone(),
-                provider_type: ProviderType::Local,
+                provider_class: ProviderClass::Local,
                 model: config.local_model.clone(),
                 api_url: None,
                 max_context_length: 8192,
                 cost_per_1k_tokens: 0.0,
                 latency_ms: 100,
             },
-            ProviderConfig {
+            InferenceCandidate {
                 id: "cloud".into(),
                 name: config.cloud_model.clone(),
-                provider_type: ProviderType::Cloud,
+                provider_class: ProviderClass::Cloud,
                 model: config.cloud_model.clone(),
                 api_url: None,
                 max_context_length: 200_000,
@@ -64,7 +64,7 @@ impl InferenceRouter {
     }
 
     /// Select the best provider for a given message.
-    pub fn select_provider(&self, message: &str) -> &ProviderConfig {
+    pub fn select_provider(&self, message: &str) -> &InferenceCandidate {
         let complexity = self.classifier.classify(message);
         debug!(?complexity, "Classified message complexity");
 
@@ -73,7 +73,7 @@ impl InferenceRouter {
                 // Use local provider if available
                 self.providers
                     .iter()
-                    .filter(|p| matches!(p.provider_type, ProviderType::Local))
+                    .filter(|p| matches!(p.provider_class, ProviderClass::Local))
                     .min_by_key(|p| p.latency_ms)
                     .or_else(|| self.providers.first())
                     .unwrap()
@@ -82,7 +82,7 @@ impl InferenceRouter {
                 // Use cost-optimal cloud provider
                 self.providers
                     .iter()
-                    .filter(|p| matches!(p.provider_type, ProviderType::Cloud))
+                    .filter(|p| matches!(p.provider_class, ProviderClass::Cloud))
                     .min_by(|a, b| {
                         a.cost_per_1k_tokens
                             .partial_cmp(&b.cost_per_1k_tokens)
@@ -95,7 +95,7 @@ impl InferenceRouter {
                 // Use quality-first cloud provider (longest context)
                 self.providers
                     .iter()
-                    .filter(|p| matches!(p.provider_type, ProviderType::Cloud))
+                    .filter(|p| matches!(p.provider_class, ProviderClass::Cloud))
                     .max_by_key(|p| p.max_context_length)
                     .or_else(|| self.providers.first())
                     .unwrap()
@@ -146,32 +146,32 @@ impl InferenceRouter {
 mod tests {
     use super::*;
 
-    fn make_providers() -> Vec<ProviderConfig> {
+    fn make_providers() -> Vec<InferenceCandidate> {
         vec![
-            ProviderConfig {
+            InferenceCandidate {
                 id: "local".into(),
                 name: "Local LLM".into(),
-                provider_type: ProviderType::Local,
+                provider_class: ProviderClass::Local,
                 model: "qwen3-8b".into(),
                 api_url: None,
                 max_context_length: 8192,
                 cost_per_1k_tokens: 0.0,
                 latency_ms: 100,
             },
-            ProviderConfig {
+            InferenceCandidate {
                 id: "cloud-cheap".into(),
                 name: "Cloud Cheap".into(),
-                provider_type: ProviderType::Cloud,
+                provider_class: ProviderClass::Cloud,
                 model: "deepseek-v3".into(),
                 api_url: Some("https://api.deepseek.com".into()),
                 max_context_length: 32768,
                 cost_per_1k_tokens: 0.001,
                 latency_ms: 500,
             },
-            ProviderConfig {
+            InferenceCandidate {
                 id: "cloud-quality".into(),
                 name: "Cloud Quality".into(),
-                provider_type: ProviderType::Cloud,
+                provider_class: ProviderClass::Cloud,
                 model: "claude-opus".into(),
                 api_url: Some("https://api.anthropic.com".into()),
                 max_context_length: 200000,

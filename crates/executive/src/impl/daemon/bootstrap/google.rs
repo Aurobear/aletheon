@@ -33,16 +33,11 @@ pub(super) fn register_configured_google_read_tools(
     cancel: &CancellationToken,
     artifact_root: &std::path::Path,
     storage_quota: Option<crate::r#impl::storage_quota::StorageQuota>,
+    config: Option<&crate::core::config::ResolvedGoogleIntegration>,
 ) -> anyhow::Result<Option<ConfiguredGoogleReadTools>> {
-    let client_id = match std::env::var("ALETHEON_GOOGLE_CLIENT_ID") {
-        Ok(value) if !value.trim().is_empty() => value,
-        _ => return Ok(None),
+    let Some(config) = config else {
+        return Ok(None);
     };
-    let redirect_uri = std::env::var("ALETHEON_GOOGLE_REDIRECT_URI")
-        .context("ALETHEON_GOOGLE_REDIRECT_URI is required when Google is configured")?;
-    let client_secret = std::env::var("ALETHEON_GOOGLE_CLIENT_SECRET")
-        .ok()
-        .filter(|value| !value.is_empty());
 
     let repository = ExternalIdentityRepository::open(objective_db_path)
         .context("opening external identity repository")?;
@@ -55,17 +50,18 @@ pub(super) fn register_configured_google_read_tools(
         fabric::ExternalScope::GmailReadonly,
         fabric::ExternalScope::CalendarReadonly,
     ];
-    if std::env::var("ALETHEON_GOOGLE_DRIVE_SYNC_ENABLED")
-        .is_ok_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
-    {
+    if config.drive_sync_enabled {
         scopes.push(fabric::ExternalScope::DriveReadonly);
     }
     let tokens = corpus::tools::mcp::token_store::TokenStore::open_default()
         .context("opening encrypted Google credential vault")?;
     let oauth = corpus::tools::google::oauth::GoogleOAuthProvider::new(
-        client_id,
-        client_secret,
-        redirect_uri,
+        config.client_id.clone(),
+        config
+            .client_secret
+            .as_ref()
+            .map(|value| value.expose().to_owned()),
+        config.redirect_uri.clone(),
         scopes,
         tokens,
         clock.clone(),
@@ -89,16 +85,13 @@ pub(super) fn register_configured_google_read_tools(
     });
     tools.register_google_read_tools(gmail, calendar, accounts)?;
 
-    let gmail_ingress = match (
-        gmail_adapter,
-        std::env::var_os("ALETHEON_GMAIL_INGRESS_POLICY_FILE"),
-    ) {
+    let gmail_ingress = match (gmail_adapter, config.gmail_ingress_policy_file.as_ref()) {
         (Some(adapter), Some(path)) => {
             let owners = active_bindings
                 .iter()
                 .map(|(identity, _)| (identity.id, identity.principal_id.clone()))
                 .collect::<std::collections::HashMap<_, _>>();
-            let policies = load_gmail_ingress_policies(std::path::Path::new(&path), &owners)
+            let policies = load_gmail_ingress_policies(path, &owners)
                 .context("loading Gmail ingress policies")?;
             let ingress =
                 GmailGoalEventIngress::new(adapter, objective_db_path, artifact_root, policies)?;
@@ -119,14 +112,11 @@ pub(super) fn register_configured_google_read_tools(
         clock.clone(),
         crate::r#impl::google::GoogleSyncManagerConfig::default(),
     )?;
-    let drive_enabled = std::env::var("ALETHEON_GOOGLE_DRIVE_SYNC_ENABLED")
-        .is_ok_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"));
-    let selected_drive_files = std::env::var("ALETHEON_GOOGLE_DRIVE_FILE_IDS")
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+    let drive_enabled = config.drive_sync_enabled;
+    let selected_drive_files = config
+        .drive_file_ids
+        .iter()
+        .cloned()
         .collect::<std::collections::HashSet<_>>();
     let now_ms = clock.wall_now().0.max(0);
     for (identity, grant) in active_bindings {

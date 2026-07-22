@@ -2,7 +2,6 @@
 
 use super::super::model_router::{ModelRouter, TaskType};
 use super::super::prefix_builder::PrefixBuilder;
-use super::super::session_manager::SessionManager;
 use super::super::DaemonConfig;
 use crate::core::config::ExecutiveConfig;
 use crate::core::evolution_coordinator::EvolutionConfig;
@@ -18,19 +17,14 @@ use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::sandbox::executor::{create_executor_with_front_backend, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
-use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
 use fabric::CanonicalEventBus;
 use fabric::Clock;
-use fabric::LlmProvider;
 use fabric::Registry;
 use fabric::Version;
 use fabric::{Subsystem, SubsystemContext};
 use metacog::DefaultMetaRuntime;
 use mnemosyne::episodic::EpisodicMemory;
-use mnemosyne::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
-use mnemosyne::CoreMemory;
-use mnemosyne::RecallMemory;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
@@ -43,7 +37,7 @@ use crate::r#impl::channel::gmail::GmailGoalDraftCoordinator;
 use crate::r#impl::goal::ObjectiveStore;
 use crate::r#impl::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
 use crate::r#impl::runtime::{pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime};
-use crate::service::inference_port::{InferencePort, PortLlmProvider};
+use crate::service::inference_port::InferencePort;
 use crate::service::CapabilityService;
 use corpus::hook::builtin::audit_hook;
 use corpus::security::storm_breaker::StormBreaker;
@@ -51,7 +45,6 @@ use corpus::skill::plugin::register_skill;
 use corpus::HookRegistry;
 use corpus::SkillLoader;
 use corpus::SkillRouter;
-use mnemosyne::FactStore;
 
 use super::super::debug_handler::DebugHandler;
 use crate::core::session_gateway::gateway::SessionStateRef;
@@ -78,10 +71,11 @@ impl RequestHandler {
         event_bus: Option<Arc<CanonicalEventBus>>,
         cancel_token: CancellationToken,
     ) -> anyhow::Result<Self> {
-        let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::new(
-            inference.clone(),
-            config.model.clone(),
-        ));
+        let llm = super::inference::compose(super::inference::InferenceCompositionInput {
+            port: inference.clone(),
+            model_spec: config.model.clone(),
+        })
+        .provider;
         info!(provider = llm.name(), "LLM provider initialized");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
 
@@ -126,25 +120,16 @@ impl RequestHandler {
             sf.wire_dasein_event_bridge(bus).await?;
         }
 
-        let core_memory = Arc::new(Mutex::new(CoreMemory::with_defaults()));
-        let recall_db_path = data_dir.join("recall_memory.db");
-        let recall_clock: Arc<dyn fabric::Clock> = Arc::new(SystemClock::new());
-        let recall_memory = Arc::new(Mutex::new(RecallMemory::new(
-            &recall_db_path,
-            recall_clock,
-        )?));
+        let memory = super::memory::compose(super::memory::MemoryCompositionInput {
+            data_dir: &data_dir,
+            clock: clock.clone(),
+        })?;
 
         // Every durable user-runtime store is rooted in the injected state
         // directory. Never rediscover HOME or a machine deployment path here.
         let aletheon_dir = data_dir.clone();
         std::fs::create_dir_all(&aletheon_dir)?;
         let production = config.deployment.mode == cognit::config::DeploymentMode::Production;
-        let fact_root = data_dir.join("mnemosyne");
-        std::fs::create_dir_all(&fact_root)?;
-        let fact_store =
-            FactStore::open(&fact_root.join("fact_store.db")).context("opening fact store")?;
-        let fact_store = Arc::new(Mutex::new(fact_store));
-
         let objective_root = data_dir.join("goals");
         std::fs::create_dir_all(&objective_root)?;
         let objective_db_path = objective_root.join("objectives.db");
@@ -276,61 +261,56 @@ impl RequestHandler {
 
         // Multi-session setup
         let context_window = llm.max_context_length();
-        let initial_session =
-            SessionManager::new(&data_dir, session_id.clone(), context_window, clock.clone())
-                .await?;
+        let sessions_composition =
+            super::sessions::compose(super::sessions::SessionCompositionInput {
+                data_dir: &data_dir,
+                session_id: session_id.clone(),
+                context_window,
+                clock: clock.clone(),
+            })
+            .await?;
         info!(
             context_window = context_window,
             "Session context window configured"
         );
-        let initial_session = Arc::new(Mutex::new(initial_session));
-        let mut sessions = HashMap::new();
-        sessions.insert(session_id.clone(), initial_session.clone());
-        let sessions = Arc::new(Mutex::new(sessions));
-        let default_session_id = Arc::new(tokio::sync::Mutex::new(session_id.clone()));
-
-        let session_created_at = {
-            let mut m = HashMap::new();
-            m.insert(session_id.clone(), clock.mono_now());
-            Arc::new(Mutex::new(m))
-        };
+        let initial_session = sessions_composition.initial;
+        let sessions = sessions_composition.registry;
+        let default_session_id = sessions_composition.default_id;
+        let session_created_at = sessions_composition.created_at;
         let active_connections = Arc::new(AtomicUsize::new(0));
 
         // Register tools
-        let mut tools = ToolRegistry::with_network_policy(network_policy);
-        let _ = tools.register(Arc::new(CoreMemoryAppendTool {
-            memory: core_memory.clone(),
+        let search_config = config.integrations.search.as_ref().map(|search| {
+            corpus::tools::tools::web_search::WebSearchConfig::new(
+                search.api_url.clone(),
+                search.api_key.expose().to_owned(),
+            )
+        });
+        let tool_composition = super::tools::compose(super::tools::ToolCompositionInput {
+            network_policy,
+            search: search_config,
+            stores: memory,
             clock: clock.clone(),
-        }));
-        let _ = tools.register(Arc::new(CoreMemoryReplaceTool {
-            memory: core_memory.clone(),
-            clock: clock.clone(),
-        }));
-        let _ = tools.register(Arc::new(MemorySearchTool {
-            recall: recall_memory.clone(),
-            core_memory: core_memory.clone(),
-            fact_store: Some(fact_store.clone()),
-            clock: clock.clone(),
-        }));
+        });
+        let mut tools = tool_composition.registry;
+        let core_memory = tool_composition.stores.core;
+        let recall_memory = tool_composition.stores.recall;
+        let fact_store = tool_composition.stores.facts;
         let external_artifact_root = data_dir.join("external-artifacts");
-        let (google, mut google_sync, google_sync_store, gmail_ingress) =
-            match super::google::register_configured_google_read_tools(
-                &mut tools,
-                &objective_db_path,
-                clock.clone(),
-                &cancel_token,
-                &external_artifact_root,
-                storage_quota.clone(),
-            ) {
-                Ok(Some((integration, sync, store, gmail_ingress))) => {
-                    (Some(integration), Some(sync), Some(store), gmail_ingress)
-                }
-                Ok(None) => (None, None, None, None),
-                Err(error) => {
-                    warn!(error = %error, "Google read integration disabled");
-                    (None, None, None, None)
-                }
-            };
+        let google_composition =
+            super::integrations::compose_google(super::integrations::GoogleCompositionInput {
+                tools: &mut tools,
+                objective_db_path: &objective_db_path,
+                clock: clock.clone(),
+                cancel: &cancel_token,
+                artifact_root: &external_artifact_root,
+                storage_quota: storage_quota.clone(),
+                config: config.integrations.google.as_ref(),
+            });
+        let google = google_composition.integration;
+        let mut google_sync = google_composition.sync;
+        let google_sync_store = google_composition.sync_store;
+        let gmail_ingress = google_composition.gmail_ingress;
         if let (Some(handle), Some(store)) = (google_sync.as_mut(), google_sync_store) {
             let goal_store = Arc::new(std::sync::Mutex::new(
                 ObjectiveStore::open(&objective_db_path)
@@ -696,7 +676,7 @@ impl RequestHandler {
         );
         let gbrain_runtime = crate::r#impl::gbrain::build_gbrain_memory_runtime_with_retention(
             local_memory,
-            retained_mcp,
+            retained_mcp.clone(),
             &config.gbrain_memory,
             clock.clone(),
             &cancel_token,
@@ -863,33 +843,28 @@ impl RequestHandler {
         );
         let agent_runtimes =
             Arc::new(crate::service::agent_control::AgentRuntimeRegistry::default());
-        let agent_profiles_for_tools;
-        let agent_profile_registry;
-
         // Ordinary child Agents use one Cognit session runtime. Goal worker
         // and reviewer attempts remain explicit ProviderWorkerRuntime routes.
-        {
+        let agent_composition = {
             // Stable agent control definitions must be visible to
             // load_agent_profiles so profiles can list them in `allowed_tools`
             // before the AgentControlService runtime is constructed.
             let mut definitions = corpus_group.tools.lock().await.definitions();
             definitions
                 .extend(corpus::tools::tools::agent_control::AgentControlTools::definitions());
-            let (profiles, tool_profiles) = super::runtime::load_agent_profiles(
-                &aletheon_dir.join("agents"),
-                inference.clone(),
-                llm.clone(),
-                &definitions,
-                &runtime_config_snapshot,
-                &agent_profiles,
-            )?;
-            agent_profiles_for_tools = tool_profiles;
-            agent_profile_registry = profiles.clone();
+            let composition = super::agents::compose(super::agents::AgentCompositionInput {
+                agents_dir: &aletheon_dir.join("agents"),
+                inference: inference.clone(),
+                default_llm: llm.clone(),
+                definitions: &definitions,
+                runtime_config: &runtime_config_snapshot,
+                profiles_config: &agent_profiles,
+            })?;
             let native = Arc::new(crate::r#impl::runtime::NativeCognitRuntime::new(
                 crate::r#impl::runtime::NativeCognitRuntimeResources {
                     sessions: domains.cognition(),
                     capabilities: capability_service.clone(),
-                    profiles,
+                    profiles: composition.profiles.clone(),
                     clock: clock.clone(),
                     conscious_actions: Some(conscious_registry.clone()),
                     conscious_candidates: Some(conscious_registry.clone()),
@@ -899,23 +874,11 @@ impl RequestHandler {
                 crate::r#impl::runtime::NativeCognitRuntime::runtime_id(),
                 native,
             )?;
-        }
-        let active_profile_name = if !agent_profiles.default.trim().is_empty() {
-            agent_profiles.default.clone()
-        } else if agent_profile_registry.resolve_by_name("code-agent").is_ok() {
-            "code-agent".to_owned()
-        } else {
-            let mut names = agent_profile_registry.names();
-            names.sort();
-            names
-                .into_iter()
-                .next()
-                .context("no Agent profile is available for the main turn")?
+            composition
         };
-        agent_profile_registry
-            .resolve_by_name(&active_profile_name)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let active_profile = Arc::new(Mutex::new(active_profile_name));
+        let agent_profiles_for_tools = agent_composition.tool_profiles;
+        let agent_profile_registry = agent_composition.profiles;
+        let active_profile = Arc::new(Mutex::new(agent_composition.active_profile_name));
 
         // Goal worker/reviewer runtimes are opt-in and strictly alias-resolved.
         // Missing routes fail startup only when Goal execution is enabled.
@@ -1323,6 +1286,7 @@ impl RequestHandler {
             ),
             grok_hardening,
             workspace_trust,
+            mcp: retained_mcp,
         };
         let handler = composition.into_handler();
 

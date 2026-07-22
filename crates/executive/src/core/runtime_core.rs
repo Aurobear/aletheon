@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -56,7 +56,14 @@ impl RuntimeCore {
     pub async fn bootstrap(config_path: Option<PathBuf>, enable_evolution: bool) -> Result<Self> {
         // ── AppConfig ───────────────────────────────────────────────
         // Layered base (defaults → /etc → user → project), then --config on top.
-        let app_config = crate::core::config::load_for_host(None, config_path.as_deref())?.value;
+        let loaded = crate::core::config::load_for_host(None, config_path.as_deref())?;
+        // Resolve all enabled optional integrations before providers, storage,
+        // sessions, or background workers start. Diagnostics contain only typed
+        // config paths and credential reference identities, never secret values.
+        let integrations = loaded
+            .preflight_integrations(&crate::core::config::EnvironmentCredentialResolver)
+            .context("optional integration startup preflight")?;
+        let app_config = loaded.value;
         tracing::info!(providers = %app_config.providers.len(), "Loaded config");
 
         // ── ProviderRegistry ────────────────────────────────────────
@@ -66,24 +73,40 @@ impl RuntimeCore {
         // ── DaemonConfig ────────────────────────────────────────────
         let config = DaemonConfig {
             model: default_model.clone(),
-            working_dir: std::env::var("AGENT_WORKING_DIR").unwrap_or_else(|_| "/tmp".to_string()),
-            data_dir: std::env::var("AGENT_DATA_DIR").unwrap_or_else(|_| {
-                if app_config.deployment.mode == cognit::config::DeploymentMode::Production {
-                    app_config
-                        .deployment
-                        .paths
-                        .state
-                        .to_string_lossy()
-                        .to_string()
-                } else {
-                    fabric::paths::xdg_data_dir().to_string_lossy().to_string()
-                }
-            }),
-            system_prompt: std::env::var("AGENT_SYSTEM_PROMPT")
-                .unwrap_or_else(|_| app_config.agent.system_prompt.clone()),
-            sandbox_preference: std::env::var("AGENT_SANDBOX_PREFERENCE")
-                .unwrap_or_else(|_| "auto".to_string()),
-            conscious_arbitration_mode: crate::r#impl::daemon::conscious_arbitration_mode_from_env(
+            working_dir: app_config
+                .bootstrap
+                .working_dir
+                .clone()
+                .unwrap_or(
+                    std::env::current_dir().context(
+                        "bootstrap.working_dir is unset and the process cwd is unavailable",
+                    )?,
+                )
+                .to_string_lossy()
+                .to_string(),
+            data_dir: app_config.bootstrap.data_dir.clone().map_or_else(
+                || {
+                    if app_config.deployment.mode == cognit::config::DeploymentMode::Production {
+                        app_config
+                            .deployment
+                            .paths
+                            .state
+                            .to_string_lossy()
+                            .to_string()
+                    } else {
+                        fabric::paths::xdg_data_dir().to_string_lossy().to_string()
+                    }
+                },
+                |path| path.to_string_lossy().to_string(),
+            ),
+            system_prompt: app_config.agent.system_prompt.clone(),
+            sandbox_preference: app_config
+                .bootstrap
+                .sandbox_preference
+                .clone()
+                .unwrap_or_else(|| "auto".to_string()),
+            conscious_arbitration_mode: crate::r#impl::daemon::parse_conscious_arbitration_mode(
+                app_config.bootstrap.conscious_arbitration_mode.as_deref(),
             )?,
             enable_evolution,
             mcp_servers: super::mcp_config::convert_mcp_servers(&app_config.mcp_servers),
@@ -98,6 +121,7 @@ impl RuntimeCore {
             backpressure: app_config.backpressure.clone(),
             agent_admission: app_config.agent.admission.clone(),
             agent_max_iterations: app_config.agent.max_iterations,
+            integrations,
         };
 
         // ── Event bus ───────────────────────────────────────────────
@@ -116,14 +140,7 @@ impl RuntimeCore {
                     .providers
                     .iter()
                     .map(|p| SchedulerProviderConfig {
-                        name: p.name.clone(),
-                        base_url: p.base_url.clone(),
-                        api_key: p.api_key.clone(),
-                        kind: match p.transport {
-                            cognit::config::Transport::Anthropic => "anthropic".to_string(),
-                            cognit::config::Transport::Openai => "openai".to_string(),
-                            cognit::config::Transport::Auto => "openai".to_string(),
-                        },
+                        definition: p.clone(),
                         model: p.models.first().cloned().unwrap_or_default(),
                     })
                     .collect(),
@@ -134,6 +151,8 @@ impl RuntimeCore {
                         provider_name,
                     })
                     .collect(),
+                max_tokens: app_config.agent.max_tokens as u32,
+                provider_timeouts: app_config.agent.provider_timeouts,
             };
 
             let scheduler_clock: Arc<dyn Clock> = Arc::new(SystemClock::new());

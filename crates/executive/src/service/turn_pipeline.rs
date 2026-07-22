@@ -132,26 +132,27 @@ impl TurnPipeline {
             match effect {
                 LifecycleEffect::EmitEvent { schema, payload } => {
                     if let Some(bus) = &self.event_bus {
-                        let _ = bus
-                            .publish_event(
-                                fabric::SchemaId::from(schema.as_str()),
-                                &target,
-                                payload.clone(),
-                            )
-                            .await;
+                        publish_requested_lifecycle_event(bus, schema, &target, payload.clone())
+                            .await?;
                     }
                 }
                 LifecycleEffect::RequestCancellation { .. } => cancel.cancel(),
                 _ => {}
             }
             if let Some(bus) = &self.event_bus {
-                let _ = bus
+                if let Err(error) = bus
                     .publish_event(
                         fabric::SchemaId::from("aletheon.event.lifecycle_effect_applied/v1"),
                         &target,
                         serde_json::json!({"effect": format!("{effect:?}")}),
                     )
-                    .await;
+                    .await
+                {
+                    warn!(
+                        error = %error,
+                        "best-effort lifecycle effect audit event was not published"
+                    );
+                }
             }
         }
         Ok(dispatch)
@@ -774,7 +775,14 @@ impl TurnPipeline {
                             ).await {
                                 scope_token.cancel();
                                 react_task.abort();
-                                let _ = (&mut react_task).await;
+                                if let Err(join_error) = (&mut react_task).await {
+                                    if !join_error.is_cancelled() {
+                                        warn!(
+                                            error = %join_error,
+                                            "react task did not terminate cleanly after lifecycle failure"
+                                        );
+                                    }
+                                }
                                 return Err(error);
                             }
                         }
@@ -1007,7 +1015,7 @@ impl TurnPipeline {
         .await;
 
         if turn_result.is_err() {
-            let _ = self
+            if let Err(error) = self
                 .dispatch_lifecycle(
                     crate::service::lifecycle_contributors::LifecycleInput {
                         phase: crate::service::lifecycle_contributors::LifecyclePhase::OnAbort,
@@ -1019,7 +1027,13 @@ impl TurnPipeline {
                     },
                     &scope_token,
                 )
-                .await;
+                .await
+            {
+                warn!(
+                    error = %error,
+                    "turn abort lifecycle dispatch failed while preserving original pipeline error"
+                );
+            }
         }
 
         if let Some(checkpoint_id) = checkpoint_id {
@@ -1036,6 +1050,17 @@ impl TurnPipeline {
         }
         turn_result
     }
+}
+
+async fn publish_requested_lifecycle_event(
+    bus: &CanonicalEventBus,
+    schema: &str,
+    target: &str,
+    payload: serde_json::Value,
+) -> anyhow::Result<()> {
+    bus.publish_event(fabric::SchemaId::from(schema), target, payload)
+        .await
+        .map_err(|error| anyhow::anyhow!("requested lifecycle event publish failed: {error}"))
 }
 
 #[derive(Default)]
@@ -1228,6 +1253,22 @@ fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
 #[cfg(test)]
 mod terminal_event_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn requested_lifecycle_event_publish_failure_is_propagated() {
+        let bus = CanonicalEventBus::new(4);
+        let error = publish_requested_lifecycle_event(
+            &bus,
+            "invalid.lifecycle.schema/v1",
+            "thread:test",
+            serde_json::json!({"event": "must-not-disappear"}),
+        )
+        .await
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("requested lifecycle event publish failed"));
+    }
 
     #[tokio::test]
     async fn real_bash_progress_crosses_guard_bridge_and_client_projection() {

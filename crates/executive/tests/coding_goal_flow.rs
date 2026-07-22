@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use base64::Engine;
 use executive::r#impl::goal::{
-    AttemptCoordinationOutcome, AttemptExecutor, AttemptRequest, CodingVerifier, GoalCoordinator,
-    ObjectiveStore, RetryPolicy,
+    AttemptCoordinationOutcome, AttemptCoordinatorError, AttemptExecutor, AttemptRequest,
+    CodingVerifier, GoalCoordinator, ObjectiveStore, RetryPolicy,
 };
 use executive::r#impl::runtime::{PiAttemptRequest, PI_CODER_RUNTIME_ID};
 use executive::service::verification::{VerificationCheckKind, VerificationContext};
@@ -388,6 +388,64 @@ async fn advisory_warning_is_approval_ready_and_duplicate_call_is_idempotent() {
     assert!(
         matches!(duplicate, AttemptCoordinationOutcome::Succeeded { ref goal, .. } if goal.state == GoalState::Blocked)
     );
+    assert_eq!(h.executor.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(h.verifier.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn coding_settlement_failure_preserves_diff_and_recovers_without_pi_reinvocation() {
+    let h = Harness::new(vec![VerifyResult::Report(true, false)]);
+    let job_id = CodingJobId::new();
+    let injector = rusqlite::Connection::open(h._db.path()).unwrap();
+    injector
+        .execute_batch(
+            "CREATE TRIGGER fail_test_coding_settlement
+             BEFORE UPDATE OF status ON goal_budget_ledger
+             WHEN NEW.status='settled'
+             BEGIN SELECT RAISE(ABORT, 'injected coding settlement failure'); END;",
+        )
+        .unwrap();
+
+    let first = h
+        .coordinator
+        .execute_one(h.request(1, job_id), CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(matches!(first, AttemptCoordinatorError::Budget(_)));
+    let attempts = h
+        .store
+        .lock()
+        .unwrap()
+        .attempts_for_goal(h.goal_id, usize::MAX)
+        .unwrap();
+    let report = attempts[0]
+        .evidence
+        .iter()
+        .find(|evidence| evidence.kind == "coding_job_report")
+        .and_then(|evidence| serde_json::from_str::<CodingJobReport>(&evidence.content).ok())
+        .unwrap();
+    assert!(report.diff_sha256.is_some());
+
+    injector
+        .execute_batch("DROP TRIGGER fail_test_coding_settlement;")
+        .unwrap();
+    let recovered = h
+        .coordinator
+        .execute_one(h.request(1, job_id), CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(matches!(
+        recovered,
+        AttemptCoordinationOutcome::Succeeded { .. }
+    ));
+    let coding = h
+        .store
+        .lock()
+        .unwrap()
+        .load_coding_job(job_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(coding.diff_sha256, report.diff_sha256.unwrap());
     assert_eq!(h.executor.calls.load(Ordering::SeqCst), 1);
     assert_eq!(h.verifier.calls.load(Ordering::SeqCst), 1);
 }

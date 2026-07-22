@@ -15,6 +15,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use uuid::Uuid;
 
+use cognit::config::{ProviderConfig, ProviderTimeoutConfig, Transport};
 use cognit::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
 use cognit::r#impl::llm::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
@@ -34,10 +35,15 @@ fn build_scheduler() -> Result<Arc<LlmScheduler>> {
 
     let config = SchedulerConfig {
         providers: vec![SchedulerProviderConfig {
-            name: "deepseek".to_string(),
-            base_url: "https://api.deepseek.com/v1".to_string(),
-            api_key,
-            kind: "openai".to_string(),
+            definition: ProviderConfig {
+                name: "deepseek".to_string(),
+                base_url: "https://api.deepseek.com/v1".to_string(),
+                api_key,
+                transport: Transport::Openai,
+                models: vec!["deepseek-chat".to_string()],
+                max_context_length: None,
+                pricing: None,
+            },
             model: "deepseek-chat".to_string(),
         }],
         routing: vec![
@@ -54,6 +60,8 @@ fn build_scheduler() -> Result<Arc<LlmScheduler>> {
                 provider_name: "deepseek".to_string(),
             },
         ],
+        max_tokens: 4_096,
+        provider_timeouts: ProviderTimeoutConfig::default(),
     };
 
     Ok(Arc::new(LlmScheduler::new(

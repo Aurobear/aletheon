@@ -674,6 +674,59 @@
       },
       "type": "object"
     },
+    "GoogleIntegrationConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "client_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "client_secret": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "client_type": {
+          "$ref": "#/$defs/OAuthClientType",
+          "default": "public"
+        },
+        "drive_file_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "drive_sync_enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "gmail_ingress_policy_file": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "redirect_uri": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "GrokHardeningConfig": {
       "additionalProperties": false,
       "description": "Toggles for the staged Grok-hardening mechanisms. Fail-closed on typos\n(`deny_unknown_fields`) so a misspelled flag never silently reads as off.",
@@ -835,6 +888,32 @@
             "type": "string"
           },
           "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "IntegrationsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "google": {
+          "$ref": "#/$defs/GoogleIntegrationConfig",
+          "default": {
+            "client_id": null,
+            "client_secret": null,
+            "client_type": "public",
+            "drive_file_ids": [],
+            "drive_sync_enabled": false,
+            "gmail_ingress_policy_file": null,
+            "redirect_uri": null
+          }
+        },
+        "search": {
+          "$ref": "#/$defs/SearchIntegrationConfig",
+          "default": {
+            "api_key": null,
+            "api_url": null,
+            "enabled": false
+          }
         }
       },
       "type": "object"
@@ -1357,6 +1436,13 @@
       },
       "type": "object"
     },
+    "OAuthClientType": {
+      "enum": [
+        "public",
+        "confidential"
+      ],
+      "type": "string"
+    },
     "PerceptionConfig": {
       "additionalProperties": false,
       "description": "Perception subsystem configuration.",
@@ -1670,6 +1756,40 @@
       ],
       "type": "object"
     },
+    "RuntimeBootstrapConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "conscious_arbitration_mode": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "data_dir": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sandbox_preference": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "working_dir": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "SandboxConfig": {
       "additionalProperties": false,
       "description": "Sandbox execution preference.",
@@ -1750,6 +1870,47 @@
       },
       "type": "object"
     },
+    "SearchIntegrationConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "api_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "api_url": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "SecretRef": {
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "description": "Environment variable containing the secret value. The variable name is\nconfiguration; its value never becomes part of AppConfig diagnostics.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "env"
+      ],
+      "type": "object"
+    },
     "TelegramConfig": {
       "additionalProperties": false,
       "description": "Telegram bot configuration for owner-only control channel.\n\nThe config stores the environment-variable NAME, never the token value itself.\nThe runtime reads the token from that env var at startup.",
@@ -1789,6 +1950,7 @@
       "enum": [
         "openai",
         "anthropic",
+        "ollama",
         "auto"
       ],
       "type": "string"
@@ -1842,6 +2004,16 @@
         "max_concurrent_turns": null
       },
       "description": "D2-M5-T2: overload/backpressure limits (default unlimited)."
+    },
+    "bootstrap": {
+      "$ref": "#/$defs/RuntimeBootstrapConfig",
+      "default": {
+        "conscious_arbitration_mode": null,
+        "data_dir": null,
+        "sandbox_preference": null,
+        "working_dir": null
+      },
+      "description": "Host/bootstrap values that are passed into the daemon as typed inputs."
     },
     "daemon": {
       "$ref": "#/$defs/DaemonConfig",
@@ -1966,6 +2138,26 @@
         "subagent_stop": [],
         "user_prompt_submit": []
       }
+    },
+    "integrations": {
+      "$ref": "#/$defs/IntegrationsConfig",
+      "default": {
+        "google": {
+          "client_id": null,
+          "client_secret": null,
+          "client_type": "public",
+          "drive_file_ids": [],
+          "drive_sync_enabled": false,
+          "gmail_ingress_policy_file": null,
+          "redirect_uri": null
+        },
+        "search": {
+          "api_key": null,
+          "api_url": null,
+          "enabled": false
+        }
+      },
+      "description": "Optional external integrations and their credential references."
     },
     "mcp_servers": {
       "default": [],

@@ -144,10 +144,7 @@ impl crate::host::RuntimeHost for SystemdHost {
         let socket = self.socket;
         let pulse_handle = core.pulse_handle;
         // ── MCP embedded server ─────────────────────────────────────
-        let mcp_socket = socket
-            .parent()
-            .unwrap_or(&PathBuf::from("/tmp/aletheon"))
-            .join("aletheon-mcp.sock");
+        let mcp_socket = super::runtime_sidecar_path(&socket, "aletheon-mcp.sock")?;
         let mcp_server = McpEmbedded::new(
             request_handler.corpus_service(),
             request_handler.corpus_grant(),

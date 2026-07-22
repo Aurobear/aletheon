@@ -73,6 +73,44 @@ if [[ ! -s config/schema/aletheon-config.schema.json ]]; then
   exit 1
 fi
 
+# H2: provider identity and construction have one owner. Heuristic inference
+# candidates must not recreate the application provider schema, and every
+# concrete LLM constructor must remain behind the canonical factory.
+provider_config_defs=$(rg -n '\bstruct ProviderConfig\b' crates/cognit/src -g '*.rs' | wc -l)
+if [[ "$provider_config_defs" -ne 1 ]]; then
+  echo "architecture-check: Cognit must define exactly one ProviderConfig (found $provider_config_defs)" >&2
+  exit 1
+fi
+provider_constructors_outside_factory=$(rg -l \
+  'AnthropicProvider::new|OpenAiProvider::new|OllamaProvider::new' \
+  crates/cognit/src -g '*.rs' \
+  | grep -v '^crates/cognit/src/impl/llm/provider_factory.rs$' || true)
+if [[ -n "$provider_constructors_outside_factory" ]]; then
+  echo "architecture-check: concrete LLM construction bypasses provider_factory:" >&2
+  echo "$provider_constructors_outside_factory" >&2
+  exit 1
+fi
+
+# H3: legacy business environment parsing is a compatibility concern owned by
+# Executive's typed config loader. Host protocol variables (systemd, XDG,
+# display, credential directory, sockets, and subprocess handoff) are excluded.
+h3_business_env_reads=$(rg -n \
+  'std::env::(?:var|var_os)\("(?:AGENT_(?:WORKING_DIR|DATA_DIR|SYSTEM_PROMPT|SANDBOX_PREFERENCE)|ALETHEON_CONSCIOUS_ARBITRATION_MODE|ALETHEON_GOOGLE_(?:CLIENT_ID|CLIENT_SECRET|REDIRECT_URI|DRIVE_SYNC_ENABLED|DRIVE_FILE_IDS)|ALETHEON_GMAIL_INGRESS_POLICY_FILE|SEARCH_API_(?:URL|KEY))"' \
+  crates -g '*.rs' \
+  | grep -v '^crates/executive/src/core/config/' || true)
+if [[ -n "$h3_business_env_reads" ]]; then
+  echo "architecture-check: business environment parsing bypasses typed bootstrap config:" >&2
+  echo "$h3_business_env_reads" >&2
+  exit 1
+fi
+
+# H4: MCP production background work must be registered with the MCP task
+# supervisor. Test-only mock servers remain outside this client gate.
+if rg -n 'tokio::spawn' crates/corpus/src/tools/mcp/client.rs; then
+  echo "architecture-check: MCP client background task bypasses McpTaskSupervisor" >&2
+  exit 1
+fi
+
 # Q02 deletion gates: Interact and Bin may depend on Fabric protocol types, while
 # domain construction belongs to Executive/Corpus composition.
 if rg -n '^\s*(kernel|corpus)\s*=' crates/interact/Cargo.toml || \
@@ -583,10 +621,9 @@ if forbidden:
     raise SystemExit("architecture-check: forbidden hyphenated workspace package(s): " + ", ".join(forbidden))
 reviewed={
     ("aletheon", "fabric"),
-    ("corpus", "cognit"),
-    ("corpus", "mnemosyne"),
-    ("execd", "corpus"),
+    ("cognit", "kernel"),
     ("executive", "gateway"),
+    ("executive", "hardware"),
     ("gateway", "fabric"),
     ("interact", "executive"),
 }

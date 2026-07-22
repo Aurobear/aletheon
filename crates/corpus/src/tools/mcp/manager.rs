@@ -102,6 +102,21 @@ impl McpManager {
         self.inner.connected_count()
     }
 
+    /// Snapshot supervised server/task health without exposing transport or
+    /// credential details.
+    pub fn health_snapshot(&self) -> super::supervisor::McpHealthSnapshot {
+        self.inner.health_snapshot()
+    }
+
+    /// Stop admission, signal every MCP background task, and wait up to the
+    /// supplied bound before aborting non-cooperative tasks.
+    pub async fn shutdown(
+        &self,
+        timeout: std::time::Duration,
+    ) -> super::supervisor::McpShutdownReport {
+        self.inner.shutdown(timeout).await
+    }
+
     pub fn server_has_tools(&self, server_name: &str, required: &[&str]) -> bool {
         self.inner.server_has_tools(server_name, required)
     }
@@ -424,7 +439,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_HTTP_TOKEN".into()),
                 oauth: None,
@@ -470,7 +485,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_CALL_TOKEN".into()),
                 oauth: None,
@@ -525,7 +540,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_TOOL_ERROR_TOKEN".into()),
                 oauth: None,
@@ -562,7 +577,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_401_TOKEN".into()),
                 oauth: None,
@@ -581,6 +596,15 @@ mod tests {
         assert!(result.is_ok());
         // But the server should NOT be connected (401)
         assert_eq!(mgr.connected_count(), 0);
+        let health = mgr.health_snapshot();
+        assert_eq!(
+            health.servers[0].state,
+            super::super::supervisor::McpServerHealthState::Degraded
+        );
+        assert_eq!(
+            health.servers[0].reason.as_deref(),
+            Some("initial_connect_failed_reconnect_disabled")
+        );
 
         // Verify error does NOT contain the token value
         let s = state.lock().unwrap();
@@ -611,7 +635,7 @@ mod tests {
             transport: McpTransportConfig::StreamableHttp {
                 url: "http://localhost:9020/mcp".into(),
             },
-            trust: McpTrustLevel::RemoteTrusted,
+            trust: McpTrustLevel::LocalTrusted,
             enabled: true,
             bearer_token_env: Some("GBRAIN_READ_TOKEN".into()),
             oauth: None,
@@ -657,7 +681,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: false,
                 bearer_token_env: Some("TEST_DISABLED_TOKEN".into()),
                 oauth: None,
@@ -694,7 +718,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_RESOURCE_TOKEN".into()),
                 oauth: None,
@@ -750,7 +774,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_READ_RESOURCE_TOKEN".into()),
                 oauth: None,
@@ -788,7 +812,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_LIST_RESOURCES_TOKEN".into()),
                 oauth: None,
@@ -825,7 +849,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_RESOURCE_EXEC_TOKEN".into()),
                 oauth: None,
@@ -885,7 +909,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_PARALLEL_TOKEN".into()),
                 oauth: None,
@@ -929,7 +953,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_REFRESH_TOKEN".into()),
                 oauth: None,
@@ -972,7 +996,7 @@ mod tests {
                 transport: McpTransportConfig::StreamableHttp {
                     url: format!("http://{}/mcp", addr),
                 },
-                trust: McpTrustLevel::RemoteTrusted,
+                trust: McpTrustLevel::LocalTrusted,
                 enabled: true,
                 bearer_token_env: Some("TEST_INITIAL_RECONNECT_TOKEN".into()),
                 oauth: None,
@@ -1000,6 +1024,83 @@ mod tests {
             .expect("reconnect signal timed out");
         assert_eq!(manager.connected_count(), 1);
         assert_eq!(changed.as_deref(), Some("late-server"));
+        let health = manager.health_snapshot();
+        assert_eq!(health.servers.len(), 1);
+        assert_eq!(
+            health.servers[0].state,
+            super::super::supervisor::McpServerHealthState::Connected
+        );
+        assert_eq!(health.servers[0].reconnect_count, 1);
+        let shutdown = manager.shutdown(std::time::Duration::from_secs(1)).await;
+        assert!(shutdown.aborted_tasks.is_empty());
+        let stopped = manager.health_snapshot();
+        assert!(!stopped.accepting_tasks);
+        assert_eq!(
+            stopped.servers[0].state,
+            super::super::supervisor::McpServerHealthState::Stopped
+        );
         std::env::remove_var("TEST_INITIAL_RECONNECT_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn health_failure_degrades_then_recovers_under_supervision() {
+        std::env::set_var("TEST_HEALTH_RECONNECT_TOKEN", "health-token");
+        let state = Arc::new(Mutex::new(MockMcpState::with_token("health-token")));
+        let addr = spawn_mock_server(state.clone()).await;
+        let config = McpConfig {
+            servers: vec![McpServerConfig {
+                name: "health-server".into(),
+                transport: McpTransportConfig::StreamableHttp {
+                    url: format!("http://{addr}/mcp"),
+                },
+                trust: McpTrustLevel::LocalTrusted,
+                enabled: true,
+                bearer_token_env: Some("TEST_HEALTH_RECONNECT_TOKEN".into()),
+                oauth: None,
+                request_timeout_ms: Some(100),
+                health_check_interval_sec: 1,
+                allowlist: Vec::new(),
+                denylist: Vec::new(),
+                permission_overrides: std::collections::HashMap::new(),
+            }],
+            ..McpConfig::default()
+        };
+        let mut manager = McpManager::new(config);
+        manager.connect_all().await.unwrap();
+        state.lock().unwrap().return_401 = true;
+
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let snapshot = manager.health_snapshot();
+                if snapshot.servers[0].state
+                    == super::super::supervisor::McpServerHealthState::Reconnecting
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("health failure was not projected");
+
+        state.lock().unwrap().return_401 = false;
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let snapshot = manager.health_snapshot();
+                if snapshot.servers[0].state
+                    == super::super::supervisor::McpServerHealthState::Connected
+                    && snapshot.servers[0].reconnect_count >= 1
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("MCP health did not recover");
+
+        let report = manager.shutdown(std::time::Duration::from_secs(1)).await;
+        assert!(report.aborted_tasks.is_empty());
+        std::env::remove_var("TEST_HEALTH_RECONNECT_TOKEN");
     }
 }

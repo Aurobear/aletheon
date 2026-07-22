@@ -1,10 +1,13 @@
 use anyhow::Result;
 use fabric::Clock;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::debug;
 
 use super::config::OutputConfig;
 use super::truncation::truncate_head_tail;
+
+static OVERFLOW_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub enum ProcessedOutput {
@@ -64,9 +67,26 @@ pub async fn process_result(
 
     // Overflow to file
     tokio::fs::create_dir_all(&config.overflow_dir).await?;
-    let filename = format!("tool_output_{}_{}.txt", tool_name, clock.wall_now().0);
+    if let Err(error) = cleanup_overflow_dir(config, clock).await {
+        tracing::warn!(%error, "tool output overflow cleanup failed");
+    }
+    let filename = format!(
+        "tool_output_{}_{}_{}_{}.txt",
+        tool_name,
+        std::process::id(),
+        clock.wall_now().0,
+        OVERFLOW_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
     let path = config.overflow_dir.join(&filename);
-    tokio::fs::write(&path, content).await?;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path).await?;
+    use tokio::io::AsyncWriteExt;
+    file.write_all(content.as_bytes()).await?;
 
     debug!(
         tool = tool_name,
@@ -96,7 +116,11 @@ pub async fn cleanup_overflow_dir(config: &OutputConfig, clock: &dyn Clock) -> R
     let cutoff = fabric::wall_to_datetime(clock.wall_now())
         - chrono::Duration::days(config.retention_days as i64);
 
-    let mut entries = tokio::fs::read_dir(&config.overflow_dir).await?;
+    let mut entries = match tokio::fs::read_dir(&config.overflow_dir).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
     while let Some(entry) = entries.next_entry().await? {
         if let Ok(metadata) = entry.metadata().await {
             if let Ok(modified) = metadata.modified() {
@@ -169,5 +193,49 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, ProcessedOutput::Inline { .. }));
+    }
+
+    #[tokio::test]
+    async fn overflow_files_are_private_and_same_timestamp_writes_do_not_collide() {
+        let tmp = TempDir::new().unwrap();
+        let clock = test_clock();
+        let config = OutputConfig {
+            max_output_chars: 1,
+            overflow_dir: tmp.path().to_path_buf(),
+            ..Default::default()
+        };
+        let first = process_result("bash_exec", "first", &config, &clock)
+            .await
+            .unwrap();
+        let second = process_result("bash_exec", "second", &config, &clock)
+            .await
+            .unwrap();
+        let ProcessedOutput::Overflow {
+            overflow_path: first,
+            ..
+        } = first
+        else {
+            panic!("first output did not overflow")
+        };
+        let ProcessedOutput::Overflow {
+            overflow_path: second,
+            ..
+        } = second
+        else {
+            panic!("second output did not overflow")
+        };
+        assert_ne!(first, second);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(first).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::metadata(second).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 }
