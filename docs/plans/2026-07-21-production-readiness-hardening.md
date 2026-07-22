@@ -1,10 +1,11 @@
 # Aletheon Production Readiness Hardening Plan
 
 > **Date:** 2026-07-21（2026-07-22 校正）
-> **Status:** H0–H11 implementation complete；等待最终 SER8 部署验收
+> **Status:** H0–H11 implementation complete；SER8 部署验收通过
 > **Role:** 唯一可执行 hardening 队列
 > **Companion evidence:** `docs/plans/2026-07-21-aletheon-coupling-and-external-interface-audit.md`
 > **Accepted baseline:** `docs/deployment/ser8-acceptance-2026-07-21.md`
+> **Post-hardening acceptance:** `docs/deployment/ser8-hardening-acceptance-2026-07-22.md`
 
 ## 1. 目标与范围
 
