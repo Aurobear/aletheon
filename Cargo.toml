@@ -55,6 +55,10 @@ tokio-util = "0.7"
 walkdir = "2"
 tree-sitter = "0.25"
 tree-sitter-rust = "0.24"
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+tonic-build = "0.12"
 
 [workspace.lints.rust]
 # Placeholder features for future use (io_uring, ebpf, fuse, vector-*)

@@ -8,6 +8,7 @@ pub mod broker;
 pub mod clock;
 pub mod command;
 pub mod device;
+pub mod grpc;
 pub mod lease;
 pub mod observation;
 pub mod provider;
