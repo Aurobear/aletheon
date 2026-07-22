@@ -17,6 +17,7 @@ mnemosyne = { path = "../mnemosyne" }
 runtime = { path = "../runtime" }
 dasein = { path = "../dasein" }
 metacog = { path = "../metacog" }
+hardware = { path = "../hardware" }
 anyhow = "1"
 thiserror = "2"
 serde_yaml = "0.9"
@@ -45,7 +46,6 @@ regex = { workspace = true }
 which = "7"
 
 [dev-dependencies]
-hardware = { path = "../hardware" }
 tokio-test = "0.4"
 tempfile = "3"
 hyper = { version = "1", features = ["server", "http1"] }
