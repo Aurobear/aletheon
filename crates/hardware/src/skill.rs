@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use fabric::{
+use fabric::types::embodiment::{
     DeviceId, EmbodiedObservation, SkillDescriptor, SkillProgress, SkillRequest, SkillResult,
 };
 

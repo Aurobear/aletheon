@@ -245,8 +245,8 @@ impl SimulatedEmbodiment {
 impl crate::EmbodimentProvider for SimulatedEmbodiment {
     async fn observe(
         &self,
-        device: &fabric::DeviceId,
-    ) -> Result<Vec<fabric::EmbodiedObservation>, crate::ProviderError> {
+        device: &fabric::types::embodiment::DeviceId,
+    ) -> Result<Vec<fabric::types::embodiment::EmbodiedObservation>, crate::ProviderError> {
         Ok(vec![self
             .get_state(device)
             .await?
@@ -255,15 +255,15 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
 
     async fn get_state(
         &self,
-        device: &fabric::DeviceId,
-    ) -> Result<Option<fabric::EmbodiedObservation>, crate::ProviderError> {
+        device: &fabric::types::embodiment::DeviceId,
+    ) -> Result<Option<fabric::types::embodiment::EmbodiedObservation>, crate::ProviderError> {
         let mut guard = self.inner.lock().await;
         if guard.manifest.id != *device {
             return Err(crate::ProviderError::Rejected("device mismatch".into()));
         }
         let telemetry = guard.telemetry(None);
         let time = fabric::MonoTime(telemetry.source_time.0);
-        Ok(Some(fabric::EmbodiedObservation {
+        Ok(Some(fabric::types::embodiment::EmbodiedObservation {
             schema: telemetry.stream,
             schema_version: 1,
             source: format!("sim:{}", telemetry.device.0),
@@ -280,14 +280,14 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
 
     async fn list_skills(
         &self,
-        device: &fabric::DeviceId,
-    ) -> Result<Vec<fabric::SkillDescriptor>, crate::ProviderError> {
+        device: &fabric::types::embodiment::DeviceId,
+    ) -> Result<Vec<fabric::types::embodiment::SkillDescriptor>, crate::ProviderError> {
         let guard = self.inner.lock().await;
         if guard.manifest.id != *device {
             return Err(crate::ProviderError::Rejected("device mismatch".into()));
         }
-        Ok(vec![fabric::SkillDescriptor {
-            skill: fabric::SkillId("navigate".into()),
+        Ok(vec![fabric::types::embodiment::SkillDescriptor {
+            skill: fabric::types::embodiment::SkillId("navigate".into()),
             device: device.clone(),
             summary: "navigate to a two-dimensional target".into(),
             input_schema: serde_json::json!({
@@ -296,7 +296,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
                 "required": ["x", "y"],
                 "additionalProperties": false
             }),
-            risk: fabric::RiskClass::Medium,
+            risk: fabric::types::embodiment::RiskClass::Medium,
             timeout_ms: 30_000,
             cancellable: true,
             preconditions: vec!["active control lease".into()],
@@ -308,7 +308,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
         &self,
         command: crate::ValidatedSkillCommand<'_>,
         progress: Arc<dyn crate::SkillProgressSink>,
-    ) -> Result<fabric::SkillResult, crate::ProviderError> {
+    ) -> Result<fabric::types::embodiment::SkillResult, crate::ProviderError> {
         let request = command.request();
         if request.skill.0 != "navigate" {
             return Err(crate::ProviderError::Rejected(format!(
@@ -349,14 +349,14 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
             .map_err(crate::ProviderError::Rejected)?;
         let receipt = guard.execute(&typed, Some(command.permit()));
         let outcome = if receipt.accepted() {
-            fabric::SkillOutcome::Succeeded
+            fabric::types::embodiment::SkillOutcome::Succeeded
         } else {
-            fabric::SkillOutcome::Failed {
+            fabric::types::embodiment::SkillOutcome::Failed {
                 reason: format!("{:?}", receipt.decision),
             }
         };
         if !receipt.accepted() {
-            return Ok(fabric::SkillResult {
+            return Ok(fabric::types::embodiment::SkillResult {
                 operation_id,
                 skill: request.skill.clone(),
                 device: request.device.clone(),
@@ -366,7 +366,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
             });
         }
         progress
-            .progress(fabric::SkillProgress {
+            .progress(fabric::types::embodiment::SkillProgress {
                 operation_id,
                 skill: request.skill.clone(),
                 fraction: 1.0,
@@ -374,7 +374,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
                 at: fabric::MonoTime(receipt.observed_at.0),
             })
             .await;
-        Ok(fabric::SkillResult {
+        Ok(fabric::types::embodiment::SkillResult {
             operation_id,
             skill: request.skill.clone(),
             device: request.device.clone(),
@@ -386,7 +386,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
 
     async fn cancel(
         &self,
-        device: &fabric::DeviceId,
+        device: &fabric::types::embodiment::DeviceId,
         _operation: &crate::OperationId,
     ) -> Result<crate::CancelAck, crate::ProviderError> {
         let mut guard = self.inner.lock().await;
@@ -401,7 +401,7 @@ impl crate::EmbodimentProvider for SimulatedEmbodiment {
 
     async fn safe_stop(
         &self,
-        device: &fabric::DeviceId,
+        device: &fabric::types::embodiment::DeviceId,
     ) -> Result<crate::StopReceipt, crate::ProviderError> {
         let mut guard = self.inner.lock().await;
         if guard.manifest.id != *device {
@@ -583,7 +583,7 @@ mod tests {
 mod embodiment_tests {
     use super::*;
     use crate::{skill::authorized_fixture, EmbodimentProvider, ManualClock, SkillProgressSink};
-    use fabric::{DeviceId, SkillId, SkillOutcome, SkillProgress, SkillRequest};
+    use fabric::types::embodiment::{DeviceId, SkillId, SkillOutcome, SkillProgress, SkillRequest};
 
     struct NullSink;
     #[async_trait::async_trait]

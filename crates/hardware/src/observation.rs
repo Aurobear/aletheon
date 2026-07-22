@@ -2,7 +2,8 @@
 
 use std::collections::HashMap;
 
-use fabric::{DeviceId, EmbodiedObservation, MonoTime};
+use fabric::types::embodiment::{DeviceId, EmbodiedObservation};
+use fabric::MonoTime;
 
 #[derive(Default)]
 pub struct ObservationIngest {

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use executive::service::embodiment_authority::KernelEmbodimentAuthority;
+use executive::service::embodiment_authority::build_embodiment_invoker;
 use executive::service::embodiment_progress::RecordingEmbodimentProgress;
 use executive::service::embodiment_service::EmbodimentService;
-use fabric::{
-    DeviceId, EmbodimentExecutionPort, PrincipalId, ProcessId, SkillId, SkillOutcome, SkillRequest,
+use fabric::types::embodiment::{
+    DeviceId, EmbodimentExecutionPort, SkillId, SkillOutcome, SkillRequest,
 };
 use hardware::{Broker, ManualClock, ProviderRegistry, SimulatedEmbodiment};
 use kernel::chronos::TestClock;
@@ -15,12 +15,6 @@ async fn skill_is_admitted_executed_correlated_and_settled() {
         100, 0,
     ))));
     let hardware_clock = Arc::new(ManualClock::new(100));
-    let authority = Arc::new(KernelEmbodimentAuthority::new(
-        kernel.admission(),
-        hardware_clock.clone(),
-        ProcessId::new(),
-        PrincipalId("operator".into()),
-    ));
     let progress = Arc::new(RecordingEmbodimentProgress::default());
     let mut registry = ProviderRegistry::new();
     registry.register(
@@ -30,10 +24,20 @@ async fn skill_is_admitted_executed_correlated_and_settled() {
             hardware_clock.clone(),
         )),
     );
+    let broker = Arc::new(Broker::new(Arc::new(registry), hardware_clock));
+    let (invoker, active) =
+        build_embodiment_invoker(kernel.admission(), broker.clone(), progress.clone());
     let service = EmbodimentService::new(
-        Arc::new(Broker::new(Arc::new(registry), hardware_clock)),
-        authority,
-        progress.clone(),
+        broker,
+        invoker,
+        active,
+        fabric::ProcessId::new(),
+        fabric::PrincipalId("operator".into()),
+        fabric::WorkspacePolicy::from_resolved_roots(
+            std::path::PathBuf::from("/tmp/embodiment-production"),
+            vec![],
+        )
+        .unwrap(),
     );
 
     let result = service

@@ -38,11 +38,11 @@ fn result(ctx: &ToolContext, start: fabric::MonoTime, value: Result<Value, Strin
 macro_rules! robot_tool {
     ($name:ident, $tool_name:literal, $description:literal, $permission:expr, $concurrency:expr, $schema:expr, |$this:ident, $input:ident| $body:block) => {
         pub struct $name {
-            port: Arc<dyn fabric::EmbodimentExecutionPort>,
+            port: Arc<dyn fabric::types::embodiment::EmbodimentExecutionPort>,
         }
 
         impl $name {
-            pub fn new(port: Arc<dyn fabric::EmbodimentExecutionPort>) -> Self {
+            pub fn new(port: Arc<dyn fabric::types::embodiment::EmbodimentExecutionPort>) -> Self {
                 Self { port }
             }
         }
@@ -85,7 +85,7 @@ robot_tool!(
     |this, input| {
         let device = required_string(&input, "device")?;
         this.port
-            .observe(&fabric::DeviceId(device))
+            .observe(&fabric::types::embodiment::DeviceId(device))
             .await
             .map(|value| json!(value))
             .map_err(|error| error.to_string())
@@ -102,7 +102,7 @@ robot_tool!(
     |this, input| {
         let device = required_string(&input, "device")?;
         this.port
-            .get_state(&fabric::DeviceId(device))
+            .get_state(&fabric::types::embodiment::DeviceId(device))
             .await
             .map(|value| json!(value))
             .map_err(|error| error.to_string())
@@ -119,7 +119,7 @@ robot_tool!(
     |this, input| {
         let device = required_string(&input, "device")?;
         this.port
-            .list_skills(&fabric::DeviceId(device))
+            .list_skills(&fabric::types::embodiment::DeviceId(device))
             .await
             .map(|value| json!(value))
             .map_err(|error| error.to_string())
@@ -153,9 +153,9 @@ robot_tool!(
             return Err("'parameters' must be an object".into());
         }
         this.port
-            .execute_skill(fabric::SkillRequest {
-                device: fabric::DeviceId(device),
-                skill: fabric::SkillId(skill),
+            .execute_skill(fabric::types::embodiment::SkillRequest {
+                device: fabric::types::embodiment::DeviceId(device),
+                skill: fabric::types::embodiment::SkillId(skill),
                 parameters,
             })
             .await
@@ -198,7 +198,7 @@ robot_tool!(
     |this, input| {
         let device = required_string(&input, "device")?;
         this.port
-            .safe_stop(&fabric::DeviceId(device.clone()))
+            .safe_stop(&fabric::types::embodiment::DeviceId(device.clone()))
             .await
             .map(|()| json!({"device": device, "stopped": true}))
             .map_err(|error| error.to_string())
@@ -216,38 +216,50 @@ mod tests {
     }
 
     #[async_trait]
-    impl fabric::EmbodimentExecutionPort for RecordingPort {
+    impl fabric::types::embodiment::EmbodimentExecutionPort for RecordingPort {
         async fn observe(
             &self,
-            _device: &fabric::DeviceId,
-        ) -> Result<Vec<fabric::EmbodiedObservation>, fabric::SkillDispatchError> {
+            _device: &fabric::types::embodiment::DeviceId,
+        ) -> Result<
+            Vec<fabric::types::embodiment::EmbodiedObservation>,
+            fabric::types::embodiment::SkillDispatchError,
+        > {
             self.calls.lock().unwrap().push("observe".into());
             Ok(vec![])
         }
         async fn get_state(
             &self,
-            _device: &fabric::DeviceId,
-        ) -> Result<Option<fabric::EmbodiedObservation>, fabric::SkillDispatchError> {
+            _device: &fabric::types::embodiment::DeviceId,
+        ) -> Result<
+            Option<fabric::types::embodiment::EmbodiedObservation>,
+            fabric::types::embodiment::SkillDispatchError,
+        > {
             self.calls.lock().unwrap().push("get_state".into());
             Ok(None)
         }
         async fn list_skills(
             &self,
-            _device: &fabric::DeviceId,
-        ) -> Result<Vec<fabric::SkillDescriptor>, fabric::SkillDispatchError> {
+            _device: &fabric::types::embodiment::DeviceId,
+        ) -> Result<
+            Vec<fabric::types::embodiment::SkillDescriptor>,
+            fabric::types::embodiment::SkillDispatchError,
+        > {
             self.calls.lock().unwrap().push("list_skills".into());
             Ok(vec![])
         }
         async fn execute_skill(
             &self,
-            request: fabric::SkillRequest,
-        ) -> Result<fabric::SkillResult, fabric::SkillDispatchError> {
+            request: fabric::types::embodiment::SkillRequest,
+        ) -> Result<
+            fabric::types::embodiment::SkillResult,
+            fabric::types::embodiment::SkillDispatchError,
+        > {
             self.calls.lock().unwrap().push("execute_skill".into());
-            Ok(fabric::SkillResult {
+            Ok(fabric::types::embodiment::SkillResult {
                 operation_id: fabric::OperationId::new(),
                 skill: request.skill,
                 device: request.device,
-                outcome: fabric::SkillOutcome::Succeeded,
+                outcome: fabric::types::embodiment::SkillOutcome::Succeeded,
                 duration_ms: 1,
                 evidence: vec![],
             })
@@ -255,14 +267,14 @@ mod tests {
         async fn cancel(
             &self,
             _operation_id: &fabric::OperationId,
-        ) -> Result<(), fabric::SkillDispatchError> {
+        ) -> Result<(), fabric::types::embodiment::SkillDispatchError> {
             self.calls.lock().unwrap().push("cancel".into());
             Ok(())
         }
         async fn safe_stop(
             &self,
-            _device: &fabric::DeviceId,
-        ) -> Result<(), fabric::SkillDispatchError> {
+            _device: &fabric::types::embodiment::DeviceId,
+        ) -> Result<(), fabric::types::embodiment::SkillDispatchError> {
             self.calls.lock().unwrap().push("safe_stop".into());
             Ok(())
         }

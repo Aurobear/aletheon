@@ -721,18 +721,17 @@ impl RequestHandler {
         ));
         let hardware_clock: Arc<dyn hardware::MonotonicClock> =
             Arc::new(super::embodiment::HardwareClockAdapter(clock.clone()));
-        let embodiment_authority = Arc::new(
-            crate::service::embodiment_authority::KernelEmbodimentAuthority::new(
-                kernel.admission(),
-                hardware_clock.clone(),
-                fabric::ProcessId::new(),
-                fabric::PrincipalId(fabric::LOCAL_OWNER_PRINCIPAL.to_string()),
-            ),
-        );
+        let embodiment_workspace =
+            fabric::WorkspacePolicy::from_resolved_roots(data_dir.clone(), Vec::new())
+                .map_err(anyhow::Error::msg)
+                .context("resolving embodiment workspace")?;
         let embodiment_port = super::embodiment::build_embodiment_port(
             hardware_clock,
-            embodiment_authority,
+            kernel.admission(),
             Arc::new(crate::service::embodiment_progress::NoopEmbodimentProgress),
+            fabric::ProcessId::new(),
+            fabric::PrincipalId(fabric::LOCAL_OWNER_PRINCIPAL.to_string()),
+            embodiment_workspace,
         );
         tools
             .lock()

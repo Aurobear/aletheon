@@ -6,7 +6,8 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
-use fabric::{OperationId, SkillProgress};
+use fabric::types::embodiment::SkillProgress;
+use fabric::OperationId;
 use hardware::SkillProgressSink;
 
 #[async_trait]

@@ -96,7 +96,7 @@ impl ToolRegistry {
 
     pub fn register_robot_tools(
         &mut self,
-        port: Arc<dyn fabric::EmbodimentExecutionPort>,
+        port: Arc<dyn fabric::types::embodiment::EmbodimentExecutionPort>,
     ) -> Result<Vec<RegistrationId>, AgentError> {
         use super::robot::{
             RobotCancelTool, RobotExecuteSkillTool, RobotGetStateTool, RobotListSkillsTool,

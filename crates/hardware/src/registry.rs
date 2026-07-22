@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use fabric::DeviceId;
+use fabric::types::embodiment::DeviceId;
 
 use crate::EmbodimentProvider;
 

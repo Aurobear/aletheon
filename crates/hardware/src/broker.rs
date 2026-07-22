@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use fabric::{DeviceId, EmbodiedObservation, SkillDescriptor, SkillResult};
+use fabric::types::embodiment::{DeviceId, EmbodiedObservation, SkillDescriptor, SkillResult};
 
 use crate::{
     AuthorizedSkillRequest, EmbodimentProvider, MonotonicClock, OperationId, ProviderError,
@@ -138,7 +138,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use async_trait::async_trait;
-    use fabric::{SkillId, SkillOutcome, SkillProgress, SkillRequest};
+    use fabric::types::embodiment::{SkillId, SkillOutcome, SkillProgress, SkillRequest};
 
     use super::*;
     use crate::{skill::authorized_fixture, CancelAck, ManualClock, StopReceipt};
