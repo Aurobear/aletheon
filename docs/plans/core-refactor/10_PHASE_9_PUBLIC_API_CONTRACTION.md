@@ -34,10 +34,10 @@ Prerequisites: Phases 1–7. Phase 8 need not be globally complete, but no activ
 
 ## Task 1: Export/import inventory
 
-- [ ] Enumerate every `pub mod`, `pub use`, public concrete adapter/repository/parser, and cross-crate `r#impl` import.
-- [ ] Assign a canonical public path or mark private.
-- [ ] Record downstream call count and deletion order.
-- [ ] Add compile-fail/static gate fixtures for forbidden exports/imports.
+- [x] Enumerate every `pub mod`, `pub use`, public concrete adapter/repository/parser, and cross-crate `r#impl` import.
+- [x] Assign a canonical public path or mark private.
+- [x] Record downstream call count and deletion order.
+- [x] Add compile-fail/static gate fixtures for forbidden exports/imports.
 
 ## Task 2: Stable crate facades
 
@@ -50,9 +50,9 @@ required host/client facade types
 testing fakes under an explicit testing feature/module
 ```
 
-- [ ] No whole adapter/application internal tree is public.
-- [ ] No newtype wrapper is added solely to hide an otherwise unstable concrete type.
-- [ ] Public docs identify owner and stability of every facade group.
+- [x] No whole adapter/application internal tree is public.
+- [x] No newtype wrapper is added solely to hide an otherwise unstable concrete type.
+- [x] Public docs identify owner and stability of every facade group.
 
 ## Task 3: Migrate downstream imports
 
@@ -63,24 +63,24 @@ Order:
 3. Executive callers and binary host
 4. Dasein/Metacog public callers
 
-- [ ] Replace `crate::r#impl` and concrete adapter paths with canonical facade/port paths.
-- [ ] Run the narrow consuming package after each migration.
-- [ ] Lower ratchet counts immediately when imports decrease.
+- [x] Replace `crate::r#impl` and concrete adapter paths with canonical facade/port paths.
+- [x] Run the narrow consuming package after each migration.
+- [x] Lower ratchet counts immediately when imports decrease.
 
 ## Task 4: Physical impl cleanup
 
-- [ ] Cognit: remove top-level `impl/`, distribute remaining modules into actual needed layers.
-- [ ] Executive: remove top-level `impl/` after all adapter/application/composition/host moves complete.
-- [ ] Mnemosyne: remove top-level `impl/` and private concrete backends.
-- [ ] Dasein/Metacog: stop crate-root public `r#impl`; physical directory split is not mandatory in this phase.
-- [ ] Remove compatibility re-exports whose count is zero.
+- [x] Cognit: remove top-level `impl/`, distribute remaining modules into actual needed layers.
+- [x] Executive: remove top-level `impl/` after all adapter/application/composition/host moves complete.
+- [x] Mnemosyne: remove top-level `impl/` and private concrete backends.
+- [x] Dasein/Metacog: stop crate-root public `r#impl`; physical directory split is not mandatory in this phase.
+- [x] Remove compatibility re-exports whose count is zero.
 
 ## Task 5: Gate final public surface
 
-- [ ] All five crate roots lack `pub mod r#impl` and `pub use r#impl::*`.
-- [ ] Cross-crate `impl` references equal zero.
-- [ ] Concrete provider/repository/wire/parser exports equal zero except explicitly stable host facade types.
-- [ ] Public API snapshots or rustdoc checks are updated.
+- [x] All five crate roots lack `pub mod r#impl` and `pub use r#impl::*`.
+- [x] Cross-crate `impl` references equal zero.
+- [x] Concrete provider/repository/wire/parser exports equal zero except explicitly stable host facade types.
+- [x] Public API snapshots or rustdoc checks are updated.
 
 ## Validation
 

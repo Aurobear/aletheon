@@ -3,14 +3,14 @@
 //!
 //! [`ChannelApprovalPort`] lets `dispatcher.rs` and `handlers/approval.rs`
 //! depend only on fabric-native vocabulary instead of the concrete
-//! `crate::r#impl::approval::ApprovalRepository` (and its
+//! the private approval repository (and its
 //! `ApprovalDecision`/`ApprovalResolutionContext` types), so the channel
 //! layer can eventually move to a separate crate.
 
 use fabric::{ApprovalId, ApprovalSnapshot, PrincipalId};
 
 /// Channel-facing approval decision. Mirrors
-/// `crate::r#impl::approval::ApprovalDecision` without naming it, so the
+/// the private approval decision type without naming it, so the
 /// port stays free of the concrete approval-repository dependency.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChannelApprovalDecision {

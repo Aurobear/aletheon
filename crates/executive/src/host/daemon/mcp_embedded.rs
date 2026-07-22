@@ -1,4 +1,4 @@
-// crates/aletheon-runtime/src/impl/daemon/mcp_embedded.rs
+// Embedded MCP host adapter.
 
 //! Embedded MCP server — exposes body tools via MCP protocol.
 //!

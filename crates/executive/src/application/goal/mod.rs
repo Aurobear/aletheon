@@ -1,6 +1,6 @@
 //! Persistent objective store backed by SQLite.
 //!
-//! Mirrors `FactStore`'s open/schema idiom (`impl/memory/fact_store/mod.rs`):
+//! Mirrors the memory adapter's `FactStore` open/schema idiom:
 //! WAL, versioned migrations, positional row mapping.
 //!
 //! M2 extends the schema with goal-specific columns, event log, and budget ledger,
