@@ -76,7 +76,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify preinstalled stable toolchain
+        run: rustup run stable rustc --version
       - name: Verify replay receipts
         run: python3 tests/coding/replay_test.py
       - name: Verify coding harness contracts
@@ -95,9 +96,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy,rustfmt
+      - name: Verify preinstalled stable toolchain
+        run: rustup run stable rustc --version
       - name: Formatting
         run: bash scripts/cargo-agent.sh fmt --all -- --check
       - name: Clippy
@@ -116,9 +116,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.88.0
+      - name: Verify preinstalled MSRV toolchain
+        run: rustup run 1.88.0 rustc --version
       - run: bash scripts/cargo-agent.sh +1.88.0 check --workspace --all-targets
 
   strict-pi-contract:
@@ -131,7 +130,8 @@ jobs:
       ALETHEON_REAL_PI_VERSION: 0.80.10
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify preinstalled stable toolchain
+        run: rustup run stable rustc --version
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -145,12 +145,13 @@ jobs:
 
   strict-fuzz:
     name: Fuzz quick-check
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, Linux, X64, aletheon]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - name: Verify preinstalled nightly toolchain
+        run: rustup run nightly rustc --version
       - name: Install cargo-fuzz when absent
         run: command -v cargo-fuzz >/dev/null || cargo +nightly install cargo-fuzz --locked
       - name: Run all executive fuzz targets
@@ -166,6 +167,6 @@ jobs:
             message_roundtrip
           )
           for target in "${targets[@]}"; do
-            cargo +nightly fuzz run "$target" \
+            bash scripts/cargo-agent.sh +nightly fuzz run "$target" \
               --fuzz-dir crates/executive/fuzz -- -max_total_time=30
           done
