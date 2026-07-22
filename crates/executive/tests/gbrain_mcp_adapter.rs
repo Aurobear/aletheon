@@ -175,7 +175,9 @@ async fn build_adapter(state: FakeState, timeout: Duration) -> (GbrainMcpAdapter
         servers: vec![McpServerConfig {
             name: "gbrain".into(),
             transport: McpTransportConfig::StreamableHttp { url },
-            trust: McpTrustLevel::RemoteTrusted,
+            // This in-process HTTP fixture is a loopback endpoint and must
+            // declare local trust under the production endpoint policy.
+            trust: McpTrustLevel::LocalTrusted,
             enabled: true,
             bearer_token_env: None,
             oauth: None,
