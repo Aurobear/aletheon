@@ -12,7 +12,15 @@ while (($#)); do
     --preflight|--readiness) mode="$1"; shift ;;
     --core-unit) mode=--core-unit; unit=${2-}; shift 2 ;;
     --user-units)
-      mode=--user-units; service_unit=${2-}; socket_unit=${3-}; shift 3 ;;
+      mode=--user-units
+      if (($# >= 3)) && [[ ${2-} != --* && ${3-} != --* ]]; then
+        service_unit=$2; socket_unit=$3; shift 3
+      else
+        service_unit=config/aletheon.user.service
+        socket_unit=config/aletheon.user.socket
+        shift
+      fi
+      ;;
     --binary) binary=${2-}; shift 2 ;;
     --config) config=${2-}; shift 2 ;;
     --socket) socket=${2-}; shift 2 ;;
@@ -20,6 +28,12 @@ while (($#)); do
     *) usage ;;
   esac
 done
+
+# Repository-local verification does not need the production binary. The script
+# itself is an executable, stable stand-in for systemd-analyze path validation.
+if [[ "$mode" == --user-units && -z "$binary" ]]; then
+  binary=$0
+fi
 
 stage_unit() {
   local source=$1 destination=$2

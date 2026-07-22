@@ -65,3 +65,5 @@ grep -q 'verify-systemd.sh --user-units' scripts/install-systemd.sh
 if grep -q 'systemd-analyze --user verify' scripts/install-systemd.sh; then
   echo 'root installer depends on an unavailable user systemd manager' >&2; exit 1
 fi
+
+echo 'systemd runtime boundary: pass'

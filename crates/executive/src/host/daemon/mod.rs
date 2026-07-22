@@ -21,6 +21,7 @@ pub mod debug_handler;
 pub mod handler;
 pub mod mcp_embedded;
 pub mod model_router;
+mod protocol;
 #[deprecated(note = "use executive::composition::prefix_builder")]
 pub mod prefix_builder {
     pub use crate::composition::prefix_builder::*;

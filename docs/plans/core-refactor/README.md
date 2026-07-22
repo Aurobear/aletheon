@@ -25,7 +25,7 @@ This directory is the complete execution package for implementing
 - [x] Phase 8b — Turn Pipeline state machine
 - [x] Phase 8c — Mnemosyne service state machine
 - [x] Phase 8d — MCP client/auth state machine
-- [ ] Phase 8e — daemon server state machine
+- [x] Phase 8e — daemon server state machine
 - [ ] Phase 9 — public API contraction
 - [ ] Phase 10 — global verification and crate-split review
 

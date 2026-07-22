@@ -209,6 +209,7 @@ crates/executive/src/host/daemon/mcp_embedded.rs	host	executive	daemon, transpor
 crates/executive/src/host/daemon/mod.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/model_router.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/server.rs	host	executive	daemon, transport, or process lifecycle
+crates/executive/src/host/daemon/protocol.rs	host	executive	pure daemon connection protocol reducer
 crates/executive/src/host/daemon/session_manager.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/launcher.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/mod.rs	host	executive	daemon, transport, or process lifecycle

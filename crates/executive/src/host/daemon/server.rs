@@ -9,8 +9,7 @@ use anyhow::Result;
 use fabric::debug::DebugEvent;
 use fabric::events::ui_event::ClientEvent;
 use fabric::protocol::client::{
-    negotiate_protocol_version, ClientCapabilities, ClientEvent as ProtocolClientEvent,
-    ClientMessage, ClientRequest, InitializedResult,
+    ClientEvent as ProtocolClientEvent, ClientMessage, ClientRequest, InitializedResult,
 };
 use fabric::{Clock, ConnectionId, LocalOsPrincipal, PrincipalId, Timer};
 use futures::FutureExt;
@@ -27,6 +26,7 @@ use tracing::{error, info, warn};
 const CONNECTION_NOTIFICATION_CAPACITY: usize = 64;
 
 use super::handler::RequestHandler;
+use super::protocol::{ConnectionProtocolState, NegotiatedProtocol, ProtocolAction};
 
 /// Filesystem visibility of a path-bound daemon socket.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -219,72 +219,6 @@ impl ConnectionContext {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct NegotiatedProtocol {
-    protocol_version: u16,
-    capabilities: ClientCapabilities,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ConnectionProtocolState {
-    New,
-    AwaitingInitialized {
-        negotiated: NegotiatedProtocol,
-    },
-    Ready {
-        negotiated: Option<NegotiatedProtocol>,
-    },
-}
-
-enum ProtocolAction {
-    InitializeResponse(NegotiatedProtocol),
-    Initialized,
-    Dispatch,
-}
-
-impl ConnectionProtocolState {
-    fn accept(&mut self, request: &ClientRequest) -> anyhow::Result<ProtocolAction> {
-        match (&mut *self, request) {
-            (Self::New, ClientRequest::Initialize(params)) => {
-                let negotiated = NegotiatedProtocol {
-                    protocol_version: negotiate_protocol_version(&params.protocol_versions)?,
-                    capabilities: params.capabilities.clone(),
-                };
-                *self = Self::AwaitingInitialized {
-                    negotiated: negotiated.clone(),
-                };
-                Ok(ProtocolAction::InitializeResponse(negotiated))
-            }
-            (Self::New, _) => anyhow::bail!("connection must initialize before requests"),
-            (Self::AwaitingInitialized { negotiated }, ClientRequest::Initialized) => {
-                let negotiated = negotiated.clone();
-                *self = Self::Ready {
-                    negotiated: Some(negotiated),
-                };
-                Ok(ProtocolAction::Initialized)
-            }
-            (Self::AwaitingInitialized { .. }, ClientRequest::Initialize(_)) => {
-                anyhow::bail!("connection initialization cannot be repeated")
-            }
-            (Self::AwaitingInitialized { .. }, _) => {
-                anyhow::bail!("connection must send initialized before requests")
-            }
-            (Self::Ready { .. }, ClientRequest::Initialize(_) | ClientRequest::Initialized) => {
-                anyhow::bail!("connection initialization cannot be repeated")
-            }
-            (
-                Self::Ready {
-                    negotiated: Some(_),
-                },
-                _,
-            ) => Ok(ProtocolAction::Dispatch),
-            (Self::Ready { negotiated: None }, _) => {
-                anyhow::bail!("legacy connections cannot send versioned requests")
-            }
-        }
-    }
-}
-
 /// Temporary M0-M2 bridge for the pre-versioned JSON-RPC client.
 ///
 /// This adapter never handles a Fabric `ClientMessage`; it only marks a legacy
@@ -297,17 +231,7 @@ impl LegacyClientHandshakeAdapter {
         if !is_legacy_json_rpc(request) {
             return false;
         }
-        match state {
-            ConnectionProtocolState::New => {
-                *state = ConnectionProtocolState::Ready { negotiated: None };
-                true
-            }
-            ConnectionProtocolState::Ready { negotiated: None } => true,
-            ConnectionProtocolState::AwaitingInitialized { .. }
-            | ConnectionProtocolState::Ready {
-                negotiated: Some(_),
-            } => false,
-        }
+        state.accept_legacy().is_ok()
     }
 }
 

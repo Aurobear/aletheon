@@ -39,14 +39,14 @@ Never combine two work packages in one commit series.
 
 For each package:
 
-- [ ] Write `STATE_MACHINE.md` beside the module or under its plan evidence directory.
-- [ ] List states, accepted events, guards, transitions, side effects, terminal states, idempotency keys, persistence points, cancellation, timeout, and recovery.
-- [ ] Add characterization tests for every existing transition and invalid transition.
-- [ ] Extract a pure reducer returning `Transition { next_state, effects }` or an equivalent typed result.
-- [ ] Keep I/O in an effect executor behind ports.
-- [ ] Ensure there is exactly one mutation entry point.
-- [ ] Add crash/restart and repeated-event tests where persistence exists.
-- [ ] Update architecture inventory and largest-module metrics.
+- [x] Write `STATE_MACHINE.md` beside the module or under its plan evidence directory.
+- [x] List states, accepted events, guards, transitions, side effects, terminal states, idempotency keys, persistence points, cancellation, timeout, and recovery.
+- [x] Add characterization tests for every existing transition and invalid transition.
+- [x] Extract a pure reducer returning `Transition { next_state, effects }` or an equivalent typed result.
+- [x] Keep I/O in an effect executor behind ports.
+- [x] Ensure there is exactly one mutation entry point.
+- [x] Add crash/restart and repeated-event tests where persistence exists.
+- [x] Update architecture inventory and largest-module metrics.
 
 ## Work package 8a: Agent Control
 
@@ -141,9 +141,16 @@ bash tests/architecture_check.sh
 
 ## Work package 8e: Daemon Server
 
-- [ ] Separate listener/accept, authentication, client protocol negotiation, request dispatch, subscriptions, shutdown, and child/task supervision.
-- [ ] Preserve protocol version rejection, frame limits, socket permissions, systemd activation, and graceful shutdown.
-- [ ] Host calls application ports only.
+- [x] Separate listener/accept, authentication, client protocol negotiation, request dispatch, subscriptions, shutdown, and child/task supervision.
+- [x] Preserve protocol version rejection, frame limits, socket permissions, systemd activation, and graceful shutdown.
+- [x] Host calls application ports only.
+
+Evidence: `crates/executive/src/host/daemon/STATE_MACHINE.md` documents listener,
+authentication, negotiation, dispatch, subscription, and shutdown ownership.
+`protocol.rs` contains the pure reducer and `ConnectionProtocolState::apply` is its
+single mutation entry. Server and reconnect tests cover invalid/repeated negotiation,
+identity, bounded task cleanup, and cursor replay. Systemd boundary and typed unit
+verification cover activation, permissions, and graceful host configuration.
 
 Validation:
 
