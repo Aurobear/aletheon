@@ -12,7 +12,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
   ALETHEON_CARGO_CACHE_ROOT: /home/aletheon-ci/.cache/aletheon-cargo
+  ALETHEON_CARGO_TARGET_MAX_GIB: 30
 
 # Runner jobs are deliberately limited to branches in this repository. The
 # repository is public, so forked pull requests must never execute arbitrary
