@@ -17,7 +17,6 @@ use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::sandbox::executor::{create_executor_with_front_backend, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
-use corpus::tools::tools::ToolRegistry;
 use dasein::{SelfField, SelfFieldConfig};
 use fabric::CanonicalEventBus;
 use fabric::Clock;
@@ -26,7 +25,6 @@ use fabric::Version;
 use fabric::{Subsystem, SubsystemContext};
 use metacog::DefaultMetaRuntime;
 use mnemosyne::episodic::EpisodicMemory;
-use mnemosyne::memory_tools::{CoreMemoryAppendTool, CoreMemoryReplaceTool, MemorySearchTool};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
@@ -126,9 +124,6 @@ impl RequestHandler {
             data_dir: &data_dir,
             clock: clock.clone(),
         })?;
-        let core_memory = memory.core;
-        let recall_memory = memory.recall;
-        let fact_store = memory.facts;
 
         // Every durable user-runtime store is rooted in the injected state
         // directory. Never rediscover HOME or a machine deployment path here.
@@ -291,21 +286,16 @@ impl RequestHandler {
                 search.api_key.expose().to_owned(),
             )
         });
-        let mut tools = ToolRegistry::with_network_policy_and_search(network_policy, search_config);
-        let _ = tools.register(Arc::new(CoreMemoryAppendTool {
-            memory: core_memory.clone(),
+        let tool_composition = super::tools::compose(super::tools::ToolCompositionInput {
+            network_policy,
+            search: search_config,
+            memory,
             clock: clock.clone(),
-        }));
-        let _ = tools.register(Arc::new(CoreMemoryReplaceTool {
-            memory: core_memory.clone(),
-            clock: clock.clone(),
-        }));
-        let _ = tools.register(Arc::new(MemorySearchTool {
-            recall: recall_memory.clone(),
-            core_memory: core_memory.clone(),
-            fact_store: Some(fact_store.clone()),
-            clock: clock.clone(),
-        }));
+        });
+        let mut tools = tool_composition.registry;
+        let core_memory = tool_composition.memory.core;
+        let recall_memory = tool_composition.memory.recall;
+        let fact_store = tool_composition.memory.facts;
         let external_artifact_root = data_dir.join("external-artifacts");
         let (google, mut google_sync, google_sync_store, gmail_ingress) =
             match super::google::register_configured_google_read_tools(

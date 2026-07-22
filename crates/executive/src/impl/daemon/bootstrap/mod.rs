@@ -16,6 +16,7 @@ mod runtime;
 mod services;
 mod sessions;
 mod storage;
+mod tools;
 mod turn_runtime;
 
 use std::sync::atomic::AtomicUsize;
