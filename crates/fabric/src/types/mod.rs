@@ -15,6 +15,7 @@ pub mod conscious_core;
 pub mod conscious_core_trace;
 pub mod conscious_field_metrics;
 pub mod context;
+pub mod embodiment;
 pub mod evidence;
 pub mod extension;
 pub mod external_event;
