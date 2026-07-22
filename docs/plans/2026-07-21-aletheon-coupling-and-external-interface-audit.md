@@ -648,6 +648,14 @@ memory projection 与临时 artifact 删除是明确的 best-effort 路径，但
 
 ## 22. 已验证的健康行为与排除项
 
+- H10 以 disposable Git repository 串起 goal、固定 Pi contract executor、生产 verifier、
+  approval、生产 `git apply` 与 settled receipt；测试同时证明 diff hash 篡改、真实 verifier
+  失败和重复 consume 均不会绕过闭环
+  （`crates/executive/tests/coding_production_e2e.rs:36-107,192-287,290-389`）。确定性 gate 已进入
+  当前 CI，真实 Pi 0.80.10 contract 仍为独立 gate；SER8 用户 timer 继续运行有界真实 Pi 任务
+  （`.github/workflows/ci.yml:29-45,100-117`、
+  `deploy/systemd/user/aletheon-pi-closure.timer:1-12`、
+  `scripts/aletheon-pi-scheduled-task.sh:6-42,51-102`）。
 - H9 的 Pi capability audit 不再用“present + 两个空向量”占位，而是记录 sandbox backend
   报告的 observed/unavailable 信号，并用显式 allow-list 供 verifier 比对
   （`crates/executive/src/impl/runtime/pi.rs:285-315,685-693`）。Pi report 同时预声明与 durable
