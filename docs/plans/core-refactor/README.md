@@ -22,7 +22,7 @@ This directory is the complete execution package for implementing
 - [x] Phase 6 — channel, identity, and information sources
 - [x] Phase 7 — inference adapter isolation
 - [x] Phase 8a — Agent Control state machine
-- [ ] Phase 8b — Turn Pipeline state machine
+- [x] Phase 8b — Turn Pipeline state machine
 - [ ] Phase 8c — Mnemosyne service state machine
 - [ ] Phase 8d — MCP client/auth state machine
 - [ ] Phase 8e — daemon server state machine

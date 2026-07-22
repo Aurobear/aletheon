@@ -79,9 +79,16 @@ bash scripts/cargo-agent.sh test -p executive --test agent_recovery
 
 ## Work package 8b: Turn Pipeline
 
-- [ ] Model admission, pre-turn, cognitive execution, tool loop, post-turn, projection, completion/error/cancel states.
-- [ ] Preserve event ordering, token ownership, streaming, compaction, cancellation, parity, and post-turn projections.
-- [ ] Remove bypass paths that call concrete harness/tool/memory implementations.
+- [x] Model admission, pre-turn, cognitive execution, tool loop, post-turn, projection, completion/error/cancel states.
+- [x] Preserve event ordering, token ownership, streaming, compaction, cancellation, parity, and post-turn projections.
+- [x] Remove bypass paths that call concrete harness/tool/memory implementations.
+
+Evidence: `crates/executive/src/application/TURN_STATE_MACHINE.md` documents the
+stage model and recovery semantics; `turn_lifecycle.rs` owns the pure reducer and
+single mutation entry, including terminal and invalid-event characterization.
+`TurnPipeline::run` advances that lifecycle at the existing port-backed boundaries.
+The architecture inventory records the owner and module measurements, while ordering,
+engine parity, and conscious action/outcome tests protect existing behavior.
 
 Validation:
 

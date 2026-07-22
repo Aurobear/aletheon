@@ -96,6 +96,7 @@ crates/executive/src/application/tool_stream_bridge.rs	application	executive	use
 crates/executive/src/application/turn_coordinator.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/turn_diff_tracker.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/turn_engine.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/turn_lifecycle.rs	application	executive	pure turn pipeline lifecycle reducer
 crates/executive/src/application/turn_pipeline.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/turn_policy.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/turn_recovery.rs	application	executive	use-case orchestration and ports

@@ -46,6 +46,7 @@ pub mod tool_stream_bridge;
 pub mod turn_coordinator;
 pub mod turn_diff_tracker;
 pub mod turn_engine;
+pub mod turn_lifecycle;
 pub mod turn_pipeline;
 pub mod turn_policy;
 pub mod turn_recovery;

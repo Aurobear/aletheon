@@ -6,6 +6,7 @@
 use crate::application::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
 use crate::application::daemon_turn::helpers::bounded_text_history;
 use crate::application::governed_capability::CapabilityExecutionContext;
+use crate::application::turn_lifecycle::{TurnPipelineEvent, TurnPipelineLifecycle};
 use crate::core::session_gateway::SessionGateway;
 use cognit::CanonicalTurnEventSink;
 use fabric::events::ui_event::ClientEvent;
@@ -265,7 +266,10 @@ impl TurnPipeline {
             "turn:{}:assistant",
             lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)).0
         );
+        let mut pipeline_lifecycle = TurnPipelineLifecycle::default();
         let turn_result: anyhow::Result<serde_json::Value> = async {
+
+        pipeline_lifecycle.apply(TurnPipelineEvent::Admit)?;
 
         let lifecycle_start = self
             .dispatch_lifecycle(
@@ -454,6 +458,8 @@ impl TurnPipeline {
             .await?;
         let context_projection_receipt = assembled_context.projection_receipt;
         let request_messages = assembled_context.messages;
+
+        pipeline_lifecycle.apply(TurnPipelineEvent::ContextPrepared)?;
 
         // LLM selection
         let llm = self.runtime_ports.models.select(&message);
@@ -652,6 +658,8 @@ impl TurnPipeline {
 
         let goal_message = message.to_string();
         let goal_message_for_gw = goal_message.clone();
+
+        pipeline_lifecycle.apply(TurnPipelineEvent::ToolLoopStarted)?;
 
         // Spawn ReAct loop
         let mut react_task = tokio::spawn(submit_streaming_daemon_turn(
@@ -906,6 +914,8 @@ impl TurnPipeline {
         let metrics = result.metrics;
         info!(len = text.len(), "ReAct loop completed");
 
+        pipeline_lifecycle.apply(TurnPipelineEvent::ExecutionFinished)?;
+
         // -- Post-turn settlement --
         // Session gateway update
         {
@@ -995,6 +1005,9 @@ impl TurnPipeline {
         )
         .await?;
 
+        pipeline_lifecycle.apply(TurnPipelineEvent::PostTurnSettled)?;
+        pipeline_lifecycle.apply(TurnPipelineEvent::ProjectionFinished)?;
+
         Ok(json!({"jsonrpc": "2.0", "id": id, "result": {
             "response": text, "turn": turn, "succeeded": turn_succeeded,
                 "metrics": {
@@ -1015,6 +1028,12 @@ impl TurnPipeline {
         .await;
 
         if turn_result.is_err() {
+            let terminal = if scope_token.is_cancelled() {
+                TurnPipelineEvent::Cancel
+            } else {
+                TurnPipelineEvent::Fail
+            };
+            pipeline_lifecycle.apply(terminal)?;
             if let Err(error) = self
                 .dispatch_lifecycle(
                     crate::application::lifecycle_contributors::LifecycleInput {
