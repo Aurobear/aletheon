@@ -45,6 +45,9 @@ pub struct TurnEngineContext {
     pub workspace: Arc<fabric::WorkspacePolicy>,
     pub profile: ResolvedTurnProfile,
     pub cancel_token: CancellationToken,
+    /// Exact host-authenticated context when the caller already resolved one.
+    /// CLI callers may omit it and use the compatibility construction below.
+    pub principal_context: Option<fabric::PrincipalContext>,
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +64,6 @@ pub trait TurnEngineEventSink: Send + Sync {
 // Result / Status / Error
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug)]
 pub struct TurnEngineResult {
     pub turn_id: TurnId,
     pub output: String,
@@ -70,6 +72,9 @@ pub struct TurnEngineResult {
     pub tokens_in: u64,
     pub tokens_out: u64,
     pub elapsed_ms: u64,
+    /// Coordinator-owned durable artifacts produced by daemon execution.
+    /// Non-daemon engines leave this empty.
+    pub coordinator_execution: Option<crate::service::turn_coordinator::TurnExecution>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,18 +141,21 @@ impl TurnEngine for SessionTurnEngine {
             .model_policy
             .or(context.profile.model_policy.clone());
 
-        let turn_request = fabric::TurnRequest {
-            operation_id: context.operation_id,
-            process_id: context.process_id,
-            context: fabric::PrincipalContext::new(
+        let principal_context = context.principal_context.unwrap_or_else(|| {
+            fabric::PrincipalContext::new(
                 principal_id.clone(),
                 fabric::LocalOsPrincipal { uid: 0, gid: 0 },
                 fabric::ConnectionId::default(),
-                fabric::ThreadId(principal_id.0),
+                fabric::ThreadId(principal_id.0.clone()),
                 workspace,
                 fabric::PermissionProfileId("exec".into()),
                 fabric::ApprovalPolicy::Never,
-            ),
+            )
+        });
+        let turn_request = fabric::TurnRequest {
+            operation_id: context.operation_id,
+            process_id: context.process_id,
+            context: principal_context,
             input: request.input.clone(),
             model_policy,
             deadline: request.deadline,
@@ -163,6 +171,7 @@ impl TurnEngine for SessionTurnEngine {
                 tokens_in: 0,
                 tokens_out: 0,
                 elapsed_ms: tr.metrics.elapsed_ms,
+                coordinator_execution: None,
             },
             Err(_e) => TurnEngineResult {
                 turn_id,
@@ -172,6 +181,7 @@ impl TurnEngine for SessionTurnEngine {
                 tokens_in: 0,
                 tokens_out: 0,
                 elapsed_ms: 0,
+                coordinator_execution: None,
             },
         };
 

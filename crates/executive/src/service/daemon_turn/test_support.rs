@@ -82,6 +82,7 @@ impl DaemonTurnTestBuilder {
             main_agent_process_id: Arc::new(Mutex::new(None)),
             turn_token: Arc::new(Mutex::new(None)),
             pipeline: None,
+            turn_engine: None,
             coordinator: coordinator.clone(),
             session_service,
             grok_hardening: Default::default(),

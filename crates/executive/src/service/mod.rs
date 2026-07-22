@@ -13,6 +13,7 @@ pub mod context_assembler;
 pub mod context_fragment;
 pub mod daemon_react;
 pub mod daemon_turn;
+pub mod daemon_turn_engine;
 pub mod dasein_workspace_adapter;
 pub mod durable_write;
 pub mod event_projection;

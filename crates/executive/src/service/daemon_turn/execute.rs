@@ -5,9 +5,10 @@
 
 use super::orchestrator::DaemonTurnOrchestrator;
 
-use crate::service::turn_coordinator::TurnExecution;
+use std::sync::Arc;
+
 use crate::service::turn_policy::TurnPolicy;
-use fabric::{PrincipalContext, PromptEnvelope, PromptKind, TurnRequest, TurnResult, TurnStop};
+use fabric::{PrincipalContext, PromptEnvelope, PromptKind, TurnRequest};
 use serde_json::json;
 use tracing::warn;
 
@@ -168,12 +169,14 @@ impl DaemonTurnOrchestrator {
 
         // Resolve the active agent profile once per turn so model_policy,
         // prompt, budget, and approval are all drawn from the same source.
-        let model_policy = self
-            .active_profile
-            .snapshot()
-            .await
-            .map(|p| p.model_policy)
-            .unwrap_or_default();
+        let profile = match self.active_profile.snapshot().await {
+            Ok(profile) => profile,
+            Err(error) => {
+                warn!(%error, "failed to resolve active turn profile");
+                return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": error.to_string()}});
+            }
+        };
+        let model_policy = profile.model_policy.clone();
 
         // The coordinator replaces this placeholder with the authoritative Turn id.
         let turn_request = TurnRequest {
@@ -186,11 +189,9 @@ impl DaemonTurnOrchestrator {
         };
 
         let _turn_token = self.begin_turn_token().await;
-        let pipeline = self.pipeline.clone();
+        let turn_engine = self.turn_engine.clone();
         #[cfg(test)]
         let test_runner = self.test_runner.clone();
-        let rpc_id = id.clone();
-        let principal = turn_request.context.principal_id.clone();
         let policy = TurnPolicy::daemon();
         let coordinated = self
             .coordinator
@@ -199,84 +200,30 @@ impl DaemonTurnOrchestrator {
                 if let Some(runner) = test_runner {
                     return runner(request, cancel).await;
                 }
-                let pipeline =
-                    pipeline.expect("production daemon orchestrator has a turn pipeline");
-                let turn_cancel = cancel.clone();
-                {
-                    let mut guard = pipeline.current_scope.lock().await;
-                    *guard = Some(kernel::operation::OperationScope::new(request.operation_id));
-                }
-                let response = pipeline
-                    .run(
-                        rpc_id,
-                        request.input.clone(),
-                        request.clone(),
-                        request.operation_id,
-                        request.process_id,
-                        cancel,
-                        principal,
-                    )
-                    .await?;
-                if let Some(error) = response.get("error") {
-                    anyhow::bail!(
-                        "{}",
-                        error
-                            .get("message")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("daemon turn failed")
-                    );
-                }
-                let result = &response["result"];
-                let output = result["response"].as_str().unwrap_or_default().to_string();
-                let items =
-                    serde_json::from_value(result["canonical_items"].clone()).unwrap_or_default();
-                let succeeded = result["succeeded"].as_bool().unwrap_or(false);
-                let metric = &result["metrics"];
-                let metrics = fabric::TurnMetrics {
-                    tool_calls_made: metric["tool_calls_made"].as_u64().unwrap_or(0) as usize,
-                    tool_errors: metric["tool_errors"].as_u64().unwrap_or(0) as usize,
-                    elapsed_ms: metric["elapsed_ms"].as_u64().unwrap_or(0),
-                    iterations: metric["iterations"].as_u64().unwrap_or(0) as usize,
-                    completed_normally: metric["completed_normally"].as_bool().unwrap_or(false),
-                };
-                let projection = crate::service::post_turn_projection::PostTurnDispatch {
-                    projector: pipeline.post_turn_projection.clone(),
-                    outcome: crate::service::post_turn_projection::PostTurnOutcome {
-                        session_id: result["projection"]["session_id"]
-                            .as_str()
-                            .unwrap_or(&request.context.thread_id.0)
-                            .to_string(),
-                        input: request.input.clone(),
-                        output: output.clone(),
-                        turn: result["turn"].as_u64().unwrap_or(0) as usize,
-                        succeeded,
-                        tool_calls_made: metrics.tool_calls_made,
-                        tool_errors: metrics.tool_errors,
-                        elapsed_ms: metrics.elapsed_ms,
-                        iterations: metrics.iterations,
-                        completed_normally: metrics.completed_normally,
-                        agora_start_version: result["projection"]["agora_start_version"]
-                            .as_u64()
-                            .unwrap_or(0),
-                    },
-                };
-                let context_projection =
-                    serde_json::from_value(result["projection"]["conscious_context"].clone()).ok();
-                Ok(TurnExecution {
-                    result: TurnResult {
-                        output,
-                        stop: if turn_cancel.is_cancelled() {
-                            TurnStop::Cancelled
-                        } else if succeeded {
-                            TurnStop::Completed
-                        } else {
-                            TurnStop::Failed
+                let turn_engine = turn_engine
+                    .ok_or_else(|| anyhow::anyhow!("daemon turn engine is not configured"))?;
+                let engine_result = turn_engine
+                    .execute(
+                        crate::service::turn_engine::TurnEngineRequest {
+                            input: request.input.clone(),
+                            model_policy: request.model_policy.clone(),
+                            deadline: request.deadline,
                         },
-                        metrics,
-                    },
-                    items,
-                    projection: Some(projection),
-                    context_projection,
+                        crate::service::turn_engine::TurnEngineContext {
+                            principal_id: request.context.principal_id.clone(),
+                            operation_id: request.operation_id,
+                            process_id: request.process_id,
+                            workspace: Arc::new(request.context.workspace.clone()),
+                            profile: profile.clone(),
+                            cancel_token: cancel,
+                            principal_context: Some(request.context.clone()),
+                        },
+                        Arc::new(crate::service::daemon_turn_engine::NoopTurnEngineEventSink),
+                    )
+                    .await
+                    .map_err(anyhow::Error::from)?;
+                engine_result.coordinator_execution.ok_or_else(|| {
+                    anyhow::anyhow!("daemon turn engine omitted coordinator execution artifacts")
                 })
             })
             .await;
