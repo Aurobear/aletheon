@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabric::{
-    EmbodimentExecutionPort, SkillDispatchError, SkillOutcome, SkillRequest, SkillResult,
+    DeviceId, EmbodiedObservation, EmbodimentExecutionPort, OperationId, SkillDescriptor,
+    SkillDispatchError, SkillOutcome, SkillRequest, SkillResult,
 };
 use hardware::{Broker, BrokerError};
 
@@ -15,6 +16,7 @@ pub struct EmbodimentService {
     broker: Arc<Broker>,
     authority: Arc<dyn EmbodimentAuthorityPort>,
     progress: Arc<dyn EmbodimentProgressPort>,
+    active_operations: tokio::sync::Mutex<std::collections::HashMap<OperationId, DeviceId>>,
 }
 
 impl EmbodimentService {
@@ -27,18 +29,50 @@ impl EmbodimentService {
             broker,
             authority,
             progress,
+            active_operations: tokio::sync::Mutex::new(Default::default()),
         }
     }
 }
 
 #[async_trait]
 impl EmbodimentExecutionPort for EmbodimentService {
+    async fn observe(
+        &self,
+        device: &DeviceId,
+    ) -> Result<Vec<EmbodiedObservation>, SkillDispatchError> {
+        self.broker.observe(device).await.map_err(map_broker_error)
+    }
+
+    async fn get_state(
+        &self,
+        device: &DeviceId,
+    ) -> Result<Option<EmbodiedObservation>, SkillDispatchError> {
+        self.broker
+            .get_state(device)
+            .await
+            .map_err(map_broker_error)
+    }
+
+    async fn list_skills(
+        &self,
+        device: &DeviceId,
+    ) -> Result<Vec<SkillDescriptor>, SkillDispatchError> {
+        self.broker
+            .list_skills(device)
+            .await
+            .map_err(map_broker_error)
+    }
+
     async fn execute_skill(
         &self,
         request: SkillRequest,
     ) -> Result<SkillResult, SkillDispatchError> {
         let operation_id = fabric::OperationId::new();
         let authorized = self.authority.authorize(operation_id, &request).await?;
+        self.active_operations
+            .lock()
+            .await
+            .insert(operation_id, request.device.clone());
         let sink = Arc::new(BoundedProgressSink::new(
             operation_id,
             self.progress.clone(),
@@ -54,11 +88,33 @@ impl EmbodimentExecutionPort for EmbodimentService {
             Ok(SkillOutcome::Succeeded)
         );
         let settlement = self.authority.settle(operation_id, succeeded).await;
+        self.active_operations.lock().await.remove(&operation_id);
         match (dispatched, settlement) {
             (Ok(result), Ok(())) => Ok(result),
             (Err(error), _) => Err(error),
             (Ok(_), Err(error)) => Err(error),
         }
+    }
+
+    async fn cancel(&self, operation_id: &OperationId) -> Result<(), SkillDispatchError> {
+        let device = self
+            .active_operations
+            .lock()
+            .await
+            .get(operation_id)
+            .cloned()
+            .ok_or_else(|| SkillDispatchError::Rejected("operation is not active".into()))?;
+        self.broker
+            .cancel(&device, &hardware::OperationId(operation_id.0.to_string()))
+            .await
+            .map_err(map_broker_error)
+    }
+
+    async fn safe_stop(&self, device: &DeviceId) -> Result<(), SkillDispatchError> {
+        self.broker
+            .safe_stop(device)
+            .await
+            .map_err(map_broker_error)
     }
 }
 

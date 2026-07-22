@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use fabric::{DeviceId, SkillDescriptor, SkillResult};
+use fabric::{DeviceId, EmbodiedObservation, SkillDescriptor, SkillResult};
 
 use crate::{
     AuthorizedSkillRequest, EmbodimentProvider, MonotonicClock, OperationId, ProviderError,
@@ -49,6 +49,26 @@ impl Broker {
     ) -> Result<Vec<SkillDescriptor>, BrokerError> {
         self.provider(device)?
             .list_skills(device)
+            .await
+            .map_err(BrokerError::Provider)
+    }
+
+    pub async fn observe(
+        &self,
+        device: &DeviceId,
+    ) -> Result<Vec<EmbodiedObservation>, BrokerError> {
+        self.provider(device)?
+            .observe(device)
+            .await
+            .map_err(BrokerError::Provider)
+    }
+
+    pub async fn get_state(
+        &self,
+        device: &DeviceId,
+    ) -> Result<Option<EmbodiedObservation>, BrokerError> {
+        self.provider(device)?
+            .get_state(device)
             .await
             .map_err(BrokerError::Provider)
     }
@@ -135,6 +155,20 @@ mod tests {
 
     #[async_trait]
     impl EmbodimentProvider for Provider {
+        async fn observe(
+            &self,
+            _device: &DeviceId,
+        ) -> Result<Vec<EmbodiedObservation>, ProviderError> {
+            Ok(vec![])
+        }
+
+        async fn get_state(
+            &self,
+            _device: &DeviceId,
+        ) -> Result<Option<EmbodiedObservation>, ProviderError> {
+            Ok(None)
+        }
+
         async fn list_skills(
             &self,
             _device: &DeviceId,

@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use fabric::{DeviceId, SkillDescriptor, SkillProgress, SkillRequest, SkillResult};
+use fabric::{
+    DeviceId, EmbodiedObservation, SkillDescriptor, SkillProgress, SkillRequest, SkillResult,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProviderError {
@@ -55,6 +57,11 @@ impl<'a> ValidatedSkillCommand<'a> {
 
 #[async_trait]
 pub trait EmbodimentProvider: Send + Sync {
+    async fn observe(&self, device: &DeviceId) -> Result<Vec<EmbodiedObservation>, ProviderError>;
+    async fn get_state(
+        &self,
+        device: &DeviceId,
+    ) -> Result<Option<EmbodiedObservation>, ProviderError>;
     async fn list_skills(&self, device: &DeviceId) -> Result<Vec<SkillDescriptor>, ProviderError>;
     async fn execute_skill(
         &self,

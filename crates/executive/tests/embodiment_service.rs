@@ -78,6 +78,17 @@ async fn service_generates_identity_dispatches_and_settles_once() {
     let progress = Arc::new(RecordingEmbodimentProgress::default());
     let service = EmbodimentService::new(broker, authority.clone(), progress.clone());
 
+    let observations = service.observe(&DeviceId("bot".into())).await.unwrap();
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].schema, "pose");
+    assert!(service
+        .get_state(&DeviceId("bot".into()))
+        .await
+        .unwrap()
+        .is_some());
+    let skills = service.list_skills(&DeviceId("bot".into())).await.unwrap();
+    assert_eq!(skills[0].skill, SkillId("navigate".into()));
+
     let result = service
         .execute_skill(SkillRequest {
             skill: SkillId("navigate".into()),
@@ -91,4 +102,5 @@ async fn service_generates_identity_dispatches_and_settles_once() {
     let updates = progress.updates().await;
     assert_eq!(updates.len(), 1);
     assert_eq!(updates[0].operation_id, result.operation_id);
+    service.safe_stop(&DeviceId("bot".into())).await.unwrap();
 }

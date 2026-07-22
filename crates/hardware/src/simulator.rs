@@ -243,6 +243,41 @@ impl SimulatedEmbodiment {
 
 #[async_trait::async_trait]
 impl crate::EmbodimentProvider for SimulatedEmbodiment {
+    async fn observe(
+        &self,
+        device: &fabric::DeviceId,
+    ) -> Result<Vec<fabric::EmbodiedObservation>, crate::ProviderError> {
+        Ok(vec![self
+            .get_state(device)
+            .await?
+            .expect("simulator always exposes state")])
+    }
+
+    async fn get_state(
+        &self,
+        device: &fabric::DeviceId,
+    ) -> Result<Option<fabric::EmbodiedObservation>, crate::ProviderError> {
+        let mut guard = self.inner.lock().await;
+        if guard.manifest.id != *device {
+            return Err(crate::ProviderError::Rejected("device mismatch".into()));
+        }
+        let telemetry = guard.telemetry(None);
+        let time = fabric::MonoTime(telemetry.source_time.0);
+        Ok(Some(fabric::EmbodiedObservation {
+            schema: telemetry.stream,
+            schema_version: 1,
+            source: format!("sim:{}", telemetry.device.0),
+            sequence: telemetry.sequence,
+            source_time: time,
+            received_at: time,
+            valid_until: Some(fabric::MonoDeadline::after(time, 1_000)),
+            confidence: 1.0,
+            frame_ref: Some("map".into()),
+            payload: telemetry.payload,
+            evidence: vec![],
+        }))
+    }
+
     async fn list_skills(
         &self,
         device: &fabric::DeviceId,

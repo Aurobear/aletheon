@@ -719,6 +719,26 @@ impl RequestHandler {
             clock.clone(),
             durable_budget,
         ));
+        let hardware_clock: Arc<dyn hardware::MonotonicClock> =
+            Arc::new(super::embodiment::HardwareClockAdapter(clock.clone()));
+        let embodiment_authority = Arc::new(
+            crate::service::embodiment_authority::KernelEmbodimentAuthority::new(
+                kernel.admission(),
+                hardware_clock.clone(),
+                fabric::ProcessId::new(),
+                fabric::PrincipalId(fabric::LOCAL_OWNER_PRINCIPAL.to_string()),
+            ),
+        );
+        let embodiment_port = super::embodiment::build_embodiment_port(
+            hardware_clock,
+            embodiment_authority,
+            Arc::new(crate::service::embodiment_progress::NoopEmbodimentProgress),
+        );
+        tools
+            .lock()
+            .await
+            .register_robot_tools(embodiment_port)
+            .context("registering governed robot tools")?;
         let fact_use_cases: Arc<dyn mnemosyne::FactUseCases> =
             Arc::new(mnemosyne::DefaultFactUseCases::new(fact_store.clone()));
         let goal_use_cases: Arc<dyn crate::service::GoalUseCases> =

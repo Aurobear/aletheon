@@ -108,8 +108,22 @@ pub enum SkillDispatchError {
 
 #[async_trait::async_trait]
 pub trait EmbodimentExecutionPort: Send + Sync {
+    async fn observe(
+        &self,
+        device: &DeviceId,
+    ) -> Result<Vec<EmbodiedObservation>, SkillDispatchError>;
+    async fn get_state(
+        &self,
+        device: &DeviceId,
+    ) -> Result<Option<EmbodiedObservation>, SkillDispatchError>;
+    async fn list_skills(
+        &self,
+        device: &DeviceId,
+    ) -> Result<Vec<SkillDescriptor>, SkillDispatchError>;
     async fn execute_skill(&self, request: SkillRequest)
         -> Result<SkillResult, SkillDispatchError>;
+    async fn cancel(&self, operation_id: &OperationId) -> Result<(), SkillDispatchError>;
+    async fn safe_stop(&self, device: &DeviceId) -> Result<(), SkillDispatchError>;
 }
 
 #[cfg(test)]

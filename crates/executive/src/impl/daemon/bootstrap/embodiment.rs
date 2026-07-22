@@ -9,7 +9,14 @@ use crate::service::embodiment_authority::EmbodimentAuthorityPort;
 use crate::service::embodiment_progress::EmbodimentProgressPort;
 use crate::service::embodiment_service::EmbodimentService;
 
-#[allow(dead_code)] // Enabled only after P1-D registers the complete tool surface.
+pub struct HardwareClockAdapter(pub Arc<dyn fabric::Clock>);
+
+impl MonotonicClock for HardwareClockAdapter {
+    fn now(&self) -> hardware::MonotonicInstant {
+        hardware::MonotonicInstant(self.0.mono_now().0)
+    }
+}
+
 pub fn build_embodiment_port(
     clock: Arc<dyn MonotonicClock>,
     authority: Arc<dyn EmbodimentAuthorityPort>,
