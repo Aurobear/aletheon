@@ -2,7 +2,6 @@
 
 use super::super::model_router::{ModelRouter, TaskType};
 use super::super::prefix_builder::PrefixBuilder;
-use super::super::session_manager::SessionManager;
 use super::super::DaemonConfig;
 use crate::core::config::ExecutiveConfig;
 use crate::core::evolution_coordinator::EvolutionConfig;
@@ -276,24 +275,22 @@ impl RequestHandler {
 
         // Multi-session setup
         let context_window = llm.max_context_length();
-        let initial_session =
-            SessionManager::new(&data_dir, session_id.clone(), context_window, clock.clone())
-                .await?;
+        let sessions_composition =
+            super::sessions::compose(super::sessions::SessionCompositionInput {
+                data_dir: &data_dir,
+                session_id: session_id.clone(),
+                context_window,
+                clock: clock.clone(),
+            })
+            .await?;
         info!(
             context_window = context_window,
             "Session context window configured"
         );
-        let initial_session = Arc::new(Mutex::new(initial_session));
-        let mut sessions = HashMap::new();
-        sessions.insert(session_id.clone(), initial_session.clone());
-        let sessions = Arc::new(Mutex::new(sessions));
-        let default_session_id = Arc::new(tokio::sync::Mutex::new(session_id.clone()));
-
-        let session_created_at = {
-            let mut m = HashMap::new();
-            m.insert(session_id.clone(), clock.mono_now());
-            Arc::new(Mutex::new(m))
-        };
+        let initial_session = sessions_composition.initial;
+        let sessions = sessions_composition.registry;
+        let default_session_id = sessions_composition.default_id;
+        let session_created_at = sessions_composition.created_at;
         let active_connections = Arc::new(AtomicUsize::new(0));
 
         // Register tools
