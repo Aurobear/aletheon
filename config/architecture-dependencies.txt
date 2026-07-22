@@ -28,7 +28,6 @@ dependency|executive|kernel
 dependency|executive|metacog
 dependency|executive|mnemosyne
 dependency|executive|runtime
-dependency|hardware|fabric
 dependency|interact|fabric
 dependency|kernel|fabric
 dependency|metacog|fabric
