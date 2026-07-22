@@ -5,8 +5,8 @@ use std::sync::Arc;
 use corpus::security::approval::ApprovalDecision;
 use executive::application::admin_service::{
     AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases,
-    ApprovalOwner, ModeChange, PendingApprovals, ScopedApprovalCache,
-    SkillAdminPort, TransientApprovalRequest,
+    ApprovalOwner, ModeChange, PendingApprovals, ScopedApprovalCache, SkillAdminPort,
+    TransientApprovalRequest,
 };
 use fabric::ui_event::{CollaborationMode, InterruptReason};
 use tempfile::tempdir;
@@ -55,7 +55,9 @@ fn setup(skills_dir: std::path::PathBuf) -> (AdminService, CancellationToken, Ar
 
 fn setup_with_rollback(
     skills_dir: std::path::PathBuf,
-    deployment_rollback: Option<Arc<dyn executive::application::admin_service::DeploymentRollbackPort>>,
+    deployment_rollback: Option<
+        Arc<dyn executive::application::admin_service::DeploymentRollbackPort>,
+    >,
 ) -> (AdminService, CancellationToken, Arc<Mutex<String>>) {
     let cancellation = CancellationToken::new();
     let cached_prefix = Arc::new(Mutex::new(String::new()));

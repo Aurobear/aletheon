@@ -10,9 +10,9 @@ use fabric::{
 };
 use tracing::info;
 
+use crate::composition::user_runtime::{UserRuntime, UserRuntimeConfig};
 use crate::core::SystemCoreRuntime;
 use crate::host::core_rpc::CoreRpcClient;
-use crate::composition::user_runtime::{UserRuntime, UserRuntimeConfig};
 use crate::ExecSessionBuilder;
 
 #[derive(Debug, Clone)]

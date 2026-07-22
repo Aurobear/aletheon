@@ -6,8 +6,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use executive::testing::supplemental_memory::GbrainWorker;
 use mnemosyne::supplemental::{
-    SupplementalDocument, SupplementalSpool, RetryPolicy, SpoolLimits, SupplementalErrorCategory, SupplementalHit,
-    SupplementalMemoryTransport, SupplementalTransportError,
+    RetryPolicy, SpoolLimits, SupplementalDocument, SupplementalErrorCategory, SupplementalHit,
+    SupplementalMemoryTransport, SupplementalSpool, SupplementalTransportError,
 };
 use mnemosyne::MemorySensitivity;
 use tokio_util::sync::CancellationToken;

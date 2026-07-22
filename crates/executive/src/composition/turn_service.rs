@@ -1,8 +1,8 @@
+use crate::adapters::session::canonical_store::CanonicalSessionStore;
 use crate::application::harness_factory::{CognitiveSessionFactory, LinearCognitiveSessionFactory};
 use crate::application::turn_coordinator::{cancelled_result, TurnCoordinator, TurnExecution};
 use crate::application::turn_policy::TurnPolicy;
 use crate::application::{PostTurnPipeline, PreTurnPipeline};
-use crate::adapters::session::canonical_store::CanonicalSessionStore;
 use anyhow::Result;
 use async_trait::async_trait;
 use cognit::harness::HarnessConfig;

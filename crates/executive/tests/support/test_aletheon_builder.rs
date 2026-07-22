@@ -19,11 +19,11 @@
 
 use std::sync::Arc;
 
-use executive::runtime::events::SqliteEventSpine;
-use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::application::harness_factory::LinearCognitiveSessionFactory;
 use executive::application::session_input::SessionInputCoordinator;
 use executive::application::turn_coordinator::TurnCoordinator;
+use executive::runtime::events::SqliteEventSpine;
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use fabric::{Clock, SessionAppendStore};
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
@@ -75,8 +75,12 @@ impl TestAletheonBuilder {
             Arc::new(CanonicalSessionStore::open(":memory:").expect("in-memory session store"));
         let event_spine =
             Arc::new(SqliteEventSpine::open(":memory:").expect("in-memory event spine"));
-        let coordinator =
-            executive::testing::turn_coordinator::compose_with_event_spine(kernel.clone(), store.clone(), event_spine.clone(), executive::composition::config::GrokHardeningConfig::default());
+        let coordinator = executive::testing::turn_coordinator::compose_with_event_spine(
+            kernel.clone(),
+            store.clone(),
+            event_spine.clone(),
+            executive::composition::config::GrokHardeningConfig::default(),
+        );
         let cognitive_sessions = Arc::new(LinearCognitiveSessionFactory::new(
             cognit::HarnessConfig::default(),
             clock.clone() as Arc<dyn Clock>,

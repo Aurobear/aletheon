@@ -278,12 +278,7 @@ impl RequestHandler {
 
         // Route debug.* methods to the debug handler (backward compat).
         if method.starts_with("debug.") {
-            if let Some(response) = self
-                .ports
-                .debug
-                .handle_method(&method, &id, &params)
-                .await
-            {
+            if let Some(response) = self.ports.debug.handle_method(&method, &id, &params).await {
                 return response;
             }
         }

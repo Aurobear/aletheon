@@ -23,13 +23,13 @@ use kernel::chronos::SystemClock;
 use kernel::KernelRuntime;
 use tokio_util::sync::CancellationToken;
 
+use crate::adapters::session::canonical_store::CanonicalSessionStore;
 use crate::application::governed_capability::{
     CapabilityRuntimeFactory, RegistryAuthorityProvider, TurnCapabilityInvoker,
 };
 use crate::application::inference_port::{InferencePort, PortLlmProvider};
 use crate::application::{PostTurnPipeline, PreTurnPipeline};
 use crate::composition::TurnService;
-use crate::adapters::session::canonical_store::CanonicalSessionStore;
 
 /// Builder for a CLI `exec` session (non-daemon, single-turn).
 pub struct ExecSessionBuilder {

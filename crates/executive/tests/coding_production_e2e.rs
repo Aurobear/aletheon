@@ -1,6 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use base64::Engine;
+use executive::application::coding_runtime::CodingAttemptRequest;
+use executive::application::verification::{
+    ArchitecturePolicy, VerificationService, VerificationServiceConfig,
+};
 use executive::approval::{
     ApplyCoordinationOutcome, ApplyCoordinatorConfig, ApprovalDecision, ApprovalRepository,
     ApprovalResolutionContext, ManagedWorktreeCleaner,
@@ -9,11 +13,7 @@ use executive::goal::{
     AttemptCoordinationOutcome, AttemptExecutor, AttemptRequest, GoalCoordinator, ObjectiveStore,
     RetryPolicy,
 };
-use executive::application::coding_runtime::CodingAttemptRequest;
 use executive::testing::coding_runtime::PI_CODER_RUNTIME_ID;
-use executive::application::verification::{
-    ArchitecturePolicy, VerificationService, VerificationServiceConfig,
-};
 use fabric::*;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

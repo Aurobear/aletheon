@@ -6,12 +6,12 @@
 use super::budget::{GoalBudgetError, GoalBudgetRequest};
 use super::transition::GoalTransitionError;
 use super::{GoalAttempt, GoalFrame, ObjectiveStore, RetryDecision, RetryPolicy};
+use crate::application::approval::{ApprovalCreate, ApprovalRepository};
+use crate::application::coding_runtime::CodingAttemptRequest;
 use crate::application::verification::{
     CapabilityAuditSummary, VerificationContext, VerificationSelection, VerificationService,
 };
 use crate::core::runtime_registry::RuntimeRegistry;
-use crate::application::approval::{ApprovalCreate, ApprovalRepository};
-use crate::application::coding_runtime::CodingAttemptRequest;
 use async_trait::async_trait;
 use base64::Engine;
 use fabric::{
@@ -230,9 +230,9 @@ impl AttemptCoordinator {
         cancel: CancellationToken,
     ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
         let request_value = serde_json::from_str::<serde_json::Value>(&request.task).ok();
-        let is_coding = request_value.as_ref().is_some_and(|value| {
-            value.get("job").is_some() && value.get("task_input").is_some()
-        });
+        let is_coding = request_value
+            .as_ref()
+            .is_some_and(|value| value.get("job").is_some() && value.get("task_input").is_some());
         let mut coding_request = if is_coding {
             Some(
                 serde_json::from_str::<CodingAttemptRequest>(&request.task).map_err(|error| {

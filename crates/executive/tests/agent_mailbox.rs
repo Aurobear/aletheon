@@ -1,7 +1,5 @@
+use executive::application::agent_control::{AgentRunRecord, AgentRunRepository};
 use executive::testing::agent_control::SqliteAgentRunRepository;
-use executive::application::agent_control::{
-    AgentRunRecord, AgentRunRepository,
-};
 use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
 use fabric::ipc::mailbox::{InProcessMailbox, Mailbox};
 use fabric::{

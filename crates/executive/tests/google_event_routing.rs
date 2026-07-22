@@ -1,7 +1,7 @@
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::testing::external::ExternalIdentityRepository;
-use executive::goal::coordinator::{GoalCoordinator, ExternalEventWaitCondition};
+use executive::goal::coordinator::{ExternalEventWaitCondition, GoalCoordinator};
 use executive::goal::ObjectiveStore;
+use executive::testing::external::ExternalIdentityRepository;
 use executive::testing::provider_account::{
     DurableGoogleNotificationSink, GoogleCurrentTaskProjection, GoogleEventDispatcher,
     GoogleEventRouter, GoogleMemoryProposalSink, GoogleSubscription, GoogleSubscriptionQuery,

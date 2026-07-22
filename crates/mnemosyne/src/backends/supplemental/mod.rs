@@ -7,20 +7,20 @@ pub mod page;
 pub mod reconcile;
 pub mod spool;
 
-pub use config::{validate_tools_list, SupplementalBackendConfig, RetryPolicy, SpoolPolicy};
+pub use config::{validate_tools_list, RetryPolicy, SpoolPolicy, SupplementalBackendConfig};
 pub use page::{SupplementalDocument, PAGE_SCHEMA_VERSION};
 pub use reconcile::{
-    SupplementalReconciliation, SupplementalReconciliationService, ReconcileOperation, ReconcileOperationKind,
-    ReconciliationDrainReport, RemoteMemoryReceipt, RECONCILIATION_SCHEMA_VERSION,
+    ReconcileOperation, ReconcileOperationKind, ReconciliationDrainReport, RemoteMemoryReceipt,
+    SupplementalReconciliation, SupplementalReconciliationService, RECONCILIATION_SCHEMA_VERSION,
 };
 
 pub use spool::{
-    ClaimedPage, DeadLetter, EnqueueOutcome, SupplementalSpool, MigrationReport, RetryOutcome,
-    SpoolError, SpoolLimits,
+    ClaimedPage, DeadLetter, EnqueueOutcome, MigrationReport, RetryOutcome, SpoolError,
+    SpoolLimits, SupplementalSpool,
 };
 
 pub use backend::{
-    SupplementalMemoryBackend, SupplementalMemoryError, SupplementalErrorCategory, SupplementalHit,
+    SupplementalErrorCategory, SupplementalHit, SupplementalMemoryBackend, SupplementalMemoryError,
     SupplementalMemoryTransport, SupplementalRecall, SupplementalRecallHealth,
     SupplementalTransportError,
 };

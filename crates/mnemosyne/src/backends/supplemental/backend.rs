@@ -11,12 +11,12 @@ use tokio_util::sync::CancellationToken;
 
 use super::config::SupplementalBackendConfig;
 use super::page::SupplementalDocument;
-use super::spool::{EnqueueOutcome, SupplementalSpool, SpoolError};
+use super::spool::{EnqueueOutcome, SpoolError, SupplementalSpool};
 use crate::service::{
     ExperienceEvent, ForgetPolicy, MemorySensitivity, RecallItem, RecallRequest, TemporalState,
 };
 use crate::{
-    SupplementalDegradedCategory, MemoryKind, MemoryMetrics, RecallOmittedReason, RecallSourceLabel,
+    MemoryKind, MemoryMetrics, RecallOmittedReason, RecallSourceLabel, SupplementalDegradedCategory,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,7 +127,11 @@ pub struct SupplementalMemoryBackend<T: SupplementalMemoryTransport> {
 }
 
 impl<T: SupplementalMemoryTransport> SupplementalMemoryBackend<T> {
-    pub fn new(spool: Arc<SupplementalSpool>, transport: Arc<T>, config: SupplementalBackendConfig) -> Self {
+    pub fn new(
+        spool: Arc<SupplementalSpool>,
+        transport: Arc<T>,
+        config: SupplementalBackendConfig,
+    ) -> Self {
         let metrics = MemoryMetrics::default();
         metrics.set_supplemental_queue_depth(spool.queue_depth().unwrap_or_default());
         Self {
@@ -177,8 +181,8 @@ impl<T: SupplementalMemoryTransport> SupplementalMemoryBackend<T> {
                 .recall_omitted(RecallOmittedReason::Sensitive, 1);
             return Ok(EnqueueOutcome::ExcludedSensitive);
         }
-        let Some(page) =
-            SupplementalDocument::from_event(event).map_err(|_| SupplementalMemoryError::InvalidRecord)?
+        let Some(page) = SupplementalDocument::from_event(event)
+            .map_err(|_| SupplementalMemoryError::InvalidRecord)?
         else {
             return Ok(EnqueueOutcome::ExcludedSensitive);
         };

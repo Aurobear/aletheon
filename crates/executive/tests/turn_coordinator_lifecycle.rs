@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use executive::runtime::events::{EventReadFilter, SqliteEventSpine};
-use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::application::harness_factory::CognitiveSessionFactory;
 use executive::application::turn_coordinator::{TurnCoordinator, TurnExecution};
 use executive::application::turn_policy::*;
 use executive::application::{PostTurnPipeline, PreTurnPipeline};
+use executive::runtime::events::{EventReadFilter, SqliteEventSpine};
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::TurnService;
 use fabric::{
     ItemPayload, OperationState, SessionAppendStore, SessionId, TurnMetrics, TurnRequest,
@@ -44,8 +44,12 @@ async fn coordinator_owns_turn_operation_and_ordered_canonical_items() {
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
-    let coordinator =
-        executive::testing::turn_coordinator::compose_with_event_spine(kernel.clone(), store.clone(), event_spine.clone(), executive::composition::config::GrokHardeningConfig::default());
+    let coordinator = executive::testing::turn_coordinator::compose_with_event_spine(
+        kernel.clone(),
+        store.clone(),
+        event_spine.clone(),
+        executive::composition::config::GrokHardeningConfig::default(),
+    );
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await
@@ -145,7 +149,10 @@ async fn failure_is_terminal_and_remains_replayable() {
     let kernel = Arc::new(KernelRuntime::new());
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-    let coordinator = executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(kernel.clone(), store.clone());
+    let coordinator = executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
+        kernel.clone(),
+        store.clone(),
+    );
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await
@@ -240,7 +247,12 @@ async fn daemon_then_exec_restart_projects_prior_canonical_context() {
         let kernel = Arc::new(KernelRuntime::new());
         let store: Arc<dyn SessionAppendStore> =
             Arc::new(CanonicalSessionStore::open(&db).unwrap());
-        let coordinator = Arc::new(executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(kernel.clone(), store));
+        let coordinator = Arc::new(
+            executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
+                kernel.clone(),
+                store,
+            ),
+        );
         let process = kernel
             .spawn_process(fabric::SpawnSpec::default())
             .await

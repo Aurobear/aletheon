@@ -1,13 +1,11 @@
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::approval::{
-    ApprovalDecision, ApprovalRepository, ApprovalResolutionContext,
-};
+use executive::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
+use executive::goal::ObjectiveStore;
 use executive::testing::channel::gmail::report::{
     GmailDeliveryOutcome, GmailReconciliation, GmailReportBoundary, GmailReportProvider,
     GmailSendResult,
 };
 use executive::testing::external::ExternalIdentityRepository;
-use executive::goal::ObjectiveStore;
 use fabric::{
     ApprovalId, ExternalCapabilityId, ExternalIdentityId, GoalBudget, GoalSpec, PrincipalId,
 };

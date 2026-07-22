@@ -5,11 +5,11 @@
 //! JSON-RPC formatting continue through `DaemonTurnOrchestrator::execute_turn`.
 
 use super::orchestrator::{DaemonTurnOrchestrator, TestTurnRunner};
+use crate::adapters::events::SqliteEventSpine;
+use crate::adapters::session::canonical_store::CanonicalSessionStore;
 use crate::application::session_service::SessionService;
 use crate::application::turn_coordinator::{TurnCoordinator, TurnExecution};
 use crate::application::turn_runtime_ports::{ActiveAgentProfilePort, ResolvedTurnProfile};
-use crate::adapters::events::SqliteEventSpine;
-use crate::adapters::session::canonical_store::CanonicalSessionStore;
 use fabric::{Clock, SessionAppendStore};
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
@@ -67,12 +67,14 @@ impl DaemonTurnTestBuilder {
         let store: Arc<dyn SessionAppendStore> =
             Arc::new(CanonicalSessionStore::open(":memory:").expect("test session store"));
         let spine = Arc::new(SqliteEventSpine::open(":memory:").expect("test event spine"));
-        let coordinator = Arc::new(crate::composition::turn_coordinator::compose_with_event_spine(
-            kernel.clone(),
-            store.clone(),
-            spine,
-            crate::composition::config::GrokHardeningConfig::default(),
-        ));
+        let coordinator = Arc::new(
+            crate::composition::turn_coordinator::compose_with_event_spine(
+                kernel.clone(),
+                store.clone(),
+                spine,
+                crate::composition::config::GrokHardeningConfig::default(),
+            ),
+        );
         let session_service = Arc::new(SessionService::new(
             store.clone(),
             Arc::new(Mutex::new(Default::default())),

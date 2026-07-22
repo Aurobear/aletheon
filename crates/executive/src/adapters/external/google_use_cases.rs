@@ -11,10 +11,10 @@ use fabric::{
 use serde_json::json;
 use tokio::sync::RwLock;
 
+use crate::adapters::external::GoogleIntegration;
 use crate::application::request_use_cases::{
     ExternalRefreshStatus, ExternalSourceUseCaseError, ExternalSourceUseCases,
 };
-use crate::adapters::external::GoogleIntegration;
 
 pub struct ProductionExternalSourceUseCases {
     integration: Option<Arc<GoogleIntegration>>,
@@ -197,7 +197,10 @@ impl ExternalSourceUseCases for ProductionExternalSourceUseCases {
             .is_ok();
         Ok((true, provider))
     }
-    async fn refresh(&self, account: String) -> Result<ExternalRefreshStatus, ExternalSourceUseCaseError> {
+    async fn refresh(
+        &self,
+        account: String,
+    ) -> Result<ExternalRefreshStatus, ExternalSourceUseCaseError> {
         let (google, principal) = self.context()?;
         let account_id = {
             let repository = google.repository();

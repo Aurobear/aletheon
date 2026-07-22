@@ -5,7 +5,9 @@
 //! subsequent ticks.
 
 use crate::application::approval::ApprovalRepository;
-use crate::application::approval::{ApplyCoordinator, ApplyCoordinatorConfig, ManagedWorktreeCleaner};
+use crate::application::approval::{
+    ApplyCoordinator, ApplyCoordinatorConfig, ManagedWorktreeCleaner,
+};
 use crate::application::goal::budget::GoalBudgetRequest;
 use crate::application::goal::transition::GoalTransitionError;
 use crate::application::goal::{

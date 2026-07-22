@@ -30,9 +30,9 @@ use std::path::PathBuf;
 
 use tracing::info;
 
-use crate::core::runtime_core::RuntimeCore;
 use self::daemon::mcp_embedded::McpEmbedded;
 use self::daemon::server;
+use crate::core::runtime_core::RuntimeCore;
 
 /// Load .env file (simple KEY=VALUE parser, no shell expansion).
 pub fn load_dotenv(path: &PathBuf) {

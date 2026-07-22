@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
 use executive::testing::artifact::ArtifactStore;
 use executive::testing::channel::gmail::ingest::{
-    GmailAttachmentFetcher, ExternalEventIngestConfig, ExternalEventIngestMessage, GmailMessageIngester,
-    GmailMimePart,
+    ExternalEventIngestConfig, ExternalEventIngestMessage, GmailAttachmentFetcher,
+    GmailMessageIngester, GmailMimePart,
 };
 use executive::testing::external::ExternalIdentityRepository;
 use fabric::{ExternalCapabilityId, ExternalIdentityId, PrincipalId};
@@ -227,17 +227,19 @@ async fn sanitizes_html_and_lists_rejected_evidence_without_downloading() {
 async fn malformed_bombs_partial_download_and_type_mismatch_fail_closed() {
     let fixture = Fixture::new();
     let mut malformed = fixture.message(vec![body("bad", "TEXT/PLAIN", b"bad")]);
-    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
-        .unwrap()
-        .ingest(
-            &malformed,
-            &fetcher([]),
-            &fixture.artifacts(),
-            2_000,
-            &CancellationToken::new(),
-        )
-        .await
-        .is_err());
+    assert!(
+        GmailMessageIngester::new(ExternalEventIngestConfig::default())
+            .unwrap()
+            .ingest(
+                &malformed,
+                &fetcher([]),
+                &fixture.artifacts(),
+                2_000,
+                &CancellationToken::new(),
+            )
+            .await
+            .is_err()
+    );
 
     malformed.root.parts = vec![attachment(
         "huge",
@@ -246,17 +248,19 @@ async fn malformed_bombs_partial_download_and_type_mismatch_fail_closed() {
         Some(30 * 1_048_576),
     )];
     let no_download = fetcher([]);
-    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
-        .unwrap()
-        .ingest(
-            &malformed,
-            &no_download,
-            &fixture.artifacts(),
-            2_000,
-            &CancellationToken::new(),
-        )
-        .await
-        .is_err());
+    assert!(
+        GmailMessageIngester::new(ExternalEventIngestConfig::default())
+            .unwrap()
+            .ingest(
+                &malformed,
+                &no_download,
+                &fixture.artifacts(),
+                2_000,
+                &CancellationToken::new(),
+            )
+            .await
+            .is_err()
+    );
     assert_eq!(no_download.calls.load(Ordering::SeqCst), 0);
 
     let mut nested = body("leaf", "text/plain", b"leaf");
@@ -278,17 +282,19 @@ async fn malformed_bombs_partial_download_and_type_mismatch_fail_closed() {
         source_timestamp_ms: 1_000,
         root: nested,
     };
-    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
-        .unwrap()
-        .ingest(
-            &nested_message,
-            &fetcher([]),
-            &fixture.artifacts(),
-            2_000,
-            &CancellationToken::new(),
-        )
-        .await
-        .is_err());
+    assert!(
+        GmailMessageIngester::new(ExternalEventIngestConfig::default())
+            .unwrap()
+            .ingest(
+                &nested_message,
+                &fetcher([]),
+                &fixture.artifacts(),
+                2_000,
+                &CancellationToken::new(),
+            )
+            .await
+            .is_err()
+    );
 
     let partial = fixture.message(vec![attachment(
         "partial",
@@ -296,30 +302,34 @@ async fn malformed_bombs_partial_download_and_type_mismatch_fail_closed() {
         "text/plain",
         Some(10),
     )]);
-    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
-        .unwrap()
-        .ingest(
-            &partial,
-            &fetcher([("attachment-partial", b"short".to_vec())]),
-            &fixture.artifacts(),
-            2_000,
-            &CancellationToken::new(),
-        )
-        .await
-        .is_err());
+    assert!(
+        GmailMessageIngester::new(ExternalEventIngestConfig::default())
+            .unwrap()
+            .ingest(
+                &partial,
+                &fetcher([("attachment-partial", b"short".to_vec())]),
+                &fixture.artifacts(),
+                2_000,
+                &CancellationToken::new(),
+            )
+            .await
+            .is_err()
+    );
 
     let mismatch = fixture.message(vec![attachment("png", "image.png", "image/png", Some(4))]);
-    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
-        .unwrap()
-        .ingest(
-            &mismatch,
-            &fetcher([("attachment-png", b"text".to_vec())]),
-            &fixture.artifacts(),
-            2_000,
-            &CancellationToken::new(),
-        )
-        .await
-        .is_err());
+    assert!(
+        GmailMessageIngester::new(ExternalEventIngestConfig::default())
+            .unwrap()
+            .ingest(
+                &mismatch,
+                &fetcher([("attachment-png", b"text".to_vec())]),
+                &fixture.artifacts(),
+                2_000,
+                &CancellationToken::new(),
+            )
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -401,17 +411,19 @@ async fn duplicates_cancellation_and_restart_midway_leave_no_partial_evidence() 
         "text/plain",
         Some(6),
     )]);
-    assert!(GmailMessageIngester::new(ExternalEventIngestConfig::default())
-        .unwrap()
-        .ingest(
-            &cancel_message,
-            &cancelling,
-            &fixture.artifacts(),
-            3_000,
-            &cancel,
-        )
-        .await
-        .is_err());
+    assert!(
+        GmailMessageIngester::new(ExternalEventIngestConfig::default())
+            .unwrap()
+            .ingest(
+                &cancel_message,
+                &cancelling,
+                &fixture.artifacts(),
+                3_000,
+                &cancel,
+            )
+            .await
+            .is_err()
+    );
     assert!(!std::fs::read_dir(&fixture.artifact_root)
         .unwrap()
         .any(|entry| entry

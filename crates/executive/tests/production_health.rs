@@ -4,7 +4,10 @@ use executive::runtime::health::{ComponentHealth, HealthClass, HealthRegistry};
 fn required_store_failure_is_unready_but_optional_outages_are_degraded() {
     let health = HealthRegistry::production_ready();
     health.set("gbrain_spool", ComponentHealth::degraded("schema_drift"));
-    health.set("external_sync", ComponentHealth::degraded("auth_unavailable"));
+    health.set(
+        "external_sync",
+        ComponentHealth::degraded("auth_unavailable"),
+    );
     let snapshot = health.snapshot();
     assert_eq!(snapshot.liveness, "alive");
     assert_eq!(snapshot.readiness, "degraded");

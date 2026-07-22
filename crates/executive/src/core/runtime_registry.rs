@@ -45,11 +45,7 @@ impl RuntimeRegistry {
         self.runtimes.contains_key(id)
     }
 
-    pub fn has_capability(
-        &self,
-        id: &RuntimeId,
-        capability: &runtime::RuntimeCapability,
-    ) -> bool {
+    pub fn has_capability(&self, id: &RuntimeId, capability: &runtime::RuntimeCapability) -> bool {
         self.runtimes
             .get(id)
             .is_some_and(|runtime| runtime.capabilities().contains(capability))

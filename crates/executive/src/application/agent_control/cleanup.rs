@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use fabric::AgentControlError;
 
-use super::{AgentResourceLeaseKind, AgentRunRepository};
 use super::AgentResourceLease;
+use super::{AgentResourceLeaseKind, AgentRunRepository};
 
 pub trait AgentWorktreeReclaimer: Send + Sync {
     fn reclaim(&self, lease: &AgentResourceLease) -> anyhow::Result<()>;

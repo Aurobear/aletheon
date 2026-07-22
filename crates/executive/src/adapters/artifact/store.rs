@@ -8,8 +8,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::compatibility::persistence_migrations as migrations;
 use crate::application::storage_quota::{StorageClass, StorageQuota, StorageReservation};
+use crate::compatibility::persistence_migrations as migrations;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtifactScanStatus {

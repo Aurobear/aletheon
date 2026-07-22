@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use super::page::SupplementalDocument;
-use super::spool::{EnqueueOutcome, SupplementalSpool, SpoolError};
+use super::spool::{EnqueueOutcome, SpoolError, SupplementalSpool};
 use super::{RetryOutcome, RetryPolicy, SupplementalErrorCategory, SupplementalMemoryTransport};
 use crate::model::{MemoryRecord, MemoryRecordId, MemoryStatus};
 use crate::{MemoryMetrics, RetentionRepository};
@@ -258,7 +258,8 @@ impl<T: SupplementalMemoryTransport> SupplementalReconciliationService<T> {
         }
         report.queue_depth = self.spool.queue_depth()?;
         self.transport.set_queue_depth(report.queue_depth);
-        self.metrics.set_supplemental_queue_depth(report.queue_depth);
+        self.metrics
+            .set_supplemental_queue_depth(report.queue_depth);
         Ok(report)
     }
 

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use executive::application::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
 use executive::host::core_rpc::{
     CoreFrame, CorePeerPolicy, CoreRequest, CoreRpcClient, CoreRpcServer,
 };
-use executive::application::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
 use fabric::{
     ContentBlock, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk, Usage,
 };

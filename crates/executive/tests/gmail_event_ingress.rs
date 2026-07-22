@@ -4,6 +4,7 @@ use corpus::tools::google::{
     GmailIngressCapability, GmailIngressHeader, GmailIngressMessage, GmailIngressPart,
     GoogleApiError,
 };
+use executive::goal::ObjectiveStore;
 use executive::testing::channel::gmail::sender_policy::{
     AuthenticationRequirement, GmailSenderPolicy,
 };
@@ -11,7 +12,6 @@ use executive::testing::channel::gmail::{
     load_gmail_ingress_policies, GmailGoalEventIngress, GmailIngressPolicy,
 };
 use executive::testing::external::ExternalIdentityRepository;
-use executive::goal::ObjectiveStore;
 use fabric::{
     ExternalCapabilityId, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
     ExternalIdentityId, ExternalObjectRef, ExternalProviderId, ExternalRecordRef, MailChange,

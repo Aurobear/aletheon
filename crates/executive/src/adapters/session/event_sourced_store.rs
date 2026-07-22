@@ -16,9 +16,9 @@ use fabric::{
 };
 use uuid::Uuid;
 
-use crate::application::event_projection::EventProjectionSink;
 use crate::adapters::events::session_projection::SessionProjection;
 use crate::adapters::events::SqliteEventSpine;
+use crate::application::event_projection::EventProjectionSink;
 
 const SESSION_EVENT_NAMESPACE: Uuid = Uuid::from_u128(0x01b2f7f1_0d98_441a_a30e_4f637b27be55);
 const FORK_ITEM_NAMESPACE: Uuid = Uuid::from_u128(0x97223947_4cbc_4e93_94fa_a71798f64a30);

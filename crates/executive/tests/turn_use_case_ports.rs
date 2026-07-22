@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::application::post_turn_projection::{
     PostTurnDispatch, PostTurnOutcome, PostTurnProjection,
 };
 use executive::application::turn_coordinator::{TurnCoordinator, TurnExecution};
 use executive::application::turn_policy::TurnPolicy;
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use fabric::{
     ItemPayload, OperationId, OperationState, SessionAppendStore, SessionId, TurnMetrics,
     TurnRequest, TurnResult, TurnStop,
@@ -45,7 +45,10 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
     let kernel = Arc::new(KernelRuntime::new());
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-    let coordinator = executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(kernel.clone(), store.clone());
+    let coordinator = executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
+        kernel.clone(),
+        store.clone(),
+    );
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await

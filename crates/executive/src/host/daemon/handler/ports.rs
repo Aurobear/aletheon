@@ -4,13 +4,13 @@ use std::sync::Arc;
 
 use mnemosyne::FactUseCases;
 
-use crate::compatibility::legacy_session_service::LegacySessionUseCases;
 use crate::application::request_use_cases::{
-    ExternalSourceUseCases, HealthUseCases, ReflectionUseCases, SessionLifecycleUseCases, TurnUseCases,
-    WorkflowUseCases,
+    ExternalSourceUseCases, HealthUseCases, ReflectionUseCases, SessionLifecycleUseCases,
+    TurnUseCases, WorkflowUseCases,
 };
-use crate::host::daemon::debug_handler::DebugHandler;
 use crate::application::{AdminUseCases, ApprovalUseCases, GoalUseCases};
+use crate::compatibility::legacy_session_service::LegacySessionUseCases;
+use crate::host::daemon::debug_handler::DebugHandler;
 
 pub(crate) struct TransportPorts {
     pub(crate) corpus: Arc<dyn corpus::CorpusService>,

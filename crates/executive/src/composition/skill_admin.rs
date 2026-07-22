@@ -1,7 +1,7 @@
 //! Composition-owned skill reload and prompt-prefix refresh.
 
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::application::admin_service::{AdminServiceError, SkillAdminPort};
@@ -33,10 +33,7 @@ impl SkillAdminPort for DefaultSkillAdmin {
         let count = self.loader.lock().await.reload();
         let new_prefix = {
             let loader = self.loader.lock().await;
-            PrefixBuilder::build(
-                &self.config_prompt,
-                loader.skills(),
-            )
+            PrefixBuilder::build(&self.config_prompt, loader.skills())
         };
         *self.cached_prefix.lock().await = new_prefix;
         Ok(count)

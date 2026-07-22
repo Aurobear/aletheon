@@ -7,8 +7,8 @@ use std::time::Duration;
 use crate::composition::config::SupplementalMemoryConfig;
 use corpus::tools::mcp::manager::McpManager;
 use mnemosyne::supplemental::{
-    SupplementalMemoryBackend, SupplementalBackendConfig, SupplementalSpool, RetryPolicy, SpoolLimits,
-    SupplementalErrorCategory,
+    RetryPolicy, SpoolLimits, SupplementalBackendConfig, SupplementalErrorCategory,
+    SupplementalMemoryBackend, SupplementalSpool,
 };
 use mnemosyne::{CompositeMemoryHealth, CompositeMemoryService, MemoryService};
 use tokio::task::JoinHandle;
@@ -56,7 +56,14 @@ pub fn build_supplemental_memory_runtime(
     clock: Arc<dyn fabric::Clock>,
     daemon_cancel: &CancellationToken,
 ) -> GbrainMemoryRuntime {
-    build_supplemental_memory_runtime_with_retention(local, manager, config, clock, daemon_cancel, None)
+    build_supplemental_memory_runtime_with_retention(
+        local,
+        manager,
+        config,
+        clock,
+        daemon_cancel,
+        None,
+    )
 }
 
 pub fn build_supplemental_memory_runtime_with_retention(

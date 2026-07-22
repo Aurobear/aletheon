@@ -1,8 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use executive::application::coding_runtime::CodingAttemptRequest;
 use executive::composition::config::CodingRuntimeConfig;
 use executive::core::sub_agent::SubAgentRuntime;
-use executive::application::coding_runtime::CodingAttemptRequest;
 use executive::testing::coding_runtime::PiRuntime;
 use fabric::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
@@ -153,7 +153,12 @@ impl Fixture {
         }
     }
 
-    fn request(&self, output_cap: usize, timeout_ms: u64, task_input: &str) -> CodingAttemptRequest {
+    fn request(
+        &self,
+        output_cap: usize,
+        timeout_ms: u64,
+        task_input: &str,
+    ) -> CodingAttemptRequest {
         CodingAttemptRequest {
             job: CodingJobSpec {
                 job_id: CodingJobId::new(),

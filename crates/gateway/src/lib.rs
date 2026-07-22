@@ -7,6 +7,7 @@
 //! implements the ports declared here (transports, turn/goal executors,
 //! approval repositories) and wires the dispatcher into the daemon.
 
+mod adapters;
 pub mod dispatcher;
 pub mod effect;
 pub mod handlers;
@@ -14,7 +15,6 @@ pub mod intent;
 pub mod notify;
 pub mod ports;
 pub mod registry;
-mod adapters;
 
 mod store_facade {
     pub use crate::adapters::sqlite_store::{ChannelStore, InsertOutcome};
@@ -29,6 +29,9 @@ pub fn build_telegram_transport(
     cancel: tokio_util::sync::CancellationToken,
 ) -> std::sync::Arc<dyn dispatcher::ChannelTransport> {
     std::sync::Arc::new(adapters::telegram::TelegramTransport::new(
-        token, api_base, poll_timeout_secs, cancel,
+        token,
+        api_base,
+        poll_timeout_secs,
+        cancel,
     ))
 }

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use executive::runtime::events::{EventReadFilter, SqliteEventSpine};
 use executive::application::agent_control::{
     AgentCandidateProjector, AgentCandidateSubmissionPort, AgentContextProjection, AgentEventSink,
     AgentRuntimeEvent, AgentRuntimeInbox, AgentRuntimeInput, NoopAgentEventSink,
@@ -9,6 +8,7 @@ use executive::application::agent_control::{
 };
 use executive::application::conscious_workspace::ConsciousWorkspaceRegistry;
 use executive::application::dasein_workspace_adapter::DaseinWorkspaceAdapter;
+use executive::runtime::events::{EventReadFilter, SqliteEventSpine};
 use fabric::{
     AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork, AgentHandle, AgentId,
     AgentProfileId, AgentResult, AgentRunStatus, AgentSpawnRequest, AgoraSpaceId, AttemptEvidence,

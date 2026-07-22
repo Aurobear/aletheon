@@ -5,7 +5,9 @@ use std::collections::HashMap;
 pub(super) fn deployment_storage_quota(
     deployment: &cognit::config::DeploymentConfig,
 ) -> anyhow::Result<crate::application::storage_quota::StorageQuota> {
-    use crate::application::storage_quota::{StorageClass, StorageLimit, StorageQuota, StorageRoot};
+    use crate::application::storage_quota::{
+        StorageClass, StorageLimit, StorageQuota, StorageRoot,
+    };
 
     let quotas = &deployment.quotas;
     let paths = &deployment.paths;

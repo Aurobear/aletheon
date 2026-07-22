@@ -132,19 +132,20 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
         clock as Arc<dyn fabric::Clock>,
     ));
     let store: Arc<dyn SessionAppendStore> = Arc::new(TerminalFailingStore {
-        inner: executive::runtime::session::canonical_store::CanonicalSessionStore::open(":memory:")
-            .unwrap(),
+        inner: executive::runtime::session::canonical_store::CanonicalSessionStore::open(
+            ":memory:",
+        )
+        .unwrap(),
     });
     let spine = Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap());
     let mut hardening = executive::composition::config::GrokHardeningConfig::default();
     hardening.compaction_v2 = true;
-    let coordinator =
-        executive::testing::turn_coordinator::compose_with_event_spine(
-            kernel.clone(),
-            store.clone(),
-            spine,
-            hardening,
-        );
+    let coordinator = executive::testing::turn_coordinator::compose_with_event_spine(
+        kernel.clone(),
+        store.clone(),
+        spine,
+        hardening,
+    );
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await

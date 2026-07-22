@@ -1,9 +1,7 @@
 use executive::testing::agent_control::SqliteAgentRunRepository;
 use std::sync::Arc;
 
-use executive::application::agent_control::{
-    AgentRunRecord, AgentRunRepository,
-};
+use executive::application::agent_control::{AgentRunRecord, AgentRunRepository};
 use fabric::{
     AgentBroadcastRef, AgentBudget, AgentContextFork, AgentHandle, AgentId, AgentProfileId,
     AgentResult, AgentRunStatus, AgentSnapshot, AgentSpawnRequest, AgoraSpaceId, AttemptUsage,

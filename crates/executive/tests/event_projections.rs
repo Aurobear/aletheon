@@ -1,10 +1,10 @@
+use executive::application::event_projection::{
+    EventProjection, EventProjectionSink, SqliteProjectionStore,
+};
 use executive::runtime::events::{
     agent_tree_projection::AgentTreeProjection, debug_projection::DebugProjection,
     memory_job_projection::MemoryJobProjection, metrics_projection::MetricsProjection,
     session_projection::SessionProjection,
-};
-use executive::application::event_projection::{
-    EventProjection, EventProjectionSink, SqliteProjectionStore,
 };
 use fabric::{
     EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, EventId, EventIdentity, EventPayload,

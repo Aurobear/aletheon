@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use executive::runtime::events::{EventReadFilter, SqliteEventSpine};
-use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::application::session_service::{InterruptOutcome, SessionService};
 use executive::application::turn_coordinator::{
     cancelled_result, ActiveTurnKey, TurnCoordinator, TurnExecution,
 };
 use executive::application::turn_policy::TurnPolicy;
+use executive::runtime::events::{EventReadFilter, SqliteEventSpine};
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use fabric::{SessionAppendStore, SessionId, TurnRequest};
 use kernel::KernelRuntime;
 
@@ -31,12 +31,14 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let event_spine = Arc::new(SqliteEventSpine::open(":memory:").unwrap());
-    let coordinator = Arc::new(executive::testing::turn_coordinator::compose_with_event_spine(
-        kernel,
-        store.clone(),
-        event_spine.clone(),
-        executive::composition::config::GrokHardeningConfig::default(),
-    ));
+    let coordinator = Arc::new(
+        executive::testing::turn_coordinator::compose_with_event_spine(
+            kernel,
+            store.clone(),
+            event_spine.clone(),
+            executive::composition::config::GrokHardeningConfig::default(),
+        ),
+    );
     coordinator
         .submit_with(
             request("base", process.id),

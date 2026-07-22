@@ -145,7 +145,12 @@ async fn telegram_poll_loop(
                 Ok(pending) => {
                     for approval in pending {
                         if let Err(error) = router
-                            .notify_approval(transport.as_ref(), conversation.clone(), &approval, now_ms)
+                            .notify_approval(
+                                transport.as_ref(),
+                                conversation.clone(),
+                                &approval,
+                                now_ms,
+                            )
                             .await
                         {
                             warn!(approval_id = %approval.id, error = %error, "Telegram approval notification failed");

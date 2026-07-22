@@ -30,9 +30,7 @@ pub fn compose_in_memory_turn_coordinator(
     kernel: Arc<KernelRuntime>,
     read_store: Arc<dyn SessionAppendStore>,
 ) -> TurnCoordinator {
-    let event_spine = Arc::new(
-        SqliteEventSpine::open(":memory:").expect("in-memory event spine"),
-    );
+    let event_spine = Arc::new(SqliteEventSpine::open(":memory:").expect("in-memory event spine"));
     let projections = Arc::new(DefaultEventProjectionSet::in_memory());
     compose_turn_coordinator(
         kernel,

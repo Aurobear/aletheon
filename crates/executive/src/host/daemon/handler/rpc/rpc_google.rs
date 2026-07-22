@@ -86,7 +86,9 @@ fn google_error(id: &Value, error: ExternalSourceUseCaseError) -> Value {
         ExternalSourceUseCaseError::Forbidden => {
             rpc_error(id, -32073, "google_account_revoked_or_scope_denied")
         }
-        ExternalSourceUseCaseError::Provider => rpc_error(id, -32074, "google_provider_operation_failed"),
+        ExternalSourceUseCaseError::Provider => {
+            rpc_error(id, -32074, "google_provider_operation_failed")
+        }
     }
 }
 

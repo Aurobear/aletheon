@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use executive::core::{RegistryInferencePort, SystemCoreRuntime};
 use executive::application::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
 use executive::composition::user_runtime::{UserRuntime, UserRuntimeConfig};
+use executive::core::{RegistryInferencePort, SystemCoreRuntime};
 use fabric::{LlmResponse, LlmStream, StopReason, Usage};
 use futures::stream;
 

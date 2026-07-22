@@ -7,13 +7,13 @@
 //! - `SelfMemory` — identity changes, lineage (cognitive-memory feature)
 
 pub mod episodic;
-pub mod supplemental;
 #[cfg(feature = "cognitive-memory")]
 pub mod procedural;
 #[cfg(feature = "cognitive-memory")]
 pub mod self_memory;
 #[cfg(feature = "cognitive-memory")]
 pub mod semantic;
+pub mod supplemental;
 
 pub use episodic::EpisodicMemory;
 #[cfg(feature = "cognitive-memory")]

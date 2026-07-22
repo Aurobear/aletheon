@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use fabric::{Clock, Subsystem, SubsystemContext};
 use mnemosyne::supplemental::{
-    EnqueueOutcome, SupplementalMemoryError, SupplementalErrorCategory, SupplementalRecall,
+    EnqueueOutcome, SupplementalErrorCategory, SupplementalMemoryError, SupplementalRecall,
     SupplementalRecallHealth,
 };
 use mnemosyne::{
@@ -343,7 +343,11 @@ impl SupplementalMemoryService for OutageSupplemental {
         0
     }
 
-    fn record(&self, _: &ExperienceEvent, _: i64) -> Result<EnqueueOutcome, SupplementalMemoryError> {
+    fn record(
+        &self,
+        _: &ExperienceEvent,
+        _: i64,
+    ) -> Result<EnqueueOutcome, SupplementalMemoryError> {
         Err(SupplementalMemoryError::Unsupported)
     }
 

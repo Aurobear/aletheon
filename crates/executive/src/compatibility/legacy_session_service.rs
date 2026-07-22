@@ -1,7 +1,7 @@
 //! Request-safe legacy session compatibility use cases.
 
-use crate::host::daemon::session_manager::SessionManager;
 use crate::adapters::session::store::SessionStore;
+use crate::host::daemon::session_manager::SessionManager;
 use async_trait::async_trait;
 use fabric::{Clock, ContentBlock, LlmProvider, Message, Role, SessionId};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};

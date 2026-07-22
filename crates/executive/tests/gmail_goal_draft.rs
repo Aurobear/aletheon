@@ -1,5 +1,6 @@
 use corpus::tools::google::oauth::GoogleBinding;
 use executive::approval::{ApprovalDecision, ApprovalResolutionContext};
+use executive::goal::ObjectiveStore;
 use executive::testing::artifact::{ArtifactRecord, ArtifactScanStatus};
 use executive::testing::channel::daemon_adapter::{
     ApprovalRepositoryPort, DaemonExternalDraftApprovalExecutor,
@@ -14,7 +15,6 @@ use executive::testing::channel::gmail::{
     GmailChannelMessage, GmailChannelStore, GmailGoalDraftCoordinator,
 };
 use executive::testing::external::ExternalIdentityRepository;
-use executive::goal::ObjectiveStore;
 use fabric::{
     ApprovalCategory, ApprovalStatus, ExternalCapabilityId, ExternalIdentityId, GoalState,
     PrincipalId,

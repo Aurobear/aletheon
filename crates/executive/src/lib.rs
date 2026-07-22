@@ -10,11 +10,11 @@
     clippy::manual_strip
 )]
 
-pub mod application;
 #[doc(hidden)]
 pub(crate) mod adapters;
-pub mod composition;
+pub mod application;
 pub(crate) mod compatibility;
+pub mod composition;
 pub mod core;
 pub mod tools;
 
@@ -94,8 +94,8 @@ pub mod testing {
     }
 }
 
-pub use runtime::AgentRuntime;
 pub use composition::TurnService;
+pub use runtime::AgentRuntime;
 
 // ── Re-exports for CLI exec path (bin crate uses these via executive) ───
 pub use crate::composition::exec_session::ExecSessionBuilder;

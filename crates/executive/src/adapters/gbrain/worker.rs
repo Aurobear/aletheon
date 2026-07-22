@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mnemosyne::supplemental::{
-    SupplementalReconciliationService, SupplementalSpool, RetryPolicy, SpoolError, SupplementalMemoryTransport,
+    RetryPolicy, SpoolError, SupplementalMemoryTransport, SupplementalReconciliationService,
+    SupplementalSpool,
 };
 use mnemosyne::RetentionRepository;
 use tokio_util::sync::CancellationToken;

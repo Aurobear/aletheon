@@ -1,8 +1,8 @@
 //! Production bridge from durable Gmail history events to authenticated Goal drafts.
 
 use super::ingest::{
-    GmailAttachmentFetcher, ExternalEventIngestConfig, ExternalEventIngestMessage, GmailMessageIngester,
-    GmailMimePart,
+    ExternalEventIngestConfig, ExternalEventIngestMessage, GmailAttachmentFetcher,
+    GmailMessageIngester, GmailMimePart,
 };
 use super::sender_policy::{GmailHeader, GmailSenderPolicy};
 use super::{
@@ -128,7 +128,10 @@ impl GmailGoalEventIngress {
         })
     }
 
-    pub fn with_storage_quota(mut self, quota: crate::application::storage_quota::StorageQuota) -> Self {
+    pub fn with_storage_quota(
+        mut self,
+        quota: crate::application::storage_quota::StorageQuota,
+    ) -> Self {
         self.storage_quota = Some(quota);
         self
     }

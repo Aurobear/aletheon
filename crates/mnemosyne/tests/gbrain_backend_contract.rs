@@ -5,13 +5,14 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use mnemosyne::supplemental::{
-    EnqueueOutcome, SupplementalMemoryBackend, SupplementalBackendConfig, SupplementalDocument, SupplementalSpool, SpoolLimits,
-    SupplementalErrorCategory, SupplementalHit, SupplementalMemoryTransport,
-    SupplementalTransportError,
+    EnqueueOutcome, SpoolLimits, SupplementalBackendConfig, SupplementalDocument,
+    SupplementalErrorCategory, SupplementalHit, SupplementalMemoryBackend,
+    SupplementalMemoryTransport, SupplementalSpool, SupplementalTransportError,
 };
 use mnemosyne::{
-    ExperienceEvent, ForgetPolicy, SupplementalDegradedCategory, MemoryKindLabel, MemoryMetadata,
-    MemoryProvenance, MemorySensitivity, RecallRequest, RecallSourceLabel, TemporalState,
+    ExperienceEvent, ForgetPolicy, MemoryKindLabel, MemoryMetadata, MemoryProvenance,
+    MemorySensitivity, RecallRequest, RecallSourceLabel, SupplementalDegradedCategory,
+    TemporalState,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -263,7 +264,8 @@ async fn outage_slow_and_malformed_remote_memory_degrade_to_empty() {
         Some(SupplementalErrorCategory::Provider)
     );
     assert_eq!(
-        backend.metrics().snapshot().memory_supplemental_degraded[&SupplementalDegradedCategory::Provider],
+        backend.metrics().snapshot().memory_supplemental_degraded
+            [&SupplementalDegradedCategory::Provider],
         1
     );
 

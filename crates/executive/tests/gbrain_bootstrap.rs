@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use executive::composition::config::SupplementalMemoryConfig;
 use corpus::tools::mcp::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use corpus::tools::mcp::manager::McpManager;
+use executive::composition::config::SupplementalMemoryConfig;
 use executive::testing::supplemental_memory::build_supplemental_memory_runtime;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
@@ -15,7 +15,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use mnemosyne::supplemental::{
-    EnqueueOutcome, SupplementalMemoryError, SupplementalErrorCategory, SupplementalRecall,
+    EnqueueOutcome, SupplementalErrorCategory, SupplementalMemoryError, SupplementalRecall,
     SupplementalRecallHealth,
 };
 use mnemosyne::{

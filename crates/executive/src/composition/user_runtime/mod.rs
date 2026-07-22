@@ -165,7 +165,10 @@ impl UserRuntimeConfig {
     }
 }
 
-fn apply_execd_override(config: &mut crate::composition::config::GrokHardeningConfig, cli_enabled: bool) {
+fn apply_execd_override(
+    config: &mut crate::composition::config::GrokHardeningConfig,
+    cli_enabled: bool,
+) {
     config.execd |= cli_enabled;
 }
 

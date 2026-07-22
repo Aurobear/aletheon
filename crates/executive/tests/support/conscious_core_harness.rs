@@ -9,11 +9,6 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::Context;
 use async_trait::async_trait;
-use executive::runtime::events::{
-    agent_tree_projection::AgentTreeProjection, debug_projection::DebugProjection,
-    memory_job_projection::MemoryJobProjection, metrics_projection::MetricsProjection,
-    session_projection::SessionProjection,
-};
 use executive::application::agent_control::{
     AgentControlService, AgentEventSink, AgentRunRepository, AgentRuntimeInput,
     AgentRuntimeLauncher, AgentRuntimeRegistry, BoundedAgentAdmission,
@@ -23,6 +18,11 @@ use executive::application::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use executive::application::event_projection::{EventProjection, SqliteProjectionStore};
 use executive::application::governed_capability::{
     GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
+};
+use executive::runtime::events::{
+    agent_tree_projection::AgentTreeProjection, debug_projection::DebugProjection,
+    memory_job_projection::MemoryJobProjection, metrics_projection::MetricsProjection,
+    session_projection::SessionProjection,
 };
 use fabric::{
     AcceptanceEvidence, AgentBudget, AgentContextFork, AgentControlError, AgentControlPort,
@@ -872,9 +872,10 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
                 created_at: now,
                 expires_at: Some(fabric::MonoDeadline::after(now, 10_000)),
             },
-            cause: executive::application::conscious_core_ports::CandidateCause::ExternalObservation {
-                event_ref,
-            },
+            cause:
+                executive::application::conscious_core_ports::CandidateCause::ExternalObservation {
+                    event_ref,
+                },
         },
     )
     .await?;

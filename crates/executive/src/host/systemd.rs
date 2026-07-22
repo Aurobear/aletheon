@@ -19,9 +19,9 @@ use std::time::Duration;
 use tracing;
 
 use crate::core::runtime_core::RuntimeCore;
-use crate::host::load_dotenv;
 use crate::host::daemon::mcp_embedded::McpEmbedded;
 use crate::host::daemon::server;
+use crate::host::load_dotenv;
 
 /// Send a status message to systemd via the notification socket.
 ///

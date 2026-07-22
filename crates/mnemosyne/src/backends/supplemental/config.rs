@@ -101,7 +101,9 @@ pub fn validate_tools_list(document: &Value) -> anyhow::Result<()> {
         let tool = tools
             .iter()
             .find(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
-            .with_context(|| format!("supplemental memory required MCP tool `{name}` is missing"))?;
+            .with_context(|| {
+                format!("supplemental memory required MCP tool `{name}` is missing")
+            })?;
         let schema = tool
             .get("inputSchema")
             .context("required tool lacks inputSchema")?;
@@ -122,7 +124,9 @@ pub fn validate_tools_list(document: &Value) -> anyhow::Result<()> {
                 "string"
             };
             if value.get("type").and_then(Value::as_str) != Some(expected) {
-                bail!("supplemental memory tool `{name}` property `{property}` has incompatible type");
+                bail!(
+                    "supplemental memory tool `{name}` property `{property}` has incompatible type"
+                );
             }
         }
         let actual: BTreeSet<_> = schema

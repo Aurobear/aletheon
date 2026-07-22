@@ -15,10 +15,14 @@ pub struct RuntimeResourceRequirements {
 impl RuntimeResourceRequirements {
     pub fn validate(self) -> Result<Self, String> {
         if self.storage_bytes > MAX_RUNTIME_STORAGE_BYTES {
-            return Err(format!("runtime storage byte request exceeds {MAX_RUNTIME_STORAGE_BYTES}"));
+            return Err(format!(
+                "runtime storage byte request exceeds {MAX_RUNTIME_STORAGE_BYTES}"
+            ));
         }
         if self.storage_items > MAX_RUNTIME_STORAGE_ITEMS {
-            return Err(format!("runtime storage item request exceeds {MAX_RUNTIME_STORAGE_ITEMS}"));
+            return Err(format!(
+                "runtime storage item request exceeds {MAX_RUNTIME_STORAGE_ITEMS}"
+            ));
         }
         Ok(self)
     }
@@ -85,7 +89,10 @@ mod tests {
 
     #[test]
     fn resource_requirements_default_to_no_reservation() {
-        assert_eq!(RuntimeResourceRequirements::default().validate().unwrap(), RuntimeResourceRequirements::default());
+        assert_eq!(
+            RuntimeResourceRequirements::default().validate().unwrap(),
+            RuntimeResourceRequirements::default()
+        );
     }
 
     #[test]

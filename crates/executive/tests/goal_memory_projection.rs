@@ -1,16 +1,14 @@
 use std::sync::Arc;
 
+use executive::application::event_projection::SqliteProjectionStore;
+use executive::application::memory_projection::{
+    ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
+};
+use executive::goal::{GoalApprovalOutcomeSummary, GoalCompletionSummary, GoalProjectionEvidence};
 use executive::runtime::events::{
     memory_job_projection::MemoryJobProjection, DefaultEventProjectionSet, EventReadFilter,
     SqliteEventSpine,
 };
-use executive::goal::{
-    GoalApprovalOutcomeSummary, GoalCompletionSummary, GoalProjectionEvidence,
-};
-use executive::application::memory_projection::{
-    ApprovedArchitectureDecision, MemoryProjection, ProjectionStatus,
-};
-use executive::application::event_projection::SqliteProjectionStore;
 use fabric::{ApprovalId, EventSpine, EventTreeId, GoalId, SpineEvent, UnsequencedEvent};
 use mnemosyne::MemorySensitivity;
 use uuid::Uuid;

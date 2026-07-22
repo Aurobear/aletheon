@@ -1,13 +1,13 @@
 //! Handler initialization, construction, and setup-related methods.
 
 use super::super::model_router::{ModelRouter, TaskType};
-use crate::composition::prefix_builder::PrefixBuilder;
 use super::super::DaemonConfig;
+use crate::adapters::session::store::SessionStore;
 use crate::composition::config::ExecutiveConfig;
+use crate::composition::prefix_builder::PrefixBuilder;
 use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonExecutive;
 use crate::host::daemon::handler::RequestHandler;
-use crate::adapters::session::store::SessionStore;
 use anyhow::Context;
 use kernel::chronos::SystemClock;
 
@@ -33,12 +33,16 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::adapters::channel::gmail::GmailGoalDraftCoordinator;
+use crate::adapters::runtime::worktree_recovery::{
+    WorktreeRecoveryConfig, WorktreeRecoveryService,
+};
+use crate::adapters::runtime::{
+    pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime,
+};
+use crate::application::goal::ObjectiveStore;
 use crate::application::inference_port::InferencePort;
 use crate::application::CapabilityService;
-use crate::adapters::channel::gmail::GmailGoalDraftCoordinator;
-use crate::application::goal::ObjectiveStore;
-use crate::adapters::runtime::worktree_recovery::{WorktreeRecoveryConfig, WorktreeRecoveryService};
-use crate::adapters::runtime::{pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime};
 use corpus::hook::builtin::audit_hook;
 use corpus::security::storm_breaker::StormBreaker;
 use corpus::skill::plugin::register_skill;
@@ -327,11 +331,12 @@ impl RequestHandler {
                 )
                 .context("opening Google notification outbox")?,
             );
-            let mut event_router = crate::adapters::google::GoogleEventRouter::new_with_notifications(
-                store.clone(),
-                goals,
-                notifications,
-            );
+            let mut event_router =
+                crate::adapters::google::GoogleEventRouter::new_with_notifications(
+                    store.clone(),
+                    goals,
+                    notifications,
+                );
             if let Some(ingress) = gmail_ingress {
                 event_router = event_router.with_mail_ingress(Arc::new(
                     crate::adapters::channel::handlers::gmail_ingest::ExternalEventIngestHandler::new(
@@ -682,14 +687,15 @@ impl RequestHandler {
             .with_consolidation_repository(consolidation_repository)
             .with_retention_repository(retention_repository.clone()),
         );
-        let gbrain_runtime = crate::adapters::gbrain::build_supplemental_memory_runtime_with_retention(
-            local_memory,
-            retained_mcp.clone(),
-            &config.supplemental_memory,
-            clock.clone(),
-            &cancel_token,
-            Some(retention_repository.clone()),
-        );
+        let gbrain_runtime =
+            crate::adapters::gbrain::build_supplemental_memory_runtime_with_retention(
+                local_memory,
+                retained_mcp.clone(),
+                &config.supplemental_memory,
+                clock.clone(),
+                &cancel_token,
+                Some(retention_repository.clone()),
+            );
         let memory_admin_use_cases: Arc<
             dyn crate::application::request_use_cases::MemoryAdminUseCases,
         > = Arc::new(
@@ -1103,7 +1109,8 @@ impl RequestHandler {
             Arc::new(crate::adapters::google::GoogleSyncWorkerPort::new(handle))
                 as Arc<dyn crate::application::admin_service::BackgroundWorkerPort>
         });
-        let supplemental_memory_worker_task = supplemental_memory_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
+        let supplemental_memory_worker_task =
+            supplemental_memory_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
         let self_field_shutdown = Arc::new(Mutex::new(Some(self_field.clone())));
 
         let approval_use_cases: Arc<dyn crate::application::ApprovalUseCases> =
@@ -1200,7 +1207,8 @@ impl RequestHandler {
             ),
         );
         let started_at = clock_2.mono_now();
-        let health_registry = Arc::new(crate::application::health::HealthRegistry::production_ready());
+        let health_registry =
+            Arc::new(crate::application::health::HealthRegistry::production_ready());
         let channel_task = Arc::new(Mutex::new(None));
         let request_facades = RequestFacadePorts::new(
             runtime.clone(),
@@ -1253,15 +1261,16 @@ impl RequestHandler {
                 super::request_ports::reflection_engine_port(reflector.clone()),
             ),
         );
-        let google_use_cases: Arc<dyn crate::application::request_use_cases::ExternalSourceUseCases> =
-            Arc::new(
-                crate::adapters::external::ProductionExternalSourceUseCases::new(
-                    google.clone(),
-                    domains.corpus(),
-                    granted_capabilities.clone(),
-                    clock.clone(),
-                ),
-            );
+        let google_use_cases: Arc<
+            dyn crate::application::request_use_cases::ExternalSourceUseCases,
+        > = Arc::new(
+            crate::adapters::external::ProductionExternalSourceUseCases::new(
+                google.clone(),
+                domains.corpus(),
+                granted_capabilities.clone(),
+                clock.clone(),
+            ),
+        );
         let workflow_use_cases: Arc<dyn crate::application::request_use_cases::WorkflowUseCases> =
             Arc::new(
                 crate::application::request_use_cases::ProductionWorkflowUseCases::new(

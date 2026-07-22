@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 use mnemosyne::supplemental::{
-    SupplementalDocument, SupplementalReconciliation, SupplementalSpool, ReconcileOperationKind, RemoteMemoryReceipt,
-    RetryOutcome, RetryPolicy, SpoolError, SpoolLimits, RECONCILIATION_SCHEMA_VERSION,
+    ReconcileOperationKind, RemoteMemoryReceipt, RetryOutcome, RetryPolicy, SpoolError,
+    SpoolLimits, SupplementalDocument, SupplementalReconciliation, SupplementalSpool,
+    RECONCILIATION_SCHEMA_VERSION,
 };
 use mnemosyne::{
     MemoryAuthority, MemoryKind, MemoryMetadata, MemoryProvenance, MemoryRecord, MemoryRecordId,

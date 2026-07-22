@@ -2,6 +2,6 @@
 
 pub mod approval;
 pub mod chat;
-pub mod goal;
 pub mod external_read;
+pub mod goal;
 pub mod greeting;

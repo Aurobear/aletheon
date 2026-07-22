@@ -3,8 +3,8 @@ use std::sync::{Arc, Barrier};
 
 use mnemosyne::supplemental::config::RetryPolicy;
 use mnemosyne::supplemental::{
-    EnqueueOutcome, SupplementalDocument, SupplementalSpool, RemoteMemoryReceipt, RetryOutcome, SpoolError,
-    SpoolLimits,
+    EnqueueOutcome, RemoteMemoryReceipt, RetryOutcome, SpoolError, SpoolLimits,
+    SupplementalDocument, SupplementalSpool,
 };
 use mnemosyne::MemorySensitivity;
 use rusqlite::{Connection, ErrorCode};

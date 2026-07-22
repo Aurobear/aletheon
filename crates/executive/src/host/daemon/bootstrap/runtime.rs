@@ -204,9 +204,9 @@ use kernel::chronos::SystemClock;
 #[cfg(test)]
 use tokio_util::sync::CancellationToken;
 
+use crate::adapters::runtime::ProviderWorkerRuntime;
 use crate::application::CapabilityService;
 use crate::core::runtime_registry::RuntimeRegistry;
-use crate::adapters::runtime::ProviderWorkerRuntime;
 
 pub(crate) fn register_goal_runtimes(
     registry: &mut RuntimeRegistry,

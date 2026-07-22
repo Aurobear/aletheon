@@ -1,20 +1,20 @@
 //! Fail-closed configuration and registration for the isolated Pi coding runtime.
 
 use crate::application::verification::CapabilityAuditSummary;
+use crate::composition::config::CodingRuntimeConfig;
 use crate::core::runtime_registry::RuntimeRegistry;
 use crate::core::sub_agent::SubAgentRuntime;
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use base64::Engine;
-use crate::composition::config::CodingRuntimeConfig;
 use corpus::tools::subagent::{
     CommandRequest, CommandRunner, WorktreeManager, WorktreeManagerConfig,
 };
 use fabric::sandbox::{IsolationLevel, SandboxBackend, SandboxConfig};
 use fabric::{
-    resolve_profile, AttemptEvidence, AttemptUsage, Clock, CodingJobReport,
-    CodingJobStatus, CodingNetworkPolicy, FailureClass, ProfileName, ResolvedSandboxPolicy,
-    RuntimeFailure, RuntimeId, RuntimeResult, SandboxProfiles, WorkspacePolicy,
+    resolve_profile, AttemptEvidence, AttemptUsage, Clock, CodingJobReport, CodingJobStatus,
+    CodingNetworkPolicy, FailureClass, ProfileName, ResolvedSandboxPolicy, RuntimeFailure,
+    RuntimeId, RuntimeResult, SandboxProfiles, WorkspacePolicy,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -205,7 +205,10 @@ impl PiRuntime {
         &self.config
     }
 
-    fn validate_job(&self, request: &crate::application::coding_runtime::CodingAttemptRequest) -> Result<()> {
+    fn validate_job(
+        &self,
+        request: &crate::application::coding_runtime::CodingAttemptRequest,
+    ) -> Result<()> {
         request.job.validate()?;
         if request.task_input.trim().is_empty() {
             bail!("Pi task input must not be empty");
@@ -479,15 +482,16 @@ impl SubAgentRuntime for PiRuntime {
         cancel: CancellationToken,
     ) -> std::result::Result<RuntimeResult, RuntimeFailure> {
         let started = self.clock.mono_now().0;
-        let request: crate::application::coding_runtime::CodingAttemptRequest = serde_json::from_str(task).map_err(|error| {
-            self.failure(
-                FailureClass::InvalidAssumption,
-                format!("invalid Pi attempt request: {error}"),
-                false,
-                0,
-                vec![],
-            )
-        })?;
+        let request: crate::application::coding_runtime::CodingAttemptRequest =
+            serde_json::from_str(task).map_err(|error| {
+                self.failure(
+                    FailureClass::InvalidAssumption,
+                    format!("invalid Pi attempt request: {error}"),
+                    false,
+                    0,
+                    vec![],
+                )
+            })?;
         self.validate_job(&request).map_err(|error| {
             self.failure(
                 FailureClass::PermissionDenied,

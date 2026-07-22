@@ -6,11 +6,13 @@
 
 use std::sync::Arc;
 
-use crate::application::DaemonTurnOrchestrator;
-use crate::application::approval::ApplyCoordinator;
-use crate::application::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
 use crate::adapters::channel::gmail::GmailGoalDraftCoordinator;
+use crate::application::approval::ApplyCoordinator;
+use crate::application::approval::{
+    ApprovalDecision, ApprovalRepository, ApprovalResolutionContext,
+};
 use crate::application::goal::ObjectiveStore;
+use crate::application::DaemonTurnOrchestrator;
 use fabric::{
     ApprovalId, ApprovalSnapshot, GoalId, GoalSnapshot, GoalSpec, GoalState, PrincipalId, ProcessId,
 };

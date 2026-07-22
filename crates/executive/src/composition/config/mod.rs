@@ -4,39 +4,35 @@
 //! merges, validates, and reports application layers.
 
 mod agent;
+pub mod backpressure;
 mod channel;
 mod coding;
-pub mod backpressure;
 pub mod diagnostics;
 mod genome;
 mod grok_hardening;
 mod infra;
 mod integrations;
-mod supplemental_memory;
 mod provenance;
 mod provider;
 pub mod schema;
+mod supplemental_memory;
 
 pub use agent::{
     AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, ExecutiveConfig,
     HooksConfig, PerceptionConfig,
 };
 pub use backpressure::BackpressureConfig;
+pub use channel::TelegramChannelConfig;
+pub use coding::CodingRuntimeConfig;
 pub use cognit::config::{
     AgentAdmissionConfig, BackupMode, CognitConfig, DeploymentBackupConfig, DeploymentConfig,
     DeploymentHealthConfig, DeploymentIntegrationsConfig, DeploymentMode, DeploymentPathsConfig,
-    DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig,
-    RoleRuntimeConfig,
+    DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig, RoleRuntimeConfig,
 };
-pub use channel::TelegramChannelConfig;
-pub use coding::CodingRuntimeConfig;
-pub use supplemental_memory::{MemoryConfig, SupplementalMemoryConfig};
 pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
 pub use genome::GenomeConfig;
 pub use grok_hardening::GrokHardeningConfig;
-pub use infra::{
-    DaemonConfig, McpServerConfig, PluginsConfig, SandboxConfig,
-};
+pub use infra::{DaemonConfig, McpServerConfig, PluginsConfig, SandboxConfig};
 pub use integrations::{
     CredentialResolver, EmbodimentProviderConfig, EnvironmentCredentialResolver,
     IntegrationsConfig, OAuthClientType, ProductionEmbodimentConfig, ResolvedGoogleIntegration,
@@ -45,6 +41,7 @@ pub use integrations::{
 };
 pub use provenance::{ConfigProvenance, ConfigSource, ConfigSourceKind, Provenanced};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
+pub use supplemental_memory::{MemoryConfig, SupplementalMemoryConfig};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

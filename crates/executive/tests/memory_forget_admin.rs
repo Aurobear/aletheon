@@ -6,7 +6,9 @@ use executive::application::admin_service::{
     AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases, ModeChange,
     SkillAdminPort,
 };
-use executive::application::request_use_cases::{ProductionMemoryAdminUseCases, RetentionAdminPort};
+use executive::application::request_use_cases::{
+    ProductionMemoryAdminUseCases, RetentionAdminPort,
+};
 use mnemosyne::{
     ForgetAuthority, ForgetPolicy, ForgetReceipt, ForgetSelector, MemoryAuthority, MemoryKind,
     MemoryMetadata, MemoryRecord, MemoryRecordId, MemoryScope, MemoryService, MemoryStatus,

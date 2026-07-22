@@ -25,8 +25,8 @@ pub mod candidate_projection;
 pub mod cleanup;
 pub mod context_fork;
 pub mod execution;
-pub mod live_runs;
 pub mod lifecycle;
+pub mod live_runs;
 pub mod mailbox;
 pub mod memory;
 pub mod recovery;
@@ -37,9 +37,8 @@ pub(crate) fn agent_spawn_request_hash(
     request: &AgentSpawnRequest,
 ) -> Result<String, AgentControlError> {
     request.validate()?;
-    let encoded = serde_json::to_vec(request).map_err(|error| {
-        control_error(AgentControlErrorKind::Persistence, error.to_string())
-    })?;
+    let encoded = serde_json::to_vec(request)
+        .map_err(|error| control_error(AgentControlErrorKind::Persistence, error.to_string()))?;
     Ok(format!("{:x}", Sha256::digest(encoded)))
 }
 
@@ -61,11 +60,11 @@ pub use execution::{
     AgentRuntimeLauncher, AgentRuntimeRegistry, BackgroundResourceRegistration,
     CompatibilityRuntimeLauncher, NoopAgentEventSink, SpineAgentEventSink,
 };
-pub use live_runs::{LiveAgentRun, LiveAgentRuns, ReparentAuthority};
 pub use lifecycle::{
     reduce_agent_lifecycle, reduce_agent_status_transition, AgentLifecycleEffect,
     AgentLifecycleEvent, AgentLifecycleTransition, InvalidAgentLifecycleTransition,
 };
+pub use live_runs::{LiveAgentRun, LiveAgentRuns, ReparentAuthority};
 pub use mailbox::{AgentMailboxBridge, AgentRuntimeInbox};
 pub use memory::MemoryRecordingAgentEventSink;
 pub use recovery::{
@@ -759,9 +758,10 @@ impl AgentControlPort for AgentControlService {
         let agent_id = identity.agent_id;
         let workspace_id = agent_workspace_id(agent_id);
         let request_hash = agent_spawn_request_hash(&request)?;
-        let requirements = launcher.resource_requirements().validate().map_err(|message| {
-            control_error(AgentControlErrorKind::Capacity, message)
-        })?;
+        let requirements = launcher
+            .resource_requirements()
+            .validate()
+            .map_err(|message| control_error(AgentControlErrorKind::Capacity, message))?;
         let storage = AgentStorageRequest {
             bytes: requirements.storage_bytes,
             items: requirements.storage_items,

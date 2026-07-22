@@ -2,9 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use executive::conscious::{
-    AgentAdapter, CorpusProcessor, MetacogProcessor, MnemosyneProcessor,
-};
+use executive::conscious::{AgentAdapter, CorpusProcessor, MetacogProcessor, MnemosyneProcessor};
 use fabric::dasein::SelfVersion;
 use fabric::{
     AgoraSpaceId, BroadcastEpoch, Clock, ConsciousProcessor, ContentId, MonoDeadline, MonoTime,

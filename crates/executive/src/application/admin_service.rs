@@ -492,7 +492,10 @@ impl AdminUseCases for AdminService {
             sync.shutdown().await;
         }
         for (name, worker) in [
-            ("Supplemental memory", &self.resources.supplemental_memory_worker),
+            (
+                "Supplemental memory",
+                &self.resources.supplemental_memory_worker,
+            ),
             ("Goal", &self.resources.goal_worker),
         ] {
             if let Some(worker) = worker {

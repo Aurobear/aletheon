@@ -12,21 +12,20 @@ use async_trait::async_trait;
 use fabric::hook::{HookContext, HookPoint};
 use fabric::ui_event::InterruptReason;
 use fabric::{
-    Clock, EvolutionLogEntry, OperationId,
-    OperationResult, PrincipalContext, PrincipalId, ProcessId, ReflectionEntry, ReflectionTrigger,
-    SessionId, ThreadId,
+    Clock, EvolutionLogEntry, OperationId, OperationResult, PrincipalContext, PrincipalId,
+    ProcessId, ReflectionEntry, ReflectionTrigger, SessionId, ThreadId,
 };
 use serde::Serialize;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::application::session_service::{InterruptOutcome, ResumeResult, SessionService};
 use crate::application::admin_service::BackgroundWorkerPort;
-use crate::application::DaemonTurnOrchestrator;
 use crate::application::health::{ComponentHealth, HealthRegistry, ProductionHealth};
 use crate::application::orchestration::digraph::graph::{DiGraph, WorkflowDef};
 use crate::application::orchestration::store::WorkflowStore;
+use crate::application::session_service::{InterruptOutcome, ResumeResult, SessionService};
+use crate::application::DaemonTurnOrchestrator;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RequestStatus {
@@ -258,7 +257,8 @@ impl HealthUseCases for ProductionHealthUseCases {
         if supplemental.enabled {
             supplemental_health.count = Some(supplemental.queue_depth as u64);
         }
-        self.registry.set("supplemental_memory_spool", supplemental_health);
+        self.registry
+            .set("supplemental_memory_spool", supplemental_health);
         if self.daemon_cancel.is_cancelled() {
             self.registry.begin_shutdown();
         }
@@ -762,7 +762,10 @@ pub trait ExternalSourceUseCases: Send + Sync {
     ) -> Result<serde_json::Value, ExternalSourceUseCaseError>;
     async fn accounts(&self) -> Result<Vec<serde_json::Value>, ExternalSourceUseCaseError>;
     async fn revoke(&self, account: String) -> Result<(bool, bool), ExternalSourceUseCaseError>;
-    async fn refresh(&self, account: String) -> Result<ExternalRefreshStatus, ExternalSourceUseCaseError>;
+    async fn refresh(
+        &self,
+        account: String,
+    ) -> Result<ExternalRefreshStatus, ExternalSourceUseCaseError>;
 }
 
 #[derive(Clone, Debug, Serialize)]

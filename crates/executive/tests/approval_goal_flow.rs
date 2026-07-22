@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use base64::Engine;
+use executive::application::coding_runtime::CodingAttemptRequest;
 use executive::approval::ApprovalRepository;
 use executive::goal::{
     AttemptExecutor, AttemptRequest, CodingVerifier, GoalCoordinator, ObjectiveStore, RetryPolicy,
 };
-use executive::application::coding_runtime::CodingAttemptRequest;
 const TEST_CODING_RUNTIME_ID: &str = "fake-coding-runtime";
 use executive::application::verification::{VerificationCheckKind, VerificationContext};
 use fabric::*;

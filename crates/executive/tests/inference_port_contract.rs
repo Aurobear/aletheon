@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use cognit::testing::mock_llm::MockLlmProvider;
-use executive::application::inference_port::{CoreInferenceRequest, InferencePort, LocalInferencePort};
+use executive::application::inference_port::{
+    CoreInferenceRequest, InferencePort, LocalInferencePort,
+};
 use fabric::{LlmStream, Message, StopReason, StreamChunk, ToolDefinition};
 
 fn request() -> CoreInferenceRequest {

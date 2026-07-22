@@ -176,7 +176,10 @@ impl SupplementalDocument {
             .context("supplemental memory page has malformed frontmatter")?;
         let parsed: Frontmatter = serde_yaml::from_str(yaml)?;
         if parsed.schema != PAGE_SCHEMA_VERSION {
-            bail!("unsupported supplemental memory page schema `{}`", parsed.schema);
+            bail!(
+                "unsupported supplemental memory page schema `{}`",
+                parsed.schema
+            );
         }
         let metadata = MemoryMetadata {
             record_id: parsed.record_id,
@@ -280,7 +283,9 @@ mod tests {
             content: "secret".into(),
             metadata: metadata(),
         };
-        assert!(SupplementalDocument::from_event(&message).unwrap().is_none());
+        assert!(SupplementalDocument::from_event(&message)
+            .unwrap()
+            .is_none());
         let mut secret = metadata();
         secret.sensitivity = MemorySensitivity::Restricted;
         assert!(SupplementalDocument::build("architecture_decision", "x", "y", &secret).is_err());
@@ -288,7 +293,8 @@ mod tests {
 
     #[test]
     fn rejects_unknown_schema_and_control_frontmatter() {
-        let page = SupplementalDocument::build("architecture_decision", "x", "y", &metadata()).unwrap();
+        let page =
+            SupplementalDocument::build("architecture_decision", "x", "y", &metadata()).unwrap();
         let unknown = SupplementalDocument {
             content: page
                 .content
