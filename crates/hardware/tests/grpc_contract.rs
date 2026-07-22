@@ -42,7 +42,9 @@ fn generated_types_compile() {
 fn client_stub_is_available() {
     // Verify the gRPC client stub is generated.
     // If this compiles, tonic-build successfully generated the client.
-    let _ = std::mem::size_of::<hardware::grpc::wire::embodiment_gateway_client::EmbodimentGatewayClient<
-        tonic::transport::Channel,
-    >>();
+    let _ = std::mem::size_of::<
+        hardware::grpc::wire::embodiment_gateway_client::EmbodimentGatewayClient<
+            tonic::transport::Channel,
+        >,
+    >();
 }

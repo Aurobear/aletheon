@@ -91,5 +91,8 @@ device_id: "bot"
 "#;
     let result: Result<EmbodimentProviderConfig, _> = serde_yaml::from_str(yaml);
     // Must fail — the "kind" tag is required by serde(tag = "kind")
-    assert!(result.is_err(), "missing kind tag must fail deserialization");
+    assert!(
+        result.is_err(),
+        "missing kind tag must fail deserialization"
+    );
 }

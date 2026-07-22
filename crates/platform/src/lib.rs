@@ -8,7 +8,6 @@ pub mod backend;
 pub mod desktop;
 pub mod error;
 pub mod filesystem;
-pub mod hil_evidence_verifier;
 pub mod manifest;
 pub mod path;
 pub mod process;

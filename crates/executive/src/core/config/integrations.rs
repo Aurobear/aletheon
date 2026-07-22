@@ -191,7 +191,10 @@ impl ProductionEmbodimentConfig {
 
         // 1. Namespace must be "production"
         if self.namespace != "production" {
-            errors.push(format!("namespace must be 'production', got '{}'", self.namespace));
+            errors.push(format!(
+                "namespace must be 'production', got '{}'",
+                self.namespace
+            ));
         }
 
         // 2. Device serial required
@@ -215,7 +218,11 @@ impl ProductionEmbodimentConfig {
         }
 
         // 6. Reject wildcards in allowlist
-        if self.skill_allowlist.iter().any(|s| s.contains('*') || s.contains('?')) {
+        if self
+            .skill_allowlist
+            .iter()
+            .any(|s| s.contains('*') || s.contains('?'))
+        {
             errors.push("skill_allowlist must not contain wildcards".into());
         }
 
@@ -224,13 +231,22 @@ impl ProductionEmbodimentConfig {
 
         // 8. Hard production limits (compile-time maxima)
         if self.max_linear_mps > 0.1 {
-            errors.push(format!("max_linear_mps {} exceeds production limit 0.1", self.max_linear_mps));
+            errors.push(format!(
+                "max_linear_mps {} exceeds production limit 0.1",
+                self.max_linear_mps
+            ));
         }
         if self.max_angular_rps > 0.2 {
-            errors.push(format!("max_angular_rps {} exceeds production limit 0.2", self.max_angular_rps));
+            errors.push(format!(
+                "max_angular_rps {} exceeds production limit 0.2",
+                self.max_angular_rps
+            ));
         }
         if self.max_duration_ms > 5000 {
-            errors.push(format!("max_duration_ms {} exceeds production limit 5000", self.max_duration_ms));
+            errors.push(format!(
+                "max_duration_ms {} exceeds production limit 5000",
+                self.max_duration_ms
+            ));
         }
 
         // 9. Evidence path must be non-empty
@@ -238,7 +254,11 @@ impl ProductionEmbodimentConfig {
             errors.push("gate_evidence_path must not be empty".into());
         }
 
-        if errors.is_empty() { Ok(()) } else { Err(errors) }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }
 

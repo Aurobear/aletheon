@@ -44,7 +44,12 @@ fn full_recovery_table() {
         (VerificationDecision::Unsafe, 0, 0, RecoveryAction::SafeStop),
         (VerificationDecision::Unsafe, 1, 1, RecoveryAction::SafeStop),
         (VerificationDecision::Unknown, 0, 0, RecoveryAction::Retry),
-        (VerificationDecision::Unknown, 1, 0, RecoveryAction::SafeStop),
+        (
+            VerificationDecision::Unknown,
+            1,
+            0,
+            RecoveryAction::SafeStop,
+        ),
     ];
 
     for (decision, retries, replans, expected) in cases {

@@ -1,8 +1,8 @@
 //! Verifier for signed HIL gate evidence.
 //! Only allowlisted public keys may produce valid evidence.
 
-use std::collections::HashSet;
 use fabric::types::hil_evidence::{HILEvidence, HILResult};
+use std::collections::HashSet;
 
 pub struct HILEvidenceVerifier {
     /// Allowlisted public key IDs that may sign HIL evidence.
@@ -39,9 +39,7 @@ impl HILEvidenceVerifier {
         match evidence.result {
             HILResult::Passed | HILResult::Conditional => {}
             HILResult::Failed => return Err("HIL evidence result is Failed".into()),
-            HILResult::Inconclusive => {
-                return Err("HIL evidence result is Inconclusive".into())
-            }
+            HILResult::Inconclusive => return Err("HIL evidence result is Inconclusive".into()),
         }
 
         // 3. Signer must be in allowlist
@@ -211,7 +209,7 @@ mod tests {
     fn old_evidence_rejected() {
         let v = HILEvidenceVerifier::new(
             vec!["key-1".into()],
-            100, // max_age_ms = 100ms
+            100,               // max_age_ms = 100ms
             Box::new(|| 5000), // now = 5000
         );
         // issued_unix_ms = 1000, now = 5000, diff = 4000 > max_age_ms=100

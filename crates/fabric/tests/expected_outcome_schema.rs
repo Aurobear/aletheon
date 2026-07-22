@@ -1,6 +1,4 @@
-use fabric::types::expected_outcome::{
-    ExpectedOutcome, OutcomeContractError, OutcomePredicate,
-};
+use fabric::types::expected_outcome::{ExpectedOutcome, OutcomeContractError, OutcomePredicate};
 
 #[test]
 fn valid_equals_predicate() {
@@ -45,10 +43,7 @@ fn nan_rejected_in_range() {
         stable_window_ms: 200,
         timeout_ms: 5000,
     };
-    assert!(matches!(
-        eo.validate(),
-        Err(OutcomeContractError::NaNValue)
-    ));
+    assert!(matches!(eo.validate(), Err(OutcomeContractError::NaNValue)));
 }
 
 #[test]
@@ -101,9 +96,7 @@ fn over_64_nodes_rejected() {
             value: serde_json::json!(i),
         });
     }
-    let all = OutcomePredicate::All {
-        predicates: preds,
-    };
+    let all = OutcomePredicate::All { predicates: preds };
     let eo = ExpectedOutcome {
         predicate: all,
         freshness_ms: 500,
@@ -119,17 +112,12 @@ fn over_64_nodes_rejected() {
 #[test]
 fn empty_all_rejected() {
     let eo = ExpectedOutcome {
-        predicate: OutcomePredicate::All {
-            predicates: vec![],
-        },
+        predicate: OutcomePredicate::All { predicates: vec![] },
         freshness_ms: 500,
         stable_window_ms: 200,
         timeout_ms: 5000,
     };
-    assert!(matches!(
-        eo.validate(),
-        Err(OutcomeContractError::EmptyAll)
-    ));
+    assert!(matches!(eo.validate(), Err(OutcomeContractError::EmptyAll)));
 }
 
 #[test]

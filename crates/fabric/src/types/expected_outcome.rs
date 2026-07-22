@@ -240,10 +240,7 @@ mod tests {
             stable_window_ms: 200,
             timeout_ms: 5000,
         };
-        assert!(matches!(
-            eo.validate(),
-            Err(OutcomeContractError::NaNValue)
-        ));
+        assert!(matches!(eo.validate(), Err(OutcomeContractError::NaNValue)));
     }
 
     #[test]
@@ -296,9 +293,7 @@ mod tests {
                 value: serde_json::json!(i),
             });
         }
-        let all = OutcomePredicate::All {
-            predicates: preds,
-        };
+        let all = OutcomePredicate::All { predicates: preds };
         let eo = ExpectedOutcome {
             predicate: all,
             freshness_ms: 500,
@@ -314,17 +309,12 @@ mod tests {
     #[test]
     fn empty_all_rejected() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::All {
-                predicates: vec![],
-            },
+            predicate: OutcomePredicate::All { predicates: vec![] },
             freshness_ms: 500,
             stable_window_ms: 200,
             timeout_ms: 5000,
         };
-        assert!(matches!(
-            eo.validate(),
-            Err(OutcomeContractError::EmptyAll)
-        ));
+        assert!(matches!(eo.validate(), Err(OutcomeContractError::EmptyAll)));
     }
 
     #[test]

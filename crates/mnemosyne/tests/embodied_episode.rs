@@ -1,16 +1,15 @@
 use std::path::PathBuf;
 
-use mnemosyne::embodied_episode::EmbodiedEpisodeRepository;
 use fabric::types::embodiment::{DeviceId, SkillId};
 use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
 use fabric::OperationId;
+use mnemosyne::embodied_episode::EmbodiedEpisodeRepository;
 
 fn temp_db() -> PathBuf {
-    let dir = std::env::temp_dir()
-        .join(format!(
-            "mnemosyne-embodied-episode-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+    let dir = std::env::temp_dir().join(format!(
+        "mnemosyne-embodied-episode-test-{}",
+        uuid::Uuid::new_v4()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     dir.join("episodes.db")
 }
@@ -71,12 +70,30 @@ fn idempotent_replay() {
 
     // Same (episode_id, attempt_number, operation_id) → idempotent
     repo.append_attempt(
-        "ep2", 1, &op, &SkillId("s".into()), &eo, None, None, None, None, None,
+        "ep2",
+        1,
+        &op,
+        &SkillId("s".into()),
+        &eo,
+        None,
+        None,
+        None,
+        None,
+        None,
     )
     .unwrap();
 
     repo.append_attempt(
-        "ep2", 1, &op, &SkillId("s".into()), &eo, None, None, None, None, None,
+        "ep2",
+        1,
+        &op,
+        &SkillId("s".into()),
+        &eo,
+        None,
+        None,
+        None,
+        None,
+        None,
     )
     .unwrap();
 
@@ -104,12 +121,30 @@ fn conflicting_replay_rejected() {
     };
 
     repo.append_attempt(
-        "ep3", 1, &op1, &SkillId("s".into()), &eo, None, None, None, None, None,
+        "ep3",
+        1,
+        &op1,
+        &SkillId("s".into()),
+        &eo,
+        None,
+        None,
+        None,
+        None,
+        None,
     )
     .unwrap();
 
     let result = repo.append_attempt(
-        "ep3", 1, &op2, &SkillId("s".into()), &eo, None, None, None, None, None,
+        "ep3",
+        1,
+        &op2,
+        &SkillId("s".into()),
+        &eo,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("conflicting replay"));
@@ -142,11 +177,29 @@ fn multiple_attempts_ordered() {
     };
 
     repo.append_attempt(
-        "ep5", 1, &op1, &SkillId("s".into()), &eo, None, None, None, None, None,
+        "ep5",
+        1,
+        &op1,
+        &SkillId("s".into()),
+        &eo,
+        None,
+        None,
+        None,
+        None,
+        None,
     )
     .unwrap();
     repo.append_attempt(
-        "ep5", 2, &op2, &SkillId("s".into()), &eo, None, None, None, None, None,
+        "ep5",
+        2,
+        &op2,
+        &SkillId("s".into()),
+        &eo,
+        None,
+        None,
+        None,
+        None,
+        None,
     )
     .unwrap();
 

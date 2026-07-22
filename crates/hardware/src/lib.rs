@@ -29,13 +29,13 @@ pub use device::{
     OperationId, PrincipalId,
 };
 pub use emergency_stop::EmergencyStop;
+pub use grpc::provider::{GrpcEmbodimentProvider, GrpcProviderConfig};
 pub use lease::{ControlLease, ControlPermit};
 pub use observation::{is_stale, ObservationIngest};
 pub use provider::{DeviceProvider, ValidatedCommand};
 pub use registry::ProviderRegistry;
 pub use safety::{CommandDecision, RejectionReason, SafetyState};
 pub use simulator::{SimulatedDevice, SimulatedEmbodiment};
-pub use grpc::provider::{GrpcEmbodimentProvider, GrpcProviderConfig};
 pub use skill::{
     AuthorizedSkillRequest, CancelAck, EmbodimentProvider, ProviderError, SkillProgressSink,
     StopReceipt, ValidatedSkillCommand,

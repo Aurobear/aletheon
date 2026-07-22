@@ -1,8 +1,6 @@
 //! Integration tests for deployment gate public API.
 
-use hardware::{
-    validate_gate, DeploymentGateInput, DeviceNamespace,
-};
+use hardware::{validate_gate, DeploymentGateInput, DeviceNamespace};
 
 fn valid_input(ns: DeviceNamespace) -> DeploymentGateInput {
     DeploymentGateInput {

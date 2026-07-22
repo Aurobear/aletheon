@@ -71,10 +71,7 @@ impl VisualAggregator {
         }
 
         // 2. Dedup by camera + sha256 hash
-        let camera_hashes = self
-            .seen_hashes
-            .entry(frame.camera_id.clone())
-            .or_default();
+        let camera_hashes = self.seen_hashes.entry(frame.camera_id.clone()).or_default();
         if camera_hashes.contains_key(&frame.sha256) {
             return None;
         }
@@ -85,9 +82,7 @@ impl VisualAggregator {
             .camera_timestamps
             .entry(frame.camera_id.clone())
             .or_default();
-        while !timestamps.is_empty()
-            && timestamps.front().map_or(true, |t| now_ms - t > 1000)
-        {
+        while !timestamps.is_empty() && timestamps.front().map_or(true, |t| now_ms - t > 1000) {
             timestamps.pop_front();
         }
         if timestamps.len() >= self.config.max_hz {
@@ -206,13 +201,9 @@ mod tests {
     fn different_camera_same_hash_not_deduped() {
         let mut agg = VisualAggregator::new(VisualAggregatorConfig::default());
         let f1 = test_frame("cam0", "aaa", 1000);
-        assert!(agg
-            .ingest(f1, vec![], "".into(), 0.5, 1000)
-            .is_some());
+        assert!(agg.ingest(f1, vec![], "".into(), 0.5, 1000).is_some());
         let f2 = test_frame("cam1", "aaa", 1000);
-        assert!(agg
-            .ingest(f2, vec![], "".into(), 0.5, 1001)
-            .is_some());
+        assert!(agg.ingest(f2, vec![], "".into(), 0.5, 1001).is_some());
     }
 
     #[test]
@@ -252,13 +243,7 @@ mod tests {
             .unwrap();
         assert_eq!(obs.confidence, 1.0);
         let obs2 = agg
-            .ingest(
-                test_frame("c0", "bbb", 1001),
-                vec![],
-                "".into(),
-                -0.5,
-                1001,
-            )
+            .ingest(test_frame("c0", "bbb", 1001), vec![], "".into(), -0.5, 1001)
             .unwrap();
         assert_eq!(obs2.confidence, 0.0);
     }

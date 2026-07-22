@@ -81,11 +81,7 @@ mod tests {
     #[test]
     fn retryable_with_remaining_retries() {
         assert_eq!(
-            map_verification_to_recovery(
-                &report(VerificationDecision::RetryableMismatch),
-                0,
-                0
-            ),
+            map_verification_to_recovery(&report(VerificationDecision::RetryableMismatch), 0, 0),
             RecoveryAction::Retry
         );
     }
@@ -93,11 +89,7 @@ mod tests {
     #[test]
     fn retryable_exhausted_replans() {
         assert_eq!(
-            map_verification_to_recovery(
-                &report(VerificationDecision::RetryableMismatch),
-                1,
-                0
-            ),
+            map_verification_to_recovery(&report(VerificationDecision::RetryableMismatch), 1, 0),
             RecoveryAction::Replan
         );
     }
@@ -105,11 +97,7 @@ mod tests {
     #[test]
     fn replannable_with_remaining_replan() {
         assert_eq!(
-            map_verification_to_recovery(
-                &report(VerificationDecision::ReplannableMismatch),
-                0,
-                0
-            ),
+            map_verification_to_recovery(&report(VerificationDecision::ReplannableMismatch), 0, 0),
             RecoveryAction::Replan
         );
     }
@@ -117,11 +105,7 @@ mod tests {
     #[test]
     fn replannable_exhausted_escalates() {
         assert_eq!(
-            map_verification_to_recovery(
-                &report(VerificationDecision::ReplannableMismatch),
-                0,
-                1
-            ),
+            map_verification_to_recovery(&report(VerificationDecision::ReplannableMismatch), 0, 1),
             RecoveryAction::Escalate
         );
     }
@@ -159,11 +143,7 @@ mod tests {
     fn exhaustion_across_both_dimensions() {
         // Both retries and replans exhausted + Replannable -> Escalate
         assert_eq!(
-            map_verification_to_recovery(
-                &report(VerificationDecision::ReplannableMismatch),
-                1,
-                1
-            ),
+            map_verification_to_recovery(&report(VerificationDecision::ReplannableMismatch), 1, 1),
             RecoveryAction::Escalate
         );
     }
@@ -172,11 +152,7 @@ mod tests {
     fn retryable_with_both_exhausted_replans_not_escalates() {
         // RetryableMismatch with both exhausted -> still Replan (not Escalate)
         assert_eq!(
-            map_verification_to_recovery(
-                &report(VerificationDecision::RetryableMismatch),
-                1,
-                1
-            ),
+            map_verification_to_recovery(&report(VerificationDecision::RetryableMismatch), 1, 1),
             RecoveryAction::Replan
         );
     }

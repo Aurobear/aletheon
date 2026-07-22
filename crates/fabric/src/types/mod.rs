@@ -59,13 +59,13 @@ pub mod workspace_checkpoint;
 
 pub mod workspace_trust;
 
-pub mod expected_outcome;
-pub mod outcome_verification;
-pub mod world_state;
-pub mod frame;
-pub mod perception_observation;
-pub mod skill_proposal;
 pub mod embodied_episode;
-pub mod hil_evidence;
 pub mod emergency_stop;
+pub mod expected_outcome;
+pub mod frame;
+pub mod hil_evidence;
+pub mod outcome_verification;
+pub mod perception_observation;
 pub mod robot_audit;
+pub mod skill_proposal;
+pub mod world_state;

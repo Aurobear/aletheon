@@ -159,7 +159,7 @@ fn no_conversion_depends_on_display_strings() {
     assert_eq!(rc, fabric::types::embodiment::RiskClass::High);
 
     // SkillOutcome: uses i32 → wire::SkillOutcome → domain::SkillOutcome
-    let so = convert::to_skill_outcome(wire::SkillOutcome::Cancelled as i32, String::new())
-        .unwrap();
+    let so =
+        convert::to_skill_outcome(wire::SkillOutcome::Cancelled as i32, String::new()).unwrap();
     assert_eq!(so, fabric::types::embodiment::SkillOutcome::Cancelled);
 }

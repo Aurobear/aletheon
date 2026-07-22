@@ -21,9 +21,7 @@ pub fn map_error(error: &wire::ErrorDetail) -> ProviderError {
         | Ok(wire::ErrorCode::NotReady)
         | Ok(wire::ErrorCode::StaleState)
         | Ok(wire::ErrorCode::Internal)
-        | Ok(wire::ErrorCode::Unspecified) => {
-            ProviderError::Rejected(error.message.clone())
-        }
+        | Ok(wire::ErrorCode::Unspecified) => ProviderError::Rejected(error.message.clone()),
         Err(_) => {
             // Unknown error code → fail closed as rejected
             ProviderError::Rejected(format!(

@@ -4,15 +4,15 @@
 pub mod proposal_validator;
 pub mod state;
 
-use std::sync::Arc;
+use crate::harness::robot::proposal_validator::validate_proposal;
+use crate::harness::robot::state::{RobotHarnessConfig, RobotState, VerificationSignal};
+use crate::ports::policy_provider::PolicyProviderPort;
 use async_trait::async_trait;
-use fabric::types::expected_outcome::ExpectedOutcome;
 use fabric::types::embodiment::{DeviceId, SkillDescriptor, SkillId, SkillRequest, SkillResult};
+use fabric::types::expected_outcome::ExpectedOutcome;
 use fabric::types::outcome_verification::VerificationReport;
 use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
-use crate::harness::robot::state::{RobotHarnessConfig, RobotState, VerificationSignal};
-use crate::harness::robot::proposal_validator::validate_proposal;
-use crate::ports::policy_provider::PolicyProviderPort;
+use std::sync::Arc;
 
 /// Port for executing an embodied skill. Injected by Executive.
 #[async_trait]
@@ -37,9 +37,18 @@ pub trait OutcomeVerifierPort: Send + Sync {
 /// Port for plan generation. Injected — may use LLM or policy.
 #[async_trait]
 pub trait PlanPort: Send + Sync {
-    async fn plan(&self, device: &DeviceId, snapshot: &WorldSnapshot, goal: &str) -> Result<SkillRequest, String>;
-    async fn replan(&self, device: &DeviceId, snapshot: &WorldSnapshot, failure_reason: &str)
-        -> Result<SkillRequest, String>;
+    async fn plan(
+        &self,
+        device: &DeviceId,
+        snapshot: &WorldSnapshot,
+        goal: &str,
+    ) -> Result<SkillRequest, String>;
+    async fn replan(
+        &self,
+        device: &DeviceId,
+        snapshot: &WorldSnapshot,
+        failure_reason: &str,
+    ) -> Result<SkillRequest, String>;
 }
 
 /// Port for episode persistence. Injected.
@@ -97,7 +106,16 @@ impl RobotHarness {
         policy: Arc<dyn PolicyProviderPort>,
         allowed_skills: Vec<SkillDescriptor>,
     ) -> Self {
-        Self { config, world_state, executor, verifier, planner, episodes, policy, allowed_skills }
+        Self {
+            config,
+            world_state,
+            executor,
+            verifier,
+            planner,
+            episodes,
+            policy,
+            allowed_skills,
+        }
     }
 
     pub fn init(&self, device: DeviceId, goal: String, episode_id: String) -> RobotHarnessState {
@@ -125,18 +143,19 @@ impl RobotHarness {
                 harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
             }
             RobotState::Plan => {
-                let snapshots: Vec<WorldSnapshot> = harness_state
-                    .latest_snapshot
-                    .iter()
-                    .cloned()
-                    .collect();
-                match self.policy.propose(
-                    &harness_state.goal,
-                    &harness_state.device,
-                    &snapshots,
-                    &[],
-                    &self.allowed_skills,
-                ).await {
+                let snapshots: Vec<WorldSnapshot> =
+                    harness_state.latest_snapshot.iter().cloned().collect();
+                match self
+                    .policy
+                    .propose(
+                        &harness_state.goal,
+                        &harness_state.device,
+                        &snapshots,
+                        &[],
+                        &self.allowed_skills,
+                    )
+                    .await
+                {
                     Ok(proposals) => {
                         let mut valid_request = None;
                         for proposal in &proposals {
@@ -152,7 +171,8 @@ impl RobotHarness {
                         match valid_request {
                             Some(req) => {
                                 harness_state.latest_skill_request = Some(req);
-                                harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
+                                harness_state.state =
+                                    harness_state.state.next(&VerificationSignal::Matched);
                             }
                             None => {
                                 harness_state.error = Some("no valid policy proposal".into());
@@ -173,7 +193,9 @@ impl RobotHarness {
             }
             RobotState::Execute => {
                 harness_state.attempt += 1;
-                let request = harness_state.latest_skill_request.clone()
+                let request = harness_state
+                    .latest_skill_request
+                    .clone()
                     .unwrap_or_else(|| SkillRequest {
                         skill: SkillId("kuavo.stance".into()),
                         device: harness_state.device.clone(),
@@ -183,23 +205,30 @@ impl RobotHarness {
                 match self.executor.execute(request).await {
                     Ok(result) => {
                         harness_state.latest_skill_result = Some(result);
-                        let _ = self.episodes.append_attempt(
-                            &harness_state.episode_id,
-                            harness_state.attempt,
-                            "op",
-                            &ExpectedOutcome {
-                                predicate: fabric::types::expected_outcome::OutcomePredicate::Equals {
-                                    path: "mode".into(),
-                                    value: serde_json::json!("stance"),
+                        let _ = self
+                            .episodes
+                            .append_attempt(
+                                &harness_state.episode_id,
+                                harness_state.attempt,
+                                "op",
+                                &ExpectedOutcome {
+                                    predicate:
+                                        fabric::types::expected_outcome::OutcomePredicate::Equals {
+                                            path: "mode".into(),
+                                            value: serde_json::json!("stance"),
+                                        },
+                                    freshness_ms: 500,
+                                    stable_window_ms: 0,
+                                    timeout_ms: 5000,
                                 },
-                                freshness_ms: 500, stable_window_ms: 0, timeout_ms: 5000,
-                            },
-                            before_snap.as_ref(),
-                            None,
-                            harness_state.latest_skill_result.as_ref(),
-                            None,
-                        ).await;
-                        harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
+                                before_snap.as_ref(),
+                                None,
+                                harness_state.latest_skill_result.as_ref(),
+                                None,
+                            )
+                            .await;
+                        harness_state.state =
+                            harness_state.state.next(&VerificationSignal::Matched);
                     }
                     Err(e) => {
                         harness_state.error = Some(e);
@@ -215,13 +244,29 @@ impl RobotHarness {
                         path: "mode".into(),
                         value: serde_json::json!("stance"),
                     },
-                    freshness_ms: 500, stable_window_ms: 0, timeout_ms: 5000,
+                    freshness_ms: 500,
+                    stable_window_ms: 0,
+                    timeout_ms: 5000,
                 };
-                let report = self.verifier.verify(&expected, harness_state.latest_snapshot.as_ref(), after_snap.as_ref(), harness_state.attempt).await;
+                let report = self
+                    .verifier
+                    .verify(
+                        &expected,
+                        harness_state.latest_snapshot.as_ref(),
+                        after_snap.as_ref(),
+                        harness_state.attempt,
+                    )
+                    .await;
                 harness_state.latest_verification = Some(report.clone());
 
-                let remaining_retries = self.config.max_retries.saturating_sub(harness_state.retries_used);
-                let remaining_replans = self.config.max_replans.saturating_sub(harness_state.replans_used);
+                let remaining_retries = self
+                    .config
+                    .max_retries
+                    .saturating_sub(harness_state.retries_used);
+                let remaining_replans = self
+                    .config
+                    .max_replans
+                    .saturating_sub(harness_state.replans_used);
 
                 let signal = match report.decision {
                     fabric::types::outcome_verification::VerificationDecision::Matched => VerificationSignal::Matched,
@@ -244,10 +289,19 @@ impl RobotHarness {
                 harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
             }
             RobotState::Replan => {
-                match self.planner.replan(&harness_state.device, harness_state.latest_snapshot.as_ref().unwrap(), harness_state.error.as_deref().unwrap_or("unknown")).await {
+                match self
+                    .planner
+                    .replan(
+                        &harness_state.device,
+                        harness_state.latest_snapshot.as_ref().unwrap(),
+                        harness_state.error.as_deref().unwrap_or("unknown"),
+                    )
+                    .await
+                {
                     Ok(req) => {
                         harness_state.latest_skill_request = Some(req);
-                        harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
+                        harness_state.state =
+                            harness_state.state.next(&VerificationSignal::Matched);
                     }
                     Err(e) => {
                         harness_state.error = Some(e);
@@ -259,12 +313,18 @@ impl RobotHarness {
                 harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
             }
             RobotState::Settle => {
-                let _ = self.episodes.close_episode(&harness_state.episode_id, "completed").await;
+                let _ = self
+                    .episodes
+                    .close_episode(&harness_state.episode_id, "completed")
+                    .await;
                 harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
             }
             RobotState::SafeStop => {
                 let _ = self.executor.safe_stop(&harness_state.device).await;
-                let _ = self.episodes.close_episode(&harness_state.episode_id, "failed").await;
+                let _ = self
+                    .episodes
+                    .close_episode(&harness_state.episode_id, "failed")
+                    .await;
                 harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
             }
             RobotState::Completed | RobotState::Failed => {}

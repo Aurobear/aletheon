@@ -4,9 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use fabric::types::embodiment::{
-    DeviceId, EmbodiedObservation, SkillDescriptor, SkillResult,
-};
+use fabric::types::embodiment::{DeviceId, EmbodiedObservation, SkillDescriptor, SkillResult};
 use tonic::transport::Channel;
 
 use crate::grpc::convert;
@@ -14,9 +12,7 @@ use crate::grpc::error::map_error;
 use crate::grpc::wire::embodiment_gateway_client::EmbodimentGatewayClient;
 use crate::grpc::wire::{self, RequestMeta};
 use crate::skill::SkillProgressSink;
-use crate::{
-    CancelAck, EmbodimentProvider, ProviderError, StopReceipt, ValidatedSkillCommand,
-};
+use crate::{CancelAck, EmbodimentProvider, ProviderError, StopReceipt, ValidatedSkillCommand};
 
 /// Configuration for a gRPC embodiment provider.
 #[derive(Debug, Clone)]
@@ -116,10 +112,7 @@ impl GrpcEmbodimentProvider {
 
 #[async_trait]
 impl EmbodimentProvider for GrpcEmbodimentProvider {
-    async fn observe(
-        &self,
-        device: &DeviceId,
-    ) -> Result<Vec<EmbodiedObservation>, ProviderError> {
+    async fn observe(&self, device: &DeviceId) -> Result<Vec<EmbodiedObservation>, ProviderError> {
         let resp = self
             .client
             .clone()
@@ -149,10 +142,7 @@ impl EmbodimentProvider for GrpcEmbodimentProvider {
         Ok(observations.pop())
     }
 
-    async fn list_skills(
-        &self,
-        device: &DeviceId,
-    ) -> Result<Vec<SkillDescriptor>, ProviderError> {
+    async fn list_skills(&self, device: &DeviceId) -> Result<Vec<SkillDescriptor>, ProviderError> {
         let resp = self
             .client
             .clone()
@@ -223,14 +213,10 @@ impl EmbodimentProvider for GrpcEmbodimentProvider {
                     let dr = convert::to_skill_result(&wr).map_err(ProviderError::Rejected)?;
                     // Validate identity
                     if dr.device != request.device {
-                        return Err(ProviderError::Rejected(
-                            "result device mismatch".into(),
-                        ));
+                        return Err(ProviderError::Rejected("result device mismatch".into()));
                     }
                     if dr.skill != request.skill {
-                        return Err(ProviderError::Rejected(
-                            "result skill mismatch".into(),
-                        ));
+                        return Err(ProviderError::Rejected("result skill mismatch".into()));
                     }
                     final_result = Some(dr);
                     break; // terminal
@@ -275,10 +261,7 @@ impl EmbodimentProvider for GrpcEmbodimentProvider {
         })
     }
 
-    async fn safe_stop(
-        &self,
-        device: &DeviceId,
-    ) -> Result<StopReceipt, ProviderError> {
+    async fn safe_stop(&self, device: &DeviceId) -> Result<StopReceipt, ProviderError> {
         let resp = self
             .client
             .clone()

@@ -21,14 +21,9 @@ fn integration_dedup_and_rate_limit() {
             camera_id: "cam0".into(),
             frame_id: i,
         };
-        if agg.ingest(
-            f,
-            vec![],
-            format!("frame_{}", i),
-            0.9,
-            1000,
-        )
-        .is_some()
+        if agg
+            .ingest(f, vec![], format!("frame_{}", i), 0.9, 1000)
+            .is_some()
         {
             count += 1;
         }

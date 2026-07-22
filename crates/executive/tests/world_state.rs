@@ -29,8 +29,13 @@ async fn per_device_latest_sequence() {
 #[tokio::test]
 async fn keep_separate_sequence_per_device() {
     let ws = EmbodimentWorldState::new(5);
-    ws.ingest(DeviceId("a".into()), snapshot("a", 100, 1.0)).unwrap();
-    ws.ingest(DeviceId("b".into()), snapshot("b", 1, 2.0)).unwrap();
+    ws.ingest(DeviceId("a".into()), snapshot("a", 100, 1.0))
+        .unwrap();
+    ws.ingest(DeviceId("b".into()), snapshot("b", 1, 2.0))
+        .unwrap();
     // b's low sequence doesn't touch a
-    assert_eq!(ws.latest(&DeviceId("a".into())).await.unwrap().sequence, 100);
+    assert_eq!(
+        ws.latest(&DeviceId("a".into())).await.unwrap().sequence,
+        100
+    );
 }

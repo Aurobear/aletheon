@@ -1,6 +1,8 @@
-use cognit::r#impl::policy::grpc_provider::{validate_policy_endpoint, GrpcPolicyConfig, StubPolicyProvider};
 use cognit::ports::policy_provider::PolicyProviderPort;
-use fabric::types::embodiment::{DeviceId, SkillId, SkillDescriptor, RiskClass};
+use cognit::r#impl::policy::grpc_provider::{
+    validate_policy_endpoint, GrpcPolicyConfig, StubPolicyProvider,
+};
+use fabric::types::embodiment::{DeviceId, RiskClass, SkillDescriptor, SkillId};
 
 #[test]
 fn endpoint_validation_table() {
@@ -13,7 +15,12 @@ fn endpoint_validation_table() {
         ("", false),
     ];
     for (endpoint, expected) in cases {
-        assert_eq!(validate_policy_endpoint(endpoint).is_ok(), expected, "endpoint: {}", endpoint);
+        assert_eq!(
+            validate_policy_endpoint(endpoint).is_ok(),
+            expected,
+            "endpoint: {}",
+            endpoint
+        );
     }
 }
 
@@ -31,8 +38,14 @@ async fn stub_produces_valid_proposal() {
         preconditions: vec![],
         success_criteria: vec![],
     }];
-    let proposals = provider.propose("goal", &DeviceId("bot".into()), &[], &[], &skills).await.unwrap();
+    let proposals = provider
+        .propose("goal", &DeviceId("bot".into()), &[], &[], &skills)
+        .await
+        .unwrap();
     assert!(!proposals.is_empty());
     // Verify proposal doesn't contain raw actuation
-    assert!(!proposals[0].parameters.as_object().map_or(false, |p| p.contains_key("joint")));
+    assert!(!proposals[0]
+        .parameters
+        .as_object()
+        .map_or(false, |p| p.contains_key("joint")));
 }

@@ -189,9 +189,7 @@ impl EmbodiedEpisodeRepository {
     pub fn load_episode(&self, episode_id: &str) -> Result<Option<EmbodiedEpisode>, String> {
         let conn = self.conn.lock().map_err(|e| format!("lock: {}", e))?;
         let mut stmt = conn
-            .prepare(
-                "SELECT goal_id, device_id FROM embodied_episodes WHERE episode_id = ?1",
-            )
+            .prepare("SELECT goal_id, device_id FROM embodied_episodes WHERE episode_id = ?1")
             .map_err(|e| format!("prepare: {}", e))?;
         let episode_row: Option<(String, String)> = stmt
             .query_row(rusqlite::params![episode_id], |row| {
@@ -250,8 +248,8 @@ impl EmbodiedEpisodeRepository {
             attempts.push(EpisodeAttempt {
                 operation_id,
                 skill: SkillId(skill_str),
-                expected_outcome: serde_json::from_str(&expected_json)
-                    .unwrap_or_else(|_| ExpectedOutcome {
+                expected_outcome: serde_json::from_str(&expected_json).unwrap_or_else(|_| {
+                    ExpectedOutcome {
                         predicate: fabric::types::expected_outcome::OutcomePredicate::Equals {
                             path: "x".into(),
                             value: serde_json::json!(0),
@@ -259,7 +257,8 @@ impl EmbodiedEpisodeRepository {
                         freshness_ms: 0,
                         stable_window_ms: 0,
                         timeout_ms: 0,
-                    }),
+                    }
+                }),
                 before: before_json.and_then(|j| serde_json::from_str(&j).ok()),
                 after: after_json.and_then(|j| serde_json::from_str(&j).ok()),
                 result: result_json.and_then(|j| serde_json::from_str(&j).ok()),

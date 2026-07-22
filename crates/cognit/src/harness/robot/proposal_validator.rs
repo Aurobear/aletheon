@@ -98,16 +98,12 @@ pub fn validate_proposal(
     }
 
     // 8. Reject proposals that look like raw actuation (joint/torque in params)
-    if proposal
-        .parameters
-        .as_object()
-        .map_or(false, |p| {
-            p.contains_key("joint")
-                || p.contains_key("torque")
-                || p.contains_key("topic")
-                || p.contains_key("actuator")
-        })
-    {
+    if proposal.parameters.as_object().map_or(false, |p| {
+        p.contains_key("joint")
+            || p.contains_key("torque")
+            || p.contains_key("topic")
+            || p.contains_key("actuator")
+    }) {
         errors.push(ValidationError {
             field: "parameters".into(),
             message:

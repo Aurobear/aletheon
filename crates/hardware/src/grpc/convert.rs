@@ -80,9 +80,7 @@ pub fn to_skill_progress(sp: &wire::SkillProgress) -> Result<domain::SkillProgre
 
 // ── SkillDescriptor ──────────────────────────────────────────────────────────
 
-pub fn to_skill_descriptor(
-    sd: &wire::SkillDescriptor,
-) -> Result<domain::SkillDescriptor, String> {
+pub fn to_skill_descriptor(sd: &wire::SkillDescriptor) -> Result<domain::SkillDescriptor, String> {
     Ok(domain::SkillDescriptor {
         skill: domain::SkillId(sd.skill_id.clone()),
         device: domain::DeviceId(sd.device_id.clone()),
@@ -144,9 +142,7 @@ fn json_to_prost_value(v: &serde_json::Value) -> prost_types::Value {
     let kind = match v {
         serde_json::Value::Null => Kind::NullValue(0),
         serde_json::Value::Bool(b) => Kind::BoolValue(*b),
-        serde_json::Value::Number(n) => {
-            Kind::NumberValue(n.as_f64().unwrap_or(0.0))
-        }
+        serde_json::Value::Number(n) => Kind::NumberValue(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => Kind::StringValue(s.clone()),
         serde_json::Value::Array(arr) => {
             let values: Vec<prost_types::Value> = arr.iter().map(json_to_prost_value).collect();
@@ -175,11 +171,9 @@ fn prost_value_to_json(v: &prost_types::Value) -> serde_json::Value {
     use prost_types::value::Kind;
     match &v.kind {
         Some(Kind::NullValue(_)) => serde_json::Value::Null,
-        Some(Kind::NumberValue(n)) => {
-            serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or_else(|| {
-                serde_json::Number::from(0)
-            }))
-        }
+        Some(Kind::NumberValue(n)) => serde_json::Value::Number(
+            serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0)),
+        ),
         Some(Kind::StringValue(s)) => serde_json::Value::String(s.clone()),
         Some(Kind::BoolValue(b)) => serde_json::Value::Bool(*b),
         Some(Kind::StructValue(s)) => struct_to_json(&Some(s.clone())),
@@ -228,8 +222,11 @@ mod tests {
             to_skill_outcome(wire::SkillOutcome::Succeeded as i32, String::new()).unwrap(),
             domain::SkillOutcome::Succeeded
         );
-        let failed = to_skill_outcome(wire::SkillOutcome::Failed as i32, "motor fault".into()).unwrap();
-        assert!(matches!(failed, domain::SkillOutcome::Failed { reason } if reason == "motor fault"));
+        let failed =
+            to_skill_outcome(wire::SkillOutcome::Failed as i32, "motor fault".into()).unwrap();
+        assert!(
+            matches!(failed, domain::SkillOutcome::Failed { reason } if reason == "motor fault")
+        );
         assert_eq!(
             to_skill_outcome(wire::SkillOutcome::Cancelled as i32, String::new()).unwrap(),
             domain::SkillOutcome::Cancelled

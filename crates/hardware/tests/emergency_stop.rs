@@ -1,7 +1,7 @@
 //! Integration tests for emergency stop public API.
 
-use hardware::EmergencyStop;
 use fabric::types::emergency_stop::EStopState;
+use hardware::EmergencyStop;
 
 #[test]
 fn default_is_armed() {

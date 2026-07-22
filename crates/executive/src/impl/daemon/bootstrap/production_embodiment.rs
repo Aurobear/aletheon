@@ -23,12 +23,20 @@ impl ProductionStartupGate {
     fn record(&mut self, step: &'static str, result: Result<(), String>) -> Result<(), String> {
         match result {
             Ok(()) => {
-                self.checks.push(GateCheck { step, passed: true, detail: "ok".into() });
+                self.checks.push(GateCheck {
+                    step,
+                    passed: true,
+                    detail: "ok".into(),
+                });
                 Ok(())
             }
             Err(err) => {
                 let detail = err.clone();
-                self.checks.push(GateCheck { step, passed: false, detail: err });
+                self.checks.push(GateCheck {
+                    step,
+                    passed: false,
+                    detail: err,
+                });
                 Err(detail)
             }
         }
@@ -47,33 +55,90 @@ impl ProductionStartupGate {
         if tls_resolved {
             self.record("credential_resolution", Ok(()))
         } else {
-            self.record("credential_resolution", Err("TLS credentials not resolved".into()))
+            self.record(
+                "credential_resolution",
+                Err("TLS credentials not resolved".into()),
+            )
         }
     }
 
     /// Gate 3: Device identity handshake — verify device_id and serial.
-    pub fn check_device_identity(&mut self, device_id_match: bool, serial_match: bool) -> Result<(), String> {
-        self.record("device_id_handshake", if device_id_match { Ok(()) } else { Err("device_id mismatch".into()) })?;
-        self.record("device_serial", if serial_match { Ok(()) } else { Err("device serial mismatch".into()) })
+    pub fn check_device_identity(
+        &mut self,
+        device_id_match: bool,
+        serial_match: bool,
+    ) -> Result<(), String> {
+        self.record(
+            "device_id_handshake",
+            if device_id_match {
+                Ok(())
+            } else {
+                Err("device_id mismatch".into())
+            },
+        )?;
+        self.record(
+            "device_serial",
+            if serial_match {
+                Ok(())
+            } else {
+                Err("device serial mismatch".into())
+            },
+        )
     }
 
     /// Gate 4: Manifest and limits digest match configured values.
-    pub fn check_manifest_digest(&mut self, manifest_match: bool, limits_match: bool) -> Result<(), String> {
-        self.record("manifest_digest", if manifest_match { Ok(()) } else { Err("manifest digest mismatch".into()) })?;
-        self.record("limits_digest", if limits_match { Ok(()) } else { Err("limits digest mismatch".into()) })
+    pub fn check_manifest_digest(
+        &mut self,
+        manifest_match: bool,
+        limits_match: bool,
+    ) -> Result<(), String> {
+        self.record(
+            "manifest_digest",
+            if manifest_match {
+                Ok(())
+            } else {
+                Err("manifest digest mismatch".into())
+            },
+        )?;
+        self.record(
+            "limits_digest",
+            if limits_match {
+                Ok(())
+            } else {
+                Err("limits digest mismatch".into())
+            },
+        )
     }
 
     /// Gate 5: Signed HIL evidence is present, valid, unexpired.
-    pub fn check_evidence(&mut self, evidence_valid: bool, evidence_loaded: bool) -> Result<(), String> {
+    pub fn check_evidence(
+        &mut self,
+        evidence_valid: bool,
+        evidence_loaded: bool,
+    ) -> Result<(), String> {
         if !evidence_loaded {
             return self.record("evidence_loaded", Err("evidence file not found".into()));
         }
-        self.record("evidence_valid", if evidence_valid { Ok(()) } else { Err("evidence signature/tamper/invalid".into()) })
+        self.record(
+            "evidence_valid",
+            if evidence_valid {
+                Ok(())
+            } else {
+                Err("evidence signature/tamper/invalid".into())
+            },
+        )
     }
 
     /// Gate 6: E-stop self-test passes.
     pub fn check_estop(&mut self, estop_armed: bool) -> Result<(), String> {
-        self.record("estop_self_test", if estop_armed { Ok(()) } else { Err("E-stop not armed".into()) })
+        self.record(
+            "estop_self_test",
+            if estop_armed {
+                Ok(())
+            } else {
+                Err("E-stop not armed".into())
+            },
+        )
     }
 
     /// Gate 7: Local operator arming receipt.
@@ -95,7 +160,10 @@ impl ProductionStartupGate {
         if failures.is_empty() {
             "production gate: all checks passed".into()
         } else {
-            let parts: Vec<_> = failures.iter().map(|c| format!("{}: {}", c.step, c.detail)).collect();
+            let parts: Vec<_> = failures
+                .iter()
+                .map(|c| format!("{}: {}", c.step, c.detail))
+                .collect();
             format!("production gate FAILED: {}", parts.join("; "))
         }
     }
@@ -112,7 +180,9 @@ impl ProductionStartupGate {
 }
 
 impl Default for ProductionStartupGate {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -136,7 +206,9 @@ mod tests {
     #[test]
     fn config_failure_blocks_production() {
         let mut gate = ProductionStartupGate::new();
-        assert!(gate.check_config(Err(vec!["bad namespace".into()])).is_err());
+        assert!(gate
+            .check_config(Err(vec!["bad namespace".into()]))
+            .is_err());
         assert!(!gate.all_passed());
         let err = gate.finalize().unwrap_err();
         assert!(err.contains("config_validation"));

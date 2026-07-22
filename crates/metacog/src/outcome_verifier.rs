@@ -36,7 +36,11 @@ pub fn evaluate(
     };
 
     // Check for safety faults in the payload
-    if let Some(fault) = after.payload.get("fault").or_else(|| after.payload.get("safety_fault")) {
+    if let Some(fault) = after
+        .payload
+        .get("fault")
+        .or_else(|| after.payload.get("safety_fault"))
+    {
         let reason = format!("safety fault detected: {}", fault);
         return VerificationReport {
             decision: VerificationDecision::Unsafe,
@@ -70,20 +74,21 @@ pub fn evaluate(
                     decision,
                     evaluated_sequence: after.sequence,
                     observed_paths: collect_paths(&expected.predicate),
-                    reasons: vec![format!("predicate not satisfied on attempt {}", attempt_number)],
+                    reasons: vec![format!(
+                        "predicate not satisfied on attempt {}",
+                        attempt_number
+                    )],
                     evidence: vec![],
                 }
             }
         }
-        Err(err) => {
-            VerificationReport {
-                decision: VerificationDecision::Unknown,
-                evaluated_sequence: after.sequence,
-                observed_paths: collect_paths(&expected.predicate),
-                reasons: vec![err],
-                evidence: vec![],
-            }
-        }
+        Err(err) => VerificationReport {
+            decision: VerificationDecision::Unknown,
+            evaluated_sequence: after.sequence,
+            observed_paths: collect_paths(&expected.predicate),
+            reasons: vec![err],
+            evidence: vec![],
+        },
     }
 }
 
@@ -104,32 +109,55 @@ fn eval_predicate(
         }
         OutcomePredicate::Range { path, min, max } => {
             let observed = dot_get(current, path)?;
-            let n = observed.as_f64().ok_or_else(|| format!("path '{}' is not numeric: {}", path, observed))?;
+            let n = observed
+                .as_f64()
+                .ok_or_else(|| format!("path '{}' is not numeric: {}", path, observed))?;
             if let Some(min_val) = min {
-                if n < *min_val { return Ok(false); }
+                if n < *min_val {
+                    return Ok(false);
+                }
             }
             if let Some(max_val) = max {
-                if n > *max_val { return Ok(false); }
+                if n > *max_val {
+                    return Ok(false);
+                }
             }
             Ok(true)
         }
-        OutcomePredicate::Change { path, min_delta, max_delta } => {
+        OutcomePredicate::Change {
+            path,
+            min_delta,
+            max_delta,
+        } => {
             let current_val = dot_get(current, path)?;
-            let current_n = current_val.as_f64().ok_or_else(|| format!("path '{}' current is not numeric: {}", path, current_val))?;
+            let current_n = current_val.as_f64().ok_or_else(|| {
+                format!("path '{}' current is not numeric: {}", path, current_val)
+            })?;
 
             let before_val = match before {
                 Some(b) => dot_get(b, path)?,
-                None => return Err(format!("Change predicate requires before snapshot for path '{}'", path)),
+                None => {
+                    return Err(format!(
+                        "Change predicate requires before snapshot for path '{}'",
+                        path
+                    ))
+                }
             };
-            let before_n = before_val.as_f64().ok_or_else(|| format!("path '{}' before is not numeric: {}", path, before_val))?;
+            let before_n = before_val
+                .as_f64()
+                .ok_or_else(|| format!("path '{}' before is not numeric: {}", path, before_val))?;
 
             let delta = current_n - before_n;
 
             if let Some(min) = min_delta {
-                if delta < *min { return Ok(false); }
+                if delta < *min {
+                    return Ok(false);
+                }
             }
             if let Some(max) = max_delta {
-                if delta > *max { return Ok(false); }
+                if delta > *max {
+                    return Ok(false);
+                }
             }
             Ok(true)
         }
@@ -165,10 +193,16 @@ fn dot_get<'a>(value: &'a serde_json::Value, path: &str) -> Result<serde_json::V
     for segment in path.split('.') {
         match current {
             serde_json::Value::Object(map) => {
-                current = map.get(segment)
+                current = map
+                    .get(segment)
                     .ok_or_else(|| format!("path segment '{}' not found in {}", segment, path))?;
             }
-            _ => return Err(format!("path segment '{}' is not an object in path '{}'", segment, path)),
+            _ => {
+                return Err(format!(
+                    "path segment '{}' is not an object in path '{}'",
+                    segment, path
+                ))
+            }
         }
     }
     Ok(current.clone())
@@ -177,8 +211,10 @@ fn dot_get<'a>(value: &'a serde_json::Value, path: &str) -> Result<serde_json::V
 /// Collect all dot-paths referenced in a predicate tree.
 fn collect_paths(pred: &OutcomePredicate) -> Vec<String> {
     match pred {
-        OutcomePredicate::Equals { path, .. } | OutcomePredicate::NotEquals { path, .. }
-        | OutcomePredicate::Range { path, .. } | OutcomePredicate::Change { path, .. } => {
+        OutcomePredicate::Equals { path, .. }
+        | OutcomePredicate::NotEquals { path, .. }
+        | OutcomePredicate::Range { path, .. }
+        | OutcomePredicate::Change { path, .. } => {
             vec![path.clone()]
         }
         OutcomePredicate::All { predicates } | OutcomePredicate::Any { predicates } => {
@@ -211,8 +247,13 @@ mod tests {
     #[test]
     fn equals_matches_when_value_equal() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Equals { path: "mode".into(), value: serde_json::json!("stance") },
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Equals {
+                path: "mode".into(),
+                value: serde_json::json!("stance"),
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let after = snapshot(serde_json::json!({"mode": "stance"}), 1, false);
         let report = evaluate(&eo, None, Some(&after), 1);
@@ -222,8 +263,13 @@ mod tests {
     #[test]
     fn equals_mismatch_on_wrong_value() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Equals { path: "mode".into(), value: serde_json::json!("stance") },
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Equals {
+                path: "mode".into(),
+                value: serde_json::json!("stance"),
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let after = snapshot(serde_json::json!({"mode": "walking"}), 1, false);
         let report = evaluate(&eo, None, Some(&after), 1);
@@ -233,8 +279,13 @@ mod tests {
     #[test]
     fn mismatch_after_retry_becomes_replannable() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Equals { path: "x".into(), value: serde_json::json!(1) },
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Equals {
+                path: "x".into(),
+                value: serde_json::json!(1),
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let after = snapshot(serde_json::json!({"x": 2}), 1, false);
         // Attempt 2 (third try) → ReplannableMismatch
@@ -245,112 +296,211 @@ mod tests {
     #[test]
     fn range_inclusive_bounds() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Range { path: "x".into(), min: Some(0.0), max: Some(10.0) },
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Range {
+                path: "x".into(),
+                min: Some(0.0),
+                max: Some(10.0),
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let after = snapshot(serde_json::json!({"x": 5.0}), 1, false);
-        assert_eq!(evaluate(&eo, None, Some(&after), 1).decision, VerificationDecision::Matched);
+        assert_eq!(
+            evaluate(&eo, None, Some(&after), 1).decision,
+            VerificationDecision::Matched
+        );
 
         // boundary
         let after2 = snapshot(serde_json::json!({"x": 0.0}), 1, false);
-        assert_eq!(evaluate(&eo, None, Some(&after2), 1).decision, VerificationDecision::Matched);
+        assert_eq!(
+            evaluate(&eo, None, Some(&after2), 1).decision,
+            VerificationDecision::Matched
+        );
     }
 
     #[test]
     fn range_out_of_bounds() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Range { path: "x".into(), min: Some(0.0), max: Some(10.0) },
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Range {
+                path: "x".into(),
+                min: Some(0.0),
+                max: Some(10.0),
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let after = snapshot(serde_json::json!({"x": 15.0}), 1, false);
-        assert_eq!(evaluate(&eo, None, Some(&after), 1).decision, VerificationDecision::RetryableMismatch);
+        assert_eq!(
+            evaluate(&eo, None, Some(&after), 1).decision,
+            VerificationDecision::RetryableMismatch
+        );
     }
 
     #[test]
     fn change_delta_detected() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Change { path: "x".into(), min_delta: Some(1.0), max_delta: None },
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Change {
+                path: "x".into(),
+                min_delta: Some(1.0),
+                max_delta: None,
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let before = snapshot(serde_json::json!({"x": 0.0}), 0, false);
         let after = snapshot(serde_json::json!({"x": 3.0}), 1, false);
-        assert_eq!(evaluate(&eo, Some(&before), Some(&after), 1).decision, VerificationDecision::Matched);
+        assert_eq!(
+            evaluate(&eo, Some(&before), Some(&after), 1).decision,
+            VerificationDecision::Matched
+        );
     }
 
     #[test]
     fn change_no_delta_is_mismatch() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Change { path: "x".into(), min_delta: Some(1.0), max_delta: None },
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Change {
+                path: "x".into(),
+                min_delta: Some(1.0),
+                max_delta: None,
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let before = snapshot(serde_json::json!({"x": 0.0}), 0, false);
         let after = snapshot(serde_json::json!({"x": 0.5}), 1, false);
-        assert_eq!(evaluate(&eo, Some(&before), Some(&after), 1).decision, VerificationDecision::RetryableMismatch);
+        assert_eq!(
+            evaluate(&eo, Some(&before), Some(&after), 1).decision,
+            VerificationDecision::RetryableMismatch
+        );
     }
 
     #[test]
     fn all_nested_predicates() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::All { predicates: vec![
-                OutcomePredicate::Equals { path: "mode".into(), value: serde_json::json!("stance") },
-                OutcomePredicate::Range { path: "x".into(), min: Some(0.0), max: Some(5.0) },
-            ]},
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::All {
+                predicates: vec![
+                    OutcomePredicate::Equals {
+                        path: "mode".into(),
+                        value: serde_json::json!("stance"),
+                    },
+                    OutcomePredicate::Range {
+                        path: "x".into(),
+                        min: Some(0.0),
+                        max: Some(5.0),
+                    },
+                ],
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let after = snapshot(serde_json::json!({"mode": "stance", "x": 2.0}), 1, false);
-        assert_eq!(evaluate(&eo, None, Some(&after), 1).decision, VerificationDecision::Matched);
+        assert_eq!(
+            evaluate(&eo, None, Some(&after), 1).decision,
+            VerificationDecision::Matched
+        );
     }
 
     #[test]
     fn any_predicate_one_matches() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Any { predicates: vec![
-                OutcomePredicate::Equals { path: "mode".into(), value: serde_json::json!("stance") },
-                OutcomePredicate::Equals { path: "mode".into(), value: serde_json::json!("walk") },
-            ]},
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Any {
+                predicates: vec![
+                    OutcomePredicate::Equals {
+                        path: "mode".into(),
+                        value: serde_json::json!("stance"),
+                    },
+                    OutcomePredicate::Equals {
+                        path: "mode".into(),
+                        value: serde_json::json!("walk"),
+                    },
+                ],
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let after = snapshot(serde_json::json!({"mode": "walk"}), 1, false);
-        assert_eq!(evaluate(&eo, None, Some(&after), 1).decision, VerificationDecision::Matched);
+        assert_eq!(
+            evaluate(&eo, None, Some(&after), 1).decision,
+            VerificationDecision::Matched
+        );
     }
 
     #[test]
     fn stale_snapshot_is_unknown() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Equals { path: "x".into(), value: serde_json::json!(1) },
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Equals {
+                path: "x".into(),
+                value: serde_json::json!(1),
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let after = snapshot(serde_json::json!({"x": 1}), 1, true);
-        assert_eq!(evaluate(&eo, None, Some(&after), 1).decision, VerificationDecision::Unknown);
+        assert_eq!(
+            evaluate(&eo, None, Some(&after), 1).decision,
+            VerificationDecision::Unknown
+        );
     }
 
     #[test]
     fn fault_field_maps_to_unsafe() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Equals { path: "mode".into(), value: serde_json::json!("stance") },
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Equals {
+                path: "mode".into(),
+                value: serde_json::json!("stance"),
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let after = snapshot(serde_json::json!({"fault": "motor_stall"}), 1, false);
-        assert_eq!(evaluate(&eo, None, Some(&after), 1).decision, VerificationDecision::Unsafe);
+        assert_eq!(
+            evaluate(&eo, None, Some(&after), 1).decision,
+            VerificationDecision::Unsafe
+        );
     }
 
     #[test]
     fn missing_path_is_unknown() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Equals { path: "nonexistent".into(), value: serde_json::json!(1) },
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Equals {
+                path: "nonexistent".into(),
+                value: serde_json::json!(1),
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let after = snapshot(serde_json::json!({"x": 1}), 1, false);
-        assert_eq!(evaluate(&eo, None, Some(&after), 1).decision, VerificationDecision::Unknown);
+        assert_eq!(
+            evaluate(&eo, None, Some(&after), 1).decision,
+            VerificationDecision::Unknown
+        );
     }
 
     #[test]
     fn type_mismatch_path_is_unknown() {
         let eo = ExpectedOutcome {
-            predicate: OutcomePredicate::Range { path: "x".into(), min: Some(0.0), max: None },
-            freshness_ms: 500, stable_window_ms: 200, timeout_ms: 5000,
+            predicate: OutcomePredicate::Range {
+                path: "x".into(),
+                min: Some(0.0),
+                max: None,
+            },
+            freshness_ms: 500,
+            stable_window_ms: 200,
+            timeout_ms: 5000,
         };
         let after = snapshot(serde_json::json!({"x": "not_a_number"}), 1, false);
-        assert_eq!(evaluate(&eo, None, Some(&after), 1).decision, VerificationDecision::Unknown);
+        assert_eq!(
+            evaluate(&eo, None, Some(&after), 1).decision,
+            VerificationDecision::Unknown
+        );
     }
 }

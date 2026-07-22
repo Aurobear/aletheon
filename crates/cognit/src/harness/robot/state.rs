@@ -1,7 +1,7 @@
 //! RobotHarness state machine — bounded retry/replan with deterministic verification.
 
-use std::fmt;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// RobotHarness states, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,12 +52,18 @@ impl RobotState {
             Self::Execute => Self::Verify,
             Self::Verify => match verification {
                 VerificationSignal::Matched => Self::Settle,
-                VerificationSignal::Retryable { remaining_retries } if *remaining_retries > 0 => Self::Retry,
+                VerificationSignal::Retryable { remaining_retries } if *remaining_retries > 0 => {
+                    Self::Retry
+                }
                 VerificationSignal::Retryable { .. } => Self::Replan,
-                VerificationSignal::Replannable { remaining_replans } if *remaining_replans > 0 => Self::Replan,
+                VerificationSignal::Replannable { remaining_replans } if *remaining_replans > 0 => {
+                    Self::Replan
+                }
                 VerificationSignal::Replannable { .. } => Self::Recover,
                 VerificationSignal::Unsafe => Self::SafeStop,
-                VerificationSignal::Unknown { remaining_retries, .. } if *remaining_retries > 0 => Self::Retry,
+                VerificationSignal::Unknown {
+                    remaining_retries, ..
+                } if *remaining_retries > 0 => Self::Retry,
                 VerificationSignal::Unknown { .. } => Self::SafeStop,
             },
             Self::Retry => Self::Execute,
@@ -90,6 +96,9 @@ pub struct RobotHarnessConfig {
 
 impl Default for RobotHarnessConfig {
     fn default() -> Self {
-        Self { max_retries: 1, max_replans: 1 }
+        Self {
+            max_retries: 1,
+            max_replans: 1,
+        }
     }
 }

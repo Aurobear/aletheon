@@ -1,15 +1,19 @@
 //! Tests for production embodiment config validation.
 
-use executive::core::config::SecretRef;
 use executive::core::config::ProductionEmbodimentConfig;
+use executive::core::config::SecretRef;
 
 fn valid_config() -> ProductionEmbodimentConfig {
     ProductionEmbodimentConfig {
         namespace: "production".into(),
         device_serial: "SN-001".into(),
         endpoint: "grpcs://kuavo-bridge.local:50051".into(),
-        tls_client_cert: SecretRef { env: "TLS_CERT".into() },
-        tls_client_key: SecretRef { env: "TLS_KEY".into() },
+        tls_client_cert: SecretRef {
+            env: "TLS_CERT".into(),
+        },
+        tls_client_key: SecretRef {
+            env: "TLS_KEY".into(),
+        },
         skill_allowlist: vec!["kuavo.stance".into(), "kuavo.stop".into()],
         max_linear_mps: 0.05,
         max_angular_rps: 0.1,
@@ -97,16 +101,26 @@ fn all_errors_reported_together() {
         max_angular_rps: 1.0,
         max_duration_ms: 10000,
         gate_evidence_path: "".into(),
-        tls_client_cert: SecretRef { env: "TLS_CERT".into() },
-        tls_client_key: SecretRef { env: "TLS_KEY".into() },
+        tls_client_cert: SecretRef {
+            env: "TLS_CERT".into(),
+        },
+        tls_client_key: SecretRef {
+            env: "TLS_KEY".into(),
+        },
     };
     let err = c.validate().unwrap_err();
-    assert!(err.len() > 3, "should report multiple errors, got {:?}", err);
+    assert!(
+        err.len() > 3,
+        "should report multiple errors, got {:?}",
+        err
+    );
 }
 
 #[test]
 fn secret_ref_debug_never_exposes_values() {
-    let s = SecretRef { env: "SECRET_TOKEN".into() };
+    let s = SecretRef {
+        env: "SECRET_TOKEN".into(),
+    };
     let debug = format!("{:?}", s);
     assert!(!debug.contains("SECRET_TOKEN_VALUE"));
 }

@@ -2,9 +2,9 @@
 //! E-stop is NOT Cancel/SafeStop — it is a separate high-priority local path.
 //! Once latched, only a local trusted adapter may reset.
 
+use fabric::types::emergency_stop::{EStopEvent, EStopState};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Mutex;
-use fabric::types::emergency_stop::{EStopEvent, EStopState};
 
 pub struct EmergencyStop {
     state: Mutex<EStopState>,
@@ -73,7 +73,8 @@ impl EmergencyStop {
             }
             EStopState::ResetRequired => {
                 // Only local operator (with ID) may arm
-                let op = operator_id.ok_or("remote reset is not allowed — local operator required")?;
+                let op =
+                    operator_id.ok_or("remote reset is not allowed — local operator required")?;
                 if op.is_empty() {
                     return Err("operator_id must not be empty".into());
                 }

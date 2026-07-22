@@ -1,14 +1,14 @@
 //! gRPC Policy provider adapter — proposes skills, never executes.
 //! No environment reads, no string error classification.
 
-use std::time::Duration;
+use crate::ports::policy_provider::PolicyProviderPort;
 use async_trait::async_trait;
 use fabric::types::embodiment::{DeviceId, SkillDescriptor};
+use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
 use fabric::types::perception_observation::PerceptionObservation;
 use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
-use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
 use fabric::types::world_state::WorldSnapshot;
-use crate::ports::policy_provider::PolicyProviderPort;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct GrpcPolicyConfig {
@@ -41,7 +41,10 @@ pub fn validate_policy_endpoint(endpoint: &str) -> Result<(), String> {
     let is_tls = endpoint.starts_with("https://") || endpoint.starts_with("grpcs://");
 
     if !is_loopback && !is_tls {
-        return Err(format!("non-loopback endpoint '{}' must use TLS (https:// or grpcs://)", endpoint));
+        return Err(format!(
+            "non-loopback endpoint '{}' must use TLS (https:// or grpcs://)",
+            endpoint
+        ));
     }
     Ok(())
 }
@@ -141,7 +144,7 @@ mod tests {
 
     #[tokio::test]
     async fn stub_provider_returns_proposal() {
-        use fabric::types::embodiment::{SkillId, SkillDescriptor, RiskClass};
+        use fabric::types::embodiment::{RiskClass, SkillDescriptor, SkillId};
         let provider = StubPolicyProvider::new(GrpcPolicyConfig::default());
         let skills = vec![SkillDescriptor {
             skill: SkillId("kuavo.stance".into()),
@@ -154,7 +157,10 @@ mod tests {
             preconditions: vec![],
             success_criteria: vec![],
         }];
-        let proposals = provider.propose("test goal", &DeviceId("bot".into()), &[], &[], &skills).await.unwrap();
+        let proposals = provider
+            .propose("test goal", &DeviceId("bot".into()), &[], &[], &skills)
+            .await
+            .unwrap();
         assert_eq!(proposals.len(), 1);
         assert_eq!(proposals[0].skill.0, "kuavo.stance");
     }

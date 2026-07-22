@@ -1,12 +1,12 @@
 //! Bounded artifact store for perception frames and evidence.
 //! Content-addressed with MIME/size allowlist, quota, and expiry.
 
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use sha2::{Digest, Sha256};
 
 const ALLOWED_MIME_TYPES: &[&str] = &["image/jpeg", "image/png"];
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MiB
@@ -65,7 +65,12 @@ impl ArtifactStore {
     /// Content-addressed: identical content returns the same hash without duplicate storage.
     pub fn put(&self, data: &[u8], mime_type: &str) -> Result<String, String> {
         // Validate MIME
-        if !self.config.allowed_mime_types.iter().any(|m| m == mime_type) {
+        if !self
+            .config
+            .allowed_mime_types
+            .iter()
+            .any(|m| m == mime_type)
+        {
             return Err(format!("MIME type not allowed: {}", mime_type));
         }
         // Validate size
@@ -106,8 +111,7 @@ impl ArtifactStore {
         // Atomic write: write to temp, then rename
         let tmp_path = self.config.root.join(format!(".tmp_{}", hash));
         {
-            let mut f =
-                fs::File::create(&tmp_path).map_err(|e| format!("create tmp: {}", e))?;
+            let mut f = fs::File::create(&tmp_path).map_err(|e| format!("create tmp: {}", e))?;
             f.write_all(data).map_err(|e| format!("write: {}", e))?;
             f.sync_all().map_err(|e| format!("sync: {}", e))?;
         }
@@ -151,8 +155,7 @@ impl ArtifactStore {
         let data = {
             let mut f = self.open_read(sha256)?;
             let mut buf = Vec::new();
-            std::io::Read::read_to_end(&mut f, &mut buf)
-                .map_err(|e| format!("read: {}", e))?;
+            std::io::Read::read_to_end(&mut f, &mut buf).map_err(|e| format!("read: {}", e))?;
             buf
         };
         let mut hasher = Sha256::new();
@@ -264,7 +267,7 @@ mod tests {
     #[test]
     fn quota_exceeded() {
         let (_dir, store) = store_with_quota(1024); // 1 KiB quota
-        // First put fits
+                                                    // First put fits
         let data1 = vec![1u8; 512];
         store.put(&data1, "image/jpeg").unwrap();
         // Second put exceeds quota (512 + 600 > 1024)
@@ -294,7 +297,9 @@ mod tests {
         let hash = store.put(data, "image/jpeg").unwrap();
         assert!(store.verify(&hash).unwrap());
         // Corrupt the file on disk — we test that a wrong hash fails verification
-        assert!(store.verify("0000000000000000000000000000000000000000000000000000000000000000").is_err());
+        assert!(store
+            .verify("0000000000000000000000000000000000000000000000000000000000000000")
+            .is_err());
     }
 
     #[test]
@@ -307,6 +312,8 @@ mod tests {
     #[test]
     fn nonexistent_artifact_open_read_fails() {
         let (_dir, store) = store();
-        assert!(store.open_read("aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000").is_err());
+        assert!(store
+            .open_read("aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000")
+            .is_err());
     }
 }

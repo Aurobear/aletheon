@@ -25,7 +25,10 @@ pub struct EmbodimentWorldState {
 
 impl EmbodimentWorldState {
     pub fn new(max_devices: usize) -> Self {
-        Self { devices: RwLock::new(HashMap::new()), max_devices }
+        Self {
+            devices: RwLock::new(HashMap::new()),
+            max_devices,
+        }
     }
 
     /// Ingest a new observation into the world state. Called from the
@@ -155,8 +158,12 @@ mod tests {
     #[test]
     fn bounded_device_count_enforced() {
         let ws = EmbodimentWorldState::new(2);
-        ws.ingest(DeviceId("a".into()), snapshot("a", 1, 0.0)).unwrap();
-        ws.ingest(DeviceId("b".into()), snapshot("b", 1, 0.0)).unwrap();
-        assert!(ws.ingest(DeviceId("c".into()), snapshot("c", 1, 0.0)).is_err());
+        ws.ingest(DeviceId("a".into()), snapshot("a", 1, 0.0))
+            .unwrap();
+        ws.ingest(DeviceId("b".into()), snapshot("b", 1, 0.0))
+            .unwrap();
+        assert!(ws
+            .ingest(DeviceId("c".into()), snapshot("c", 1, 0.0))
+            .is_err());
     }
 }

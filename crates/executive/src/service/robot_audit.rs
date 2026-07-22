@@ -1,9 +1,9 @@
 //! Immutable robot audit chain — append-only, hash-linked governance records.
 //! Excludes credentials, raw images, and high-frequency state.
 
+use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::sync::Mutex;
-use sha2::{Digest, Sha256};
 
 /// A single audit record in the chain.
 #[derive(Debug, Clone)]
@@ -33,7 +33,10 @@ pub struct AuditChain {
 
 impl AuditChain {
     pub fn new(max_entries: usize) -> Self {
-        Self { entries: Mutex::new(VecDeque::new()), max_entries }
+        Self {
+            entries: Mutex::new(VecDeque::new()),
+            max_entries,
+        }
     }
 
     /// Append an entry. Returns the new sequence number.
@@ -64,8 +67,12 @@ impl AuditChain {
         hasher.update(skill_id.as_bytes());
         hasher.update(attempt.to_le_bytes());
         hasher.update(decision.as_bytes());
-        if let Some(ref v) = verification { hasher.update(v.as_bytes()); }
-        if let Some(ref r) = recovery { hasher.update(r.as_bytes()); }
+        if let Some(ref v) = verification {
+            hasher.update(v.as_bytes());
+        }
+        if let Some(ref r) = recovery {
+            hasher.update(r.as_bytes());
+        }
         hasher.update(&[safe_stop as u8, emergency_stop as u8]);
         hasher.update(at_ms.to_le_bytes());
         hasher.update(previous_hash.as_bytes());
@@ -99,7 +106,9 @@ impl AuditChain {
     /// Verify the entire chain integrity.
     pub fn verify_chain(&self) -> Result<bool, String> {
         let entries = self.entries.lock().map_err(|e| format!("lock: {}", e))?;
-        if entries.is_empty() { return Ok(true); }
+        if entries.is_empty() {
+            return Ok(true);
+        }
 
         let mut prev_hash = String::new();
         let mut prev_seq = 0u64;
@@ -124,8 +133,12 @@ impl AuditChain {
             hasher.update(entry.skill_id.as_bytes());
             hasher.update(entry.attempt.to_le_bytes());
             hasher.update(entry.decision.as_bytes());
-            if let Some(ref v) = entry.verification { hasher.update(v.as_bytes()); }
-            if let Some(ref r) = entry.recovery { hasher.update(r.as_bytes()); }
+            if let Some(ref v) = entry.verification {
+                hasher.update(v.as_bytes());
+            }
+            if let Some(ref r) = entry.recovery {
+                hasher.update(r.as_bytes());
+            }
             hasher.update(&[entry.safe_stop as u8, entry.emergency_stop as u8]);
             hasher.update(entry.at_ms.to_le_bytes());
             hasher.update(entry.previous_hash.as_bytes());
@@ -156,10 +169,20 @@ mod tests {
     use super::*;
 
     fn append_entry(chain: &AuditChain, seq_suffix: &str) -> u64 {
-        chain.append(
-            format!("op-{}", seq_suffix), "kuavo-01".into(), "stance".into(),
-            1, "matched".into(), None, None, false, false, 1000,
-        ).unwrap()
+        chain
+            .append(
+                format!("op-{}", seq_suffix),
+                "kuavo-01".into(),
+                "stance".into(),
+                1,
+                "matched".into(),
+                None,
+                None,
+                false,
+                false,
+                1000,
+            )
+            .unwrap()
     }
 
     #[test]
@@ -189,8 +212,34 @@ mod tests {
     fn chain_hash_is_deterministic() {
         let chain1 = AuditChain::new(10);
         let chain2 = AuditChain::new(10);
-        let s1 = chain1.append("op-a".into(), "d".into(), "s".into(), 1, "m".into(), None, None, false, false, 1000).unwrap();
-        let s2 = chain2.append("op-a".into(), "d".into(), "s".into(), 1, "m".into(), None, None, false, false, 1000).unwrap();
+        let s1 = chain1
+            .append(
+                "op-a".into(),
+                "d".into(),
+                "s".into(),
+                1,
+                "m".into(),
+                None,
+                None,
+                false,
+                false,
+                1000,
+            )
+            .unwrap();
+        let s2 = chain2
+            .append(
+                "op-a".into(),
+                "d".into(),
+                "s".into(),
+                1,
+                "m".into(),
+                None,
+                None,
+                false,
+                false,
+                1000,
+            )
+            .unwrap();
         assert_eq!(s1, s2);
         let e1 = chain1.export().unwrap();
         let e2 = chain2.export().unwrap();
@@ -200,7 +249,20 @@ mod tests {
     #[test]
     fn no_credentials_in_audit_records() {
         let chain = AuditChain::new(10);
-        chain.append("op".into(), "d".into(), "s".into(), 1, "m".into(), None, None, false, false, 1000).unwrap();
+        chain
+            .append(
+                "op".into(),
+                "d".into(),
+                "s".into(),
+                1,
+                "m".into(),
+                None,
+                None,
+                false,
+                false,
+                1000,
+            )
+            .unwrap();
         let entries = chain.export().unwrap();
         // AuditEntry has no credential/token/password fields
         let serialized = format!("{:?}", entries[0]);

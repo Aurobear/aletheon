@@ -1,5 +1,6 @@
 pub mod bridge;
 pub mod core;
+pub mod hil_evidence_verifier;
 #[path = "impl/mod.rs"]
 pub mod r#impl;
 pub mod outcome_verifier;

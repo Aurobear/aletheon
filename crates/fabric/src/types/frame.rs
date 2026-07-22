@@ -64,8 +64,9 @@ mod tests {
     #[test]
     fn valid_frame_passes_validation() {
         let f = FrameRef {
-            uri: "artifact://sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
-                .into(),
+            uri:
+                "artifact://sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                    .into(),
             sha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".into(),
             mime_type: "image/jpeg".into(),
             width: 640,

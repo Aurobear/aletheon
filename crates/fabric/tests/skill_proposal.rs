@@ -64,9 +64,7 @@ fn empty_provenance_digest_rejected() {
 #[test]
 fn invalid_expected_outcome_rejected() {
     let mut p = make_valid_proposal();
-    p.expected_outcome.predicate = OutcomePredicate::All {
-        predicates: vec![],
-    };
+    p.expected_outcome.predicate = OutcomePredicate::All { predicates: vec![] };
     assert!(p.validate().is_err());
 }
 

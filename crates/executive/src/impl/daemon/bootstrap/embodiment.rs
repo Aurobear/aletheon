@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use fabric::types::embodiment::EmbodimentExecutionPort;
-use hardware::{Broker, GrpcEmbodimentProvider, GrpcProviderConfig, MonotonicClock, ProviderRegistry, SimulatedEmbodiment};
+use hardware::{
+    Broker, GrpcEmbodimentProvider, GrpcProviderConfig, MonotonicClock, ProviderRegistry,
+    SimulatedEmbodiment,
+};
 
 use crate::core::config::EmbodimentProviderConfig;
 use crate::service::embodiment_authority::build_embodiment_invoker;

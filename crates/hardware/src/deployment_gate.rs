@@ -1,8 +1,8 @@
 //! Production deployment gate — all checks must pass before Production namespace is available.
 //! Simulation defaults always pass. Production requires all fields and valid evidence.
 
-use serde::{Deserialize, Serialize};
 use crate::device::DeviceNamespace;
+use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
 const HARD_MAX_LINEAR_MPS_PROD: f64 = 0.1;
@@ -33,9 +33,17 @@ pub struct DeploymentGateResult {
 impl DeploymentGateResult {
     #[allow(dead_code)]
     fn fail(reason: impl Into<String>) -> Self {
-        Self { passed: false, failures: vec![reason.into()] }
+        Self {
+            passed: false,
+            failures: vec![reason.into()],
+        }
     }
-    fn pass() -> Self { Self { passed: true, failures: vec![] } }
+    fn pass() -> Self {
+        Self {
+            passed: true,
+            failures: vec![],
+        }
+    }
 }
 
 /// Validate deployment gate input. Simulation always passes.
@@ -50,19 +58,47 @@ pub fn validate_gate(input: &DeploymentGateInput) -> DeploymentGateResult {
 
 fn validate_lab_gate(input: &DeploymentGateInput) -> DeploymentGateResult {
     let mut failures = Vec::new();
-    if input.device_id.is_empty() { failures.push("device_id required for Lab".into()); }
-    if input.endpoint_identity.is_empty() { failures.push("endpoint_identity required for Lab".into()); }
-    if failures.is_empty() { DeploymentGateResult::pass() } else { DeploymentGateResult { passed: false, failures } }
+    if input.device_id.is_empty() {
+        failures.push("device_id required for Lab".into());
+    }
+    if input.endpoint_identity.is_empty() {
+        failures.push("endpoint_identity required for Lab".into());
+    }
+    if failures.is_empty() {
+        DeploymentGateResult::pass()
+    } else {
+        DeploymentGateResult {
+            passed: false,
+            failures,
+        }
+    }
 }
 
 fn validate_hil_gate(input: &DeploymentGateInput) -> DeploymentGateResult {
     let mut failures = Vec::new();
-    if input.device_id.is_empty() { failures.push("device_id required for HIL".into()); }
-    if input.device_serial.is_empty() { failures.push("device_serial required for HIL".into()); }
-    if input.endpoint_identity.is_empty() { failures.push("endpoint_identity required for HIL".into()); }
-    if input.manifest_digest.is_empty() { failures.push("manifest_digest required for HIL".into()); }
-    if input.limits_digest.is_empty() { failures.push("limits_digest required for HIL".into()); }
-    if failures.is_empty() { DeploymentGateResult::pass() } else { DeploymentGateResult { passed: false, failures } }
+    if input.device_id.is_empty() {
+        failures.push("device_id required for HIL".into());
+    }
+    if input.device_serial.is_empty() {
+        failures.push("device_serial required for HIL".into());
+    }
+    if input.endpoint_identity.is_empty() {
+        failures.push("endpoint_identity required for HIL".into());
+    }
+    if input.manifest_digest.is_empty() {
+        failures.push("manifest_digest required for HIL".into());
+    }
+    if input.limits_digest.is_empty() {
+        failures.push("limits_digest required for HIL".into());
+    }
+    if failures.is_empty() {
+        DeploymentGateResult::pass()
+    } else {
+        DeploymentGateResult {
+            passed: false,
+            failures,
+        }
+    }
 }
 
 fn validate_production_gate(input: &DeploymentGateInput) -> DeploymentGateResult {
@@ -83,15 +119,27 @@ fn validate_production_gate(input: &DeploymentGateInput) -> DeploymentGateResult
         ));
     }
     // Production must use non-loopback endpoint
-    if input.endpoint_identity.contains("127.0.0.1") || input.endpoint_identity.contains("localhost") {
+    if input.endpoint_identity.contains("127.0.0.1")
+        || input.endpoint_identity.contains("localhost")
+    {
         failures.push("production endpoint must not be loopback".into());
     }
     // Verify namespace/credential match
     if input.namespace != DeviceNamespace::Production {
-        failures.push(format!("expected Production namespace, got {:?}", input.namespace));
+        failures.push(format!(
+            "expected Production namespace, got {:?}",
+            input.namespace
+        ));
     }
 
-    if failures.is_empty() { DeploymentGateResult::pass() } else { DeploymentGateResult { passed: false, failures } }
+    if failures.is_empty() {
+        DeploymentGateResult::pass()
+    } else {
+        DeploymentGateResult {
+            passed: false,
+            failures,
+        }
+    }
 }
 
 #[cfg(test)]

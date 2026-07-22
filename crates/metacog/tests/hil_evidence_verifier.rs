@@ -1,7 +1,7 @@
 //! Integration tests for the HILEvidenceVerifier public API.
 
 use fabric::types::hil_evidence::{HILEvidence, HILResult};
-use platform::hil_evidence_verifier::HILEvidenceVerifier;
+use metacog::hil_evidence_verifier::HILEvidenceVerifier;
 
 fn valid_evidence() -> HILEvidence {
     HILEvidence {
@@ -33,7 +33,10 @@ fn verifier(keys: Vec<&str>, now_ms: i64) -> HILEvidenceVerifier {
 fn valid_passed_evidence_accepted() {
     let v = verifier(vec!["key-1"], 5000);
     let ev = valid_evidence();
-    assert!(v.verify(&ev).is_ok(), "valid passed evidence must be accepted");
+    assert!(
+        v.verify(&ev).is_ok(),
+        "valid passed evidence must be accepted"
+    );
 }
 
 #[test]
@@ -41,7 +44,10 @@ fn valid_conditional_evidence_accepted() {
     let v = verifier(vec!["key-1"], 5000);
     let mut ev = valid_evidence();
     ev.result = HILResult::Conditional;
-    assert!(v.verify(&ev).is_ok(), "conditional evidence must be accepted");
+    assert!(
+        v.verify(&ev).is_ok(),
+        "conditional evidence must be accepted"
+    );
 }
 
 #[test]
@@ -119,7 +125,7 @@ fn unknown_schema_version_rejected() {
 fn age_based_rejection() {
     let v = HILEvidenceVerifier::new(
         vec!["key-1".into()],
-        500, // max age 500ms
+        500,               // max age 500ms
         Box::new(|| 5000), // now
     );
     // issued = 1000, now = 5000, diff = 4000 > 500

@@ -21,8 +21,8 @@ pub mod bridge;
 pub mod config;
 pub mod core;
 pub mod harness;
-pub mod ports;
 pub mod r#impl;
+pub mod ports;
 
 // Re-export core components
 pub use core::critic::Critic;

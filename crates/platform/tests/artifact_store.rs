@@ -54,7 +54,11 @@ fn size_quota_enforcement() {
     let result = store.put(&vec![1u8; 1500], "image/jpeg");
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.contains("quota exceeded"), "expected quota error, got: {}", err);
+    assert!(
+        err.contains("quota exceeded"),
+        "expected quota error, got: {}",
+        err
+    );
 }
 
 #[test]
