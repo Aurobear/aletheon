@@ -25,6 +25,8 @@ pub struct ComponentHealth {
     pub age_seconds: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_category: Option<&'static str>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<String>,
 }
 
 impl ComponentHealth {
@@ -34,6 +36,7 @@ impl ComponentHealth {
             count: None,
             age_seconds: None,
             error_category: None,
+            items: Vec::new(),
         }
     }
 
@@ -43,6 +46,7 @@ impl ComponentHealth {
             count: None,
             age_seconds: None,
             error_category: None,
+            items: Vec::new(),
         }
     }
 
@@ -52,6 +56,7 @@ impl ComponentHealth {
             count: None,
             age_seconds: None,
             error_category: Some(category),
+            items: Vec::new(),
         }
     }
 
@@ -61,6 +66,7 @@ impl ComponentHealth {
             count: None,
             age_seconds: None,
             error_category: Some(category),
+            items: Vec::new(),
         }
     }
 }

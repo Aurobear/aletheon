@@ -3,6 +3,7 @@
 //! Powers D2-M5-T1. Reports config validity, MCP server health, sandbox/execd
 //! status, and recent writer failures in a schema-stable JSON format with secrets redacted.
 
+use anyhow::Context;
 use serde::Serialize;
 
 use crate::composition::config::{AppConfig, LoadedConfig};
@@ -86,6 +87,10 @@ pub struct DoctorReport {
     /// Bounded summary of the latest all-session startup recovery scan.
     pub turn_recovery: crate::application::turn_recovery::TurnRecoveryHealth,
 
+    /// Persisted invalid Agent profiles. Reasons stay in the local quarantine
+    /// record; doctor exposes only bounded names to avoid leaking config data.
+    pub quarantined_profiles: QuarantinedProfilesStatus,
+
     /// Daemon daemon_version for diagnostics.
     pub daemon_version: &'static str,
 
@@ -147,6 +152,12 @@ pub struct WriterHealth {
     pub writes_succeeding: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_failure_phase: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct QuarantinedProfilesStatus {
+    pub count: usize,
+    pub names: Vec<String>,
 }
 
 impl DoctorReport {
@@ -218,12 +229,20 @@ impl DoctorReport {
                 crate::application::turn_recovery::TurnRecoveryHealth::default()
             }
         };
+        let quarantined_profiles = match read_quarantined_profiles(&data_dir) {
+            Ok(status) => status,
+            Err(error) => {
+                warnings.push(format!("profile quarantine unavailable: {error}"));
+                QuarantinedProfilesStatus::default()
+            }
+        };
 
         // Determine overall status.
         let status = if config_validity_is_ok(config)
             && deployment.is_healthy()
             && writer_health.writes_succeeding
             && writer_health.recent_failures == 0
+            && quarantined_profiles.count == 0
         {
             "healthy"
         } else {
@@ -257,6 +276,7 @@ impl DoctorReport {
             sandbox,
             writer_health,
             turn_recovery,
+            quarantined_profiles,
             daemon_version: env!("CARGO_PKG_VERSION"),
             warnings: warnings
                 .into_iter()
@@ -265,6 +285,29 @@ impl DoctorReport {
                 .collect(),
         }
     }
+}
+
+fn read_quarantined_profiles(data_dir: &std::path::Path) -> anyhow::Result<QuarantinedProfilesStatus> {
+    let primary = data_dir.join("state/agent-profile-quarantine.json");
+    let fallback = data_dir.join("agent-profile-quarantine.json");
+    let path = if primary.exists() { primary } else { fallback };
+    if !path.exists() {
+        return Ok(QuarantinedProfilesStatus::default());
+    }
+    let records: serde_json::Value = serde_json::from_reader(std::fs::File::open(path)?)?;
+    let records = records
+        .as_array()
+        .context("profile quarantine record must be an array")?;
+    let names = records
+        .iter()
+        .take(MAX_DOCTOR_JSON_ENTRIES)
+        .filter_map(|record| record.get("name").and_then(|value| value.as_str()))
+        .map(bounded_text)
+        .collect();
+    Ok(QuarantinedProfilesStatus {
+        count: records.len(),
+        names,
+    })
 }
 
 fn config_validity_is_ok(_config: &AppConfig) -> bool {
@@ -348,6 +391,22 @@ mod tests {
         let report = DoctorReport::standalone(&loaded);
         // Default config has no MCP servers configured
         assert!(report.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn doctor_reads_bounded_profile_quarantine_without_reasons() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = temp.path().join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(
+            state.join("agent-profile-quarantine.json"),
+            br#"[{"name":"broken-profile","reason":"token=must-not-leak"}]"#,
+        )
+        .unwrap();
+        let status = read_quarantined_profiles(temp.path()).unwrap();
+        assert_eq!(status.count, 1);
+        assert_eq!(status.names, vec!["broken-profile"]);
+        assert!(!serde_json::to_string(&status).unwrap().contains("must-not-leak"));
     }
 
     #[test]

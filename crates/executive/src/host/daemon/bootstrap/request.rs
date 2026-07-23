@@ -890,6 +890,12 @@ impl RequestHandler {
         let extension_runtime_quarantine_count =
             extension_runtime_composition.quarantined.len() as u64;
         let extension_runtime_count = extension_runtime_composition.router.registered().len() as u64;
+        let extension_runtime_quarantined_ids: Vec<String> = extension_runtime_composition
+            .quarantined
+            .iter()
+            .map(|value| value.split(':').next().unwrap_or("unknown").to_owned())
+            .collect();
+        let extension_runtime_rolled_back = extension_runtime_composition.rolled_back;
         // Ordinary child Agents use one Cognit session runtime. Goal worker
         // and reviewer attempts remain explicit ProviderWorkerRuntime routes.
         let agent_composition = {
@@ -924,6 +930,11 @@ impl RequestHandler {
             composition
         };
         let quarantined_profile_count = agent_composition.quarantined_profiles().len() as u64;
+        let quarantined_profile_names: Vec<String> = agent_composition
+            .quarantined_profiles()
+            .iter()
+            .map(|profile| profile.name.clone())
+            .collect();
         let agent_profiles_unready = agent_composition.active_profile_name.is_empty();
         let agent_profiles_for_tools = agent_composition.tool_profiles;
         let agent_profile_registry = agent_composition.profiles;
@@ -1232,6 +1243,7 @@ impl RequestHandler {
                 )
             };
             health.count = Some(quarantined_profile_count);
+            health.items = quarantined_profile_names;
             health_registry.set("agent_profiles", health);
         } else {
             health_registry.set(
@@ -1244,11 +1256,24 @@ impl RequestHandler {
                 "extension_runtimes_quarantined",
             );
             health.count = Some(extension_runtime_quarantine_count);
+            health.items = extension_runtime_quarantined_ids;
             health_registry.set("extension_runtimes", health);
         } else {
             let mut health = crate::application::health::ComponentHealth::ready();
             health.count = Some(extension_runtime_count);
             health_registry.set("extension_runtimes", health);
+        }
+        if extension_runtime_rolled_back.is_empty() {
+            health_registry.set(
+                "extension_rollbacks",
+                crate::application::health::ComponentHealth::ready(),
+            );
+        } else {
+            let mut health =
+                crate::application::health::ComponentHealth::degraded("extension_rolled_back");
+            health.count = Some(extension_runtime_rolled_back.len() as u64);
+            health.items = extension_runtime_rolled_back;
+            health_registry.set("extension_rollbacks", health);
         }
         let channel_task = Arc::new(Mutex::new(None));
         let request_facades = RequestFacadePorts::new(

@@ -581,6 +581,15 @@ async fn handle_doctor(
             report.turn_recovery.turns_scanned,
             report.turn_recovery.incomplete_turns_recovered
         );
+        println!(
+            "  profiles:  {} quarantined{}",
+            report.quarantined_profiles.count,
+            if report.quarantined_profiles.names.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", report.quarantined_profiles.names.join(", "))
+            }
+        );
         for warning in &report.warnings {
             println!("  WARNING:   {warning}");
         }

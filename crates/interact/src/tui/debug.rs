@@ -701,7 +701,6 @@ async fn trace_status(socket: &std::path::Path) -> Result<()> {
 
 async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
     let request = ClientRpcRequest::DebugHealth.to_json_rpc(Some(1))?;
-
     let response = send_rpc(socket, &request).await?;
 
     if response["error"].is_object() {
@@ -764,6 +763,33 @@ async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
             println!("  Warnings:");
             for w in warnings {
                 println!("    ⚠️  {}", w.as_str().unwrap_or(""));
+            }
+        }
+    }
+
+    let production_request = ClientRpcRequest::Health.to_json_rpc(Some(2))?;
+    let production = send_rpc(socket, &production_request).await?;
+    if !production["error"].is_object() {
+        let result = &production["result"];
+        println!();
+        println!(
+            "  Runtime readiness: {}",
+            result["readiness"].as_str().unwrap_or("unknown")
+        );
+        if let Some(components) = result["components"].as_object() {
+            for name in ["agent_profiles", "extension_runtimes", "extension_rollbacks"] {
+                let Some(component) = components.get(name) else {
+                    continue;
+                };
+                let class = component["class"].as_str().unwrap_or("unknown");
+                let count = component["count"].as_u64().unwrap_or(0);
+                let category = component["error_category"].as_str().unwrap_or("-");
+                println!("    {name}: {class} count={count} category={category}");
+                if let Some(items) = component["items"].as_array() {
+                    for item in items {
+                        println!("      - {}", item.as_str().unwrap_or("<invalid>"));
+                    }
+                }
             }
         }
     }

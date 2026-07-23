@@ -67,6 +67,7 @@ pub enum ClientRpcRequest {
     DebugTraceStart(DebugTraceStartParams),
     DebugTraceStop,
     DebugTraceStatus,
+    Health,
     DebugHealth,
     DebugNodes,
     DebugParamGet(DebugParamGetParams),
@@ -518,6 +519,7 @@ impl ClientRpcRequest {
             }
             Self::DebugTraceStop => empty_params("debug.trace_stop")?,
             Self::DebugTraceStatus => empty_params("debug.trace_status")?,
+            Self::Health => empty_params("health")?,
             Self::DebugHealth => empty_params("debug.health")?,
             Self::DebugNodes => empty_params("debug.nodes")?,
             Self::DebugParamGet(params) => ("debug.param_get", Some(serde_json::to_value(params)?)),

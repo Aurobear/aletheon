@@ -7,6 +7,7 @@ use anyhow::Context;
 pub(super) struct ExtensionRuntimeComposition {
     pub router: Arc<crate::application::extension_runtime_router::ExtensionRuntimeRouter>,
     pub quarantined: Vec<String>,
+    pub rolled_back: Vec<String>,
 }
 
 pub(super) struct RuntimeExtensionIndex {
@@ -31,6 +32,7 @@ pub(super) async fn register_package_runtimes(
         .await
         .map(|backend| Arc::new(backend) as Arc<dyn fabric::SandboxBackend>);
     let mut quarantined = Vec::new();
+    let mut rolled_back = Vec::new();
 
     let installed = store.list_installed()?;
     let mut package_ids: Vec<_> = installed.iter().map(|record| record.id.clone()).collect();
@@ -122,6 +124,7 @@ pub(super) async fn register_package_runtimes(
                             &format!("package:sha256:{}", previous.hash),
                         )?;
                         quarantined.push(candidate_reason);
+                        rolled_back.push(package_id.clone());
                         continue;
                     }
                     Err(rollback_error) => {
@@ -155,6 +158,7 @@ pub(super) async fn register_package_runtimes(
     Ok(ExtensionRuntimeComposition {
         router,
         quarantined,
+        rolled_back,
     })
 }
 
@@ -541,6 +545,7 @@ risk = "Sandboxed"
         .await
         .unwrap();
         assert!(composition.quarantined.is_empty());
+        assert!(composition.rolled_back.is_empty());
         assert_eq!(
             composition.router.registered(),
             vec![fabric::RuntimeId("runtime.generic".into())]
@@ -600,6 +605,7 @@ risk = "Sandboxed"
             composition.router.registered(),
             vec![fabric::RuntimeId("runtime.generic".into())]
         );
+        assert_eq!(composition.rolled_back, vec!["test.runtime"]);
         let state = store.read_activation("test.runtime").unwrap();
         assert!(state.enabled);
         assert_eq!(state.current.as_deref(), Some(OLD_HASH));
