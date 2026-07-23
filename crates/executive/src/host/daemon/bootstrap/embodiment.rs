@@ -60,7 +60,7 @@ pub async fn build_embodiment_port(
                 request_timeout: std::time::Duration::from_millis(request_timeout_ms),
                 ..Default::default()
             };
-            let provider = GrpcEmbodimentProvider::connect(grpc_config)
+            let provider = GrpcEmbodimentProvider::connect_with_clock(grpc_config, clock.clone())
                 .await
                 .context("failed to connect to gRPC embodiment provider")?;
 

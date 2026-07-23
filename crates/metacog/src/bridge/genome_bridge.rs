@@ -2,14 +2,14 @@
 //!
 //! Provides helpers for genome loading, conversion, and config extraction.
 
-use crate::core::types::{CareExt, GenomeMeta, ReasoningConfig};
+use crate::genome::{CareExt, GenomeMeta, ReasoningConfig};
 use anyhow::Result;
 use fabric::genome::Genome;
 use fabric::Clock;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::r#impl::genome::loader::GenomeLoader;
+use crate::genome::loader::GenomeLoader;
 
 /// Bridge between GenomeMeta (extended metadata) and Genome (ABI level).
 pub struct GenomeBridge {
@@ -34,13 +34,13 @@ impl GenomeBridge {
             genome_version: "0.1.0".to_string(),
             lineage_id: format!("lineage-{}", self.clock.wall_now().0),
             parent_version: None,
-            identity_ext: crate::core::types::IdentityExt {
+            identity_ext: crate::genome::IdentityExt {
                 core_values: vec!["truthfulness".into(), "safety".into()],
                 fundamental_purpose: "assist the user".into(),
             },
             care_ext: CareExt::default(),
             reasoning: ReasoningConfig::default(),
-            evolution: crate::core::types::EvolutionConfig::default(),
+            evolution: crate::genome::EvolutionConfig::default(),
         }
     }
 

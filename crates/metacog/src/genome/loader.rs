@@ -3,7 +3,7 @@
 //! Supports loading/saving genomes from YAML files and computing diffs
 //! between two genomes.
 
-use crate::core::types::{ChangeType, Genome, GenomeChange, GenomeMeta};
+use crate::genome::model::{ChangeType, Genome, GenomeChange, GenomeMeta};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
@@ -39,7 +39,7 @@ impl GenomeLoader {
 
     /// Returns a sensible default genome for first-run or missing file scenarios.
     fn default_genome() -> Genome {
-        use crate::core::types::*;
+        use crate::genome::model::*;
         Genome {
             topology: Topology { subsystems: vec![] },
             identity: IdentitySpec {

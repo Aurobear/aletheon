@@ -40,7 +40,7 @@ impl CandidateBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r#impl::genome::loader::GenomeLoader;
+    use crate::genome::loader::GenomeLoader;
     use kernel::chronos::TestClock;
     use std::path::Path;
 

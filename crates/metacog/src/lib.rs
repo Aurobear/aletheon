@@ -1,5 +1,7 @@
 pub mod bridge;
 pub mod core;
+pub mod genome;
+pub mod governance;
 pub mod hil_evidence_verifier;
 #[path = "impl/mod.rs"]
 mod r#impl;
@@ -8,6 +10,10 @@ pub mod service;
 
 pub use core::traits::DefaultMetaRuntime;
 pub use core::types::*;
+pub use genome::{
+    CareExt, ChangeType, EvolutionConfig, GenomeChange, GenomeMeta, GenomeRule, IdentityExt,
+    ReasoningConfig,
+};
 pub use service::*;
 
 /// Stable mutation-intent facade consumed by Executive evolution policy.

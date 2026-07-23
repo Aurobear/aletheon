@@ -1,7 +1,7 @@
 //! gRPC embodiment provider over the vendor-neutral gateway contract.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use fabric::types::embodiment::{DeviceId, EmbodiedObservation, SkillDescriptor, SkillResult};
@@ -12,7 +12,10 @@ use crate::grpc::error::map_error;
 use crate::grpc::wire::embodiment_gateway_client::EmbodimentGatewayClient;
 use crate::grpc::wire::{self, RequestMeta};
 use crate::skill::SkillProgressSink;
-use crate::{CancelAck, EmbodimentProvider, ProviderError, StopReceipt, ValidatedSkillCommand};
+use crate::{
+    CancelAck, EmbodimentProvider, MonotonicClock, MonotonicInstant, ProviderError, StopReceipt,
+    ValidatedSkillCommand,
+};
 
 /// Configuration for a gRPC embodiment provider.
 #[derive(Debug, Clone)]
@@ -48,11 +51,31 @@ impl Default for GrpcProviderConfig {
 pub struct GrpcEmbodimentProvider {
     client: EmbodimentGatewayClient<Channel>,
     config: GrpcProviderConfig,
+    clock: Option<Arc<dyn MonotonicClock>>,
 }
 
 impl GrpcEmbodimentProvider {
     /// Connect to the bridge and perform a capabilities handshake.
     pub async fn connect(config: GrpcProviderConfig) -> Result<Self, ProviderError> {
+        Self::connect_inner(config, None).await
+    }
+
+    /// Connect with the monotonic clock that issues permits and leases.
+    ///
+    /// A shared clock is required for skill execution because domain deadlines
+    /// are process-local monotonic instants while the wire protocol carries
+    /// Unix timestamps.
+    pub async fn connect_with_clock(
+        config: GrpcProviderConfig,
+        clock: Arc<dyn MonotonicClock>,
+    ) -> Result<Self, ProviderError> {
+        Self::connect_inner(config, Some(clock)).await
+    }
+
+    async fn connect_inner(
+        config: GrpcProviderConfig,
+        clock: Option<Arc<dyn MonotonicClock>>,
+    ) -> Result<Self, ProviderError> {
         let endpoint = tonic::transport::Endpoint::from_shared(config.endpoint.clone())
             .map_err(|e| ProviderError::Rejected(format!("invalid endpoint: {e}")))?
             .connect_timeout(config.connect_timeout)
@@ -85,7 +108,11 @@ impl GrpcEmbodimentProvider {
             )));
         }
 
-        Ok(Self { client, config })
+        Ok(Self {
+            client,
+            config,
+            clock,
+        })
     }
 
     fn build_meta(&self) -> RequestMeta {
@@ -102,6 +129,26 @@ impl GrpcEmbodimentProvider {
             ..Default::default()
         }
     }
+
+    fn deadline_unix_ms(&self, expires_at: MonotonicInstant) -> Result<u64, ProviderError> {
+        let clock = self.clock.as_ref().ok_or_else(|| {
+            ProviderError::Rejected("gRPC skill execution requires a shared monotonic clock".into())
+        })?;
+        let now_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| ProviderError::Rejected("system clock precedes Unix epoch".into()))?
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        Ok(monotonic_deadline_to_unix_ms(
+            expires_at.0,
+            clock.now().0,
+            now_unix_ms,
+        ))
+    }
+}
+
+fn monotonic_deadline_to_unix_ms(expires_at: u64, now_mono: u64, now_unix: u64) -> u64 {
+    now_unix.saturating_add(expires_at.saturating_sub(now_mono))
 }
 
 #[async_trait]
@@ -169,13 +216,15 @@ impl EmbodimentProvider for GrpcEmbodimentProvider {
 
         let params = crate::grpc::convert::json_to_struct(&request.parameters);
 
+        let permit_expires_unix_ms = self.deadline_unix_ms(permit.expires_at)?;
+        let lease_expires_unix_ms = self.deadline_unix_ms(lease.expires_at)?;
         let wire_request = wire::ExecuteSkillRequest {
-            meta: Some(self.build_deadline_meta(permit.expires_at.0)),
+            meta: Some(self.build_deadline_meta(permit_expires_unix_ms)),
             operation_id: permit.operation.0.clone(),
             device_id: request.device.0.clone(),
             skill_id: request.skill.0.clone(),
             parameters: Some(params),
-            lease_expires_unix_ms: lease.expires_at.0 as i64,
+            lease_expires_unix_ms: lease_expires_unix_ms as i64,
         };
 
         let mut stream = self
@@ -288,5 +337,26 @@ fn map_status(status: tonic::Status) -> ProviderError {
             status.code().description(),
             status.message()
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::monotonic_deadline_to_unix_ms;
+
+    #[test]
+    fn converts_remaining_monotonic_duration_to_unix_deadline() {
+        assert_eq!(
+            monotonic_deadline_to_unix_ms(12_500, 10_000, 1_700_000_000_000),
+            1_700_000_002_500
+        );
+    }
+
+    #[test]
+    fn expired_monotonic_deadline_maps_to_current_unix_time() {
+        assert_eq!(
+            monotonic_deadline_to_unix_ms(9_000, 10_000, 1_700_000_000_000),
+            1_700_000_000_000
+        );
     }
 }

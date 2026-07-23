@@ -4,7 +4,8 @@
 //! 1. Genome-level: checks safety weight, immutable rules, adjustment magnitude
 //! 2. ABI-level: evaluates RuntimeCandidate after sandbox testing
 
-use crate::core::types::{EvaluationResult, Genome, GenomeMeta};
+use crate::core::types::EvaluationResult;
+use crate::genome::model::{Genome, GenomeMeta};
 use anyhow::Result;
 use fabric::{meta::Recommendation, Evaluation, RuntimeCandidate, TestResult};
 

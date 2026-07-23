@@ -96,12 +96,18 @@ Commit subject: `test(metacog): lock public surface before module migration`
 **Files:**
 - Move: `crates/metacog/src/impl/genome/loader.rs` → `crates/metacog/src/genome/loader.rs`
 - Move: `GenomeMeta`, `IdentityExt`, `CareExt`, `GenomeRule`, `ReasoningConfig`, `EvolutionConfig`, `GenomeChange`, and `ChangeType` from `crates/metacog/src/core/types.rs` → `crates/metacog/src/genome/model.rs`
-- Move: `crates/metacog/src/impl/meta_runtime/self_reader.rs` → `crates/metacog/src/genome/self_reader.rs`
-- Move: `crates/metacog/src/impl/meta_runtime/spec_editor.rs` → `crates/metacog/src/genome/editor.rs`
+- Move: `crates/metacog/src/impl/meta_runtime/self_reader.rs` → `crates/metacog/src/governance/self_reader.rs`
+- Move: `crates/metacog/src/impl/meta_runtime/spec_editor.rs` → `crates/metacog/src/governance/spec_editor.rs`
 - Create: `crates/metacog/src/genome/mod.rs`
 - Modify: `crates/metacog/src/lib.rs`
 - Modify: `crates/metacog/src/bridge/genome_bridge.rs` imports only; the file move occurs in Task 4
 - Test: existing Genome tests plus `crates/metacog/tests/public_surface.rs`
+
+Note: `self_reader.rs` (runtime genome introspection) and `spec_editor.rs`
+ (spec mutation) are runtime operations, not genome data. They belong to
+ `governance/` — the layer that orchestrates reading and modifying the
+ running system. `genome/` contains only the data model (`model.rs`) and
+ file-based persistence (`loader.rs`).
 
 - [ ] **Step 1: Move Genome-owned files without changing behavior**
 
@@ -110,18 +116,26 @@ Use `git mv` for `loader.rs`, `self_reader.rs`, and `spec_editor.rs`; rename onl
 - [ ] **Step 2: Create the feature facade**
 
 ```rust
-mod editor;
 mod loader;
 mod model;
-mod self_reader;
 
-pub(crate) use editor::SpecEditor;
 pub use loader::GenomeLoader;
 pub use model::{
     CareExt, ChangeType, EvolutionConfig, GenomeChange, GenomeMeta, GenomeRule,
     IdentityExt, ReasoningConfig,
 };
+```
+
+- [ ] **Step 2b: Wire runtime operations into governance**
+
+In `crates/metacog/src/governance/mod.rs`, add after the existing declarations:
+
+```rust
+mod self_reader;
+mod spec_editor;
+
 pub(crate) use self_reader::SelfReader;
+pub(crate) use spec_editor::SpecEditor;
 ```
 
 - [ ] **Step 3: Keep temporary crate-root compatibility re-exports**
@@ -232,6 +246,16 @@ Commit subject: `refactor(metacog): group evolution and governance features`
 - Move: `crates/metacog/src/outcome_verifier.rs` → `crates/metacog/src/evaluation/outcome.rs`
 - Move: `crates/metacog/src/hil_evidence_verifier.rs` → `crates/metacog/src/evaluation/hil_evidence.rs`
 - Move: `crates/metacog/src/core/meta_cognition.rs` → `crates/metacog/src/adapters/dasein.rs`
+
+**Transition note — mood-based fallback:** The current `MetaCognition::decide()`
+at `crates/metacog/src/core/meta_cognition.rs:66-105` uses `Stimmung`
+(Angst/Langeweile/Neugier) to trigger evolution every 20 turns. The daemon
+calls this after each turn via Dasein. Moving it to `adapters/dasein.rs`
+preserves this behavior as the active evolution driver until the new
+`ReflectionEngine` (Phase 4) and `ProposalPromoter` (Task 14) are fully
+wired. The mood-based adapter becomes a fallback: once evidence-backed
+reflection produces proposals, those take priority. Until then, the daemon's
+evolution loop continues uninterrupted.
 - Move: `crates/metacog/src/bridge/candidate_bridge.rs` → `crates/metacog/src/evolution/candidate_bridge.rs`
 - Move: `crates/metacog/src/bridge/genome_bridge.rs` → `crates/metacog/src/genome/bridge.rs`
 - Move: `crates/metacog/src/impl/morphogenesis/mutation_intent.rs` → `crates/metacog/src/improvement/promotion.rs`
@@ -309,10 +333,18 @@ Commit subject: `refactor(metacog): retire technical-layer module layout`
 ### Task 5: Add generic experience and evidence contracts
 
 **Files:**
-- Create: `crates/fabric/src/types/metacognition.rs`
+- Create: `crates/fabric/src/types/metacognition_experience.rs`
+- Create: `crates/fabric/src/types/metacognition_evidence.rs`
 - Modify: `crates/fabric/src/types/mod.rs`
 - Modify: `crates/fabric/src/lib.rs`
 - Create: `crates/fabric/tests/metacognition_contract.rs`
+
+Note: The contracts are split into two files to avoid a single monolith.
+ `metacognition_experience.rs` owns `DomainId`, `ExperienceId`,
+ `SubjectId`, `ExperienceEnvelope`, and `ExperienceOutcome`.
+ `metacognition_evidence.rs` owns `EvidenceId`, `EvidenceKind`,
+ `EvidenceTrust`, and `EvidenceItem`. Scoring and report types are added
+ later in Task 8 and may warrant their own file depending on total size.
 
 - [ ] **Step 1: Write failing serde contract tests**
 
@@ -345,21 +377,41 @@ Expected: FAIL because the module/types do not exist.
 
 - [ ] **Step 3: Implement the value objects**
 
-The file must define:
+`metacognition_experience.rs` must define:
 
 ```rust
 pub const METACOGNITION_SCHEMA_V1: u16 = 1;
 
 pub struct ExperienceId(pub String);
-pub struct EvidenceId(pub String);
 pub struct SubjectId(pub String);
 pub struct DomainId(String);
 
 pub enum ExperienceOutcome { Succeeded, Failed, Cancelled, TimedOut, Unknown }
+
+pub struct ExperienceEnvelope {
+    pub schema_version: u16,
+    pub experience_id: ExperienceId,
+    pub domain: DomainId,
+    pub subject: SubjectId,
+    pub goal_ref: Option<String>,
+    pub started_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+    pub outcome: ExperienceOutcome,
+    pub correlations: BTreeMap<String, String>,
+    pub evidence: Vec<EvidenceId>,
+}
+```
+
+`metacognition_evidence.rs` must define:
+
+```rust
+pub struct EvidenceId(pub String);
+
 pub enum EvidenceKind {
     Assertion, Observation, ActionResult, VerificationResult, Metric,
     Artifact, HumanFeedback, PolicyDecision, RuntimeFault,
 }
+
 pub enum EvidenceTrust { Authoritative, Corroborated, Unverified }
 
 pub struct EvidenceItem {
@@ -503,7 +555,9 @@ Commit subject: `feat(metacog): ingest validated experiences`
 ### Task 8: Add rubric and evaluation report contracts
 
 **Files:**
-- Extend: `crates/fabric/src/types/metacognition.rs`
+- Create: `crates/fabric/src/types/metacognition_evaluation.rs`
+- Extend: `crates/fabric/src/types/mod.rs`
+- Extend: `crates/fabric/src/lib.rs`
 - Extend: `crates/fabric/tests/metacognition_contract.rs`
 
 - [ ] **Step 1: Add failing tests for unknown dimensions and hard gates**

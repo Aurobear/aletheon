@@ -50,7 +50,7 @@ impl CandidateGenerator {
                         } else {
                             // Topic doesn't exist yet — add it
                             candidate_genome.care.priorities.push(
-                                crate::core::types::CarePriority {
+                                crate::genome::model::CarePriority {
                                     topic: topic.to_string(),
                                     weight: delta.clamp(0.0, 1.0),
                                 },

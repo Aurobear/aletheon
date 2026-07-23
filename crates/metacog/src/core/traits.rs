@@ -11,13 +11,13 @@ use fabric::{
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::r#impl::genome::loader::GenomeLoader;
+use crate::genome::loader::GenomeLoader;
+use crate::governance::self_reader::SelfReader;
 use crate::r#impl::meta_runtime::evaluator::Evaluator;
 use crate::r#impl::meta_runtime::lineage::LineageTracker;
 use crate::r#impl::meta_runtime::migration::MigrationManager;
 use crate::r#impl::meta_runtime::rollback::RollbackManager;
 use crate::r#impl::meta_runtime::sandbox_runner::SandboxRunner;
-use crate::r#impl::meta_runtime::self_reader::SelfReader;
 use crate::r#impl::morphogenesis::candidate::CandidateGenerator;
 
 /// Concrete MetaRuntime implementation.

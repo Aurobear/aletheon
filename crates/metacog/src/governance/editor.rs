@@ -3,7 +3,8 @@
 //! Applies GenomePatch operations to a Genome: modify care weights,
 //! add/remove boundary rules, and other targeted mutations.
 
-use crate::core::types::{CarePriority, Genome, GenomePatch, PatchOperation};
+use crate::core::types::{GenomePatch, PatchOperation};
+use crate::genome::model::{CarePriority, Genome};
 use anyhow::{bail, Result};
 
 pub struct SpecEditor;
@@ -118,7 +119,7 @@ impl SpecEditor {
     }
 
     fn apply_boundary_patch(&self, genome: &mut Genome, patch: &GenomePatch) -> Result<()> {
-        use crate::core::types::BoundaryRuleSpec;
+        use crate::genome::model::BoundaryRuleSpec;
 
         match &patch.operation {
             PatchOperation::Add => {

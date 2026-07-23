@@ -12,7 +12,7 @@ use fabric::{
     SelfFieldOps, Version,
 };
 
-use crate::core::types::Genome as MetaGenome;
+use crate::genome::model::Genome as MetaGenome;
 
 /// Reads the current genome from the runtime environment.
 ///

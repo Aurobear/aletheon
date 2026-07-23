@@ -114,12 +114,12 @@ impl ToolRegistry {
         .map(|tool| self.register(tool))
         .collect::<Result<Vec<_>, _>>()?;
         for name in [
-            "robot.observe",
-            "robot.get_state",
-            "robot.list_skills",
-            "robot.execute_skill",
-            "robot.cancel",
-            "robot.safe_stop",
+            "robot_observe",
+            "robot_get_state",
+            "robot_list_skills",
+            "robot_execute_skill",
+            "robot_cancel",
+            "robot_safe_stop",
         ] {
             self.set_proposal_confidence(name, 0.5)?;
         }
