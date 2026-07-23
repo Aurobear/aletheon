@@ -85,6 +85,7 @@ systemctl daemon-reload
 if ((enable)); then
   systemctl disable --now aletheon.service
   systemctl enable aletheon-core.service
+  systemctl reset-failed aletheon-core.service
   systemctl restart aletheon-core.service
   systemctl --global enable aletheon.socket
   systemctl enable --now aletheon-backup.timer aletheon-cleanup.timer
