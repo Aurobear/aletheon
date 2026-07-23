@@ -25,6 +25,18 @@ pub(super) struct AgentComposition {
     pub(super) quarantined_profiles: Vec<super::runtime::QuarantinedProfile>,
 }
 
+impl AgentComposition {
+    /// List profiles that failed validation and were quarantined.
+    pub fn quarantined_profiles(&self) -> &[super::runtime::QuarantinedProfile] {
+        &self.quarantined_profiles
+    }
+
+    /// Whether the daemon started in degraded mode (some profiles quarantined).
+    pub fn is_degraded(&self) -> bool {
+        !self.quarantined_profiles.is_empty()
+    }
+}
+
 fn select_active_profile(configured: &str, mut names: Vec<String>) -> anyhow::Result<String> {
     if !configured.trim().is_empty() {
         anyhow::ensure!(
@@ -61,6 +73,14 @@ pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentC
         );
     }
 
+    if !result.quarantined.is_empty() {
+        tracing::warn!(
+            count = result.quarantined.len(),
+            names = ?result.quarantined.iter().map(|q| &q.name).collect::<Vec<_>>(),
+            "Daemon starting with quarantined agent profiles"
+        );
+    }
+
     if result.profiles.is_empty() && !result.quarantined.is_empty() {
         tracing::error!(
             count = result.quarantined.len(),
@@ -74,8 +94,30 @@ pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentC
         });
     }
 
-    let active_profile_name =
-        select_active_profile(&input.profiles_config.default, result.profiles.keys().cloned().collect())?;
+    let active_profile_name = match select_active_profile(
+        &input.profiles_config.default,
+        result.profiles.keys().cloned().collect(),
+    ) {
+        Ok(name) => name,
+        Err(_) if !result.profiles.is_empty() => {
+            // Configured default was quarantined or missing; fall back to any valid profile.
+            let fallback = if result.profiles.contains_key("code-agent") {
+                "code-agent".to_string()
+            } else {
+                let mut names: Vec<_> = result.profiles.keys().cloned().collect();
+                names.sort();
+                names.into_iter().next().unwrap()
+            };
+            tracing::warn!(
+                configured = %input.profiles_config.default,
+                fallback = %fallback,
+                quarantined_count = result.quarantined.len(),
+                "Configured default profile unavailable; falling back to available profile"
+            );
+            fallback
+        }
+        Err(e) => return Err(e), // No profiles at all — genuine error
+    };
     result.registry
         .resolve_by_name(&active_profile_name)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;

@@ -241,11 +241,33 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
             corpus::extension::inspector::inspect_package(path)?;
             println!("Package is valid.");
         }
-        ExtensionCmd::Install { .. } => {
-            anyhow::bail!("not implemented: extension install (R2)")
+        ExtensionCmd::Install { path } => {
+            use executive::application::extension_install::ExtensionInstallService;
+            let store_root = dirs::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("aletheon")
+                .join("extensions")
+                .join("packages");
+            let service = ExtensionInstallService::new(&store_root)?;
+            let hash = service.install(&path)?;
+            println!("Installed package with hash: {hash}");
         }
         ExtensionCmd::List => {
-            anyhow::bail!("not implemented: extension list (R2)")
+            use executive::application::extension_install::ExtensionInstallService;
+            let store_root = dirs::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("aletheon")
+                .join("extensions")
+                .join("packages");
+            let service = ExtensionInstallService::new(&store_root)?;
+            let packages = service.list()?;
+            if packages.is_empty() {
+                println!("No extensions installed.");
+            } else {
+                for pkg in packages {
+                    println!("  {pkg}");
+                }
+            }
         }
         ExtensionCmd::Show { .. } => {
             anyhow::bail!("not implemented: extension show (R2)")

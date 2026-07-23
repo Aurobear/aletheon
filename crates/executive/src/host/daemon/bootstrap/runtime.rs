@@ -621,6 +621,10 @@ mod goal_runtime_tests {
         assert_eq!(result.quarantined.len(), 1);
         assert_eq!(result.quarantined[0].name, "bad");
         assert!(result.quarantined[0].reason.contains("not_a_tool"));
+        assert!(
+            result.profiles.is_empty(),
+            "no valid profiles should remain when every profile is quarantined"
+        );
     }
 
     #[test]

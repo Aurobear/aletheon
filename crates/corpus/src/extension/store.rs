@@ -4,6 +4,8 @@
 //! as a pointer file that atomically switches between versions.
 
 use anyhow::{bail, Context, Result};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 
 /// Package store backed by a filesystem directory.
@@ -25,8 +27,10 @@ impl PackageStore {
     }
 
     /// Return the path where a package with the given hash is stored.
-    pub fn package_path(&self, hash: &str) -> PathBuf {
-        self.packages_dir.join(hash)
+    /// Validates that `hash` is exactly 64 lowercase hex characters.
+    pub fn package_path(&self, hash: &str) -> Result<PathBuf> {
+        validate_hash(hash)?;
+        Ok(self.packages_dir.join(hash))
     }
 
     /// Return the activation pointer path for a package.
@@ -45,29 +49,49 @@ impl PackageStore {
     /// live process already holds the lock.
     pub fn acquire_lock(&self, package_id: &str) -> Result<()> {
         let lock_path = self.lock_path(package_id);
-        if lock_path.exists() {
-            // Check if the PID in the lock file is still alive
-            let content = std::fs::read_to_string(&lock_path)
-                .unwrap_or_default();
-            if let Ok(pid) = content.trim().parse::<i32>() {
-                if pid_alive(pid) {
-                    bail!(
-                        "package '{}' is locked by process {}",
-                        package_id,
-                        pid
-                    );
+        let pid = std::process::id();
+
+        // Attempt atomic creation first — no TOCTOU gap.
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&lock_path)
+        {
+            Ok(mut f) => {
+                write!(f, "{}", pid)
+                    .with_context(|| format!("cannot write lock for: {}", package_id))?;
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Lock file exists — check if the holder is still alive.
+                let content =
+                    std::fs::read_to_string(&lock_path).unwrap_or_default();
+                if let Ok(holder_pid) = content.trim().parse::<i32>() {
+                    if pid_alive(holder_pid) {
+                        bail!(
+                            "package '{}' is locked by process {}",
+                            package_id,
+                            holder_pid
+                        );
+                    }
                 }
-                // Dead PID — clean up stale lock
-                let _ = std::fs::remove_file(&lock_path);
-            } else {
-                // Corrupt lock — clean up
+                // Dead PID or corrupt content — remove stale lock.
                 let _ = std::fs::remove_file(&lock_path);
             }
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("cannot create lock for: {}", package_id));
+            }
         }
-        // Create new lock with current PID
-        let pid = std::process::id();
-        std::fs::write(&lock_path, pid.to_string())
+
+        // Retry atomic creation after cleaning up stale lock.
+        let mut f = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&lock_path)
             .with_context(|| format!("cannot create lock for: {}", package_id))?;
+        write!(f, "{}", pid)
+            .with_context(|| format!("cannot write lock for: {}", package_id))?;
         Ok(())
     }
 
@@ -78,19 +102,24 @@ impl PackageStore {
     }
 
     /// Check if a package with the given hash is already installed.
-    pub fn is_installed(&self, hash: &str) -> bool {
-        self.package_path(hash).exists()
+    /// Validates that `hash` is exactly 64 lowercase hex characters.
+    pub fn is_installed(&self, hash: &str) -> Result<bool> {
+        Ok(self.package_path(hash)?.exists())
     }
 
     /// Get the staging directory for a package hash.
-    pub fn staging_path(&self, hash: &str) -> PathBuf {
-        self.root.join("staging").join(&hash[..16])
+    /// Validates that `hash` is exactly 64 lowercase hex characters.
+    pub fn staging_path(&self, hash: &str) -> Result<PathBuf> {
+        validate_hash(hash)?;
+        Ok(self.root.join("staging").join(&hash[..16]))
     }
 
     /// Move staging directory to final package location.
+    /// Validates that `hash` is exactly 64 lowercase hex characters.
     pub fn commit_staging(&self, hash: &str) -> Result<()> {
-        let staging = self.staging_path(hash);
-        let dest = self.package_path(hash);
+        validate_hash(hash)?;
+        let staging = self.staging_path(hash)?;
+        let dest = self.package_path(hash)?;
         if dest.exists() {
             bail!("package already installed at: {}", dest.display());
         }
@@ -132,6 +161,17 @@ impl PackageStore {
         }
         Ok(hashes)
     }
+}
+
+/// Validate that `hash` is exactly 64 lowercase hex characters.
+fn validate_hash(hash: &str) -> Result<()> {
+    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!(
+            "invalid hash: must be 64 hex characters, got {:?}",
+            hash
+        );
+    }
+    Ok(())
 }
 
 /// Check if a process with the given PID is alive (Linux).
@@ -176,11 +216,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = PackageStore::new(tmp.path().to_path_buf()).unwrap();
         let hash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
-        let staging = store.staging_path(hash);
+        let staging = store.staging_path(hash).unwrap();
         std::fs::create_dir_all(&staging).unwrap();
         std::fs::write(staging.join("test.txt"), "hello").unwrap();
         store.commit_staging(hash).unwrap();
-        assert!(store.is_installed(hash));
-        assert!(store.package_path(hash).join("test.txt").exists());
+        assert!(store.is_installed(hash).unwrap());
+        assert!(store.package_path(hash).unwrap().join("test.txt").exists());
     }
 }
