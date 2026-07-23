@@ -260,6 +260,7 @@ impl ProductionTurnSessions {
         } else {
             Message::user(pending_user).estimate_tokens()
         };
+        let effective_context_window = self.context_window.min(profile.max_input_tokens as usize);
         Ok(ContextBudgetPlanner::plan(ContextBudgetInput {
             model_context_window: self.context_window,
             profile_input_limit: profile.max_input_tokens as usize,
@@ -267,7 +268,7 @@ impl ProductionTurnSessions {
             tool_schema_tokens,
             reserved_output_tokens: profile.max_output_tokens as usize,
             pending_user_input_tokens,
-            safety_margin_tokens: (self.context_window / 20).max(1_024),
+            safety_margin_tokens: (effective_context_window / 20).max(1_024),
             current_history_tokens: manager.estimate_tokens(),
         }))
     }
