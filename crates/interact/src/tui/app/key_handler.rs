@@ -256,34 +256,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         // Tab: trigger completion for slash commands
         KeyCode::Tab => {
             if app.input_buf.starts_with('/') {
-                let commands: Vec<String> = vec![
-                    "/help",
-                    "/clear",
-                    "/copy",
-                    "/status",
-                    "/reflect",
-                    "/reflect_now",
-                    "/evolution",
-                    "/genome",
-                    "/sessions",
-                    "/resume",
-                    "/compact",
-                    "/model",
-                    "/quit",
-                    "/mode",
-                    "/plan",
-                    "/approve",
-                    "/agents",
-                    "/agent",
-                    "/hooks",
-                    "/skills",
-                    "/skill",
-                    "/interrupt",
-                    "/context",
-                ]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+                let commands = app.registry.completion_list();
                 app.completion.show(&app.input_buf, &commands);
             }
         }

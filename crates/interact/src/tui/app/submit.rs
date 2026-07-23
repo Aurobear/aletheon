@@ -39,7 +39,10 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Clear)) => {
+                write_request(app, ClientRpcRequest::SessionNew).await;
                 app.chat = ChatWidget::new(app.caps.clone());
+                app.chat
+                    .add_text(ChatRole::System, "已创建新会话".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Copy)) => {
@@ -73,8 +76,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Help)) => {
-                let help = "内置命令：\n  /help         显示帮助\n  /clear        清空对话\n  /copy         复制最后回复到剪贴板\n  /status (st)  查看自我演化状态\n  /reflect      查看反思记录\n  /reflect_now  执行即时反思\n  /evolution    查看演化历史\n  /genome       查看基因组\n  /sessions     列出会话\n  /resume <id>  恢复会话\n  /compact (cmp) 压缩上下文\n  /model (m)    切换模型\n  /quit         退出\n\n输入：\n  Shift+Enter 或 \\+Enter  换行\n  Enter                   发送\n  Ctrl+C                   清空/退出\n  Esc                      清空输入\n  PgUp/PgDn               滚动聊天";
-                app.chat.add_text(ChatRole::System, help.to_string());
+                let help = app.registry.help_text();
+                app.chat.add_text(ChatRole::System, help);
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Status)) => {
@@ -222,20 +225,9 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Skills)) => {
-                let skills = app.skill_loader.list();
-                if skills.is_empty() {
-                    app.chat
-                        .add_text(ChatRole::System, "No skills loaded".to_string());
-                } else {
-                    let lines: Vec<String> = skills
-                        .iter()
-                        .map(|s| format!("  /{} - {}", s.name, s.description))
-                        .collect();
-                    app.chat.add_text(
-                        ChatRole::System,
-                        format!("Available skills:\n{}", lines.join("\n")),
-                    );
-                }
+                send_request(app, ClientRpcRequest::SkillsList).await;
+                app.chat
+                    .add_text(ChatRole::System, "查询 Skill 列表中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::SkillRun { name, args })) => {

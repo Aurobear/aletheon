@@ -34,12 +34,14 @@ pub enum ClientRpcRequest {
     ModelList,
     AgentProfileList,
     AgentProfileSet(AgentProfileSetParams),
+    SkillsList,
     ModeSwitch(ModeSwitchParams),
     PlanApprove,
     Cancel,
     Interrupt(InterruptParams),
     HooksList,
     DaemonShutdown,
+    SessionNew,
     ApprovalResponse(ApprovalResponseParams),
     MemoryAdd(MemoryAddParams),
     MemoryList(MemoryListParams),
@@ -473,6 +475,7 @@ impl ClientRpcRequest {
             Self::AgentProfileSet(params) => {
                 ("agent.profile.set", Some(serde_json::to_value(params)?))
             }
+            Self::SkillsList => ("skills.list", None),
             Self::ModeSwitch(params) => ("mode_switch", Some(serde_json::to_value(params)?)),
             Self::PlanApprove => ("plan_approve", None),
             Self::Cancel => ("cancel", None),
@@ -482,6 +485,7 @@ impl ClientRpcRequest {
                 "daemon.shutdown",
                 Some(serde_json::to_value(EmptyParams {})?),
             ),
+            Self::SessionNew => ("session.new", None),
             Self::ApprovalResponse(params) => {
                 ("approval_response", Some(serde_json::to_value(params)?))
             }

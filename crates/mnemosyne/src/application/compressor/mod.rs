@@ -14,6 +14,26 @@ use fabric::{
 use tail::{find_tail_cut, TailProtectionConfig};
 use template::{SummaryTemplate, SUMMARY_PREFIX};
 
+/// Immutable record of one compaction run.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CompactionLineage {
+    /// Monotonic run identifier.
+    pub run_id: u64,
+    /// Strategy used for this compaction.
+    pub strategy: CompactionStrategy,
+    /// Token count before compaction.
+    pub tokens_before: usize,
+    /// Token count after compaction.
+    pub tokens_after: usize,
+    /// Whether the compaction was forced (true) or automatic (false).
+    pub forced: bool,
+    /// Whether the compaction succeeded (true) or failed (false).
+    pub applied: bool,
+    /// Failure reason if not applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+}
+
 /// Advanced context compressor with token-budget tail protection
 /// and iterative summary updates.
 pub struct AdvancedCompressor {
@@ -22,6 +42,8 @@ pub struct AdvancedCompressor {
     context_window_tokens: usize,
     previous_summary: Option<String>,
     template: SummaryTemplate,
+    run_counter: u64,
+    lineage: Vec<CompactionLineage>,
 }
 
 impl AdvancedCompressor {
@@ -39,6 +61,8 @@ impl AdvancedCompressor {
             context_window_tokens,
             previous_summary: None,
             template: SummaryTemplate,
+            run_counter: 0,
+            lineage: Vec::new(),
         }
     }
 
@@ -63,6 +87,11 @@ impl AdvancedCompressor {
     /// The most recent summary produced by a compaction, if any.
     pub fn last_summary(&self) -> Option<&str> {
         self.previous_summary.as_deref()
+    }
+
+    /// All compaction lineage records, oldest first.
+    pub fn lineage(&self) -> &[CompactionLineage] {
+        &self.lineage
     }
 
     /// Read-only prediction used by lifecycle observers. It applies the same
@@ -145,6 +174,17 @@ impl AdvancedCompressor {
             "Context compacted with token-budget tail protection"
         );
 
+        self.run_counter += 1;
+        self.lineage.push(CompactionLineage {
+            run_id: self.run_counter,
+            strategy: CompactionStrategy::TailKeep,
+            tokens_before: total_tokens,
+            tokens_after: messages.iter().map(|m| m.estimate_tokens()).sum(),
+            forced: force,
+            applied: true,
+            failure: None,
+        });
+
         Ok(true)
     }
 
@@ -175,7 +215,7 @@ impl AdvancedCompressor {
         if !force {
             let threshold = (self.context_window_tokens as f64 * 0.8) as usize;
             if tokens_before < threshold {
-                return Ok(unchanged(None));
+                return Ok(self.push_lineage(unchanged(None), force));
             }
         }
 
@@ -190,12 +230,12 @@ impl AdvancedCompressor {
             _ => find_tail_cut(messages, &self.tail_config),
         };
         if cut == 0 || cut >= messages.len() {
-            return Ok(unchanged(None));
+            return Ok(self.push_lineage(unchanged(None), force));
         }
 
         let old_messages = &messages[..cut];
         if old_messages.is_empty() {
-            return Ok(unchanged(None));
+            return Ok(self.push_lineage(unchanged(None), force));
         }
 
         let seed_chars: usize = old_messages
@@ -204,7 +244,10 @@ impl AdvancedCompressor {
             .map(content_block_chars)
             .sum();
         if seed_chars < MIN_SUMMARY_SEED_CHARS {
-            return Ok(unchanged(Some(CompactionFailure::TooShortToSummarize)));
+            return Ok(self.push_lineage(
+                unchanged(Some(CompactionFailure::TooShortToSummarize)),
+                force,
+            ));
         }
 
         let mut pruned = old_messages.to_vec();
@@ -213,19 +256,25 @@ impl AdvancedCompressor {
         let summary = match self.generate_summary(&pruned, llm).await {
             Ok(s) => s,
             Err(e) => {
-                return Ok(unchanged(Some(CompactionFailure::SamplerError {
-                    detail: e.to_string(),
-                })));
+                return Ok(self.push_lineage(
+                    unchanged(Some(CompactionFailure::SamplerError {
+                        detail: e.to_string(),
+                    })),
+                    force,
+                ));
             }
         };
 
         if is_degenerate_summary(&summary) {
-            return Ok(unchanged(Some(CompactionFailure::DegenerateSummary {
-                reason: format!(
-                    "summary rejected ({} chars)",
-                    summary.trim().chars().count()
-                ),
-            })));
+            return Ok(self.push_lineage(
+                unchanged(Some(CompactionFailure::DegenerateSummary {
+                    reason: format!(
+                        "summary rejected ({} chars)",
+                        summary.trim().chars().count()
+                    ),
+                })),
+                force,
+            ));
         }
 
         // Segments that will leave the main buffer — surfaced for promotion.
@@ -255,14 +304,32 @@ impl AdvancedCompressor {
         *messages = compacted;
         let tokens_after: usize = messages.iter().map(|m| m.estimate_tokens()).sum();
 
-        Ok(CompactionOutcome {
-            strategy,
-            applied: true,
-            tokens_before,
-            tokens_after,
-            evicted,
-            failure: None,
-        })
+        Ok(self.push_lineage(
+            CompactionOutcome {
+                strategy,
+                applied: true,
+                tokens_before,
+                tokens_after,
+                evicted,
+                failure: None,
+            },
+            force,
+        ))
+    }
+
+    /// Record a compaction lineage entry and return the outcome unchanged.
+    fn push_lineage(&mut self, outcome: CompactionOutcome, forced: bool) -> CompactionOutcome {
+        self.run_counter += 1;
+        self.lineage.push(CompactionLineage {
+            run_id: self.run_counter,
+            strategy: outcome.strategy,
+            tokens_before: outcome.tokens_before,
+            tokens_after: outcome.tokens_after,
+            forced,
+            applied: outcome.applied,
+            failure: outcome.failure.as_ref().map(|f| format!("{f:?}")),
+        });
+        outcome
     }
 
     async fn generate_summary<L: LlmProvider + ?Sized>(

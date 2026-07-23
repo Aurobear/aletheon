@@ -22,6 +22,7 @@ pub mod input;
 pub mod markdown;
 pub mod pager;
 pub mod plan_view;
+pub mod registry;
 pub mod skill;
 pub mod state;
 pub mod status;
@@ -298,6 +299,7 @@ struct App {
     sub_agents: Vec<SubAgentHandle>,
     /// Current ReAct loop iteration (0 = first call, 1+ = after tool calls).
     current_iteration: usize,
+    pub registry: registry::CommandRegistry,
     /// Clock for time-based operations (injectable for testing).
     pub clock: Arc<dyn Clock>,
 }
@@ -349,6 +351,7 @@ impl App {
             plan_view: PlanViewState::default(),
             sub_agents: Vec::new(),
             current_iteration: 0,
+            registry: registry::CommandRegistry::new(),
             clock,
         }
     }

@@ -360,6 +360,11 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
             // /hooks response
             let formatted = format_hooks(hooks);
             app.chat.set_assistant_stream(formatted);
+        } else if let Some(skills) = result.get("skills") {
+            // Phase B: when SkillsCatalog response arrives, call
+            // app.registry.set_skills(skills);
+            let formatted = format_skills_list(skills);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(tools) = result.get("tools") {
             // tools/list response
             let formatted = format_tools_list(tools);
@@ -725,6 +730,24 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
         let status = a.get("status").and_then(|v| v.as_str()).unwrap_or("?");
         lines.push(format!("  {id} [{status}] — {task}"));
     }
+    lines.join("\n")
+}
+
+pub fn format_skills_list(skills: &serde_json::Value) -> String {
+    let empty = vec![];
+    let arr = skills.as_array().unwrap_or(&empty);
+    if arr.is_empty() {
+        return "No skills available.".to_string();
+    }
+    let mut lines = Vec::new();
+    lines.push(format!("=== Skills ({}) ===\n", arr.len()));
+    for sk in arr {
+        let name = sk.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let desc = sk.get("description").and_then(|v| v.as_str()).unwrap_or("");
+        lines.push(format!("  /{name} — {desc}"));
+    }
+    // Phase B: when SkillsCatalog response arrives, call
+    // app.registry.set_skills(skills);
     lines.join("\n")
 }
 
