@@ -1,5 +1,1 @@
-pub mod evaluator;
-pub mod lineage;
-pub mod migration;
-pub mod rollback;
-pub mod sandbox_runner;
+// Placeholder: meta_runtime modules have moved to crate::evolution and crate::governance.

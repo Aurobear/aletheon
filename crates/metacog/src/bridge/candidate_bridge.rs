@@ -4,7 +4,7 @@ use anyhow::Result;
 use fabric::{Clock, Genome, MutationIntent, RuntimeCandidate};
 use std::sync::Arc;
 
-use crate::r#impl::morphogenesis::candidate::CandidateGenerator;
+use crate::evolution::candidate::CandidateGenerator;
 
 /// Bridge for candidate generation — connects MutationIntent to RuntimeCandidate.
 pub struct CandidateBridge {
