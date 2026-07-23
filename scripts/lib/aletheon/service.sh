@@ -30,6 +30,10 @@ cmd_status() {
 
 cmd_restart() {
   aletheon_info "restarting machine core and user daemon"
+  # The installer may have just restarted the core while replacing units.
+  # Clear systemd's rate-limit accounting before the deliberate deploy restart.
+  sudo systemctl reset-failed aletheon-core.service
+  systemctl --user reset-failed aletheon.service 2>/dev/null || true
   sudo systemctl restart aletheon-core.service
   systemctl --user restart aletheon.service
   aletheon_ok "services restarted"
