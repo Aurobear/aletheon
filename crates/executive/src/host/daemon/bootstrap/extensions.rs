@@ -52,6 +52,14 @@ pub(super) async fn register_package_runtimes(
             activation.health = "quarantined".into();
             activation.quarantine_reason = Some("active package projection is missing".into());
             store.write_activation(&activation)?;
+            publish_runtime_evidence(
+                &store,
+                "degraded_health",
+                &package_id,
+                None,
+                "quarantined",
+                "activation:missing_projection",
+            )?;
             quarantined.push(format!("{package_id}: active package projection is missing"));
             continue;
         };
@@ -66,6 +74,14 @@ pub(super) async fn register_package_runtimes(
         )
         .await;
         if let Err(candidate_error) = candidate_result {
+            publish_runtime_evidence(
+                &store,
+                "activation_failure",
+                &package_id,
+                Some(&candidate.version),
+                "failed",
+                &format!("package:sha256:{}", candidate.hash),
+            )?;
             let candidate_reason = format!("{package_id}: {candidate_error:#}");
             tracing::error!(reason = %candidate_reason, "Extension runtime candidate failed");
             let rollback = activation
@@ -97,6 +113,14 @@ pub(super) async fn register_package_runtimes(
                         activation.health = "rolled_back".into();
                         activation.quarantine_reason = Some(candidate_reason.clone());
                         store.write_activation(&activation)?;
+                        publish_runtime_evidence(
+                            &store,
+                            "successful_recovery",
+                            &package_id,
+                            Some(&previous.version),
+                            "rolled_back",
+                            &format!("package:sha256:{}", previous.hash),
+                        )?;
                         quarantined.push(candidate_reason);
                         continue;
                     }
@@ -112,6 +136,14 @@ pub(super) async fn register_package_runtimes(
             activation.enabled = false;
             activation.health = "quarantined".into();
             store.write_activation(&activation)?;
+            publish_runtime_evidence(
+                &store,
+                "degraded_health",
+                &package_id,
+                Some(&candidate.version),
+                "quarantined",
+                &format!("package:sha256:{}", candidate.hash),
+            )?;
             quarantined.push(
                 activation
                     .quarantine_reason
@@ -123,6 +155,26 @@ pub(super) async fn register_package_runtimes(
     Ok(ExtensionRuntimeComposition {
         router,
         quarantined,
+    })
+}
+
+fn publish_runtime_evidence(
+    store: &corpus::extension::store::PackageStore,
+    event_type: &str,
+    package_id: &str,
+    package_version: Option<&str>,
+    result: &str,
+    evidence_reference: &str,
+) -> anyhow::Result<()> {
+    store.append_evidence(&corpus::extension::store::ExtensionEvidenceEvent {
+        schema_version: 1,
+        event_type: event_type.into(),
+        correlation_id: uuid::Uuid::new_v4().to_string(),
+        package_id: package_id.into(),
+        package_version: package_version.map(str::to_owned),
+        result: result.into(),
+        evidence_references: vec![evidence_reference.into()],
+        occurred_at: chrono::Utc::now().to_rfc3339(),
     })
 }
 

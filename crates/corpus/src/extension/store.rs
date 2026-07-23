@@ -45,6 +45,20 @@ pub struct WorkspaceTrustRecord {
     pub package_hash: String,
 }
 
+/// Generic extension evidence envelope. It deliberately lives below Metacog:
+/// observers may consume it, but cannot use it to mutate extension state.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionEvidenceEvent {
+    pub schema_version: u32,
+    pub event_type: String,
+    pub correlation_id: String,
+    pub package_id: String,
+    pub package_version: Option<String>,
+    pub result: String,
+    pub evidence_references: Vec<String>,
+    pub occurred_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PermissionApprovalRecord {
     pub actor: String,
@@ -250,6 +264,33 @@ impl PackageStore {
         let path = directory.join(format!("{}.json", Uuid::new_v4()));
         write_json_atomic(&path, receipt)?;
         Ok(path)
+    }
+
+    /// Append a bounded, structured observation for Metacog and other generic
+    /// evidence consumers. State mutation remains exclusively in lifecycle
+    /// services; this stream is observation-only.
+    pub fn append_evidence(&self, event: &ExtensionEvidenceEvent) -> Result<()> {
+        anyhow::ensure!(event.schema_version == 1, "unsupported evidence schema");
+        anyhow::ensure!(!event.event_type.trim().is_empty(), "event type is required");
+        anyhow::ensure!(!event.correlation_id.trim().is_empty(), "correlation ID is required");
+        anyhow::ensure!(event.result.len() <= 64, "event result is too long");
+        anyhow::ensure!(
+            event.evidence_references.len() <= 16
+                && event
+                    .evidence_references
+                    .iter()
+                    .all(|reference| reference.len() <= 256),
+            "evidence references exceed persistence bounds"
+        );
+        let _lock = self.acquire_lock("__extension_evidence__")?;
+        let path = self.root.join("metacog-events.jsonl");
+        let mut line = serde_json::to_vec(event)?;
+        line.push(b'\n');
+        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+        file.write_all(&line)?;
+        file.sync_all()?;
+        sync_dir(&self.root)?;
+        Ok(())
     }
 
     /// Rebuild the installed projection from durable install receipts.
@@ -476,5 +517,31 @@ mod tests {
         assert!(store.list_installed().unwrap().is_empty());
         assert_eq!(store.replay_install_receipts().unwrap(), 1);
         assert_eq!(store.list_installed().unwrap(), vec![record]);
+    }
+
+    #[test]
+    fn generic_evidence_is_durable_bounded_jsonl() {
+        let temp = TempDir::new().unwrap();
+        let store = PackageStore::new(temp.path().to_owned()).unwrap();
+        let event = ExtensionEvidenceEvent {
+            schema_version: 1,
+            event_type: "activation_failure".into(),
+            correlation_id: "correlation-1".into(),
+            package_id: "test.pkg".into(),
+            package_version: Some("1.0.0".into()),
+            result: "failed".into(),
+            evidence_references: vec![format!("package:sha256:{HASH}")],
+            occurred_at: "2026-07-24T00:00:00Z".into(),
+        };
+        store.append_evidence(&event).unwrap();
+        let line = std::fs::read_to_string(temp.path().join("metacog-events.jsonl")).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ExtensionEvidenceEvent>(line.trim()).unwrap(),
+            event
+        );
+
+        let mut oversized = event;
+        oversized.result = "x".repeat(65);
+        assert!(store.append_evidence(&oversized).is_err());
     }
 }

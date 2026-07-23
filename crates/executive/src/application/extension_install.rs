@@ -6,7 +6,8 @@
 use anyhow::{Context, Result};
 use corpus::extension::inspector;
 use corpus::extension::store::{
-    InstalledPackageRecord, PackageSourceRecord, PackageStore, WorkspaceTrustRecord,
+    ExtensionEvidenceEvent, InstalledPackageRecord, PackageSourceRecord, PackageStore,
+    WorkspaceTrustRecord,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -62,7 +63,19 @@ impl ExtensionInstallService {
         source_override: Option<PackageSourceRecord>,
         workspace_actor: Option<&str>,
     ) -> Result<String> {
-        let result = inspector::inspect_package(package_path)?;
+        let result = match inspector::inspect_package(package_path) {
+            Ok(result) => result,
+            Err(error) => {
+                self.publish_evidence(
+                    "package_validation_failure",
+                    "unknown",
+                    None,
+                    "failed",
+                    vec!["package:inspection".into()],
+                )?;
+                return Err(error);
+            }
+        };
         let hash = result.package_hash.as_str();
         let pkg_id = &result.manifest.package.id.0;
         let source = source_override.unwrap_or_else(|| {
@@ -134,6 +147,13 @@ impl ExtensionInstallService {
             "record": record,
         });
         self.store.store_receipt(pkg_id, &receipt)?;
+        self.publish_evidence(
+            "package_installed",
+            pkg_id,
+            Some(&record.version),
+            "succeeded",
+            vec![format!("package:sha256:{hash}")],
+        )?;
 
         Ok(hash.to_owned())
     }
@@ -147,6 +167,26 @@ impl ExtensionInstallService {
         let records = self.store.get_installed(id)?;
         anyhow::ensure!(!records.is_empty(), "extension '{id}' is not installed");
         Ok(records)
+    }
+
+    fn publish_evidence(
+        &self,
+        event_type: &str,
+        package_id: &str,
+        package_version: Option<&str>,
+        result: &str,
+        evidence_references: Vec<String>,
+    ) -> Result<()> {
+        self.store.append_evidence(&ExtensionEvidenceEvent {
+            schema_version: 1,
+            event_type: event_type.to_owned(),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            package_id: package_id.to_owned(),
+            package_version: package_version.map(str::to_owned),
+            result: result.to_owned(),
+            evidence_references,
+            occurred_at: chrono::Utc::now().to_rfc3339(),
+        })
     }
 }
 

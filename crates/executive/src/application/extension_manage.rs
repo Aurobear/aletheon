@@ -1,7 +1,7 @@
 //! Transactional extension lifecycle management.
 
 use anyhow::{Context, Result};
-use corpus::extension::store::{ActivationRecord, PackageStore};
+use corpus::extension::store::{ActivationRecord, ExtensionEvidenceEvent, PackageStore};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -371,7 +371,7 @@ impl ExtensionManageService {
     }
 
     fn receipt(&self, id: &str, operation: &str, details: serde_json::Value) -> Result<()> {
-        self.store.store_receipt(
+        let receipt_path = self.store.store_receipt(
             id,
             &serde_json::json!({
                 "schema_version": 1,
@@ -381,6 +381,27 @@ impl ExtensionManageService {
                 "details": details,
             }),
         )?;
+        let result = if details.get("approved").and_then(|value| value.as_bool()) == Some(false) {
+            "denied"
+        } else {
+            "succeeded"
+        };
+        self.store.append_evidence(&ExtensionEvidenceEvent {
+            schema_version: 1,
+            event_type: format!("extension_{operation}"),
+            correlation_id: uuid::Uuid::new_v4().to_string(),
+            package_id: id.to_owned(),
+            package_version: None,
+            result: result.into(),
+            evidence_references: vec![format!(
+                "receipt:{}",
+                receipt_path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("unknown")
+            )],
+            occurred_at: chrono::Utc::now().to_rfc3339(),
+        })?;
         Ok(())
     }
 
