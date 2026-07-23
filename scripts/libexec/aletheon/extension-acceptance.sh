@@ -82,6 +82,7 @@ def validate_envelope(value, name):
 
 receipts = {}
 criteria = set()
+commits = set()
 for name in required:
     path = safe_file(name)
     if name.endswith(".jsonl"):
@@ -98,6 +99,7 @@ for name in required:
         receipts[name] = values
         for value in values:
             criteria.update(value["acceptance_criteria"])
+            commits.add(value["commit"])
     else:
         try:
             value = json.loads(path.read_text())
@@ -105,9 +107,12 @@ for name in required:
             fail(f"{name} is invalid JSON: {error}")
         receipts[name] = validate_envelope(value, name)
         criteria.update(value["acceptance_criteria"])
+        commits.add(value["commit"])
 
 if criteria != set(range(1, 21)):
     fail(f"acceptance criteria coverage is incomplete: {sorted(criteria)}")
+if len(commits) != 1:
+    fail(f"receipts do not describe one candidate commit: {sorted(commits)}")
 
 hashes = []
 for name in ("candidate-hash.json", "installed-hash.json", "running-process-hash.json"):

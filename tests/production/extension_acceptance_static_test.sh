@@ -61,4 +61,16 @@ if bash "$validator" "$tmp" >/dev/null 2>&1; then
   echo "validator accepted a dirty cleanup receipt" >&2
   exit 1
 fi
+python3 - "$tmp/cleanup.json" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+value = json.loads(path.read_text())
+value["evidence_summary"]["remaining_processes"] = 0
+value["commit"] = "abcdef2"
+path.write_text(json.dumps(value) + "\n")
+PY
+if bash "$validator" "$tmp" >/dev/null 2>&1; then
+  echo "validator accepted receipts from mixed commits" >&2
+  exit 1
+fi
 echo "extension acceptance static verification: pass"
