@@ -13,6 +13,8 @@ use thiserror::Error;
 use super::experiment::{EvolutionExperiment, ExperimentOutcome};
 use super::lineage::LineageLink;
 
+const EXPERIMENT_EVENT_SCHEMA_V1: u32 = 1;
+
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -85,19 +87,32 @@ pub trait ExperimentStore: Send + Sync {
 enum ExperimentRecord {
     #[serde(rename = "experiment_started")]
     Started {
+        schema_version: u32,
         experiment_id: String,
         experiment: EvolutionExperiment,
     },
     #[serde(rename = "experiment_completed")]
     Completed {
+        schema_version: u32,
         experiment_id: String,
         outcome: ExperimentOutcome,
     },
     #[serde(rename = "lineage_link")]
     Lineage {
+        schema_version: u32,
         experiment_id: String,
         link: LineageLink,
     },
+}
+
+impl ExperimentRecord {
+    fn schema_version(&self) -> u32 {
+        match self {
+            Self::Started { schema_version, .. }
+            | Self::Completed { schema_version, .. }
+            | Self::Lineage { schema_version, .. } => *schema_version,
+        }
+    }
 }
 
 /// JSONL-backed experiment store.
@@ -133,6 +148,12 @@ impl JsonlExperimentStore {
                 }
                 let record: ExperimentRecord = serde_json::from_str(&line)
                     .map_err(|e| ExperimentStoreError::Persistence(e.to_string()))?;
+                if record.schema_version() != EXPERIMENT_EVENT_SCHEMA_V1 {
+                    return Err(ExperimentStoreError::Persistence(format!(
+                        "unsupported experiment event schema version {}",
+                        record.schema_version()
+                    )));
+                }
                 records.push(record);
             }
             records
@@ -149,27 +170,19 @@ impl JsonlExperimentStore {
         })
     }
 
-    /// Full rewrite of the backing file (atomic via temp-file rename).
-    fn persist(&self) -> Result<(), ExperimentStoreError> {
+    fn append_to_file(&self, record: &ExperimentRecord) -> Result<(), ExperimentStoreError> {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        let temp = path.with_extension(".tmp");
-        let records = self
-            .records
-            .lock()
-            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {}", e)))?;
-        let mut file = std::fs::File::create(&temp)
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
             .map_err(|e| ExperimentStoreError::Persistence(e.to_string()))?;
-        for record in records.iter() {
-            let line = serde_json::to_string(record)
-                .map_err(|e| ExperimentStoreError::Persistence(e.to_string()))?;
-            writeln!(file, "{}", line)
-                .map_err(|e| ExperimentStoreError::Persistence(e.to_string()))?;
-        }
+        let line = serde_json::to_string(record)
+            .map_err(|e| ExperimentStoreError::Persistence(e.to_string()))?;
+        writeln!(file, "{line}").map_err(|e| ExperimentStoreError::Persistence(e.to_string()))?;
         file.sync_all()
-            .map_err(|e| ExperimentStoreError::Persistence(e.to_string()))?;
-        std::fs::rename(&temp, path)
             .map_err(|e| ExperimentStoreError::Persistence(e.to_string()))?;
         Ok(())
     }
@@ -203,12 +216,13 @@ impl ExperimentStore for JsonlExperimentStore {
             }
         }
 
-        records.push(ExperimentRecord::Started {
+        let record = ExperimentRecord::Started {
+            schema_version: EXPERIMENT_EVENT_SCHEMA_V1,
             experiment_id: experiment_id.clone(),
             experiment,
-        });
-        drop(records);
-        self.persist()?;
+        };
+        self.append_to_file(&record)?;
+        records.push(record);
         Ok(experiment_id)
     }
 
@@ -231,12 +245,13 @@ impl ExperimentStore for JsonlExperimentStore {
             return Err(ExperimentStoreError::NotFound(experiment_id.to_string()));
         }
 
-        records.push(ExperimentRecord::Completed {
+        let record = ExperimentRecord::Completed {
+            schema_version: EXPERIMENT_EVENT_SCHEMA_V1,
             experiment_id: experiment_id.to_string(),
             outcome,
-        });
-        drop(records);
-        self.persist()?;
+        };
+        self.append_to_file(&record)?;
+        records.push(record);
         Ok(())
     }
 
@@ -252,6 +267,7 @@ impl ExperimentStore for JsonlExperimentStore {
             if let ExperimentRecord::Started {
                 experiment_id: eid,
                 experiment,
+                ..
             } = r
             {
                 if eid == experiment_id {
@@ -274,6 +290,7 @@ impl ExperimentStore for JsonlExperimentStore {
             if let ExperimentRecord::Completed {
                 experiment_id: eid,
                 outcome,
+                ..
             } = r
             {
                 if eid == experiment_id {
@@ -293,12 +310,13 @@ impl ExperimentStore for JsonlExperimentStore {
             .records
             .lock()
             .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {}", e)))?;
-        records.push(ExperimentRecord::Lineage {
+        let record = ExperimentRecord::Lineage {
+            schema_version: EXPERIMENT_EVENT_SCHEMA_V1,
             experiment_id: experiment_id.to_string(),
             link,
-        });
-        drop(records);
-        self.persist()?;
+        };
+        self.append_to_file(&record)?;
+        records.push(record);
         Ok(())
     }
 
@@ -316,6 +334,7 @@ impl ExperimentStore for JsonlExperimentStore {
                 if let ExperimentRecord::Lineage {
                     experiment_id: eid,
                     link,
+                    ..
                 } = r
                 {
                     if eid == experiment_id {
@@ -335,10 +354,7 @@ impl ExperimentStore for JsonlExperimentStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evolution::experiment::{
-        EvaluationReport, ExperimentDecision, GateResult, ProblemRecord, ProblemSeverity,
-        ProblemState,
-    };
+    use crate::evolution::experiment::ExperimentDecision;
 
     fn make_experiment() -> EvolutionExperiment {
         EvolutionExperiment {
@@ -349,6 +365,7 @@ mod tests {
             success_threshold: 5_000,
             rollback_threshold: 3_000,
             observation_window_ms: 60_000,
+            observed_duration_ms: 60_000,
         }
     }
 

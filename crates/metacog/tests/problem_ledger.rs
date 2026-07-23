@@ -4,8 +4,8 @@
 //! restart projection rebuild, and historical evidence preservation.
 
 use metacog::problem::{
-    JsonlProblemLedger, ProblemFinding, ProblemLedger, ProblemRecord, ProblemSeverity,
-    ProblemState, ProblemTransition,
+    JsonlProblemLedger, ProblemFinding, ProblemLedger, ProblemSeverity, ProblemState,
+    ProblemTransition,
 };
 
 fn make_finding(id: &str, domain: &str, category: &str) -> ProblemFinding {
@@ -167,8 +167,8 @@ async fn valid_lifecycle_transitions_succeed() {
 
     let record = ledger.get("p1").await.unwrap().unwrap();
     assert_eq!(record.state, ProblemState::Resolved);
-    // Each observation + 4 transitions = 5 occurrences
-    assert_eq!(record.occurrence_count, 5);
+    // Lifecycle events do not fabricate new problem occurrences.
+    assert_eq!(record.occurrence_count, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -176,7 +176,7 @@ async fn valid_lifecycle_transitions_succeed() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn occurrence_count_increments_on_transitions() {
+async fn occurrence_count_does_not_increment_on_transitions() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ledger.jsonl");
 
@@ -199,8 +199,30 @@ async fn occurrence_count_increments_on_transitions() {
         .unwrap();
 
     let record = ledger.get("p1").await.unwrap().unwrap();
-    assert_eq!(record.occurrence_count, 2);
+    assert_eq!(record.occurrence_count, 1);
     assert_eq!(record.state, ProblemState::Confirmed);
+}
+
+#[tokio::test]
+async fn compatible_repeated_findings_increment_occurrence_by_fingerprint() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = JsonlProblemLedger::new(dir.path().join("ledger.jsonl"))
+        .await
+        .unwrap();
+    let first = make_finding("p1", "coding", "correctness");
+    let mut repeated = first.clone();
+    repeated.problem_id = "p2".into();
+    repeated.observed_at_ms += 10;
+    repeated.evidence_ids = vec!["ev-repeat".into()];
+
+    ledger.observe(first).await.unwrap();
+    ledger.observe(repeated).await.unwrap();
+
+    let record = ledger.get("p1").await.unwrap().unwrap();
+    assert_eq!(record.occurrence_count, 2);
+    assert_eq!(record.last_seen_at_ms, 110);
+    assert!(record.evidence_ids.contains(&"ev-repeat".to_string()));
+    assert!(ledger.get("p2").await.unwrap().is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +268,7 @@ async fn restart_rebuilds_projection_from_jsonl() {
         assert_eq!(p1.problem_id, "p1");
         assert_eq!(p1.domain, "coding");
         assert_eq!(p1.state, ProblemState::Confirmed);
-        assert_eq!(p1.occurrence_count, 2);
+        assert_eq!(p1.occurrence_count, 1);
 
         let p2 = ledger.get("p2").await.unwrap().unwrap();
         assert_eq!(p2.problem_id, "p2");
@@ -332,8 +354,7 @@ async fn historical_evidence_preserved_after_regression() {
     assert_eq!(record.state, ProblemState::Regressed);
     // Original evidence should still be preserved
     assert!(record.evidence_ids.contains(&"ev-original".to_string()));
-    // Occurrence count: 1 observe + 5 transitions = 6
-    assert_eq!(record.occurrence_count, 6);
+    assert_eq!(record.occurrence_count, 1);
 }
 
 // ---------------------------------------------------------------------------

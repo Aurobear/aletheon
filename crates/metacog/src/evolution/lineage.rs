@@ -1,4 +1,5 @@
-//! Lineage — tracks the history of runtime versions.
+//! Lineage — tracks the history of runtime versions AND causal links
+//! from problem identification through to measured evolution outcomes.
 //!
 //! In-memory implementation using a Vec. Each migration records a new entry
 //! with the version, parent version, description, and timestamp.
@@ -17,6 +18,56 @@ pub struct LineageEntry {
     pub parent_version: Option<String>,
     pub description: String,
     pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Lineage link — typed causal references
+// ---------------------------------------------------------------------------
+
+/// A single link in the causal chain from problem to measured outcome.
+///
+/// Each link carries stable string IDs and content hashes, never
+/// embedded payloads.  This keeps the lineage compact and allows
+/// every step of the evolution cycle to be addressed after restart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineageLink {
+    /// Stable identifier for the problem that triggered the improvement.
+    pub problem_id: String,
+    /// Stable identifier for the improvement proposal.
+    pub proposal_id: String,
+    /// Stable identifier for the mutation intent generated from the proposal.
+    pub mutation_id: String,
+    /// Stable identifier for the generated candidate.
+    pub candidate_id: String,
+    /// Stable identifier for the approval decision.
+    pub approval_id: String,
+    /// SHA-256 digest of the sandbox evaluation report payload.
+    pub evaluation_hash: String,
+    /// Stable identifier for the experiment outcome.
+    pub outcome_id: String,
+}
+
+impl LineageLink {
+    /// Create a new lineage link.
+    pub fn new(
+        problem_id: String,
+        proposal_id: String,
+        mutation_id: String,
+        candidate_id: String,
+        approval_id: String,
+        evaluation_hash: String,
+        outcome_id: String,
+    ) -> Self {
+        Self {
+            problem_id,
+            proposal_id,
+            mutation_id,
+            candidate_id,
+            approval_id,
+            evaluation_hash,
+            outcome_id,
+        }
+    }
 }
 
 /// Tracks the history of runtime versions.

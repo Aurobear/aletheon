@@ -4,7 +4,7 @@
 //! duplicate IDs with conflicting payloads.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -73,6 +73,27 @@ impl JsonlEvidenceStore {
                 }
                 let item: EvidenceItem = serde_json::from_str(&line)
                     .map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
+                if item.schema_version != 1 {
+                    return Err(EvidenceStoreError::Persistence(format!(
+                        "unsupported evidence schema version {}",
+                        item.schema_version
+                    )));
+                }
+                if !integrity::verify_integrity(&item) {
+                    return Err(EvidenceStoreError::IntegrityViolation(format!(
+                        "digest mismatch while replaying evidence {}",
+                        item.evidence_id.0
+                    )));
+                }
+                if let Some(existing) = items
+                    .iter()
+                    .find(|existing: &&EvidenceItem| existing.evidence_id == item.evidence_id)
+                {
+                    if existing.sha256 != item.sha256 {
+                        return Err(EvidenceStoreError::Conflict);
+                    }
+                    continue;
+                }
                 items.push(item);
             }
             items
@@ -89,26 +110,20 @@ impl JsonlEvidenceStore {
         })
     }
 
-    fn persist(&self) -> Result<(), EvidenceStoreError> {
+    fn append_to_file(&self, item: &EvidenceItem) -> Result<(), EvidenceStoreError> {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        let temp = path.with_extension(".tmp");
-        let items = self
-            .items
-            .lock()
-            .map_err(|e| EvidenceStoreError::Persistence(format!("lock poisoned: {}", e)))?;
-        let mut file = std::fs::File::create(&temp)
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
             .map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
-        for item in items.iter() {
-            let line = serde_json::to_string(item)
-                .map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
-            writeln!(file, "{}", line)
-                .map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
-        }
+        let line = serde_json::to_string(item)
+            .map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
+        writeln!(file, "{line}").map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
         file.sync_all()
             .map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
-        std::fs::rename(&temp, path).map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
         Ok(())
     }
 }
@@ -121,6 +136,12 @@ impl EvidenceStore for JsonlEvidenceStore {
             return Err(EvidenceStoreError::IntegrityViolation(format!(
                 "digest mismatch for evidence {}",
                 item.evidence_id.0
+            )));
+        }
+        if item.schema_version != 1 {
+            return Err(EvidenceStoreError::IntegrityViolation(format!(
+                "unsupported evidence schema version {}",
+                item.schema_version
             )));
         }
 
@@ -137,9 +158,10 @@ impl EvidenceStore for JsonlEvidenceStore {
             return Err(EvidenceStoreError::Conflict);
         }
 
+        // Persist before publishing to the process-local projection. A failed
+        // durable append therefore leaves both representations unchanged.
+        self.append_to_file(&item)?;
         items.push(item);
-        drop(items);
-        self.persist()?;
         Ok(AppendOutcome::Appended)
     }
 

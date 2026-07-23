@@ -12,6 +12,7 @@ use super::model::{ProblemRecord, ProblemState};
 /// Rebuilt from scratch by replaying all ledger events in append order.
 pub struct Projection {
     records: HashMap<String, ProblemRecord>,
+    fingerprints: HashMap<String, String>,
 }
 
 impl Projection {
@@ -19,49 +20,95 @@ impl Projection {
     pub fn new() -> Self {
         Self {
             records: HashMap::new(),
+            fingerprints: HashMap::new(),
         }
     }
 
     /// Apply a ledger event to update the projection.
-    pub fn apply_event(&mut self, event: &LedgerEvent) {
+    pub(crate) fn apply_event(&mut self, event: &LedgerEvent) {
         match event {
             LedgerEvent::ProblemObserved {
                 finding,
-                fingerprint: _fp,
+                fingerprint,
                 ..
             } => {
-                // Create a new record if not already present (idempotency)
-                self.records
-                    .entry(finding.problem_id.clone())
-                    .or_insert_with(|| ProblemRecord {
-                        problem_id: finding.problem_id.clone(),
-                        category: finding.category.clone(),
-                        subtype: finding.subtype.clone(),
-                        domain: finding.domain.clone(),
-                        subject: finding.subject.clone(),
-                        severity: finding.severity,
-                        confidence_millis: finding.confidence_millis,
-                        state: ProblemState::Observed,
-                        first_seen_at_ms: finding.observed_at_ms,
-                        last_seen_at_ms: finding.observed_at_ms,
-                        occurrence_count: 1,
-                        affected_versions: finding.affected_versions.clone(),
-                        expected_summary: finding.expected_summary.clone(),
-                        observed_summary: finding.observed_summary.clone(),
-                        failure_signature: finding.failure_signature.clone(),
-                        evidence_ids: finding.evidence_ids.clone(),
-                        causal_hypotheses: Vec::new(),
-                        related_problem_ids: Vec::new(),
-                        proposed_mitigations: Vec::new(),
-                        resolution_evidence: Vec::new(),
-                        regression_evidence: Vec::new(),
-                    });
+                if let Some(existing_id) = self.fingerprints.get(fingerprint).cloned() {
+                    if let Some(existing) = self.records.get_mut(&existing_id) {
+                        existing.last_seen_at_ms =
+                            existing.last_seen_at_ms.max(finding.observed_at_ms);
+                        existing.occurrence_count = existing.occurrence_count.saturating_add(1);
+                        existing.confidence_millis =
+                            existing.confidence_millis.max(finding.confidence_millis);
+                        for evidence in &finding.evidence_ids {
+                            if !existing.evidence_ids.contains(evidence) {
+                                existing.evidence_ids.push(evidence.clone());
+                            }
+                        }
+                        for version in &finding.affected_versions {
+                            if !existing.affected_versions.contains(version) {
+                                existing.affected_versions.push(version.clone());
+                            }
+                        }
+                    }
+                    return;
+                }
+                if !self.records.contains_key(&finding.problem_id) {
+                    self.fingerprints
+                        .insert(fingerprint.clone(), finding.problem_id.clone());
+                    self.records.insert(
+                        finding.problem_id.clone(),
+                        ProblemRecord {
+                            problem_id: finding.problem_id.clone(),
+                            category: finding.category.clone(),
+                            subtype: finding.subtype.clone(),
+                            domain: finding.domain.clone(),
+                            subject: finding.subject.clone(),
+                            severity: finding.severity,
+                            confidence_millis: finding.confidence_millis,
+                            state: ProblemState::Observed,
+                            first_seen_at_ms: finding.observed_at_ms,
+                            last_seen_at_ms: finding.observed_at_ms,
+                            occurrence_count: 1,
+                            affected_versions: finding.affected_versions.clone(),
+                            expected_summary: finding.expected_summary.clone(),
+                            observed_summary: finding.observed_summary.clone(),
+                            failure_signature: finding.failure_signature.clone(),
+                            evidence_ids: finding.evidence_ids.clone(),
+                            causal_hypotheses: Vec::new(),
+                            related_problem_ids: Vec::new(),
+                            proposed_mitigations: Vec::new(),
+                            resolution_evidence: Vec::new(),
+                            regression_evidence: Vec::new(),
+                        },
+                    );
+                }
             }
             LedgerEvent::ProblemTransitioned { transition, .. } => {
                 if let Some(record) = self.records.get_mut(&transition.problem_id) {
                     record.state = transition.new_state;
                     record.last_seen_at_ms = transition.timestamp_ms;
-                    record.occurrence_count = record.occurrence_count.saturating_add(1);
+                    for evidence in &transition.evidence_ids {
+                        if !record.evidence_ids.contains(evidence) {
+                            record.evidence_ids.push(evidence.clone());
+                        }
+                    }
+                    if matches!(
+                        transition.new_state,
+                        ProblemState::Mitigated | ProblemState::Resolved
+                    ) {
+                        for evidence in &transition.evidence_ids {
+                            if !record.resolution_evidence.contains(evidence) {
+                                record.resolution_evidence.push(evidence.clone());
+                            }
+                        }
+                    }
+                    if transition.new_state == ProblemState::Regressed {
+                        for evidence in &transition.evidence_ids {
+                            if !record.regression_evidence.contains(evidence) {
+                                record.regression_evidence.push(evidence.clone());
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -75,6 +122,10 @@ impl Projection {
     /// Check if a problem ID is present.
     pub fn contains(&self, id: &str) -> bool {
         self.records.contains_key(id)
+    }
+
+    pub fn contains_fingerprint(&self, fingerprint: &str) -> bool {
+        self.fingerprints.contains_key(fingerprint)
     }
 
     /// List all active problems (non-resolved, non-disputed, non-accepted-risk).
@@ -175,7 +226,7 @@ mod tests {
 
         let record = proj.get("p1").unwrap();
         assert_eq!(record.state, ProblemState::Confirmed);
-        assert_eq!(record.occurrence_count, 2);
+        assert_eq!(record.occurrence_count, 1);
     }
 
     #[test]

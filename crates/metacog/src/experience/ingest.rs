@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use super::model::{ExperienceEnvelope, ExperienceId, ExperienceOutcome, METACOGNITION_SCHEMA_V1};
+use super::model::{ExperienceEnvelope, ExperienceId, METACOGNITION_SCHEMA_V1};
 use crate::evidence::store::{AppendOutcome, EvidenceStore};
 
 #[derive(Debug, Error)]

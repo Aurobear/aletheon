@@ -2,12 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Placeholder proposal identifier — owned by the improvement module.
-///
-/// This is redefined here to avoid a circular dependency between reflection
-/// and improvement. The real `ProposalId` lives in `crate::improvement`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct ProposalId(pub String);
+pub use crate::improvement::ImprovementProposal;
 
 /// A recurring problem pattern grouped by deterministic category.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +81,6 @@ pub struct ReflectionReport {
     pub knowledge_gaps: Vec<String>,
     /// Recommended next observations to gather more evidence.
     pub recommended_observations: Vec<String>,
-    /// Improvement proposal placeholders generated from reflection.
-    pub improvement_proposals: Vec<ProposalId>,
+    /// Governable proposals generated from evidence-backed patterns.
+    pub improvement_proposals: Vec<ImprovementProposal>,
 }

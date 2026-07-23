@@ -20,6 +20,15 @@ path_actual=$(mktemp)
 trap 'rm -f "$actual" "$dep_actual" "$path_actual" "$actual.new" "$actual.stale" "$dep_actual.new" "$dep_actual.stale" "$path_actual.new" "$path_actual.stale"' EXIT
 cd "$ROOT"
 
+# Metacog is feature-owned. Reintroducing the retired technical-layer roots
+# would split one capability across unrelated implementation directories.
+for retired in core bridge impl; do
+  if [[ -d "$ROOT/crates/metacog/src/$retired" ]]; then
+    echo "architecture-check: retired Metacog source root returned: crates/metacog/src/$retired" >&2
+    exit 1
+  fi
+done
+
 # Phase 0 architecture inventory and semantic ratchets.  The inventories are
 # deliberately data files: later refactor phases update ownership and lower
 # metrics without having to rewrite this checker.

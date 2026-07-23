@@ -88,6 +88,14 @@ pub(crate) enum LedgerEvent {
     },
 }
 
+const PROBLEM_EVENT_SCHEMA_V1: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LedgerEnvelope {
+    schema_version: u32,
+    event: LedgerEvent,
+}
+
 /// Append-only problem ledger port.
 #[async_trait]
 pub trait ProblemLedger: Send + Sync {
@@ -135,9 +143,15 @@ impl JsonlProblemLedger {
                 if line.is_empty() {
                     continue;
                 }
-                let event: LedgerEvent = serde_json::from_str(line)
+                let envelope: LedgerEnvelope = serde_json::from_str(line)
                     .map_err(|e| ProblemError::Persistence(format!("corrupt ledger line: {e}")))?;
-                projection.apply_event(&event);
+                if envelope.schema_version != PROBLEM_EVENT_SCHEMA_V1 {
+                    return Err(ProblemError::Persistence(format!(
+                        "unsupported problem event schema version {}",
+                        envelope.schema_version
+                    )));
+                }
+                projection.apply_event(&envelope.event);
             }
         }
 
@@ -148,8 +162,11 @@ impl JsonlProblemLedger {
     }
 
     async fn append_event(&self, event: &LedgerEvent) -> Result<(), ProblemError> {
-        let mut line = serde_json::to_string(event)
-            .map_err(|e| ProblemError::Persistence(format!("serialization error: {e}")))?;
+        let mut line = serde_json::to_string(&LedgerEnvelope {
+            schema_version: PROBLEM_EVENT_SCHEMA_V1,
+            event: event.clone(),
+        })
+        .map_err(|e| ProblemError::Persistence(format!("serialization error: {e}")))?;
         line.push('\n');
 
         let mut file = OpenOptions::new()
@@ -176,35 +193,25 @@ impl JsonlProblemLedger {
 #[async_trait]
 impl ProblemLedger for JsonlProblemLedger {
     async fn observe(&self, finding: ProblemFinding) -> Result<(), ProblemError> {
-        let event = {
-            let mut proj = self.projection.lock().await;
-
-            // Check if problem already exists (idempotency)
-            if proj.contains(&finding.problem_id) {
-                return Err(ProblemError::AlreadyExists(finding.problem_id.clone()));
-            }
-
-            let fingerprint = problem_fingerprint(
-                &finding.domain,
-                &finding.subject,
-                &finding.category,
-                &finding.failure_signature,
-                finding.rubric_version,
-            );
-
-            LedgerEvent::ProblemObserved {
-                event_id: format!("evt-{}", uuid::Uuid::new_v4()),
-                fingerprint,
-                timestamp_ms: finding.observed_at_ms,
-                finding: finding.clone(),
-            }
-        }; // lock released here
-
+        let mut proj = self.projection.lock().await;
+        if proj.contains(&finding.problem_id) {
+            return Err(ProblemError::AlreadyExists(finding.problem_id.clone()));
+        }
+        let fingerprint = problem_fingerprint(
+            &finding.domain,
+            &finding.subject,
+            &finding.category,
+            &finding.failure_signature,
+            finding.rubric_version,
+        );
+        let event = LedgerEvent::ProblemObserved {
+            event_id: format!("evt-{}", uuid::Uuid::new_v4()),
+            fingerprint,
+            timestamp_ms: finding.observed_at_ms,
+            finding,
+        };
         self.append_event(&event).await?;
-
-        // Re-acquire lock and apply event
-        self.projection.lock().await.apply_event(&event);
-
+        proj.apply_event(&event);
         Ok(())
     }
 
@@ -217,33 +224,24 @@ impl ProblemLedger for JsonlProblemLedger {
             });
         }
 
-        let ledger_event = {
-            let proj = self.projection.lock().await;
-
-            // Check that the problem exists and is in the expected current state
-            let current = proj
-                .get(&event.problem_id)
-                .ok_or_else(|| ProblemError::NotFound(event.problem_id.clone()))?;
-
-            if current.state != event.old_state {
-                return Err(ProblemError::InvalidTransition {
-                    from: current.state,
-                    to: event.new_state,
-                });
-            }
-
-            LedgerEvent::ProblemTransitioned {
-                event_id: event.event_id.clone(),
-                timestamp_ms: event.timestamp_ms,
-                transition: event.clone(),
-            }
-        }; // lock released here
+        let mut proj = self.projection.lock().await;
+        let current = proj
+            .get(&event.problem_id)
+            .ok_or_else(|| ProblemError::NotFound(event.problem_id.clone()))?;
+        if current.state != event.old_state {
+            return Err(ProblemError::InvalidTransition {
+                from: current.state,
+                to: event.new_state,
+            });
+        }
+        let ledger_event = LedgerEvent::ProblemTransitioned {
+            event_id: event.event_id.clone(),
+            timestamp_ms: event.timestamp_ms,
+            transition: event,
+        };
 
         self.append_event(&ledger_event).await?;
-
-        // Re-acquire lock and apply event
-        self.projection.lock().await.apply_event(&ledger_event);
-
+        proj.apply_event(&ledger_event);
         Ok(())
     }
 

@@ -477,3 +477,228 @@ mod tests {
         assert!((rate - 2.0 / 3.0).abs() < 1e-9);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Proposal promoter — converts approved ImprovementProposals into MutationIntents
+// ---------------------------------------------------------------------------
+
+use thiserror::Error;
+
+use super::model::{ImprovementProposal, ProposalId, ProposalState};
+
+#[derive(Debug, Error)]
+pub enum PromotionError {
+    #[error("proposal {0} is not in Accepted state (current: {1:?})")]
+    NotAccepted(ProposalId, ProposalState),
+    #[error("proposal {0} has expired")]
+    Expired(ProposalId),
+    #[error("proposal {0} is irreversible but has no rollback plan")]
+    IrreversibleWithoutRollback(ProposalId),
+    #[error("proposal {0} has no evidence (empty problem_ids)")]
+    EvidenceFree(ProposalId),
+}
+
+/// Converts an approved, evidence-backed ImprovementProposal into a
+/// governed MutationIntent for the morphogenesis pipeline.
+pub trait ProposalPromoter: Send + Sync {
+    fn promote(
+        &self,
+        proposal: &ImprovementProposal,
+        now_ms: i64,
+    ) -> Result<fabric::MutationIntent, PromotionError>;
+}
+
+/// Deterministic proposal promoter.
+///
+/// Validates governance state, expiration, reversibility, and evidence
+/// before constructing a MutationIntent.
+pub struct DeterministicProposalPromoter;
+
+impl ProposalPromoter for DeterministicProposalPromoter {
+    fn promote(
+        &self,
+        proposal: &ImprovementProposal,
+        now_ms: i64,
+    ) -> Result<fabric::MutationIntent, PromotionError> {
+        // Gate 1: must be Accepted
+        if proposal.state != ProposalState::Accepted {
+            return Err(PromotionError::NotAccepted(
+                proposal.id.clone(),
+                proposal.state,
+            ));
+        }
+
+        // Gate 2: must not be expired
+        if proposal.is_expired(now_ms) {
+            return Err(PromotionError::Expired(proposal.id.clone()));
+        }
+
+        // Gate 3: irreversible changes require a rollback plan
+        if !proposal.reversible && proposal.rollback_plan.is_empty() {
+            return Err(PromotionError::IrreversibleWithoutRollback(
+                proposal.id.clone(),
+            ));
+        }
+
+        // Gate 4: must cite at least one problem (evidence-backed)
+        if proposal.problem_ids.is_empty() {
+            return Err(PromotionError::EvidenceFree(proposal.id.clone()));
+        }
+
+        // Construct a MutationIntent from the approved proposal
+        Ok(fabric::MutationIntent {
+            target: proposal.target_capability.clone(),
+            change: serde_json::json!({
+                "proposal_id": proposal.id.0,
+                "proposed_change": proposal.proposed_change,
+                "problem_ids": proposal.problem_ids,
+                "benefit": proposal.expected_benefit,
+                "validation_plan": proposal.validation_plan,
+                "rollback_plan": proposal.rollback_plan,
+            }),
+            reason: format!(
+                "approved proposal {}: {} (benefit: {})",
+                proposal.id.0, proposal.proposed_change, proposal.expected_benefit
+            ),
+            reversible: proposal.reversible,
+        })
+    }
+}
+
+#[cfg(test)]
+mod promoter_tests {
+    use super::*;
+
+    fn make_proposal(
+        id: &str,
+        state: ProposalState,
+        reversible: bool,
+        problem_ids: Vec<String>,
+        rollback_plan: &str,
+    ) -> ImprovementProposal {
+        ImprovementProposal {
+            id: ProposalId(id.to_string()),
+            proposer: "test".to_string(),
+            target_capability: "tool.config".to_string(),
+            problem_ids,
+            proposed_change: "test change".to_string(),
+            expected_benefit: "test benefit".to_string(),
+            possible_regressions: vec![],
+            validation_plan: "sandbox".to_string(),
+            rollback_plan: rollback_plan.to_string(),
+            authority_requirements: vec!["gov".to_string()],
+            reversible,
+            expires_at_ms: i64::MAX,
+            state,
+        }
+    }
+
+    #[test]
+    fn promote_accepted_proposal_succeeds() {
+        let promoter = DeterministicProposalPromoter;
+        let proposal = make_proposal(
+            "prop-1",
+            ProposalState::Accepted,
+            true,
+            vec!["p1".to_string()],
+            "revert to previous",
+        );
+        let result = promoter.promote(&proposal, 0);
+        assert!(result.is_ok());
+        let intent = result.unwrap();
+        assert_eq!(intent.target, "tool.config");
+        assert!(intent.reversible);
+        assert!(intent.change.get("proposal_id").and_then(|v| v.as_str()) == Some("prop-1"));
+    }
+
+    #[test]
+    fn reject_unapproved_proposal() {
+        let promoter = DeterministicProposalPromoter;
+        let proposal = make_proposal(
+            "prop-1",
+            ProposalState::Proposed,
+            true,
+            vec!["p1".to_string()],
+            "revert",
+        );
+        let result = promoter.promote(&proposal, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not in Accepted"));
+    }
+
+    #[test]
+    fn reject_pending_approval_proposal() {
+        let promoter = DeterministicProposalPromoter;
+        let proposal = make_proposal(
+            "prop-1",
+            ProposalState::PendingApproval,
+            true,
+            vec!["p1".to_string()],
+            "revert",
+        );
+        let result = promoter.promote(&proposal, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reject_expired_proposal() {
+        let promoter = DeterministicProposalPromoter;
+        let proposal = ImprovementProposal {
+            expires_at_ms: 100,
+            ..make_proposal(
+                "prop-1",
+                ProposalState::Accepted,
+                true,
+                vec!["p1".to_string()],
+                "revert",
+            )
+        };
+        let result = promoter.promote(&proposal, 200); // now_ms > expires_at_ms
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("expired"));
+    }
+
+    #[test]
+    fn reject_irreversible_without_rollback() {
+        let promoter = DeterministicProposalPromoter;
+        let proposal = make_proposal(
+            "prop-1",
+            ProposalState::Accepted,
+            false, // not reversible
+            vec!["p1".to_string()],
+            "", // empty rollback plan
+        );
+        let result = promoter.promote(&proposal, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("irreversible"));
+    }
+
+    #[test]
+    fn irreversible_with_rollback_is_accepted() {
+        let promoter = DeterministicProposalPromoter;
+        let proposal = make_proposal(
+            "prop-1",
+            ProposalState::Accepted,
+            false,
+            vec!["p1".to_string()],
+            "full system restore",
+        );
+        let result = promoter.promote(&proposal, 0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn reject_evidence_free_proposal() {
+        let promoter = DeterministicProposalPromoter;
+        let proposal = make_proposal(
+            "prop-1",
+            ProposalState::Accepted,
+            true,
+            vec![], // empty problem_ids
+            "revert",
+        );
+        let result = promoter.promote(&proposal, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("evidence"));
+    }
+}

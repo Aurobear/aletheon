@@ -10,8 +10,8 @@ memory-consolidation	mnemosyne	crates/mnemosyne/src/consolidation/migrations.rs	
 episodic-memory	mnemosyne	crates/mnemosyne/src/backends/episodic/schema.rs	schema initializer	episodic repository	episodic repository	additive schema; backup/version migration before incompatible change	5,8c
 semantic-memory	mnemosyne	crates/mnemosyne/src/backends/semantic/schema.rs	schema initializer	semantic repository	semantic repository	additive schema; backup/version migration before incompatible change	5,8c
 memory-ops	mnemosyne	crates/mnemosyne/src/ops/schema.rs	schema initializer	memory ops	memory ops	transactional schema initialization; fail closed on invalid schema	5,8c
-meta-runtime-state	metacog	crates/metacog/src/impl/meta_runtime/migration.rs	crates/metacog/src/service.rs::STATE_SCHEMA_VERSION	meta runtime	meta runtime	version detect and explicit migration; reject unknown newer schema	8c
+meta-runtime-state	metacog	crates/metacog/src/evolution/migration.rs	crates/metacog/src/governance/service.rs::STATE_SCHEMA_VERSION	meta runtime	meta runtime	version detect and explicit migration; reject unknown newer schema	8c
 oauth-credential-vault	corpus	crates/corpus/src/security/credential_vault.rs	vault envelope/version metadata	credential readers	credential vault	preserve encryption and file permissions; fail closed; backup before migration	6,8d
 mcp-token-store	corpus	crates/corpus/src/tools/mcp/token_store.rs	token record format	MCP auth client	MCP token store	atomic write; preserve secret permissions; reject malformed data	6,8d
 artifact-store	platform	crates/platform/src/artifact_store.rs	receipt/metadata schema	artifact consumers	platform artifact store	atomic publish and receipt verification; version incompatible metadata	2
-hil-evidence	metacog	crates/metacog/src/hil_evidence_verifier.rs	schema_version	HIL verifier	executive/HIL capture	fail closed on unknown version or integrity mismatch	8c
+hil-evidence	metacog	crates/metacog/src/evaluation/hil_evidence.rs	schema_version	HIL verifier	executive/HIL capture	fail closed on unknown version or integrity mismatch	8c

@@ -26,6 +26,7 @@ use fabric::types::metacognition_experience::ExperienceOutcome;
 
 use metacog::evidence::store::{AppendOutcome, JsonlEvidenceStore};
 use metacog::evidence::EvidenceStore;
+use metacog::evolution::experiment::{decide_experiment, EvolutionExperiment, ExperimentDecision};
 use metacog::experience::ingest::{ExperienceIngestor, InMemoryExperienceStore};
 use metacog::improvement::{
     DeterministicProposalPromoter, ImprovementProposal, ImprovementRegistry,
@@ -584,27 +585,22 @@ async fn candidate_comparison_promote_only_with_thresholds() {
     let gates_pass = cand_eval.gates.iter().all(|g| g.passed);
     assert!(!gates_pass, "candidate should have a failed gate");
 
-    // Simulate the experiment decision table
-    enum ExperimentDecision {
-        Promote,
-        Retain,
-        Rollback,
-        Reject,
-        Inconclusive,
-    }
-
-    let decision = if gates_pass
-        && cand_eval.eligible
-        && cand_eval.weighted_total_millis.unwrap_or(0) > base_total
-    {
-        ExperimentDecision::Promote
-    } else if gates_pass && cand_eval.eligible {
-        ExperimentDecision::Retain
-    } else if !gates_pass {
-        ExperimentDecision::Rollback
-    } else {
-        ExperimentDecision::Inconclusive
+    let experiment = EvolutionExperiment {
+        baseline_version: "coding-baseline".into(),
+        candidate_version: "coding-candidate".into(),
+        target_problem_ids: vec!["coding-verification".into()],
+        baseline_score_distribution: vec![base_total as f64],
+        success_threshold: 5_000,
+        rollback_threshold: 3_000,
+        observation_window_ms: 60_000,
+        observed_duration_ms: 60_000,
     };
+    let decision = decide_experiment(
+        std::slice::from_ref(&base_eval),
+        std::slice::from_ref(&cand_eval),
+        &experiment,
+    )
+    .decision;
 
     assert!(
         matches!(decision, ExperimentDecision::Rollback),
@@ -622,14 +618,7 @@ async fn candidate_comparison_promote_only_with_thresholds() {
     better_eval.eligible = true;
     better_eval.evidence_coverage_millis = 800;
 
-    let better_decision = if better_eval.gates.iter().all(|g| g.passed)
-        && better_eval.eligible
-        && better_eval.weighted_total_millis.unwrap_or(0) > base_total
-    {
-        ExperimentDecision::Promote
-    } else {
-        ExperimentDecision::Retain
-    };
+    let better_decision = decide_experiment(&[base_eval], &[better_eval], &experiment).decision;
 
     assert!(
         matches!(better_decision, ExperimentDecision::Promote),

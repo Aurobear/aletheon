@@ -133,8 +133,12 @@ fn no_mutation_intent_appears_in_api() {
     };
     let report = engine.reflect(input).unwrap();
 
-    // Proposals come back as ProposalId placeholders, not MutationIntent
+    // Proposals remain unapproved governance objects, not MutationIntent.
     assert!(!report.improvement_proposals.is_empty());
+    assert!(report
+        .improvement_proposals
+        .iter()
+        .all(|proposal| proposal.state == metacog::improvement::ProposalState::Proposed));
     // No MutationIntent type anywhere in the report or its fields
     // (this is a compile-time assertion — the ReflectionReport has no fabric::MutationIntent field)
 }

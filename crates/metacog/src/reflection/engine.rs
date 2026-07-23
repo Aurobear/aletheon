@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 use super::model::{
-    CausalHypothesis, ProblemSummary, ProposalId, RecurringPattern, ReflectionInput,
+    CausalHypothesis, ImprovementProposal, ProblemSummary, RecurringPattern, ReflectionInput,
     ReflectionReport,
 };
+use crate::improvement::{ProposalId, ProposalState};
 
 #[derive(Debug, Error)]
 pub enum ReflectionError {
@@ -178,15 +179,38 @@ impl ReflectionEngine for DeterministicReflectionEngine {
                 .push("no specific observation recommendations — continue monitoring".to_string());
         }
 
-        // Improvement proposals: placeholder ProposalIds for each recurring pattern
-        let mut improvement_proposals: Vec<ProposalId> = Vec::new();
+        let mut improvement_proposals: Vec<ImprovementProposal> = Vec::new();
         for pattern in &recurring_patterns {
             let sanitized = pattern
                 .category
                 .chars()
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
                 .collect::<String>();
-            improvement_proposals.push(ProposalId(format!("proposal-reflect-{}", sanitized)));
+            improvement_proposals.push(ImprovementProposal {
+                id: ProposalId(format!("proposal-reflect-{sanitized}")),
+                proposer: "metacog".into(),
+                target_capability: format!("capability.{}", pattern.category),
+                problem_ids: pattern.example_ids.clone(),
+                proposed_change: format!(
+                    "Address the recurring '{}' pattern through a governed candidate",
+                    pattern.category
+                ),
+                expected_benefit: format!(
+                    "Reduce measured '{}' problem occurrences",
+                    pattern.category
+                ),
+                possible_regressions: vec![
+                    "The candidate may reduce performance in unrelated dimensions".into(),
+                ],
+                validation_plan:
+                    "Replay the same evaluation cohort and require all hard gates to pass".into(),
+                rollback_plan: "Restore the baseline runtime and record the measured outcome"
+                    .into(),
+                authority_requirements: vec!["external-governor".into()],
+                reversible: true,
+                expires_at_ms: i64::MAX,
+                state: ProposalState::Proposed,
+            });
         }
 
         Ok(ReflectionReport {
@@ -391,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn improvement_proposals_are_proposal_id_placeholders() {
+    fn improvement_proposals_are_governable_and_unapproved() {
         let engine = DeterministicReflectionEngine;
         let input = ReflectionInput {
             experiences: vec![],
@@ -404,9 +428,12 @@ mod tests {
         let report = engine.reflect(input).unwrap();
 
         assert!(!report.improvement_proposals.is_empty());
-        // All are ProposalId placeholders — no MutationIntent
         for proposal in &report.improvement_proposals {
-            assert!(proposal.0.contains("proposal-reflect-"));
+            assert!(proposal.id.0.contains("proposal-reflect-"));
+            assert_eq!(proposal.state, ProposalState::Proposed);
+            assert!(!proposal.problem_ids.is_empty());
+            assert!(!proposal.validation_plan.is_empty());
+            assert!(!proposal.rollback_plan.is_empty());
         }
     }
 }

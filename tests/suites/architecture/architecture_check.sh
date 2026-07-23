@@ -5,6 +5,7 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/config" "$tmp/target" \
   "$tmp/crates/corpus/src/legacy" "$tmp/crates/dasein/src" \
   "$tmp/crates/executive/src" "$tmp/crates/interact/src" "$tmp/crates/fabric/src"
+mkdir -p "$tmp/crates/metacog/src"
 printf 'pub use example::Example;\n' > "$tmp/crates/fabric/src/lib.rs"
 cat > "$tmp/architecture-status.toml" <<'TOML'
 [freeze]
@@ -32,6 +33,12 @@ BASE
 : > "$tmp/config/architecture-path-inventory.txt"
 ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null
+mkdir -p "$tmp/crates/metacog/src/core"
+if ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+  bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
+  echo 'expected retired Metacog roots to fail' >&2; exit 1
+fi
+rmdir "$tmp/crates/metacog/src/core"
 printf 'tool.execute(y)\n' >> "$tmp/crates/corpus/src/legacy/mod.rs"
 if ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then

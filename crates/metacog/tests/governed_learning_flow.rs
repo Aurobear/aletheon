@@ -23,92 +23,38 @@ use metacog::evidence::model::{
 use metacog::evidence::store::{AppendOutcome, EvidenceStore, JsonlEvidenceStore};
 use metacog::evolution::experiment::{
     decide_experiment, EvaluationReport as EvalReport, EvolutionExperiment, ExperimentDecision,
-    ExperimentOutcome, GateResult, ProblemRecord, ProblemSeverity, ProblemState,
+    ExperimentOutcome, GateResult, ProblemSeverity, ProblemState,
 };
 use metacog::evolution::experiment_store::{ExperimentStore, JsonlExperimentStore};
 use metacog::evolution::LineageLink;
 use metacog::experience::model::{
     DomainId, ExperienceEnvelope, ExperienceOutcome, SubjectId, METACOGNITION_SCHEMA_V1,
 };
-use metacog::improvement::model::{ImprovementProposal, ProposalId, ProposalState};
+use metacog::improvement::{
+    ImprovementProposal, ImprovementRegistry, InMemoryImprovementRegistry, ProposalDecision,
+    ProposalId, ProposalState,
+};
+use metacog::problem::ledger::{JsonlProblemLedger, ProblemFinding, ProblemLedger};
+use metacog::problem::model::ProblemTransition;
 
-// ---------------------------------------------------------------------------
-// Synthetic helper types — local shadows of types that will exist in
-// completed Phases 3-4.  These avoid coupling to unfinished modules.
-// ---------------------------------------------------------------------------
-
-/// A minimal problem ledger for the synthetic test.
-struct SyntheticProblemLedger {
-    problems: std::sync::Mutex<Vec<ProblemRecord>>,
-}
-
-impl SyntheticProblemLedger {
-    fn new() -> Self {
-        Self {
-            problems: std::sync::Mutex::new(Vec::new()),
-        }
-    }
-
-    fn observe(&self, record: ProblemRecord) {
-        let mut problems = self.problems.lock().unwrap();
-        problems.push(record);
-    }
-
-    fn get(&self, id: &str) -> Option<ProblemRecord> {
-        let problems = self.problems.lock().unwrap();
-        problems.iter().find(|p| p.problem_id == id).cloned()
-    }
-
-    fn all_active(&self) -> Vec<ProblemRecord> {
-        let problems = self.problems.lock().unwrap();
-        problems
-            .iter()
-            .filter(|p| p.state == ProblemState::Confirmed || p.state == ProblemState::Active)
-            .cloned()
-            .collect()
+fn report(total: u32, eligible: bool, gates: Vec<GateResult>) -> EvalReport {
+    EvalReport {
+        rubric: fabric::types::metacognition_evaluation::RubricId("synthetic-v1".into()),
+        rubric_version: 1,
+        dimensions: Vec::new(),
+        gates,
+        weighted_total_millis: Some(total),
+        evidence_coverage_millis: 800,
+        confidence_millis: 850,
+        eligible,
     }
 }
 
-/// A minimal improvement registry using in-memory storage.
-struct SyntheticRegistry {
-    proposals: std::sync::Mutex<Vec<ImprovementProposal>>,
-}
-
-impl SyntheticRegistry {
-    fn new() -> Self {
-        Self {
-            proposals: std::sync::Mutex::new(Vec::new()),
-        }
-    }
-
-    fn propose(&self, proposal: ImprovementProposal) {
-        let mut proposals = self.proposals.lock().unwrap();
-        proposals.push(proposal);
-    }
-
-    fn get(&self, id: &ProposalId) -> Option<ImprovementProposal> {
-        let proposals = self.proposals.lock().unwrap();
-        proposals.iter().find(|p| &p.id == id).cloned()
-    }
-
-    fn transition(&self, id: &ProposalId, new_state: ProposalState) -> Option<ImprovementProposal> {
-        let mut proposals = self.proposals.lock().unwrap();
-        if let Some(p) = proposals.iter_mut().find(|p| &p.id == id) {
-            p.state = new_state;
-            Some(p.clone())
-        } else {
-            None
-        }
-    }
-}
-
-/// Verify that promoting an unapproved proposal fails.
-fn try_promote_unapproved(registry: &SyntheticRegistry, proposal_id: &ProposalId) -> bool {
-    let p = registry.get(proposal_id);
-    if let Some(p) = p {
-        p.state == ProposalState::Accepted
-    } else {
-        false
+fn gate(name: &str, passed: bool) -> GateResult {
+    GateResult {
+        name: name.into(),
+        passed,
+        evidence: Vec::new(),
     }
 }
 
@@ -154,55 +100,57 @@ async fn governed_learning_end_to_end() {
     assert_eq!(listed.len(), 2, "both evidence items should be available");
 
     // Step 3: Evaluate the experience
-    let baseline_report = EvalReport {
-        weighted_total_millis: Some(72_000),
-        eligible: true,
-        gates: vec![
-            GateResult {
-                name: "safety_boundary".into(),
-                passed: true,
-            },
-            GateResult {
-                name: "policy_review".into(),
-                passed: true,
-            },
-        ],
-        evidence_coverage_millis: 800,
-        confidence_millis: 850,
-    };
-    let degraded_report = EvalReport {
-        weighted_total_millis: Some(58_000),
-        eligible: false,
-        gates: vec![
-            GateResult {
-                name: "safety_boundary".into(),
-                passed: true,
-            },
-            GateResult {
-                name: "policy_review".into(),
-                passed: false,
-            },
-        ],
-        evidence_coverage_millis: 750,
-        confidence_millis: 700,
-    };
+    let baseline_report = report(
+        72_000,
+        true,
+        vec![gate("safety_boundary", true), gate("policy_review", true)],
+    );
+    let degraded_report = report(
+        58_000,
+        false,
+        vec![gate("safety_boundary", true), gate("policy_review", false)],
+    );
 
     // Step 4: Record and confirm a problem
-    let problem_ledger = SyntheticProblemLedger::new();
-    let problem = ProblemRecord {
+    let problem_file = tempfile::NamedTempFile::new().unwrap();
+    let problem_path = problem_file.path().with_extension("jsonl");
+    let problem_ledger = JsonlProblemLedger::new(problem_path.clone()).await.unwrap();
+    let finding = ProblemFinding {
         problem_id: "prob-001".into(),
-        description: "Policy compliance failure on unauthorized mutation path".into(),
+        category: "policy".into(),
+        subtype: "unauthorized_mutation".into(),
+        domain: "synthetic".into(),
+        subject: "tool.config".into(),
         severity: ProblemSeverity::High,
-        state: ProblemState::Confirmed,
+        confidence_millis: 900,
+        observed_at_ms: 100,
+        affected_versions: vec!["v1.0.0".into()],
+        expected_summary: "mutation requires governance approval".into(),
+        observed_summary: "unauthorized mutation path was attempted".into(),
+        failure_signature: "unauthorized-mutation".into(),
+        evidence_ids: vec!["ev-002".into()],
+        rubric_version: 1,
     };
-    problem_ledger.observe(problem.clone());
+    problem_ledger.observe(finding).await.unwrap();
+    problem_ledger
+        .transition(ProblemTransition {
+            problem_id: "prob-001".into(),
+            event_id: "confirm-prob-001".into(),
+            old_state: ProblemState::Observed,
+            new_state: ProblemState::Confirmed,
+            reason: "authoritative policy evidence".into(),
+            evidence_ids: vec!["ev-002".into()],
+            timestamp_ms: 101,
+        })
+        .await
+        .unwrap();
 
-    let retrieved = problem_ledger.get("prob-001").unwrap();
+    let retrieved = problem_ledger.get("prob-001").await.unwrap().unwrap();
     assert_eq!(retrieved.severity, ProblemSeverity::High);
     assert_eq!(retrieved.state, ProblemState::Confirmed);
 
     // Step 5: Reflect and propose an improvement
-    let registry = SyntheticRegistry::new();
+    let registry = InMemoryImprovementRegistry::new();
     let proposal = ImprovementProposal {
         id: ProposalId("prop-001".into()),
         proposer: "metacog".into(),
@@ -218,20 +166,31 @@ async fn governed_learning_end_to_end() {
         expires_at_ms: i64::MAX,
         state: ProposalState::Proposed,
     };
-    registry.propose(proposal.clone());
+    registry.propose(proposal.clone()).await.unwrap();
 
     // Step 6: Prove promotion fails before approval
     assert!(
-        !try_promote_unapproved(&registry, &proposal.id),
+        registry.accepted(&proposal.id).await.is_err(),
         "unapproved proposal must not be promoted"
     );
 
     // Step 7: Approve through authority boundary (mock governor)
-    registry.transition(&proposal.id, ProposalState::PendingApproval);
-    registry.transition(&proposal.id, ProposalState::Accepted);
-    let approved = registry.get(&proposal.id).unwrap();
+    registry
+        .decide(&proposal.id, ProposalDecision::Submit)
+        .await
+        .unwrap();
+    registry
+        .decide(
+            &proposal.id,
+            ProposalDecision::Accept {
+                principal: "governor".into(),
+                reason: "evidence and rollback plan verified".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let approved = registry.accepted(&proposal.id).await.unwrap();
     assert_eq!(approved.state, ProposalState::Accepted);
-    assert!(try_promote_unapproved(&registry, &proposal.id));
 
     // Step 8: Generate and sandbox a candidate (simulated)
 
@@ -244,6 +203,7 @@ async fn governed_learning_end_to_end() {
         success_threshold: 5_000,
         rollback_threshold: 3_000,
         observation_window_ms: 60_000,
+        observed_duration_ms: 60_000,
     };
 
     let outcome = decide_experiment(&[baseline_report], &[degraded_report], &experiment);
@@ -256,27 +216,9 @@ async fn governed_learning_end_to_end() {
     );
 
     // Now test the rollback path specifically
-    let regression_report = EvalReport {
-        weighted_total_millis: Some(80_000),
-        eligible: true,
-        gates: vec![GateResult {
-            name: "safety_boundary".into(),
-            passed: false,
-        }],
-        evidence_coverage_millis: 600,
-        confidence_millis: 500,
-    };
+    let regression_report = report(80_000, true, vec![gate("safety_boundary", false)]);
     let rollback_outcome = decide_experiment(
-        &[EvalReport {
-            weighted_total_millis: Some(75_000),
-            eligible: true,
-            gates: vec![GateResult {
-                name: "safety_boundary".into(),
-                passed: true,
-            }],
-            evidence_coverage_millis: 800,
-            confidence_millis: 800,
-        }],
+        &[report(75_000, true, vec![gate("safety_boundary", true)])],
         &[regression_report],
         &experiment,
     );
@@ -309,6 +251,7 @@ async fn governed_learning_end_to_end() {
             success_threshold: 5_000,
             rollback_threshold: 3_000,
             observation_window_ms: 60_000,
+            observed_duration_ms: 60_000,
         };
         experiment_id = exp_store.start_experiment(exp).await.unwrap();
 

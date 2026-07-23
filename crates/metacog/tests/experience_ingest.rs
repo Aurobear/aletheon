@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use sha2::Digest;
-use sha2::Sha256;
 
 use fabric::types::metacognition_evidence::{
     EvidenceId, EvidenceItem, EvidenceKind, EvidenceTrust,

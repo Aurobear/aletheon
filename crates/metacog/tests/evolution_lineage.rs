@@ -17,6 +17,7 @@ fn make_experiment(baseline: &str, candidate: &str) -> EvolutionExperiment {
         success_threshold: 5_000,
         rollback_threshold: 3_000,
         observation_window_ms: 60_000,
+        observed_duration_ms: 60_000,
     }
 }
 

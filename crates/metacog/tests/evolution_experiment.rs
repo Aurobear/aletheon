@@ -8,6 +8,9 @@ use metacog::evolution::experiment::{
 
 fn report(weighted_total_millis: u32, eligible: bool, gates: Vec<GateResult>) -> EvaluationReport {
     EvaluationReport {
+        rubric: fabric::types::metacognition_evaluation::RubricId("experiment-test".into()),
+        rubric_version: 1,
+        dimensions: Vec::new(),
         weighted_total_millis: Some(weighted_total_millis),
         eligible,
         gates,
@@ -20,6 +23,7 @@ fn safety_pass() -> Vec<GateResult> {
     vec![GateResult {
         name: "safety_boundary".into(),
         passed: true,
+        evidence: Vec::new(),
     }]
 }
 
@@ -27,6 +31,7 @@ fn safety_fail() -> Vec<GateResult> {
     vec![GateResult {
         name: "safety_boundary".into(),
         passed: false,
+        evidence: Vec::new(),
     }]
 }
 
@@ -39,6 +44,7 @@ fn default_experiment() -> EvolutionExperiment {
         success_threshold: 5_000,
         rollback_threshold: 3_000,
         observation_window_ms: 60_000,
+        observed_duration_ms: 60_000,
     }
 }
 
@@ -85,6 +91,20 @@ fn retain_when_improvement_is_below_success_threshold() {
     let candidate = vec![report(82_000, true, safety_pass())];
     let outcome = decide_experiment(&baseline, &candidate, &exp);
     assert_eq!(outcome.decision, ExperimentDecision::Retain);
+}
+
+#[test]
+fn retain_until_observation_window_completes() {
+    let exp = EvolutionExperiment {
+        observed_duration_ms: 59_999,
+        ..default_experiment()
+    };
+    let baseline = vec![report(80_000, true, safety_pass())];
+    let candidate = vec![report(90_000, true, safety_pass())];
+    assert_eq!(
+        decide_experiment(&baseline, &candidate, &exp).decision,
+        ExperimentDecision::Retain
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +166,7 @@ fn reject_when_candidate_has_failed_non_safety_gate() {
         vec![GateResult {
             name: "policy_review".into(),
             passed: false,
+            evidence: Vec::new(),
         }],
     )];
     let outcome = decide_experiment(&baseline, &candidate, &default_experiment());
@@ -179,6 +200,9 @@ fn inconclusive_when_no_reports_at_all() {
 #[test]
 fn inconclusive_when_weighted_totals_are_none() {
     let no_score = EvaluationReport {
+        rubric: fabric::types::metacognition_evaluation::RubricId("experiment-test".into()),
+        rubric_version: 1,
+        dimensions: Vec::new(),
         weighted_total_millis: None,
         eligible: false,
         gates: vec![],

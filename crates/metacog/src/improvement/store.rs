@@ -4,12 +4,20 @@
 //! rebuild on restart, and retrieval by ID.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use thiserror::Error;
 
 use super::model::{ImprovementProposal, ProposalId};
+
+const PROPOSAL_EVENT_SCHEMA_V1: u32 = 1;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ProposalEvent {
+    schema_version: u32,
+    proposal: ImprovementProposal,
+}
 
 #[derive(Debug, Error)]
 pub enum ProposalStoreError {
@@ -51,8 +59,15 @@ impl JsonlImprovementStore {
                 if line.trim().is_empty() {
                     continue;
                 }
-                let proposal: ImprovementProposal = serde_json::from_str(&line)
+                let event: ProposalEvent = serde_json::from_str(&line)
                     .map_err(|e| ProposalStoreError::Persistence(e.to_string()))?;
+                if event.schema_version != PROPOSAL_EVENT_SCHEMA_V1 {
+                    return Err(ProposalStoreError::Persistence(format!(
+                        "unsupported proposal event schema version {}",
+                        event.schema_version
+                    )));
+                }
+                let proposal = event.proposal;
                 // Deduplicate: last write wins per id
                 if let Some(existing) = proposals.iter_mut().find(|p| p.id == proposal.id) {
                     *existing = proposal;
@@ -86,9 +101,8 @@ impl JsonlImprovementStore {
             return Err(ProposalStoreError::AlreadyExists(proposal.id));
         }
 
+        self.append_to_file(&proposal)?;
         proposals.push(proposal);
-        drop(proposals);
-        self.persist()?;
         Ok(())
     }
 
@@ -103,9 +117,8 @@ impl JsonlImprovementStore {
             .iter_mut()
             .find(|p| p.id == proposal.id)
             .ok_or_else(|| ProposalStoreError::NotFound(proposal.id.clone()))?;
+        self.append_to_file(&proposal)?;
         *existing = proposal;
-        drop(proposals);
-        self.persist()?;
         Ok(())
     }
 
@@ -131,26 +144,23 @@ impl JsonlImprovementStore {
             .collect())
     }
 
-    fn persist(&self) -> Result<(), ProposalStoreError> {
+    fn append_to_file(&self, proposal: &ImprovementProposal) -> Result<(), ProposalStoreError> {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        let temp = path.with_extension(".tmp");
-        let proposals = self
-            .proposals
-            .lock()
-            .map_err(|e| ProposalStoreError::Persistence(format!("lock poisoned: {e}")))?;
-        let mut file = std::fs::File::create(&temp)
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
             .map_err(|e| ProposalStoreError::Persistence(e.to_string()))?;
-        for proposal in proposals.iter() {
-            let line = serde_json::to_string(proposal)
-                .map_err(|e| ProposalStoreError::Persistence(e.to_string()))?;
-            writeln!(file, "{}", line)
-                .map_err(|e| ProposalStoreError::Persistence(e.to_string()))?;
-        }
+        let line = serde_json::to_string(&ProposalEvent {
+            schema_version: PROPOSAL_EVENT_SCHEMA_V1,
+            proposal: proposal.clone(),
+        })
+        .map_err(|e| ProposalStoreError::Persistence(e.to_string()))?;
+        writeln!(file, "{line}").map_err(|e| ProposalStoreError::Persistence(e.to_string()))?;
         file.sync_all()
             .map_err(|e| ProposalStoreError::Persistence(e.to_string()))?;
-        std::fs::rename(&temp, path).map_err(|e| ProposalStoreError::Persistence(e.to_string()))?;
         Ok(())
     }
 }

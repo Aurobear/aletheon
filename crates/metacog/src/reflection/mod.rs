@@ -3,6 +3,6 @@ pub mod model;
 
 pub use engine::{DeterministicReflectionEngine, ReflectionEngine, ReflectionError};
 pub use model::{
-    CausalHypothesis, ProblemSummary, ProposalId, RecurringPattern, ReflectionInput,
+    CausalHypothesis, ImprovementProposal, ProblemSummary, RecurringPattern, ReflectionInput,
     ReflectionReport,
 };

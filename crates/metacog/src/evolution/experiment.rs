@@ -4,75 +4,9 @@
 //! whether an accepted change helped. The experiment compares baseline
 //! and candidate evaluation reports against configured thresholds.
 
+pub use crate::problem::model::{ProblemRecord, ProblemSeverity, ProblemState};
+pub use fabric::types::metacognition_evaluation::{EvaluationReport, GateResult};
 use serde::{Deserialize, Serialize};
-
-// ---------------------------------------------------------------------------
-// Local types — these mirror the eventual metacog::evaluation and
-// metacog::problem types that will be defined in Phases 3-4.  They are
-// scoped here to keep the experiment module self-contained while those
-// upstream types are still being built.
-// ---------------------------------------------------------------------------
-
-/// A problem record referenced by regression tracking.
-///
-/// This is a local stand-in for the full `ProblemRecord` defined in
-/// the problem module (Phase 3, Task 10).  Only the fields needed for
-/// experiment outcome reporting are included.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProblemRecord {
-    pub problem_id: String,
-    pub description: String,
-    pub severity: ProblemSeverity,
-    pub state: ProblemState,
-}
-
-/// Severity of a problem.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum ProblemSeverity {
-    Info,
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-/// Lifecycle state of a problem.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ProblemState {
-    Observed,
-    Confirmed,
-    Active,
-    Mitigated,
-    Resolved,
-    Regressed,
-}
-
-/// A simplified evaluation report sufficient for experiment decisions.
-///
-/// This is a local stand-in for the full `EvaluationReport` defined in
-/// `fabric::types::metacognition_evaluation` (Phase 3, Task 8).  It
-/// holds only the fields that `decide_experiment` requires.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvaluationReport {
-    /// Fixed-point weighted total, in millis (0 – 100_000 = 100.0).
-    pub weighted_total_millis: Option<u32>,
-    /// Whether all mandatory hard gates passed.
-    pub eligible: bool,
-    /// Hard-gate results.  Any gate with `name` starting with "safety"
-    /// is treated as a safety gate.
-    pub gates: Vec<GateResult>,
-    /// Evidence coverage, in millis (1_000 = 100%).
-    pub evidence_coverage_millis: u16,
-    /// Confidence, in millis (1_000 = 100%).
-    pub confidence_millis: u16,
-}
-
-/// A single hard-gate result.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GateResult {
-    pub name: String,
-    pub passed: bool,
-}
 
 // ---------------------------------------------------------------------------
 // Evolution experiment types
@@ -112,6 +46,8 @@ pub struct EvolutionExperiment {
     /// Minimum observation window in milliseconds before a decision can
     /// be made.
     pub observation_window_ms: u64,
+    /// Candidate observation time accumulated so far.
+    pub observed_duration_ms: u64,
 }
 
 /// Outcome of an evolution experiment after comparing reports.
@@ -217,6 +153,16 @@ pub fn decide_experiment(
                 };
             }
 
+            if experiment.observed_duration_ms < experiment.observation_window_ms {
+                return ExperimentOutcome {
+                    pre_reports: baseline.to_vec(),
+                    post_reports: candidate.to_vec(),
+                    regressions,
+                    new_problems,
+                    decision: ExperimentDecision::Retain,
+                };
+            }
+
             // Promote: candidate improves by at least success_threshold AND all
             // post-deployment hard gates pass.
             if delta >= experiment.success_threshold as i64 && candidate.iter().all(|r| r.eligible)
@@ -287,6 +233,9 @@ mod tests {
         gates: Vec<GateResult>,
     ) -> EvaluationReport {
         EvaluationReport {
+            rubric: fabric::types::metacognition_evaluation::RubricId("experiment-test".into()),
+            rubric_version: 1,
+            dimensions: Vec::new(),
             weighted_total_millis: Some(weighted_total_millis),
             eligible,
             gates,
@@ -299,6 +248,7 @@ mod tests {
         vec![GateResult {
             name: "safety_boundary".into(),
             passed: true,
+            evidence: Vec::new(),
         }]
     }
 
@@ -306,6 +256,7 @@ mod tests {
         vec![GateResult {
             name: "safety_boundary".into(),
             passed: false,
+            evidence: Vec::new(),
         }]
     }
 
@@ -318,6 +269,7 @@ mod tests {
             success_threshold: 5_000,  // 5.0 points in millis
             rollback_threshold: 3_000, // 3.0 points
             observation_window_ms: 60_000,
+            observed_duration_ms: 60_000,
         }
     }
 
@@ -388,6 +340,7 @@ mod tests {
             vec![GateResult {
                 name: "policy_review".into(),
                 passed: false,
+                evidence: Vec::new(),
             }],
         )];
         let exp = experiment();
@@ -416,6 +369,9 @@ mod tests {
     #[test]
     fn inconclusive_when_no_weighted_totals() {
         let no_score = EvaluationReport {
+            rubric: fabric::types::metacognition_evaluation::RubricId("experiment-test".into()),
+            rubric_version: 1,
+            dimensions: Vec::new(),
             weighted_total_millis: None,
             eligible: false,
             gates: vec![],
