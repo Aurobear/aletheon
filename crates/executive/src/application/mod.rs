@@ -3,6 +3,8 @@ pub mod agent;
 pub mod agent_control;
 pub mod approval;
 pub mod approval_service;
+pub mod coding_metacog_adapter;
+pub mod coding_metacog_rubric;
 pub mod coding_runtime;
 pub mod compaction_normalize;
 pub mod conscious;
