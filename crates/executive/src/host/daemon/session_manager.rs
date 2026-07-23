@@ -101,6 +101,11 @@ impl SessionManager {
         self.compressor.should_compact(&self.messages)
     }
 
+    /// Check if tokens exceed a custom threshold fraction (0.0-1.0).
+    pub fn exceeds_threshold(&self, fraction: f64) -> bool {
+        self.compressor.exceeds_threshold(&self.messages, fraction)
+    }
+
     pub async fn compact_if_needed(&mut self, llm: &dyn LlmProvider) -> Result<bool> {
         self.run_compaction(llm, false).await
     }

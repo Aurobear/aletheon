@@ -83,6 +83,32 @@ impl RequestHandler {
         }
     }
 
+    pub(super) async fn handle_skills_list(
+        &self,
+        id: &serde_json::Value,
+        _request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let skills = self.ports.admin.list_skills();
+        let list: Vec<serde_json::Value> = skills
+            .iter()
+            .map(|s| {
+                json!({
+                    "name": s.name,
+                    "description": s.description,
+                    "enabled": s.enabled,
+                })
+            })
+            .collect();
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "method": "skills.list",
+                "skills": list,
+            }
+        })
+    }
+
     pub(super) async fn handle_approval_response(
         &self,
         connection: &super::super::super::server::ConnectionContext,

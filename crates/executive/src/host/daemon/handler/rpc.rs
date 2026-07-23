@@ -37,6 +37,7 @@ impl RequestHandler {
             "load_recent" => self.handle_load_recent(&id, &request).await,
             "session.create" => self.handle_session_create(&id, &request).await,
             "session.list" => self.handle_session_list(&id, &request).await,
+            "session.new" => self.handle_session_new_simple(&id, &request).await,
             "session.switch" => self.handle_session_switch(&id, &request).await,
 
             // ── Health / status ───────────────────────────────────────
@@ -54,6 +55,7 @@ impl RequestHandler {
                     .await
             }
             "reload_skills" => self.handle_reload_skills(&id, &request).await,
+            "skills.list" => self.handle_skills_list(&id, &request).await,
             "approval_response" => {
                 self.handle_approval_response(connection, &id, &request)
                     .await

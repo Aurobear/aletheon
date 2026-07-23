@@ -286,6 +286,7 @@ pub trait AdminUseCases: Send + Sync {
     async fn switch_model(&self, model: String) -> Result<String, AdminServiceError>;
     async fn tools(&self) -> Result<Vec<fabric::ToolDefinition>, AdminServiceError>;
     async fn hooks(&self) -> Result<Vec<HookDescriptor>, AdminServiceError>;
+    fn list_skills(&self) -> Vec<SkillDescriptor>;
     async fn sub_agents(&self) -> Result<Vec<SubAgentSummary>, AdminServiceError>;
     async fn list_agent_profiles(&self) -> Result<Vec<AgentProfileDescriptor>, AdminServiceError>;
     async fn switch_agent_profile(
@@ -336,9 +337,17 @@ impl DeploymentRollbackPort for crate::core::deploy::DeploymentRollbackService {
     }
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct SkillDescriptor {
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+}
+
 #[async_trait]
 pub trait SkillAdminPort: Send + Sync {
     async fn reload(&self) -> Result<usize, AdminServiceError>;
+    fn list(&self) -> Vec<SkillDescriptor>;
 }
 
 #[async_trait]
@@ -594,6 +603,10 @@ impl AdminUseCases for AdminService {
         let mut hooks = (self.resources.hook_catalog)().await;
         hooks.truncate(MAX_ADMIN_ITEMS);
         Ok(hooks)
+    }
+
+    fn list_skills(&self) -> Vec<SkillDescriptor> {
+        self.resources.skills.list()
     }
 
     async fn sub_agents(&self) -> Result<Vec<SubAgentSummary>, AdminServiceError> {

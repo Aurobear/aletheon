@@ -361,8 +361,9 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
             let formatted = format_hooks(hooks);
             app.chat.set_assistant_stream(formatted);
         } else if let Some(skills) = result.get("skills") {
-            // Phase B: when SkillsCatalog response arrives, call
-            // app.registry.set_skills(skills);
+            // Phase B: SkillsCatalog response — populate the command registry
+            // so Tab-completion and /help reflect daemon skills.
+            app.registry.set_skills_from_json(skills);
             let formatted = format_skills_list(skills);
             app.chat.set_assistant_stream(formatted);
         } else if let Some(tools) = result.get("tools") {

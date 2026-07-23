@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use executive::application::admin_service::{
     AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases, ModeChange,
-    SkillAdminPort,
+    SkillAdminPort, SkillDescriptor,
 };
 use executive::application::request_use_cases::{
     ProductionMemoryAdminUseCases, RetentionAdminPort,
@@ -35,6 +35,9 @@ impl AdminRuntimePort for NoopAdminRuntime {
 impl SkillAdminPort for NoopSkills {
     async fn reload(&self) -> Result<usize, AdminServiceError> {
         Ok(0)
+    }
+    fn list(&self) -> Vec<SkillDescriptor> {
+        Vec::new()
     }
 }
 

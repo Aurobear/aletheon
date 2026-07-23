@@ -106,6 +106,13 @@ impl AdvancedCompressor {
         cut > 0 && cut < messages.len()
     }
 
+    /// Check if token count exceeds a given fraction of the context window.
+    pub fn exceeds_threshold(&self, messages: &[Message], fraction: f64) -> bool {
+        let total_tokens: usize = messages.iter().map(Message::estimate_tokens).sum();
+        let threshold = (self.context_window_tokens as f64 * fraction) as usize;
+        total_tokens > threshold
+    }
+
     async fn compact_impl<L: LlmProvider + ?Sized>(
         &mut self,
         messages: &mut Vec<Message>,

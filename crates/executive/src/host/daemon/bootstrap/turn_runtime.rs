@@ -247,6 +247,32 @@ impl TurnSessionStatePort for ProductionTurnSessions {
         let turn_count = {
             let mut manager = manager.lock().await;
             manager.push_user(message).await;
+
+            // Pre-request compaction: if context would overflow the window,
+            // compact synchronously before calling the model (hard watermark).
+            let pre_tokens = manager.estimate_tokens();
+            let hard_limit = (self.context_window as f64 * 0.95) as usize;
+            if pre_tokens > hard_limit {
+                tracing::warn!(
+                    tokens_before = pre_tokens,
+                    hard_limit = hard_limit,
+                    "Hard watermark exceeded — compacting before model call"
+                );
+                if let Err(e) = manager.force_compact(&*self.llm).await {
+                    tracing::error!(error = %e, "Pre-request compaction failed — blocking turn");
+                    return Err(anyhow::anyhow!(
+                        "Context too large and compaction failed. Try /new to start a fresh session, \
+                         or switch to a model with a larger context window."
+                    ));
+                }
+                let post_tokens = manager.estimate_tokens();
+                tracing::info!(
+                    tokens_before = pre_tokens,
+                    tokens_after = post_tokens,
+                    "Hard-watermark compaction applied"
+                );
+            }
+
             manager.turn_count()
         };
         if let Err(error) = self
@@ -320,6 +346,21 @@ impl TurnSessionStatePort for ProductionTurnSessions {
             }
             manager.push_assistant(output).await;
             let turn_count = manager.turn_count();
+
+            // Soft watermark: predict if next turn will need compaction
+            let tokens_after_turn = manager.estimate_tokens();
+            let soft_limit = (self.context_window as f64 * 0.75) as usize;
+            if tokens_after_turn > soft_limit {
+                // We still have room for at least one more turn, but compaction is soon needed.
+                // The existing post-turn compaction at 80% will handle it in finish().
+                // This is just informational — no action needed yet.
+                tracing::debug!(
+                    tokens = tokens_after_turn,
+                    soft_limit = soft_limit,
+                    "Soft watermark approaching"
+                );
+            }
+
             let tokens_before = manager.estimate_tokens();
             if !manager.compaction_needed() {
                 return Ok(turn_count);

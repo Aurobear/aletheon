@@ -231,22 +231,15 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::SkillRun { name, args })) => {
-                let skill = match app.skill_loader.get(&name) {
-                    Some(s) => s.clone(),
-                    None => {
-                        app.chat
-                            .add_text(ChatRole::System, format!("Unknown skill: /{name}"));
-                        return;
-                    }
-                };
+                // Send structured skill invocation via !skill prefix.
+                // The daemon has the authoritative skill content loaded in its
+                // prompt prefix, so the TUI does not need to inject SKILL.md.
                 let message = if args.is_empty() {
-                    skill.content.clone()
+                    format!("!skill {}", name)
                 } else {
-                    format!("{}\n\nUser input: {}", skill.content, args)
+                    format!("!skill {} {}", name, args)
                 };
                 app.chat.add_text(ChatRole::User, text.clone());
-                // Assistant entry created lazily on first response delta so it
-                // renders after any tool/reflection logs (ordering fix).
                 send_to_daemon(app, &message).await;
                 return;
             }
@@ -292,22 +285,15 @@ pub async fn submit_message(app: &mut App, text: String) {
             }
             Some(CommandType::Builtin(_)) => return,
             Some(CommandType::Skill { name, args }) => {
-                app.chat.add_text(ChatRole::User, text.clone());
-                let skill = match app.skill_loader.get(&name) {
-                    Some(s) => s.clone(),
-                    None => {
-                        app.chat
-                            .add_text(ChatRole::System, format!("未知技能: /{name}"));
-                        return;
-                    }
-                };
+                // Send structured skill invocation via !skill prefix.
+                // The daemon has the authoritative skill content loaded in its
+                // prompt prefix, so the TUI does not need to inject SKILL.md.
                 let message = if args.is_empty() {
-                    skill.content.clone()
+                    format!("!skill {}", name)
                 } else {
-                    format!("{}\n\nUser input: {}", skill.content, args)
+                    format!("!skill {} {}", name, args)
                 };
-                // Assistant entry created lazily on first response delta so it
-                // renders after any tool/reflection logs (ordering fix).
+                app.chat.add_text(ChatRole::User, text.clone());
                 send_to_daemon(app, &message).await;
                 return;
             }

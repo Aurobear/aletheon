@@ -38,4 +38,17 @@ impl SkillAdminPort for DefaultSkillAdmin {
         *self.cached_prefix.lock().await = new_prefix;
         Ok(count)
     }
+
+    fn list(&self) -> Vec<crate::application::admin_service::SkillDescriptor> {
+        self.loader
+            .blocking_lock()
+            .skills()
+            .iter()
+            .map(|s| crate::application::admin_service::SkillDescriptor {
+                name: s.name.clone(),
+                description: s.description.clone(),
+                enabled: true,
+            })
+            .collect()
+    }
 }

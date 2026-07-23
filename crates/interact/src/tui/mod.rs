@@ -264,6 +264,7 @@ struct App {
     turn_active: bool,
     response_buf: String,
     caps: TermCaps,
+    #[allow(dead_code)]
     skill_loader: SkillLoader,
     model_name: String,
     status: StatusBar,

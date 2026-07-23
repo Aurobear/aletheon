@@ -333,6 +333,35 @@ impl CommandRegistry {
         self.skills = skills;
     }
 
+    /// Populate skills from a `skills.list` JSON-RPC response payload.
+    pub fn set_skills_from_json(&mut self, skills: &serde_json::Value) {
+        let empty = vec![];
+        let arr = skills.as_array().unwrap_or(&empty);
+        let mut descriptors = Vec::with_capacity(arr.len());
+        for sk in arr {
+            let name = sk
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let desc = sk
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let usage_string = format!("/{}", name);
+            descriptors.push(CommandDescriptor {
+                name: Box::leak(name.into_boxed_str()),
+                aliases: &[],
+                description: Box::leak(desc.into_boxed_str()),
+                category: "技能",
+                usage: Box::leak(usage_string.into_boxed_str()),
+                has_args: true,
+            });
+        }
+        self.skills = descriptors;
+    }
+
     /// List built-in command descriptors.
     pub fn builtins(&self) -> &[CommandDescriptor] {
         &self.builtins

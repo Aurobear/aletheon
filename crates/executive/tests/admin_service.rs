@@ -6,7 +6,7 @@ use corpus::security::approval::ApprovalDecision;
 use executive::application::admin_service::{
     AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases,
     ApprovalOwner, ModeChange, PendingApprovals, ScopedApprovalCache, SkillAdminPort,
-    TransientApprovalRequest,
+    SkillDescriptor, TransientApprovalRequest,
 };
 use fabric::ui_event::{CollaborationMode, InterruptReason};
 use tempfile::tempdir;
@@ -46,6 +46,9 @@ fn noop_runtime_shutdown(
 impl SkillAdminPort for FailingSkillAdmin {
     async fn reload(&self) -> Result<usize, AdminServiceError> {
         Err(AdminServiceError::Operation("reload failed".into()))
+    }
+    fn list(&self) -> Vec<SkillDescriptor> {
+        Vec::new()
     }
 }
 

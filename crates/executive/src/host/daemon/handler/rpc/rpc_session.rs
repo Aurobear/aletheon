@@ -247,6 +247,30 @@ impl RequestHandler {
             }
         }
     }
+
+    /// Create a fresh session (no previous session required).
+    /// This is the handler for the `session.new` JSON-RPC method,
+    /// distinct from `session.create` which is a broader API.
+    pub(super) async fn handle_session_new_simple(
+        &self,
+        id: &serde_json::Value,
+        _request: &serde_json::Value,
+    ) -> serde_json::Value {
+        match self.ports.sessions.create().await {
+            Ok(session) => {
+                info!(session_id = %session.session_id, "session.new: created fresh session");
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "method": "session.created",
+                        "session_id": session.session_id,
+                    }
+                })
+            }
+            Err(error) => session_error(id, -32030, format!("Failed to create session: {error}")),
+        }
+    }
 }
 
 fn session_error(
