@@ -416,16 +416,35 @@ impl AdvancedCompressor {
         };
 
         let prompt = vec![Message::user(prompt_text)];
-        let response = llm.complete(&prompt, &[]).await?;
-
-        let summary: String = response
-            .content
-            .iter()
-            .map(|c| match c {
-                ContentBlock::Text { text } => text.clone(),
-                _ => String::new(),
-            })
-            .collect();
+        let summary = match llm.complete(&prompt, &[]).await {
+            Ok(response) => response
+                .content
+                .iter()
+                .filter_map(|block| match block {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect(),
+            Err(complete_error) => {
+                // Some production gateways expose streaming inference only.
+                // Compaction still uses the same provider boundary, but
+                // aggregates text deltas into the validated checkpoint.
+                let mut stream = llm.complete_stream(&prompt, &[]).await.map_err(|stream_error| {
+                    anyhow::anyhow!(
+                        "summary inference failed (complete: {complete_error:#}; stream: {stream_error:#})"
+                    )
+                })?;
+                let mut text = String::new();
+                while let Some(chunk) =
+                    std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await
+                {
+                    if let fabric::StreamChunk::TextDelta { text: delta } = chunk? {
+                        text.push_str(&delta);
+                    }
+                }
+                text
+            }
+        };
 
         Ok(summary)
     }
