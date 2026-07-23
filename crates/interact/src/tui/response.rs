@@ -97,6 +97,8 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::ThinkingDelta { text } => {
             app.stream_ctrl.push_thinking(&text);
+            app.chat
+                .set_assistant_stream(app.stream_ctrl.current_text());
         }
         ClientEvent::TextDelta { text } => {
             app.stream_ctrl.push_text(&text);
@@ -173,6 +175,8 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::TurnDone => {
             app.stream_ctrl.commit();
+            app.chat
+                .set_assistant_stream(app.stream_ctrl.current_text());
             app.streaming = false;
             app.status.waiting = false;
             app.app_state.streaming = false;
