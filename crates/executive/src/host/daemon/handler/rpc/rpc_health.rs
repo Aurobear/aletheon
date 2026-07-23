@@ -87,7 +87,10 @@ impl RequestHandler {
             Ok(status) => json!({
                 "jsonrpc": "2.0", "id": id,
                 "result": { "status": {
-                    "session_id": status.session_id,
+                    // Session-scoped fields above were resolved from the
+                    // explicitly requested session. Do not mix them with the
+                    // health service's process-global/default session id.
+                    "session_id": session_id,
                     "turn_count": turn_count,
                     "iteration": status.iteration,
                     "reflection_count": status.reflection_count,
