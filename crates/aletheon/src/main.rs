@@ -224,12 +224,22 @@ enum ConfigSub {
 // ── Extension handler ────────────────────────────────────────────────────
 
 async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
+    use executive::application::extension_install::ExtensionInstallService;
     use executive::application::extension_manage::ExtensionManageService;
-    let manage_svc = ExtensionManageService;
+    let store_root = std::env::var_os("ALETHEON_EXTENSION_STORE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("aletheon")
+                .join("extensions")
+        });
+    let install_svc = ExtensionInstallService::new(&store_root)?;
+    let manage_svc = ExtensionManageService::new(&store_root)?;
 
     match cmd {
         ExtensionCmd::Inspect { path } => {
-            let result = corpus::extension::inspector::inspect_package(path)?;
+            let result = install_svc.inspect(path)?;
             println!("Package: {}", result.manifest.package.id.0);
             println!("Version: {}", result.manifest.package.version.0);
             println!("Hash: {}", result.package_hash);
@@ -241,51 +251,25 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
             }
         }
         ExtensionCmd::Validate { path } => {
-            corpus::extension::inspector::inspect_package(path)?;
+            install_svc.inspect(path)?;
             println!("Package is valid.");
         }
         ExtensionCmd::Install { path } => {
-            use executive::application::extension_install::ExtensionInstallService;
-            let store_root = dirs::data_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("aletheon")
-                .join("extensions")
-                .join("packages");
-            let service = ExtensionInstallService::new(&store_root)?;
-            let hash = service.install(&path)?;
+            let hash = install_svc.install(path)?;
             println!("Installed package with hash: {hash}");
         }
         ExtensionCmd::List => {
-            use executive::application::extension_install::ExtensionInstallService;
-            let store_root = dirs::data_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("aletheon")
-                .join("extensions")
-                .join("packages");
-            let service = ExtensionInstallService::new(&store_root)?;
-            let packages = service.list()?;
+            let packages = install_svc.list()?;
             if packages.is_empty() {
                 println!("No extensions installed.");
             } else {
                 for pkg in packages {
-                    println!("  {pkg}");
+                    println!("{}\t{}\t{}", pkg.id, pkg.version, pkg.hash);
                 }
             }
         }
         ExtensionCmd::Show { id } => {
-            use executive::application::extension_install::ExtensionInstallService;
-            let store_root = dirs::data_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("aletheon")
-                .join("extensions")
-                .join("packages");
-            let service = ExtensionInstallService::new(&store_root)?;
-            let packages = service.list()?;
-            let found = packages.iter().find(|p| *p == id);
-            match found {
-                Some(pkg) => println!("{pkg}"),
-                None => anyhow::bail!("not implemented: extension show (R2)"),
-            }
+            println!("{}", serde_json::to_string_pretty(&install_svc.show(id)?)?);
         }
         ExtensionCmd::Enable { id } => {
             manage_svc.enable(id)?;
@@ -319,7 +303,7 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
             );
         }
         ExtensionCmd::ImportLegacy => {
-            let imported = manage_svc.import_legacy()?;
+            let imported = manage_svc.import_legacy(&store_root.join("legacy"))?;
             println!("Imported {} legacy extensions: {imported:?}", imported.len());
         }
     }

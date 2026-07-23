@@ -71,7 +71,11 @@ pub fn parse_checksums(content: &str) -> Result<std::collections::HashMap<String
         let mut parts = line.splitn(2, |c: char| c.is_whitespace());
         let hash = parts.next().unwrap_or("").trim().to_lowercase();
         let path = parts.next().unwrap_or("").trim();
-        if hash.is_empty() || path.is_empty() || hash.len() != 64 {
+        if hash.is_empty()
+            || path.is_empty()
+            || hash.len() != 64
+            || !hash.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
             bail!("invalid checksum line: {}", line);
         }
         if checksums.contains_key(path) {

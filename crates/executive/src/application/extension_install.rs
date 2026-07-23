@@ -5,22 +5,11 @@
 
 use anyhow::{Context, Result};
 use corpus::extension::inspector;
-use corpus::extension::manifest;
-use corpus::extension::store::PackageStore;
+use corpus::extension::store::{InstalledPackageRecord, PackageStore};
 use std::path::Path;
 use std::sync::Arc;
 
 /// Installed package record (returned by list/show).
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct InstalledPackage {
-    pub id: String,
-    pub version: String,
-    pub description: String,
-    pub hash: String,
-    pub file_count: usize,
-    pub total_size: u64,
-}
-
 /// Application service for extension installation.
 /// CLI and RPC handlers call this — they never touch the store directly.
 pub struct ExtensionInstallService {
@@ -44,44 +33,62 @@ impl ExtensionInstallService {
     /// Install a package: validate, stage, atomically commit, persist receipt.
     pub fn install(&self, package_path: &Path) -> Result<String> {
         let result = inspector::inspect_package(package_path)?;
-        let hash = &result.package_hash;
-
-        // Verify no hash injection
-        if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-            anyhow::bail!("invalid package hash");
-        }
-
+        let hash = result.package_hash.as_str();
         let pkg_id = &result.manifest.package.id.0;
+        let _lock = self.store.acquire_lock(pkg_id)?;
 
-        // Acquire lock
-        self.store.acquire_lock(pkg_id)?;
-
-        // Commit staging to final location
+        // The content-addressed commit is idempotent. Extraction failures and
+        // interrupted candidates are cleaned before returning.
         let staging = self.store.staging_path(hash)?;
-        if !staging.exists() {
-            inspector::extract_to_staging(package_path, &staging)?;
+        if !self.store.is_installed(hash)? {
+            self.store.clean_staging(hash)?;
+            if let Err(error) = inspector::extract_to_staging(package_path, &staging) {
+                let _ = self.store.clean_staging(hash);
+                return Err(error);
+            }
+            if let Err(error) = self.store.commit_staging(hash) {
+                let _ = self.store.clean_staging(hash);
+                return Err(error);
+            }
         }
-        self.store.commit_staging(hash)?;
 
-        // Write receipt
+        let record = InstalledPackageRecord {
+            schema_version: 1,
+            id: pkg_id.clone(),
+            version: result.manifest.package.version.0.clone(),
+            description: result.manifest.package.description.clone(),
+            hash: hash.to_owned(),
+            file_count: result.file_count,
+            total_size: result.total_size,
+            installed_at: chrono::Utc::now().to_rfc3339(),
+        };
+        // The record filename is the content hash, so a repeated install
+        // replaces the same projection rather than creating duplicates.
+        self.store.put_installed(&record)?;
         let receipt = serde_json::json!({
             "schema_version": 1,
+            "operation": "install",
+            "receipt_id": uuid::Uuid::new_v4(),
             "package_id": pkg_id,
-            "version": result.manifest.package.version.0,
+            "version": record.version,
             "hash": hash,
             "file_count": result.file_count,
             "total_size": result.total_size,
+            "completed_at": chrono::Utc::now().to_rfc3339(),
         });
-        self.store.store_receipt(pkg_id, &receipt.to_string())?;
+        self.store.store_receipt(pkg_id, &receipt)?;
 
-        // Release lock
-        self.store.release_lock(pkg_id);
-
-        Ok(hash.clone())
+        Ok(hash.to_owned())
     }
 
     /// List installed packages.
-    pub fn list(&self) -> Result<Vec<String>> {
+    pub fn list(&self) -> Result<Vec<InstalledPackageRecord>> {
         self.store.list_installed()
+    }
+
+    pub fn show(&self, id: &str) -> Result<Vec<InstalledPackageRecord>> {
+        let records = self.store.get_installed(id)?;
+        anyhow::ensure!(!records.is_empty(), "extension '{id}' is not installed");
+        Ok(records)
     }
 }

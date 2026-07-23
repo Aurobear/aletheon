@@ -4,7 +4,7 @@
 //! and extracts to a staging directory.
 
 use anyhow::{bail, Context, Result};
-use fabric::PackageManifest;
+use fabric::{AssetKind, PackageManifest};
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -120,6 +120,7 @@ pub fn inspect_package(package_path: &Path) -> Result<InspectionResult> {
     let mut files_for_verification = files.clone();
     files_for_verification.remove("checksums.sha256");
     validation::verify_all_checksums(&files_for_verification, &checksums)?;
+    validate_declared_assets(&manifest, &files)?;
 
     // Compute package content hash (hash of all file paths + data, sorted).
     let mut hasher = Sha256::new();
@@ -139,6 +140,35 @@ pub fn inspect_package(package_path: &Path) -> Result<InspectionResult> {
         file_count: files.len(),
         total_size,
     })
+}
+
+fn validate_declared_assets(
+    manifest: &PackageManifest,
+    files: &HashMap<String, Vec<u8>>,
+) -> Result<()> {
+    for asset in &manifest.assets {
+        validation::validate_entry_path(Path::new(&asset.path))?;
+        let (prefix, suffix) = match asset.kind {
+            AssetKind::Skill => ("assets/skills/", Some("/SKILL.md")),
+            AssetKind::Hook => ("assets/hooks/", Some(".toml")),
+            AssetKind::AgentProfile => ("assets/agents/", Some(".md")),
+            AssetKind::Connector => ("assets/connectors/", None),
+            AssetKind::Executable => ("assets/executables/", None),
+        };
+        if !asset.path.starts_with(prefix)
+            || suffix.is_some_and(|expected| !asset.path.ends_with(expected))
+        {
+            bail!(
+                "asset kind/path mismatch for '{}': {}",
+                asset.id,
+                asset.path
+            );
+        }
+        if !files.contains_key(&asset.path) {
+            bail!("declared asset file is missing: {}", asset.path);
+        }
+    }
+    Ok(())
 }
 
 /// Extract inspected package to a staging directory.
@@ -343,6 +373,24 @@ path = "assets/skills/demo/SKILL.md"
         tar_path
     }
 
+    fn create_package_with_special_entry(dir: &Path, entry_type: tar::EntryType) -> PathBuf {
+        let path = dir.join("special.tar.gz");
+        let file = std::fs::File::create(&path).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_path("assets/special").unwrap();
+        header.set_entry_type(entry_type);
+        header.set_size(0);
+        if entry_type == tar::EntryType::Link {
+            header.set_link_name("extension.toml").unwrap();
+        }
+        header.set_cksum();
+        builder.append(&header, &[][..]).unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+        path
+    }
+
     #[test]
     fn inspect_valid_package() {
         let tmp = TempDir::new().unwrap();
@@ -353,6 +401,24 @@ path = "assets/skills/demo/SKILL.md"
         assert_eq!(result.file_count, 3);
         assert!(result.total_size > 0);
         assert!(!result.package_hash.is_empty());
+    }
+
+    #[test]
+    fn inspect_rejects_hardlink_fifo_and_device_entries() {
+        for entry_type in [
+            tar::EntryType::Link,
+            tar::EntryType::Fifo,
+            tar::EntryType::Block,
+            tar::EntryType::Char,
+        ] {
+            let temp = TempDir::new().unwrap();
+            let package = create_package_with_special_entry(temp.path(), entry_type);
+            let error = inspect_package(&package).unwrap_err().to_string();
+            assert!(
+                error.contains("unsupported entry type"),
+                "unexpected error for {entry_type:?}: {error}"
+            );
+        }
     }
 
     #[test]

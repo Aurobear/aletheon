@@ -1,72 +1,65 @@
-//! Gate tests for CLI commands that must fail gracefully until implemented.
-//!
-//! R0 repair: assert unimplemented extension subcommands return non-zero exit
-//! codes and error messages, not success text output.
+//! Production CLI boundary tests for the extension application service.
 
 use std::process::Command;
+use tempfile::TempDir;
 
-/// Path to the compiled aletheon binary.
-///
-/// The test binary lives in `target/debug/deps/`; the aletheon binary is in
-/// `target/debug/aletheon`.  Walk up from the test executable to find it.
 fn aletheon_binary() -> std::path::PathBuf {
     let test_bin = std::env::current_exe().expect("cannot find current exe");
-    let target_dir = test_bin
-        .parent()                       // deps/
-        .and_then(|p| p.parent())       // debug/ or release/
-        .expect("cannot resolve target dir");
-    target_dir.join("aletheon")
+    test_bin
+        .parent()
+        .and_then(|path| path.parent())
+        .expect("cannot resolve target directory")
+        .join("aletheon")
+}
+
+fn run(store: &TempDir, args: &[&str]) -> std::process::Output {
+    Command::new(aletheon_binary())
+        .env("ALETHEON_EXTENSION_STORE_ROOT", store.path())
+        .args(args)
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run `aletheon {}`: {error}", args.join(" ")))
 }
 
 #[test]
-fn unimplemented_extension_commands_return_error() {
-    let binary = aletheon_binary();
-
-    // Commands that must fail with "not implemented" (wired through ExtensionManageService
-    // but the service returns bail! for unimplemented paths).
-    let cases: &[&[&str]] = &[
-        &["extension", "show", "test.minimal"],
-        &["extension", "enable", "test.minimal"],
-        &["extension", "disable", "test.minimal"],
-        &["extension", "upgrade", "/nonexistent/pkg.tar.gz"],
-        &["extension", "rollback", "test.minimal"],
-        &["extension", "remove", "test.minimal"],
-        &["extension", "purge", "test.minimal"],
-        &["extension", "import-legacy"],
-    ];
-
-    for args in cases {
-        let output = Command::new(&binary)
-            .args(*args)
-            .output()
-            .unwrap_or_else(|e| panic!("failed to run `aletheon {}`: {e}", args.join(" ")));
-
-        assert!(
-            !output.status.success(),
-            "`aletheon {}` must return non-zero; got success with stdout: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stdout)
-        );
-
+fn lifecycle_commands_use_real_service_errors() {
+    let store = TempDir::new().unwrap();
+    for args in [
+        &["extension", "show", "test.missing"][..],
+        &["extension", "enable", "test.missing"],
+        &["extension", "disable", "test.missing"],
+        &["extension", "rollback", "test.missing"],
+        &["extension", "remove", "test.missing"],
+        &["extension", "purge", "test.missing"],
+    ] {
+        let output = run(&store, args);
+        assert!(!output.status.success(), "`{}` unexpectedly succeeded", args.join(" "));
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("not yet") || stderr.contains("not implemented"),
-            "`aletheon {}` error must say 'not yet' or 'not implemented'; got: {stderr}",
+            !stderr.contains("not implemented") && !stderr.contains("not yet implemented"),
+            "`{}` still reached a placeholder: {stderr}",
             args.join(" ")
         );
     }
 }
 
 #[test]
-fn implemented_inspect_rejects_nonexistent_package() {
-    let binary = aletheon_binary();
-    let output = Command::new(&binary)
-        .args(["extension", "inspect", "/nonexistent/pkg.tar.gz"])
-        .output()
-        .expect("failed to run aletheon");
-
+fn empty_legacy_import_is_a_successful_noop() {
+    let store = TempDir::new().unwrap();
+    let output = run(&store, &["extension", "import-legacy"]);
     assert!(
-        !output.status.success(),
-        "inspect of missing package must fail"
+        output.status.success(),
+        "empty import failed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Imported 0"));
+}
+
+#[test]
+fn inspect_rejects_nonexistent_package() {
+    let store = TempDir::new().unwrap();
+    let output = run(
+        &store,
+        &["extension", "inspect", "/nonexistent/pkg.tar.gz"],
+    );
+    assert!(!output.status.success());
 }
