@@ -293,10 +293,25 @@ impl TurnSessionStatePort for ProductionTurnSessions {
                     history_budget = plan.history_budget,
                     "Hard watermark exceeded — compacting before model call"
                 );
-                let first_applied = manager.compact_to_budget(&*self.llm, &plan, false).await?;
+                let first_applied = match manager.compact_to_budget(&*self.llm, &plan, false).await
+                {
+                    Ok(applied) => applied,
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "First hard-watermark compaction attempt was rejected; retrying aggressively"
+                        );
+                        false
+                    }
+                };
                 plan = self.budget_plan(&manager, message).await?;
                 if !first_applied || plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
-                    manager.compact_to_budget(&*self.llm, &plan, true).await?;
+                    if let Err(error) = manager.compact_to_budget(&*self.llm, &plan, true).await {
+                        tracing::warn!(
+                            error = %error,
+                            "Aggressive hard-watermark compaction attempt was rejected"
+                        );
+                    }
                     plan = self.budget_plan(&manager, message).await?;
                 }
                 if plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
@@ -408,7 +423,21 @@ impl TurnSessionStatePort for ProductionTurnSessions {
                 })
                 .await;
             let mut manager = manager_handle.lock().await;
-            if manager.compact_to_budget(&*self.llm, &plan, false).await? {
+            let compacted = match manager.compact_to_budget(&*self.llm, &plan, false).await {
+                Ok(compacted) => compacted,
+                Err(error) => {
+                    // A soft-watermark pass is opportunistic. Validation
+                    // rejection leaves the projection untouched and must not
+                    // turn an otherwise successful model response into a
+                    // failed turn.
+                    tracing::warn!(
+                        error = %error,
+                        "Soft-watermark compaction was rejected; preserving current projection"
+                    );
+                    false
+                }
+            };
+            if compacted {
                 let tokens_after = manager.estimate_tokens();
                 drop(manager);
                 self.hooks
