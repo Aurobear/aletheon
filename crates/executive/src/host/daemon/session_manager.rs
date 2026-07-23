@@ -5,7 +5,7 @@ use anyhow::Result;
 use tracing::{debug, info};
 
 use fabric::{Clock, LlmProvider, Message, Role};
-use mnemosyne::runtime::AdvancedCompressor;
+use mnemosyne::runtime::{AdvancedCompressor, ContextBudgetPlan};
 
 /// Process-local working context for one canonical Session.
 ///
@@ -97,6 +97,15 @@ impl SessionManager {
         self.messages.iter().map(Message::estimate_tokens).sum()
     }
 
+    pub fn projected_tokens(&self, pending_user: &str) -> usize {
+        self.estimate_tokens()
+            .saturating_add(Message::user(pending_user).estimate_tokens())
+    }
+
+    pub fn compaction_needed_for(&self, plan: &ContextBudgetPlan) -> bool {
+        self.estimate_tokens() >= plan.soft_watermark && self.compressor.can_compact(&self.messages)
+    }
+
     pub fn compaction_needed(&self) -> bool {
         self.compressor.should_compact(&self.messages)
     }
@@ -115,6 +124,20 @@ impl SessionManager {
             return Ok(false);
         }
         self.run_compaction(llm, true).await
+    }
+
+    /// Run the shared compaction engine against a per-turn target. The second
+    /// attempt retains a smaller verbatim tail but uses the same validation and
+    /// atomic commit path.
+    pub async fn compact_to_budget(
+        &mut self,
+        llm: &dyn LlmProvider,
+        plan: &ContextBudgetPlan,
+        aggressive_retry: bool,
+    ) -> Result<bool> {
+        self.compressor
+            .configure_budget(plan.history_budget, aggressive_retry);
+        self.force_compact(llm).await
     }
 
     async fn run_compaction(&mut self, llm: &dyn LlmProvider, force: bool) -> Result<bool> {
@@ -149,6 +172,19 @@ mod tests {
 
     struct StubLlm;
 
+    const VALID_CHECKPOINT: &str = "\
+## Active Task\ncontinue\n\
+## Goal\ncomplete the task\n\
+## Completed Actions\n- inspected state\n\
+## Active State\nworkspace is active\n\
+## In Progress\nimplementation\n\
+## Blocked\nnone\n\
+## Key Decisions\npreserve evidence\n\
+## Pending User Asks\nfinish\n\
+## Relevant Files\nsrc/lib.rs\n\
+## Remaining Work\nvalidate\n\
+## Critical Context\nconstraints remain";
+
     #[async_trait]
     impl LlmProvider for StubLlm {
         async fn complete(
@@ -158,7 +194,7 @@ mod tests {
         ) -> anyhow::Result<LlmResponse> {
             Ok(LlmResponse {
                 content: vec![ContentBlock::Text {
-                    text: "SUMMARY".into(),
+                    text: VALID_CHECKPOINT.into(),
                 }],
                 stop_reason: StopReason::EndTurn,
                 usage: Usage::default(),

@@ -39,15 +39,18 @@ impl SkillAdminPort for DefaultSkillAdmin {
         Ok(count)
     }
 
-    fn list(&self) -> Vec<crate::application::admin_service::SkillDescriptor> {
+    async fn list(&self) -> Vec<crate::application::admin_service::SkillDescriptor> {
         self.loader
-            .blocking_lock()
+            .lock()
+            .await
             .skills()
             .iter()
             .map(|s| crate::application::admin_service::SkillDescriptor {
+                id: format!("{}:{}", s.source, s.name),
                 name: s.name.clone(),
                 description: s.description.clone(),
                 enabled: true,
+                extension_id: s.source.clone(),
             })
             .collect()
     }

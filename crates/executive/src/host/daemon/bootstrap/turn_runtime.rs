@@ -87,6 +87,7 @@ pub(super) struct TurnRuntimeResources {
     pub(crate) session_created_at: Arc<Mutex<HashMap<String, fabric::MonoTime>>>,
     pub(crate) data_dir: std::path::PathBuf,
     pub(crate) context_window: usize,
+    pub(crate) cached_prefix: Arc<Mutex<String>>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) memory: Arc<dyn mnemosyne::MemoryService>,
     pub(crate) config: Arc<dyn TurnConfigPort>,
@@ -101,6 +102,7 @@ pub(super) fn compose_turn_runtime(resources: TurnRuntimeResources) -> TurnRunti
         Box::pin(async move { corpus.execute_hook(&context).await })
     });
     let hooks: Arc<dyn TurnHookPort> = Arc::new(ProductionTurnHooks { execute_hook });
+    let active_profile = resources.active_profile.clone();
     TurnRuntimePorts {
         hooks: hooks.clone(),
         storm: Arc::new(ProductionStormState {
@@ -119,7 +121,7 @@ pub(super) fn compose_turn_runtime(resources: TurnRuntimeResources) -> TurnRunti
             resources: resources.capabilities,
             admission: resources.admission,
             hooks: hooks.clone(),
-            active_profile: resources.active_profile,
+            active_profile: active_profile.clone(),
         }),
         sessions: Arc::new(ProductionTurnSessions {
             registry: resources.sessions,
@@ -127,6 +129,8 @@ pub(super) fn compose_turn_runtime(resources: TurnRuntimeResources) -> TurnRunti
             created_at: resources.session_created_at,
             data_dir: resources.data_dir,
             context_window: resources.context_window,
+            cached_prefix: resources.cached_prefix,
+            active_profile,
             clock: resources.clock,
             llm: resources.default_llm,
             memory_service: resources.memory,
@@ -197,6 +201,8 @@ struct ProductionTurnSessions {
     created_at: Arc<Mutex<HashMap<String, fabric::MonoTime>>>,
     data_dir: std::path::PathBuf,
     context_window: usize,
+    cached_prefix: Arc<Mutex<String>>,
+    active_profile: Arc<dyn ActiveAgentProfilePort>,
     clock: Arc<dyn Clock>,
     llm: Arc<dyn LlmProvider>,
     memory_service: Arc<dyn mnemosyne::MemoryService>,
@@ -232,6 +238,39 @@ impl ProductionTurnSessions {
             .insert(session_id.clone(), self.clock.mono_now());
         Ok((session_id, manager))
     }
+
+    async fn budget_plan(
+        &self,
+        manager: &crate::host::daemon::session_manager::SessionManager,
+        pending_user: &str,
+    ) -> anyhow::Result<mnemosyne::runtime::ContextBudgetPlan> {
+        use mnemosyne::runtime::{ContextBudgetInput, ContextBudgetPlanner};
+
+        let profile = self.active_profile.snapshot().await?;
+        let prefix_tokens = Message::system(self.cached_prefix.lock().await.clone())
+            .estimate_tokens()
+            .saturating_add(Message::system(profile.system_prompt).estimate_tokens());
+        let tool_schema_tokens = profile
+            .allowed_tools
+            .iter()
+            .map(|name| Message::system(format!("tool:{name}:schema")).estimate_tokens() + 64)
+            .sum();
+        let pending_user_input_tokens = if pending_user.is_empty() {
+            0
+        } else {
+            Message::user(pending_user).estimate_tokens()
+        };
+        Ok(ContextBudgetPlanner::plan(ContextBudgetInput {
+            model_context_window: self.context_window,
+            profile_input_limit: profile.max_input_tokens as usize,
+            system_and_skill_prefix_tokens: prefix_tokens,
+            tool_schema_tokens,
+            reserved_output_tokens: profile.max_output_tokens as usize,
+            pending_user_input_tokens,
+            safety_margin_tokens: (self.context_window / 20).max(1_024),
+            current_history_tokens: manager.estimate_tokens(),
+        }))
+    }
 }
 
 #[async_trait]
@@ -246,33 +285,30 @@ impl TurnSessionStatePort for ProductionTurnSessions {
         let (session_id, manager) = self.manager().await?;
         let turn_count = {
             let mut manager = manager.lock().await;
-            manager.push_user(message).await;
-
-            // Pre-request compaction: if context would overflow the window,
-            // compact synchronously before calling the model (hard watermark).
-            let pre_tokens = manager.estimate_tokens();
-            let hard_limit = (self.context_window as f64 * 0.95) as usize;
-            if pre_tokens > hard_limit {
+            let mut plan = self.budget_plan(&manager, message).await?;
+            if plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
                 tracing::warn!(
-                    tokens_before = pre_tokens,
-                    hard_limit = hard_limit,
+                    projected_tokens = plan.projected_history_tokens,
+                    history_budget = plan.history_budget,
                     "Hard watermark exceeded — compacting before model call"
                 );
-                if let Err(e) = manager.force_compact(&*self.llm).await {
-                    tracing::error!(error = %e, "Pre-request compaction failed — blocking turn");
+                let first_applied = manager.compact_to_budget(&*self.llm, &plan, false).await?;
+                plan = self.budget_plan(&manager, message).await?;
+                if !first_applied || plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
+                    manager.compact_to_budget(&*self.llm, &plan, true).await?;
+                    plan = self.budget_plan(&manager, message).await?;
+                }
+                if plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
                     return Err(anyhow::anyhow!(
-                        "Context too large and compaction failed. Try /new to start a fresh session, \
-                         or switch to a model with a larger context window."
+                        "Context cannot safely fit the request after two validated compaction \
+                         attempts. Try /new, switch to a larger-window model, or export diagnostics."
                     ));
                 }
-                let post_tokens = manager.estimate_tokens();
-                tracing::info!(
-                    tokens_before = pre_tokens,
-                    tokens_after = post_tokens,
-                    "Hard-watermark compaction applied"
-                );
             }
 
+            // The pending input becomes part of the projection only after the
+            // hard-watermark gate proves that the request can be submitted.
+            manager.push_user(message).await;
             manager.turn_count()
         };
         if let Err(error) = self
@@ -347,22 +383,11 @@ impl TurnSessionStatePort for ProductionTurnSessions {
             manager.push_assistant(output).await;
             let turn_count = manager.turn_count();
 
-            // Soft watermark: predict if next turn will need compaction
-            let tokens_after_turn = manager.estimate_tokens();
-            let soft_limit = (self.context_window as f64 * 0.75) as usize;
-            if tokens_after_turn > soft_limit {
-                // We still have room for at least one more turn, but compaction is soon needed.
-                // The existing post-turn compaction at 80% will handle it in finish().
-                // This is just informational — no action needed yet.
-                tracing::debug!(
-                    tokens = tokens_after_turn,
-                    soft_limit = soft_limit,
-                    "Soft watermark approaching"
-                );
-            }
-
+            let plan = self.budget_plan(&manager, "").await?;
             let tokens_before = manager.estimate_tokens();
-            if !manager.compaction_needed() {
+            if plan.action == mnemosyne::runtime::BudgetAction::None
+                || !manager.compaction_needed_for(&plan)
+            {
                 return Ok(turn_count);
             }
             drop(manager);
@@ -382,7 +407,7 @@ impl TurnSessionStatePort for ProductionTurnSessions {
                 })
                 .await;
             let mut manager = manager_handle.lock().await;
-            if manager.compact_if_needed(&*self.llm).await? {
+            if manager.compact_to_budget(&*self.llm, &plan, false).await? {
                 let tokens_after = manager.estimate_tokens();
                 drop(manager);
                 self.hooks

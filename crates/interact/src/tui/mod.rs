@@ -23,7 +23,6 @@ pub mod markdown;
 pub mod pager;
 pub mod plan_view;
 pub mod registry;
-pub mod skill;
 pub mod state;
 pub mod status;
 pub mod streaming;
@@ -62,6 +61,7 @@ pub fn restore_terminal() {
     let _ = execute!(io::stderr(), crossterm::cursor::Show);
 }
 
+use std::collections::BTreeMap;
 use std::io;
 use std::sync::Arc;
 
@@ -86,7 +86,6 @@ use self::chat::ChatWidget;
 use self::completion::CompletionPopup;
 use self::input::CommandHistory;
 use self::plan_view::PlanViewState;
-use self::skill::SkillLoader;
 use self::state::AppState;
 use self::status::StatusBar;
 use self::streaming::StreamController;
@@ -264,8 +263,12 @@ struct App {
     turn_active: bool,
     response_buf: String,
     caps: TermCaps,
-    #[allow(dead_code)]
-    skill_loader: SkillLoader,
+    /// Monotonically increasing JSON-RPC request id.
+    next_request_id: u64,
+    /// UI mutations which must happen only after their matching RPC succeeds.
+    pending_commands: BTreeMap<u64, PendingCommand>,
+    /// Non-turn RPCs whose result should stop the command spinner immediately.
+    pending_non_turn: std::collections::BTreeSet<u64>,
     model_name: String,
     status: StatusBar,
     /// Last Ctrl+C press time (for double-press detection).
@@ -313,10 +316,6 @@ impl App {
         clock: Arc<dyn Clock>,
         workspace: fabric::WorkspacePolicy,
     ) -> Self {
-        let mut skill_loader = SkillLoader::new(SkillLoader::default_dir());
-        if let Err(e) = skill_loader.load_all() {
-            eprintln!("Warning: failed to load skills: {e}");
-        }
         let mut status = StatusBar::new(caps.clone());
         status.connected = true;
         status.model_name = model_name.clone();
@@ -333,7 +332,9 @@ impl App {
             turn_active: false,
             response_buf: String::new(),
             caps,
-            skill_loader,
+            next_request_id: 1,
+            pending_commands: BTreeMap::new(),
+            pending_non_turn: std::collections::BTreeSet::new(),
             model_name,
             status,
             last_ctrl_c: None,
@@ -370,6 +371,12 @@ impl App {
                 || (0x30A0..=0x30FF).contains(&cp) // Katakana
         });
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingCommand {
+    InitializeSession,
+    NewSession { clear_screen: bool },
 }
 
 #[cfg(test)]

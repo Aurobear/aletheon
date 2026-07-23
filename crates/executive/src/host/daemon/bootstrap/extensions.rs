@@ -195,7 +195,7 @@ async fn prepare_and_publish(
     let assets: Vec<_> = installed
         .assets
         .iter()
-        .filter(|asset| asset.kind == fabric::AssetKind::Executable)
+        .filter(|asset| asset.kind == fabric::types::extension_asset::AssetKind::Executable)
         .collect();
     if assets.is_empty() {
         return Ok(());
@@ -433,12 +433,12 @@ risk = "Sandboxed"
                 file_count: 2,
                 total_size: 1,
                 installed_at: format!("2026-07-24T{version}:00Z"),
-                assets: vec![fabric::AssetRef {
-                    kind: fabric::AssetKind::Executable,
+                assets: vec![fabric::types::extension_package::AssetRef {
+                    kind: fabric::types::extension_asset::AssetKind::Executable,
                     id: "runtime.generic".into(),
                     path: "assets/executables/generic/runtime.toml".into(),
                 }],
-                requested_permissions: fabric::PermissionRequestSet {
+                requested_permissions: fabric::types::extension_package::PermissionRequestSet {
                     filesystem: None,
                     network: false,
                     executables: true,
@@ -489,7 +489,7 @@ risk = "Sandboxed"
         let mut permissions = std::fs::metadata(&command).unwrap().permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(&command, permissions).unwrap();
-        let requested = fabric::PermissionRequestSet {
+        let requested = fabric::types::extension_package::PermissionRequestSet {
             filesystem: None,
             network: false,
             executables: true,
@@ -504,8 +504,8 @@ risk = "Sandboxed"
                 file_count: 2,
                 total_size: 1,
                 installed_at: "2026-07-24T00:00:00Z".into(),
-                assets: vec![fabric::AssetRef {
-                    kind: fabric::AssetKind::Executable,
+                assets: vec![fabric::types::extension_package::AssetRef {
+                    kind: fabric::types::extension_asset::AssetKind::Executable,
                     id: "runtime.generic".into(),
                     path: "assets/executables/generic/runtime.toml".into(),
                 }],
@@ -572,7 +572,7 @@ risk = "Sandboxed"
             "02",
             "#!/usr/bin/python3\nraise SystemExit(23)\n",
         );
-        let requested = fabric::PermissionRequestSet {
+        let requested = fabric::types::extension_package::PermissionRequestSet {
             filesystem: None,
             network: false,
             executables: true,

@@ -110,6 +110,9 @@ pub use ops::router;
 pub mod runtime {
     pub use crate::adapters::storage::fact_store::FactStore;
     pub use crate::adapters::storage::recall_memory::RecallMemory;
+    pub use crate::application::compressor::budget::{
+        BudgetAction, ContextBudgetInput, ContextBudgetPlan, ContextBudgetPlanner,
+    };
     pub use crate::application::compressor::AdvancedCompressor;
     pub use crate::backends::EpisodicMemory;
     #[cfg(feature = "cognitive-memory")]

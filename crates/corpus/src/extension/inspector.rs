@@ -4,7 +4,8 @@
 //! and extracts to a staging directory.
 
 use anyhow::{bail, Context, Result};
-use fabric::{AssetKind, PackageManifest};
+use fabric::types::extension_asset::AssetKind;
+use fabric::types::extension_package::PackageManifest;
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;

@@ -323,6 +323,16 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
 }
 
 pub fn process_response(app: &mut App, msg: serde_json::Value) {
+    if let Some(request_id) = msg.get("id").and_then(serde_json::Value::as_u64) {
+        if app.pending_non_turn.remove(&request_id) {
+            app.streaming = false;
+            app.status.waiting = false;
+            app.app_state.streaming = false;
+        }
+    }
+    if apply_pending_command_response(app, &msg) {
+        return;
+    }
     if apply_typed_protocol_event(app, &msg) {
         return;
     }
@@ -391,6 +401,65 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
     //
     // Also do NOT clear response_buf — streaming events may follow in the
     // same try_read chunk.
+}
+
+fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) -> bool {
+    let Some(request_id) = message.get("id").and_then(serde_json::Value::as_u64) else {
+        return false;
+    };
+    let Some(pending) = app.pending_commands.remove(&request_id) else {
+        return false;
+    };
+
+    match (pending, message.get("result"), message.get("error")) {
+        (super::PendingCommand::InitializeSession, Some(result), None) => {
+            if let Some(session_id) = result.get("session_id").and_then(serde_json::Value::as_str) {
+                app.app_state.session_id = Some(session_id.to_owned());
+            }
+        }
+        (super::PendingCommand::NewSession { clear_screen }, Some(result), None)
+            if result
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some() =>
+        {
+            if clear_screen {
+                app.chat = super::chat::ChatWidget::new(app.caps.clone());
+            }
+            let session_id = result
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            app.app_state.session_id = Some(session_id.to_owned());
+            app.chat
+                .add_text(ChatRole::System, format!("已创建新会话：{session_id}"));
+        }
+        (super::PendingCommand::InitializeSession, _, Some(error)) => {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("初始化会话失败");
+            app.chat
+                .add_text(ChatRole::System, format!("Error: {message}"));
+        }
+        (_, _, Some(error)) => {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("创建新会话失败");
+            app.chat.add_text(
+                ChatRole::System,
+                format!("Error: {message}。旧会话和界面保持不变。"),
+            );
+        }
+        _ => {
+            app.chat.add_text(
+                ChatRole::System,
+                "Error: daemon 返回了无效的会话创建响应；旧会话和界面保持不变。".to_string(),
+            );
+        }
+    }
+    true
 }
 
 fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> bool {

@@ -222,7 +222,7 @@ enum ConfigSub {
 async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
     use executive::application::extension_install::ExtensionInstallService;
     use executive::application::extension_manage::ExtensionManageService;
-    let store_root = corpus::extension::store::PackageStore::configured_user_root();
+    let store_root = ExtensionInstallService::configured_user_root();
     let install_svc = ExtensionInstallService::new(&store_root)?;
     let explicit_approval = matches!(
         cmd,

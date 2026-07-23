@@ -5,7 +5,8 @@
 //! lazily during the inspector phase.
 
 use anyhow::{bail, Context, Result};
-use fabric::{CapabilityDescriptor, CapabilityKind, PackageManifest, RuntimeClass};
+use fabric::types::extension_asset::{CapabilityDescriptor, CapabilityKind, RuntimeClass};
+use fabric::types::extension_package::PackageManifest;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;

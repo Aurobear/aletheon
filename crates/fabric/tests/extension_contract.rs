@@ -338,7 +338,7 @@ fn unknown_extension_kind_deserialization_behavior() {
 /// can safely project legacy extension kinds into the new asset model.
 #[test]
 fn extension_kind_to_asset_kind_projection() {
-    use fabric::AssetKind;
+    use fabric::types::extension_asset::AssetKind;
     assert_eq!(AssetKind::from(ExtensionKind::Skill), AssetKind::Skill);
     assert_eq!(AssetKind::from(ExtensionKind::Hook), AssetKind::Hook);
     assert_eq!(AssetKind::from(ExtensionKind::Mcp), AssetKind::Connector);
@@ -355,7 +355,7 @@ fn extension_kind_to_asset_kind_projection() {
 
 #[test]
 fn extension_origin_to_asset_origin_projection() {
-    use fabric::AssetOrigin;
+    use fabric::types::extension_asset::AssetOrigin;
     let builtin = AssetOrigin::from(ExtensionOrigin::BuiltIn);
     assert_eq!(builtin, AssetOrigin::BuiltIn);
 
@@ -398,7 +398,7 @@ fn extension_descriptor_to_asset_descriptor_projection() {
 
 #[test]
 fn package_id_serde_transparent() {
-    use fabric::PackageId;
+    use fabric::types::extension_package::PackageId;
     let id = PackageId("test.minimal".into());
     let json = to_string(&id).unwrap();
     assert_eq!(json, "\"test.minimal\"");
@@ -412,7 +412,7 @@ fn package_id_serde_transparent() {
 
 #[test]
 fn asset_kind_serde_snake_case() {
-    use fabric::AssetKind;
+    use fabric::types::extension_asset::AssetKind;
     let cases = [
         (AssetKind::Skill, "skill"),
         (AssetKind::Hook, "hook"),
@@ -432,7 +432,7 @@ fn asset_kind_serde_snake_case() {
 
 #[test]
 fn activation_state_serde() {
-    use fabric::ActivationState;
+    use fabric::types::extension_state::ActivationState;
     let cases = [
         (ActivationState::Discovered, "\"discovered\""),
         (ActivationState::Active, "\"active\""),
@@ -449,7 +449,7 @@ fn activation_state_serde() {
 
 #[test]
 fn health_state_serde() {
-    use fabric::HealthState;
+    use fabric::types::extension_state::HealthState;
     assert_eq!(to_string(&HealthState::Healthy).unwrap(), "\"healthy\"");
     let degraded = HealthState::Degraded {
         failures: vec!["timeout".into()],

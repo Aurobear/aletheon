@@ -88,7 +88,7 @@ impl RequestHandler {
         id: &serde_json::Value,
         _request: &serde_json::Value,
     ) -> serde_json::Value {
-        let skills = self.ports.admin.list_skills();
+        let skills = self.ports.admin.list_skills().await;
         let list: Vec<serde_json::Value> = skills
             .iter()
             .map(|s| {

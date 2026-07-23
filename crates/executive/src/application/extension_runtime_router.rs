@@ -5,7 +5,8 @@
 //! external runtime implementation.
 
 use anyhow::{Context, Result};
-use fabric::{AgentHandle, AgentRuntimeProvider, AgentSpawnRequest, RuntimeId};
+use fabric::include::extension_provider::AgentRuntimeProvider;
+use fabric::{AgentHandle, AgentSpawnRequest, RuntimeId};
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;

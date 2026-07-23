@@ -54,17 +54,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     let test_timeout = Duration::from_secs(test_config.test_timeout);
     let mut needs_redraw = true;
 
-    // Clear daemon session on startup (avoids stale data from previous runs)
-    let clear_msg = ClientRpcRequest::Clear.to_json_rpc(Some(0))?;
-    use tokio::io::AsyncWriteExt;
-    let _ = app
-        .stream
-        .write_all(format!("{clear_msg}\n").as_bytes())
-        .await;
-    let _ = app.stream.flush().await;
-    // Read and discard the clear response so it doesn't pollute the socket buffer
-    ClientTimer.sleep(Duration::from_millis(50)).await;
-    let _ = app.stream.try_read(&mut app.read_buf);
+    // Populate completion/help from the daemon-owned Skill catalog. The
+    // registry retains its last valid catalog if a later refresh fails.
+    let init_id = super::submit::write_request(&mut app, ClientRpcRequest::SessionLoadRecent).await;
+    app.pending_commands
+        .insert(init_id, super::super::PendingCommand::InitializeSession);
+    super::submit::write_request(&mut app, ClientRpcRequest::SkillsList).await;
 
     // If test mode with auto_submit, submit the first line immediately
     if let Some(ref mut reader) = test_input {
@@ -137,6 +132,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                             app.cursor += ch.len_utf8();
                         }
                         app.check_cjk();
+                        super::key_handler::refresh_command_completion(&mut app);
                         needs_redraw = true;
                     }
                     Event::Resize(w, _h) => {

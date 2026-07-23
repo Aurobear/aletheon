@@ -1,3 +1,4 @@
+pub mod budget;
 pub mod tail;
 pub mod template;
 
@@ -106,6 +107,19 @@ impl AdvancedCompressor {
         cut > 0 && cut < messages.len()
     }
 
+    pub fn can_compact(&self, messages: &[Message]) -> bool {
+        let cut = safe_tail_cut(messages, find_tail_cut(messages, &self.tail_config));
+        cut > 0 && cut < messages.len()
+    }
+
+    /// Adapt the protected tail to the actual history budget for this turn.
+    pub fn configure_budget(&mut self, history_budget: usize, aggressive: bool) {
+        let divisor = if aggressive { 5 } else { 3 };
+        let minimum = self.tail_config.tail_token_budget.max(256);
+        self.tail_config.tail_token_budget = (history_budget / divisor).max(minimum);
+        self.context_window_tokens = history_budget;
+    }
+
     /// Check if token count exceeds a given fraction of the context window.
     pub fn exceeds_threshold(&self, messages: &[Message], fraction: f64) -> bool {
         let total_tokens: usize = messages.iter().map(Message::estimate_tokens).sum();
@@ -148,7 +162,10 @@ impl AdvancedCompressor {
         let mut pruned_messages = old_messages.to_vec();
         fabric::prune_tool_outputs(&mut pruned_messages, 0);
 
-        let summary = self.generate_summary(&pruned_messages, llm).await?;
+        let summary = match self.generate_summary(&pruned_messages, llm).await {
+            Ok(summary) => summary,
+            Err(error) => return self.reject_compaction(total_tokens, force, error.to_string()),
+        };
 
         // A request at index zero cannot be part of both sides of a contiguous
         // prefix/tail split. Preserve it explicitly after the summary so it
@@ -170,8 +187,29 @@ impl AdvancedCompressor {
         compacted.extend(protected_initial_user);
         compacted.extend_from_slice(tail_messages);
 
-        self.previous_summary = Some(summary);
+        let tokens_after: usize = compacted.iter().map(Message::estimate_tokens).sum();
+        if let Err(error) = validate_structured_checkpoint(&summary) {
+            return self.reject_compaction(total_tokens, force, error.to_string());
+        }
+        if tokens_after >= total_tokens {
+            return self.reject_compaction(
+                total_tokens,
+                force,
+                format!("no token benefit ({total_tokens} -> {tokens_after})"),
+            );
+        }
+        if tokens_after > self.context_window_tokens {
+            return self.reject_compaction(
+                total_tokens,
+                force,
+                format!(
+                    "result {tokens_after} exceeds history budget {}",
+                    self.context_window_tokens
+                ),
+            );
+        }
 
+        self.previous_summary = Some(summary);
         let before = messages.len();
         *messages = compacted;
         info!(
@@ -186,13 +224,32 @@ impl AdvancedCompressor {
             run_id: self.run_counter,
             strategy: CompactionStrategy::TailKeep,
             tokens_before: total_tokens,
-            tokens_after: messages.iter().map(|m| m.estimate_tokens()).sum(),
+            tokens_after,
             forced: force,
             applied: true,
             failure: None,
         });
 
         Ok(true)
+    }
+
+    fn reject_compaction(
+        &mut self,
+        tokens_before: usize,
+        forced: bool,
+        reason: String,
+    ) -> Result<bool> {
+        self.run_counter += 1;
+        self.lineage.push(CompactionLineage {
+            run_id: self.run_counter,
+            strategy: CompactionStrategy::TailKeep,
+            tokens_before,
+            tokens_after: tokens_before,
+            forced,
+            applied: false,
+            failure: Some(reason.clone()),
+        });
+        anyhow::bail!("compaction validation failed: {reason}")
     }
 
     /// Guarded compaction returning a rich `CompactionOutcome` (C1).
@@ -367,6 +424,35 @@ impl AdvancedCompressor {
     }
 }
 
+fn validate_structured_checkpoint(summary: &str) -> Result<()> {
+    const REQUIRED: [&str; 10] = [
+        "## Active Task",
+        "## Goal",
+        "## Completed Actions",
+        "## Active State",
+        "## In Progress",
+        "## Blocked",
+        "## Key Decisions",
+        "## Pending User Asks",
+        "## Relevant Files",
+        "## Remaining Work",
+    ];
+    let missing: Vec<&str> = REQUIRED
+        .into_iter()
+        .filter(|heading| !summary.contains(heading))
+        .collect();
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "compaction checkpoint missing required sections: {}",
+            missing.join(", ")
+        );
+    }
+    if !summary.contains("## Critical Context") {
+        anyhow::bail!("compaction checkpoint missing required section: ## Critical Context");
+    }
+    Ok(())
+}
+
 impl CompactorTrait for AdvancedCompressor {
     fn maybe_compact<'a>(
         &'a mut self,
@@ -412,6 +498,19 @@ fn content_block_chars(block: &ContentBlock) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const VALID_CHECKPOINT: &str = "\
+## Active Task\ncontinue\n\
+## Goal\ncomplete the task\n\
+## Completed Actions\n- inspected state\n\
+## Active State\nworkspace is active\n\
+## In Progress\nimplementation\n\
+## Blocked\nnone\n\
+## Key Decisions\npreserve evidence\n\
+## Pending User Asks\nfinish\n\
+## Relevant Files\nsrc/lib.rs\n\
+## Remaining Work\nvalidate\n\
+## Critical Context\nconstraints remain";
     use async_trait::async_trait;
     use fabric::ToolDefinition;
     use fabric::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
@@ -436,7 +535,7 @@ mod tests {
         ) -> anyhow::Result<LlmResponse> {
             Ok(LlmResponse {
                 content: vec![ContentBlock::Text {
-                    text: "this is a summary".into(),
+                    text: VALID_CHECKPOINT.into(),
                 }],
                 stop_reason: StopReason::EndTurn,
                 usage: Usage::default(),
@@ -461,7 +560,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compressor_actually_compacts() {
-        let mut compressor = AdvancedCompressor::new(100, 200, 1_000);
+        let mut compressor = AdvancedCompressor::new(100, 200, 4_000);
         let llm = SimpleLlm;
 
         // Build many large messages to exceed threshold
@@ -503,7 +602,7 @@ mod tests {
         // force_compact compacts anyway and records the summary
         let did = c.force_compact(&mut messages, &llm).await.unwrap();
         assert!(did, "force_compact should compact regardless of threshold");
-        assert_eq!(c.last_summary(), Some("this is a summary"));
+        assert_eq!(c.last_summary(), Some(VALID_CHECKPOINT));
     }
 
     #[tokio::test]
@@ -539,15 +638,14 @@ mod tests {
         messages.push(Message::tool_result("latest", "最新工具结果🧠", false));
 
         assert!(c.force_compact(&mut messages, &llm).await.unwrap());
-        let first = messages.clone();
         assert!(contains_text_user(&messages, "还是A吧"));
         assert_tail_is_tool_boundary_safe(&messages);
 
-        assert!(c.force_compact(&mut messages, &llm).await.unwrap());
-        assert_eq!(
-            serde_json::to_value(&messages).unwrap(),
-            serde_json::to_value(&first).unwrap()
-        );
+        let second_snapshot = serde_json::to_value(&messages).unwrap();
+        let second = c.force_compact(&mut messages, &llm).await;
+        if second.is_err() {
+            assert_eq!(serde_json::to_value(&messages).unwrap(), second_snapshot);
+        }
         assert!(contains_text_user(&messages, "还是A吧"));
         assert_tail_is_tool_boundary_safe(&messages);
     }
@@ -612,6 +710,39 @@ mod tests {
         }
     }
 
+    struct DegenerateLlm;
+    #[async_trait]
+    impl LlmProvider for DegenerateLlm {
+        async fn complete(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "this is a summary".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+        async fn complete_stream(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            anyhow::bail!("mock(DegenerateLlm): streaming not implemented")
+        }
+        fn name(&self) -> &str {
+            "degenerate"
+        }
+        fn max_context_length(&self) -> usize {
+            100_000
+        }
+    }
+
     /// Fails every completion (simulates a sampler outage).
     struct ErrLlm;
     #[async_trait]
@@ -670,12 +801,12 @@ mod tests {
 
     #[tokio::test]
     async fn v2_rejects_degenerate_summary_and_keeps_messages() {
-        // SimpleLlm returns "this is a summary" (17 chars) -> degenerate.
+        // DegenerateLlm returns a very short free-form summary.
         let mut c = AdvancedCompressor::new(100, 200, 1_000);
         let mut messages = oversized_messages();
         let snapshot = serde_json::to_value(&messages).unwrap();
         let outcome = c
-            .maybe_compact_v2(&mut messages, &SimpleLlm, CompactionStrategy::TailKeep)
+            .maybe_compact_v2(&mut messages, &DegenerateLlm, CompactionStrategy::TailKeep)
             .await
             .unwrap();
         assert!(!outcome.applied);

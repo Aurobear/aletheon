@@ -11,7 +11,7 @@ use super::extension_install::ExtensionInstallService;
 pub struct ExtensionApprovalRequest {
     pub package_id: String,
     pub version: String,
-    pub added_permissions: fabric::PermissionRequestSet,
+    pub added_permissions: fabric::types::extension_package::PermissionRequestSet,
     pub added_assets: Vec<String>,
 }
 
@@ -89,7 +89,8 @@ mod tests {
             total_size: 1,
             installed_at: installed_at.into(),
             assets: Vec::new(),
-            requested_permissions: fabric::PermissionRequestSet::default(),
+            requested_permissions: fabric::types::extension_package::PermissionRequestSet::default(
+            ),
             source: corpus::extension::store::PackageSourceRecord::LocalArchive,
             workspace_trust: None,
         }
@@ -117,7 +118,8 @@ mod tests {
                 enabled: true,
                 current: Some(HASH_B.into()),
                 previous_known_good: Some(HASH_A.into()),
-                granted_permissions: fabric::PermissionRequestSet::default(),
+                granted_permissions:
+                    fabric::types::extension_package::PermissionRequestSet::default(),
                 permission_approval: None,
                 activated_assets: Vec::new(),
                 health: "healthy".into(),
@@ -157,11 +159,13 @@ mod tests {
         let mut candidate = record(HASH_A, "1.0.0", "2026-07-23T00:00:00Z");
         candidate.requested_permissions.network = true;
         candidate.requested_permissions.executables = true;
-        candidate.assets.push(fabric::AssetRef {
-            kind: fabric::AssetKind::Executable,
-            id: "runtime.generic".into(),
-            path: "assets/executables/generic/runtime.toml".into(),
-        });
+        candidate
+            .assets
+            .push(fabric::types::extension_package::AssetRef {
+                kind: fabric::types::extension_asset::AssetKind::Executable,
+                id: "runtime.generic".into(),
+                path: "assets/executables/generic/runtime.toml".into(),
+            });
         service.store.put_installed(&candidate).unwrap();
         assert!(service.enable("test.pkg").is_err());
         assert!(!service.store.read_activation("test.pkg").unwrap().enabled);
@@ -495,7 +499,7 @@ fn approval_request(
     ExtensionApprovalRequest {
         package_id: candidate.id.clone(),
         version: candidate.version.clone(),
-        added_permissions: fabric::PermissionRequestSet {
+        added_permissions: fabric::types::extension_package::PermissionRequestSet {
             filesystem: (!filesystem.is_empty()).then_some(filesystem),
             network: candidate.requested_permissions.network
                 && !activation.granted_permissions.network,
@@ -511,7 +515,9 @@ fn approval_request(
     }
 }
 
-fn permission_request_is_empty(permissions: &fabric::PermissionRequestSet) -> bool {
+fn permission_request_is_empty(
+    permissions: &fabric::types::extension_package::PermissionRequestSet,
+) -> bool {
     permissions
         .filesystem
         .as_ref()

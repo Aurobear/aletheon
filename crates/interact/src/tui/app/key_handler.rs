@@ -8,6 +8,15 @@ use super::submit::{submit_message, write_request};
 use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
 use fabric::ui_event::CollaborationMode;
 
+pub(crate) fn refresh_command_completion(app: &mut App) {
+    if app.input_buf.starts_with('/') {
+        app.completion
+            .show_commands(&app.input_buf, &app.registry, app.turn_active);
+    } else {
+        app.completion.hide();
+    }
+}
+
 pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
     use crossterm::event::MouseEventKind;
     match mouse.kind {
@@ -112,6 +121,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             app.cursor = 0;
             app.has_cjk = false;
             app.pending_submit = None;
+            app.completion.hide();
             return;
         }
     }
@@ -256,8 +266,8 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         // Tab: trigger completion for slash commands
         KeyCode::Tab => {
             if app.input_buf.starts_with('/') {
-                let commands = app.registry.completion_list();
-                app.completion.show(&app.input_buf, &commands);
+                app.completion
+                    .show_commands(&app.input_buf, &app.registry, app.turn_active);
             }
         }
 
@@ -266,11 +276,14 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             // Accept completion if visible
             if app.completion.visible {
                 if let Some(selected) = app.completion.selected() {
-                    app.input_buf = selected.to_string();
-                    app.cursor = app.input_buf.len();
+                    if selected != app.input_buf {
+                        app.input_buf = selected.to_string();
+                        app.cursor = app.input_buf.len();
+                        app.completion.hide();
+                        return;
+                    }
                     app.completion.hide();
                 }
-                return;
             }
 
             // Shift+Enter or Alt+Enter → newline
@@ -321,6 +334,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 app.input_buf.replace_range(prev..app.cursor, "");
                 app.cursor = prev;
                 app.check_cjk();
+                refresh_command_completion(app);
             }
         }
 
@@ -334,6 +348,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                     .unwrap_or(app.input_buf.len());
                 app.input_buf.replace_range(app.cursor..next, "");
                 app.check_cjk();
+                refresh_command_completion(app);
             }
         }
 
@@ -343,6 +358,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 app.input_buf.insert(app.cursor, c);
                 app.cursor += c.len_utf8();
                 app.check_cjk();
+                refresh_command_completion(app);
             }
         }
 

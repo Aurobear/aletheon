@@ -5,10 +5,8 @@
 //! circuit breaking, stderr sanitization, and cancellation.
 
 use anyhow::{bail, Context, Result};
-use fabric::{
-    AgentHandle, AgentRuntimeProvider, AgentSpawnRequest, IsolationLevel, SandboxBackend,
-    SandboxConfig,
-};
+use fabric::include::extension_provider::AgentRuntimeProvider;
+use fabric::{AgentHandle, AgentSpawnRequest, IsolationLevel, SandboxBackend, SandboxConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -144,7 +142,7 @@ pub struct SubprocessAgentRuntimeProvider {
 
 #[derive(Clone)]
 struct ProviderSession {
-    runtime: Arc<Mutex<SubprocessRuntime>>,
+    process: Arc<Mutex<SubprocessRuntime>>,
     cancel: CancellationToken,
 }
 
@@ -250,7 +248,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
         let (handle, runtime) = result?;
         let session = ProviderSession {
             cancel: runtime.cancellation_token(),
-            runtime: Arc::new(Mutex::new(runtime)),
+            process: Arc::new(Mutex::new(runtime)),
         };
         anyhow::ensure!(
             self.sessions
@@ -268,7 +266,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
         let result = self
             .session(handle)
             .await?
-            .runtime
+            .process
             .lock()
             .await
             .call("observe", serde_json::to_value(handle)?)
@@ -282,7 +280,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
         let result = self
             .session(handle)
             .await?
-            .runtime
+            .process
             .lock()
             .await
             .call(
@@ -300,7 +298,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
         let result = self
             .session(handle)
             .await?
-            .runtime
+            .process
             .lock()
             .await
             .call(
@@ -320,7 +318,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
             .remove(&handle.agent_id)
             .context("unknown extension runtime Agent handle")?;
         session.cancel.cancel();
-        let mut runtime = session.runtime.lock().await;
+        let mut runtime = session.process.lock().await;
         let _ = runtime
             .call(
                 "cancel",
@@ -335,7 +333,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     async fn wait(&self, handle: &AgentHandle) -> Result<Value> {
         let session = self.session(handle).await?;
         let result = session
-            .runtime
+            .process
             .lock()
             .await
             .call("wait", serde_json::to_value(handle)?)
@@ -350,7 +348,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     async fn health(&self) -> Result<()> {
         self.ensure_available().await?;
         for session in self.sessions.lock().await.values() {
-            session.runtime.lock().await.health()?;
+            session.process.lock().await.health()?;
         }
         Ok(())
     }

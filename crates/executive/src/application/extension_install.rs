@@ -9,7 +9,7 @@ use corpus::extension::store::{
     ExtensionEvidenceEvent, InstalledPackageRecord, PackageSourceRecord, PackageStore,
     WorkspaceTrustRecord,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Installed package record (returned by list/show).
@@ -20,6 +20,10 @@ pub struct ExtensionInstallService {
 }
 
 impl ExtensionInstallService {
+    pub fn configured_user_root() -> PathBuf {
+        PackageStore::configured_user_root()
+    }
+
     pub fn new(store_root: &Path) -> Result<Self> {
         let store =
             PackageStore::new(store_root.to_path_buf()).context("failed to open package store")?;

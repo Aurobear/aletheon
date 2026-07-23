@@ -1078,6 +1078,7 @@ impl RequestHandler {
             capability_resources,
             conscious_registry.clone(),
             context_assembler,
+            cached_prefix.clone(),
             apply_objective_store,
             param_registry.clone(),
             agent_svc.agent_live_runs,

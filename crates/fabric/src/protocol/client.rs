@@ -24,6 +24,7 @@ pub enum ClientRpcRequest {
     Chat(ChatParams),
     Clear,
     Status,
+    StatusFor(SessionParams),
     Reflect,
     ReflectNow,
     Evolution,
@@ -31,10 +32,12 @@ pub enum ClientRpcRequest {
     Sessions,
     Resume(ResumeParams),
     Compact,
+    CompactFor(SessionParams),
     ModelList,
     AgentProfileList,
     AgentProfileSet(AgentProfileSetParams),
     SkillsList,
+    SkillInvoke(SkillInvokeParams),
     ModeSwitch(ModeSwitchParams),
     PlanApprove,
     Cancel,
@@ -42,6 +45,8 @@ pub enum ClientRpcRequest {
     HooksList,
     DaemonShutdown,
     SessionNew,
+    SessionNewFor(SessionParams),
+    SessionLoadRecent,
     ApprovalResponse(ApprovalResponseParams),
     MemoryAdd(MemoryAddParams),
     MemoryList(MemoryListParams),
@@ -92,9 +97,22 @@ pub struct ChatParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SkillInvokeParams {
+    pub skill_id: String,
+    pub user_args: String,
+    pub working_dir: PathBuf,
+    pub workspace_roots: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ResumeParams {
     #[schemars(with = "String")]
     pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SessionParams {
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -287,6 +305,19 @@ impl ClientRpcRequest {
         })
     }
 
+    pub fn skill_invoke(
+        skill_id: impl Into<String>,
+        user_args: impl Into<String>,
+        workspace: &WorkspacePolicy,
+    ) -> Self {
+        Self::SkillInvoke(SkillInvokeParams {
+            skill_id: skill_id.into(),
+            user_args: user_args.into(),
+            working_dir: workspace.cwd().to_path_buf(),
+            workspace_roots: workspace.writable_roots().to_vec(),
+        })
+    }
+
     pub fn resume(session_id: impl Into<SessionId>) -> Self {
         Self::Resume(ResumeParams {
             session_id: session_id.into(),
@@ -463,6 +494,7 @@ impl ClientRpcRequest {
             Self::Chat(params) => ("chat", Some(serde_json::to_value(params)?)),
             Self::Clear => ("clear", None),
             Self::Status => ("status", None),
+            Self::StatusFor(params) => ("status", Some(serde_json::to_value(params)?)),
             Self::Reflect => ("reflect", None),
             Self::ReflectNow => ("reflect_now", None),
             Self::Evolution => ("evolution", None),
@@ -470,12 +502,14 @@ impl ClientRpcRequest {
             Self::Sessions => ("sessions", None),
             Self::Resume(params) => ("resume", Some(serde_json::to_value(params)?)),
             Self::Compact => ("compact", None),
+            Self::CompactFor(params) => ("compact", Some(serde_json::to_value(params)?)),
             Self::ModelList => ("model_list", None),
             Self::AgentProfileList => ("agent.profile.list", None),
             Self::AgentProfileSet(params) => {
                 ("agent.profile.set", Some(serde_json::to_value(params)?))
             }
             Self::SkillsList => ("skills.list", None),
+            Self::SkillInvoke(params) => ("skill.invoke", Some(serde_json::to_value(params)?)),
             Self::ModeSwitch(params) => ("mode_switch", Some(serde_json::to_value(params)?)),
             Self::PlanApprove => ("plan_approve", None),
             Self::Cancel => ("cancel", None),
@@ -486,6 +520,8 @@ impl ClientRpcRequest {
                 Some(serde_json::to_value(EmptyParams {})?),
             ),
             Self::SessionNew => ("session.new", None),
+            Self::SessionNewFor(params) => ("new_session", Some(serde_json::to_value(params)?)),
+            Self::SessionLoadRecent => ("load_recent", None),
             Self::ApprovalResponse(params) => {
                 ("approval_response", Some(serde_json::to_value(params)?))
             }

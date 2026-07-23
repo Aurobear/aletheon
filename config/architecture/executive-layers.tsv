@@ -296,3 +296,13 @@ crates/executive/src/tools/mod.rs	adapter	executive	tool-facing boundary impleme
 crates/executive/src/tools/self_observe.rs	adapter	executive	tool-facing boundary implementation
 crates/executive/src/application/session_projection.rs	application	executive	pure canonical item projection
 crates/executive/src/composition/turn_coordinator.rs	composition	executive	compose turn ports with local persistence
+crates/executive/src/application/coding_metacog_adapter.rs	application	executive	coding evidence application adapter
+crates/executive/src/application/coding_metacog_rubric.rs	application	executive	coding evaluation policy
+crates/executive/src/application/extension_install.rs	application	executive	extension installation use case
+crates/executive/src/application/extension_manage.rs	application	executive	extension management use case
+crates/executive/src/application/extension_runtime_router.rs	application	executive	extension runtime routing use case
+crates/executive/src/extensions/mod.rs	adapter	executive	legacy extension adapter facade
+crates/executive/src/extensions/runtime/mod.rs	adapter	executive	extension runtime adapter
+crates/executive/src/extensions/runtime/subprocess.rs	adapter	executive	extension subprocess adapter
+crates/executive/src/host/daemon/bootstrap/runtime/runtime_tests.rs	host	executive	daemon runtime tests
+crates/executive/src/host/daemon/handler/rpc/rpc_skill.rs	host	executive	daemon Skill RPC transport

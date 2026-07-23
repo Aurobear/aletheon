@@ -11,6 +11,7 @@ mod rpc_health;
 mod rpc_memory;
 mod rpc_reflection;
 mod rpc_session;
+mod rpc_skill;
 mod rpc_turn;
 mod rpc_workflow;
 
@@ -56,6 +57,7 @@ impl RequestHandler {
             }
             "reload_skills" => self.handle_reload_skills(&id, &request).await,
             "skills.list" => self.handle_skills_list(&id, &request).await,
+            "skill.invoke" => self.handle_skill_invoke(connection, id, request).await,
             "approval_response" => {
                 self.handle_approval_response(connection, &id, &request)
                     .await
