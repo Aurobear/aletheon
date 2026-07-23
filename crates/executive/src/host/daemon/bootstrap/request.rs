@@ -889,7 +889,8 @@ impl RequestHandler {
         .await?;
         let extension_runtime_quarantine_count =
             extension_runtime_composition.quarantined.len() as u64;
-        let extension_runtime_count = extension_runtime_composition.router.registered().len() as u64;
+        let extension_runtime_count =
+            extension_runtime_composition.router.registered().len() as u64;
         let extension_runtime_quarantined_ids: Vec<String> = extension_runtime_composition
             .quarantined
             .iter()
@@ -1238,9 +1239,7 @@ impl RequestHandler {
                     "all_agent_profiles_quarantined",
                 )
             } else {
-                crate::application::health::ComponentHealth::degraded(
-                    "agent_profiles_quarantined",
-                )
+                crate::application::health::ComponentHealth::degraded("agent_profiles_quarantined")
             };
             health.count = Some(quarantined_profile_count);
             health.items = quarantined_profile_names;

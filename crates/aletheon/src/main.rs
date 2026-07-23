@@ -149,13 +149,9 @@ enum Commands {
 #[derive(Subcommand)]
 enum ExtensionCmd {
     /// Inspect an extension package archive.
-    Inspect {
-        path: PathBuf,
-    },
+    Inspect { path: PathBuf },
     /// Validate an extension package without installing.
-    Validate {
-        path: PathBuf,
-    },
+    Validate { path: PathBuf },
     /// Install an extension package.
     Install {
         path: PathBuf,
@@ -166,9 +162,7 @@ enum ExtensionCmd {
     /// List installed extensions.
     List,
     /// Show details for an installed extension.
-    Show {
-        id: String,
-    },
+    Show { id: String },
     /// Enable an installed extension.
     Enable {
         id: String,
@@ -177,9 +171,7 @@ enum ExtensionCmd {
         approve_permissions: bool,
     },
     /// Disable an active extension.
-    Disable {
-        id: String,
-    },
+    Disable { id: String },
     /// Upgrade an extension to a newer package.
     Upgrade {
         /// Path to the new package archive.
@@ -192,21 +184,13 @@ enum ExtensionCmd {
         trust_workspace: bool,
     },
     /// Rollback to the previous known-good version.
-    Rollback {
-        id: String,
-    },
+    Rollback { id: String },
     /// Remove an extension (deactivate but keep package).
-    Remove {
-        id: String,
-    },
+    Remove { id: String },
     /// Purge an extension (remove package and all state).
-    Purge {
-        id: String,
-    },
+    Purge { id: String },
     /// Run diagnostics on an extension.
-    Doctor {
-        id: String,
-    },
+    Doctor { id: String },
     /// Import legacy filesystem extensions into the package store.
     ImportLegacy,
 }
@@ -280,9 +264,8 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
             path,
             trust_workspace,
         } => {
-            let actor = trust_workspace.then(|| {
-                std::env::var("USER").unwrap_or_else(|_| "local-operator".into())
-            });
+            let actor = trust_workspace
+                .then(|| std::env::var("USER").unwrap_or_else(|_| "local-operator".into()));
             let hash = install_svc.install_with_workspace_trust(path, actor.as_deref())?;
             println!("Installed package with hash: {hash}");
         }
@@ -312,9 +295,8 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
             trust_workspace,
             ..
         } => {
-            let actor = trust_workspace.then(|| {
-                std::env::var("USER").unwrap_or_else(|_| "local-operator".into())
-            });
+            let actor = trust_workspace
+                .then(|| std::env::var("USER").unwrap_or_else(|_| "local-operator".into()));
             manage_svc.upgrade_with_workspace_trust(path, actor.as_deref())?;
             println!("Extension upgraded from '{}'.", path.display());
         }
@@ -343,7 +325,10 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
         }
         ExtensionCmd::ImportLegacy => {
             let imported = manage_svc.import_legacy(&store_root.join("legacy"))?;
-            println!("Imported {} legacy extensions: {imported:?}", imported.len());
+            println!(
+                "Imported {} legacy extensions: {imported:?}",
+                imported.len()
+            );
         }
     }
     Ok(())
@@ -450,9 +435,7 @@ async fn main() -> Result<()> {
             init_tracing("aletheon::doctor");
             handle_doctor(*json, config.as_deref(), project_dir.as_deref()).await
         }
-        (Some(Commands::Extension { sub }), _) => {
-            handle_extension(sub).await
-        }
+        (Some(Commands::Extension { sub }), _) => handle_extension(sub).await,
         (Some(Commands::RestoreTerminal), _) => {
             interact::tui::restore_terminal();
             println!("Terminal restored to normal state.");

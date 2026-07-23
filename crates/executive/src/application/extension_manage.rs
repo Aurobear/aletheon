@@ -75,10 +75,8 @@ mod tests {
     use corpus::extension::store::InstalledPackageRecord;
     use tempfile::TempDir;
 
-    const HASH_A: &str =
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const HASH_B: &str =
-        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const HASH_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     fn record(hash: &str, version: &str, installed_at: &str) -> InstalledPackageRecord {
         InstalledPackageRecord {
@@ -106,20 +104,26 @@ mod tests {
             (HASH_B, "2.0.0", "2026-07-23T01:00:00Z"),
         ] {
             std::fs::create_dir_all(service.store.package_path(hash).unwrap()).unwrap();
-            service.store.put_installed(&record(hash, version, time)).unwrap();
+            service
+                .store
+                .put_installed(&record(hash, version, time))
+                .unwrap();
         }
-        service.store.write_activation(&ActivationRecord {
-            schema_version: 1,
-            package_id: "test.pkg".into(),
-            enabled: true,
-            current: Some(HASH_B.into()),
-            previous_known_good: Some(HASH_A.into()),
-            granted_permissions: fabric::PermissionRequestSet::default(),
-            permission_approval: None,
-            activated_assets: Vec::new(),
-            health: "healthy".into(),
-            quarantine_reason: None,
-        }).unwrap();
+        service
+            .store
+            .write_activation(&ActivationRecord {
+                schema_version: 1,
+                package_id: "test.pkg".into(),
+                enabled: true,
+                current: Some(HASH_B.into()),
+                previous_known_good: Some(HASH_A.into()),
+                granted_permissions: fabric::PermissionRequestSet::default(),
+                permission_approval: None,
+                activated_assets: Vec::new(),
+                health: "healthy".into(),
+                quarantine_reason: None,
+            })
+            .unwrap();
 
         service.disable("test.pkg").unwrap();
         assert!(!service.store.read_activation("test.pkg").unwrap().enabled);
@@ -136,9 +140,10 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let service = ExtensionManageService::new(temp.path()).unwrap();
         std::fs::create_dir_all(service.store.package_path(HASH_A).unwrap()).unwrap();
-        service.store.put_installed(
-            &record(HASH_A, "1.0.0", "2026-07-23T00:00:00Z"),
-        ).unwrap();
+        service
+            .store
+            .put_installed(&record(HASH_A, "1.0.0", "2026-07-23T00:00:00Z"))
+            .unwrap();
         service.purge("test.pkg").unwrap();
         assert!(service.store.get_installed("test.pkg").unwrap().is_empty());
         assert!(!service.store.is_installed(HASH_A).unwrap());
@@ -169,10 +174,7 @@ mod tests {
         assert!(state.enabled);
         assert!(state.granted_permissions.network);
         assert!(state.granted_permissions.executables);
-        assert_eq!(
-            state.permission_approval.unwrap().actor,
-            "operator:test"
-        );
+        assert_eq!(state.permission_approval.unwrap().actor, "operator:test");
     }
 }
 
@@ -216,8 +218,11 @@ impl ExtensionManageService {
         if approval.is_some() {
             activation.permission_approval = approval;
         }
-        activation.activated_assets =
-            candidate.assets.iter().map(|asset| asset.id.clone()).collect();
+        activation.activated_assets = candidate
+            .assets
+            .iter()
+            .map(|asset| asset.id.clone())
+            .collect();
         activation.health = "healthy".into();
         activation.quarantine_reason = None;
         self.store.write_activation(&activation)?;
@@ -227,7 +232,10 @@ impl ExtensionManageService {
     pub fn disable(&self, id: &str) -> Result<()> {
         let _lock = self.store.acquire_lock(id)?;
         let mut activation = self.store.read_activation(id)?;
-        anyhow::ensure!(activation.current.is_some(), "extension '{id}' has never been enabled");
+        anyhow::ensure!(
+            activation.current.is_some(),
+            "extension '{id}' has never been enabled"
+        );
         activation.enabled = false;
         self.store.write_activation(&activation)?;
         self.receipt(id, "disable", serde_json::json!({}))
@@ -264,7 +272,11 @@ impl ExtensionManageService {
             previous_known_good: old.current.filter(|value| value != &hash),
             granted_permissions: candidate.requested_permissions.clone(),
             permission_approval: approval.or(old.permission_approval),
-            activated_assets: candidate.assets.iter().map(|asset| asset.id.clone()).collect(),
+            activated_assets: candidate
+                .assets
+                .iter()
+                .map(|asset| asset.id.clone())
+                .collect(),
             health: "healthy".into(),
             quarantine_reason: None,
         };
@@ -365,7 +377,10 @@ impl ExtensionManageService {
         let mut candidates = Vec::new();
         for entry in std::fs::read_dir(legacy_root)? {
             let path = entry?.path();
-            let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
             if path.is_file() && (name.ends_with(".tar.gz") || name.ends_with(".tgz")) {
                 candidates.push(path);
             }
@@ -429,7 +444,8 @@ impl ExtensionManageService {
         activation: &ActivationRecord,
     ) -> Result<Option<corpus::extension::store::PermissionApprovalRecord>> {
         let request = approval_request(candidate, activation);
-        if permission_request_is_empty(&request.added_permissions) && request.added_assets.is_empty()
+        if permission_request_is_empty(&request.added_permissions)
+            && request.added_assets.is_empty()
         {
             return Ok(None);
         }

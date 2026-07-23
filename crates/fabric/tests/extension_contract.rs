@@ -5,6 +5,7 @@
 //! `crates/fabric/src/types/extension.rs` or `crates/fabric/src/types/admission.rs`
 //! must pass all of the following assertions.
 
+use fabric::types::admission::RiskLevel;
 use fabric::ActivationConstraints;
 use fabric::CapabilityId;
 use fabric::ExtensionDescriptor;
@@ -13,7 +14,6 @@ use fabric::ExtensionKind;
 use fabric::ExtensionOrigin;
 use fabric::ExtensionSnapshot;
 use fabric::ToolDefinition;
-use fabric::types::admission::RiskLevel;
 
 use serde_json::from_str;
 use serde_json::json;
@@ -99,9 +99,7 @@ fn extension_origin_tagged_serialization() {
     assert_eq!(rt, built_in);
 
     // --- FileSystem { path } ---
-    let fs = ExtensionOrigin::FileSystem {
-        path: "/x".into(),
-    };
+    let fs = ExtensionOrigin::FileSystem { path: "/x".into() };
     let json = to_value(&fs).unwrap();
     assert_eq!(
         json,
@@ -152,9 +150,7 @@ fn extension_descriptor_round_trip_without_tool() {
         kind: ExtensionKind::Skill,
         version: "0.3.1".into(),
         description: "Summarizes input text.".into(),
-        capabilities: vec![
-            CapabilityId("summary".into()),
-        ],
+        capabilities: vec![CapabilityId("summary".into())],
         origin: ExtensionOrigin::BuiltIn,
         activation: ActivationConstraints {
             allowed_agents: vec!["orchestrator".into()],
@@ -196,9 +192,7 @@ fn extension_descriptor_round_trip_with_tool() {
         kind: ExtensionKind::Tool,
         version: "1.0.0".into(),
         description: "Reads a file from disk.".into(),
-        capabilities: vec![
-            CapabilityId("read_file".into()),
-        ],
+        capabilities: vec![CapabilityId("read_file".into())],
         origin: ExtensionOrigin::Package {
             package: "core-tools".into(),
         },
@@ -345,22 +339,10 @@ fn unknown_extension_kind_deserialization_behavior() {
 #[test]
 fn extension_kind_to_asset_kind_projection() {
     use fabric::AssetKind;
-    assert_eq!(
-        AssetKind::from(ExtensionKind::Skill),
-        AssetKind::Skill
-    );
-    assert_eq!(
-        AssetKind::from(ExtensionKind::Hook),
-        AssetKind::Hook
-    );
-    assert_eq!(
-        AssetKind::from(ExtensionKind::Mcp),
-        AssetKind::Connector
-    );
-    assert_eq!(
-        AssetKind::from(ExtensionKind::Tool),
-        AssetKind::Executable
-    );
+    assert_eq!(AssetKind::from(ExtensionKind::Skill), AssetKind::Skill);
+    assert_eq!(AssetKind::from(ExtensionKind::Hook), AssetKind::Hook);
+    assert_eq!(AssetKind::from(ExtensionKind::Mcp), AssetKind::Connector);
+    assert_eq!(AssetKind::from(ExtensionKind::Tool), AssetKind::Executable);
     assert_eq!(
         AssetKind::from(ExtensionKind::Plugin),
         AssetKind::Executable
@@ -380,9 +362,12 @@ fn extension_origin_to_asset_origin_projection() {
     let fs = AssetOrigin::from(ExtensionOrigin::FileSystem {
         path: "/ext".into(),
     });
-    assert_eq!(fs, AssetOrigin::FileSystem {
-        path: "/ext".into(),
-    });
+    assert_eq!(
+        fs,
+        AssetOrigin::FileSystem {
+            path: "/ext".into(),
+        }
+    );
 }
 
 // ---------------------------------------------------------------------------

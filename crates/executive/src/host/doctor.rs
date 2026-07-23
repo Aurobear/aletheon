@@ -287,7 +287,9 @@ impl DoctorReport {
     }
 }
 
-fn read_quarantined_profiles(data_dir: &std::path::Path) -> anyhow::Result<QuarantinedProfilesStatus> {
+fn read_quarantined_profiles(
+    data_dir: &std::path::Path,
+) -> anyhow::Result<QuarantinedProfilesStatus> {
     let primary = data_dir.join("state/agent-profile-quarantine.json");
     let fallback = data_dir.join("agent-profile-quarantine.json");
     let path = if primary.exists() { primary } else { fallback };
@@ -406,7 +408,9 @@ mod tests {
         let status = read_quarantined_profiles(temp.path()).unwrap();
         assert_eq!(status.count, 1);
         assert_eq!(status.names, vec!["broken-profile"]);
-        assert!(!serde_json::to_string(&status).unwrap().contains("must-not-leak"));
+        assert!(!serde_json::to_string(&status)
+            .unwrap()
+            .contains("must-not-leak"));
     }
 
     #[test]

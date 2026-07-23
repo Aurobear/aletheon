@@ -21,8 +21,8 @@ pub struct ExtensionInstallService {
 
 impl ExtensionInstallService {
     pub fn new(store_root: &Path) -> Result<Self> {
-        let store = PackageStore::new(store_root.to_path_buf())
-            .context("failed to open package store")?;
+        let store =
+            PackageStore::new(store_root.to_path_buf()).context("failed to open package store")?;
         Ok(Self {
             store: Arc::new(store),
         })
@@ -40,11 +40,7 @@ impl ExtensionInstallService {
 
     /// Install an archive discovered by the legacy importer.
     pub fn install_legacy(&self, package_path: &Path) -> Result<String> {
-        self.install_with_options(
-            package_path,
-            Some(PackageSourceRecord::LegacyImport),
-            None,
-        )
+        self.install_with_options(package_path, Some(PackageSourceRecord::LegacyImport), None)
     }
 
     /// Install a package, requiring an explicit actor when the archive comes
@@ -258,8 +254,10 @@ path = "assets/skills/demo/SKILL.md"
         let workspace = root.join("project/.aletheon/extensions");
         std::fs::create_dir_all(&workspace).unwrap();
         let archive = workspace.join("test.tar.gz");
-        let encoder =
-            GzEncoder::new(std::fs::File::create(&archive).unwrap(), Compression::default());
+        let encoder = GzEncoder::new(
+            std::fs::File::create(&archive).unwrap(),
+            Compression::default(),
+        );
         let mut builder = tar::Builder::new(encoder);
         builder.append_dir_all(".", &source).unwrap();
         builder.into_inner().unwrap().finish().unwrap();

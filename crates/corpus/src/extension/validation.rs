@@ -89,11 +89,7 @@ pub fn validate_total_size(total: u64) -> Result<()> {
 /// Check file count against maximum.
 pub fn validate_file_count(count: usize) -> Result<()> {
     if count > MAX_FILE_COUNT {
-        bail!(
-            "file count {} exceeds maximum {}",
-            count,
-            MAX_FILE_COUNT
-        );
+        bail!("file count {} exceeds maximum {}", count, MAX_FILE_COUNT);
     }
     Ok(())
 }

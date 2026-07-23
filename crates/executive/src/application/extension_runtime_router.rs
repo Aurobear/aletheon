@@ -79,8 +79,7 @@ impl AgentRuntimeLauncher for ExtensionProviderLauncher {
                 });
             }
         };
-        let result: fabric::AgentResult =
-            serde_json::from_value(value).map_err(runtime_error)?;
+        let result: fabric::AgentResult = serde_json::from_value(value).map_err(runtime_error)?;
         result.validate()?;
         events
             .emit(AgentRuntimeEvent::Terminal {
@@ -176,7 +175,10 @@ impl ExtensionRuntimeRouter {
             .collect();
         let mut health = HashMap::new();
         for (id, provider) in providers {
-            health.insert(id, provider.health().await.map_err(|error| error.to_string()));
+            health.insert(
+                id,
+                provider.health().await.map_err(|error| error.to_string()),
+            );
         }
         health
     }
@@ -186,9 +188,7 @@ impl ExtensionRuntimeRouter {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use fabric::{
-        AgentContextFork, AgentId, AgentProfileId, OperationId, ProcessId, RuntimeId,
-    };
+    use fabric::{AgentContextFork, AgentId, AgentProfileId, OperationId, ProcessId, RuntimeId};
     use uuid::Uuid;
 
     struct Provider {
@@ -267,10 +267,7 @@ mod tests {
             .unwrap();
         let handle = router.start(request(id.clone())).await.unwrap();
         assert_eq!(router.registered(), vec![id.clone()]);
-        assert_eq!(
-            router.observe(&handle).await.unwrap()["status"],
-            "running"
-        );
+        assert_eq!(router.observe(&handle).await.unwrap()["status"], "running");
         assert_eq!(
             router
                 .follow_up(&handle, serde_json::json!({"message": "next"}))

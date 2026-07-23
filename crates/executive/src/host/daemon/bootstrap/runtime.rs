@@ -617,7 +617,8 @@ mod goal_runtime_tests {
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(result.quarantined.len(), 1);
         assert_eq!(result.quarantined[0].name, "bad");
         assert!(result.quarantined[0].reason.contains("not_a_tool"));
@@ -657,11 +658,15 @@ mod goal_runtime_tests {
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
-        ).unwrap();
+        )
+        .unwrap();
         // Valid profile loaded, invalid profile quarantined
         assert_eq!(result.quarantined.len(), 1);
         assert_eq!(result.quarantined[0].name, "bad");
-        assert!(result.profiles.contains_key("reviewer"), "valid profile must be loaded");
+        assert!(
+            result.profiles.contains_key("reviewer"),
+            "valid profile must be loaded"
+        );
     }
 
     #[test]
@@ -688,8 +693,13 @@ mod goal_runtime_tests {
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
-        ).unwrap();
-        assert_eq!(result.quarantined.len(), 1, "expected 1 quarantined profile");
+        )
+        .unwrap();
+        assert_eq!(
+            result.quarantined.len(),
+            1,
+            "expected 1 quarantined profile"
+        );
         let q = &result.quarantined[0];
         assert!(
             q.name.contains("bad-agent"),

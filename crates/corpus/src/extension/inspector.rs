@@ -172,7 +172,10 @@ fn validate_declared_assets(
                 .context("runtime manifest is not valid UTF-8")?;
             let runtime = manifest::parse_executable_runtime_manifest(content)?;
             if !files.contains_key(&runtime.command) {
-                bail!("runtime command is missing from package: {}", runtime.command);
+                bail!(
+                    "runtime command is missing from package: {}",
+                    runtime.command
+                );
             }
         }
     }
@@ -184,10 +187,7 @@ fn validate_declared_assets(
 /// First validates the package via [`inspect_package`], then extracts
 /// the full archive tree into `staging_dir`. Returns the same
 /// [`InspectionResult`] produced by the inspection pass.
-pub fn extract_to_staging(
-    package_path: &Path,
-    staging_dir: &Path,
-) -> Result<InspectionResult> {
+pub fn extract_to_staging(package_path: &Path, staging_dir: &Path) -> Result<InspectionResult> {
     // Validate everything first.
     let result = inspect_package(package_path)?;
 
@@ -246,23 +246,19 @@ pub fn extract_to_staging(
                                 .map(|p| p.to_path_buf())
                                 .unwrap_or_else(|| Path::new(".").to_path_buf());
                         }
-                        let remainder = dest
-                            .strip_prefix(&anc)
-                            .unwrap_or_else(|_| Path::new(""));
+                        let remainder = dest.strip_prefix(&anc).unwrap_or_else(|_| Path::new(""));
                         anc.canonicalize()?.join(remainder)
                     }
                 };
                 if !dest_abs.starts_with(&canonical_staging) {
-                    bail!(
-                        "entry escapes staging directory: {}",
-                        entry_path.display()
-                    );
+                    bail!("entry escapes staging directory: {}", entry_path.display());
                 }
             }
 
             if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("cannot create parent directory: {}", parent.display()))?;
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("cannot create parent directory: {}", parent.display())
+                })?;
             }
             entry
                 .unpack(&dest)
@@ -477,18 +473,25 @@ path = "s.md"
         tar_builder.append(&toml_header, toml.as_bytes()).unwrap();
 
         // Add checksums.sha256 with wrong hash
-        let bad_checksum = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  extension.toml\n";
+        let bad_checksum =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  extension.toml\n";
         let mut cs_header = tar::Header::new_gnu();
         cs_header.set_path("checksums.sha256").unwrap();
         cs_header.set_size(bad_checksum.len() as u64);
         cs_header.set_cksum();
-        tar_builder.append(&cs_header, bad_checksum.as_bytes()).unwrap();
+        tar_builder
+            .append(&cs_header, bad_checksum.as_bytes())
+            .unwrap();
 
         let encoder = tar_builder.into_inner().unwrap();
         encoder.finish().unwrap();
 
         let err = inspect_package(&tar_path).unwrap_err().to_string();
-        assert!(err.contains("checksum"), "expected checksum error, got: {}", err);
+        assert!(
+            err.contains("checksum"),
+            "expected checksum error, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -500,9 +503,7 @@ path = "s.md"
 
         assert_eq!(result.manifest.package.id.0, "test.minimal");
         assert!(staging.join("extension.toml").exists());
-        assert!(staging
-            .join("assets/skills/demo/SKILL.md")
-            .exists());
+        assert!(staging.join("assets/skills/demo/SKILL.md").exists());
         assert!(staging.join("checksums.sha256").exists());
     }
 
@@ -561,15 +562,14 @@ path = "s.md"
         // Add checksums.sha256 with correct hashes.
         let toml_hash = format!("{:x}", Sha256::digest(toml.as_bytes()));
         let skill_hash = format!("{:x}", Sha256::digest(skill_data));
-        let checksums = format!(
-            "{}  extension.toml\n{}  s.md\n",
-            toml_hash, skill_hash
-        );
+        let checksums = format!("{}  extension.toml\n{}  s.md\n", toml_hash, skill_hash);
         let mut cs_header = tar::Header::new_gnu();
         cs_header.set_path("checksums.sha256").unwrap();
         cs_header.set_size(checksums.len() as u64);
         cs_header.set_cksum();
-        tar_builder.append(&cs_header, checksums.as_bytes()).unwrap();
+        tar_builder
+            .append(&cs_header, checksums.as_bytes())
+            .unwrap();
 
         // Add a symlink entry — this must be rejected.
         let mut symlink_header = tar::Header::new_gnu();

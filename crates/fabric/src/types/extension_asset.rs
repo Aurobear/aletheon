@@ -42,16 +42,9 @@ pub struct AssetId {
 #[serde(tag = "origin", rename_all = "snake_case")]
 pub enum AssetOrigin {
     BuiltIn,
-    Package {
-        package: String,
-        version: String,
-    },
-    FileSystem {
-        path: String,
-    },
-    Workspace {
-        path: String,
-    },
+    Package { package: String, version: String },
+    FileSystem { path: String },
+    Workspace { path: String },
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +192,10 @@ mod tests {
         let cases = [
             (CapabilityKind::Tool, "tool"),
             (CapabilityKind::HookProvider, "hook_provider"),
-            (CapabilityKind::AgentRuntimeProvider, "agent_runtime_provider"),
+            (
+                CapabilityKind::AgentRuntimeProvider,
+                "agent_runtime_provider",
+            ),
             (CapabilityKind::ConnectorProvider, "connector_provider"),
         ];
         for (kind, expected) in cases {

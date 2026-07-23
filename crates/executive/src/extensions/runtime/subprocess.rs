@@ -5,8 +5,13 @@
 //! circuit breaking, stderr sanitization, and cancellation.
 
 use anyhow::{bail, Context, Result};
+use fabric::{
+    AgentHandle, AgentRuntimeProvider, AgentSpawnRequest, IsolationLevel, SandboxBackend,
+    SandboxConfig,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -14,11 +19,6 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Instant};
 use tokio_util::sync::CancellationToken;
-use fabric::{
-    AgentHandle, AgentRuntimeProvider, AgentSpawnRequest, IsolationLevel, SandboxBackend,
-    SandboxConfig,
-};
-use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Protocol types
@@ -226,7 +226,9 @@ impl SubprocessAgentRuntimeProvider {
 impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     async fn start(&self, request: AgentSpawnRequest) -> Result<AgentHandle> {
         self.ensure_available().await?;
-        request.validate().map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        request
+            .validate()
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let result = async {
             let mut runtime = SubprocessRuntime::new_isolated(
                 self.config.clone(),
@@ -234,9 +236,11 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
                 &self.sandbox_config,
             )?;
             runtime.start().await?;
-            let value = runtime.call("start", serde_json::to_value(request)?).await?;
-            let handle: AgentHandle =
-                serde_json::from_value(value).context("runtime returned an invalid Agent handle")?;
+            let value = runtime
+                .call("start", serde_json::to_value(request)?)
+                .await?;
+            let handle: AgentHandle = serde_json::from_value(value)
+                .context("runtime returned an invalid Agent handle")?;
             Ok::<_, anyhow::Error>((handle, runtime))
         }
         .await;
@@ -261,7 +265,8 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
 
     async fn observe(&self, handle: &AgentHandle) -> Result<Value> {
         self.ensure_available().await?;
-        let result = self.session(handle)
+        let result = self
+            .session(handle)
             .await?
             .runtime
             .lock()
@@ -274,12 +279,16 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
 
     async fn steer(&self, handle: &AgentHandle, input: Value) -> Result<()> {
         self.ensure_available().await?;
-        let result = self.session(handle)
+        let result = self
+            .session(handle)
             .await?
             .runtime
             .lock()
             .await
-            .call("steer", serde_json::json!({"handle": handle, "input": input}))
+            .call(
+                "steer",
+                serde_json::json!({"handle": handle, "input": input}),
+            )
             .await;
         self.record_business_result(&result).await;
         result?;
@@ -288,12 +297,16 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
 
     async fn follow_up(&self, handle: &AgentHandle, input: Value) -> Result<Value> {
         self.ensure_available().await?;
-        let result = self.session(handle)
+        let result = self
+            .session(handle)
             .await?
             .runtime
             .lock()
             .await
-            .call("follow_up", serde_json::json!({"handle": handle, "input": input}))
+            .call(
+                "follow_up",
+                serde_json::json!({"handle": handle, "input": input}),
+            )
             .await;
         self.record_business_result(&result).await;
         result
@@ -309,7 +322,10 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
         session.cancel.cancel();
         let mut runtime = session.runtime.lock().await;
         let _ = runtime
-            .call("cancel", serde_json::json!({"handle": handle, "reason": reason}))
+            .call(
+                "cancel",
+                serde_json::json!({"handle": handle, "reason": reason}),
+            )
             .await;
         runtime.cancel();
         runtime.shutdown().await;
@@ -640,7 +656,8 @@ impl SubprocessRuntime {
                     "JSON-RPC operation cancelled",
                 )),
             }
-        }).await;
+        })
+        .await;
         match read_result {
             Ok(Ok(0)) => {
                 let _inner = reader.into_inner();
@@ -765,10 +782,7 @@ mod tests {
         let workspace =
             fabric::WorkspacePolicy::from_resolved_roots(work.path().to_path_buf(), vec![])
                 .unwrap();
-        let mut environment = BTreeMap::from([(
-            "EXTENSION_FIXTURE_MODE".into(),
-            mode.to_string(),
-        )]);
+        let mut environment = BTreeMap::from([("EXTENSION_FIXTURE_MODE".into(), mode.to_string())]);
         if let Some(path) = forbidden {
             environment.insert(
                 "EXTENSION_FORBIDDEN_PATH".into(),
@@ -856,10 +870,7 @@ mod tests {
             Arc::new(backend),
             SandboxConfig {
                 workspace,
-                environment: BTreeMap::from([(
-                    "EXTENSION_FIXTURE_MODE".into(),
-                    mode.into(),
-                )]),
+                environment: BTreeMap::from([("EXTENSION_FIXTURE_MODE".into(), mode.into())]),
                 policy: Some(policy),
             },
         )
@@ -938,26 +949,29 @@ mod tests {
 
     #[tokio::test]
     async fn real_isolated_helper_covers_protocol_and_secret_redaction() {
-        let (mut normal, _work) =
-            isolated_fixture("normal", Duration::from_secs(2), None).await;
+        let (mut normal, _work) = isolated_fixture("normal", Duration::from_secs(2), None).await;
         normal.start().await.unwrap();
-        assert!(normal
-            .call("observe", serde_json::json!({}))
-            .await
-            .unwrap()["ok"]
-            .as_bool()
-            .unwrap());
+        assert!(
+            normal.call("observe", serde_json::json!({})).await.unwrap()["ok"]
+                .as_bool()
+                .unwrap()
+        );
         normal.shutdown().await;
 
         for mode in ["wrong_id", "wrong_version", "oversized", "crash"] {
-            let (mut runtime, _work) =
-                isolated_fixture(mode, Duration::from_secs(2), None).await;
+            let (mut runtime, _work) = isolated_fixture(mode, Duration::from_secs(2), None).await;
             runtime.start().await.unwrap();
             assert!(
-                runtime.call("observe", serde_json::json!({})).await.is_err(),
+                runtime
+                    .call("observe", serde_json::json!({}))
+                    .await
+                    .is_err(),
                 "{mode} must fail closed"
             );
-            assert!(runtime.process.is_none(), "{mode} process was not terminated");
+            assert!(
+                runtime.process.is_none(),
+                "{mode} process was not terminated"
+            );
         }
 
         let (mut stderr, _work) =
@@ -992,22 +1006,17 @@ mod tests {
             isolated_fixture("network_probe", Duration::from_secs(2), None).await;
         network.start().await.unwrap();
         assert_eq!(
-            network
-                .call("probe", serde_json::json!({}))
-                .await
-                .unwrap()["allowed"],
+            network.call("probe", serde_json::json!({})).await.unwrap()["allowed"],
             false
         );
         network.shutdown().await;
 
-        let (mut hanging, _work) =
-            isolated_fixture("hang", Duration::from_millis(100), None).await;
+        let (mut hanging, _work) = isolated_fixture("hang", Duration::from_millis(100), None).await;
         hanging.start().await.unwrap();
         assert!(hanging.call("wait", serde_json::json!({})).await.is_err());
         assert!(hanging.process.is_none());
 
-        let (mut cancelled, _work) =
-            isolated_fixture("hang", Duration::from_secs(10), None).await;
+        let (mut cancelled, _work) = isolated_fixture("hang", Duration::from_secs(10), None).await;
         cancelled.start().await.unwrap();
         let token = cancelled.cancellation_token();
         tokio::spawn(async move {
@@ -1027,7 +1036,11 @@ mod tests {
             let handle = provider.start(spawn_request()).await.unwrap();
             assert!(provider.observe(&handle).await.is_err());
         }
-        let error = provider.start(spawn_request()).await.unwrap_err().to_string();
+        let error = provider
+            .start(spawn_request())
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("quarantined"));
         assert!(provider.health().await.is_err());
     }

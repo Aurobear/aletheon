@@ -41,10 +41,22 @@ pub struct ExecutableRuntimeManifest {
 pub fn parse_executable_runtime_manifest(content: &str) -> Result<ExecutableRuntimeManifest> {
     let manifest: ExecutableRuntimeManifest =
         toml::from_str(content).context("failed to parse executable runtime manifest")?;
-    anyhow::ensure!(manifest.schema_version == 1, "unsupported runtime schema version");
-    anyhow::ensure!(manifest.class == RuntimeClass::Subprocess, "third-party runtime must use subprocess class");
-    anyhow::ensure!(manifest.protocol == "json-rpc/stdio", "unsupported runtime protocol");
-    anyhow::ensure!(!manifest.id.trim().is_empty(), "runtime ID must not be empty");
+    anyhow::ensure!(
+        manifest.schema_version == 1,
+        "unsupported runtime schema version"
+    );
+    anyhow::ensure!(
+        manifest.class == RuntimeClass::Subprocess,
+        "third-party runtime must use subprocess class"
+    );
+    anyhow::ensure!(
+        manifest.protocol == "json-rpc/stdio",
+        "unsupported runtime protocol"
+    );
+    anyhow::ensure!(
+        !manifest.id.trim().is_empty(),
+        "runtime ID must not be empty"
+    );
     super::validation::validate_entry_path(Path::new(&manifest.command))?;
     anyhow::ensure!(
         manifest.command.starts_with("payload/"),
@@ -56,7 +68,10 @@ pub fn parse_executable_runtime_manifest(content: &str) -> Result<ExecutableRunt
             && manifest.isolation.max_processes > 0,
         "runtime resource limits must be nonzero"
     );
-    anyhow::ensure!(!manifest.capabilities.is_empty(), "runtime must declare capabilities");
+    anyhow::ensure!(
+        !manifest.capabilities.is_empty(),
+        "runtime must declare capabilities"
+    );
     anyhow::ensure!(
         manifest
             .capabilities
@@ -79,8 +94,8 @@ pub fn parse_executable_runtime_manifest(content: &str) -> Result<ExecutableRunt
 
 /// Parse an extension.toml file into a PackageManifest.
 pub fn parse_package_manifest(content: &str) -> Result<PackageManifest> {
-    let manifest: PackageManifest = toml::from_str(content)
-        .context("failed to parse extension.toml")?;
+    let manifest: PackageManifest =
+        toml::from_str(content).context("failed to parse extension.toml")?;
     validate_package_manifest(&manifest)?;
     Ok(manifest)
 }
@@ -121,10 +136,10 @@ pub fn validate_package_manifest(manifest: &PackageManifest) -> Result<()> {
     }
 
     // Validate publisher namespace
-    if manifest.package.id.0.starts_with("aletheon.") && !manifest.package.id.0.starts_with("aletheon.builtin.") {
-        bail!(
-            "reserved namespace 'aletheon.*' may not be used by third-party packages"
-        );
+    if manifest.package.id.0.starts_with("aletheon.")
+        && !manifest.package.id.0.starts_with("aletheon.builtin.")
+    {
+        bail!("reserved namespace 'aletheon.*' may not be used by third-party packages");
     }
 
     Ok(())
@@ -144,7 +159,9 @@ pub fn parse_checksums(content: &str) -> Result<std::collections::HashMap<String
         if hash.is_empty()
             || path.is_empty()
             || hash.len() != 64
-            || !hash.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || !hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
             bail!("invalid checksum line: {}", line);
         }
@@ -253,7 +270,8 @@ path = "b.toml"
 
     #[test]
     fn parse_checksums_valid() {
-        let content = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  extension.toml\n";
+        let content =
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  extension.toml\n";
         let map = parse_checksums(content).unwrap();
         assert_eq!(map.len(), 1);
         assert!(map.contains_key("extension.toml"));
@@ -312,10 +330,9 @@ kind = "agent_runtime_provider"
 risk = "Sandboxed"
 "#;
         assert!(parse_executable_runtime_manifest(base).is_err());
-        assert!(parse_executable_runtime_manifest(&base.replace(
-            "class = \"subprocess\"",
-            "class = \"native\""
-        ))
+        assert!(parse_executable_runtime_manifest(
+            &base.replace("class = \"subprocess\"", "class = \"native\"")
+        )
         .is_err());
         assert!(parse_executable_runtime_manifest(&format!("{base}\nunknown = true\n")).is_err());
     }

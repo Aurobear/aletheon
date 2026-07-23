@@ -1,8 +1,8 @@
 //! Scoped composition of non-tool Corpus extensions.
 
+use anyhow::Context;
 use std::path::Path;
 use std::sync::Arc;
-use anyhow::Context;
 
 pub(super) struct ExtensionRuntimeComposition {
     pub router: Arc<crate::application::extension_runtime_router::ExtensionRuntimeRouter>,
@@ -24,9 +24,8 @@ pub(super) async fn register_package_runtimes(
 ) -> anyhow::Result<ExtensionRuntimeComposition> {
     use corpus::extension::store::PackageStore;
 
-    let router = Arc::new(
-        crate::application::extension_runtime_router::ExtensionRuntimeRouter::default(),
-    );
+    let router =
+        Arc::new(crate::application::extension_runtime_router::ExtensionRuntimeRouter::default());
     let store = PackageStore::new(store_root.to_owned())?;
     let sandbox = corpus::security::sandbox::BubblewrapBackend::probe_async(clock)
         .await
@@ -62,7 +61,9 @@ pub(super) async fn register_package_runtimes(
                 "quarantined",
                 "activation:missing_projection",
             )?;
-            quarantined.push(format!("{package_id}: active package projection is missing"));
+            quarantined.push(format!(
+                "{package_id}: active package projection is missing"
+            ));
             continue;
         };
         let candidate_result = prepare_and_publish(
@@ -86,14 +87,11 @@ pub(super) async fn register_package_runtimes(
             )?;
             let candidate_reason = format!("{package_id}: {candidate_error:#}");
             tracing::error!(reason = %candidate_reason, "Extension runtime candidate failed");
-            let rollback = activation
-                .previous_known_good
-                .clone()
-                .and_then(|hash| {
-                    installed
-                        .iter()
-                        .find(|record| record.id == package_id && record.hash == hash)
-                });
+            let rollback = activation.previous_known_good.clone().and_then(|hash| {
+                installed
+                    .iter()
+                    .find(|record| record.id == package_id && record.hash == hash)
+            });
             if let Some(previous) = rollback {
                 activation.health = "rolling_back".into();
                 store.write_activation(&activation)?;
@@ -249,7 +247,10 @@ async fn prepare_and_publish(
         let mut writable = vec![workdir.clone()];
         for path in &granted_filesystem {
             let path = std::path::PathBuf::from(path);
-            anyhow::ensure!(path.is_absolute(), "approved filesystem path is not absolute");
+            anyhow::ensure!(
+                path.is_absolute(),
+                "approved filesystem path is not absolute"
+            );
             writable.push(path);
         }
         let workspace = WorkspacePolicy::from_resolved_roots(workdir.clone(), writable.clone())
@@ -390,10 +391,8 @@ mod tests {
     use tempfile::TempDir;
 
     const HASH: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-    const OLD_HASH: &str =
-        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
-    const BAD_HASH: &str =
-        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const OLD_HASH: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    const BAD_HASH: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
     fn put_runtime_package(store: &PackageStore, hash: &str, version: &str, script: &str) {
         let package = store.package_path(hash).unwrap();
@@ -534,8 +533,7 @@ risk = "Sandboxed"
             })
             .unwrap();
 
-        let registry =
-            crate::application::agent_control::AgentRuntimeRegistry::default();
+        let registry = crate::application::agent_control::AgentRuntimeRegistry::default();
         let composition = register_package_runtimes(
             &registry,
             &data_root,
@@ -568,7 +566,12 @@ risk = "Sandboxed"
         .unwrap()
         .replacen("#!/usr/bin/env python3", "#!/usr/bin/python3", 1);
         put_runtime_package(&store, OLD_HASH, "01", &helper);
-        put_runtime_package(&store, BAD_HASH, "02", "#!/usr/bin/python3\nraise SystemExit(23)\n");
+        put_runtime_package(
+            &store,
+            BAD_HASH,
+            "02",
+            "#!/usr/bin/python3\nraise SystemExit(23)\n",
+        );
         let requested = fabric::PermissionRequestSet {
             filesystem: None,
             network: false,

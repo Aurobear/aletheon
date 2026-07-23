@@ -1,14 +1,14 @@
 //! Durable, content-addressed extension package store.
 
 use anyhow::{bail, Context, Result};
+use fabric::{AssetRef, PermissionRequestSet};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::collections::BTreeMap;
 use uuid::Uuid;
-use fabric::{AssetRef, PermissionRequestSet};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstalledPackageRecord {
@@ -134,7 +134,12 @@ impl PackageStore {
         for dir in [&packages_dir, &state_dir, &staging_dir] {
             std::fs::create_dir_all(dir)?;
         }
-        Ok(Self { root, packages_dir, state_dir, staging_dir })
+        Ok(Self {
+            root,
+            packages_dir,
+            state_dir,
+            staging_dir,
+        })
     }
 
     pub fn root(&self) -> &Path {
@@ -172,7 +177,11 @@ impl PackageStore {
         let parent = lock_path.parent().context("lock has no parent")?;
         std::fs::create_dir_all(parent)?;
         for attempt in 0..2 {
-            match OpenOptions::new().create_new(true).write(true).open(&lock_path) {
+            match OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&lock_path)
+            {
                 Ok(mut file) => {
                     writeln!(file, "{}", std::process::id())?;
                     file.sync_all()?;
@@ -184,10 +193,13 @@ impl PackageStore {
                         .ok()
                         .and_then(|value| value.trim().parse::<i32>().ok());
                     if holder.is_some_and(pid_alive) {
-                        bail!("package '{}' is locked by process {}", package_id, holder.unwrap());
+                        bail!(
+                            "package '{}' is locked by process {}",
+                            package_id,
+                            holder.unwrap()
+                        );
                     }
-                    std::fs::remove_file(&lock_path)
-                        .context("cannot remove stale package lock")?;
+                    std::fs::remove_file(&lock_path).context("cannot remove stale package lock")?;
                 }
                 Err(error) => return Err(error).context("cannot acquire package lock"),
             }
@@ -225,7 +237,10 @@ impl PackageStore {
 
     fn version_record_path(&self, package_id: &str, hash: &str) -> Result<PathBuf> {
         validate_hash(hash)?;
-        Ok(self.package_state_dir(package_id).join("versions").join(format!("{hash}.json")))
+        Ok(self
+            .package_state_dir(package_id)
+            .join("versions")
+            .join(format!("{hash}.json")))
     }
 
     pub fn put_installed(&self, record: &InstalledPackageRecord) -> Result<()> {
@@ -236,7 +251,11 @@ impl PackageStore {
     pub fn get_installed(&self, package_id: &str) -> Result<Vec<InstalledPackageRecord>> {
         let directory = self.package_state_dir(package_id).join("versions");
         read_records(&directory).map(|mut records: Vec<InstalledPackageRecord>| {
-            records.sort_by(|a, b| a.installed_at.cmp(&b.installed_at).then(a.hash.cmp(&b.hash)));
+            records.sort_by(|a, b| {
+                a.installed_at
+                    .cmp(&b.installed_at)
+                    .then(a.hash.cmp(&b.hash))
+            });
             records
         })
     }
@@ -283,8 +302,14 @@ impl PackageStore {
     /// services; this stream is observation-only.
     pub fn append_evidence(&self, event: &ExtensionEvidenceEvent) -> Result<()> {
         anyhow::ensure!(event.schema_version == 1, "unsupported evidence schema");
-        anyhow::ensure!(!event.event_type.trim().is_empty(), "event type is required");
-        anyhow::ensure!(!event.correlation_id.trim().is_empty(), "correlation ID is required");
+        anyhow::ensure!(
+            !event.event_type.trim().is_empty(),
+            "event type is required"
+        );
+        anyhow::ensure!(
+            !event.correlation_id.trim().is_empty(),
+            "correlation ID is required"
+        );
         anyhow::ensure!(event.result.len() <= 64, "event result is too long");
         anyhow::ensure!(
             event.evidence_references.len() <= 16
@@ -315,14 +340,21 @@ impl PackageStore {
             "invalid compatibility read category"
         );
         self.update_migration_report(|report| {
-            *report.compatibility_reads.entry(category.to_owned()).or_default() += 1;
+            *report
+                .compatibility_reads
+                .entry(category.to_owned())
+                .or_default() += 1;
         })
     }
 
     pub fn record_legacy_import(&self, hash: &str) -> Result<()> {
         validate_hash(hash)?;
         self.update_migration_report(|report| {
-            if !report.imported_package_hashes.iter().any(|value| value == hash) {
+            if !report
+                .imported_package_hashes
+                .iter()
+                .any(|value| value == hash)
+            {
                 report.imported_package_hashes.push(hash.to_owned());
                 report.imported_package_hashes.sort();
             }
@@ -412,7 +444,11 @@ impl PackageStore {
 
     pub fn remove_package_if_unreferenced(&self, hash: &str) -> Result<()> {
         validate_hash(hash)?;
-        if self.list_installed()?.iter().any(|record| record.hash == hash) {
+        if self
+            .list_installed()?
+            .iter()
+            .any(|record| record.hash == hash)
+        {
             return Ok(());
         }
         let path = self.package_path(hash)?;
@@ -426,7 +462,9 @@ impl PackageStore {
 
 fn validate_hash(hash: &str) -> Result<()> {
     if hash.len() != 64
-        || !hash.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || !hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
         bail!("invalid hash: expected 64 lowercase hexadecimal characters");
     }
@@ -438,7 +476,10 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     std::fs::create_dir_all(parent)?;
     let temporary = parent.join(format!(".{}.tmp", Uuid::new_v4()));
     let result = (|| {
-        let mut file = OpenOptions::new().create_new(true).write(true).open(&temporary)?;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
         serde_json::to_writer_pretty(&mut file, value)?;
         file.write_all(b"\n")?;
         file.sync_all()?;
@@ -464,7 +505,10 @@ fn read_records<T: DeserializeOwned>(directory: &Path) -> Result<Vec<T>> {
     for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
         if entry.file_type()?.is_file()
-            && entry.path().extension().is_some_and(|extension| extension == "json")
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "json")
         {
             records.push(read_json(&entry.path())?);
         }
@@ -622,10 +666,7 @@ mod tests {
 
         let report = store.legacy_migration_report().unwrap();
         assert_eq!(report.schema_version, 1);
-        assert_eq!(
-            report.compatibility_reads["legacy_filesystem_archive"],
-            1
-        );
+        assert_eq!(report.compatibility_reads["legacy_filesystem_archive"], 1);
         assert_eq!(report.imported_package_hashes, vec![HASH]);
         assert_eq!(report.remaining_candidates, 2);
         assert!(store

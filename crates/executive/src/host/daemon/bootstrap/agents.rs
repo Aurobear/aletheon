@@ -141,7 +141,8 @@ pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentC
         }
         Err(e) => return Err(e), // No profiles at all — genuine error
     };
-    result.registry
+    result
+        .registry
         .resolve_by_name(&active_profile_name)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
 
@@ -180,13 +181,19 @@ fn persist_quarantine(
 fn replace_profile_snapshot(source: &Path, destination: &Path) -> anyhow::Result<()> {
     let parent = destination.parent().context("snapshot has no parent")?;
     std::fs::create_dir_all(parent)?;
-    let temporary = parent.join(format!(".agent-profile-known-good.{}.tmp", std::process::id()));
+    let temporary = parent.join(format!(
+        ".agent-profile-known-good.{}.tmp",
+        std::process::id()
+    ));
     if temporary.exists() {
         std::fs::remove_dir_all(&temporary)?;
     }
     copy_directory(source, &temporary)?;
     if destination.exists() {
-        let old = parent.join(format!(".agent-profile-known-good.{}.old", std::process::id()));
+        let old = parent.join(format!(
+            ".agent-profile-known-good.{}.old",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&old);
         std::fs::rename(destination, &old)?;
         std::fs::rename(&temporary, destination)?;

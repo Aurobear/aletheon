@@ -777,7 +777,11 @@ async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
             result["readiness"].as_str().unwrap_or("unknown")
         );
         if let Some(components) = result["components"].as_object() {
-            for name in ["agent_profiles", "extension_runtimes", "extension_rollbacks"] {
+            for name in [
+                "agent_profiles",
+                "extension_runtimes",
+                "extension_rollbacks",
+            ] {
                 let Some(component) = components.get(name) else {
                     continue;
                 };

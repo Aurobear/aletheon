@@ -242,9 +242,7 @@ pub use types::extension_package::{
     AssetRef, CompatibilitySpec, PackageId, PackageInfo, PackageManifest, PackageVersion,
     PermissionRequestSet,
 };
-pub use types::extension_state::{
-    ActivationState, ActivationTransition, HealthState,
-};
+pub use types::extension_state::{ActivationState, ActivationTransition, HealthState};
 pub use types::external_event::{
     ExternalContentRef, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
     ExternalEventError, ExternalEventId, ExternalFileMetadata, ExternalObjectRef, MailChange,

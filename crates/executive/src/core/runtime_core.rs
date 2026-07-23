@@ -123,7 +123,11 @@ impl RuntimeCore {
             agent_max_iterations: app_config.agent.max_iterations,
             harness_kind: app_config.agent.harness_kind,
             integrations,
-            embodiment_provider: app_config.integrations.embodiment.clone().unwrap_or_default(),
+            embodiment_provider: app_config
+                .integrations
+                .embodiment
+                .clone()
+                .unwrap_or_default(),
         };
 
         // ── Event bus ───────────────────────────────────────────────

@@ -29,17 +29,11 @@ pub enum ActivationState {
     /// Extension is active and serving capabilities.
     Active,
     /// Activation was explicitly rejected.
-    Rejected {
-        reason: String,
-    },
+    Rejected { reason: String },
     /// Extension failed validation or health probe; isolated, not serving.
-    Quarantined {
-        reason: String,
-    },
+    Quarantined { reason: String },
     /// Extension is active but one or more capabilities are degraded.
-    Degraded {
-        reason: String,
-    },
+    Degraded { reason: String },
     /// In the process of rolling back to a previous known-good version.
     RollingBack,
     /// Successfully rolled back to previous version.
@@ -106,9 +100,7 @@ pub enum HealthState {
         failures: Vec<String>,
     },
     /// Extension is not serving and requires operator intervention.
-    Unhealthy {
-        reason: String,
-    },
+    Unhealthy { reason: String },
 }
 
 impl HealthState {

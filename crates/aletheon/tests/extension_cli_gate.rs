@@ -32,7 +32,11 @@ fn lifecycle_commands_use_real_service_errors() {
         &["extension", "purge", "test.missing"],
     ] {
         let output = run(&store, args);
-        assert!(!output.status.success(), "`{}` unexpectedly succeeded", args.join(" "));
+        assert!(
+            !output.status.success(),
+            "`{}` unexpectedly succeeded",
+            args.join(" ")
+        );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             !stderr.contains("not implemented") && !stderr.contains("not yet implemented"),
@@ -57,9 +61,6 @@ fn empty_legacy_import_is_a_successful_noop() {
 #[test]
 fn inspect_rejects_nonexistent_package() {
     let store = TempDir::new().unwrap();
-    let output = run(
-        &store,
-        &["extension", "inspect", "/nonexistent/pkg.tar.gz"],
-    );
+    let output = run(&store, &["extension", "inspect", "/nonexistent/pkg.tar.gz"]);
     assert!(!output.status.success());
 }

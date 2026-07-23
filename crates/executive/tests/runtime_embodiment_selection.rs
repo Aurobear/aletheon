@@ -31,7 +31,10 @@ fn missing_embodiment_config_defaults_to_simulator() {
     // Verify that Option::None unwrap_or_default gives Simulator
     let config: Option<EmbodimentProviderConfig> = None;
     let resolved = config.unwrap_or_default();
-    assert!(matches!(resolved, EmbodimentProviderConfig::Simulator { .. }));
+    assert!(matches!(
+        resolved,
+        EmbodimentProviderConfig::Simulator { .. }
+    ));
 }
 
 #[test]
