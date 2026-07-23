@@ -93,9 +93,11 @@ impl RequestHandler {
             .iter()
             .map(|s| {
                 json!({
+                    "id": s.id,
                     "name": s.name,
                     "description": s.description,
                     "enabled": s.enabled,
+                    "extension_id": s.extension_id,
                 })
             })
             .collect();
