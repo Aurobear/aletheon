@@ -95,6 +95,13 @@ impl AdvancedCompressor {
         &self.lineage
     }
 
+    /// Carry validated receipts when a compacted working projection is
+    /// materialized as a new immutable canonical session.
+    pub fn inherit_lineage(&mut self, lineage: &[CompactionLineage]) {
+        self.lineage = lineage.to_vec();
+        self.run_counter = self.lineage.last().map_or(0, |entry| entry.run_id);
+    }
+
     /// Read-only prediction used by lifecycle observers. It applies the same
     /// threshold and boundary guard as `maybe_compact` without mutating state.
     pub fn should_compact(&self, messages: &[Message]) -> bool {
@@ -115,8 +122,7 @@ impl AdvancedCompressor {
     /// Adapt the protected tail to the actual history budget for this turn.
     pub fn configure_budget(&mut self, history_budget: usize, aggressive: bool) {
         let divisor = if aggressive { 5 } else { 3 };
-        let minimum = self.tail_config.tail_token_budget.max(256);
-        self.tail_config.tail_token_budget = (history_budget / divisor).max(minimum);
+        self.tail_config.tail_token_budget = (history_budget / divisor).max(256);
         self.context_window_tokens = history_budget;
     }
 
@@ -522,6 +528,15 @@ mod tests {
         assert_eq!(compressor.target_summary_chars, 4_000);
         assert_eq!(compressor.context_window_tokens, 128_000);
         assert!(compressor.previous_summary.is_none());
+    }
+
+    #[test]
+    fn aggressive_budget_retry_reduces_the_protected_tail() {
+        let mut compressor = AdvancedCompressor::new(8_000, 2_000, 100_000);
+        compressor.configure_budget(9_000, false);
+        assert_eq!(compressor.tail_config.tail_token_budget, 3_000);
+        compressor.configure_budget(9_000, true);
+        assert_eq!(compressor.tail_config.tail_token_budget, 1_800);
     }
 
     struct SimpleLlm;

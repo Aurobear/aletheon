@@ -102,6 +102,17 @@ impl SessionManager {
             .saturating_add(Message::user(pending_user).estimate_tokens())
     }
 
+    pub fn compaction_lineage(&self) -> &[mnemosyne::runtime::CompactionLineage] {
+        self.compressor.lineage()
+    }
+
+    pub fn inherit_compaction_lineage(
+        &mut self,
+        lineage: &[mnemosyne::runtime::CompactionLineage],
+    ) {
+        self.compressor.inherit_lineage(lineage);
+    }
+
     pub fn compaction_needed_for(&self, plan: &ContextBudgetPlan) -> bool {
         self.estimate_tokens() >= plan.soft_watermark && self.compressor.can_compact(&self.messages)
     }

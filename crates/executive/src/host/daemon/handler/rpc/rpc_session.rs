@@ -89,15 +89,48 @@ impl RequestHandler {
             }
         };
         match self.ports.sessions.compact(session_id).await {
-            Ok(Some(transition)) => json!({
-                "jsonrpc":"2.0",
-                "id":id,
-                "result":{
-                    "compacted":true,
-                    "session_id":transition.current.session_id,
-                }
-            }),
-            Ok(None) => json!({"jsonrpc":"2.0", "id":id, "result":{"compacted":false}}),
+            Ok(Some(transition)) => {
+                let receipt = transition.compaction.as_ref();
+                let tokens_before = receipt.map_or_else(
+                    || {
+                        transition
+                            .previous
+                            .messages
+                            .iter()
+                            .map(fabric::Message::estimate_tokens)
+                            .sum()
+                    },
+                    |receipt| receipt.tokens_before,
+                );
+                let tokens_after = receipt.map_or(0, |receipt| receipt.tokens_after);
+                let ratio = if tokens_before == 0 {
+                    0.0
+                } else {
+                    tokens_after as f64 / tokens_before as f64
+                };
+                json!({
+                    "jsonrpc":"2.0",
+                    "id":id,
+                    "result":{
+                        "compacted":true,
+                        "session_id":transition.current.session_id,
+                        "tokens_before":tokens_before,
+                        "tokens_after":tokens_after,
+                        "strategy":receipt.map(|entry| format!("{:?}", entry.strategy)).unwrap_or_else(|| "unknown".into()),
+                        "retained_messages":transition.current.message_count,
+                        "compression_ratio":ratio,
+                        "message":format!(
+                            "上下文压缩完成：{tokens_before} → {tokens_after} tokens，压缩比 {:.1}%，保留 {} 条消息，策略 structured_checkpoint_tail_keep",
+                            ratio * 100.0,
+                            transition.current.message_count
+                        ),
+                    }
+                })
+            }
+            Ok(None) => json!({"jsonrpc":"2.0", "id":id, "result":{
+                "compacted":false,
+                "message":"当前上下文无需压缩或没有可安全压缩的历史；上下文保持不变。"
+            }}),
             Err(error) => session_error(id, -32023, error),
         }
     }

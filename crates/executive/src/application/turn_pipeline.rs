@@ -1250,8 +1250,21 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
             reason: reason.clone(),
         }),
         TurnEventV1::CompactionTriggered { .. } => Some(ClientEvent::CompactionTriggered),
-        // Outcome remains on the canonical turn stream for audit/metrics; the
-        // legacy UI only has a generic triggered marker.
+        TurnEventV1::CompactionOutcome {
+            strategy,
+            applied: true,
+            tokens_before,
+            tokens_after,
+            evicted_messages,
+            ..
+        } => Some(ClientEvent::CompactionCompleted {
+            strategy: strategy.clone(),
+            tokens_before: *tokens_before as u64,
+            tokens_after: *tokens_after as u64,
+            evicted_messages: *evicted_messages as u64,
+        }),
+        // Failed or skipped outcomes remain on the canonical stream for
+        // diagnostics. The TUI must not imply success from a trigger alone.
         TurnEventV1::CompactionOutcome { .. }
         | TurnEventV1::TextDeltaStop
         | TurnEventV1::Approval { .. }

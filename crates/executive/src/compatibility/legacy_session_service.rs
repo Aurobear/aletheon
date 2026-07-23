@@ -28,6 +28,14 @@ pub struct LegacySessionSnapshot {
 pub struct LegacySessionTransition {
     pub previous: LegacySessionSnapshot,
     pub current: LegacySessionView,
+    pub compaction: Option<mnemosyne::runtime::CompactionLineage>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct LegacyCompactionStatus {
+    pub attempts: usize,
+    pub successful: usize,
+    pub last: Option<mnemosyne::runtime::CompactionLineage>,
 }
 
 #[derive(Debug, Error)]
@@ -57,6 +65,10 @@ pub trait LegacySessionUseCases: Send + Sync {
         thread_id: &str,
     ) -> Result<Option<LegacySessionTransition>, LegacySessionError>;
     async fn current(&self, thread_id: &str) -> Result<LegacySessionSnapshot, LegacySessionError>;
+    async fn compaction_status(
+        &self,
+        thread_id: &str,
+    ) -> Result<LegacyCompactionStatus, LegacySessionError>;
     async fn route_workspace(&self, working_dir: PathBuf) -> Result<String, LegacySessionError>;
 }
 
@@ -224,7 +236,11 @@ impl LegacySessionUseCases for LegacySessionService {
         let current = self.create_with_messages(&[]).await?;
         self.remap_default_workspace(&previous.session_id, &current.session_id)
             .await;
-        Ok(LegacySessionTransition { previous, current })
+        Ok(LegacySessionTransition {
+            previous,
+            current,
+            compaction: None,
+        })
     }
 
     async fn list(&self) -> Result<Vec<LegacySessionView>, LegacySessionError> {
@@ -329,7 +345,11 @@ impl LegacySessionUseCases for LegacySessionService {
         let current = self.create_with_messages(&[]).await?;
         self.remap_default_workspace(&previous.session_id, &current.session_id)
             .await;
-        Ok(LegacySessionTransition { previous, current })
+        Ok(LegacySessionTransition {
+            previous,
+            current,
+            compaction: None,
+        })
     }
 
     async fn compact(
@@ -338,7 +358,7 @@ impl LegacySessionUseCases for LegacySessionService {
     ) -> Result<Option<LegacySessionTransition>, LegacySessionError> {
         let previous = self.current(thread_id).await?;
         let manager = self.manager(&previous.session_id).await?;
-        let messages = {
+        let (messages, lineage, compaction) = {
             let mut manager = manager.lock().await;
             if !manager
                 .force_compact(&*self.llm)
@@ -347,18 +367,46 @@ impl LegacySessionUseCases for LegacySessionService {
             {
                 return Ok(None);
             }
-            manager.history().to_vec()
+            (
+                manager.history().to_vec(),
+                manager.compaction_lineage().to_vec(),
+                manager.compaction_lineage().last().cloned(),
+            )
         };
         // Canonical history is immutable. Materialize the compacted view as a
         // new session rather than silently rewriting durable Session/Turn/Item truth.
         let current = self.create_with_messages(&messages).await?;
+        self.manager(&current.session_id)
+            .await?
+            .lock()
+            .await
+            .inherit_compaction_lineage(&lineage);
         self.remap_default_workspace(&previous.session_id, &current.session_id)
             .await;
-        Ok(Some(LegacySessionTransition { previous, current }))
+        Ok(Some(LegacySessionTransition {
+            previous,
+            current,
+            compaction,
+        }))
     }
 
     async fn current(&self, thread_id: &str) -> Result<LegacySessionSnapshot, LegacySessionError> {
         self.snapshot(thread_id).await
+    }
+
+    async fn compaction_status(
+        &self,
+        thread_id: &str,
+    ) -> Result<LegacyCompactionStatus, LegacySessionError> {
+        let current = self.current(thread_id).await?;
+        let manager = self.manager(&current.session_id).await?;
+        let manager = manager.lock().await;
+        let lineage = manager.compaction_lineage();
+        Ok(LegacyCompactionStatus {
+            attempts: lineage.len(),
+            successful: lineage.iter().filter(|entry| entry.applied).count(),
+            last: lineage.last().cloned(),
+        })
     }
 
     async fn route_workspace(&self, working_dir: PathBuf) -> Result<String, LegacySessionError> {

@@ -74,6 +74,15 @@ impl RequestHandler {
                 });
             }
         };
+        let compaction = match self.ports.sessions.compaction_status(session_id).await {
+            Ok(status) => status,
+            Err(error) => {
+                return json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "error": { "code": -32000, "message": error.to_string() }
+                });
+            }
+        };
         match self.ports.health.status().await {
             Ok(status) => json!({
                 "jsonrpc": "2.0", "id": id,
@@ -87,6 +96,7 @@ impl RequestHandler {
                     "boundary_rules": status.boundary_rules,
                     "boundary_immutable": status.boundary_immutable,
                     "attention_focus": status.attention_focus,
+                    "compaction": compaction,
                 }}
             }),
             Err(error) => json!({

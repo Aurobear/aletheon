@@ -26,7 +26,20 @@ impl LlmProvider for SummaryLlm {
     ) -> anyhow::Result<LlmResponse> {
         Ok(LlmResponse {
             content: vec![ContentBlock::Text {
-                text: "summary".into(),
+                text: [
+                    "## Active Task\nPreserve the session across compaction.",
+                    "## Goal\nKeep the relevant conversation state.",
+                    "## Completed Actions\nEarlier turns were recorded.",
+                    "## Active State\nThe session is being compacted.",
+                    "## In Progress\nCompaction validation.",
+                    "## Blocked\nNone.",
+                    "## Key Decisions\nUse an immutable projected session.",
+                    "## Pending User Asks\nContinue the conversation.",
+                    "## Relevant Files\nNone.",
+                    "## Remaining Work\nResume from the protected tail.",
+                    "## Critical Context\nRetain the user's requirements and constraints.",
+                ]
+                .join("\n\n"),
             }],
             stop_reason: StopReason::EndTurn,
             usage: Usage::default(),

@@ -110,6 +110,19 @@ pub fn event_to_client_event(event: &Event) -> Option<ClientEvent> {
             reason: reason.clone(),
         }),
         Event::CompactionTriggered { .. } => Some(ClientEvent::CompactionTriggered),
+        Event::CompactionOutcome {
+            strategy,
+            applied: true,
+            tokens_before,
+            tokens_after,
+            evicted_messages,
+            ..
+        } => Some(ClientEvent::CompactionCompleted {
+            strategy: strategy.clone(),
+            tokens_before: *tokens_before as u64,
+            tokens_after: *tokens_after as u64,
+            evicted_messages: *evicted_messages as u64,
+        }),
 
         // Internal-only events — not for client consumption.
         Event::Text { .. }

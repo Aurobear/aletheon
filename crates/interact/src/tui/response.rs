@@ -273,7 +273,26 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 .add_text(ChatRole::System, format!("Circuit breaker: {reason}"));
         }
         ClientEvent::CompactionTriggered => {
-            // compaction is internal, just note it
+            // Wait for the validated outcome; a trigger alone is not success.
+        }
+        ClientEvent::CompactionCompleted {
+            strategy,
+            tokens_before,
+            tokens_after,
+            evicted_messages,
+        } => {
+            let ratio = if tokens_before == 0 {
+                0.0
+            } else {
+                tokens_after as f64 / tokens_before as f64 * 100.0
+            };
+            app.chat.add_text(
+                ChatRole::System,
+                format!(
+                    "自动压缩完成：{tokens_before} → {tokens_after} tokens（{ratio:.1}%），\
+                     移除 {evicted_messages} 条消息，策略 {strategy}"
+                ),
+            );
         }
         ClientEvent::Reflection { summary } => {
             // Routine reflection is internal control flow, not conversation.
@@ -723,6 +742,32 @@ pub fn format_status(status: &serde_json::Value) -> String {
     lines.push(format!("Turns: {turn_count}"));
     lines.push(format!("Reflections: {reflection_count}"));
     lines.push(format!("Evolutions: {evolution_count}"));
+    if let Some(compaction) = status.get("compaction") {
+        let attempts = compaction
+            .get("attempts")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let successful = compaction
+            .get("successful")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        lines.push(format!("Compactions: {successful}/{attempts} successful"));
+        if let Some(last) = compaction.get("last").filter(|value| !value.is_null()) {
+            let before = last
+                .get("tokens_before")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let after = last
+                .get("tokens_after")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let strategy = last
+                .get("strategy")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            lines.push(format!("Last compaction: {before} → {after} ({strategy})"));
+        }
+    }
     lines.push(String::new());
     lines.push("Care Weights:".to_string());
 
