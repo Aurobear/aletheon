@@ -15,6 +15,7 @@ cmd_test() {
       _run_test_script suites/operations/cli_static_test.sh
       _run_test_script suites/operations/cli_test.sh
       _run_test_script suites/operations/installed_runtime_gate_test.sh
+      _run_test_script suites/operations/completion_test.sh
       ;;
     architecture)
       _run_test_script suites/architecture/architecture_check.sh

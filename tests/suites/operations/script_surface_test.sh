@@ -47,7 +47,7 @@ for path in "${removed[@]}"; do
 done
 
 help=$(bash scripts/aletheon.sh help)
-for command in backup restore upgrade cleanup secrets database verify acceptance test; do
+for command in backup restore upgrade cleanup secrets database verify acceptance test completion; do
   grep -q "$command" <<<"$help"
 done
 

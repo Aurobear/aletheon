@@ -42,8 +42,17 @@ Operations:
   test {unit|operations|deployment|architecture|all}
                                 Run a focused test suite
   closure {install|run|status}  Manage the scheduled Pi-memory closure
+  completion {bash|zsh}         Print shell completion definitions
   help                          Show this help
 EOF
+}
+
+cmd_completion() {
+  local shell=${1:-}
+  case "$shell" in
+    bash|zsh) cat "$SCRIPT_DIR/completions/aletheon.$shell" ;;
+    *) aletheon_die "usage: aletheon.sh completion {bash|zsh}" || return 2 ;;
+  esac
 }
 
 cmd_deploy() {
@@ -86,6 +95,7 @@ case "${1:-help}" in
   acceptance) shift; cmd_acceptance "$@" ;;
   test) shift; cmd_test "$@" ;;
   closure) shift; cmd_closure "$@" ;;
+  completion) shift; cmd_completion "$@" ;;
   help|--help|-h) usage ;;
   *) printf 'Unknown command: %s\n' "$1" >&2; usage >&2; exit 2 ;;
 esac
