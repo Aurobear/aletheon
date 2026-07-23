@@ -333,8 +333,12 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
         ExtensionCmd::Doctor { id } => {
             let result = manage_svc.doctor(id)?;
             println!(
-                "Extension '{}': healthy={}, issues={:?}",
-                result.id, result.healthy, result.issues
+                "Extension '{}': healthy={}, issues={:?}, legacy_reads={:?}, remaining_legacy={}",
+                result.id,
+                result.healthy,
+                result.issues,
+                result.migration_report.compatibility_reads,
+                result.migration_report.remaining_candidates,
             );
         }
         ExtensionCmd::ImportLegacy => {

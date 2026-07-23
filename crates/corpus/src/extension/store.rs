@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 use fabric::{AssetRef, PermissionRequestSet};
 
@@ -57,6 +58,17 @@ pub struct ExtensionEvidenceEvent {
     pub result: String,
     pub evidence_references: Vec<String>,
     pub occurred_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LegacyMigrationReport {
+    pub schema_version: u32,
+    pub generated_at: String,
+    #[serde(default)]
+    pub compatibility_reads: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub imported_package_hashes: Vec<String>,
+    pub remaining_candidates: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -291,6 +303,59 @@ impl PackageStore {
         file.sync_all()?;
         sync_dir(&self.root)?;
         Ok(())
+    }
+
+    pub fn record_legacy_compatibility_read(&self, category: &str) -> Result<()> {
+        anyhow::ensure!(
+            !category.is_empty()
+                && category.len() <= 64
+                && category
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_'),
+            "invalid compatibility read category"
+        );
+        self.update_migration_report(|report| {
+            *report.compatibility_reads.entry(category.to_owned()).or_default() += 1;
+        })
+    }
+
+    pub fn record_legacy_import(&self, hash: &str) -> Result<()> {
+        validate_hash(hash)?;
+        self.update_migration_report(|report| {
+            if !report.imported_package_hashes.iter().any(|value| value == hash) {
+                report.imported_package_hashes.push(hash.to_owned());
+                report.imported_package_hashes.sort();
+            }
+        })
+    }
+
+    pub fn set_remaining_legacy_candidates(&self, count: u64) -> Result<()> {
+        self.update_migration_report(|report| report.remaining_candidates = count)
+    }
+
+    pub fn legacy_migration_report(&self) -> Result<LegacyMigrationReport> {
+        let path = self.root.join("legacy-migration-report.json");
+        if path.exists() {
+            read_json(&path)
+        } else {
+            Ok(LegacyMigrationReport {
+                schema_version: 1,
+                generated_at: chrono::Utc::now().to_rfc3339(),
+                ..LegacyMigrationReport::default()
+            })
+        }
+    }
+
+    fn update_migration_report(
+        &self,
+        update: impl FnOnce(&mut LegacyMigrationReport),
+    ) -> Result<()> {
+        let _lock = self.acquire_lock("__legacy_migration__")?;
+        let mut report = self.legacy_migration_report()?;
+        report.schema_version = 1;
+        update(&mut report);
+        report.generated_at = chrono::Utc::now().to_rfc3339();
+        write_json_atomic(&self.root.join("legacy-migration-report.json"), &report)
     }
 
     /// Rebuild the installed projection from durable install receipts.
@@ -543,5 +608,28 @@ mod tests {
         let mut oversized = event;
         oversized.result = "x".repeat(65);
         assert!(store.append_evidence(&oversized).is_err());
+    }
+
+    #[test]
+    fn legacy_migration_report_tracks_reads_imports_and_remaining_work() {
+        let temp = TempDir::new().unwrap();
+        let store = PackageStore::new(temp.path().to_owned()).unwrap();
+        store
+            .record_legacy_compatibility_read("legacy_filesystem_archive")
+            .unwrap();
+        store.record_legacy_import(HASH).unwrap();
+        store.set_remaining_legacy_candidates(2).unwrap();
+
+        let report = store.legacy_migration_report().unwrap();
+        assert_eq!(report.schema_version, 1);
+        assert_eq!(
+            report.compatibility_reads["legacy_filesystem_archive"],
+            1
+        );
+        assert_eq!(report.imported_package_hashes, vec![HASH]);
+        assert_eq!(report.remaining_candidates, 2);
+        assert!(store
+            .record_legacy_compatibility_read("../invalid")
+            .is_err());
     }
 }

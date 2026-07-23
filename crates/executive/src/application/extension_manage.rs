@@ -66,6 +66,7 @@ pub struct ExtensionDoctorResult {
     pub id: String,
     pub healthy: bool,
     pub issues: Vec<String>,
+    pub migration_report: corpus::extension::store::LegacyMigrationReport,
 }
 
 #[cfg(test)]
@@ -350,6 +351,7 @@ impl ExtensionManageService {
             id: id.to_owned(),
             healthy: issues.is_empty(),
             issues,
+            migration_report: self.store.legacy_migration_report()?,
         })
     }
 
@@ -360,12 +362,28 @@ impl ExtensionManageService {
             return Ok(Vec::new());
         }
         let mut imported = Vec::new();
+        let mut candidates = Vec::new();
         for entry in std::fs::read_dir(legacy_root)? {
             let path = entry?.path();
             let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
             if path.is_file() && (name.ends_with(".tar.gz") || name.ends_with(".tgz")) {
-                imported.push(self.installer.install_legacy(&path)?);
+                candidates.push(path);
             }
+        }
+        self.store
+            .set_remaining_legacy_candidates(candidates.len() as u64)?;
+        for path in candidates {
+            self.store
+                .record_legacy_compatibility_read("legacy_filesystem_archive")?;
+            let hash = self.installer.install_legacy(&path)?;
+            self.store.record_legacy_import(&hash)?;
+            imported.push(hash);
+            self.store.set_remaining_legacy_candidates(
+                self.store
+                    .legacy_migration_report()?
+                    .remaining_candidates
+                    .saturating_sub(1),
+            )?;
         }
         Ok(imported)
     }
