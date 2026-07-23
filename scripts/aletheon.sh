@@ -37,7 +37,7 @@ Operations:
   secrets {init|audit}          Initialize or audit production credentials
   database check DATABASE...    Run read-only SQLite quick checks
   verify [TARGET]               Run deployed-state or specialized verification
-  acceptance {architecture|release}
+  acceptance {architecture|release|extension}
                                 Run architecture or release acceptance
   test {unit|operations|deployment|architecture|all}
                                 Run a focused test suite

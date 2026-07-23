@@ -6,6 +6,7 @@ cmd_acceptance() {
   case "$lane" in
     architecture) run_internal architecture-check.sh "$@" ;;
     release) run_internal release-acceptance.sh "$@" ;;
-    *) aletheon_die "usage: aletheon.sh acceptance {architecture|release} [options]" || return 2 ;;
+    extension) run_internal extension-acceptance.sh "$@" ;;
+    *) aletheon_die "usage: aletheon.sh acceptance {architecture|release|extension} [options]" || return 2 ;;
   esac
 }

@@ -28,6 +28,7 @@ cmd_test() {
       _run_test_script production/installed_host_static_test.sh
       _run_test_script production/failure_matrix_static_test.sh
       _run_test_script production/release_aggregate_receipt_test.sh
+      _run_test_script production/extension_acceptance_static_test.sh
       ;;
     unit)
       bash "$ALETHEON_ROOT/scripts/cargo-agent.sh" test --workspace "$@"
