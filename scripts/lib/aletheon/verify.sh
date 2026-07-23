@@ -30,5 +30,6 @@ cmd_verify() {
   cmp -s "$ALETHEON_ROOT/deploy/systemd/user/aletheon-pi-closure.timer" "$unit_dir/aletheon-pi-closure.timer"
   journalctl --user -u aletheon.service -b --no-pager --grep='Pi coding runtime registered' -n 1 --quiet
   journalctl --user -u aletheon.service -b --no-pager --grep='Pi resident RPC runtime registered' -n 1 --quiet
+  cmd_installed_runtime_gate
   aletheon_ok "deployment verification passed"
 }

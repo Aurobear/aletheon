@@ -9,6 +9,7 @@ source "$SCRIPT_DIR/lib/aletheon/common.sh"
 source "$SCRIPT_DIR/lib/aletheon/build.sh"
 source "$SCRIPT_DIR/lib/aletheon/install.sh"
 source "$SCRIPT_DIR/lib/aletheon/service.sh"
+source "$SCRIPT_DIR/lib/aletheon/runtime_gate.sh"
 source "$SCRIPT_DIR/lib/aletheon/verify.sh"
 
 usage() {
