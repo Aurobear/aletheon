@@ -5,7 +5,9 @@
 
 use anyhow::{Context, Result};
 use corpus::extension::inspector;
-use corpus::extension::store::{InstalledPackageRecord, PackageStore};
+use corpus::extension::store::{
+    InstalledPackageRecord, PackageSourceRecord, PackageStore, WorkspaceTrustRecord,
+};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -32,9 +34,59 @@ impl ExtensionInstallService {
 
     /// Install a package: validate, stage, atomically commit, persist receipt.
     pub fn install(&self, package_path: &Path) -> Result<String> {
+        self.install_with_options(package_path, None, None)
+    }
+
+    /// Install an archive discovered by the legacy importer.
+    pub fn install_legacy(&self, package_path: &Path) -> Result<String> {
+        self.install_with_options(
+            package_path,
+            Some(PackageSourceRecord::LegacyImport),
+            None,
+        )
+    }
+
+    /// Install a package, requiring an explicit actor when the archive comes
+    /// from a workspace-local `.aletheon/extensions` directory.
+    pub fn install_with_workspace_trust(
+        &self,
+        package_path: &Path,
+        actor: Option<&str>,
+    ) -> Result<String> {
+        self.install_with_options(package_path, None, actor)
+    }
+
+    fn install_with_options(
+        &self,
+        package_path: &Path,
+        source_override: Option<PackageSourceRecord>,
+        workspace_actor: Option<&str>,
+    ) -> Result<String> {
         let result = inspector::inspect_package(package_path)?;
         let hash = result.package_hash.as_str();
         let pkg_id = &result.manifest.package.id.0;
+        let source = source_override.unwrap_or_else(|| {
+            if is_workspace_extension_path(package_path) {
+                PackageSourceRecord::Workspace
+            } else {
+                PackageSourceRecord::LocalArchive
+            }
+        });
+        let workspace_trust = match source {
+            PackageSourceRecord::Workspace => {
+                let actor = workspace_actor
+                    .filter(|value| !value.trim().is_empty())
+                    .context(
+                        "workspace extension is untrusted; retry with explicit workspace trust",
+                    )?;
+                Some(WorkspaceTrustRecord {
+                    actor: actor.to_owned(),
+                    approved_at: chrono::Utc::now().to_rfc3339(),
+                    package_hash: hash.to_owned(),
+                })
+            }
+            _ => None,
+        };
         let _lock = self.store.acquire_lock(pkg_id)?;
 
         // The content-addressed commit is idempotent. Extraction failures and
@@ -63,6 +115,8 @@ impl ExtensionInstallService {
             installed_at: chrono::Utc::now().to_rfc3339(),
             assets: result.manifest.assets.clone(),
             requested_permissions: result.manifest.requested_permissions.clone(),
+            source,
+            workspace_trust,
         };
         // The record filename is the content hash, so a repeated install
         // replaces the same projection rather than creating duplicates.
@@ -93,5 +147,107 @@ impl ExtensionInstallService {
         let records = self.store.get_installed(id)?;
         anyhow::ensure!(!records.is_empty(), "extension '{id}' is not installed");
         Ok(records)
+    }
+}
+
+fn is_workspace_extension_path(path: &Path) -> bool {
+    let mut saw_extensions = false;
+    for component in path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .components()
+        .rev()
+    {
+        let value = component.as_os_str();
+        if !saw_extensions {
+            saw_extensions = value == "extensions";
+        } else if value == ".aletheon" {
+            return true;
+        } else {
+            saw_extensions = value == "extensions";
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_workspace_extension_path, ExtensionInstallService};
+    use corpus::extension::store::{PackageSourceRecord, PackageStore};
+    use flate2::{write::GzEncoder, Compression};
+    use sha2::{Digest, Sha256};
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
+
+    #[test]
+    fn recognizes_only_workspace_extension_directory() {
+        assert!(is_workspace_extension_path(Path::new(
+            "/tmp/project/.aletheon/extensions/pkg.tar.gz"
+        )));
+        assert!(!is_workspace_extension_path(Path::new(
+            "/tmp/project/extensions/pkg.tar.gz"
+        )));
+    }
+
+    fn create_package(root: &Path) -> PathBuf {
+        let source = root.join("source");
+        let skill = source.join("assets/skills/demo/SKILL.md");
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        let manifest = r#"
+schema_version = 1
+[package]
+id = "test.workspace"
+version = "1.0.0"
+description = "workspace trust test"
+compatibility = { min_aletheon = "0.1.0" }
+[[assets]]
+kind = "skill"
+id = "skill.demo"
+path = "assets/skills/demo/SKILL.md"
+"#;
+        let skill_body = "---\nname: demo\n---\n# Demo\n";
+        std::fs::write(source.join("extension.toml"), manifest).unwrap();
+        std::fs::write(&skill, skill_body).unwrap();
+        let checksums = format!(
+            "{:x}  extension.toml\n{:x}  assets/skills/demo/SKILL.md\n",
+            Sha256::digest(manifest.as_bytes()),
+            Sha256::digest(skill_body.as_bytes())
+        );
+        std::fs::write(source.join("checksums.sha256"), checksums).unwrap();
+
+        let workspace = root.join("project/.aletheon/extensions");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let archive = workspace.join("test.tar.gz");
+        let encoder =
+            GzEncoder::new(std::fs::File::create(&archive).unwrap(), Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        builder.append_dir_all(".", &source).unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+        archive
+    }
+
+    #[test]
+    fn workspace_install_is_fail_closed_and_trust_is_hash_bound() {
+        let temp = TempDir::new().unwrap();
+        let archive = create_package(temp.path());
+        let store_root = temp.path().join("store");
+        let service = ExtensionInstallService::new(&store_root).unwrap();
+
+        let error = service.install(&archive).unwrap_err().to_string();
+        assert!(error.contains("workspace extension is untrusted"));
+        assert!(service.list().unwrap().is_empty());
+
+        let hash = service
+            .install_with_workspace_trust(&archive, Some("operator:test"))
+            .unwrap();
+        let records = PackageStore::new(store_root)
+            .unwrap()
+            .get_installed("test.workspace")
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].source, PackageSourceRecord::Workspace);
+        let trust = records[0].workspace_trust.as_ref().unwrap();
+        assert_eq!(trust.actor, "operator:test");
+        assert_eq!(trust.package_hash, hash);
     }
 }

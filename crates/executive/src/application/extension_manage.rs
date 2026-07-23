@@ -91,6 +91,8 @@ mod tests {
             installed_at: installed_at.into(),
             assets: Vec::new(),
             requested_permissions: fabric::PermissionRequestSet::default(),
+            source: corpus::extension::store::PackageSourceRecord::LocalArchive,
+            workspace_trust: None,
         }
     }
 
@@ -231,10 +233,20 @@ impl ExtensionManageService {
     }
 
     pub fn upgrade(&self, package_path: &Path) -> Result<()> {
+        self.upgrade_with_workspace_trust(package_path, None)
+    }
+
+    pub fn upgrade_with_workspace_trust(
+        &self,
+        package_path: &Path,
+        workspace_actor: Option<&str>,
+    ) -> Result<()> {
         let inspection = self.installer.inspect(package_path)?;
         let id = inspection.manifest.package.id.0.clone();
         let old = self.store.read_activation(&id)?;
-        let hash = self.installer.install(package_path)?;
+        let hash = self
+            .installer
+            .install_with_workspace_trust(package_path, workspace_actor)?;
         let _lock = self.store.acquire_lock(&id)?;
         let candidate = self
             .store
@@ -352,7 +364,7 @@ impl ExtensionManageService {
             let path = entry?.path();
             let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("");
             if path.is_file() && (name.ends_with(".tar.gz") || name.ends_with(".tgz")) {
-                imported.push(self.installer.install(&path)?);
+                imported.push(self.installer.install_legacy(&path)?);
             }
         }
         Ok(imported)

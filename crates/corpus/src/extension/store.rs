@@ -23,6 +23,26 @@ pub struct InstalledPackageRecord {
     pub assets: Vec<AssetRef>,
     #[serde(default)]
     pub requested_permissions: PermissionRequestSet,
+    #[serde(default)]
+    pub source: PackageSourceRecord,
+    #[serde(default)]
+    pub workspace_trust: Option<WorkspaceTrustRecord>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageSourceRecord {
+    #[default]
+    LocalArchive,
+    Workspace,
+    LegacyImport,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceTrustRecord {
+    pub actor: String,
+    pub approved_at: String,
+    pub package_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -417,6 +437,8 @@ mod tests {
             installed_at: "2026-07-23T00:00:00Z".into(),
             assets: Vec::new(),
             requested_permissions: PermissionRequestSet::default(),
+            source: PackageSourceRecord::LocalArchive,
+            workspace_trust: None,
         };
         store.put_installed(&record).unwrap();
         assert_eq!(store.list_installed().unwrap(), vec![record]);
@@ -438,6 +460,8 @@ mod tests {
             installed_at: "2026-07-23T00:00:00Z".into(),
             assets: Vec::new(),
             requested_permissions: PermissionRequestSet::default(),
+            source: PackageSourceRecord::LocalArchive,
+            workspace_trust: None,
         };
         store
             .store_receipt(

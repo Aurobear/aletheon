@@ -159,6 +159,9 @@ enum ExtensionCmd {
     /// Install an extension package.
     Install {
         path: PathBuf,
+        /// Explicitly trust an archive located under `.aletheon/extensions`.
+        #[arg(long)]
+        trust_workspace: bool,
     },
     /// List installed extensions.
     List,
@@ -184,6 +187,9 @@ enum ExtensionCmd {
         /// Explicitly approve permission or capability additions.
         #[arg(long)]
         approve_permissions: bool,
+        /// Explicitly trust an archive located under `.aletheon/extensions`.
+        #[arg(long)]
+        trust_workspace: bool,
     },
     /// Rollback to the previous known-good version.
     Rollback {
@@ -270,8 +276,14 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
             install_svc.inspect(path)?;
             println!("Package is valid.");
         }
-        ExtensionCmd::Install { path } => {
-            let hash = install_svc.install(path)?;
+        ExtensionCmd::Install {
+            path,
+            trust_workspace,
+        } => {
+            let actor = trust_workspace.then(|| {
+                std::env::var("USER").unwrap_or_else(|_| "local-operator".into())
+            });
+            let hash = install_svc.install_with_workspace_trust(path, actor.as_deref())?;
             println!("Installed package with hash: {hash}");
         }
         ExtensionCmd::List => {
@@ -295,8 +307,15 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
             manage_svc.disable(id)?;
             println!("Extension '{id}' disabled.");
         }
-        ExtensionCmd::Upgrade { path, .. } => {
-            manage_svc.upgrade(path)?;
+        ExtensionCmd::Upgrade {
+            path,
+            trust_workspace,
+            ..
+        } => {
+            let actor = trust_workspace.then(|| {
+                std::env::var("USER").unwrap_or_else(|_| "local-operator".into())
+            });
+            manage_svc.upgrade_with_workspace_trust(path, actor.as_deref())?;
             println!("Extension upgraded from '{}'.", path.display());
         }
         ExtensionCmd::Rollback { id } => {

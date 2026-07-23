@@ -388,6 +388,8 @@ risk = "Sandboxed"
                     network: false,
                     executables: true,
                 },
+                source: corpus::extension::store::PackageSourceRecord::LocalArchive,
+                workspace_trust: None,
             })
             .unwrap();
     }
@@ -453,6 +455,8 @@ risk = "Sandboxed"
                     path: "assets/executables/generic/runtime.toml".into(),
                 }],
                 requested_permissions: requested.clone(),
+                source: corpus::extension::store::PackageSourceRecord::LocalArchive,
+                workspace_trust: None,
             })
             .unwrap();
         store
