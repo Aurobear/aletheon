@@ -139,12 +139,19 @@ pub struct SubprocessAgentRuntimeProvider {
     sandbox_backend: Arc<dyn SandboxBackend>,
     sandbox_config: SandboxConfig,
     sessions: Mutex<HashMap<fabric::AgentId, ProviderSession>>,
+    circuit: Mutex<ProviderCircuit>,
 }
 
 #[derive(Clone)]
 struct ProviderSession {
     runtime: Arc<Mutex<SubprocessRuntime>>,
     cancel: CancellationToken,
+}
+
+#[derive(Default)]
+struct ProviderCircuit {
+    consecutive_failures: u32,
+    quarantined: bool,
 }
 
 impl SubprocessAgentRuntimeProvider {
@@ -164,7 +171,33 @@ impl SubprocessAgentRuntimeProvider {
             sandbox_backend,
             sandbox_config,
             sessions: Mutex::new(HashMap::new()),
+            circuit: Mutex::new(ProviderCircuit::default()),
         })
+    }
+
+    async fn ensure_available(&self) -> Result<()> {
+        anyhow::ensure!(
+            !self.circuit.lock().await.quarantined,
+            "extension runtime provider is quarantined"
+        );
+        Ok(())
+    }
+
+    async fn record_business_result<T>(&self, result: &Result<T>) {
+        let mut circuit = self.circuit.lock().await;
+        if result.is_ok() {
+            circuit.consecutive_failures = 0;
+            return;
+        }
+        circuit.consecutive_failures = circuit.consecutive_failures.saturating_add(1);
+        if circuit.consecutive_failures >= self.config.circuit_breaker_threshold {
+            circuit.quarantined = true;
+            tracing::error!(
+                command = %self.config.command,
+                failures = circuit.consecutive_failures,
+                "Extension runtime provider circuit breaker tripped"
+            );
+        }
     }
 
     async fn session(&self, handle: &AgentHandle) -> Result<ProviderSession> {
@@ -192,16 +225,25 @@ impl SubprocessAgentRuntimeProvider {
 #[async_trait::async_trait]
 impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     async fn start(&self, request: AgentSpawnRequest) -> Result<AgentHandle> {
+        self.ensure_available().await?;
         request.validate().map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let mut runtime = SubprocessRuntime::new_isolated(
-            self.config.clone(),
-            self.sandbox_backend.as_ref(),
-            &self.sandbox_config,
-        )?;
-        runtime.start().await?;
-        let value = runtime.call("start", serde_json::to_value(request)?).await?;
-        let handle: AgentHandle =
-            serde_json::from_value(value).context("runtime returned an invalid Agent handle")?;
+        let result = async {
+            let mut runtime = SubprocessRuntime::new_isolated(
+                self.config.clone(),
+                self.sandbox_backend.as_ref(),
+                &self.sandbox_config,
+            )?;
+            runtime.start().await?;
+            let value = runtime.call("start", serde_json::to_value(request)?).await?;
+            let handle: AgentHandle =
+                serde_json::from_value(value).context("runtime returned an invalid Agent handle")?;
+            Ok::<_, anyhow::Error>((handle, runtime))
+        }
+        .await;
+        if result.is_err() {
+            self.record_business_result(&result).await;
+        }
+        let (handle, runtime) = result?;
         let session = ProviderSession {
             cancel: runtime.cancellation_token(),
             runtime: Arc::new(Mutex::new(runtime)),
@@ -218,34 +260,43 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     }
 
     async fn observe(&self, handle: &AgentHandle) -> Result<Value> {
-        self.session(handle)
+        self.ensure_available().await?;
+        let result = self.session(handle)
             .await?
             .runtime
             .lock()
             .await
             .call("observe", serde_json::to_value(handle)?)
-            .await
+            .await;
+        self.record_business_result(&result).await;
+        result
     }
 
     async fn steer(&self, handle: &AgentHandle, input: Value) -> Result<()> {
-        self.session(handle)
+        self.ensure_available().await?;
+        let result = self.session(handle)
             .await?
             .runtime
             .lock()
             .await
             .call("steer", serde_json::json!({"handle": handle, "input": input}))
-            .await?;
+            .await;
+        self.record_business_result(&result).await;
+        result?;
         Ok(())
     }
 
     async fn follow_up(&self, handle: &AgentHandle, input: Value) -> Result<Value> {
-        self.session(handle)
+        self.ensure_available().await?;
+        let result = self.session(handle)
             .await?
             .runtime
             .lock()
             .await
             .call("follow_up", serde_json::json!({"handle": handle, "input": input}))
-            .await
+            .await;
+        self.record_business_result(&result).await;
+        result
     }
 
     async fn cancel(&self, handle: &AgentHandle, reason: &str) -> Result<()> {
@@ -273,6 +324,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
             .await
             .call("wait", serde_json::to_value(handle)?)
             .await;
+        self.record_business_result(&result).await;
         if result.is_ok() {
             self.sessions.lock().await.remove(&handle.agent_id);
         }
@@ -280,6 +332,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     }
 
     async fn health(&self) -> Result<()> {
+        self.ensure_available().await?;
         for session in self.sessions.lock().await.values() {
             session.runtime.lock().await.health()?;
         }
@@ -759,6 +812,85 @@ mod tests {
         (runtime, work)
     }
 
+    async fn isolated_provider(
+        mode: &str,
+        threshold: u32,
+    ) -> (SubprocessAgentRuntimeProvider, TempDir) {
+        let work = TempDir::new().unwrap();
+        let helper = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/extension_jsonrpc_runtime.py")
+            .canonicalize()
+            .unwrap();
+        let backend = corpus::security::sandbox::BubblewrapBackend::probe_async(Arc::new(
+            kernel::chronos::TestClock::default(),
+        ))
+        .await
+        .unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots(work.path().to_path_buf(), vec![])
+                .unwrap();
+        let policy = ResolvedSandboxPolicy {
+            name: "extension-provider-test".into(),
+            read_only_roots: vec![
+                "/usr".into(),
+                "/lib".into(),
+                "/lib64".into(),
+                "/bin".into(),
+                "/etc".into(),
+                helper.parent().unwrap().to_path_buf(),
+            ],
+            read_write_roots: vec![work.path().to_path_buf()],
+            deny_exact: Vec::new(),
+            deny_globs: Vec::new(),
+            restrict_network: true,
+        };
+        let provider = SubprocessAgentRuntimeProvider::new(
+            SubprocessConfig {
+                command: "/usr/bin/python3".into(),
+                args: vec![helper.to_string_lossy().into_owned()],
+                working_dir: Some(work.path().to_string_lossy().into_owned()),
+                call_timeout: Duration::from_secs(2),
+                circuit_breaker_threshold: threshold,
+                ..Default::default()
+            },
+            Arc::new(backend),
+            SandboxConfig {
+                workspace,
+                environment: BTreeMap::from([(
+                    "EXTENSION_FIXTURE_MODE".into(),
+                    mode.into(),
+                )]),
+                policy: Some(policy),
+            },
+        )
+        .unwrap();
+        (provider, work)
+    }
+
+    fn spawn_request() -> AgentSpawnRequest {
+        AgentSpawnRequest {
+            root_agent_id: fabric::AgentId(uuid::Uuid::new_v4()),
+            parent_agent_id: None,
+            parent_process_id: None,
+            profile_id: fabric::AgentProfileId("test".into()),
+            runtime_id: fabric::RuntimeId("runtime.generic".into()),
+            trusted_workspace: None,
+            task: "test".into(),
+            context: fabric::AgentContextFork::default(),
+            broadcast_refs: Vec::new(),
+            allowed_tools: Vec::new(),
+            budget: fabric::AgentBudget {
+                max_input_tokens: 1,
+                max_output_tokens: 1,
+                max_tool_calls: 1,
+                max_elapsed_ms: 1,
+                max_cost_usd: None,
+                max_depth: 1,
+            },
+            background_decls: Vec::new(),
+        }
+    }
+
     #[test]
     fn default_config_has_reasonable_timeouts() {
         let cfg = SubprocessConfig::default();
@@ -886,5 +1018,17 @@ mod tests {
         assert!(cancelled.call("wait", serde_json::json!({})).await.is_err());
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(cancelled.process.is_none());
+    }
+
+    #[tokio::test]
+    async fn provider_circuit_breaker_accumulates_business_failures_across_sessions() {
+        let (provider, _work) = isolated_provider("business_fail", 2).await;
+        for _ in 0..2 {
+            let handle = provider.start(spawn_request()).await.unwrap();
+            assert!(provider.observe(&handle).await.is_err());
+        }
+        let error = provider.start(spawn_request()).await.unwrap_err().to_string();
+        assert!(error.contains("quarantined"));
+        assert!(provider.health().await.is_err());
     }
 }

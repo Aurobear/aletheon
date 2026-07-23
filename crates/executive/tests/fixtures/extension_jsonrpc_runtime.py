@@ -29,6 +29,22 @@ for raw in sys.stdin:
     elif method == "shutdown":
         respond(request, {"stopped": True})
         break
+    elif method == "start" and MODE == "business_fail":
+        params = request["params"]
+        respond(
+            request,
+            {
+                "agent_id": params["root_agent_id"],
+                "root_agent_id": params["root_agent_id"],
+                "parent_agent_id": params.get("parent_agent_id"),
+                "process_id": "22222222-2222-4222-8222-222222222222",
+                "operation_id": "33333333-3333-4333-8333-333333333333",
+                "runtime_id": params["runtime_id"],
+                "profile_id": params["profile_id"],
+            },
+        )
+    elif MODE == "business_fail":
+        respond(request, {}, response_id=request["id"] + 1)
     elif MODE == "wrong_id":
         respond(request, {}, response_id=request["id"] + 1)
     elif MODE == "wrong_version":
