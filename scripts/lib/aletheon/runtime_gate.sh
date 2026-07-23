@@ -21,8 +21,18 @@ _service_pid() {
 _runtime_executable() {
   local scope=$1 unit=$2 pid path
   pid=$(_service_pid "$scope" "$unit") || return
-  path=$(readlink -f "$ALETHEON_PROC_ROOT/$pid/exe") ||
-    { aletheon_die "cannot resolve $scope runtime executable for pid $pid"; return; }
+  path=$(readlink -f "$ALETHEON_PROC_ROOT/$pid/exe" 2>/dev/null) || path=
+  if [[ ! -x "$path" ]]; then
+    path=$(_service_property "$scope" "$unit" ExecStart | sed -n 's/.*path=\([^ ;}]*\).*/\1/p')
+    [[ -n "$path" ]] || {
+      aletheon_die "cannot resolve $scope runtime executable for pid $pid"
+      return
+    }
+    path=$(readlink -f "$path") || {
+      aletheon_die "cannot resolve configured $scope runtime executable: $path"
+      return
+    }
+  fi
   [[ -x "$path" ]] ||
     { aletheon_die "$scope runtime executable is unavailable: $path"; return; }
   printf '%s\n' "$path"

@@ -41,6 +41,7 @@ case "$property" in
   MainPID) [[ "$scope" == core ]] && echo 101 || echo 202 ;;
   ActiveState) echo active ;;
   NRestarts) cat "$FIXTURE_STATE/$scope.restarts" ;;
+  ExecStart) echo "{ path=$ALETHEON_INSTALLED_BINARY ; argv[]=$ALETHEON_INSTALLED_BINARY daemon ; }" ;;
   *) echo "unsupported property: $property for $unit" >&2; exit 2 ;;
 esac
 EOF
@@ -112,6 +113,12 @@ case ${1:-all} in
     run_failure 'running executable path differs from installed binary' \
       cmd_verify_runtime_provenance
     ln -sfn "$tmp/installed/aletheon" "$tmp/proc/202/exe"
+
+    rm "$tmp/proc/101/exe" "$tmp/proc/202/exe"
+    cmd_verify_runtime_provenance >"$tmp/out"
+    grep -Fq 'installed runtime provenance verified' "$tmp/out"
+    ln -s "$tmp/installed/aletheon" "$tmp/proc/101/exe"
+    ln -s "$tmp/installed/aletheon" "$tmp/proc/202/exe"
     ;;
 esac
 
