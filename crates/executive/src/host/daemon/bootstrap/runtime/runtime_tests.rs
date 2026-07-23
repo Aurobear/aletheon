@@ -204,6 +204,47 @@ mod goal_runtime_tests {
     }
 
     #[test]
+    fn agent_profile_token_overrides_feed_adaptive_context_limits() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("compact.md"),
+            "---\nname: compact\ndescription: compact\ntools: [file_read]\n---\nCompact safely.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let definitions = vec![fabric::ToolDefinition {
+            name: "file_read".into(),
+            description: "read".into(),
+            input_schema: serde_json::json!({"type":"object"}),
+        }];
+        let mut profiles = crate::composition::config::AgentProfilesConfig::default();
+        profiles.overrides.insert(
+            "compact".into(),
+            crate::composition::config::ProfileOverride {
+                max_input_tokens: Some(8_000),
+                max_output_tokens: Some(1_000),
+                ..Default::default()
+            },
+        );
+
+        let result = super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &definitions,
+            &crate::composition::config::ExecutiveConfig::default(),
+            &profiles,
+        )
+        .unwrap();
+
+        let profile = result.profiles.get("compact").unwrap();
+        assert_eq!(profile.max_input_tokens, 8_000);
+        assert_eq!(profile.max_output_tokens, 1_000);
+    }
+
+    #[test]
     fn agent_profile_config_rejects_unknown_default_and_override() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(

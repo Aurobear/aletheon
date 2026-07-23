@@ -113,6 +113,23 @@ pub(super) fn load_agent_profiles(
         let approval_policy = overrides
             .and_then(|ov| ov.approval_policy)
             .unwrap_or(fabric::AgentApprovalPolicy::AutoApprove);
+        let max_input_tokens = overrides
+            .and_then(|ov| ov.max_input_tokens)
+            .unwrap_or(config.context_window_tokens as u64)
+            .min(config.context_window_tokens as u64);
+        let max_output_tokens = overrides
+            .and_then(|ov| ov.max_output_tokens)
+            .unwrap_or(16_384);
+        if max_input_tokens == 0 || max_output_tokens == 0 || max_output_tokens >= max_input_tokens
+        {
+            quarantined.push(QuarantinedProfile {
+                name: role.name.clone(),
+                reason: format!(
+                    "invalid token budgets: input={max_input_tokens}, output={max_output_tokens}"
+                ),
+            });
+            continue;
+        }
 
         // Derive risk tier from tool permission levels — delegated to the
         // registry construction; here we use a simple heuristic.
@@ -124,8 +141,8 @@ pub(super) fn load_agent_profiles(
             model: llm.name().to_string(),
             allowed_tools: role.tools.clone(),
             max_iterations,
-            max_input_tokens: config.context_window_tokens as u64,
-            max_output_tokens: 16_384,
+            max_input_tokens,
+            max_output_tokens,
             max_tool_calls: overrides.and_then(|ov| ov.max_tool_calls).unwrap_or(
                 if config.agent_loop.max_tool_calls == 0 {
                     128

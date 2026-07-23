@@ -67,6 +67,12 @@ pub struct AgentProfilesConfig {
 pub struct ProfileOverride {
     pub max_iterations: Option<usize>,
     pub max_tool_calls: Option<u32>,
+    /// Per-profile input budget used by adaptive context planning. Values above
+    /// the runtime model window are clamped to that authoritative window.
+    pub max_input_tokens: Option<u64>,
+    /// Output reservation subtracted from the context window before admitting
+    /// history and pending user input.
+    pub max_output_tokens: Option<u64>,
     pub tool_timeout_ms: Option<u64>,
     pub approval_policy: Option<fabric::AgentApprovalPolicy>,
 }
