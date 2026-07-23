@@ -241,38 +241,38 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
             corpus::extension::inspector::inspect_package(path)?;
             println!("Package is valid.");
         }
-        ExtensionCmd::Install { path } => {
-            println!("Install: {} (store-based activation in Phase 6b)", path.display());
+        ExtensionCmd::Install { .. } => {
+            anyhow::bail!("not implemented: extension install (R2)")
         }
         ExtensionCmd::List => {
-            println!("List: scanning installed extensions...");
+            anyhow::bail!("not implemented: extension list (R2)")
         }
-        ExtensionCmd::Show { id } => {
-            println!("Show: {}", id);
+        ExtensionCmd::Show { .. } => {
+            anyhow::bail!("not implemented: extension show (R2)")
         }
-        ExtensionCmd::Enable { id } => {
-            println!("Enable: {}", id);
+        ExtensionCmd::Enable { .. } => {
+            anyhow::bail!("not implemented: extension enable (R5)")
         }
-        ExtensionCmd::Disable { id } => {
-            println!("Disable: {}", id);
+        ExtensionCmd::Disable { .. } => {
+            anyhow::bail!("not implemented: extension disable (R5)")
         }
-        ExtensionCmd::Upgrade { path } => {
-            println!("Upgrade from: {}", path.display());
+        ExtensionCmd::Upgrade { .. } => {
+            anyhow::bail!("not implemented: extension upgrade (R5)")
         }
-        ExtensionCmd::Rollback { id } => {
-            println!("Rollback: {}", id);
+        ExtensionCmd::Rollback { .. } => {
+            anyhow::bail!("not implemented: extension rollback (R5)")
         }
-        ExtensionCmd::Remove { id } => {
-            println!("Remove: {}", id);
+        ExtensionCmd::Remove { .. } => {
+            anyhow::bail!("not implemented: extension remove (R5)")
         }
-        ExtensionCmd::Purge { id } => {
-            println!("Purge: {}", id);
+        ExtensionCmd::Purge { .. } => {
+            anyhow::bail!("not implemented: extension purge (R5)")
         }
-        ExtensionCmd::Doctor { id } => {
-            println!("Doctor: {}", id);
+        ExtensionCmd::Doctor { .. } => {
+            anyhow::bail!("not implemented: extension doctor (R5)")
         }
         ExtensionCmd::ImportLegacy => {
-            println!("Import legacy: scanning for legacy extensions...");
+            anyhow::bail!("not implemented: extension import-legacy (R5)")
         }
     }
     Ok(())
