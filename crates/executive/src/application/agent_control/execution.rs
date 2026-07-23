@@ -398,6 +398,11 @@ impl AgentRuntimeRegistry {
         Ok(())
     }
 
+    pub fn unregister(&self, id: &RuntimeId) -> bool {
+        self.manifests.write().remove(id);
+        self.runtimes.write().remove(id).is_some()
+    }
+
     /// Register a selectable runtime contract alongside the Executive-owned
     /// launcher. The manifest describes capabilities; it does not gain
     /// lifecycle, admission, cancellation, or settlement authority.
