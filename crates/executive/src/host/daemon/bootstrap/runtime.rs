@@ -232,10 +232,6 @@ pub(super) async fn register_agent_tools(
 
 use anyhow::Context;
 use fabric::{Clock, LlmProvider};
-#[cfg(test)]
-use kernel::chronos::SystemClock;
-#[cfg(test)]
-use tokio_util::sync::CancellationToken;
 
 use crate::adapters::runtime::ProviderWorkerRuntime;
 use crate::application::CapabilityService;
