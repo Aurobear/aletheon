@@ -913,6 +913,8 @@ impl RequestHandler {
             )?;
             composition
         };
+        let quarantined_profile_count = agent_composition.quarantined_profiles().len() as u64;
+        let agent_profiles_unready = agent_composition.active_profile_name.is_empty();
         let agent_profiles_for_tools = agent_composition.tool_profiles;
         let agent_profile_registry = agent_composition.profiles;
         let active_profile = Arc::new(Mutex::new(agent_composition.active_profile_name));
@@ -1209,6 +1211,24 @@ impl RequestHandler {
         let started_at = clock_2.mono_now();
         let health_registry =
             Arc::new(crate::application::health::HealthRegistry::production_ready());
+        if quarantined_profile_count > 0 {
+            let mut health = if agent_profiles_unready {
+                crate::application::health::ComponentHealth::unready(
+                    "all_agent_profiles_quarantined",
+                )
+            } else {
+                crate::application::health::ComponentHealth::degraded(
+                    "agent_profiles_quarantined",
+                )
+            };
+            health.count = Some(quarantined_profile_count);
+            health_registry.set("agent_profiles", health);
+        } else {
+            health_registry.set(
+                "agent_profiles",
+                crate::application::health::ComponentHealth::ready(),
+            );
+        }
         let channel_task = Arc::new(Mutex::new(None));
         let request_facades = RequestFacadePorts::new(
             runtime.clone(),

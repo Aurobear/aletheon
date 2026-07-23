@@ -30,11 +30,6 @@ impl AgentComposition {
     pub fn quarantined_profiles(&self) -> &[super::runtime::QuarantinedProfile] {
         &self.quarantined_profiles
     }
-
-    /// Whether the daemon started in degraded mode (some profiles quarantined).
-    pub fn is_degraded(&self) -> bool {
-        !self.quarantined_profiles.is_empty()
-    }
 }
 
 fn select_active_profile(configured: &str, mut names: Vec<String>) -> anyhow::Result<String> {
@@ -56,14 +51,42 @@ fn select_active_profile(configured: &str, mut names: Vec<String>) -> anyhow::Re
 }
 
 pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentComposition> {
-    let result = super::runtime::load_agent_profiles(
+    let mut result = super::runtime::load_agent_profiles(
         input.agents_dir,
-        input.inference,
-        input.default_llm,
+        input.inference.clone(),
+        input.default_llm.clone(),
         input.definitions,
         input.runtime_config,
         input.profiles_config,
     )?;
+    let state_dir = input
+        .agents_dir
+        .parent()
+        .unwrap_or(input.agents_dir)
+        .join("state");
+    persist_quarantine(&state_dir, &result.quarantined)?;
+
+    let known_good = state_dir.join("agent-profile-known-good");
+    if result.profiles.is_empty() && !result.quarantined.is_empty() && known_good.exists() {
+        tracing::warn!(
+            path = %known_good.display(),
+            "All current profiles are invalid; loading previous-known-good snapshot"
+        );
+        let fallback = super::runtime::load_agent_profiles(
+            &known_good,
+            input.inference.clone(),
+            input.default_llm.clone(),
+            input.definitions,
+            input.runtime_config,
+            input.profiles_config,
+        )?;
+        if !fallback.profiles.is_empty() {
+            result.registry = fallback.registry;
+            result.profiles = fallback.profiles;
+        }
+    } else if !result.profiles.is_empty() {
+        replace_profile_snapshot(input.agents_dir, &known_good)?;
+    }
 
     for q in &result.quarantined {
         tracing::warn!(
@@ -130,9 +153,72 @@ pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentC
     })
 }
 
+fn persist_quarantine(
+    state_dir: &Path,
+    quarantined: &[super::runtime::QuarantinedProfile],
+) -> anyhow::Result<()> {
+    std::fs::create_dir_all(state_dir)?;
+    let path = state_dir.join("agent-profile-quarantine.json");
+    let temporary = state_dir.join(format!(
+        ".agent-profile-quarantine.{}.tmp",
+        std::process::id()
+    ));
+    let result = (|| -> anyhow::Result<()> {
+        let file = std::fs::File::create(&temporary)?;
+        serde_json::to_writer_pretty(&file, quarantined)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, &path)?;
+        std::fs::File::open(state_dir)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary);
+    }
+    result
+}
+
+fn replace_profile_snapshot(source: &Path, destination: &Path) -> anyhow::Result<()> {
+    let parent = destination.parent().context("snapshot has no parent")?;
+    std::fs::create_dir_all(parent)?;
+    let temporary = parent.join(format!(".agent-profile-known-good.{}.tmp", std::process::id()));
+    if temporary.exists() {
+        std::fs::remove_dir_all(&temporary)?;
+    }
+    copy_directory(source, &temporary)?;
+    if destination.exists() {
+        let old = parent.join(format!(".agent-profile-known-good.{}.old", std::process::id()));
+        let _ = std::fs::remove_dir_all(&old);
+        std::fs::rename(destination, &old)?;
+        std::fs::rename(&temporary, destination)?;
+        let _ = std::fs::remove_dir_all(old);
+    } else {
+        std::fs::rename(&temporary, destination)?;
+    }
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+fn copy_directory(source: &Path, destination: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(destination)?;
+    if !source.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_directory(&entry.path(), &target)?;
+        } else if entry.file_type()?.is_file() {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn selection_prefers_config_then_code_agent_then_sorted_fallback() {
@@ -155,5 +241,35 @@ mod tests {
     fn selection_fails_closed_for_missing_configured_or_empty_profiles() {
         assert!(select_active_profile("missing", vec!["reviewer".into()]).is_err());
         assert!(select_active_profile("", Vec::new()).is_err());
+    }
+
+    #[test]
+    fn quarantine_and_known_good_snapshots_are_durable() {
+        let temp = TempDir::new().unwrap();
+        let agents = temp.path().join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(agents.join("code-agent.md"), "known good").unwrap();
+        let state = temp.path().join("state");
+        persist_quarantine(
+            &state,
+            &[super::super::runtime::QuarantinedProfile {
+                name: "broken".into(),
+                reason: "unknown tool".into(),
+            }],
+        )
+        .unwrap();
+        let quarantine: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(state.join("agent-profile-quarantine.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(quarantine[0]["name"], "broken");
+
+        let snapshot = state.join("agent-profile-known-good");
+        replace_profile_snapshot(&agents, &snapshot).unwrap();
+        std::fs::write(agents.join("code-agent.md"), "changed").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(snapshot.join("code-agent.md")).unwrap(),
+            "known good"
+        );
     }
 }

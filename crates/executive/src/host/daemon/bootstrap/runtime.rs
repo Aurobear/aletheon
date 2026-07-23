@@ -22,7 +22,7 @@ fn combine_limits(profile: usize, global: usize) -> usize {
 }
 
 /// A profile that failed validation, with diagnostics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(super) struct QuarantinedProfile {
     pub name: String,
     pub reason: String,
