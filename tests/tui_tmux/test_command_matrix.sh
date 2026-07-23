@@ -16,6 +16,12 @@ case_rendered() {
     fi
 }
 
+# The installed runtime may resume a very large production transcript. Start
+# the command matrix from a daemon-confirmed empty session so rendered
+# assertions cannot be pushed outside the PTY viewport by unrelated history.
+tui_submit "/clear"
+tui_wait "已创建新会话" 10
+
 # Discovery and local commands.
 tui_send "/h"
 sleep 1
