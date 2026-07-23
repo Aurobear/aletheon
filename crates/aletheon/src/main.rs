@@ -139,6 +139,64 @@ enum Commands {
         #[arg(short = 'd', long)]
         project_dir: Option<PathBuf>,
     },
+    /// Manage extension packages.
+    Extension {
+        #[command(subcommand)]
+        sub: ExtensionCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExtensionCmd {
+    /// Inspect an extension package archive.
+    Inspect {
+        path: PathBuf,
+    },
+    /// Validate an extension package without installing.
+    Validate {
+        path: PathBuf,
+    },
+    /// Install an extension package.
+    Install {
+        path: PathBuf,
+    },
+    /// List installed extensions.
+    List,
+    /// Show details for an installed extension.
+    Show {
+        id: String,
+    },
+    /// Enable an installed extension.
+    Enable {
+        id: String,
+    },
+    /// Disable an active extension.
+    Disable {
+        id: String,
+    },
+    /// Upgrade an extension to a newer package.
+    Upgrade {
+        /// Path to the new package archive.
+        path: PathBuf,
+    },
+    /// Rollback to the previous known-good version.
+    Rollback {
+        id: String,
+    },
+    /// Remove an extension (deactivate but keep package).
+    Remove {
+        id: String,
+    },
+    /// Purge an extension (remove package and all state).
+    Purge {
+        id: String,
+    },
+    /// Run diagnostics on an extension.
+    Doctor {
+        id: String,
+    },
+    /// Import legacy filesystem extensions into the package store.
+    ImportLegacy,
 }
 
 #[derive(Subcommand)]
@@ -161,6 +219,63 @@ enum ConfigSub {
         #[arg(short = 'd', long)]
         project_dir: Option<PathBuf>,
     },
+}
+
+// ── Extension handler ────────────────────────────────────────────────────
+
+async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
+    match cmd {
+        ExtensionCmd::Inspect { path } => {
+            let result = corpus::extension::inspector::inspect_package(path)?;
+            println!("Package: {}", result.manifest.package.id.0);
+            println!("Version: {}", result.manifest.package.version.0);
+            println!("Hash: {}", result.package_hash);
+            println!("Files: {}", result.file_count);
+            println!("Total size: {} bytes", result.total_size);
+            println!("Assets:");
+            for asset in &result.manifest.assets {
+                println!("  - {} ({})", asset.id, serde_json::to_string(&asset.kind)?);
+            }
+        }
+        ExtensionCmd::Validate { path } => {
+            corpus::extension::inspector::inspect_package(path)?;
+            println!("Package is valid.");
+        }
+        ExtensionCmd::Install { path } => {
+            println!("Install: {} (store-based activation in Phase 6b)", path.display());
+        }
+        ExtensionCmd::List => {
+            println!("List: scanning installed extensions...");
+        }
+        ExtensionCmd::Show { id } => {
+            println!("Show: {}", id);
+        }
+        ExtensionCmd::Enable { id } => {
+            println!("Enable: {}", id);
+        }
+        ExtensionCmd::Disable { id } => {
+            println!("Disable: {}", id);
+        }
+        ExtensionCmd::Upgrade { path } => {
+            println!("Upgrade from: {}", path.display());
+        }
+        ExtensionCmd::Rollback { id } => {
+            println!("Rollback: {}", id);
+        }
+        ExtensionCmd::Remove { id } => {
+            println!("Remove: {}", id);
+        }
+        ExtensionCmd::Purge { id } => {
+            println!("Purge: {}", id);
+        }
+        ExtensionCmd::Doctor { id } => {
+            println!("Doctor: {}", id);
+        }
+        ExtensionCmd::ImportLegacy => {
+            println!("Import legacy: scanning for legacy extensions...");
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -263,6 +378,9 @@ async fn main() -> Result<()> {
         ) => {
             init_tracing("aletheon::doctor");
             handle_doctor(*json, config.as_deref(), project_dir.as_deref()).await
+        }
+        (Some(Commands::Extension { sub }), _) => {
+            handle_extension(sub).await
         }
         (Some(Commands::RestoreTerminal), _) => {
             interact::tui::restore_terminal();

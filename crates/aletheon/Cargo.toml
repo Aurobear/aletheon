@@ -15,6 +15,7 @@ integration-tests = []
 acp = ["dep:fabric", "dep:async-trait", "dep:libc"]
 
 [dependencies]
+corpus = { path = "../corpus" }
 executive = { path = "../executive" }
 interact = { path = "../interact" }
 anyhow = { workspace = true }

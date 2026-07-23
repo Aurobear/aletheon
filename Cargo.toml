@@ -48,6 +48,8 @@ toml = "0.8"
 regex = "1"
 hmac = "0.12"
 sha2 = "0.10"
+flate2 = "1.0"
+tar = "0.4"
 urlencoding = "2"
 nix = { version = "0.29", features = ["user", "ioctl"] }
 dashmap = "6"

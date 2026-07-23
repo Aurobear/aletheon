@@ -1,8 +1,8 @@
 use corpus::{CorpusError, ExtensionCatalog};
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    ActivationConstraints, CapabilityId, ExtensionCatalog as _, ExtensionDescriptor, ExtensionKind,
-    ExtensionOrigin, ToolDefinition,
+    ActivationConstraints, CapabilityId, ExtensionCatalog as _, ExtensionDescriptor, ExtensionId,
+    ExtensionKind, ExtensionOrigin, ToolDefinition,
 };
 use std::sync::Arc;
 
@@ -118,4 +118,77 @@ fn runtime_skills_and_hooks_are_discovered_before_activation() {
     assert!(descriptors
         .iter()
         .any(|entry| entry.kind == ExtensionKind::Hook));
+}
+
+#[test]
+fn tool_identity_format_is_kind_colon_local_name() {
+    let id = ExtensionId::new(ExtensionKind::Tool, "read").unwrap();
+    assert_eq!(id.as_str(), "tool:read");
+    assert_eq!(
+        ExtensionId::new(ExtensionKind::Tool, "bash_exec")
+            .unwrap()
+            .as_str(),
+        "tool:bash_exec"
+    );
+    assert_eq!(
+        ExtensionId::new(ExtensionKind::Mcp, "search")
+            .unwrap()
+            .as_str(),
+        "mcp:search"
+    );
+}
+
+#[test]
+fn tool_call_identity_uses_extension_kind_tool() {
+    let ids = [
+        ExtensionId::new(ExtensionKind::Tool, "bash_exec").unwrap(),
+        ExtensionId::new(ExtensionKind::Tool, "file_write").unwrap(),
+        ExtensionId::new(ExtensionKind::Tool, "file_read").unwrap(),
+    ];
+    for id in &ids {
+        assert!(
+            id.as_str().starts_with("tool:"),
+            "{} should use tool: prefix",
+            id.as_str()
+        );
+    }
+}
+
+#[test]
+fn descriptor_without_tool_definition_is_not_executable() {
+    let d = descriptor(ExtensionKind::Skill, "review", "skill.review");
+    assert!(!d.is_executable());
+
+    let mcp = ExtensionDescriptor::new(
+        ExtensionKind::Mcp,
+        "search-no-tool",
+        "1.0.0",
+        "search without tool definition",
+        CapabilityId("mcp.search-notool".into()),
+        RiskLevel::ReadOnly,
+    )
+    .unwrap()
+    .with_origin(ExtensionOrigin::Remote {
+        server: "search".into(),
+    });
+    assert!(!mcp.is_executable());
+}
+
+#[test]
+fn empty_capabilities_rejected() {
+    let empty = ExtensionDescriptor {
+        id: ExtensionId::new(ExtensionKind::Tool, "empty-tool").unwrap(),
+        kind: ExtensionKind::Tool,
+        version: "1.0.0".into(),
+        description: "no capabilities".into(),
+        capabilities: vec![],
+        origin: ExtensionOrigin::BuiltIn,
+        activation: ActivationConstraints::default(),
+        risk: RiskLevel::ReadOnly,
+        tool_definition: None,
+    };
+    let err = ExtensionCatalog::new([empty]).unwrap_err();
+    assert!(
+        matches!(err, CorpusError::InvalidDescriptor(msg) if msg.contains("declares no capabilities"))
+    );
 }

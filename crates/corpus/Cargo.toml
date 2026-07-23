@@ -48,6 +48,8 @@ dashmap = { workspace = true }
 parking_lot = "0.12"
 futures = "0.3"
 sha2 = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
 # From security
 
 [features]

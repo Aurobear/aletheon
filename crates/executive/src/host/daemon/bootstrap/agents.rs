@@ -22,6 +22,7 @@ pub(super) struct AgentComposition {
     pub(super) profiles: Arc<crate::adapters::runtime::AgentProfileRegistry>,
     pub(super) tool_profiles: HashMap<String, fabric::AgentProfile>,
     pub(super) active_profile_name: String,
+    pub(super) quarantined_profiles: Vec<super::runtime::QuarantinedProfile>,
 }
 
 fn select_active_profile(configured: &str, mut names: Vec<String>) -> anyhow::Result<String> {
@@ -43,7 +44,7 @@ fn select_active_profile(configured: &str, mut names: Vec<String>) -> anyhow::Re
 }
 
 pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentComposition> {
-    let (profiles, tool_profiles) = super::runtime::load_agent_profiles(
+    let result = super::runtime::load_agent_profiles(
         input.agents_dir,
         input.inference,
         input.default_llm,
@@ -51,16 +52,39 @@ pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentC
         input.runtime_config,
         input.profiles_config,
     )?;
+
+    for q in &result.quarantined {
+        tracing::warn!(
+            profile = %q.name,
+            reason = %q.reason,
+            "Agent profile quarantined — daemon will start without it"
+        );
+    }
+
+    if result.profiles.is_empty() && !result.quarantined.is_empty() {
+        tracing::error!(
+            count = result.quarantined.len(),
+            "All agent profiles failed validation — daemon starting in degraded mode"
+        );
+        return Ok(AgentComposition {
+            profiles: result.registry,
+            tool_profiles: result.profiles,
+            active_profile_name: String::new(),
+            quarantined_profiles: result.quarantined,
+        });
+    }
+
     let active_profile_name =
-        select_active_profile(&input.profiles_config.default, profiles.names())?;
-    profiles
+        select_active_profile(&input.profiles_config.default, result.profiles.keys().cloned().collect())?;
+    result.registry
         .resolve_by_name(&active_profile_name)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
 
     Ok(AgentComposition {
-        profiles,
-        tool_profiles,
+        profiles: result.registry,
+        tool_profiles: result.profiles,
         active_profile_name,
+        quarantined_profiles: result.quarantined,
     })
 }
 

@@ -234,6 +234,17 @@ pub use types::extension::{
     ActivationConstraints, ExtensionCatalog, ExtensionContractError, ExtensionDescriptor,
     ExtensionId, ExtensionKind, ExtensionOrigin, ExtensionSnapshot,
 };
+pub use types::extension_asset::{
+    AssetDescriptor, AssetId, AssetKind, AssetOrigin, CapabilityDescriptor, CapabilityKind,
+    RuntimeClass, RuntimeRef,
+};
+pub use types::extension_package::{
+    AssetRef, CompatibilitySpec, PackageId, PackageInfo, PackageManifest, PackageVersion,
+    PermissionRequestSet,
+};
+pub use types::extension_state::{
+    ActivationState, ActivationTransition, HealthState,
+};
 pub use types::external_event::{
     ExternalContentRef, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
     ExternalEventError, ExternalEventId, ExternalFileMetadata, ExternalObjectRef, MailChange,
@@ -253,7 +264,7 @@ pub use types::genome::Genome;
 pub use types::goal::{
     GoalBudget, GoalBudgetUsage, GoalId, GoalSnapshot, GoalSpec, GoalState, GoalWaitReason,
 };
-pub use types::hook::{HookContext, HookPoint, HookResult, HookToolResult};
+pub use types::hook::{HookContext, HookMode, HookPoint, HookResult, HookToolResult};
 pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};
 pub use types::llm_types::{
     InferenceCapabilities, LlmProvider, LlmResponse, LlmStream, ModelInfo, StopReason, StreamChunk,
@@ -372,4 +383,8 @@ pub use include::compaction::{
     is_degenerate_summary, prune_tool_outputs, safe_tail_cut, truncate_utf8_bytes,
     CompactionFailure, CompactionOutcome, CompactionStrategy, CompactorTrait,
     MIN_SUMMARY_SEED_CHARS,
+};
+
+pub use include::extension_provider::{
+    AgentRuntimeProvider, ConnectorProvider, HookProvider, ToolProvider,
 };

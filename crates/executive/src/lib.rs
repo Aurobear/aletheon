@@ -16,6 +16,7 @@ pub mod application;
 pub(crate) mod compatibility;
 pub mod composition;
 pub mod core;
+pub mod extensions;
 pub mod tools;
 
 pub mod host;

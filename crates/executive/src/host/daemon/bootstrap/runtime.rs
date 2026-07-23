@@ -21,6 +21,20 @@ fn combine_limits(profile: usize, global: usize) -> usize {
     }
 }
 
+/// A profile that failed validation, with diagnostics.
+#[derive(Debug, Clone)]
+pub(super) struct QuarantinedProfile {
+    pub name: String,
+    pub reason: String,
+}
+
+/// Result of loading agent profiles — separates valid from quarantined.
+pub(super) struct ProfileLoadResult {
+    pub registry: Arc<crate::adapters::runtime::AgentProfileRegistry>,
+    pub profiles: HashMap<String, fabric::AgentProfile>,
+    pub quarantined: Vec<QuarantinedProfile>,
+}
+
 pub(super) fn load_agent_profiles(
     agents_dir: &std::path::Path,
     inference: Arc<dyn InferencePort>,
@@ -28,10 +42,7 @@ pub(super) fn load_agent_profiles(
     definitions: &[fabric::ToolDefinition],
     config: &crate::composition::config::ExecutiveConfig,
     profiles_config: &crate::composition::config::AgentProfilesConfig,
-) -> anyhow::Result<(
-    Arc<crate::adapters::runtime::AgentProfileRegistry>,
-    HashMap<String, fabric::AgentProfile>,
-)> {
+) -> anyhow::Result<ProfileLoadResult> {
     let mut loader = AgentLoader::new();
     if agents_dir.exists() {
         loader.load_from_dir(agents_dir)?;
@@ -56,21 +67,39 @@ pub(super) fn load_agent_profiles(
         .collect::<HashMap<_, _>>();
     let registry = Arc::new(crate::adapters::runtime::AgentProfileRegistry::default());
     let mut profiles = HashMap::new();
+    let mut quarantined = Vec::new();
     for role in loader.list() {
+        let mut tools = Vec::with_capacity(role.tools.len());
+        let mut failed = false;
+        for name in &role.tools {
+            match catalog.get(name).cloned() {
+                Some(definition) => tools.push(definition),
+                None => {
+                    tracing::warn!(
+                        profile = %role.name,
+                        tool = %name,
+                        "Agent profile references unknown tool — quarantining profile"
+                    );
+                    quarantined.push(QuarantinedProfile {
+                        name: role.name.clone(),
+                        reason: format!(
+                            "Agent profile '{}' references unknown tool '{name}'",
+                            role.name
+                        ),
+                    });
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        if failed {
+            continue;
+        }
+
         let llm: Arc<dyn LlmProvider> = match role.model.as_deref() {
             Some(model) => Arc::new(PortLlmProvider::new(inference.clone(), model)),
             None => default_llm.clone(),
         };
-        let mut tools = Vec::with_capacity(role.tools.len());
-        for name in &role.tools {
-            let definition = catalog.get(name).cloned().with_context(|| {
-                format!(
-                    "Agent profile '{}' references unknown tool '{name}'",
-                    role.name
-                )
-            })?;
-            tools.push(definition);
-        }
 
         // Apply per-profile overrides from AgentProfilesConfig.
         let overrides = profiles_config.overrides.get(&role.name);
@@ -119,7 +148,11 @@ pub(super) fn load_agent_profiles(
         })?;
         profiles.insert(role.name.clone(), profile);
     }
-    Ok((registry, profiles))
+    Ok(ProfileLoadResult {
+        registry,
+        profiles,
+        quarantined,
+    })
 }
 
 /// Derive the risk tier from the tool names and the tool catalog.
@@ -457,7 +490,7 @@ mod goal_runtime_tests {
                 input_schema: serde_json::json!({"type":"object"}),
             })
             .collect::<Vec<_>>();
-        let (registry, profiles) = super::load_agent_profiles(
+        let result = super::load_agent_profiles(
             directory.path(),
             inference,
             llm,
@@ -466,6 +499,8 @@ mod goal_runtime_tests {
             &crate::composition::config::AgentProfilesConfig::default(),
         )
         .unwrap();
+        let registry = result.registry;
+        let profiles = result.profiles;
         let profile = profiles.get("reviewer").unwrap();
         assert_eq!(profile.allowed_tools, vec!["file_read", "grep"]);
         assert_eq!(profile.max_iterations, 3);
@@ -539,7 +574,7 @@ mod goal_runtime_tests {
         }];
         definitions.extend(corpus::tools::tools::agent_control::AgentControlTools::definitions());
 
-        let (registry, profiles) = super::load_agent_profiles(
+        let result = super::load_agent_profiles(
             directory.path(),
             inference,
             llm,
@@ -548,6 +583,8 @@ mod goal_runtime_tests {
             &crate::composition::config::AgentProfilesConfig::default(),
         )
         .unwrap();
+        let registry = result.registry;
+        let profiles = result.profiles;
 
         let profile = profiles.get("orchestrator").unwrap();
         assert_eq!(profile.allowed_tools.len(), 2);
@@ -580,8 +617,86 @@ mod goal_runtime_tests {
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
+        ).unwrap();
+        assert_eq!(result.quarantined.len(), 1);
+        assert_eq!(result.quarantined[0].name, "bad");
+        assert!(result.quarantined[0].reason.contains("not_a_tool"));
+    }
+
+    #[test]
+    fn mixed_valid_and_invalid_profiles_degraded_not_fatal() {
+        // Phase 3: invalid profiles are quarantined, valid ones remain active
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("reviewer.md"),
+            "---\nname: reviewer\ndescription: review\ntools: [file_read]\n---\nReview.",
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join("bad.md"),
+            "---\nname: bad\ndescription: bad\ntools: [file_read, not_a_tool]\n---\nBad profile.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let definitions: Vec<fabric::ToolDefinition> = vec![fabric::ToolDefinition {
+            name: "file_read".into(),
+            description: "read".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+
+        let result = super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &definitions,
+            &crate::composition::config::ExecutiveConfig::default(),
+            &crate::composition::config::AgentProfilesConfig::default(),
+        ).unwrap();
+        // Valid profile loaded, invalid profile quarantined
+        assert_eq!(result.quarantined.len(), 1);
+        assert_eq!(result.quarantined[0].name, "bad");
+        assert!(result.profiles.contains_key("reviewer"), "valid profile must be loaded");
+    }
+
+    #[test]
+    fn invalid_profile_error_messages_identify_the_failing_tool() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("bad.md"),
+            "---\nname: bad-agent\ndescription: bad\ntools: [file_read, not_a_tool]\n---\nBad.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let definitions: Vec<fabric::ToolDefinition> = vec![fabric::ToolDefinition {
+            name: "file_read".into(),
+            description: "read".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+
+        let result = super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &definitions,
+            &crate::composition::config::ExecutiveConfig::default(),
+            &crate::composition::config::AgentProfilesConfig::default(),
+        ).unwrap();
+        assert_eq!(result.quarantined.len(), 1, "expected 1 quarantined profile");
+        let q = &result.quarantined[0];
+        assert!(
+            q.name.contains("bad-agent"),
+            "quarantined name should contain 'bad-agent', got: {}",
+            q.name
         );
-        assert!(result.is_err());
+        assert!(
+            q.reason.contains("not_a_tool"),
+            "reason should contain 'not_a_tool', got: {}",
+            q.reason
+        );
     }
 }
 

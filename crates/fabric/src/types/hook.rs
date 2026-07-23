@@ -103,6 +103,18 @@ pub struct HookToolResult {
     pub execution_time_ms: u64,
 }
 
+/// Hook execution mode — controls what a hook is allowed to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookMode {
+    /// Read-only observation; return value is ignored.
+    Observe,
+    /// May modify allowed fields of the event.
+    Transform,
+    /// May only allow or deny with a structured reason.
+    Guard,
+}
+
 /// Result of hook execution.
 #[derive(Debug, Clone)]
 pub enum HookResult {
