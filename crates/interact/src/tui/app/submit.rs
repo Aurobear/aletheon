@@ -341,11 +341,16 @@ pub async fn submit_message(app: &mut App, text: String) {
                     return;
                 }
                 app.chat.add_text(ChatRole::User, text.clone());
-                send_request(
-                    app,
-                    ClientRpcRequest::skill_invoke(name, args, &app.workspace.clone()),
-                )
-                .await;
+                let request = match app.app_state.session_id.clone() {
+                    Some(session_id) => ClientRpcRequest::skill_invoke_for(
+                        name,
+                        args,
+                        fabric::SessionId(session_id),
+                        &app.workspace,
+                    ),
+                    None => ClientRpcRequest::skill_invoke(name, args, &app.workspace),
+                };
+                send_request(app, request).await;
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Interrupt)) => {
@@ -446,11 +451,16 @@ pub async fn submit_message(app: &mut App, text: String) {
             }
             Some(CommandType::Skill { name, args }) => {
                 app.chat.add_text(ChatRole::User, text.clone());
-                send_request(
-                    app,
-                    ClientRpcRequest::skill_invoke(name, args, &app.workspace.clone()),
-                )
-                .await;
+                let request = match app.app_state.session_id.clone() {
+                    Some(session_id) => ClientRpcRequest::skill_invoke_for(
+                        name,
+                        args,
+                        fabric::SessionId(session_id),
+                        &app.workspace,
+                    ),
+                    None => ClientRpcRequest::skill_invoke(name, args, &app.workspace),
+                };
+                send_request(app, request).await;
                 return;
             }
             Some(CommandType::Unknown {
@@ -483,7 +493,13 @@ pub async fn submit_message(app: &mut App, text: String) {
 pub async fn send_to_daemon(app: &mut App, text: &str) {
     let request_id = app.next_request_id;
     app.next_request_id = app.next_request_id.saturating_add(1);
-    let msg = ClientRpcRequest::chat(text, &app.workspace)
+    let request = app.app_state.session_id.clone().map_or_else(
+        || ClientRpcRequest::chat(text, &app.workspace),
+        |session_id| {
+            ClientRpcRequest::chat_for(text, fabric::SessionId(session_id), &app.workspace)
+        },
+    );
+    let msg = request
         .to_json_rpc(Some(request_id))
         .expect("typed chat request serializes");
     let payload = serde_json::to_string(&msg).unwrap_or_default();

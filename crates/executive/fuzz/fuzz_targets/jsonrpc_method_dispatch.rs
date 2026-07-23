@@ -72,6 +72,7 @@ fuzz_target!(|data: &[u8]| {
         0 => ClientRpcRequest::Status,
         1 => ClientRpcRequest::Chat(fabric::protocol::client::ChatParams {
             message: method.clone(),
+            session_id: None,
             working_dir: std::path::PathBuf::from("."),
             workspace_roots: Vec::new(),
         }),

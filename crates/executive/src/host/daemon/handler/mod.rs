@@ -307,14 +307,21 @@ impl RequestHandler {
                 });
             }
         };
-        let thread_id = match self.select_workspace_session(workspace.cwd()).await {
-            Ok(thread_id) => thread_id,
-            Err(error) => {
-                return serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32603, "message": error.to_string() }
-                })
+        let thread_id = if let Some(session_id) = request["params"]["session_id"]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+        {
+            fabric::ThreadId(session_id.to_owned())
+        } else {
+            match self.select_workspace_session(workspace.cwd()).await {
+                Ok(thread_id) => thread_id,
+                Err(error) => {
+                    return serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32603, "message": error.to_string() }
+                    })
+                }
             }
         };
         self.execute_explicit_chat(connection, id, message.to_owned(), thread_id, workspace)

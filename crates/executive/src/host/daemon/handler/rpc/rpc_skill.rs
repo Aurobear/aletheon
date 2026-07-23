@@ -54,13 +54,20 @@ impl RequestHandler {
                 descriptor.name, user_args
             )
         };
-        let thread_id = match self.select_workspace_session(workspace.cwd()).await {
-            Ok(thread_id) => thread_id,
-            Err(error) => {
-                return json!({"jsonrpc":"2.0","id":id,"error":{
-                    "code":-32603,"message":error.to_string(),
-                    "data":{"recovery_hint":"Retry after the session is available","retryable":true}
-                }});
+        let thread_id = if let Some(session_id) = request["params"]["session_id"]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+        {
+            fabric::ThreadId(session_id.to_owned())
+        } else {
+            match self.select_workspace_session(workspace.cwd()).await {
+                Ok(thread_id) => thread_id,
+                Err(error) => {
+                    return json!({"jsonrpc":"2.0","id":id,"error":{
+                        "code":-32603,"message":error.to_string(),
+                        "data":{"recovery_hint":"Retry after the session is available","retryable":true}
+                    }});
+                }
             }
         };
         self.execute_explicit_chat(connection, id, message, thread_id, workspace)

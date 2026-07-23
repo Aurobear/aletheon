@@ -251,6 +251,23 @@ fn daemon_compatibility_requests_own_method_and_parameter_names() {
     assert_eq!(chat["method"], "chat");
     assert_eq!(chat["params"]["message"], "hello");
     assert_eq!(chat["params"]["working_dir"], "/tmp/project");
+    assert!(chat["params"].get("session_id").is_none());
+
+    let scoped_chat =
+        ClientRpcRequest::chat_for("hello", fabric::SessionId("session-1".into()), &workspace)
+            .to_json_rpc(Some(71))
+            .unwrap();
+    assert_eq!(scoped_chat["params"]["session_id"], "session-1");
+
+    let scoped_skill = ClientRpcRequest::skill_invoke_for(
+        "review",
+        "src/",
+        fabric::SessionId("session-1".into()),
+        &workspace,
+    )
+    .to_json_rpc(Some(72))
+    .unwrap();
+    assert_eq!(scoped_skill["params"]["session_id"], "session-1");
 
     let resume = ClientRpcRequest::resume("session-1")
         .to_json_rpc(Some(8))

@@ -92,6 +92,9 @@ pub enum ClientRpcRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ChatParams {
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub session_id: Option<SessionId>,
     pub working_dir: PathBuf,
     pub workspace_roots: Vec<PathBuf>,
 }
@@ -100,6 +103,9 @@ pub struct ChatParams {
 pub struct SkillInvokeParams {
     pub skill_id: String,
     pub user_args: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub session_id: Option<SessionId>,
     pub working_dir: PathBuf,
     pub workspace_roots: Vec<PathBuf>,
 }
@@ -300,9 +306,23 @@ impl ClientRpcRequest {
     pub fn chat(message: impl Into<String>, workspace: &WorkspacePolicy) -> Self {
         Self::Chat(ChatParams {
             message: message.into(),
+            session_id: None,
             working_dir: workspace.cwd().to_path_buf(),
             workspace_roots: workspace.writable_roots().to_vec(),
         })
+    }
+
+    pub fn chat_for(
+        message: impl Into<String>,
+        session_id: SessionId,
+        workspace: &WorkspacePolicy,
+    ) -> Self {
+        let mut request = match Self::chat(message, workspace) {
+            Self::Chat(params) => params,
+            _ => unreachable!("chat constructor always returns chat"),
+        };
+        request.session_id = Some(session_id);
+        Self::Chat(request)
     }
 
     pub fn skill_invoke(
@@ -313,9 +333,24 @@ impl ClientRpcRequest {
         Self::SkillInvoke(SkillInvokeParams {
             skill_id: skill_id.into(),
             user_args: user_args.into(),
+            session_id: None,
             working_dir: workspace.cwd().to_path_buf(),
             workspace_roots: workspace.writable_roots().to_vec(),
         })
+    }
+
+    pub fn skill_invoke_for(
+        skill_id: impl Into<String>,
+        user_args: impl Into<String>,
+        session_id: SessionId,
+        workspace: &WorkspacePolicy,
+    ) -> Self {
+        let mut request = match Self::skill_invoke(skill_id, user_args, workspace) {
+            Self::SkillInvoke(params) => params,
+            _ => unreachable!("skill constructor always returns skill invocation"),
+        };
+        request.session_id = Some(session_id);
+        Self::SkillInvoke(request)
     }
 
     pub fn resume(session_id: impl Into<SessionId>) -> Self {
