@@ -51,13 +51,18 @@ fn select_active_profile(configured: &str, mut names: Vec<String>) -> anyhow::Re
 }
 
 pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentComposition> {
+    // Candidate profile validation must not reject the whole daemon merely
+    // because the configured default is absent from this snapshot. Selection
+    // happens only after quarantine and previous-known-good recovery below.
+    let mut candidate_profiles_config = input.profiles_config.clone();
+    candidate_profiles_config.default.clear();
     let mut result = super::runtime::load_agent_profiles(
         input.agents_dir,
         input.inference.clone(),
         input.default_llm.clone(),
         input.definitions,
         input.runtime_config,
-        input.profiles_config,
+        &candidate_profiles_config,
     )?;
     let state_dir = input
         .agents_dir
@@ -78,7 +83,7 @@ pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentC
             input.default_llm.clone(),
             input.definitions,
             input.runtime_config,
-            input.profiles_config,
+            &candidate_profiles_config,
         )?;
         if !fallback.profiles.is_empty() {
             result.registry = fallback.registry;
