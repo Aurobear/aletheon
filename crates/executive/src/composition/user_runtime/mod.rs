@@ -95,7 +95,7 @@ impl UserRuntimeConfig {
             agent_max_iterations: app.agent.max_iterations,
             harness_kind: app.agent.harness_kind,
             integrations,
-            embodiment_provider: Default::default(),
+            embodiment_provider: app.integrations.embodiment.clone().unwrap_or_default(),
         };
         Ok(Self {
             request,
