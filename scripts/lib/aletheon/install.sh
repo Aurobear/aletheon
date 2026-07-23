@@ -17,11 +17,11 @@ cmd_install() {
   local legacy_unit="$user_unit_dir/aletheon.service"
   local legacy_binary_override="$user_unit_dir/aletheon.service.d/20-binary-path.conf"
   if [[ -f "$legacy_unit" ]] &&
-     grep -qE '^ExecStart=(%h|/home/[^/]+)/\\.local/bin/aletheon daemon$' "$legacy_unit"; then
+     grep -qE '^ExecStart=(%h|/home/[^/]+)/\.local/bin/aletheon daemon$' "$legacy_unit"; then
     rm -f -- "$legacy_unit"
   fi
   if [[ -f "$legacy_binary_override" ]] &&
-     grep -qE '^ExecStart=(%h|/home/[^/]+)/\\.local/bin/aletheon daemon$' "$legacy_binary_override"; then
+     grep -qE '^ExecStart=(%h|/home/[^/]+)/\.local/bin/aletheon daemon$' "$legacy_binary_override"; then
     rm -f -- "$legacy_binary_override"
   fi
   rmdir "$user_unit_dir/aletheon.service.d" 2>/dev/null || true
