@@ -1,21 +1,28 @@
-pub mod bridge;
-pub mod core;
+pub mod adapters;
+pub mod evaluation;
 pub mod evolution;
 pub mod genome;
 pub mod governance;
-pub mod hil_evidence_verifier;
-#[path = "impl/mod.rs"]
-mod r#impl;
-pub mod outcome_verifier;
+pub mod improvement;
 
-pub use evolution::{EvaluationResult, EvaluatorMetric, EvaluatorSpec};
+// Compatibility re-exports — remove after migration window (Phase 1 complete).
+pub mod hil_evidence_verifier {
+    pub use crate::evaluation::hil_evidence::HILEvidenceVerifier;
+}
+pub mod outcome_verifier {
+    pub use crate::evaluation::outcome::*;
+}
+
+pub use adapters::*;
+pub use evolution::{CandidateBridge, EvaluationResult, EvaluatorMetric, EvaluatorSpec};
 pub use genome::{
-    CareExt, ChangeType, EvolutionConfig, GenomeChange, GenomeMeta, GenomeRule, IdentityExt,
-    ReasoningConfig,
+    CareExt, ChangeType, EvolutionConfig, GenomeBridge, GenomeChange, GenomeMeta, GenomeRule,
+    IdentityExt, ReasoningConfig,
 };
 pub use governance::{
     ApplyMutation, DefaultMetaRuntime, DefaultMetacogService, GovernedMutationEvidence,
-    MetacogError, MetacogService, MutationLifecycle, MutationOperation, MutationReceipt,
-    MutationStatus, MetacogStatus, RetryDisposition, RollbackMutation, VerificationDecision,
+    MetacogError, MetacogService, MetacogStatus, MutationLifecycle, MutationOperation,
+    MutationReceipt, MutationStatus, RetryDisposition, RollbackMutation, VerificationDecision,
     VerificationReceipt, VerifyMutation,
 };
+pub use improvement::{GenomePatch, MorphogenesisCandidate, PatchOperation};

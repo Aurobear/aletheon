@@ -6,6 +6,6 @@ pub mod service;
 pub use runtime::DefaultMetaRuntime;
 pub use service::{
     ApplyMutation, DefaultMetacogService, GovernedMutationEvidence, MetacogError, MetacogService,
-    MutationLifecycle, MutationOperation, MutationReceipt, MutationStatus, MetacogStatus,
+    MetacogStatus, MutationLifecycle, MutationOperation, MutationReceipt, MutationStatus,
     RetryDisposition, RollbackMutation, VerificationDecision, VerificationReceipt, VerifyMutation,
 };

@@ -4,9 +4,9 @@
 //! 1. ABI-level: migrate to a RuntimeCandidate (used by morphogenesis pipeline)
 //! 2. Genome-level: apply care weight and boundary rule changes to a Genome
 
-use crate::genome::model::{ChangeType, Genome, GenomeChange};
-use crate::genome::loader::GenomeLoader;
 use crate::evolution::lineage::LineageTracker;
+use crate::genome::loader::GenomeLoader;
+use crate::genome::model::{ChangeType, Genome, GenomeChange};
 use anyhow::Result;
 use fabric::{Clock, MigrationResult, RuntimeCandidate};
 use std::path::PathBuf;

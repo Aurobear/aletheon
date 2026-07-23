@@ -3,8 +3,8 @@
 //! Applies GenomePatch operations to a Genome: modify care weights,
 //! add/remove boundary rules, and other targeted mutations.
 
-use crate::core::types::{GenomePatch, PatchOperation};
 use crate::genome::model::{CarePriority, Genome};
+use crate::improvement::model::{GenomePatch, PatchOperation};
 use anyhow::{bail, Result};
 
 pub struct SpecEditor;

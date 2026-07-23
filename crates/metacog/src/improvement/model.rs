@@ -1,7 +1,4 @@
-//! Morphogenesis types — candidate proposals and patches.
-//!
-//! Genome data model has moved to `crate::genome::model`.
-//! Evaluation types have moved to `crate::evolution::model`.
+//! Improvement data model — proposals, patches, and promotion types.
 
 /// Morphogenesis candidate — a proposed change to the genome.
 #[derive(Debug, Clone)]
