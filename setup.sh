@@ -136,20 +136,31 @@ else
         systemctl --user stop aletheon.service
         log "Stopped user aletheon.service"
     fi
+    # Stop the socket before unlinking it. Removing the path of an active
+    # socket unit leaves systemd believing it is listening while clients see
+    # ENOENT, and the unit cannot be restarted while the service is active.
+    if systemctl --user is-active --quiet aletheon.socket 2>/dev/null; then
+        systemctl --user stop aletheon.socket
+        log "Stopped user aletheon.socket"
+    fi
 fi
 
-# Stop via systemd (the proper way)
-if systemctl is-active --quiet aletheon.service 2>/dev/null; then
-    echo "Stopping aletheon.service..."
-    systemctl stop aletheon.service
+if [[ "$MODE" == "system" ]]; then
+    # Stop via systemd (the proper way).
+    if systemctl is-active --quiet aletheon.service 2>/dev/null; then
+        echo "Stopping aletheon.service..."
+        $USE_SUDO systemctl stop aletheon.service
+    fi
+    # Fallback: use the system pidfile only for a system install.
+    if [[ -f /run/aletheon/aletheon.pid ]]; then
+        echo "Killing daemon via pidfile..."
+        $USE_SUDO kill "$(cat /run/aletheon/aletheon.pid)" 2>/dev/null || true
+    fi
+    $USE_SUDO rm -f /run/aletheon/aletheon.sock
+else
+    # A user install must never mutate the system daemon boundary.
+    rm -f "$SOCKET_PATH"
 fi
-# Fallback: use pidfile if running outside systemd
-if [[ -f /run/aletheon/aletheon.pid ]]; then
-    echo "Killing daemon via pidfile..."
-    kill "$(cat /run/aletheon/aletheon.pid)" 2>/dev/null || true
-fi
-# Clean stale socket
-rm -f /run/aletheon/aletheon.sock
 
 log "Pre-install cleanup complete"
 
