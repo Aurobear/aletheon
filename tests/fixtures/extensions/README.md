@@ -1,24 +1,23 @@
 # Extension Platform Fixtures
 
-These fixtures are for extension platform baseline testing.
+These fixtures are the checked-in baseline and malicious-package corpus used by
+the extension inspector security gate.
 
 ## Packages
 
 - **legal-minimal**: A minimal valid extension package for baseline testing.
   Contains a single `skill` asset (`skill.demo`) with a valid SKILL.md.
 
-- **malicious-path-escape**: A package attempting a path traversal attack.
-  The `path` field in `extension.toml` contains `../` sequences designed to
-  escape the expected asset directory.
+- **malicious-\*** directories: readable manifest/checksum fixtures used by
+  parser and path-validation tests.
+- **archives/\*.tar.gz**: deterministic archive fixtures for every mandatory
+  R1 negative case: symlink, hardlink, FIFO, device header, duplicate entry,
+  duplicate checksum, non-hex checksum, undeclared file, missing asset, and
+  asset-kind/path mismatch.
 
 ## Usage
 
-These fixtures are used by Phase 2 Package Inspector tests. The inspector
-validates `extension.toml` structure and rejects packages whose asset paths
-contain path-traversal sequences.
-
-## Daemon Crash-Loop Repro
-
-When an Agent Profile references an unknown tool, the daemon currently exits
-with error instead of surfacing a usable diagnostic. This causes a crash-loop
-in the embodiment bootstrap path. See Phase 3 for the planned fix.
+`required_malicious_archive_fixtures_are_rejected_without_staging_output`
+opens every archive through the production `extract_to_staging` entry point.
+Every fixture must fail before staging is created, and the test also asserts
+that no outside path is produced.

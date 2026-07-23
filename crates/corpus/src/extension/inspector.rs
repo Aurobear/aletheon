@@ -426,6 +426,42 @@ path = "assets/skills/demo/SKILL.md"
     }
 
     #[test]
+    fn required_malicious_archive_fixtures_are_rejected_without_staging_output() {
+        let fixture_root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/extensions/archives");
+        for name in [
+            "symlink",
+            "hardlink",
+            "fifo",
+            "device-header",
+            "duplicate-entry",
+            "duplicate-checksum",
+            "non-hex-checksum",
+            "undeclared-file",
+            "missing-asset",
+            "asset-kind-path-mismatch",
+        ] {
+            let temp = TempDir::new().unwrap();
+            let staging = temp.path().join("staging");
+            let outside = temp.path().join("outside");
+            let package = fixture_root.join(format!("{name}.tar.gz"));
+
+            let error = extract_to_staging(&package, &staging)
+                .expect_err(name)
+                .to_string();
+            assert!(!error.is_empty(), "{name} must report a diagnostic");
+            assert!(
+                !staging.exists(),
+                "{name} must not leave a staging directory"
+            );
+            assert!(
+                !outside.exists(),
+                "{name} must not create files outside staging"
+            );
+        }
+    }
+
+    #[test]
     fn inspect_rejects_missing_extension_toml() {
         let tmp = TempDir::new().unwrap();
         let tar_path = tmp.path().join("bad.tar.gz");
