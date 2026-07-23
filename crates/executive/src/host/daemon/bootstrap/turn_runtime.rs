@@ -212,11 +212,16 @@ struct ProductionTurnSessions {
 impl ProductionTurnSessions {
     async fn manager(
         &self,
+        requested_session_id: &str,
     ) -> anyhow::Result<(
         String,
         Arc<Mutex<crate::host::daemon::session_manager::SessionManager>>,
     )> {
-        let session_id = self.default_id.lock().await.clone();
+        let session_id = if requested_session_id.trim().is_empty() {
+            self.default_id.lock().await.clone()
+        } else {
+            requested_session_id.to_owned()
+        };
         if let Some(manager) = self.registry.lock().await.get(&session_id).cloned() {
             return Ok((session_id, manager));
         }
@@ -276,14 +281,18 @@ impl ProductionTurnSessions {
 
 #[async_trait]
 impl TurnSessionStatePort for ProductionTurnSessions {
-    async fn current(&self) -> anyhow::Result<(String, usize)> {
-        let (session_id, manager) = self.manager().await?;
+    async fn current(&self, requested_session_id: &str) -> anyhow::Result<(String, usize)> {
+        let (session_id, manager) = self.manager(requested_session_id).await?;
         let turn_count = manager.lock().await.turn_count();
         Ok((session_id, turn_count))
     }
 
-    async fn begin_user(&self, message: &str) -> anyhow::Result<(String, usize)> {
-        let (session_id, manager) = self.manager().await?;
+    async fn begin_user(
+        &self,
+        requested_session_id: &str,
+        message: &str,
+    ) -> anyhow::Result<(String, usize)> {
+        let (session_id, manager) = self.manager(requested_session_id).await?;
         let turn_count = {
             let mut manager = manager.lock().await;
             let mut plan = self.budget_plan(&manager, message).await?;
@@ -360,12 +369,13 @@ impl TurnSessionStatePort for ProductionTurnSessions {
 
     async fn finish(
         &self,
+        requested_session_id: &str,
         succeeded: bool,
         tool_calls: &[(String, String, serde_json::Value)],
         tool_results: &[(String, String, bool)],
         output: &str,
     ) -> anyhow::Result<usize> {
-        let (session_id, manager_handle) = self.manager().await?;
+        let (session_id, manager_handle) = self.manager(requested_session_id).await?;
         let mut manager = manager_handle.lock().await;
         if succeeded {
             if !tool_calls.is_empty() {

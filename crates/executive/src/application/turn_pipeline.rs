@@ -234,7 +234,12 @@ impl TurnPipeline {
     ) -> anyhow::Result<serde_json::Value> {
         // Resolve the authoritative runtime session before policy review. The
         // read is non-mutating; denied turns still never call `begin_user`.
-        let (session_id, current_turn_count) = self.runtime_ports.sessions.current().await?;
+        let requested_session_id = turn_request.context.thread_id.0.clone();
+        let (session_id, current_turn_count) = self
+            .runtime_ports
+            .sessions
+            .current(&requested_session_id)
+            .await?;
 
         let checkpoint_id = self
             .workspace_checkpoint
@@ -418,7 +423,11 @@ impl TurnPipeline {
         }
         effective_message.push_str(&message);
 
-        let (sess_id, turn_count) = self.runtime_ports.sessions.begin_user(&message).await?;
+        let (sess_id, turn_count) = self
+            .runtime_ports
+            .sessions
+            .begin_user(&requested_session_id, &message)
+            .await?;
 
         if let Some(conscious) = &self.conscious_core {
             conscious
@@ -970,6 +979,7 @@ impl TurnPipeline {
             .runtime_ports
             .sessions
             .finish(
+                &requested_session_id,
                 turn_succeeded,
                 &tool_calls_for_session,
                 &tool_results_for_session,

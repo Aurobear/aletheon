@@ -34,10 +34,11 @@ pub trait SelfPolicyPort: Send + Sync {
 
 #[async_trait]
 pub trait TurnSessionStatePort: Send + Sync {
-    async fn current(&self) -> anyhow::Result<(String, usize)>;
-    async fn begin_user(&self, message: &str) -> anyhow::Result<(String, usize)>;
+    async fn current(&self, session_id: &str) -> anyhow::Result<(String, usize)>;
+    async fn begin_user(&self, session_id: &str, message: &str) -> anyhow::Result<(String, usize)>;
     async fn finish(
         &self,
+        session_id: &str,
         succeeded: bool,
         tool_calls: &[(String, String, serde_json::Value)],
         tool_results: &[(String, String, bool)],
