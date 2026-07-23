@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd -P)
 matrix=${ALETHEON_MIGRATION_MATRIX:-"$repo_root/config/release/migration-matrix.toml"}
 [[ -f "$matrix" && ! -L "$matrix" ]] || { echo "migration matrix missing or unsafe: $matrix" >&2; exit 1; }
 

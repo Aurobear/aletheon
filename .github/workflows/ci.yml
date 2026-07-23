@@ -48,12 +48,11 @@ jobs:
           exit 1
       - name: Verify preinstalled stable toolchain
         run: rustup run stable rustc --version
-      - run: bash tests/architecture_check.sh
-      - run: bash tests/architecture_path_inventory.sh
+      - run: bash scripts/aletheon.sh test architecture
       - name: Reject architecture drift
         env:
           ARCH_BASE_REF: origin/${{ github.base_ref || 'dev' }}
-        run: bash scripts/architecture-check.sh
+        run: bash scripts/aletheon.sh acceptance architecture
 
   pr-validation:
     name: PR validation

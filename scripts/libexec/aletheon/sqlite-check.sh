@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: scripts/aletheon-sqlite-check.sh DATABASE [DATABASE ...]
+Usage: scripts/aletheon.sh database check DATABASE [DATABASE ...]
 
 Runs SQLite PRAGMA quick_check against existing databases in read-only mode.
 Stop the owning Aletheon service, or operate on a consistent backup, before

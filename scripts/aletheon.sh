@@ -9,6 +9,10 @@ source "$SCRIPT_DIR/lib/aletheon/common.sh"
 source "$SCRIPT_DIR/lib/aletheon/build.sh"
 source "$SCRIPT_DIR/lib/aletheon/install.sh"
 source "$SCRIPT_DIR/lib/aletheon/service.sh"
+source "$SCRIPT_DIR/lib/aletheon/maintenance.sh"
+source "$SCRIPT_DIR/lib/aletheon/security.sh"
+source "$SCRIPT_DIR/lib/aletheon/acceptance.sh"
+source "$SCRIPT_DIR/lib/aletheon/test.sh"
 source "$SCRIPT_DIR/lib/aletheon/runtime_gate.sh"
 source "$SCRIPT_DIR/lib/aletheon/verify.sh"
 
@@ -28,7 +32,15 @@ Operations:
   health                        Probe core, user daemon, and GBrain
   restart                       Restart core and user daemon
   logs [core|user|closure]      Show recent journal entries
-  verify                        Run the complete deployed-state gate
+  backup | restore | upgrade    Run production lifecycle operations
+  cleanup {runtime|cargo}       Clean managed runtime or Cargo state
+  secrets {init|audit}          Initialize or audit production credentials
+  database check DATABASE...    Run read-only SQLite quick checks
+  verify [TARGET]               Run deployed-state or specialized verification
+  acceptance {architecture|release}
+                                Run architecture or release acceptance
+  test {unit|operations|deployment|architecture|all}
+                                Run a focused test suite
   closure {install|run|status}  Manage the scheduled Pi-memory closure
   help                          Show this help
 EOF
@@ -61,7 +73,18 @@ case "${1:-help}" in
   health) shift; cmd_health "$@" ;;
   restart) shift; cmd_restart "$@" ;;
   logs) shift; cmd_logs "$@" ;;
-  verify) shift; cmd_verify "$@" ;;
+  backup) shift; cmd_backup "$@" ;;
+  restore) shift; cmd_restore "$@" ;;
+  upgrade) shift; cmd_upgrade "$@" ;;
+  cleanup) shift; cmd_cleanup "$@" ;;
+  secrets) shift; cmd_secrets "$@" ;;
+  database) shift; cmd_database "$@" ;;
+  verify)
+    shift
+    if (($#)); then cmd_verify_specialized "$@"; else cmd_verify; fi
+    ;;
+  acceptance) shift; cmd_acceptance "$@" ;;
+  test) shift; cmd_test "$@" ;;
   closure) shift; cmd_closure "$@" ;;
   help|--help|-h) usage ;;
   *) printf 'Unknown command: %s\n' "$1" >&2; usage >&2; exit 2 ;;

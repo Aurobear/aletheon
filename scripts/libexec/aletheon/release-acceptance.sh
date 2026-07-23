@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
 validate_v01_report() {
   local report_path=$1
   [[ -f "$report_path" && ! -L "$report_path" ]] || {
@@ -312,7 +312,7 @@ pathlib.Path(sys.argv[2]).write_text(json.dumps({
 }, sort_keys=True) + "\n")
 PY
 
-"$repo_root/scripts/verify-migration-matrix.sh"
+"$repo_root/scripts/libexec/aletheon/verify/migration-matrix.sh"
 migration_receipt="$guest_artifacts/migration-matrix-receipt.json"
 jq -n --arg completed_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg matrix_sha256 "$(sha256sum "$repo_root/config/release/migration-matrix.toml" | cut -d' ' -f1)" \
@@ -414,11 +414,11 @@ rmdir -- "$production_workspace"
 ALETHEON_RELEASE_ARTIFACTS="$guest_artifacts" ALETHEON_V01_ACCEPTANCE_REPORT="$v01_report" \
   ALETHEON_V01_RECIPE_RECEIPT="$v01_recipe_receipt" \
   "$repo_root/tests/production/failure_matrix.sh"
-"$repo_root/scripts/architecture-check.sh"
+"$repo_root/scripts/libexec/aletheon/architecture-check.sh"
 architecture_receipt="$guest_artifacts/architecture-gate-receipt.json"
 jq -n --arg completed_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg commit "$(git -C "$repo_root" rev-parse HEAD)" \
-  '{schema_version:1,status:"PASS",completed_utc:$completed_utc,command:"scripts/architecture-check.sh",commit:$commit}' \
+  '{schema_version:1,status:"PASS",completed_utc:$completed_utc,command:"scripts/aletheon.sh acceptance architecture",commit:$commit}' \
   >"$architecture_receipt"
 cargo tree --workspace --edges normal >"$artifacts/dependency-tree.txt"
 

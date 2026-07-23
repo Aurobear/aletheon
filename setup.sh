@@ -197,11 +197,13 @@ if ! $SKIP_BUILD; then
         log "Running as root (sudo) — building as $SUDO_USER to reuse cargo cache"
         # ensure target/ is writable by the original user
         chown -R "$SUDO_USER:$SUDO_USER" target/ 2>/dev/null || true
-        log "Building release binary (cargo build --release)..."
-        sudo -u "$SUDO_USER" cargo build -p aletheon --release 2>&1
+        log "Building release binary through scripts/cargo-agent.sh..."
+        sudo -u "$SUDO_USER" env CARGO_TARGET_DIR="$PWD/target" \
+            bash scripts/cargo-agent.sh build -p aletheon --release 2>&1
     else
-        log "Building release binary (cargo build --release)..."
-        cargo build -p aletheon --release 2>&1
+        log "Building release binary through scripts/cargo-agent.sh..."
+        CARGO_TARGET_DIR="$PWD/target" \
+            bash scripts/cargo-agent.sh build -p aletheon --release 2>&1
     fi
 
     if [[ ! -f "$BINARY_PATH" ]]; then

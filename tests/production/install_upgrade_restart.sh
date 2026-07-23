@@ -24,7 +24,7 @@ candidate_sha256=$(sha256sum "$candidate" | cut -d' ' -f1)
 # The install script and checked-in units are the release assets under test. This
 # script is intentionally impossible to run on an ordinary development host.
 ALETHEON_BINARY="$baseline" ALETHEON_CONFIG="$repo_root/config/production.toml.example" \
-  "$repo_root/scripts/install-systemd.sh" --no-enable
+  "$repo_root/scripts/libexec/aletheon/install-systemd.sh" --no-enable
 prepare_installed_test_users
 start_installed_runtime
 assert_installed_readiness
@@ -47,7 +47,7 @@ bootstrap_backup="$artifacts/bootstrap-backup"
 ALETHEON_BACKUP_MODE=staging ALETHEON_BACKUP_OUTPUT="$bootstrap_backup" \
   ALETHEON_DATA_ROOT=/var/lib/aletheon ALETHEON_CONFIG_ROOT=/etc/aletheon \
   ALETHEON_SCHEMA_VERSION="$(sha256sum "$repo_root/config/release/migration-matrix.toml" | cut -d' ' -f1)" \
-  "$repo_root/scripts/backup-aletheon.sh"
+  "$repo_root/scripts/libexec/aletheon/backup.sh"
 # Health uses marker age while the manifest remains the authoritative backup
 # receipt. Publish the marker only after the staging backup and integrity checks.
 install -d -m 0750 /var/lib/aletheon/state
@@ -60,7 +60,7 @@ backup="$artifacts/pre-upgrade-backup"
 ALETHEON_BACKUP_MODE=staging ALETHEON_BACKUP_OUTPUT="$backup" \
   ALETHEON_DATA_ROOT=/var/lib/aletheon ALETHEON_CONFIG_ROOT=/etc/aletheon \
   ALETHEON_SCHEMA_VERSION="$(sha256sum "$repo_root/config/release/migration-matrix.toml" | cut -d' ' -f1)" \
-  "$repo_root/scripts/backup-aletheon.sh"
+  "$repo_root/scripts/libexec/aletheon/backup.sh"
 user_backup="$artifacts/pre-upgrade-user-state"
 printf '%s  %s\n' "$baseline_sha256" "$baseline" >"$artifacts/baseline.sha256"
 printf '%s  %s\n' "$candidate_sha256" "$candidate" >"$artifacts/candidate.sha256"
@@ -71,7 +71,7 @@ cat >"$artifacts/upgrade-backup.sh" <<UPGRADE_BACKUP
 #!/usr/bin/env bash
 ALETHEON_BACKUP_MODE=staging ALETHEON_BACKUP_OUTPUT='$artifacts/upgrade-script-backup' \\
 ALETHEON_DATA_ROOT=/var/lib/aletheon ALETHEON_CONFIG_ROOT=/etc/aletheon \\
-'$repo_root/scripts/backup-aletheon.sh'
+'$repo_root/scripts/libexec/aletheon/backup.sh'
 UPGRADE_BACKUP
 chmod 0700 "$artifacts/upgrade-backup.sh"
 cat >"$artifacts/upgrade-user-backup.sh" <<UPGRADE_USER_BACKUP
@@ -119,7 +119,7 @@ mv /var/lib/aletheon "$artifacts/upgraded-data-root"
 archive_installed_user_state "$artifacts/upgraded-user-state"
 ALETHEON_RESTORE_SOURCE="$backup" ALETHEON_RESTORE_TARGET=/var/lib/aletheon \
   ALETHEON_RESTORE_CONFIG_TARGET="$artifacts/restored-config" \
-  "$repo_root/scripts/restore-aletheon.sh"
+  "$repo_root/scripts/libexec/aletheon/restore.sh"
 saved=$(find "$artifacts/upgraded-data-root/releases" -maxdepth 1 -type f -name 'aletheon.pre-*' ! -name '*.sha256' | sort | tail -n1)
 [[ -x "$saved" ]] || { echo "matching pre-upgrade binary was not preserved" >&2; exit 1; }
 install -m 0755 "$saved" /usr/bin/aletheon
@@ -139,7 +139,7 @@ cat >"$artifacts/final-upgrade-backup.sh" <<FINAL_UPGRADE_BACKUP
 #!/usr/bin/env bash
 ALETHEON_BACKUP_MODE=staging ALETHEON_BACKUP_OUTPUT='$artifacts/final-upgrade-script-backup' \
 ALETHEON_DATA_ROOT=/var/lib/aletheon ALETHEON_CONFIG_ROOT=/etc/aletheon \
-'$repo_root/scripts/backup-aletheon.sh'
+'$repo_root/scripts/libexec/aletheon/backup.sh'
 FINAL_UPGRADE_BACKUP
 chmod 0700 "$artifacts/final-upgrade-backup.sh"
 final_user_backup="$artifacts/final-upgrade-user-state"

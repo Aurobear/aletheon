@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/config" "$tmp/target" \
   "$tmp/crates/corpus/src/legacy" "$tmp/crates/dasein/src" \
@@ -31,16 +31,16 @@ BASE
 : > "$tmp/config/architecture-dependencies.txt"
 : > "$tmp/config/architecture-path-inventory.txt"
 ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
-  bash "$ROOT/scripts/architecture-check.sh" >/dev/null
+  bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null
 printf 'tool.execute(y)\n' >> "$tmp/crates/corpus/src/legacy/mod.rs"
 if ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
-  bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1; then
+  bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected a new finding to fail' >&2; exit 1
 fi
 sed -i '$d' "$tmp/crates/corpus/src/legacy/mod.rs"
 rm "$tmp/crates/dasein/src/lib.rs"
 out=$(ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
-  bash "$ROOT/scripts/architecture-check.sh")
+  bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh")
 grep -q 'resolved findings entries' <<<"$out"
 
 # A local dependency edge not present in the maximum baseline must also fail.
@@ -70,7 +70,7 @@ TOML
 : > "$deps/config/architecture-dependencies.txt"
 : > "$deps/config/architecture-path-inventory.txt"
 if ARCH_ROOT="$deps" ARCH_SKIP_DELETION_GATES=1 \
-  bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1; then
+  bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected a new dependency to fail' >&2; exit 1
 fi
 
@@ -80,7 +80,7 @@ fi
 sed -i '/^\[dependencies\]/,$d' "$deps/crates/fabric/Cargo.toml"
 sed -i 's/name = "kernel"/name = "runtime-api"/' "$deps/crates/kernel/Cargo.toml"
 if ARCH_ROOT="$deps" ARCH_SKIP_DELETION_GATES=1 \
-  bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1; then
+  bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected a hyphenated workspace package to fail' >&2; exit 1
 fi
 
@@ -157,12 +157,12 @@ URL_PROVIDER_INFERENCE=0
 EOF
 phase0_check() {
   ARCH_ROOT="$phase0" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
-    bash "$ROOT/scripts/architecture-check.sh" >/dev/null 2>&1
+    bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1
 }
 phase0_check || {
   echo 'expected clean Phase 0 fixture to pass' >&2
   ARCH_ROOT="$phase0" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
-    bash "$ROOT/scripts/architecture-check.sh"
+    bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh"
   exit 1
 }
 expect_phase0_rejection() {

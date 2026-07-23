@@ -2,7 +2,7 @@
 set -euo pipefail
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo "run as root" >&2; exit 1; }
-repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
 binary=${ALETHEON_BINARY:-"$repo_root/target/release/aletheon"}
 config_source=${ALETHEON_CONFIG:-"$repo_root/config/production.toml.example"}
 enable=1
@@ -28,17 +28,24 @@ for secret in provider.env telegram.env gbrain.env; do
 done
 
 install -o root -g root -m 0755 "$binary" /usr/bin/aletheon
-install -D -o root -g root -m 0755 "$repo_root/scripts/verify-systemd.sh" \
+install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/verify/systemd.sh" \
   /usr/libexec/aletheon/verify-systemd.sh
-install -D -o root -g root -m 0755 "$repo_root/scripts/aletheon-secret-audit.sh" \
+install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/secret-audit.sh" \
   /usr/libexec/aletheon/aletheon-secret-audit.sh
-install -D -o root -g root -m 0755 "$repo_root/scripts/aletheon-secret-init.sh" \
+install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/secret-init.sh" \
   /usr/libexec/aletheon/aletheon-secret-init.sh
-for helper in aletheon-healthcheck.sh backup-aletheon.sh restore-aletheon.sh \
-  cleanup-aletheon.sh verify-network-exposure.sh upgrade-aletheon.sh; do
-  install -D -o root -g root -m 0755 "$repo_root/scripts/$helper" \
-    "/usr/libexec/aletheon/$helper"
-done
+install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/healthcheck.sh" \
+  /usr/libexec/aletheon/aletheon-healthcheck.sh
+install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/backup.sh" \
+  /usr/libexec/aletheon/backup-aletheon.sh
+install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/restore.sh" \
+  /usr/libexec/aletheon/restore-aletheon.sh
+install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/cleanup.sh" \
+  /usr/libexec/aletheon/cleanup-aletheon.sh
+install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/verify/network-exposure.sh" \
+  /usr/libexec/aletheon/verify-network-exposure.sh
+install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/upgrade.sh" \
+  /usr/libexec/aletheon/upgrade-aletheon.sh
 /usr/libexec/aletheon/aletheon-secret-init.sh init /etc/aletheon/credentials
 install -o root -g root -m 0644 "$repo_root/config/aletheon.service" \
   /etc/systemd/system/aletheon.service

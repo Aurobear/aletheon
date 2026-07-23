@@ -20,6 +20,18 @@ ALETHEON_USER_UNIT=${ALETHEON_USER_UNIT:-aletheon.service}
 ALETHEON_STABILITY_SECONDS=${ALETHEON_STABILITY_SECONDS:-7}
 ALETHEON_SMOKE_TIMEOUT_SECONDS=${ALETHEON_SMOKE_TIMEOUT_SECONDS:-60}
 ALETHEON_SMOKE_PROMPT=${ALETHEON_SMOKE_PROMPT:-Reply with exactly: ALETHEON_DEPLOYMENT_OK}
+ALETHEON_LIBEXEC=${ALETHEON_LIBEXEC:-$ALETHEON_ROOT/scripts/libexec/aletheon}
+
+run_internal() {
+  local relative=$1
+  shift
+  local command=$ALETHEON_LIBEXEC/$relative
+  [[ -x "$command" ]] || {
+    aletheon_die "internal command is unavailable: $relative"
+    return
+  }
+  "$command" "$@"
+}
 
 validate_http_endpoint() {
   python3 - "$1" <<'PY'

@@ -1,6 +1,6 @@
 # Architecture gate fixtures
 
-`tests/architecture_check.sh` builds temporary repositories and injects one
+`scripts/aletheon.sh test architecture` builds temporary repositories and injects one
 violation at a time. The fixtures prove that the production gate rejects:
 
 - unregistered workspace crates and top-level `impl/` directories;

@@ -112,7 +112,7 @@ fn unix_server_retains_peer_credential_gate() {
     let server = include_str!("../src/host/daemon/server.rs");
     assert!(server.contains("check_peer_cred"));
     assert!(server.contains("Connection rejected by peer credential check"));
-    let script = include_str!("../../../scripts/aletheon-healthcheck.sh");
+    let script = include_str!("../../../scripts/libexec/aletheon/healthcheck.sh");
     assert!(script.contains("AF_UNIX"));
     assert!(script.contains("\"ready\": 0, \"degraded\": 1, \"unready\": 2"));
 }

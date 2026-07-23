@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)
 tmp=$(mktemp -d /tmp/aletheon-upgrade-multi-user.XXXXXX)
 trap 'rm -rf -- "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/prefix/bin" "$tmp/home/.local/state/aletheon"
@@ -92,7 +92,7 @@ common_env=(
 
 # The default topology must reject an implicit/partial user-state migration
 # before invoking either backup command or stopping a runtime.
-if env "${common_env[@]}" "$repo_root/scripts/upgrade-aletheon.sh" \
+if env "${common_env[@]}" "$repo_root/scripts/libexec/aletheon/upgrade.sh" \
   --binary "$tmp/candidate" --sha256-file "$tmp/candidate.sha256" \
   --config "$tmp/config.toml" --authorized-users "$tmp/users.txt" \
   >"$tmp/missing.out" 2>&1; then
@@ -101,7 +101,7 @@ if env "${common_env[@]}" "$repo_root/scripts/upgrade-aletheon.sh" \
 fi
 [[ ! -e "$tmp/events" ]]
 
-env "${common_env[@]}" "$repo_root/scripts/upgrade-aletheon.sh" \
+env "${common_env[@]}" "$repo_root/scripts/libexec/aletheon/upgrade.sh" \
   --binary "$tmp/candidate" --sha256-file "$tmp/candidate.sha256" \
   --config "$tmp/config.toml" --authorized-users "$tmp/users.txt" \
   --user-backup-command "$tmp/bin/user-backup"

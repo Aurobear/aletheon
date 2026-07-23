@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
+root=$(cd -- "$(dirname -- "$0")/../../.." && pwd -P)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/candidate" "$tmp/installed" "$tmp/runtime" \

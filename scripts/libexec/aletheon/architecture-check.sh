@@ -9,7 +9,7 @@ set -euo pipefail
 export LC_ALL=C
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ROOT=${ARCH_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}
+ROOT=${ARCH_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}
 ALLOW="$ROOT/config/architecture-allowlist.txt"
 DEPS="$ROOT/config/architecture-dependencies.txt"
 PATHS="$ROOT/config/architecture-path-inventory.txt"
@@ -827,7 +827,7 @@ if [[ ${ARCH_SKIP_DEPENDENCIES:-0} != 1 ]]; then
     echo "  Install Rust/cargo, or set ARCH_SKIP_DEPENDENCIES=1 to explicitly skip." >&2
     exit 1
   fi
-  bash "$SCRIPT_DIR/cargo-agent.sh" metadata --no-deps --format-version 1 | python3 -c '
+  bash "$ROOT/scripts/cargo-agent.sh" metadata --no-deps --format-version 1 | python3 -c '
 import json,sys
 data=json.load(sys.stdin)
 names={p["name"] for p in data["packages"]}
