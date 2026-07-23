@@ -3,7 +3,7 @@
 //! Opens .tar.gz packages, validates structure, verifies checksums,
 //! and extracts to a staging directory.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use fabric::PackageManifest;
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
@@ -64,9 +64,17 @@ pub fn inspect_package(package_path: &Path) -> Result<InspectionResult> {
             .path()
             .with_context(|| "invalid entry path encoding")?;
 
-        // Skip directory entries entirely; they carry no data to checksum.
-        if entry.header().entry_type().is_dir() {
-            continue;
+        // Only allow regular files and directories. Reject symlinks,
+        // hardlinks, block/char devices, FIFOs, and unknown types.
+        let entry_type = entry.header().entry_type();
+        match entry_type {
+            tar::EntryType::Directory => continue,
+            tar::EntryType::Regular => {}
+            _ => bail!(
+                "unsupported entry type {:?} for path: {}",
+                entry_type,
+                entry_path.display()
+            ),
         }
 
         validation::validate_entry_path(&entry_path)?;
@@ -83,6 +91,10 @@ pub fn inspect_package(package_path: &Path) -> Result<InspectionResult> {
         total_size += size;
         validation::validate_total_size(total_size)?;
 
+        // Reject duplicate entry paths in the same archive.
+        if files.contains_key(&path_str) {
+            bail!("duplicate entry path in archive: {}", path_str);
+        }
         files.insert(path_str, data);
     }
 
@@ -150,19 +162,66 @@ pub fn extract_to_staging(
     std::fs::create_dir_all(staging_dir)
         .with_context(|| format!("cannot create staging dir: {}", staging_dir.display()))?;
 
-    for entry_result in archive.entries()? {
-        let mut entry = entry_result?;
-        let entry_path = entry.path()?.to_path_buf();
+    // Canonicalize staging_dir for path-traversal defense.
+    let canonical_staging = staging_dir
+        .canonicalize()
+        .with_context(|| format!("cannot canonicalize staging dir: {}", staging_dir.display()))?;
 
-        // Re-validate for defense-in-depth.
-        validation::validate_entry_path(&entry_path)?;
+    // Wrap extraction in a fallible block so we can clean up on failure.
+    let extract_result = (|| -> Result<()> {
+        for entry_result in archive.entries()? {
+            let mut entry = entry_result?;
+            let entry_path = entry.path()?.to_path_buf();
 
-        let dest = staging_dir.join(&entry_path);
+            // Re-validate for defense-in-depth.
+            validation::validate_entry_path(&entry_path)?;
 
-        if entry.header().entry_type().is_dir() {
-            std::fs::create_dir_all(&dest)
-                .with_context(|| format!("cannot create directory: {}", dest.display()))?;
-        } else {
+            // Only extract regular files. Directories are created implicitly
+            // by parent creation below; everything else is rejected.
+            let entry_type = entry.header().entry_type();
+            match entry_type {
+                tar::EntryType::Directory => continue,
+                tar::EntryType::Regular => {}
+                _ => bail!(
+                    "unsupported entry type {:?} in extract: {}",
+                    entry_type,
+                    entry_path.display()
+                ),
+            }
+
+            let dest = staging_dir.join(&entry_path);
+
+            // Verify the resolved destination is within staging_dir.
+            {
+                let dest_abs = match dest.canonicalize() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        // File does not exist yet; canonicalize the deepest
+                        // existing ancestor and append the remainder.
+                        let mut anc = dest
+                            .parent()
+                            .map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| Path::new(".").to_path_buf());
+                        while !anc.exists() {
+                            anc = anc
+                                .parent()
+                                .map(|p| p.to_path_buf())
+                                .unwrap_or_else(|| Path::new(".").to_path_buf());
+                        }
+                        let remainder = dest
+                            .strip_prefix(&anc)
+                            .unwrap_or_else(|_| Path::new(""));
+                        anc.canonicalize()?.join(remainder)
+                    }
+                };
+                if !dest_abs.starts_with(&canonical_staging) {
+                    bail!(
+                        "entry escapes staging directory: {}",
+                        entry_path.display()
+                    );
+                }
+            }
+
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("cannot create parent directory: {}", parent.display()))?;
@@ -171,6 +230,12 @@ pub fn extract_to_staging(
                 .unpack(&dest)
                 .with_context(|| format!("cannot unpack entry to: {}", dest.display()))?;
         }
+        Ok(())
+    })();
+
+    if let Err(e) = extract_result {
+        let _ = std::fs::remove_dir_all(staging_dir);
+        return Err(e);
     }
 
     Ok(result)
@@ -381,5 +446,119 @@ path = "s.md"
         files.insert("c.txt".to_string(), b"gamma".to_vec());
         let h3 = compute_files_hash(&files);
         assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn inspect_rejects_symlink_entry() {
+        let tmp = TempDir::new().unwrap();
+        let tar_path = tmp.path().join("symlink.tar.gz");
+        let tar_file = std::fs::File::create(&tar_path).unwrap();
+        let encoder = GzEncoder::new(tar_file, Compression::default());
+        let mut tar_builder = tar::Builder::new(encoder);
+
+        // Add a valid extension.toml so the archive has the required file.
+        let toml = r#"
+schema_version = 1
+
+[package]
+id = "test.sym"
+version = "0.1.0"
+description = "symlink test"
+
+[[assets]]
+kind = "skill"
+id = "s"
+path = "s.md"
+"#;
+        let mut toml_header = tar::Header::new_gnu();
+        toml_header.set_path("extension.toml").unwrap();
+        toml_header.set_size(toml.len() as u64);
+        toml_header.set_cksum();
+        tar_builder.append(&toml_header, toml.as_bytes()).unwrap();
+
+        // Add a regular file with its checksum.
+        let skill_data = b"# demo\n";
+        let mut skill_header = tar::Header::new_gnu();
+        skill_header.set_path("s.md").unwrap();
+        skill_header.set_size(skill_data.len() as u64);
+        skill_header.set_cksum();
+        tar_builder.append(&skill_header, &skill_data[..]).unwrap();
+
+        // Add checksums.sha256 with correct hashes.
+        let toml_hash = format!("{:x}", Sha256::digest(toml.as_bytes()));
+        let skill_hash = format!("{:x}", Sha256::digest(skill_data));
+        let checksums = format!(
+            "{}  extension.toml\n{}  s.md\n",
+            toml_hash, skill_hash
+        );
+        let mut cs_header = tar::Header::new_gnu();
+        cs_header.set_path("checksums.sha256").unwrap();
+        cs_header.set_size(checksums.len() as u64);
+        cs_header.set_cksum();
+        tar_builder.append(&cs_header, checksums.as_bytes()).unwrap();
+
+        // Add a symlink entry — this must be rejected.
+        let mut symlink_header = tar::Header::new_gnu();
+        symlink_header.set_entry_type(tar::EntryType::Symlink);
+        symlink_header.set_path("evil-link").unwrap();
+        symlink_header.set_link_name("extension.toml").unwrap();
+        symlink_header.set_size(0);
+        symlink_header.set_cksum();
+        tar_builder.append(&symlink_header, &[][..]).unwrap();
+
+        let encoder = tar_builder.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let err = inspect_package(&tar_path).unwrap_err().to_string();
+        assert!(
+            err.contains("unsupported entry type"),
+            "expected unsupported entry type error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn inspect_rejects_duplicate_paths() {
+        let tmp = TempDir::new().unwrap();
+        let tar_path = tmp.path().join("duplicate.tar.gz");
+        let tar_file = std::fs::File::create(&tar_path).unwrap();
+        let encoder = GzEncoder::new(tar_file, Compression::default());
+        let mut tar_builder = tar::Builder::new(encoder);
+
+        // Add extension.toml twice with the same path.
+        let toml = r#"
+schema_version = 1
+
+[package]
+id = "test.dup"
+version = "0.1.0"
+description = "duplicate test"
+
+[[assets]]
+kind = "skill"
+id = "s"
+path = "s.md"
+"#;
+        let mut h1 = tar::Header::new_gnu();
+        h1.set_path("extension.toml").unwrap();
+        h1.set_size(toml.len() as u64);
+        h1.set_cksum();
+        tar_builder.append(&h1, toml.as_bytes()).unwrap();
+
+        let mut h2 = tar::Header::new_gnu();
+        h2.set_path("extension.toml").unwrap();
+        h2.set_size(toml.len() as u64);
+        h2.set_cksum();
+        tar_builder.append(&h2, toml.as_bytes()).unwrap();
+
+        let encoder = tar_builder.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let err = inspect_package(&tar_path).unwrap_err().to_string();
+        assert!(
+            err.contains("duplicate entry path"),
+            "expected duplicate entry error, got: {}",
+            err
+        );
     }
 }

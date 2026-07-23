@@ -69,10 +69,13 @@ pub fn parse_checksums(content: &str) -> Result<std::collections::HashMap<String
             continue;
         }
         let mut parts = line.splitn(2, |c: char| c.is_whitespace());
-        let hash = parts.next().unwrap_or("").trim();
+        let hash = parts.next().unwrap_or("").trim().to_lowercase();
         let path = parts.next().unwrap_or("").trim();
         if hash.is_empty() || path.is_empty() || hash.len() != 64 {
             bail!("invalid checksum line: {}", line);
+        }
+        if checksums.contains_key(path) {
+            bail!("duplicate checksum path: {}", path);
         }
         checksums.insert(path.to_string(), hash.to_string());
     }
