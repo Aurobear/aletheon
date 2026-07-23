@@ -167,6 +167,7 @@ impl AdvancedCompressor {
         // Prune tool outputs before summarization
         let mut pruned_messages = old_messages.to_vec();
         fabric::prune_tool_outputs(&mut pruned_messages, 0);
+        prune_long_text_for_summary(&mut pruned_messages);
 
         let summary = match self.generate_summary(&pruned_messages, llm).await {
             Ok(summary) => summary,
@@ -430,6 +431,36 @@ impl AdvancedCompressor {
     }
 }
 
+const SUMMARY_TEXT_HEAD_CHARS: usize = 3_000;
+const SUMMARY_TEXT_TAIL_CHARS: usize = 1_000;
+
+/// Bound pathological logs or pasted payloads before the summarizer call while
+/// retaining both the identifying prefix and the most recent evidence suffix.
+/// This only changes the summarizer input; canonical history remains untouched.
+fn prune_long_text_for_summary(messages: &mut [Message]) {
+    for message in messages {
+        for block in &mut message.content {
+            let ContentBlock::Text { text } = block else {
+                continue;
+            };
+            let char_count = text.chars().count();
+            let keep = SUMMARY_TEXT_HEAD_CHARS + SUMMARY_TEXT_TAIL_CHARS;
+            if char_count <= keep {
+                continue;
+            }
+            let head: String = text.chars().take(SUMMARY_TEXT_HEAD_CHARS).collect();
+            let tail: String = text
+                .chars()
+                .skip(char_count - SUMMARY_TEXT_TAIL_CHARS)
+                .collect();
+            *text = format!(
+                "{head}\n\n[... deterministically elided {} characters for compaction ...]\n\n{tail}",
+                char_count - keep
+            );
+        }
+    }
+}
+
 fn validate_structured_checkpoint(summary: &str) -> Result<()> {
     const REQUIRED: [&str; 10] = [
         "## Active Task",
@@ -537,6 +568,27 @@ mod tests {
         assert_eq!(compressor.tail_config.tail_token_budget, 3_000);
         compressor.configure_budget(9_000, true);
         assert_eq!(compressor.tail_config.tail_token_budget, 1_800);
+    }
+
+    #[test]
+    fn deterministic_summary_pruning_preserves_head_tail_and_utf8() {
+        let marker = "EXACT_REQUIREMENT";
+        let suffix = "LATEST_ERROR";
+        let mut messages = vec![Message::user(format!(
+            "{marker}{}{}",
+            "界".repeat(6_000),
+            suffix
+        ))];
+
+        prune_long_text_for_summary(&mut messages);
+
+        let ContentBlock::Text { text } = &messages[0].content[0] else {
+            panic!("expected text block");
+        };
+        assert!(text.starts_with(marker));
+        assert!(text.ends_with(suffix));
+        assert!(text.contains("deterministically elided"));
+        assert!(text.chars().count() < 4_200);
     }
 
     struct SimpleLlm;
