@@ -171,7 +171,13 @@ pub async fn submit_message(app: &mut App, text: String) {
                         .add_text(ChatRole::System, "用法: /resume <session_id>".to_string());
                     return;
                 }
-                send_request(app, ClientRpcRequest::resume(id.clone())).await;
+                let request_id = write_request(app, ClientRpcRequest::resume(id.clone())).await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::Resume {
+                        previous_session_id: app.app_state.session_id.clone(),
+                    },
+                );
                 app.chat
                     .add_text(ChatRole::System, format!("恢复会话 {id}..."));
                 return;

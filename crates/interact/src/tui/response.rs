@@ -453,6 +453,26 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
             app.chat
                 .add_text(ChatRole::System, format!("已创建新会话：{session_id}"));
         }
+        (super::PendingCommand::Resume { .. }, Some(result), None)
+            if result
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some() =>
+        {
+            let session_id = result
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            let recovered = result
+                .get("recovered_messages")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            app.app_state.session_id = Some(session_id.to_owned());
+            app.chat.add_text(
+                ChatRole::System,
+                format!("已恢复会话：{session_id}（{recovered} 条消息）"),
+            );
+        }
         (super::PendingCommand::InitializeSession, _, Some(error)) => {
             let message = error
                 .get("message")
@@ -460,6 +480,23 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .unwrap_or("初始化会话失败");
             app.chat
                 .add_text(ChatRole::System, format!("Error: {message}"));
+        }
+        (
+            super::PendingCommand::Resume {
+                previous_session_id,
+            },
+            _,
+            Some(error),
+        ) => {
+            app.app_state.session_id = previous_session_id;
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("恢复会话失败");
+            app.chat.add_text(
+                ChatRole::System,
+                format!("Error: {message}。旧会话保持不变。"),
+            );
         }
         (_, _, Some(error)) => {
             let message = error

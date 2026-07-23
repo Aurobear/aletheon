@@ -373,10 +373,11 @@ impl App {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingCommand {
     InitializeSession,
     NewSession { clear_screen: bool },
+    Resume { previous_session_id: Option<String> },
 }
 
 #[cfg(test)]
