@@ -13,7 +13,7 @@ native Aletheon -> 127.0.0.1:9020 -> non-root GBrain container
 Use both Compose files and an operator-owned environment file:
 
 ```bash
-scripts/verify-compose.sh deploy/gbrain/.env
+scripts/aletheon.sh verify compose deploy/gbrain/.env
 docker compose --env-file deploy/gbrain/.env \
   -f deploy/gbrain/compose.yaml -f deploy/compose.production.yaml up -d
 ```

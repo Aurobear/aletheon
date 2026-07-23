@@ -40,7 +40,7 @@ The machine-counted compatibility ledger now contains no Phase 9 exits (`config/
 
 ## Static gates and snapshots
 
-- Root/public implementation exports and cross-crate implementation imports are counted by `scripts/architecture-check.sh` and ratcheted in `config/architecture/metrics.env`.
+- Root/public implementation exports and cross-crate implementation imports are counted by `scripts/aletheon.sh acceptance architecture` and ratcheted in `config/architecture/metrics.env`.
 - The complete Executive layer snapshot is `config/architecture/executive-layers.tsv`; crate public-module snapshots are `config/architecture/module-boundaries.txt`.
 - Canonical path ownership is frozen in `config/architecture-path-inventory.txt`; exceptions are counted in `config/architecture-allowlist.txt` and `config/architecture/compatibility-debt.tsv`.
 - Phase 9 exit values are `CROSS_CRATE_IMPL_REFERENCES=0` and `PUBLIC_IMPL_ADAPTER_EXPORTS=0` (`config/architecture/metrics.env`).
@@ -55,8 +55,8 @@ Executed on 2026-07-23:
 - `bash scripts/cargo-agent.sh check -p dasein` — passed.
 - `bash scripts/cargo-agent.sh check -p metacog` — passed.
 - `bash scripts/cargo-agent.sh test -p executive --no-run` — passed.
-- `ARCH_PRINT_PHASE0_METRICS=1 bash scripts/architecture-check.sh` — passed with zero cross-crate impl references and zero public impl/adapter exports.
-- `bash tests/architecture_check.sh` — passed.
+- `ARCH_PRINT_PHASE0_METRICS=1 bash scripts/aletheon.sh acceptance architecture` — passed with zero cross-crate impl references and zero public impl/adapter exports.
+- `bash scripts/aletheon.sh test architecture` — passed.
 - `bash scripts/cargo-agent.sh doc -p executive --no-deps` — passed; a stale rustdoc link found during the run was corrected to the host facade.
 
 The full workspace build/test matrix and final architecture audit belong to Phase 10 and must not be inferred from these focused results.

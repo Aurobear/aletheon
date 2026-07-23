@@ -27,14 +27,14 @@ migration matrix -- installed release/systemd -- real monitor workflows
 
 ### Static lane
 
-Run `scripts/verify-migration-matrix.sh`, shell syntax checks, monitor pytest,
+Run `scripts/aletheon.sh verify migration`, shell syntax checks, monitor pytest,
 Python bytecode compilation, and both typed systemd checks against a real
 release binary:
 
 ```bash
-scripts/verify-systemd.sh --core-unit config/aletheon-core.service \
+scripts/aletheon.sh verify systemd --core-unit config/aletheon-core.service \
   --binary target/release/aletheon
-scripts/verify-systemd.sh --user-units \
+scripts/aletheon.sh verify systemd --user-units \
   config/aletheon.user.service config/aletheon.user.socket \
   --binary target/release/aletheon
 ```

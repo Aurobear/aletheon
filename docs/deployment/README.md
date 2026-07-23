@@ -47,8 +47,35 @@ bash scripts/aletheon.sh verify
 
 The interface follows a dispatcher/module layout: `scripts/aletheon.sh` is the
 only operator-facing entry point and focused implementations live below
-`scripts/lib/aletheon/`. Existing install, health, backup, restore, cleanup, and
-upgrade scripts remain low-level reviewed contracts.
+`scripts/lib/aletheon/`. Standalone reviewed implementations live below
+`scripts/libexec/aletheon/`; those paths are internal and are not operator
+entrypoints. `setup.sh` remains the first-install bootstrap and
+`scripts/cargo-agent.sh` remains the bounded Rust build wrapper.
+
+Common grouped commands are:
+
+```bash
+sudo bash scripts/aletheon.sh backup
+sudo bash scripts/aletheon.sh restore
+sudo bash scripts/aletheon.sh upgrade --binary FILE --sha256-file FILE
+sudo bash scripts/aletheon.sh cleanup runtime
+bash scripts/aletheon.sh cleanup cargo
+sudo bash scripts/aletheon.sh secrets init
+sudo bash scripts/aletheon.sh secrets audit
+bash scripts/aletheon.sh database check STATE.db
+bash scripts/aletheon.sh verify systemd --user-units \
+  config/aletheon.user.service config/aletheon.user.socket
+bash scripts/aletheon.sh acceptance architecture
+bash scripts/aletheon.sh acceptance release
+bash scripts/aletheon.sh test operations
+bash scripts/aletheon.sh test architecture
+bash scripts/aletheon.sh test deployment
+```
+
+Repository-internal script paths are not compatibility APIs. Production
+installation retains stable reviewed helper names below
+`/usr/libexec/aletheon/`, so existing systemd units do not depend on the source
+checkout layout.
 
 ## Configuration
 
