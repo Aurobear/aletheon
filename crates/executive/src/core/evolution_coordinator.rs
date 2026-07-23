@@ -342,6 +342,37 @@ impl EvolutionCoordinator {
         Ok((true, results))
     }
 
+    /// Run a mood-derived fallback request through the same operator gates and
+    /// governed verification boundary as evidence-derived evolution.
+    ///
+    /// A non-empty intent set comes from the legacy Dasein mood adapter. An
+    /// empty set is its periodic "consider evolution" signal and reuses the
+    /// accumulated reflection window. Neither path applies a mutation.
+    pub async fn run_mood_fallback(
+        &self,
+        intents: &[fabric::MutationIntent],
+        meta: &dyn MetacogService,
+    ) -> Result<(bool, Vec<VerificationReceipt>)> {
+        if !self.config.enabled || !self.config.evolution_permitted {
+            return Ok((false, Vec::new()));
+        }
+        if intents.is_empty() {
+            return self.run_evolution(meta).await;
+        }
+
+        let mut receipts = Vec::with_capacity(intents.len());
+        for intent in intents {
+            receipts.push(
+                meta.verify(VerifyMutation {
+                    mutation_id: Uuid::new_v4(),
+                    intent: intent.clone(),
+                })
+                .await?,
+            );
+        }
+        Ok((true, receipts))
+    }
+
     /// Current turn count.
     pub async fn turn_count(&self) -> usize {
         self.turn_counter.load(Ordering::Relaxed)

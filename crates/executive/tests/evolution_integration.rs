@@ -386,3 +386,77 @@ async fn disabled_coordinator_is_a_noop() {
     );
     assert!(!summary.reflected, "disabled loop skips reflection too");
 }
+
+#[tokio::test]
+async fn mood_fallback_intents_use_governed_verification_without_apply() {
+    let tmp = tempfile::tempdir().unwrap();
+    let coordinator = EvolutionCoordinator::new(
+        EvolutionConfig {
+            enabled: true,
+            evolution_permitted: true,
+            trigger_every_n_turns: 0,
+            trigger_on_failure: false,
+            window_size: 20,
+            lineage_dir: tmp.path().to_path_buf(),
+        },
+        Arc::new(TestClock::default()),
+    )
+    .unwrap();
+    let (mock, generate_calls, migrate_calls) = MockMetaRuntime::new();
+    let service = DefaultMetacogService::in_memory(Arc::new(mock), Arc::new(TestClock::default()));
+    let intents = vec![MutationIntent {
+        target: "care.priorities".into(),
+        change: serde_json::json!({"action": "adjust", "magnitude": 0.1}),
+        reason: "Dasein Angst fallback".into(),
+        reversible: true,
+    }];
+
+    let (triggered, receipts) = coordinator
+        .run_mood_fallback(&intents, &service)
+        .await
+        .unwrap();
+
+    assert!(triggered);
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(generate_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        migrate_calls.load(Ordering::SeqCst),
+        0,
+        "fallback must not bypass governed apply"
+    );
+}
+
+#[tokio::test]
+async fn mood_fallback_respects_default_off_operator_gates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let coordinator = EvolutionCoordinator::new(
+        EvolutionConfig {
+            enabled: false,
+            evolution_permitted: false,
+            trigger_every_n_turns: 0,
+            trigger_on_failure: false,
+            window_size: 20,
+            lineage_dir: tmp.path().to_path_buf(),
+        },
+        Arc::new(TestClock::default()),
+    )
+    .unwrap();
+    let (mock, generate_calls, migrate_calls) = MockMetaRuntime::new();
+    let service = DefaultMetacogService::in_memory(Arc::new(mock), Arc::new(TestClock::default()));
+    let intents = vec![MutationIntent {
+        target: "care.priorities".into(),
+        change: serde_json::json!({"action": "adjust", "magnitude": 0.1}),
+        reason: "Dasein Angst fallback".into(),
+        reversible: true,
+    }];
+
+    let (triggered, receipts) = coordinator
+        .run_mood_fallback(&intents, &service)
+        .await
+        .unwrap();
+
+    assert!(!triggered);
+    assert!(receipts.is_empty());
+    assert_eq!(generate_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(migrate_calls.load(Ordering::SeqCst), 0);
+}

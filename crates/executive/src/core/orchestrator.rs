@@ -112,6 +112,21 @@ impl AletheonExecutive {
         }
     }
 
+    /// Submit a mood-derived fallback decision to the configured evolution
+    /// coordinator. The coordinator retains the default-off and permission
+    /// gates and only performs governed verification.
+    pub async fn post_mood_fallback(
+        &self,
+        intents: &[fabric::MutationIntent],
+        meta: &dyn metacog::MetacogService,
+    ) -> Result<bool> {
+        let Some(coordinator) = &self.evolution else {
+            return Ok(false);
+        };
+        let (triggered, _receipts) = coordinator.run_mood_fallback(intents, meta).await?;
+        Ok(triggered)
+    }
+
     /// Reference to the evolution coordinator, if configured.
     pub fn evolution(&self) -> Option<&EvolutionCoordinator> {
         self.evolution.as_ref()

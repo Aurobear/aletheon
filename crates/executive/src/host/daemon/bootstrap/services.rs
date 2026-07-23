@@ -344,7 +344,12 @@ pub(super) async fn build_turn_services(
             crate::application::post_turn_projection::ProductionPostTurnProjection::new(
                 crate::application::post_turn_projection::PostTurnProjectionResources {
                     corpus: domains.corpus(),
-                    runtime: post_turn_runtime_port(runtime.clone(), domains.metacog()),
+                    runtime: post_turn_runtime_port(
+                        runtime.clone(),
+                        domains.metacog(),
+                        self_field.clone(),
+                        clock.clone(),
+                    ),
                 },
             ),
         );

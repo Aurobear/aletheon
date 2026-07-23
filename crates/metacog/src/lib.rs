@@ -17,6 +17,9 @@ pub mod outcome_verifier {
     pub use crate::evaluation::outcome::*;
 }
 
+pub use adapters::{
+    EvolutionAction, EvolutionDecision, MetaCognition, MetaCognitionThresholds, SystemState,
+};
 pub use evolution::{CandidateBridge, EvaluationResult, EvaluatorMetric, EvaluatorSpec};
 pub use genome::{
     CareExt, ChangeType, EvolutionConfig, GenomeBridge, GenomeChange, GenomeMeta, GenomeRule,

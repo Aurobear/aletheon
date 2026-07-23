@@ -49,19 +49,20 @@ pub(super) fn reflection_engine_port(
 pub(super) fn admin_runtime_port(
     runtime: Arc<Mutex<AletheonExecutive>>,
 ) -> Arc<dyn AdminRuntimePort> {
-    Arc::new(ExecutiveDomainAdapter {
-        executive: runtime,
-        evolution: None,
-    })
+    Arc::new(ExecutiveDomainAdapter { executive: runtime })
 }
 
 pub(super) fn post_turn_runtime_port(
     runtime: Arc<Mutex<AletheonExecutive>>,
     evolution: Arc<dyn metacog::MetacogService>,
+    self_field: Arc<Mutex<SelfField>>,
+    clock: Arc<dyn fabric::Clock>,
 ) -> Arc<dyn PostTurnRuntimePort> {
-    Arc::new(ExecutiveDomainAdapter {
+    Arc::new(PostTurnDomainAdapter {
         executive: runtime,
-        evolution: Some(evolution),
+        evolution,
+        self_field,
+        mood_fallback: Arc::new(metacog::MetaCognition::new(None, clock)),
     })
 }
 
@@ -116,7 +117,13 @@ struct ExecutiveRuntimeAdapter {
 
 struct ExecutiveDomainAdapter {
     executive: Arc<Mutex<AletheonExecutive>>,
-    evolution: Option<Arc<dyn metacog::MetacogService>>,
+}
+
+struct PostTurnDomainAdapter {
+    executive: Arc<Mutex<AletheonExecutive>>,
+    evolution: Arc<dyn metacog::MetacogService>,
+    self_field: Arc<Mutex<SelfField>>,
+    mood_fallback: Arc<metacog::MetaCognition>,
 }
 
 #[async_trait::async_trait]
@@ -134,13 +141,10 @@ impl AdminRuntimePort for ExecutiveDomainAdapter {
 }
 
 #[async_trait::async_trait]
-impl PostTurnRuntimePort for ExecutiveDomainAdapter {
+impl PostTurnRuntimePort for PostTurnDomainAdapter {
     async fn post_evolution(&self, outcome: &PostTurnOutcome) -> anyhow::Result<()> {
-        let evolution = self
-            .evolution
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("post-turn evolution facade is not configured"))?;
-        self.executive
+        let summary = self
+            .executive
             .lock()
             .await
             .post_evolution(
@@ -151,11 +155,70 @@ impl PostTurnRuntimePort for ExecutiveDomainAdapter {
                 outcome.tool_errors,
                 outcome.elapsed_ms,
                 outcome.iterations,
-                evolution.as_ref(),
+                self.evolution.as_ref(),
             )
-            .await
-            .map(|_| ())
+            .await?;
+
+        // Evidence-backed proposals always win. The mood adapter is only the
+        // transition fallback while the reflection/proposal pipeline has not
+        // produced a governed candidate for this turn.
+        if evidence_proposal_has_priority(summary.as_ref()) {
+            return Ok(());
+        }
+
+        let Some(context) = self.self_field.lock().await.dasein_context() else {
+            tracing::debug!(
+                turn = outcome.turn,
+                "Mood evolution fallback skipped because Dasein context is unavailable"
+            );
+            return Ok(());
+        };
+        let decision = self.mood_fallback.decide(&context, outcome.turn);
+        match decision {
+            metacog::EvolutionAction::TriggerEvolution { intents } => {
+                let triggered = self
+                    .executive
+                    .lock()
+                    .await
+                    .post_mood_fallback(&intents, self.evolution.as_ref())
+                    .await?;
+                tracing::info!(
+                    turn = outcome.turn,
+                    intent_count = intents.len(),
+                    triggered,
+                    "Dasein mood evolution fallback evaluated"
+                );
+            }
+            metacog::EvolutionAction::Observe => {
+                tracing::debug!(
+                    turn = outcome.turn,
+                    "Dasein mood evolution fallback observed"
+                );
+            }
+            metacog::EvolutionAction::AdjustDasein { parameter, value } => {
+                tracing::info!(
+                    turn = outcome.turn,
+                    %parameter,
+                    value,
+                    "Dasein mood evolution fallback requested bounded adjustment"
+                );
+            }
+            metacog::EvolutionAction::InjectReflection { content } => {
+                tracing::info!(
+                    turn = outcome.turn,
+                    reflection = %content,
+                    "Dasein mood evolution fallback emitted reflection"
+                );
+            }
+        }
+        Ok(())
     }
+}
+
+fn evidence_proposal_has_priority(
+    summary: Option<&crate::core::evolution_coordinator::EvolutionSummary>,
+) -> bool {
+    summary.is_some_and(|summary| summary.evolution_triggered)
 }
 
 #[async_trait::async_trait]
@@ -342,5 +405,29 @@ struct TurnConfigAdapter {
 impl TurnConfigPort for TurnConfigAdapter {
     async fn config(&self) -> crate::composition::config::ExecutiveConfig {
         self.config_source.lock().await.config().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::evidence_proposal_has_priority;
+    use crate::core::evolution_coordinator::EvolutionSummary;
+
+    fn summary(evolution_triggered: bool) -> EvolutionSummary {
+        EvolutionSummary {
+            reflected: true,
+            reflection_id: Some("reflection".into()),
+            evolution_triggered,
+            verification_receipts: Vec::new(),
+            lineage_entries_added: 0,
+            awareness_entries: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn evidence_backed_proposal_suppresses_mood_fallback() {
+        assert!(evidence_proposal_has_priority(Some(&summary(true))));
+        assert!(!evidence_proposal_has_priority(Some(&summary(false))));
+        assert!(!evidence_proposal_has_priority(None));
     }
 }
