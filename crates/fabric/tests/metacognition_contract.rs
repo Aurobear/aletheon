@@ -5,6 +5,9 @@
 
 use std::collections::BTreeMap;
 
+use fabric::types::metacognition_evaluation::{
+    DimensionScore, DimensionValue, EvaluationReport, GateResult, RubricId,
+};
 use fabric::types::metacognition_evidence::{
     EvidenceId, EvidenceItem, EvidenceKind, EvidenceTrust,
 };
@@ -87,4 +90,106 @@ fn evidence_item_serialization_is_stable() {
 fn experience_outcome_serializes_as_snake_case() {
     let json = serde_json::to_string(&ExperienceOutcome::TimedOut).unwrap();
     assert_eq!(json, r#""timed_out""#);
+}
+
+// ---------------------------------------------------------------------------
+// Task 8: Rubric and evaluation report contract tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn evaluation_report_unknown_dimension_absent_from_weighted_total() {
+    let report = EvaluationReport {
+        rubric: RubricId("test-rubric".into()),
+        rubric_version: 1,
+        dimensions: vec![
+            DimensionScore {
+                name: "goal_attainment".into(),
+                value: DimensionValue::Scored(80),
+                weight_millis: 500_000, // 0.5
+                evidence: vec![EvidenceId("ev-1".into())],
+                reasons: vec!["target met".into()],
+            },
+            DimensionScore {
+                name: "safety".into(),
+                value: DimensionValue::Unknown,
+                weight_millis: 300_000, // 0.3 — excluded from denominator
+                evidence: vec![],
+                reasons: vec!["no safety evidence available".into()],
+            },
+            DimensionScore {
+                name: "efficiency".into(),
+                value: DimensionValue::Scored(90),
+                weight_millis: 200_000, // 0.2
+                evidence: vec![EvidenceId("ev-2".into())],
+                reasons: vec!["within budget".into()],
+            },
+        ],
+        gates: vec![],
+        // expected: (80 * 0.5 + 90 * 0.2) / (0.5 + 0.2) = (40 + 18) / 0.7 = 82.857...
+        weighted_total_millis: Some(82_857),
+        evidence_coverage_millis: 667, // 2/3 ≈ 0.667
+        confidence_millis: 500,
+        eligible: true,
+    };
+
+    // Round-trip through JSON
+    let json = serde_json::to_string(&report).unwrap();
+    let rt: EvaluationReport = serde_json::from_str(&json).unwrap();
+    assert_eq!(report, rt);
+
+    // Unknown dimension is preserved in the report (explicitly, not as zero)
+    let safety_dim = rt.dimensions.iter().find(|d| d.name == "safety").unwrap();
+    assert_eq!(safety_dim.value, DimensionValue::Unknown);
+
+    // Weighted total is present because there are applicable dimensions
+    assert!(rt.weighted_total_millis.is_some());
+}
+
+#[test]
+fn high_score_with_failed_hard_gate_is_ineligible() {
+    let report = EvaluationReport {
+        rubric: RubricId("safety-rubric".into()),
+        rubric_version: 1,
+        dimensions: vec![DimensionScore {
+            name: "goal_attainment".into(),
+            value: DimensionValue::Scored(95),
+            weight_millis: 1_000_000, // 1.0
+            evidence: vec![EvidenceId("ev-1".into())],
+            reasons: vec!["excellent completion".into()],
+        }],
+        gates: vec![GateResult {
+            name: "safety_invariant".into(),
+            passed: false,
+            evidence: vec![EvidenceId("ev-gate".into())],
+        }],
+        weighted_total_millis: Some(95_000), // 95.0 in millis
+        evidence_coverage_millis: 1_000,
+        confidence_millis: 900,
+        eligible: false, // failed gate overrides score
+    };
+
+    let json = serde_json::to_string(&report).unwrap();
+    let rt: EvaluationReport = serde_json::from_str(&json).unwrap();
+    assert_eq!(report, rt);
+
+    // Score is high
+    assert_eq!(rt.weighted_total_millis, Some(95_000));
+    // But eligibility is false due to failed gate
+    assert!(!rt.eligible);
+    assert!(rt
+        .gates
+        .iter()
+        .any(|g| g.name == "safety_invariant" && !g.passed));
+}
+
+#[test]
+fn dimension_value_unknown_serializes_correctly() {
+    assert_eq!(
+        serde_json::to_string(&DimensionValue::Unknown).unwrap(),
+        r#""unknown""#
+    );
+    assert_eq!(
+        serde_json::to_string(&DimensionValue::Scored(42)).unwrap(),
+        r#"{"scored":42}"#
+    );
 }

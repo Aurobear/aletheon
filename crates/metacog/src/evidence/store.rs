@@ -62,8 +62,8 @@ impl JsonlEvidenceStore {
     /// Open (or create) a JSONL file as the backing store.
     pub fn open(path: PathBuf) -> Result<Self, EvidenceStoreError> {
         let items = if path.exists() {
-            let file =
-                std::fs::File::open(&path).map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
+            let file = std::fs::File::open(&path)
+                .map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
             let reader = BufReader::new(file);
             let mut items = Vec::new();
             for line in reader.lines() {
@@ -94,9 +94,10 @@ impl JsonlEvidenceStore {
             return Ok(());
         };
         let temp = path.with_extension(".tmp");
-        let items = self.items.lock().map_err(|e| {
-            EvidenceStoreError::Persistence(format!("lock poisoned: {}", e))
-        })?;
+        let items = self
+            .items
+            .lock()
+            .map_err(|e| EvidenceStoreError::Persistence(format!("lock poisoned: {}", e)))?;
         let mut file = std::fs::File::create(&temp)
             .map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
         for item in items.iter() {
@@ -107,8 +108,7 @@ impl JsonlEvidenceStore {
         }
         file.sync_all()
             .map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
-        std::fs::rename(&temp, path)
-            .map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
+        std::fs::rename(&temp, path).map_err(|e| EvidenceStoreError::Persistence(e.to_string()))?;
         Ok(())
     }
 }
@@ -124,9 +124,10 @@ impl EvidenceStore for JsonlEvidenceStore {
             )));
         }
 
-        let mut items = self.items.lock().map_err(|e| {
-            EvidenceStoreError::Persistence(format!("lock poisoned: {}", e))
-        })?;
+        let mut items = self
+            .items
+            .lock()
+            .map_err(|e| EvidenceStoreError::Persistence(format!("lock poisoned: {}", e)))?;
 
         // Check for duplicates
         if let Some(existing) = items.iter().find(|i| i.evidence_id == item.evidence_id) {
@@ -143,9 +144,10 @@ impl EvidenceStore for JsonlEvidenceStore {
     }
 
     async fn get(&self, id: &EvidenceId) -> Result<Option<EvidenceItem>, EvidenceStoreError> {
-        let items = self.items.lock().map_err(|e| {
-            EvidenceStoreError::Persistence(format!("lock poisoned: {}", e))
-        })?;
+        let items = self
+            .items
+            .lock()
+            .map_err(|e| EvidenceStoreError::Persistence(format!("lock poisoned: {}", e)))?;
         Ok(items.iter().find(|i| &i.evidence_id == id).cloned())
     }
 
@@ -153,9 +155,10 @@ impl EvidenceStore for JsonlEvidenceStore {
         &self,
         id: &ExperienceId,
     ) -> Result<Vec<EvidenceItem>, EvidenceStoreError> {
-        let items = self.items.lock().map_err(|e| {
-            EvidenceStoreError::Persistence(format!("lock poisoned: {}", e))
-        })?;
+        let items = self
+            .items
+            .lock()
+            .map_err(|e| EvidenceStoreError::Persistence(format!("lock poisoned: {}", e)))?;
         Ok(items
             .iter()
             .filter(|i| &i.experience_id == id)

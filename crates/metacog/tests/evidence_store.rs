@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use sha2::Digest;
 use sha2::Sha256;
 
-use fabric::types::metacognition_evidence::{EvidenceId, EvidenceItem, EvidenceKind, EvidenceTrust};
+use fabric::types::metacognition_evidence::{
+    EvidenceId, EvidenceItem, EvidenceKind, EvidenceTrust,
+};
 use fabric::types::metacognition_experience::ExperienceId;
 use metacog::evidence::{AppendOutcome, EvidenceStore, JsonlEvidenceStore};
 
@@ -54,7 +56,10 @@ async fn duplicate_id_with_same_digest_is_idempotent() {
     let outcome = store.append(item).await.unwrap();
     assert_eq!(outcome, AppendOutcome::AlreadyPresent);
 
-    let items = store.list_for_experience(&ExperienceId("exp-1".into())).await.unwrap();
+    let items = store
+        .list_for_experience(&ExperienceId("exp-1".into()))
+        .await
+        .unwrap();
     assert_eq!(items.len(), 1);
 }
 
@@ -107,13 +112,28 @@ async fn reopening_jsonl_rebuilds_index() {
 #[tokio::test]
 async fn list_filters_by_experience() {
     let store = JsonlEvidenceStore::in_memory();
-    store.append(item_with_digest("ev-1", "exp-a")).await.unwrap();
-    store.append(item_with_digest("ev-2", "exp-a")).await.unwrap();
-    store.append(item_with_digest("ev-3", "exp-b")).await.unwrap();
+    store
+        .append(item_with_digest("ev-1", "exp-a"))
+        .await
+        .unwrap();
+    store
+        .append(item_with_digest("ev-2", "exp-a"))
+        .await
+        .unwrap();
+    store
+        .append(item_with_digest("ev-3", "exp-b"))
+        .await
+        .unwrap();
 
-    let a_items = store.list_for_experience(&ExperienceId("exp-a".into())).await.unwrap();
+    let a_items = store
+        .list_for_experience(&ExperienceId("exp-a".into()))
+        .await
+        .unwrap();
     assert_eq!(a_items.len(), 2);
 
-    let b_items = store.list_for_experience(&ExperienceId("exp-b".into())).await.unwrap();
+    let b_items = store
+        .list_for_experience(&ExperienceId("exp-b".into()))
+        .await
+        .unwrap();
     assert_eq!(b_items.len(), 1);
 }

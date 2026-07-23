@@ -33,6 +33,7 @@ pub mod lifecycle;
 pub mod llm_types;
 pub mod local_authority;
 pub mod message;
+pub mod metacognition_evaluation;
 pub mod metacognition_evidence;
 pub mod metacognition_experience;
 pub mod network_policy;

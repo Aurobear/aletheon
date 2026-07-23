@@ -2,6 +2,7 @@ pub mod adapters;
 pub mod evaluation;
 pub mod evidence;
 pub mod evolution;
+pub mod experience;
 pub mod genome;
 pub mod governance;
 pub mod improvement;
