@@ -225,7 +225,62 @@ fn copy_directory(source: &Path, destination: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::inference_port::{
+        CoreInferenceRequest, InferenceError, PortLlmProvider,
+    };
     use tempfile::TempDir;
+
+    #[derive(Default)]
+    struct NoopInference;
+
+    #[async_trait::async_trait]
+    impl InferencePort for NoopInference {
+        async fn complete(
+            &self,
+            _request: CoreInferenceRequest,
+        ) -> Result<fabric::LlmResponse, InferenceError> {
+            Err(anyhow::anyhow!("unused test inference").into())
+        }
+
+        async fn stream(
+            &self,
+            _request: CoreInferenceRequest,
+        ) -> Result<fabric::LlmStream, InferenceError> {
+            Err(anyhow::anyhow!("unused test inference").into())
+        }
+    }
+
+    fn write_profile(agents: &Path, name: &str, tools: &str) {
+        std::fs::create_dir_all(agents).unwrap();
+        std::fs::write(
+            agents.join(format!("{name}.md")),
+            format!("---\nname: {name}\ndescription: test profile\ntools: [{tools}]\n---\nTest."),
+        )
+        .unwrap();
+    }
+
+    fn compose_test_profiles(agents: &Path, default: &str) -> anyhow::Result<AgentComposition> {
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> =
+            Arc::new(PortLlmProvider::new(inference.clone(), "test/model"));
+        let definitions = vec![ToolDefinition {
+            name: "file_read".into(),
+            description: "read".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        let profiles_config = crate::composition::config::AgentProfilesConfig {
+            default: default.into(),
+            ..Default::default()
+        };
+        compose(AgentCompositionInput {
+            agents_dir: agents,
+            inference,
+            default_llm: llm,
+            definitions: &definitions,
+            runtime_config: &crate::composition::config::ExecutiveConfig::default(),
+            profiles_config: &profiles_config,
+        })
+    }
 
     #[test]
     fn selection_prefers_config_then_code_agent_then_sorted_fallback() {
@@ -278,5 +333,88 @@ mod tests {
             std::fs::read_to_string(snapshot.join("code-agent.md")).unwrap(),
             "known good"
         );
+    }
+
+    #[test]
+    fn daemon_bootstrap_keeps_one_valid_profile_when_another_is_invalid() {
+        let temp = TempDir::new().unwrap();
+        let agents = temp.path().join("agents");
+        write_profile(&agents, "reviewer", "file_read");
+        write_profile(&agents, "broken", "unknown_tool");
+
+        let result = compose_test_profiles(&agents, "").unwrap();
+
+        assert_eq!(result.active_profile_name, "reviewer");
+        assert!(result.tool_profiles.contains_key("reviewer"));
+        assert_eq!(result.quarantined_profiles.len(), 1);
+        assert_eq!(result.quarantined_profiles[0].name, "broken");
+    }
+
+    #[test]
+    fn daemon_bootstrap_falls_back_when_configured_default_is_invalid() {
+        let temp = TempDir::new().unwrap();
+        let agents = temp.path().join("agents");
+        write_profile(&agents, "reviewer", "file_read");
+        write_profile(&agents, "broken", "unknown_tool");
+
+        let result = compose_test_profiles(&agents, "broken").unwrap();
+
+        assert_eq!(result.active_profile_name, "reviewer");
+        assert_eq!(result.quarantined_profiles.len(), 1);
+    }
+
+    #[test]
+    fn daemon_bootstrap_first_boot_with_all_invalid_is_degraded_not_fatal() {
+        let temp = TempDir::new().unwrap();
+        let agents = temp.path().join("agents");
+        write_profile(&agents, "broken", "unknown_tool");
+
+        let result = compose_test_profiles(&agents, "broken").unwrap();
+
+        assert!(result.active_profile_name.is_empty());
+        assert!(result.tool_profiles.is_empty());
+        assert_eq!(result.quarantined_profiles.len(), 1);
+    }
+
+    #[test]
+    fn daemon_bootstrap_restores_known_good_when_all_current_profiles_are_invalid() {
+        let temp = TempDir::new().unwrap();
+        let agents = temp.path().join("agents");
+        write_profile(&agents, "reviewer", "file_read");
+        let initial = compose_test_profiles(&agents, "reviewer").unwrap();
+        assert_eq!(initial.active_profile_name, "reviewer");
+
+        std::fs::remove_file(agents.join("reviewer.md")).unwrap();
+        write_profile(&agents, "broken", "unknown_tool");
+        let recovered = compose_test_profiles(&agents, "reviewer").unwrap();
+
+        assert_eq!(recovered.active_profile_name, "reviewer");
+        assert!(recovered.tool_profiles.contains_key("reviewer"));
+        assert_eq!(recovered.quarantined_profiles.len(), 1);
+    }
+
+    #[test]
+    fn daemon_bootstrap_recovers_after_quarantined_profile_is_repaired() {
+        let temp = TempDir::new().unwrap();
+        let agents = temp.path().join("agents");
+        write_profile(&agents, "worker", "unknown_tool");
+        let degraded = compose_test_profiles(&agents, "worker").unwrap();
+        assert_eq!(degraded.quarantined_profiles.len(), 1);
+
+        write_profile(&agents, "worker", "file_read");
+        let repaired = compose_test_profiles(&agents, "worker").unwrap();
+
+        assert_eq!(repaired.active_profile_name, "worker");
+        assert!(repaired.quarantined_profiles.is_empty());
+        let quarantine: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                temp.path()
+                    .join("state")
+                    .join("agent-profile-quarantine.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(quarantine, serde_json::json!([]));
     }
 }
