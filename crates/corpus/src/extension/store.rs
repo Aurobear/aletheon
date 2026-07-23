@@ -7,6 +7,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+use fabric::{AssetRef, PermissionRequestSet};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstalledPackageRecord {
@@ -18,6 +19,17 @@ pub struct InstalledPackageRecord {
     pub file_count: usize,
     pub total_size: u64,
     pub installed_at: String,
+    #[serde(default)]
+    pub assets: Vec<AssetRef>,
+    #[serde(default)]
+    pub requested_permissions: PermissionRequestSet,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PermissionApprovalRecord {
+    pub actor: String,
+    pub approved_at: String,
+    pub permissions: PermissionRequestSet,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -27,6 +39,16 @@ pub struct ActivationRecord {
     pub enabled: bool,
     pub current: Option<String>,
     pub previous_known_good: Option<String>,
+    #[serde(default)]
+    pub granted_permissions: PermissionRequestSet,
+    #[serde(default)]
+    pub permission_approval: Option<PermissionApprovalRecord>,
+    #[serde(default)]
+    pub activated_assets: Vec<String>,
+    #[serde(default)]
+    pub health: String,
+    #[serde(default)]
+    pub quarantine_reason: Option<String>,
 }
 
 /// An exclusive package transaction lock. The lock is always released on drop.
@@ -48,6 +70,17 @@ pub struct PackageStore {
 }
 
 impl PackageStore {
+    pub fn configured_user_root() -> PathBuf {
+        std::env::var_os("ALETHEON_EXTENSION_STORE_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                dirs::data_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("aletheon")
+                    .join("extensions")
+            })
+    }
+
     pub fn new(root: PathBuf) -> Result<Self> {
         let packages_dir = root.join("packages");
         let state_dir = root.join("state");
@@ -199,6 +232,49 @@ impl PackageStore {
         Ok(path)
     }
 
+    /// Rebuild the installed projection from durable install receipts.
+    ///
+    /// This is intentionally explicit: callers may audit the receipts before
+    /// replacing a damaged projection. Unknown receipt schemas and operations
+    /// are ignored, while malformed install records fail closed.
+    pub fn replay_install_receipts(&self) -> Result<usize> {
+        let mut rebuilt = 0;
+        for state in std::fs::read_dir(&self.state_dir)? {
+            let state = state?;
+            let receipts = state.path().join("receipts");
+            if !receipts.is_dir() {
+                continue;
+            }
+            for entry in std::fs::read_dir(receipts)? {
+                let entry = entry?;
+                if !entry.file_type()?.is_file() {
+                    continue;
+                }
+                let value: serde_json::Value = read_json(&entry.path())?;
+                if value.get("schema_version").and_then(|value| value.as_u64()) != Some(1)
+                    || value.get("operation").and_then(|value| value.as_str()) != Some("install")
+                {
+                    continue;
+                }
+                let record: InstalledPackageRecord = serde_json::from_value(
+                    value
+                        .get("record")
+                        .cloned()
+                        .context("install receipt is missing its projection record")?,
+                )
+                .context("install receipt contains an invalid projection record")?;
+                anyhow::ensure!(
+                    self.is_installed(&record.hash)?,
+                    "install receipt points to missing package content: {}",
+                    record.hash
+                );
+                self.put_installed(&record)?;
+                rebuilt += 1;
+            }
+        }
+        Ok(rebuilt)
+    }
+
     pub fn remove_state(&self, package_id: &str) -> Result<()> {
         let path = self.package_state_dir(package_id);
         if path.exists() {
@@ -339,8 +415,42 @@ mod tests {
             file_count: 1,
             total_size: 7,
             installed_at: "2026-07-23T00:00:00Z".into(),
+            assets: Vec::new(),
+            requested_permissions: PermissionRequestSet::default(),
         };
         store.put_installed(&record).unwrap();
+        assert_eq!(store.list_installed().unwrap(), vec![record]);
+    }
+
+    #[test]
+    fn install_receipt_replays_a_missing_projection() {
+        let temp = TempDir::new().unwrap();
+        let store = PackageStore::new(temp.path().to_owned()).unwrap();
+        std::fs::create_dir_all(store.package_path(HASH).unwrap()).unwrap();
+        let record = InstalledPackageRecord {
+            schema_version: 1,
+            id: "test.replay".into(),
+            version: "1.0.0".into(),
+            description: "test".into(),
+            hash: HASH.into(),
+            file_count: 1,
+            total_size: 7,
+            installed_at: "2026-07-23T00:00:00Z".into(),
+            assets: Vec::new(),
+            requested_permissions: PermissionRequestSet::default(),
+        };
+        store
+            .store_receipt(
+                &record.id,
+                &serde_json::json!({
+                    "schema_version": 1,
+                    "operation": "install",
+                    "record": record,
+                }),
+            )
+            .unwrap();
+        assert!(store.list_installed().unwrap().is_empty());
+        assert_eq!(store.replay_install_receipts().unwrap(), 1);
         assert_eq!(store.list_installed().unwrap(), vec![record]);
     }
 }

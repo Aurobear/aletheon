@@ -880,6 +880,16 @@ impl RequestHandler {
         );
         let agent_runtimes =
             Arc::new(crate::application::agent_control::AgentRuntimeRegistry::default());
+        let extension_runtime_composition = super::extensions::register_package_runtimes(
+            agent_runtimes.as_ref(),
+            &data_dir,
+            &corpus::extension::store::PackageStore::configured_user_root(),
+            clock.clone(),
+        )
+        .await?;
+        let extension_runtime_quarantine_count =
+            extension_runtime_composition.quarantined.len() as u64;
+        let extension_runtime_count = extension_runtime_composition.router.registered().len() as u64;
         // Ordinary child Agents use one Cognit session runtime. Goal worker
         // and reviewer attempts remain explicit ProviderWorkerRuntime routes.
         let agent_composition = {
@@ -1228,6 +1238,17 @@ impl RequestHandler {
                 "agent_profiles",
                 crate::application::health::ComponentHealth::ready(),
             );
+        }
+        if extension_runtime_quarantine_count > 0 {
+            let mut health = crate::application::health::ComponentHealth::degraded(
+                "extension_runtimes_quarantined",
+            );
+            health.count = Some(extension_runtime_quarantine_count);
+            health_registry.set("extension_runtimes", health);
+        } else {
+            let mut health = crate::application::health::ComponentHealth::ready();
+            health.count = Some(extension_runtime_count);
+            health_registry.set("extension_runtimes", health);
         }
         let channel_task = Arc::new(Mutex::new(None));
         let request_facades = RequestFacadePorts::new(

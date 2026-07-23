@@ -61,6 +61,8 @@ impl ExtensionInstallService {
             file_count: result.file_count,
             total_size: result.total_size,
             installed_at: chrono::Utc::now().to_rfc3339(),
+            assets: result.manifest.assets.clone(),
+            requested_permissions: result.manifest.requested_permissions.clone(),
         };
         // The record filename is the content hash, so a repeated install
         // replaces the same projection rather than creating duplicates.
@@ -75,6 +77,7 @@ impl ExtensionInstallService {
             "file_count": result.file_count,
             "total_size": result.total_size,
             "completed_at": chrono::Utc::now().to_rfc3339(),
+            "record": record,
         });
         self.store.store_receipt(pkg_id, &receipt)?;
 

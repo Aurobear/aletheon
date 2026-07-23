@@ -169,6 +169,9 @@ enum ExtensionCmd {
     /// Enable an installed extension.
     Enable {
         id: String,
+        /// Explicitly approve newly requested assets and permissions.
+        #[arg(long)]
+        approve_permissions: bool,
     },
     /// Disable an active extension.
     Disable {
@@ -178,6 +181,9 @@ enum ExtensionCmd {
     Upgrade {
         /// Path to the new package archive.
         path: PathBuf,
+        /// Explicitly approve permission or capability additions.
+        #[arg(long)]
+        approve_permissions: bool,
     },
     /// Rollback to the previous known-good version.
     Rollback {
@@ -226,16 +232,26 @@ enum ConfigSub {
 async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
     use executive::application::extension_install::ExtensionInstallService;
     use executive::application::extension_manage::ExtensionManageService;
-    let store_root = std::env::var_os("ALETHEON_EXTENSION_STORE_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("aletheon")
-                .join("extensions")
-        });
+    let store_root = corpus::extension::store::PackageStore::configured_user_root();
     let install_svc = ExtensionInstallService::new(&store_root)?;
-    let manage_svc = ExtensionManageService::new(&store_root)?;
+    let explicit_approval = matches!(
+        cmd,
+        ExtensionCmd::Enable {
+            approve_permissions: true,
+            ..
+        } | ExtensionCmd::Upgrade {
+            approve_permissions: true,
+            ..
+        }
+    );
+    let manage_svc = if explicit_approval {
+        let actor = std::env::var("USER").unwrap_or_else(|_| "local-operator".into());
+        ExtensionManageService::new(&store_root)?.with_approval_port(std::sync::Arc::new(
+            executive::application::extension_manage::ExplicitOperatorApproval::new(actor),
+        ))
+    } else {
+        ExtensionManageService::new(&store_root)?
+    };
 
     match cmd {
         ExtensionCmd::Inspect { path } => {
@@ -271,7 +287,7 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
         ExtensionCmd::Show { id } => {
             println!("{}", serde_json::to_string_pretty(&install_svc.show(id)?)?);
         }
-        ExtensionCmd::Enable { id } => {
+        ExtensionCmd::Enable { id, .. } => {
             manage_svc.enable(id)?;
             println!("Extension '{id}' enabled.");
         }
@@ -279,7 +295,7 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
             manage_svc.disable(id)?;
             println!("Extension '{id}' disabled.");
         }
-        ExtensionCmd::Upgrade { path } => {
+        ExtensionCmd::Upgrade { path, .. } => {
             manage_svc.upgrade(path)?;
             println!("Extension upgraded from '{}'.", path.display());
         }

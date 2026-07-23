@@ -167,6 +167,14 @@ fn validate_declared_assets(
         if !files.contains_key(&asset.path) {
             bail!("declared asset file is missing: {}", asset.path);
         }
+        if asset.kind == AssetKind::Executable {
+            let content = std::str::from_utf8(&files[&asset.path])
+                .context("runtime manifest is not valid UTF-8")?;
+            let runtime = manifest::parse_executable_runtime_manifest(content)?;
+            if !files.contains_key(&runtime.command) {
+                bail!("runtime command is missing from package: {}", runtime.command);
+            }
+        }
     }
     Ok(())
 }

@@ -124,6 +124,12 @@ pub struct SubprocessConfig {
     pub shutdown_timeout: Duration,
     /// Consecutive failures before circuit breaking.
     pub circuit_breaker_threshold: u32,
+    /// Hard CPU time limit enforced before the extension command starts.
+    pub cpu_time_seconds: u64,
+    /// Hard virtual-memory limit in bytes.
+    pub memory_bytes: u64,
+    /// Hard process-count limit.
+    pub max_processes: u32,
 }
 
 /// Production provider adapter. Every Agent handle owns a distinct isolated
@@ -132,7 +138,13 @@ pub struct SubprocessAgentRuntimeProvider {
     config: SubprocessConfig,
     sandbox_backend: Arc<dyn SandboxBackend>,
     sandbox_config: SandboxConfig,
-    sessions: Mutex<HashMap<fabric::AgentId, Arc<Mutex<SubprocessRuntime>>>>,
+    sessions: Mutex<HashMap<fabric::AgentId, ProviderSession>>,
+}
+
+#[derive(Clone)]
+struct ProviderSession {
+    runtime: Arc<Mutex<SubprocessRuntime>>,
+    cancel: CancellationToken,
 }
 
 impl SubprocessAgentRuntimeProvider {
@@ -155,13 +167,25 @@ impl SubprocessAgentRuntimeProvider {
         })
     }
 
-    async fn session(&self, handle: &AgentHandle) -> Result<Arc<Mutex<SubprocessRuntime>>> {
+    async fn session(&self, handle: &AgentHandle) -> Result<ProviderSession> {
         self.sessions
             .lock()
             .await
             .get(&handle.agent_id)
             .cloned()
             .context("unknown extension runtime Agent handle")
+    }
+
+    pub async fn probe(&self) -> Result<()> {
+        let mut runtime = SubprocessRuntime::new_isolated(
+            self.config.clone(),
+            self.sandbox_backend.as_ref(),
+            &self.sandbox_config,
+        )?;
+        runtime.start().await?;
+        let result = runtime.call("health", serde_json::json!({})).await;
+        runtime.shutdown().await;
+        result.map(|_| ())
     }
 }
 
@@ -178,12 +202,15 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
         let value = runtime.call("start", serde_json::to_value(request)?).await?;
         let handle: AgentHandle =
             serde_json::from_value(value).context("runtime returned an invalid Agent handle")?;
-        let runtime = Arc::new(Mutex::new(runtime));
+        let session = ProviderSession {
+            cancel: runtime.cancellation_token(),
+            runtime: Arc::new(Mutex::new(runtime)),
+        };
         anyhow::ensure!(
             self.sessions
                 .lock()
                 .await
-                .insert(handle.agent_id.clone(), runtime)
+                .insert(handle.agent_id.clone(), session)
                 .is_none(),
             "runtime returned a duplicate Agent handle"
         );
@@ -193,6 +220,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     async fn observe(&self, handle: &AgentHandle) -> Result<Value> {
         self.session(handle)
             .await?
+            .runtime
             .lock()
             .await
             .call("observe", serde_json::to_value(handle)?)
@@ -202,6 +230,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     async fn steer(&self, handle: &AgentHandle, input: Value) -> Result<()> {
         self.session(handle)
             .await?
+            .runtime
             .lock()
             .await
             .call("steer", serde_json::json!({"handle": handle, "input": input}))
@@ -212,6 +241,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     async fn follow_up(&self, handle: &AgentHandle, input: Value) -> Result<Value> {
         self.session(handle)
             .await?
+            .runtime
             .lock()
             .await
             .call("follow_up", serde_json::json!({"handle": handle, "input": input}))
@@ -219,13 +249,14 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     }
 
     async fn cancel(&self, handle: &AgentHandle, reason: &str) -> Result<()> {
-        let runtime = self
+        let session = self
             .sessions
             .lock()
             .await
             .remove(&handle.agent_id)
             .context("unknown extension runtime Agent handle")?;
-        let mut runtime = runtime.lock().await;
+        session.cancel.cancel();
+        let mut runtime = session.runtime.lock().await;
         let _ = runtime
             .call("cancel", serde_json::json!({"handle": handle, "reason": reason}))
             .await;
@@ -235,8 +266,9 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     }
 
     async fn wait(&self, handle: &AgentHandle) -> Result<Value> {
-        let runtime = self.session(handle).await?;
-        let result = runtime
+        let session = self.session(handle).await?;
+        let result = session
+            .runtime
             .lock()
             .await
             .call("wait", serde_json::to_value(handle)?)
@@ -248,8 +280,8 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
     }
 
     async fn health(&self) -> Result<()> {
-        for runtime in self.sessions.lock().await.values() {
-            runtime.lock().await.health()?;
+        for session in self.sessions.lock().await.values() {
+            session.runtime.lock().await.health()?;
         }
         Ok(())
     }
@@ -267,6 +299,9 @@ impl Default for SubprocessConfig {
             idle_timeout: Duration::from_secs(600),
             shutdown_timeout: Duration::from_secs(10),
             circuit_breaker_threshold: 3,
+            cpu_time_seconds: 300,
+            memory_bytes: 1024 * 1024 * 1024,
+            max_processes: 32,
         }
     }
 }
@@ -327,11 +362,21 @@ impl SubprocessRuntime {
                 && capabilities.resource_limits,
             "isolation backend lacks required filesystem, network, or resource controls"
         );
-        let wrapped = backend.wrap_argv(
-            std::path::Path::new(&config.command),
-            &config.args,
-            sandbox,
-        )?;
+        anyhow::ensure!(
+            config.cpu_time_seconds > 0 && config.memory_bytes > 0 && config.max_processes > 0,
+            "extension subprocess resource limits must be nonzero"
+        );
+        let limiter = which::which("prlimit")
+            .context("prlimit is required for extension subprocess resource governance")?;
+        let mut limited_args = vec![
+            format!("--cpu={}", config.cpu_time_seconds),
+            format!("--as={}", config.memory_bytes),
+            format!("--nproc={}", config.max_processes),
+            "--".into(),
+            config.command.clone(),
+        ];
+        limited_args.extend(config.args.clone());
+        let wrapped = backend.wrap_argv(&limiter, &limited_args, sandbox)?;
         config.command = wrapped.program.to_string_lossy().into_owned();
         config.args = wrapped.args;
         config.env = wrapped.environment.into_iter().collect();
@@ -342,6 +387,10 @@ impl SubprocessRuntime {
 
     pub fn is_quarantined(&self) -> bool {
         self.quarantined
+    }
+
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.cancel_token.clone()
     }
 
     /// Start the subprocess and initialize the JSON-RPC connection.
@@ -509,26 +558,34 @@ impl SubprocessRuntime {
         // Read one bounded line without allowing `read_line` to allocate an
         // attacker-controlled amount before the size check.
         let read_result = timeout(self.config.call_timeout, async {
-            loop {
-                let available = reader.fill_buf().await?;
-                if available.is_empty() {
-                    return Ok::<usize, std::io::Error>(line.len());
-                }
-                let take = available
-                    .iter()
-                    .position(|byte| *byte == b'\n')
-                    .map_or(available.len(), |position| position + 1);
-                if line.len().saturating_add(take) > MAX_RESPONSE_LINE_BYTES {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "JSON-RPC response line exceeds size limit",
-                    ));
-                }
-                line.extend_from_slice(&available[..take]);
-                reader.consume(take);
-                if line.last() == Some(&b'\n') {
-                    return Ok(line.len());
-                }
+            tokio::select! {
+                result = async {
+                    loop {
+                        let available = reader.fill_buf().await?;
+                        if available.is_empty() {
+                            return Ok::<usize, std::io::Error>(line.len());
+                        }
+                        let take = available
+                            .iter()
+                            .position(|byte| *byte == b'\n')
+                            .map_or(available.len(), |position| position + 1);
+                        if line.len().saturating_add(take) > MAX_RESPONSE_LINE_BYTES {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "JSON-RPC response line exceeds size limit",
+                            ));
+                        }
+                        line.extend_from_slice(&available[..take]);
+                        reader.consume(take);
+                        if line.last() == Some(&b'\n') {
+                            return Ok(line.len());
+                        }
+                    }
+                } => result,
+                _ = self.cancel_token.cancelled() => Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "JSON-RPC operation cancelled",
+                )),
             }
         }).await;
         match read_result {
@@ -633,6 +690,74 @@ impl Drop for SubprocessRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fabric::ResolvedSandboxPolicy;
+    use std::collections::BTreeMap;
+    use tempfile::TempDir;
+
+    async fn isolated_fixture(
+        mode: &str,
+        call_timeout: Duration,
+        forbidden: Option<&std::path::Path>,
+    ) -> (SubprocessRuntime, TempDir) {
+        let work = TempDir::new().unwrap();
+        let helper = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/extension_jsonrpc_runtime.py")
+            .canonicalize()
+            .unwrap();
+        let backend = corpus::security::sandbox::BubblewrapBackend::probe_async(Arc::new(
+            kernel::chronos::TestClock::default(),
+        ))
+        .await
+        .expect("bubblewrap must be available for the extension runtime gate");
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots(work.path().to_path_buf(), vec![])
+                .unwrap();
+        let mut environment = BTreeMap::from([(
+            "EXTENSION_FIXTURE_MODE".into(),
+            mode.to_string(),
+        )]);
+        if let Some(path) = forbidden {
+            environment.insert(
+                "EXTENSION_FORBIDDEN_PATH".into(),
+                path.to_string_lossy().into_owned(),
+            );
+        }
+        let policy = ResolvedSandboxPolicy {
+            name: "extension-runtime-test".into(),
+            read_only_roots: vec![
+                "/usr".into(),
+                "/lib".into(),
+                "/lib64".into(),
+                "/bin".into(),
+                "/etc".into(),
+                helper.parent().unwrap().to_path_buf(),
+            ],
+            read_write_roots: vec![work.path().to_path_buf()],
+            deny_exact: Vec::new(),
+            deny_globs: Vec::new(),
+            restrict_network: true,
+        };
+        let config = SubprocessConfig {
+            command: "/usr/bin/python3".into(),
+            args: vec![helper.to_string_lossy().into_owned()],
+            working_dir: Some(work.path().to_string_lossy().into_owned()),
+            call_timeout,
+            start_timeout: Duration::from_secs(5),
+            shutdown_timeout: Duration::from_secs(1),
+            ..Default::default()
+        };
+        let runtime = SubprocessRuntime::new_isolated(
+            config,
+            &backend,
+            &SandboxConfig {
+                workspace,
+                environment,
+                policy: Some(policy),
+            },
+        )
+        .unwrap();
+        (runtime, work)
+    }
 
     #[test]
     fn default_config_has_reasonable_timeouts() {
@@ -677,5 +802,89 @@ mod tests {
         let mut runtime = SubprocessRuntime::new(config);
         let error = runtime.start().await.unwrap_err().to_string();
         assert!(error.contains("no verified isolation backend"));
+    }
+
+    #[tokio::test]
+    async fn real_isolated_helper_covers_protocol_and_secret_redaction() {
+        let (mut normal, _work) =
+            isolated_fixture("normal", Duration::from_secs(2), None).await;
+        normal.start().await.unwrap();
+        assert!(normal
+            .call("observe", serde_json::json!({}))
+            .await
+            .unwrap()["ok"]
+            .as_bool()
+            .unwrap());
+        normal.shutdown().await;
+
+        for mode in ["wrong_id", "wrong_version", "oversized", "crash"] {
+            let (mut runtime, _work) =
+                isolated_fixture(mode, Duration::from_secs(2), None).await;
+            runtime.start().await.unwrap();
+            assert!(
+                runtime.call("observe", serde_json::json!({})).await.is_err(),
+                "{mode} must fail closed"
+            );
+            assert!(runtime.process.is_none(), "{mode} process was not terminated");
+        }
+
+        let (mut stderr, _work) =
+            isolated_fixture("stderr_secret", Duration::from_secs(2), None).await;
+        stderr.start().await.unwrap();
+        stderr.call("observe", serde_json::json!({})).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let snapshot = stderr.stderr.lock().await.snapshot();
+        assert!(snapshot.contains("[REDACTED]"));
+        assert!(!snapshot.contains("fixture-must-be-redacted"));
+        stderr.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn real_isolated_helper_enforces_timeout_cancel_filesystem_and_network() {
+        let forbidden = TempDir::new().unwrap();
+        let secret = forbidden.path().join("secret");
+        std::fs::write(&secret, "must not be visible").unwrap();
+        let (mut filesystem, _work) =
+            isolated_fixture("filesystem_probe", Duration::from_secs(2), Some(&secret)).await;
+        filesystem.start().await.unwrap();
+        assert_eq!(
+            filesystem
+                .call("probe", serde_json::json!({}))
+                .await
+                .unwrap()["allowed"],
+            false
+        );
+        filesystem.shutdown().await;
+
+        let (mut network, _work) =
+            isolated_fixture("network_probe", Duration::from_secs(2), None).await;
+        network.start().await.unwrap();
+        assert_eq!(
+            network
+                .call("probe", serde_json::json!({}))
+                .await
+                .unwrap()["allowed"],
+            false
+        );
+        network.shutdown().await;
+
+        let (mut hanging, _work) =
+            isolated_fixture("hang", Duration::from_millis(100), None).await;
+        hanging.start().await.unwrap();
+        assert!(hanging.call("wait", serde_json::json!({})).await.is_err());
+        assert!(hanging.process.is_none());
+
+        let (mut cancelled, _work) =
+            isolated_fixture("hang", Duration::from_secs(10), None).await;
+        cancelled.start().await.unwrap();
+        let token = cancelled.cancellation_token();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            token.cancel();
+        });
+        let started = Instant::now();
+        assert!(cancelled.call("wait", serde_json::json!({})).await.is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(cancelled.process.is_none());
     }
 }

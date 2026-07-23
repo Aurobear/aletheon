@@ -5,7 +5,77 @@
 //! lazily during the inspector phase.
 
 use anyhow::{bail, Context, Result};
-use fabric::PackageManifest;
+use fabric::{CapabilityDescriptor, CapabilityKind, PackageManifest, RuntimeClass};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::Path;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeIsolationManifest {
+    #[serde(default)]
+    pub network: bool,
+    #[serde(default)]
+    pub filesystem: Vec<String>,
+    pub cpu_time_seconds: u64,
+    pub memory_bytes: u64,
+    pub max_processes: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutableRuntimeManifest {
+    pub schema_version: u16,
+    pub id: String,
+    pub class: RuntimeClass,
+    pub protocol: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub secret_refs: BTreeMap<String, String>,
+    pub isolation: RuntimeIsolationManifest,
+    pub capabilities: Vec<CapabilityDescriptor>,
+}
+
+pub fn parse_executable_runtime_manifest(content: &str) -> Result<ExecutableRuntimeManifest> {
+    let manifest: ExecutableRuntimeManifest =
+        toml::from_str(content).context("failed to parse executable runtime manifest")?;
+    anyhow::ensure!(manifest.schema_version == 1, "unsupported runtime schema version");
+    anyhow::ensure!(manifest.class == RuntimeClass::Subprocess, "third-party runtime must use subprocess class");
+    anyhow::ensure!(manifest.protocol == "json-rpc/stdio", "unsupported runtime protocol");
+    anyhow::ensure!(!manifest.id.trim().is_empty(), "runtime ID must not be empty");
+    super::validation::validate_entry_path(Path::new(&manifest.command))?;
+    anyhow::ensure!(
+        manifest.command.starts_with("payload/"),
+        "runtime command must be inside payload/"
+    );
+    anyhow::ensure!(
+        manifest.isolation.cpu_time_seconds > 0
+            && manifest.isolation.memory_bytes > 0
+            && manifest.isolation.max_processes > 0,
+        "runtime resource limits must be nonzero"
+    );
+    anyhow::ensure!(!manifest.capabilities.is_empty(), "runtime must declare capabilities");
+    anyhow::ensure!(
+        manifest
+            .capabilities
+            .iter()
+            .any(|capability| capability.kind == CapabilityKind::AgentRuntimeProvider),
+        "runtime manifest does not provide an Agent Runtime capability"
+    );
+    for (environment, secret_ref) in &manifest.secret_refs {
+        anyhow::ensure!(
+            !environment.trim().is_empty() && !secret_ref.trim().is_empty(),
+            "secret references require nonempty environment and reference names"
+        );
+        anyhow::ensure!(
+            !secret_ref.contains('=') && !secret_ref.chars().any(char::is_whitespace),
+            "secret reference contains forbidden characters"
+        );
+    }
+    Ok(manifest)
+}
 
 /// Parse an extension.toml file into a PackageManifest.
 pub fn parse_package_manifest(content: &str) -> Result<PackageManifest> {
@@ -192,5 +262,61 @@ path = "b.toml"
     #[test]
     fn parse_checksums_short_hash_rejected() {
         assert!(parse_checksums("abc  file.txt").is_err());
+    }
+
+    #[test]
+    fn executable_runtime_manifest_is_generic_and_resource_bounded() {
+        let manifest = parse_executable_runtime_manifest(
+            r#"
+schema_version = 1
+id = "runtime.generic"
+class = "subprocess"
+protocol = "json-rpc/stdio"
+command = "payload/runtime"
+args = ["--stdio"]
+
+[isolation]
+network = false
+filesystem = []
+cpu_time_seconds = 30
+memory_bytes = 268435456
+max_processes = 8
+
+[[capabilities]]
+id = "agent.generic"
+kind = "agent_runtime_provider"
+risk = "Sandboxed"
+"#,
+        )
+        .unwrap();
+        assert_eq!(manifest.id, "runtime.generic");
+        assert!(!manifest.isolation.network);
+    }
+
+    #[test]
+    fn executable_runtime_manifest_rejects_unsafe_or_unbounded_configuration() {
+        let base = r#"
+schema_version = 1
+id = "runtime.generic"
+class = "subprocess"
+protocol = "json-rpc/stdio"
+command = "../escape"
+[isolation]
+network = false
+cpu_time_seconds = 0
+memory_bytes = 0
+max_processes = 0
+[[capabilities]]
+id = "agent.generic"
+kind = "agent_runtime_provider"
+risk = "Sandboxed"
+"#;
+        assert!(parse_executable_runtime_manifest(base).is_err());
+        assert!(parse_executable_runtime_manifest(&base.replace(
+            "class = \"subprocess\"",
+            "class = \"native\""
+        ))
+        .is_err());
+        assert!(parse_executable_runtime_manifest(&format!("{base}\nunknown = true\n")).is_err());
     }
 }

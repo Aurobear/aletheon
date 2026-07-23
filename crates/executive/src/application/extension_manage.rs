@@ -8,6 +8,60 @@ use std::sync::Arc;
 use super::extension_install::ExtensionInstallService;
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct ExtensionApprovalRequest {
+    pub package_id: String,
+    pub version: String,
+    pub added_permissions: fabric::PermissionRequestSet,
+    pub added_assets: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtensionApprovalDecision {
+    pub approved: bool,
+    pub actor: String,
+    pub reason: String,
+}
+
+pub trait ExtensionApprovalPort: Send + Sync {
+    fn decide(&self, request: &ExtensionApprovalRequest) -> Result<ExtensionApprovalDecision>;
+}
+
+#[derive(Default)]
+pub struct DenyPermissionElevation;
+
+impl ExtensionApprovalPort for DenyPermissionElevation {
+    fn decide(&self, _: &ExtensionApprovalRequest) -> Result<ExtensionApprovalDecision> {
+        Ok(ExtensionApprovalDecision {
+            approved: false,
+            actor: "policy:non-interactive".into(),
+            reason: "new permissions or assets require explicit operator approval".into(),
+        })
+    }
+}
+
+pub struct ExplicitOperatorApproval {
+    actor: String,
+}
+
+impl ExplicitOperatorApproval {
+    pub fn new(actor: impl Into<String>) -> Self {
+        Self {
+            actor: actor.into(),
+        }
+    }
+}
+
+impl ExtensionApprovalPort for ExplicitOperatorApproval {
+    fn decide(&self, _: &ExtensionApprovalRequest) -> Result<ExtensionApprovalDecision> {
+        Ok(ExtensionApprovalDecision {
+            approved: true,
+            actor: self.actor.clone(),
+            reason: "explicit operator approval".into(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtensionDoctorResult {
     pub id: String,
     pub healthy: bool,
@@ -35,6 +89,8 @@ mod tests {
             file_count: 1,
             total_size: 1,
             installed_at: installed_at.into(),
+            assets: Vec::new(),
+            requested_permissions: fabric::PermissionRequestSet::default(),
         }
     }
 
@@ -55,6 +111,11 @@ mod tests {
             enabled: true,
             current: Some(HASH_B.into()),
             previous_known_good: Some(HASH_A.into()),
+            granted_permissions: fabric::PermissionRequestSet::default(),
+            permission_approval: None,
+            activated_assets: Vec::new(),
+            health: "healthy".into(),
+            quarantine_reason: None,
         }).unwrap();
 
         service.disable("test.pkg").unwrap();
@@ -79,11 +140,43 @@ mod tests {
         assert!(service.store.get_installed("test.pkg").unwrap().is_empty());
         assert!(!service.store.is_installed(HASH_A).unwrap());
     }
+
+    #[test]
+    fn permission_elevation_requires_explicit_approval_and_preserves_old_state() {
+        let temp = TempDir::new().unwrap();
+        let service = ExtensionManageService::new(temp.path()).unwrap();
+        std::fs::create_dir_all(service.store.package_path(HASH_A).unwrap()).unwrap();
+        let mut candidate = record(HASH_A, "1.0.0", "2026-07-23T00:00:00Z");
+        candidate.requested_permissions.network = true;
+        candidate.requested_permissions.executables = true;
+        candidate.assets.push(fabric::AssetRef {
+            kind: fabric::AssetKind::Executable,
+            id: "runtime.generic".into(),
+            path: "assets/executables/generic/runtime.toml".into(),
+        });
+        service.store.put_installed(&candidate).unwrap();
+        assert!(service.enable("test.pkg").is_err());
+        assert!(!service.store.read_activation("test.pkg").unwrap().enabled);
+
+        let approved = ExtensionManageService::new(temp.path())
+            .unwrap()
+            .with_approval_port(Arc::new(ExplicitOperatorApproval::new("operator:test")));
+        approved.enable("test.pkg").unwrap();
+        let state = approved.store.read_activation("test.pkg").unwrap();
+        assert!(state.enabled);
+        assert!(state.granted_permissions.network);
+        assert!(state.granted_permissions.executables);
+        assert_eq!(
+            state.permission_approval.unwrap().actor,
+            "operator:test"
+        );
+    }
 }
 
 pub struct ExtensionManageService {
     store: Arc<PackageStore>,
     installer: ExtensionInstallService,
+    approvals: Arc<dyn ExtensionApprovalPort>,
 }
 
 impl ExtensionManageService {
@@ -91,7 +184,13 @@ impl ExtensionManageService {
         Ok(Self {
             store: Arc::new(PackageStore::new(store_root.to_owned())?),
             installer: ExtensionInstallService::new(store_root)?,
+            approvals: Arc::new(DenyPermissionElevation),
         })
+    }
+
+    pub fn with_approval_port(mut self, approvals: Arc<dyn ExtensionApprovalPort>) -> Self {
+        self.approvals = approvals;
+        self
     }
 
     pub fn enable(&self, id: &str) -> Result<()> {
@@ -104,11 +203,20 @@ impl ExtensionManageService {
             candidate.hash
         );
         let mut activation = self.store.read_activation(id)?;
+        let approval = self.approve_candidate(candidate, &activation)?;
         if activation.current.as_deref() != Some(&candidate.hash) {
             activation.previous_known_good = activation.current.take();
             activation.current = Some(candidate.hash.clone());
         }
         activation.enabled = true;
+        activation.granted_permissions = candidate.requested_permissions.clone();
+        if approval.is_some() {
+            activation.permission_approval = approval;
+        }
+        activation.activated_assets =
+            candidate.assets.iter().map(|asset| asset.id.clone()).collect();
+        activation.health = "healthy".into();
+        activation.quarantine_reason = None;
         self.store.write_activation(&activation)?;
         self.receipt(id, "enable", serde_json::json!({"hash": candidate.hash}))
     }
@@ -128,12 +236,24 @@ impl ExtensionManageService {
         let old = self.store.read_activation(&id)?;
         let hash = self.installer.install(package_path)?;
         let _lock = self.store.acquire_lock(&id)?;
+        let candidate = self
+            .store
+            .get_installed(&id)?
+            .into_iter()
+            .find(|record| record.hash == hash)
+            .context("installed candidate projection is missing")?;
+        let approval = self.approve_candidate(&candidate, &old)?;
         let activation = ActivationRecord {
             schema_version: 1,
             package_id: id.clone(),
             enabled: old.enabled,
             current: Some(hash.clone()),
             previous_known_good: old.current.filter(|value| value != &hash),
+            granted_permissions: candidate.requested_permissions.clone(),
+            permission_approval: approval.or(old.permission_approval),
+            activated_assets: candidate.assets.iter().map(|asset| asset.id.clone()).collect(),
+            health: "healthy".into(),
+            quarantine_reason: None,
         };
         self.store.write_activation(&activation)?;
         self.receipt(
@@ -251,4 +371,84 @@ impl ExtensionManageService {
         )?;
         Ok(())
     }
+
+    fn approve_candidate(
+        &self,
+        candidate: &corpus::extension::store::InstalledPackageRecord,
+        activation: &ActivationRecord,
+    ) -> Result<Option<corpus::extension::store::PermissionApprovalRecord>> {
+        let request = approval_request(candidate, activation);
+        if permission_request_is_empty(&request.added_permissions) && request.added_assets.is_empty()
+        {
+            return Ok(None);
+        }
+        let decision = self.approvals.decide(&request)?;
+        self.receipt(
+            &candidate.id,
+            "permission_approval",
+            serde_json::json!({
+                "request": request,
+                "approved": decision.approved,
+                "actor": decision.actor,
+                "reason": decision.reason,
+            }),
+        )?;
+        anyhow::ensure!(
+            decision.approved,
+            "extension activation rejected: {}",
+            decision.reason
+        );
+        Ok(Some(corpus::extension::store::PermissionApprovalRecord {
+            actor: decision.actor,
+            approved_at: chrono::Utc::now().to_rfc3339(),
+            permissions: request.added_permissions,
+        }))
+    }
+}
+
+fn approval_request(
+    candidate: &corpus::extension::store::InstalledPackageRecord,
+    activation: &ActivationRecord,
+) -> ExtensionApprovalRequest {
+    let old_filesystem = activation
+        .granted_permissions
+        .filesystem
+        .clone()
+        .unwrap_or_default();
+    let new_filesystem = candidate
+        .requested_permissions
+        .filesystem
+        .clone()
+        .unwrap_or_default();
+    let filesystem: Vec<_> = new_filesystem
+        .into_iter()
+        .filter(|path| !old_filesystem.contains(path))
+        .collect();
+    let old_assets = &activation.activated_assets;
+    ExtensionApprovalRequest {
+        package_id: candidate.id.clone(),
+        version: candidate.version.clone(),
+        added_permissions: fabric::PermissionRequestSet {
+            filesystem: (!filesystem.is_empty()).then_some(filesystem),
+            network: candidate.requested_permissions.network
+                && !activation.granted_permissions.network,
+            executables: candidate.requested_permissions.executables
+                && !activation.granted_permissions.executables,
+        },
+        added_assets: candidate
+            .assets
+            .iter()
+            .map(|asset| asset.id.clone())
+            .filter(|asset| !old_assets.contains(asset))
+            .collect(),
+    }
+}
+
+fn permission_request_is_empty(permissions: &fabric::PermissionRequestSet) -> bool {
+    permissions
+        .filesystem
+        .as_ref()
+        .is_none_or(|paths| paths.is_empty())
+        && !permissions.network
+        && !permissions.executables
 }
