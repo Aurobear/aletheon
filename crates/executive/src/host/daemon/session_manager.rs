@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::{debug, info};
 
-use fabric::{Clock, LlmProvider, Message, Role};
+use fabric::{Clock, ContentBlock, LlmProvider, Message, Role};
 use mnemosyne::runtime::{AdvancedCompressor, ContextBudgetPlan};
 
 /// Process-local working context for one canonical Session.
@@ -15,6 +15,7 @@ use mnemosyne::runtime::{AdvancedCompressor, ContextBudgetPlan};
 pub struct SessionManager {
     pub session_id: String,
     messages: Vec<Message>,
+    turn_count: usize,
     compressor: AdvancedCompressor,
 }
 
@@ -28,6 +29,7 @@ impl SessionManager {
         Ok(Self {
             session_id,
             messages: Vec::new(),
+            turn_count: 0,
             compressor: AdvancedCompressor::new(
                 (max_tokens as f64 * 0.25) as usize,
                 4_000,
@@ -38,11 +40,16 @@ impl SessionManager {
 
     /// Replace the process-local projection with canonical replay output.
     pub fn restore_messages(&mut self, messages: Vec<Message>) {
+        self.turn_count = messages
+            .iter()
+            .filter(|message| is_text_user_request(message))
+            .count();
         self.messages = messages;
     }
 
     pub async fn push_user(&mut self, content: &str) {
         self.messages.push(Message::user(content));
+        self.turn_count = self.turn_count.saturating_add(1);
         debug!(
             len = content.len(),
             "Pushed user message into session projection"
@@ -67,6 +74,9 @@ impl SessionManager {
 
     pub async fn push_message(&mut self, message: Message) {
         debug!(role = ?message.role, blocks = message.content.len(), "Pushed message into session projection");
+        if is_text_user_request(&message) {
+            self.turn_count = self.turn_count.saturating_add(1);
+        }
         self.messages.push(message);
     }
 
@@ -75,10 +85,7 @@ impl SessionManager {
     }
 
     pub fn turn_count(&self) -> usize {
-        self.messages
-            .iter()
-            .filter(|message| matches!(message.role, Role::User))
-            .count()
+        self.turn_count
     }
 
     pub fn message_count(&self) -> usize {
@@ -89,6 +96,7 @@ impl SessionManager {
     /// fresh canonical Session rather than rewriting append-only history.
     pub async fn clear_history(&mut self) -> Result<()> {
         self.messages.clear();
+        self.turn_count = 0;
         info!(session_id = %self.session_id, "Session working projection cleared");
         Ok(())
     }
@@ -167,6 +175,14 @@ impl SessionManager {
         }
         Ok(compacted)
     }
+}
+
+fn is_text_user_request(message: &Message) -> bool {
+    message.role == Role::User
+        && message
+            .content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::Text { .. }))
 }
 
 #[cfg(test)]
@@ -283,6 +299,7 @@ mod tests {
         manager.push_user("old context").await;
         manager.clear_history().await.unwrap();
         assert!(manager.history().is_empty());
+        assert_eq!(manager.turn_count(), 0);
     }
 
     #[tokio::test]
@@ -336,7 +353,17 @@ mod tests {
                 .push_user(&format!("user {index} {}", "z".repeat(400)))
                 .await;
         }
+        let turns_before = manager.turn_count();
         assert!(manager.compact_if_needed(&StubLlm).await.unwrap());
+        assert_eq!(
+            manager.turn_count(),
+            turns_before,
+            "working projection compaction must not rewind the logical turn counter"
+        );
+        assert_eq!(
+            turns_before, 12,
+            "tool results use the user wire role but are not logical user turns"
+        );
         let first = manager
             .history()
             .iter()
