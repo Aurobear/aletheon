@@ -14,6 +14,11 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Instant};
 use tokio_util::sync::CancellationToken;
+use fabric::{
+    AgentHandle, AgentRuntimeProvider, AgentSpawnRequest, IsolationLevel, SandboxBackend,
+    SandboxConfig,
+};
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Protocol types
@@ -74,10 +79,24 @@ impl SanitizedStderr {
     }
 
     fn snapshot(&self) -> String {
-        String::from_utf8_lossy(&self.buffer)
+        let raw: String = String::from_utf8_lossy(&self.buffer)
             .chars()
             .take(200)
-            .collect()
+            .collect();
+        raw.lines()
+            .map(|line| {
+                let lower = line.to_ascii_lowercase();
+                if ["token", "secret", "api_key", "authorization"]
+                    .iter()
+                    .any(|marker| lower.contains(marker))
+                {
+                    "[REDACTED]"
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -85,6 +104,7 @@ impl SanitizedStderr {
 // Runtime configuration
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct SubprocessConfig {
     /// Path to the executable.
     pub command: String,
@@ -104,6 +124,135 @@ pub struct SubprocessConfig {
     pub shutdown_timeout: Duration,
     /// Consecutive failures before circuit breaking.
     pub circuit_breaker_threshold: u32,
+}
+
+/// Production provider adapter. Every Agent handle owns a distinct isolated
+/// protocol process; callers never access the subprocess implementation.
+pub struct SubprocessAgentRuntimeProvider {
+    config: SubprocessConfig,
+    sandbox_backend: Arc<dyn SandboxBackend>,
+    sandbox_config: SandboxConfig,
+    sessions: Mutex<HashMap<fabric::AgentId, Arc<Mutex<SubprocessRuntime>>>>,
+}
+
+impl SubprocessAgentRuntimeProvider {
+    pub fn new(
+        config: SubprocessConfig,
+        sandbox_backend: Arc<dyn SandboxBackend>,
+        sandbox_config: SandboxConfig,
+    ) -> Result<Self> {
+        // Validate the backend during composition, not after a task is admitted.
+        let _ = SubprocessRuntime::new_isolated(
+            config.clone(),
+            sandbox_backend.as_ref(),
+            &sandbox_config,
+        )?;
+        Ok(Self {
+            config,
+            sandbox_backend,
+            sandbox_config,
+            sessions: Mutex::new(HashMap::new()),
+        })
+    }
+
+    async fn session(&self, handle: &AgentHandle) -> Result<Arc<Mutex<SubprocessRuntime>>> {
+        self.sessions
+            .lock()
+            .await
+            .get(&handle.agent_id)
+            .cloned()
+            .context("unknown extension runtime Agent handle")
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
+    async fn start(&self, request: AgentSpawnRequest) -> Result<AgentHandle> {
+        request.validate().map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let mut runtime = SubprocessRuntime::new_isolated(
+            self.config.clone(),
+            self.sandbox_backend.as_ref(),
+            &self.sandbox_config,
+        )?;
+        runtime.start().await?;
+        let value = runtime.call("start", serde_json::to_value(request)?).await?;
+        let handle: AgentHandle =
+            serde_json::from_value(value).context("runtime returned an invalid Agent handle")?;
+        let runtime = Arc::new(Mutex::new(runtime));
+        anyhow::ensure!(
+            self.sessions
+                .lock()
+                .await
+                .insert(handle.agent_id.clone(), runtime)
+                .is_none(),
+            "runtime returned a duplicate Agent handle"
+        );
+        Ok(handle)
+    }
+
+    async fn observe(&self, handle: &AgentHandle) -> Result<Value> {
+        self.session(handle)
+            .await?
+            .lock()
+            .await
+            .call("observe", serde_json::to_value(handle)?)
+            .await
+    }
+
+    async fn steer(&self, handle: &AgentHandle, input: Value) -> Result<()> {
+        self.session(handle)
+            .await?
+            .lock()
+            .await
+            .call("steer", serde_json::json!({"handle": handle, "input": input}))
+            .await?;
+        Ok(())
+    }
+
+    async fn follow_up(&self, handle: &AgentHandle, input: Value) -> Result<Value> {
+        self.session(handle)
+            .await?
+            .lock()
+            .await
+            .call("follow_up", serde_json::json!({"handle": handle, "input": input}))
+            .await
+    }
+
+    async fn cancel(&self, handle: &AgentHandle, reason: &str) -> Result<()> {
+        let runtime = self
+            .sessions
+            .lock()
+            .await
+            .remove(&handle.agent_id)
+            .context("unknown extension runtime Agent handle")?;
+        let mut runtime = runtime.lock().await;
+        let _ = runtime
+            .call("cancel", serde_json::json!({"handle": handle, "reason": reason}))
+            .await;
+        runtime.cancel();
+        runtime.shutdown().await;
+        Ok(())
+    }
+
+    async fn wait(&self, handle: &AgentHandle) -> Result<Value> {
+        let runtime = self.session(handle).await?;
+        let result = runtime
+            .lock()
+            .await
+            .call("wait", serde_json::to_value(handle)?)
+            .await;
+        if result.is_ok() {
+            self.sessions.lock().await.remove(&handle.agent_id);
+        }
+        result
+    }
+
+    async fn health(&self) -> Result<()> {
+        for runtime in self.sessions.lock().await.values() {
+            runtime.lock().await.health()?;
+        }
+        Ok(())
+    }
 }
 
 impl Default for SubprocessConfig {
@@ -139,6 +288,7 @@ pub struct SubprocessRuntime {
     last_activity: Instant,
     /// Guard against concurrent `call()` invocations.
     in_flight: bool,
+    isolation_verified: bool,
 }
 
 impl SubprocessRuntime {
@@ -153,7 +303,41 @@ impl SubprocessRuntime {
             cancel_token: CancellationToken::new(),
             last_activity: Instant::now(),
             in_flight: false,
+            isolation_verified: false,
         }
+    }
+
+    /// Build a runtime from an argv-safe, capability-complete isolation backend.
+    /// Missing namespace, filesystem, network, or resource isolation fails closed.
+    pub fn new_isolated(
+        mut config: SubprocessConfig,
+        backend: &dyn SandboxBackend,
+        sandbox: &SandboxConfig,
+    ) -> Result<Self> {
+        anyhow::ensure!(backend.is_available(), "isolation backend is unavailable");
+        anyhow::ensure!(
+            backend.isolation_level() == IsolationLevel::Namespace
+                || backend.isolation_level() == IsolationLevel::Container,
+            "extension subprocess requires namespace or container isolation"
+        );
+        let capabilities = backend.capabilities();
+        anyhow::ensure!(
+            capabilities.filesystem_isolation
+                && capabilities.network_isolation
+                && capabilities.resource_limits,
+            "isolation backend lacks required filesystem, network, or resource controls"
+        );
+        let wrapped = backend.wrap_argv(
+            std::path::Path::new(&config.command),
+            &config.args,
+            sandbox,
+        )?;
+        config.command = wrapped.program.to_string_lossy().into_owned();
+        config.args = wrapped.args;
+        config.env = wrapped.environment.into_iter().collect();
+        let mut runtime = Self::new(config);
+        runtime.isolation_verified = true;
+        Ok(runtime)
     }
 
     pub fn is_quarantined(&self) -> bool {
@@ -164,6 +348,10 @@ impl SubprocessRuntime {
     pub async fn start(&mut self) -> Result<()> {
         if self.quarantined {
             bail!("runtime is quarantined");
+        }
+        if !self.isolation_verified {
+            self.increment_failures();
+            bail!("extension subprocess has no verified isolation backend");
         }
         let mut cmd = Command::new(&self.config.command);
         cmd.args(&self.config.args);
@@ -268,6 +456,21 @@ impl SubprocessRuntime {
         let result = self.call_inner(method, params).await;
         self.in_flight = false;
         self.last_activity = Instant::now();
+        match &result {
+            Ok(_) => self.consecutive_failures = 0,
+            Err(error) => {
+                self.increment_failures();
+                let stderr = self.stderr.lock().await.snapshot();
+                tracing::warn!(
+                    error = %error,
+                    stderr = %stderr,
+                    "Extension subprocess call failed; protocol channel will be terminated"
+                );
+                if let Some(mut child) = self.process.take() {
+                    let _ = child.kill().await;
+                }
+            }
+        }
         result
     }
 
@@ -301,10 +504,33 @@ impl SubprocessRuntime {
         // Read response from stdout (one newline-delimited line)
         let stdout = process.stdout.take().context("stdout not available")?;
         let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
+        let mut line = Vec::new();
 
-        // Read line with timeout
-        let read_result = timeout(self.config.call_timeout, reader.read_line(&mut line)).await;
+        // Read one bounded line without allowing `read_line` to allocate an
+        // attacker-controlled amount before the size check.
+        let read_result = timeout(self.config.call_timeout, async {
+            loop {
+                let available = reader.fill_buf().await?;
+                if available.is_empty() {
+                    return Ok::<usize, std::io::Error>(line.len());
+                }
+                let take = available
+                    .iter()
+                    .position(|byte| *byte == b'\n')
+                    .map_or(available.len(), |position| position + 1);
+                if line.len().saturating_add(take) > MAX_RESPONSE_LINE_BYTES {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "JSON-RPC response line exceeds size limit",
+                    ));
+                }
+                line.extend_from_slice(&available[..take]);
+                reader.consume(take);
+                if line.last() == Some(&b'\n') {
+                    return Ok(line.len());
+                }
+            }
+        }).await;
         match read_result {
             Ok(Ok(0)) => {
                 let _inner = reader.into_inner();
@@ -330,25 +556,16 @@ impl SubprocessRuntime {
         self.process.as_mut().unwrap().stdout = Some(_inner);
 
         // --- response line length guard (10 MB) ------------------------------
-        let line_len = line.len();
-        if line_len > MAX_RESPONSE_LINE_BYTES {
-            bail!(
-                "JSON-RPC response line exceeds 10 MB limit ({} bytes)",
-                line_len
-            );
-        }
-
+        let line = std::str::from_utf8(&line).context("JSON-RPC response is not UTF-8")?;
         let line = line.trim_end();
-        let response: JsonRpcResponse = serde_json::from_str(line)
-            .with_context(|| format!("invalid JSON-RPC response: {}", line))?;
+        let response: JsonRpcResponse =
+            serde_json::from_str(line).context("invalid JSON-RPC response")?;
 
         // --- jsonrpc version check -----------------------------------------
-        if response.jsonrpc.as_deref() != Some("2.0") {
-            tracing::warn!(
-                response_jsonrpc = ?response.jsonrpc,
-                "JSON-RPC response missing or unexpected jsonrpc version"
-            );
-        }
+        anyhow::ensure!(
+            response.jsonrpc.as_deref() == Some("2.0"),
+            "JSON-RPC response has an invalid protocol version"
+        );
 
         // --- response id check ---------------------------------------------
         if response.id != Some(id) {
@@ -360,7 +577,7 @@ impl SubprocessRuntime {
         }
 
         if let Some(err) = response.error {
-            bail!("JSON-RPC error: {}", err.message);
+            bail!("JSON-RPC error {}: {}", err.code, err.message);
         }
         Ok(response.result.unwrap_or(Value::Null))
     }
@@ -372,13 +589,23 @@ impl SubprocessRuntime {
 
     /// Gracefully shut down the subprocess.
     pub async fn shutdown(&mut self) {
-        if let Some(mut child) = self.process.take() {
-            let _ = timeout(self.config.shutdown_timeout, async {
-                let _ = self.call("shutdown", serde_json::json!({})).await;
-                child.kill().await.ok();
-            })
+        if self.process.is_some() {
+            let _ = timeout(
+                self.config.shutdown_timeout,
+                self.call("shutdown", serde_json::json!({})),
+            )
             .await;
         }
+        if let Some(mut child) = self.process.take() {
+            let _ = child.kill().await;
+        }
+    }
+
+    pub fn health(&self) -> Result<()> {
+        anyhow::ensure!(!self.quarantined, "runtime is quarantined");
+        anyhow::ensure!(self.isolation_verified, "runtime isolation is not verified");
+        anyhow::ensure!(self.process.is_some(), "runtime process is not running");
+        Ok(())
     }
 
     fn increment_failures(&mut self) {
@@ -418,6 +645,7 @@ mod tests {
     fn new_runtime_is_not_quarantined() {
         let rt = SubprocessRuntime::new(SubprocessConfig::default());
         assert!(!rt.is_quarantined());
+        assert!(rt.health().is_err());
     }
 
     #[tokio::test]
@@ -430,5 +658,24 @@ mod tests {
         assert!(rt.is_quarantined());
         assert!(rt.start().await.is_err());
         assert!(rt.call("test", serde_json::json!({})).await.is_err());
+    }
+
+    #[test]
+    fn stderr_snapshot_redacts_secret_bearing_lines() {
+        let mut stderr = SanitizedStderr::new();
+        stderr.append(b"normal diagnostic\napi_key=should-not-leak\n");
+        let snapshot = stderr.snapshot();
+        assert!(snapshot.contains("normal diagnostic"));
+        assert!(snapshot.contains("[REDACTED]"));
+        assert!(!snapshot.contains("should-not-leak"));
+    }
+
+    #[tokio::test]
+    async fn unisolated_runtime_fails_closed_before_spawn() {
+        let mut config = SubprocessConfig::default();
+        config.command = "/bin/true".into();
+        let mut runtime = SubprocessRuntime::new(config);
+        let error = runtime.start().await.unwrap_err().to_string();
+        assert!(error.contains("no verified isolation backend"));
     }
 }
