@@ -77,7 +77,10 @@ impl RequestHandler {
     ) -> anyhow::Result<Self> {
         let llm = super::inference::compose(super::inference::InferenceCompositionInput {
             port: inference.clone(),
-            model_spec: config.model.clone(),
+            // The machine core owns provider aliases and its configured
+            // default. Passing a user-facing `provider/model` string here can
+            // make maintenance inference fail while routed turns still work.
+            model_spec: String::new(),
         })
         .provider;
         info!(provider = llm.name(), "LLM provider initialized");
