@@ -95,27 +95,33 @@ Commit subject: `test(metacog): lock public surface before module migration`
 
 **Files:**
 - Move: `crates/metacog/src/impl/genome/loader.rs` → `crates/metacog/src/genome/loader.rs`
-- Move: Genome-owned types from `crates/metacog/src/core/types.rs` → `crates/metacog/src/genome/model.rs`
+- Move: `GenomeMeta`, `IdentityExt`, `CareExt`, `GenomeRule`, `ReasoningConfig`, `EvolutionConfig`, `GenomeChange`, and `ChangeType` from `crates/metacog/src/core/types.rs` → `crates/metacog/src/genome/model.rs`
+- Move: `crates/metacog/src/impl/meta_runtime/self_reader.rs` → `crates/metacog/src/genome/self_reader.rs`
+- Move: `crates/metacog/src/impl/meta_runtime/spec_editor.rs` → `crates/metacog/src/genome/editor.rs`
 - Create: `crates/metacog/src/genome/mod.rs`
 - Modify: `crates/metacog/src/lib.rs`
-- Modify imports in `crates/metacog/src/bridge/genome_bridge.rs`
+- Modify: `crates/metacog/src/bridge/genome_bridge.rs` imports only; the file move occurs in Task 4
 - Test: existing Genome tests plus `crates/metacog/tests/public_surface.rs`
 
-- [ ] **Step 1: Move the loader without changing behavior**
+- [ ] **Step 1: Move Genome-owned files without changing behavior**
 
-Use `git mv`; retain the existing loader body unchanged.
+Use `git mv` for `loader.rs`, `self_reader.rs`, and `spec_editor.rs`; rename only `spec_editor.rs` to `editor.rs`. Retain all function bodies unchanged and update imports from `crate::core::types` to `crate::genome`.
 
 - [ ] **Step 2: Create the feature facade**
 
 ```rust
+mod editor;
 mod loader;
 mod model;
+mod self_reader;
 
+pub(crate) use editor::SpecEditor;
 pub use loader::GenomeLoader;
 pub use model::{
     CareExt, ChangeType, EvolutionConfig, GenomeChange, GenomeMeta, GenomeRule,
     IdentityExt, ReasoningConfig,
 };
+pub(crate) use self_reader::SelfReader;
 ```
 
 - [ ] **Step 3: Keep temporary crate-root compatibility re-exports**
@@ -147,8 +153,13 @@ Commit subject: `refactor(metacog): move genome into feature module`
 
 **Files:**
 - Move: `crates/metacog/src/impl/meta_runtime/evaluator.rs` → `crates/metacog/src/evolution/candidate_evaluator.rs`
-- Move: `lineage.rs`, `migration.rs`, `rollback.rs`, `sandbox_runner.rs` → `crates/metacog/src/evolution/`
+- Move: `crates/metacog/src/impl/meta_runtime/lineage.rs` → `crates/metacog/src/evolution/lineage.rs`
+- Move: `crates/metacog/src/impl/meta_runtime/migration.rs` → `crates/metacog/src/evolution/migration.rs`
+- Move: `crates/metacog/src/impl/meta_runtime/rollback.rs` → `crates/metacog/src/evolution/rollback.rs`
+- Move: `crates/metacog/src/impl/meta_runtime/sandbox_runner.rs` → `crates/metacog/src/evolution/sandbox_runner.rs`
 - Move: `crates/metacog/src/impl/morphogenesis/candidate.rs` → `crates/metacog/src/evolution/candidate.rs`
+- Move: `crates/metacog/src/impl/morphogenesis/pipeline.rs` → `crates/metacog/src/evolution/pipeline.rs`
+- Move: `EvaluatorSpec`, `EvaluatorMetric`, and `EvaluationResult` from `crates/metacog/src/core/types.rs` → `crates/metacog/src/evolution/model.rs`
 - Move: `crates/metacog/src/service.rs` → `crates/metacog/src/governance/service.rs`
 - Move: `crates/metacog/src/core/traits.rs` → `crates/metacog/src/governance/runtime.rs`
 - Create: `crates/metacog/src/evolution/mod.rs`
@@ -168,6 +179,8 @@ mod candidate;
 mod candidate_evaluator;
 mod lineage;
 mod migration;
+mod model;
+mod pipeline;
 mod rollback;
 mod sandbox_runner;
 
@@ -175,6 +188,8 @@ pub(crate) use candidate::CandidateGenerator;
 pub(crate) use candidate_evaluator::Evaluator;
 pub(crate) use lineage::LineageTracker;
 pub(crate) use migration::MigrationManager;
+pub use model::{EvaluationResult, EvaluatorMetric, EvaluatorSpec};
+pub use pipeline::{MorphogenesisPipeline, PipelineResult};
 pub use rollback::RollbackManager;
 pub(crate) use sandbox_runner::SandboxRunner;
 ```
@@ -186,7 +201,7 @@ mod runtime;
 mod service;
 
 pub use runtime::DefaultMetaRuntime;
-pub use service::{DefaultMetacogService, MetacogServiceError};
+pub use service::{DefaultMetacogService, MetacogError};
 ```
 
 - [ ] **Step 3: Preserve root exports**
@@ -194,7 +209,8 @@ pub use service::{DefaultMetacogService, MetacogServiceError};
 ```rust
 pub mod evolution;
 pub mod governance;
-pub use governance::{DefaultMetaRuntime, DefaultMetacogService, MetacogServiceError};
+pub use evolution::{EvaluationResult, EvaluatorMetric, EvaluatorSpec};
+pub use governance::{DefaultMetaRuntime, DefaultMetacogService, MetacogError};
 ```
 
 - [ ] **Step 4: Run service and contract tests**
@@ -214,37 +230,55 @@ Commit subject: `refactor(metacog): group evolution and governance features`
 
 **Files:**
 - Move: `crates/metacog/src/outcome_verifier.rs` → `crates/metacog/src/evaluation/outcome.rs`
-- Move: `crates/metacog/src/hil_evidence_verifier.rs` → `crates/metacog/src/evidence/hil_verifier.rs`
-- Move: `crates/metacog/src/core/meta_cognition.rs` → `crates/metacog/src/reflection/dasein_observer.rs`
-- Fold: `bridge/candidate_bridge.rs` into `evolution/candidate.rs`
-- Fold: `bridge/genome_bridge.rs` into `genome/bridge.rs`
-- Move: `impl/morphogenesis/mutation_intent.rs` → `improvement/promotion.rs`
-- Move: `impl/morphogenesis/pipeline.rs` → `improvement/pipeline.rs`
+- Move: `crates/metacog/src/hil_evidence_verifier.rs` → `crates/metacog/src/evaluation/hil_evidence.rs`
+- Move: `crates/metacog/src/core/meta_cognition.rs` → `crates/metacog/src/adapters/dasein.rs`
+- Move: `crates/metacog/src/bridge/candidate_bridge.rs` → `crates/metacog/src/evolution/candidate_bridge.rs`
+- Move: `crates/metacog/src/bridge/genome_bridge.rs` → `crates/metacog/src/genome/bridge.rs`
+- Move: `crates/metacog/src/impl/morphogenesis/mutation_intent.rs` → `crates/metacog/src/improvement/promotion.rs`
+- Move: `MorphogenesisCandidate`, `GenomePatch`, and `PatchOperation` from `crates/metacog/src/core/types.rs` → `crates/metacog/src/improvement/model.rs`
 - Remove empty: `crates/metacog/src/core/`, `bridge/`, `impl/`
 - Modify: `crates/metacog/src/lib.rs`
 
 - [ ] **Step 1: Add destination module facades before moves**
 
 ```rust
+// adapters/mod.rs
+mod dasein;
+pub use dasein::*;
+
 // evaluation/mod.rs
+pub mod hil_evidence;
 pub mod outcome;
 
-// evidence/mod.rs
-pub mod hil_verifier;
-
-// reflection/mod.rs
-mod dasein_observer;
-pub use dasein_observer::*;
-
 // improvement/mod.rs
-mod pipeline;
+mod model;
 pub mod promotion;
-pub use pipeline::*;
+pub use model::{GenomePatch, MorphogenesisCandidate, PatchOperation};
 ```
 
 - [ ] **Step 2: Move and update imports**
 
-Do not leave `#[path = "impl/mod.rs"]` in `lib.rs`.
+Add these exact declarations:
+
+```rust
+// evolution/mod.rs
+mod candidate_bridge;
+pub use candidate_bridge::CandidateBridge;
+
+// genome/mod.rs
+mod bridge;
+pub use bridge::GenomeBridge;
+
+// lib.rs
+pub mod adapters;
+pub mod evaluation;
+pub mod improvement;
+pub use evolution::CandidateBridge;
+pub use genome::GenomeBridge;
+```
+
+Delete the now-empty legacy `mod.rs` files. Do not leave
+`#[path = "impl/mod.rs"]` in `lib.rs`.
 
 - [ ] **Step 3: Prove forbidden directories are gone**
 
@@ -899,7 +933,9 @@ Commit subject: `feat(coding): add evidence-backed quality rubric`
 
 **Files:**
 - Create: `crates/executive/tests/coding_metacog_e2e.rs`
-- Reuse existing Coding benchmark fixtures after locating them with `rg`; do not duplicate production-scale fixtures.
+- Reuse: `tests/coding/fixtures/rust_bugfix/`
+- Reuse: `tests/coding/tasks/rust_bugfix.toml`
+- Reuse baseline receipt schema from: `tests/coding/receipts/rust_bugfix.json`
 
 - [ ] **Step 1: Add the acceptance flow**
 
