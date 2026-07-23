@@ -39,8 +39,23 @@ pub trait HookProvider: Send + Sync {
 /// Provider for Agent Runtime capabilities (CapabilityKind::AgentRuntimeProvider).
 #[async_trait]
 pub trait AgentRuntimeProvider: Send + Sync {
-    /// Launch a new agent session.
-    async fn launch(&self, request: AgentSpawnRequest) -> anyhow::Result<AgentHandle>;
+    /// Start a new agent session in this runtime.
+    async fn start(&self, request: AgentSpawnRequest) -> anyhow::Result<AgentHandle>;
+
+    /// Observe the current state of a running session.
+    async fn observe(&self, handle: &AgentHandle) -> anyhow::Result<Value>;
+
+    /// Steer an active session with new input.
+    async fn steer(&self, handle: &AgentHandle, input: Value) -> anyhow::Result<()>;
+
+    /// Send a follow-up message to a session.
+    async fn follow_up(&self, handle: &AgentHandle, input: Value) -> anyhow::Result<Value>;
+
+    /// Cancel a running session.
+    async fn cancel(&self, handle: &AgentHandle, reason: &str) -> anyhow::Result<()>;
+
+    /// Wait for a session to complete and collect the result.
+    async fn wait(&self, handle: &AgentHandle) -> anyhow::Result<Value>;
 
     /// Check runtime health.
     async fn health(&self) -> anyhow::Result<()>;

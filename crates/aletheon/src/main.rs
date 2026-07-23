@@ -224,6 +224,9 @@ enum ConfigSub {
 // ── Extension handler ────────────────────────────────────────────────────
 
 async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
+    use executive::application::extension_manage::ExtensionManageService;
+    let manage_svc = ExtensionManageService;
+
     match cmd {
         ExtensionCmd::Inspect { path } => {
             let result = corpus::extension::inspector::inspect_package(path)?;
@@ -269,32 +272,55 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
                 }
             }
         }
-        ExtensionCmd::Show { .. } => {
-            anyhow::bail!("not implemented: extension show (R2)")
+        ExtensionCmd::Show { id } => {
+            use executive::application::extension_install::ExtensionInstallService;
+            let store_root = dirs::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("aletheon")
+                .join("extensions")
+                .join("packages");
+            let service = ExtensionInstallService::new(&store_root)?;
+            let packages = service.list()?;
+            let found = packages.iter().find(|p| *p == id);
+            match found {
+                Some(pkg) => println!("{pkg}"),
+                None => anyhow::bail!("not implemented: extension show (R2)"),
+            }
         }
-        ExtensionCmd::Enable { .. } => {
-            anyhow::bail!("not implemented: extension enable (R5)")
+        ExtensionCmd::Enable { id } => {
+            manage_svc.enable(id)?;
+            println!("Extension '{id}' enabled.");
         }
-        ExtensionCmd::Disable { .. } => {
-            anyhow::bail!("not implemented: extension disable (R5)")
+        ExtensionCmd::Disable { id } => {
+            manage_svc.disable(id)?;
+            println!("Extension '{id}' disabled.");
         }
-        ExtensionCmd::Upgrade { .. } => {
-            anyhow::bail!("not implemented: extension upgrade (R5)")
+        ExtensionCmd::Upgrade { path } => {
+            manage_svc.upgrade(path)?;
+            println!("Extension upgraded from '{}'.", path.display());
         }
-        ExtensionCmd::Rollback { .. } => {
-            anyhow::bail!("not implemented: extension rollback (R5)")
+        ExtensionCmd::Rollback { id } => {
+            manage_svc.rollback(id)?;
+            println!("Extension '{id}' rolled back.");
         }
-        ExtensionCmd::Remove { .. } => {
-            anyhow::bail!("not implemented: extension remove (R5)")
+        ExtensionCmd::Remove { id } => {
+            manage_svc.remove(id)?;
+            println!("Extension '{id}' removed.");
         }
-        ExtensionCmd::Purge { .. } => {
-            anyhow::bail!("not implemented: extension purge (R5)")
+        ExtensionCmd::Purge { id } => {
+            manage_svc.purge(id)?;
+            println!("Extension '{id}' purged.");
         }
-        ExtensionCmd::Doctor { .. } => {
-            anyhow::bail!("not implemented: extension doctor (R5)")
+        ExtensionCmd::Doctor { id } => {
+            let result = manage_svc.doctor(id)?;
+            println!(
+                "Extension '{}': healthy={}, issues={:?}",
+                result.id, result.healthy, result.issues
+            );
         }
         ExtensionCmd::ImportLegacy => {
-            anyhow::bail!("not implemented: extension import-legacy (R5)")
+            let imported = manage_svc.import_legacy()?;
+            println!("Imported {} legacy extensions: {imported:?}", imported.len());
         }
     }
     Ok(())

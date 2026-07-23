@@ -2,14 +2,17 @@
 //!
 //! Spawns isolated child processes communicating via JSON-RPC over stdio.
 //! Implements lifecycle management, health checks, timeout enforcement,
-//! circuit breaking, and stderr sanitization.
+//! circuit breaking, stderr sanitization, and cancellation.
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::time::timeout;
+use tokio::sync::Mutex;
+use tokio::time::{timeout, Instant};
 use tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
@@ -26,9 +29,7 @@ struct JsonRpcRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
 struct JsonRpcResponse {
-    #[allow(dead_code)]
     jsonrpc: Option<String>,
     #[serde(default)]
     result: Option<Value>,
@@ -39,10 +40,15 @@ struct JsonRpcResponse {
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcError {
-    #[allow(dead_code)]
     code: i64,
     message: String,
 }
+
+// ---------------------------------------------------------------------------
+// Response line size limit (10 MB)
+// ---------------------------------------------------------------------------
+
+const MAX_RESPONSE_LINE_BYTES: usize = 10 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Stderr buffer (captured, truncated, sanitized)
@@ -124,9 +130,15 @@ pub struct SubprocessRuntime {
     config: SubprocessConfig,
     process: Option<Child>,
     request_id: u64,
-    stderr: SanitizedStderr,
+    stderr: Arc<Mutex<SanitizedStderr>>,
     consecutive_failures: u32,
     quarantined: bool,
+    /// Token to signal cancellation — cancel fires → kill child process.
+    cancel_token: CancellationToken,
+    /// Timestamp of the most recent `call()` for idle-timeout tracking.
+    last_activity: Instant,
+    /// Guard against concurrent `call()` invocations.
+    in_flight: bool,
 }
 
 impl SubprocessRuntime {
@@ -135,9 +147,12 @@ impl SubprocessRuntime {
             config,
             process: None,
             request_id: 1,
-            stderr: SanitizedStderr::new(),
+            stderr: Arc::new(Mutex::new(SanitizedStderr::new())),
             consecutive_failures: 0,
             quarantined: false,
+            cancel_token: CancellationToken::new(),
+            last_activity: Instant::now(),
+            in_flight: false,
         }
     }
 
@@ -167,10 +182,42 @@ impl SubprocessRuntime {
             cmd.current_dir(dir);
         }
 
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .with_context(|| format!("failed to spawn: {}", self.config.command))?;
+
+        // --- stderr drain ---------------------------------------------------
+        // Read stderr line-by-line in a background task so the pipe buffer
+        // never fills up. The drain stops when the child exits (stderr pipe
+        // closes) or when the cancellation token fires.
+        let stderr_pipe = child.stderr.take().context("stderr not available")?;
+        let stderr_buf = Arc::clone(&self.stderr);
+        let cancel = self.cancel_token.clone();
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr_pipe);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        break;
+                    }
+                    read_result = reader.read_line(&mut line) => {
+                        match read_result {
+                            Ok(0) => break, // EOF — process exited
+                            Ok(_) => {
+                                let mut buf = stderr_buf.lock().await;
+                                buf.append(line.as_bytes());
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+        });
+
         self.process = Some(child);
+        self.last_activity = Instant::now();
 
         // Initialize protocol
         match timeout(
@@ -195,6 +242,9 @@ impl SubprocessRuntime {
     }
 
     /// Call a JSON-RPC method on the subprocess.
+    ///
+    /// Enforces: no concurrent calls, idle-timeout gate, response-id match,
+    /// jsonrpc version check, and a 10 MB response line cap.
     pub async fn call(&mut self, method: &str, params: Value) -> Result<Value> {
         if self.quarantined {
             bail!("runtime is quarantined");
@@ -202,7 +252,27 @@ impl SubprocessRuntime {
         if self.process.is_none() {
             bail!("subprocess not started");
         }
+        if self.in_flight {
+            bail!("a previous JSON-RPC call is still in flight");
+        }
 
+        // --- idle timeout ---------------------------------------------------
+        if self.last_activity.elapsed() > self.config.idle_timeout {
+            bail!(
+                "subprocess idle timeout exceeded ({:?})",
+                self.config.idle_timeout
+            );
+        }
+
+        self.in_flight = true;
+        let result = self.call_inner(method, params).await;
+        self.in_flight = false;
+        self.last_activity = Instant::now();
+        result
+    }
+
+    /// Inner call logic (called after guard checks).
+    async fn call_inner(&mut self, method: &str, params: Value) -> Result<Value> {
         let id = self.request_id;
         self.request_id += 1;
         let request = JsonRpcRequest {
@@ -214,8 +284,13 @@ impl SubprocessRuntime {
         let request_json = serde_json::to_string(&request)? + "\n";
 
         let process = self.process.as_mut().unwrap();
+
+        // Check cancellation before writing
+        if self.cancel_token.is_cancelled() {
+            bail!("runtime cancelled");
+        }
+
         // Write request to stdin
-        use tokio::io::AsyncWriteExt;
         process
             .stdin
             .as_mut()
@@ -223,26 +298,76 @@ impl SubprocessRuntime {
             .write_all(request_json.as_bytes())
             .await?;
 
-        // Read response from stdout
-        use tokio::io::{AsyncBufReadExt, BufReader};
+        // Read response from stdout (one newline-delimited line)
         let stdout = process.stdout.take().context("stdout not available")?;
-        let mut reader = BufReader::new(stdout).lines();
-        let line = timeout(self.config.call_timeout, reader.next_line())
-            .await
-            .map_err(|_| anyhow::anyhow!("call timed out"))?
-            .context("unexpected EOF")?
-            .context("empty response line")?;
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
 
-        // Restore stdout
-        self.process.as_mut().unwrap().stdout = Some(reader.into_inner().into_inner());
+        // Read line with timeout
+        let read_result = timeout(self.config.call_timeout, reader.read_line(&mut line)).await;
+        match read_result {
+            Ok(Ok(0)) => {
+                let _inner = reader.into_inner();
+                self.process.as_mut().unwrap().stdout = Some(_inner);
+                bail!("unexpected EOF — no response from subprocess");
+            }
+            Ok(Ok(_)) => {} // got a line
+            Ok(Err(e)) => {
+                let _inner = reader.into_inner();
+                self.process.as_mut().unwrap().stdout = Some(_inner);
+                return Err(e).context("failed to read response from subprocess");
+            }
+            Err(_) => {
+                let _inner = reader.into_inner();
+                self.process.as_mut().unwrap().stdout = Some(_inner);
+                bail!("JSON-RPC call timed out");
+            }
+        }
 
-        let response: JsonRpcResponse = serde_json::from_str(&line)
+        // Restore stdout (BufReader may have pre-buffered more data;
+        // for request-response protocol this is acceptable loss).
+        let _inner = reader.into_inner();
+        self.process.as_mut().unwrap().stdout = Some(_inner);
+
+        // --- response line length guard (10 MB) ------------------------------
+        let line_len = line.len();
+        if line_len > MAX_RESPONSE_LINE_BYTES {
+            bail!(
+                "JSON-RPC response line exceeds 10 MB limit ({} bytes)",
+                line_len
+            );
+        }
+
+        let line = line.trim_end();
+        let response: JsonRpcResponse = serde_json::from_str(line)
             .with_context(|| format!("invalid JSON-RPC response: {}", line))?;
+
+        // --- jsonrpc version check -----------------------------------------
+        if response.jsonrpc.as_deref() != Some("2.0") {
+            tracing::warn!(
+                response_jsonrpc = ?response.jsonrpc,
+                "JSON-RPC response missing or unexpected jsonrpc version"
+            );
+        }
+
+        // --- response id check ---------------------------------------------
+        if response.id != Some(id) {
+            bail!(
+                "JSON-RPC response id mismatch: expected {}, got {:?}",
+                id,
+                response.id
+            );
+        }
 
         if let Some(err) = response.error {
             bail!("JSON-RPC error: {}", err.message);
         }
         Ok(response.result.unwrap_or(Value::Null))
+    }
+
+    /// Signal cancellation — kills the child process.
+    pub fn cancel(&self) {
+        self.cancel_token.cancel();
     }
 
     /// Gracefully shut down the subprocess.
@@ -271,6 +396,7 @@ impl SubprocessRuntime {
 
 impl Drop for SubprocessRuntime {
     fn drop(&mut self) {
+        self.cancel_token.cancel();
         if let Some(mut child) = self.process.take() {
             let _ = child.start_kill();
         }

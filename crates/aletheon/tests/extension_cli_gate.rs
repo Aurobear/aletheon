@@ -22,10 +22,9 @@ fn aletheon_binary() -> std::path::PathBuf {
 fn unimplemented_extension_commands_return_error() {
     let binary = aletheon_binary();
 
-    // Commands that must fail (not yet implemented)
+    // Commands that must fail with "not implemented" (wired through ExtensionManageService
+    // but the service returns bail! for unimplemented paths).
     let cases: &[&[&str]] = &[
-        &["extension", "install", "/nonexistent/pkg.tar.gz"],
-        &["extension", "list"],
         &["extension", "show", "test.minimal"],
         &["extension", "enable", "test.minimal"],
         &["extension", "disable", "test.minimal"],
@@ -33,7 +32,6 @@ fn unimplemented_extension_commands_return_error() {
         &["extension", "rollback", "test.minimal"],
         &["extension", "remove", "test.minimal"],
         &["extension", "purge", "test.minimal"],
-        &["extension", "doctor", "test.minimal"],
         &["extension", "import-legacy"],
     ];
 
@@ -52,8 +50,8 @@ fn unimplemented_extension_commands_return_error() {
 
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("not implemented"),
-            "`aletheon {}` error must say 'not implemented'; got: {stderr}",
+            stderr.contains("not yet") || stderr.contains("not implemented"),
+            "`aletheon {}` error must say 'not yet' or 'not implemented'; got: {stderr}",
             args.join(" ")
         );
     }
