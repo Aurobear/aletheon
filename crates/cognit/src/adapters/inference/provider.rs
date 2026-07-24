@@ -40,7 +40,10 @@ impl InferenceFailure {
 
     /// Transient failure carrying a server-advised retry delay (e.g. from
     /// a 429 `Retry-After` header).
-    pub fn transient_with_retry_after(code: &'static str, retry_after_ms: Option<u64>) -> anyhow::Error {
+    pub(crate) fn transient_with_retry_after(
+        code: &'static str,
+        retry_after_ms: Option<u64>,
+    ) -> anyhow::Error {
         anyhow::Error::new(Self {
             kind: InferenceFailureKind::Transient,
             code,
