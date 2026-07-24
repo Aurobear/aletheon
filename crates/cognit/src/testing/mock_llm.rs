@@ -107,6 +107,9 @@ impl LlmProvider for MockLlmProvider {
                         input: input.clone(),
                     }));
                 }
+                ContentBlock::Thinking { text, .. } => {
+                    chunks.push(Ok(StreamChunk::ThinkingDelta { text: text.clone() }));
+                }
                 _ => {}
             }
         }

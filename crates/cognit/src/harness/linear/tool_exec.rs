@@ -5,6 +5,7 @@ use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
 use crate::adapters::inference::provider::{LlmProvider, StopReason, StreamChunk};
+use crate::adapters::inference::scheduler::{classify_error, ErrorClass};
 use fabric::message::{ContentBlock, Message, Role};
 use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
 use std::future::Future;
@@ -62,43 +63,42 @@ impl ReActLoop {
             }
 
             // Use streaming instead of complete()
-            let mut stream = match llm.complete_stream(&self.messages, tool_defs).await {
-                Ok(s) => s,
-                Err(e) if is_context_overflow(&e) => {
-                    warn!("Context overflow detected, forcing compaction: {e}");
-                    self.run_reactive_compaction(llm, Some(event_sink)).await?;
-                    llm.complete_stream(&self.messages, tool_defs).await?
+            let mut transient_attempt = 0_u32;
+            let mut stream = loop {
+                match llm.complete_stream(&self.messages, tool_defs).await {
+                    Ok(stream) => break stream,
+                    Err(e) if is_context_overflow(&e) => {
+                        warn!("Context overflow detected, forcing compaction: {e}");
+                        self.run_reactive_compaction(llm, Some(event_sink)).await?;
+                    }
+                    Err(e)
+                        if classify_error(&e) == ErrorClass::Transient && transient_attempt < 3 =>
+                    {
+                        let backoff_ms = 250_u64.saturating_mul(1 << transient_attempt);
+                        transient_attempt += 1;
+                        warn!(
+                            attempt = transient_attempt,
+                            backoff_ms, error = %e,
+                            "Streaming inference unavailable; retrying"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    }
+                    Err(e) => return Err(e),
                 }
-                Err(e) => return Err(e),
             };
 
             let mut text_parts = Vec::new();
             let mut current_text = String::new();
-            let mut pending_think = String::new();
             let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
             let mut _stop_reason = StopReason::EndTurn;
 
             while let Some(chunk) = stream.next().await {
                 match chunk? {
                     StreamChunk::TextDelta { text } => {
-                        // Flush any pending thinking content first
-                        if !pending_think.is_empty() {
-                            event_sink.emit(Event::TextDelta {
-                                delta: pending_think.clone(),
-                            });
-                            pending_think.clear();
-                        }
                         current_text.push_str(&text);
                         event_sink.emit(Event::TextDelta { delta: text });
                     }
                     StreamChunk::ToolUseStart { id, name } => {
-                        // Flush any pending text/thinking
-                        if !pending_think.is_empty() {
-                            event_sink.emit(Event::TextDelta {
-                                delta: pending_think.clone(),
-                            });
-                            pending_think.clear();
-                        }
                         if !current_text.is_empty() {
                             text_parts.push(current_text.clone());
                             current_text.clear();
@@ -109,11 +109,9 @@ impl ReActLoop {
                         });
                         tool_calls.push((id, name, serde_json::Value::Null));
                     }
-                    StreamChunk::ThinkingDelta { text } => {
-                        // Batch thinking content — emit as single chunk when flushed
-                        // to avoid per-token socket writes (which cause TUI lag).
-                        pending_think.push_str(&text);
-                        current_text.push_str(&text);
+                    StreamChunk::ThinkingDelta { text: _ } => {
+                        // Thinking is internal model state. Keep it out of both
+                        // the visible text stream and the persisted answer.
                     }
                     StreamChunk::ToolUseDelta { id: _, delta: _ } => {
                         // Accumulated in ToolUseComplete
@@ -158,12 +156,6 @@ impl ReActLoop {
                 }
             }
 
-            // Flush any remaining thinking content
-            if !pending_think.is_empty() {
-                event_sink.emit(Event::TextDelta {
-                    delta: pending_think,
-                });
-            }
             // Flush remaining text
             if !current_text.is_empty() {
                 text_parts.push(current_text);
