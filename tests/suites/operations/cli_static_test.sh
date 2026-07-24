@@ -8,6 +8,8 @@ bash -n "$entry" "$root"/scripts/lib/aletheon/*.sh
 [[ -x "$entry" ]]
 grep -Fq 'source "$SCRIPT_DIR/lib/aletheon/runtime_gate.sh"' "$entry"
 grep -Fq 'cmd_installed_runtime_gate' "$root/scripts/lib/aletheon/verify.sh"
+grep -Fq 'reconcile_user_cli_shadow' "$root/scripts/lib/aletheon/install.sh"
+grep -Fq 'PATH resolves aletheon to a stale binary' "$root/scripts/lib/aletheon/verify.sh"
 
 for command in build install deploy configure status health restart logs verify closure \
   backup restore upgrade cleanup secrets database acceptance test help; do
