@@ -413,7 +413,10 @@ impl TurnSessionStatePort for ProductionTurnSessions {
                             .iter()
                             .map(|(id, content, is_error)| ContentBlock::ToolResult {
                                 tool_use_id: id.clone(),
-                                content: content.clone(),
+                                content:
+                                    crate::application::session_projection::bounded_tool_result(
+                                        content,
+                                    ),
                                 is_error: *is_error,
                             })
                             .collect(),

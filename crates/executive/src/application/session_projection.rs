@@ -58,7 +58,7 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
     Ok(messages)
 }
 
-fn bounded_tool_result(content: &str) -> String {
+pub(crate) fn bounded_tool_result(content: &str) -> String {
     if content.len() <= MAX_PROJECTED_TOOL_RESULT_BYTES {
         return content.to_owned();
     }
