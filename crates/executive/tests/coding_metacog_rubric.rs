@@ -3,9 +3,7 @@
 //! Verifies that the coding rubric v1 has correct structure, that completion-only
 //! messages produce low coverage, and that every dimension is independently testable.
 
-use executive::application::coding_metacog_rubric::{
-    coding_rubric_v1, Rubric, RubricDimension, RubricGate, CODING_RUBRIC_V1,
-};
+use executive::application::coding_metacog_rubric::{coding_rubric_v1, Rubric, CODING_RUBRIC_V1};
 
 use fabric::types::metacognition_evaluation::{
     DimensionScore, DimensionValue, GateResult, RubricId,

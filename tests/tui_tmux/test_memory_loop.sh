@@ -84,7 +84,7 @@ fi
 
 # /memory command.
 tmux send-keys -t "$SESSION" "/memory" Enter
-if tui_wait "Memory Facts" 20; then
+if tui_wait "Core Memory Blocks|Recall Memory" 20; then
   test_pass "/memory renders"
 else
   test_fail "/memory renders"
