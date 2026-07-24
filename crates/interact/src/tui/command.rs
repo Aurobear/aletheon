@@ -52,6 +52,10 @@ pub enum BuiltinCommand {
     },
     /// Query session memory (facts, recall, core blocks).
     Memory,
+    MemorySearch {
+        query: String,
+    },
+    MemoryStatus,
 }
 
 /// Parsed command type.
@@ -107,6 +111,19 @@ mod tests {
         assert!(matches!(
             result,
             CommandType::Builtin(BuiltinCommand::Clear)
+        ));
+    }
+
+    #[test]
+    fn test_parse_memory_subcommands() {
+        assert!(matches!(
+            parse_command("/memory status"),
+            Some(CommandType::Builtin(BuiltinCommand::MemoryStatus))
+        ));
+        assert!(matches!(
+            parse_command("/memory search deployment path"),
+            Some(CommandType::Builtin(BuiltinCommand::MemorySearch { query }))
+                if query == "deployment path"
         ));
     }
 

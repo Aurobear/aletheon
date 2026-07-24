@@ -399,6 +399,12 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
             // /memory response — render fact list
             let formatted = format_memory_facts(facts);
             app.chat.set_assistant_stream(formatted);
+        } else if let Some(memory) = result.get("memory") {
+            // /memory status response
+            app.chat.set_assistant_stream(format_memory_status(memory));
+        } else if let Some(content) = result.get("content").and_then(|value| value.as_str()) {
+            // session.memory returns bounded markdown owned by the daemon.
+            app.chat.set_assistant_stream(content.to_string());
         } else if let Some(tools) = result.get("tools") {
             // tools/list response
             let formatted = format_tools_list(tools);
@@ -809,6 +815,42 @@ pub fn format_status(status: &serde_json::Value) -> String {
             lines.push(format!("Last compaction: {before} → {after} ({strategy})"));
         }
     }
+    if let Some(memory) = status.get("memory") {
+        lines.push(String::new());
+        lines.push("Memory:".to_string());
+        lines.push(format!(
+            "  Provider: {}",
+            memory
+                .get("provider")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown")
+        ));
+        lines.push(format!(
+            "  Local: {}",
+            memory
+                .get("local")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown")
+        ));
+        if let Some(supplemental) = memory.get("supplemental") {
+            let enabled = supplemental
+                .get("enabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let state = supplemental
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            let depth = supplemental
+                .get("queue_depth")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            lines.push(format!(
+                "  Supplemental: {} (queue depth {depth})",
+                if enabled { state } else { "disabled" }
+            ));
+        }
+    }
     lines.push(String::new());
     lines.push("Care Weights:".to_string());
 
@@ -936,9 +978,37 @@ pub fn format_memory_facts(facts: &serde_json::Value) -> String {
     lines.join("\n")
 }
 
+pub fn format_memory_status(memory: &serde_json::Value) -> String {
+    let provider = memory
+        .get("provider")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let local = memory
+        .get("local")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let supplemental = memory.get("supplemental");
+    let enabled = supplemental
+        .and_then(|value| value.get("enabled"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let state = supplemental
+        .and_then(|value| value.get("state"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let queue_depth = supplemental
+        .and_then(|value| value.get("queue_depth"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    format!(
+        "=== Memory Status ===\nProvider: {provider}\nLocal: {local}\nSupplemental: {} (queue depth {queue_depth})",
+        if enabled { state } else { "disabled" }
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{deduplicate_consecutive_text, handle_event};
+    use super::{deduplicate_consecutive_text, format_memory_status, handle_event};
     use crate::tui::{chat::ChatEntry, host_time::ClientClock, term_compat::TermCaps, App};
     use executive::application::{tool_stream_bridge::ToolStreamHandle, turn_pipeline};
     use fabric::{
@@ -955,6 +1025,22 @@ mod tests {
             deduplicate_consecutive_text("abcabc trailing"),
             "abcabc trailing"
         );
+    }
+
+    #[test]
+    fn memory_status_reports_local_and_supplemental_health() {
+        let rendered = format_memory_status(&serde_json::json!({
+            "provider": "composite",
+            "local": "healthy",
+            "supplemental": {
+                "enabled": true,
+                "state": "degraded",
+                "queue_depth": 3
+            }
+        }));
+        assert!(rendered.contains("Provider: composite"));
+        assert!(rendered.contains("Local: healthy"));
+        assert!(rendered.contains("Supplemental: degraded (queue depth 3)"));
     }
 
     #[test]

@@ -213,7 +213,7 @@ impl Default for MemoryExtractionConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryPromotionConfig {
-    #[serde(default)]
+    #[serde(default = "default_promotion_enabled")]
     pub enabled: bool,
     #[serde(default = "default_min_confidence")]
     pub min_confidence: f64,
@@ -224,11 +224,15 @@ pub struct MemoryPromotionConfig {
 impl Default for MemoryPromotionConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: default_promotion_enabled(),
             min_confidence: default_min_confidence(),
             max_promoted_facts: default_max_promoted(),
         }
     }
+}
+
+fn default_promotion_enabled() -> bool {
+    true
 }
 
 fn default_recall_enabled() -> bool {

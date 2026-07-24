@@ -50,6 +50,8 @@ pub struct DaemonConfig {
     pub telegram: crate::composition::config::TelegramChannelConfig,
     /// gbrain shared memory integration configuration.
     pub supplemental_memory: crate::composition::config::SupplementalMemoryConfig,
+    /// Provider-neutral recall, extraction, and promotion policy.
+    pub memory_policy: crate::composition::config::MemoryConfig,
     /// Typed deployment paths, quotas, integrations, and health policy.
     pub deployment: cognit::config::DeploymentConfig,
     /// Host-layer turn admission limits from the effective AppConfig.

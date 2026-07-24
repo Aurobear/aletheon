@@ -346,9 +346,30 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Memory)) => {
-                send_request(app, ClientRpcRequest::memory_list(None, false)).await;
+                send_request(app, ClientRpcRequest::SessionMemory).await;
                 app.chat
                     .add_text(ChatRole::System, "查询记忆中...".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::MemorySearch { query })) => {
+                if query.is_empty() {
+                    app.chat
+                        .add_text(ChatRole::System, "用法：/memory search <query>".to_string());
+                } else {
+                    send_request(
+                        app,
+                        ClientRpcRequest::memory_search(query, app.app_state.session_id.clone()),
+                    )
+                    .await;
+                    app.chat
+                        .add_text(ChatRole::System, "搜索记忆中...".to_string());
+                }
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::MemoryStatus)) => {
+                send_request(app, ClientRpcRequest::MemoryStatus).await;
+                app.chat
+                    .add_text(ChatRole::System, "查询记忆状态中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::SkillRun { name, args })) => {

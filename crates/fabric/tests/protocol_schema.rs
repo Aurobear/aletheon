@@ -348,6 +348,10 @@ fn memory_goal_and_workflow_requests_preserve_legacy_wire_fields() {
         .to_json_rpc(Some(1))
         .unwrap();
     assert_eq!(search["method"], "memory.search");
+
+    let status = ClientRpcRequest::MemoryStatus.to_json_rpc(Some(8)).unwrap();
+    assert_eq!(status["method"], "memory.status");
+    assert!(status.get("params").is_none());
     assert_eq!(search["params"]["query"], "typed");
     assert_eq!(search["params"]["scope"], "session");
 

@@ -149,6 +149,14 @@ impl CoreMemory {
         self.try_save();
     }
 
+    /// Keep only the promoted fact blocks selected by the latest bounded
+    /// promotion query. Built-in and operator-managed blocks are untouched.
+    pub fn retain_promoted_facts(&mut self, labels: &std::collections::HashSet<String>) {
+        self.blocks
+            .retain(|label, _| !label.starts_with("fact:") || labels.contains(label));
+        self.try_save();
+    }
+
     /// Get a block value.
     pub fn get(&self, label: &str) -> Option<&str> {
         self.blocks.get(label).map(|b| b.value.as_str())
@@ -500,6 +508,20 @@ mod tests {
         let prompt = mem.inject_into_prompt();
         assert!(prompt.contains("[custom]"));
         assert!(prompt.contains("custom data"));
+    }
+
+    #[test]
+    fn retain_promoted_facts_is_bounded_without_touching_managed_blocks() {
+        let mut mem = CoreMemory::with_defaults();
+        mem.set_block(MemoryBlock::new("fact:preference:old", "old", 3000));
+        mem.set_block(MemoryBlock::new("fact:preference:new", "new", 3000));
+        mem.retain_promoted_facts(&std::collections::HashSet::from([String::from(
+            "fact:preference:new",
+        )]));
+
+        assert!(!mem.blocks().contains_key("fact:preference:old"));
+        assert!(mem.blocks().contains_key("fact:preference:new"));
+        assert!(mem.blocks().contains_key("persona"));
     }
 
     #[test]

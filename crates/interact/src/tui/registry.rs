@@ -716,7 +716,17 @@ fn to_builtin(id: BuiltinId, args: &str) -> BuiltinCommand {
         BuiltinId::Diff => BuiltinCommand::Diff,
         BuiltinId::Mention => BuiltinCommand::Mention { path: args.into() },
         BuiltinId::Input => BuiltinCommand::Input,
-        BuiltinId::Memory => BuiltinCommand::Memory,
+        BuiltinId::Memory => {
+            if args == "status" {
+                BuiltinCommand::MemoryStatus
+            } else if let Some(query) = args.strip_prefix("search ").map(str::trim) {
+                BuiltinCommand::MemorySearch {
+                    query: query.to_string(),
+                }
+            } else {
+                BuiltinCommand::Memory
+            }
+        }
     }
 }
 
@@ -781,6 +791,7 @@ mod tests {
             "context",
             "profile",
             "computer",
+            "memory",
         ] {
             assert!(registry.is_builtin(name), "missing /{name}");
         }

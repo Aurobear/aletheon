@@ -573,7 +573,7 @@ impl ConsolidationRepository {
              JOIN memory_candidates c ON r.content_hash = c.content_hash
              WHERE r.scope_json=?1 AND r.status='current' AND c.decision IN ('insert','supersede')
              GROUP BY r.content_hash HAVING MAX(c.confidence) >= ?2
-             ORDER BY MAX(c.confidence) DESC LIMIT ?3",
+             ORDER BY r.created_at_ms DESC LIMIT ?3",
         )?;
         let records = query
             .query_map(params![scope_json, min_confidence, limit as i64], |row| {
