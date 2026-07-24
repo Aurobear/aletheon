@@ -142,7 +142,20 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::ReflectNow)) => {
-                send_request(app, ClientRpcRequest::ReflectNow).await;
+                let Some(session_id) = app.app_state.session_id.clone() else {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "会话仍在初始化，请稍后重试 /reflect_now".to_string(),
+                    );
+                    return;
+                };
+                send_request(
+                    app,
+                    ClientRpcRequest::ReflectNowFor(fabric::protocol::client::SessionParams {
+                        session_id,
+                    }),
+                )
+                .await;
                 app.chat
                     .add_text(ChatRole::System, "执行即时反思中...".to_string());
                 return;
