@@ -539,11 +539,21 @@ impl LlmProvider for OpenAiProvider {
         .map_err(provider_request_error)?;
 
         if !response.status().is_success() {
+            let message_bytes = messages
+                .iter()
+                .map(|message| serde_json::to_vec(message).map_or(0, |value| value.len()))
+                .collect::<Vec<_>>();
+            let tool_bytes = tools
+                .iter()
+                .map(|tool| serde_json::to_vec(tool).map_or(0, |value| value.len()))
+                .collect::<Vec<_>>();
             tracing::warn!(
                 status = %response.status(),
                 request_bytes,
                 messages = messages.len(),
                 tools = tools.len(),
+                message_bytes = ?message_bytes,
+                tool_bytes = ?tool_bytes,
                 request_id = response
                     .headers()
                     .get("x-request-id")

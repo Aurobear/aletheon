@@ -7,20 +7,6 @@ use corpus::skill::loader::LoadedSkill;
 /// prefix stays byte-stable across turns for maximum cache reuse.
 pub struct PrefixBuilder;
 
-const MAX_SKILL_DESCRIPTION_CHARS: usize = 512;
-const MAX_SKILLS_INDEX_CHARS: usize = 16 * 1024;
-
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    if max_chars == 0 {
-        return String::new();
-    }
-    let truncated: String = value.chars().take(max_chars - 1).collect();
-    format!("{truncated}…")
-}
-
 impl PrefixBuilder {
     /// Build the prefix from its components.
     /// Order is deterministic: base -> skills. Memory is selected through the
@@ -32,24 +18,10 @@ impl PrefixBuilder {
         // 1. Base system prompt (most stable text — stays as cache prefix)
         prefix.push_str(config_prompt);
 
-        // 2. Skills index (names + descriptions only, not full content)
-        if !skills.is_empty() {
-            prefix.push_str(
-                "\n\n[Skills]\nThe following skills are available. Use them when relevant.\n",
-            );
-            let mut index_chars = 0;
-            for skill in skills {
-                let description = truncate_chars(&skill.description, MAX_SKILL_DESCRIPTION_CHARS);
-                let entry = format!("\n## {}\n{}\n", skill.name, description);
-                let remaining = MAX_SKILLS_INDEX_CHARS.saturating_sub(index_chars);
-                if remaining == 0 {
-                    break;
-                }
-                let bounded = truncate_chars(&entry, remaining);
-                index_chars += bounded.chars().count();
-                prefix.push_str(&bounded);
-            }
-        }
+        // Skills are selected per turn by the skill router. Injecting the full
+        // catalog here wastes stable-prefix tokens and exposes irrelevant
+        // descriptions before the user asks for them.
+        let _ = skills;
 
         prefix
     }
@@ -134,12 +106,10 @@ mod tests {
     }
 
     #[test]
-    fn skills_appended_after_base() {
+    fn skills_are_not_injected_into_the_stable_prefix() {
         let skills = vec![make_skill("test", "content")];
         let prefix = PrefixBuilder::build("Base.", &skills);
-        let base_pos = prefix.find("Base.").unwrap();
-        let skills_pos = prefix.find("[Skills]").unwrap();
-        assert!(base_pos < skills_pos);
+        assert_eq!(prefix, "Base.");
     }
 
     #[test]
@@ -150,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn skills_index_uses_description_not_full_body() {
+    fn skills_index_does_not_expose_description_or_full_body() {
         let skill = LoadedSkill {
             name: "large".into(),
             description: "Short routing summary".into(),
@@ -160,13 +130,13 @@ mod tests {
 
         let prefix = PrefixBuilder::build("Base.", &[skill]);
 
-        assert!(prefix.contains("Short routing summary"));
+        assert!(!prefix.contains("Short routing summary"));
         assert!(!prefix.contains("FULL_BODY_SHOULD_NOT_BE_IN_PREFIX"));
-        assert!(prefix.len() < 32 * 1024);
+        assert_eq!(prefix, "Base.");
     }
 
     #[test]
-    fn skills_index_has_total_budget() {
+    fn many_skills_do_not_change_prefix_size() {
         let skills = (0..100)
             .map(|i| LoadedSkill {
                 name: format!("skill-{i}"),
@@ -178,7 +148,7 @@ mod tests {
 
         let prefix = PrefixBuilder::build("Base.", &skills);
 
-        assert!(prefix.len() < 32 * 1024);
+        assert_eq!(prefix, "Base.");
     }
 
     #[test]
