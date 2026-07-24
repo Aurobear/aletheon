@@ -471,7 +471,7 @@ impl TurnPipeline {
         pipeline_lifecycle.apply(TurnPipelineEvent::ContextPrepared)?;
 
         // LLM selection
-        let llm = self.runtime_ports.models.select(&message);
+        let llm = self.runtime_ports.models.select(&message).await;
 
         // -- Governed capability setup --
         // Context Space seed — user turn input is private overlay data, not

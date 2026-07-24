@@ -20,8 +20,9 @@ pub trait StormStatePort: Send + Sync {
     async fn failure_count(&self) -> usize;
 }
 
+#[async_trait]
 pub trait ModelSelectionPort: Send + Sync {
-    fn select(&self, message: &str) -> Arc<dyn LlmProvider>;
+    async fn select(&self, message: &str) -> Arc<dyn LlmProvider>;
 }
 
 #[async_trait]

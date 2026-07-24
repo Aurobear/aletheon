@@ -15,6 +15,20 @@ mod goal_runtime_tests {
 
     #[async_trait::async_trait]
     impl InferencePort for NoopInference {
+        async fn capabilities(
+            &self,
+            model_spec: &str,
+        ) -> Result<
+            crate::application::inference_port::ModelCapabilities,
+            crate::application::inference_port::InferenceError,
+        > {
+            Ok(crate::application::inference_port::ModelCapabilities {
+                model_spec: model_spec.into(),
+                display_name: model_spec.into(),
+                max_context_tokens: 128_000,
+            })
+        }
+
         async fn complete(
             &self,
             _request: crate::application::inference_port::CoreInferenceRequest,
@@ -72,7 +86,7 @@ mod goal_runtime_tests {
         }
     }
 
-    fn register(
+    async fn register(
         config: GoalRuntimeConfig,
         app: AppConfig,
     ) -> anyhow::Result<(RuntimeRegistry, Vec<fabric::RuntimeId>)> {
@@ -86,21 +100,22 @@ mod goal_runtime_tests {
             Vec::new(),
             Arc::new(NoopCapability),
             Arc::new(SystemClock::new()),
-        )?;
+        )
+        .await?;
         Ok((registry, ids))
     }
 
-    #[test]
-    fn disabled_goal_runtime_registers_nothing() {
+    #[tokio::test]
+    async fn disabled_goal_runtime_registers_nothing() {
         let mut app = AppConfig::default();
         app.providers.push(provider("p"));
-        let (registry, ids) = register(GoalRuntimeConfig::default(), app).unwrap();
+        let (registry, ids) = register(GoalRuntimeConfig::default(), app).await.unwrap();
         assert!(ids.is_empty());
         assert!(!registry.contains(&fabric::RuntimeId("deepseek-worker".into())));
     }
 
-    #[test]
-    fn enabled_goal_runtime_rejects_missing_route_and_unknown_alias() {
+    #[tokio::test]
+    async fn enabled_goal_runtime_rejects_missing_route_and_unknown_alias() {
         let mut app = AppConfig::default();
         app.providers.push(provider("p"));
         let missing = GoalRuntimeConfig {
@@ -109,6 +124,7 @@ mod goal_runtime_tests {
             reviewer: None,
         };
         assert!(register(missing, app.clone())
+            .await
             .unwrap_err()
             .to_string()
             .contains("reviewer routing is missing"));
@@ -119,13 +135,14 @@ mod goal_runtime_tests {
             reviewer: Some(route("escalation-reviewer", "p/model")),
         };
         assert!(register(unknown, app)
+            .await
             .unwrap_err()
             .to_string()
             .contains("model alias 'unknown-alias' not found"));
     }
 
-    #[test]
-    fn same_provider_can_back_distinct_runtime_ids() {
+    #[tokio::test]
+    async fn same_provider_can_back_distinct_runtime_ids() {
         let mut app = AppConfig::default();
         app.providers.push(provider("shared"));
         let config = GoalRuntimeConfig {
@@ -133,15 +150,15 @@ mod goal_runtime_tests {
             worker: Some(route("deepseek-worker", "shared/worker-model")),
             reviewer: Some(route("escalation-reviewer", "shared/reviewer-model")),
         };
-        let (registry, ids) = register(config, app).unwrap();
+        let (registry, ids) = register(config, app).await.unwrap();
         assert_eq!(ids.len(), 2);
         for id in ids {
             assert!(registry.contains(&id));
         }
     }
 
-    #[test]
-    fn distinct_providers_register_worker_and_reviewer() {
+    #[tokio::test]
+    async fn distinct_providers_register_worker_and_reviewer() {
         let mut app = AppConfig::default();
         app.providers.push(provider("worker-provider"));
         app.providers.push(provider("review-provider"));
@@ -150,7 +167,7 @@ mod goal_runtime_tests {
             worker: Some(route("deepseek-worker", "worker-provider/model")),
             reviewer: Some(route("escalation-reviewer", "review-provider/model")),
         };
-        let (registry, ids) = register(config, app).unwrap();
+        let (registry, ids) = register(config, app).await.unwrap();
         assert_eq!(
             ids,
             vec![
@@ -162,8 +179,8 @@ mod goal_runtime_tests {
         assert!(registry.contains(&ids[1]));
     }
 
-    #[test]
-    fn agent_profiles_resolve_model_tools_and_frontmatter_limits() {
+    #[tokio::test]
+    async fn agent_profiles_resolve_model_tools_and_frontmatter_limits() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
             directory.path().join("reviewer.md"),
@@ -175,8 +192,11 @@ mod goal_runtime_tests {
         app.agent.default_provider = Some("shared".into());
         app.agent.default_model = Some("model".into());
         let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
-        let llm: Arc<dyn LlmProvider> =
-            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let llm: Arc<dyn LlmProvider> = Arc::new(
+            PortLlmProvider::resolve(inference.clone(), "shared/model")
+                .await
+                .unwrap(),
+        );
         let definitions = ["file_read", "grep"]
             .into_iter()
             .map(|name| fabric::ToolDefinition {
@@ -193,6 +213,7 @@ mod goal_runtime_tests {
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
         )
+        .await
         .unwrap();
         let registry = result.registry;
         let profiles = result.profiles;
@@ -203,8 +224,8 @@ mod goal_runtime_tests {
         assert!(registry.resolve(&profile.id).is_ok());
     }
 
-    #[test]
-    fn agent_profile_token_overrides_feed_adaptive_context_limits() {
+    #[tokio::test]
+    async fn agent_profile_token_overrides_feed_adaptive_context_limits() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
             directory.path().join("compact.md"),
@@ -212,8 +233,11 @@ mod goal_runtime_tests {
         )
         .unwrap();
         let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
-        let llm: Arc<dyn LlmProvider> =
-            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let llm: Arc<dyn LlmProvider> = Arc::new(
+            PortLlmProvider::resolve(inference.clone(), "shared/model")
+                .await
+                .unwrap(),
+        );
         let definitions = vec![fabric::ToolDefinition {
             name: "file_read".into(),
             description: "read".into(),
@@ -237,6 +261,7 @@ mod goal_runtime_tests {
             &crate::composition::config::ExecutiveConfig::default(),
             &profiles,
         )
+        .await
         .unwrap();
 
         let profile = result.profiles.get("compact").unwrap();
@@ -244,8 +269,8 @@ mod goal_runtime_tests {
         assert_eq!(profile.max_output_tokens, 1_000);
     }
 
-    #[test]
-    fn agent_profile_config_rejects_unknown_default_and_override() {
+    #[tokio::test]
+    async fn agent_profile_config_rejects_unknown_default_and_override() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
             directory.path().join("reviewer.md"),
@@ -253,8 +278,11 @@ mod goal_runtime_tests {
         )
         .unwrap();
         let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
-        let llm: Arc<dyn LlmProvider> =
-            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let llm: Arc<dyn LlmProvider> = Arc::new(
+            PortLlmProvider::resolve(inference.clone(), "shared/model")
+                .await
+                .unwrap(),
+        );
         let definitions = vec![fabric::ToolDefinition {
             name: "file_read".into(),
             description: "read".into(),
@@ -273,6 +301,7 @@ mod goal_runtime_tests {
             &crate::composition::config::ExecutiveConfig::default(),
             &unknown_default,
         )
+        .await
         .is_err());
 
         unknown_default.default.clear();
@@ -288,11 +317,12 @@ mod goal_runtime_tests {
             &crate::composition::config::ExecutiveConfig::default(),
             &unknown_default,
         )
+        .await
         .is_err());
     }
 
-    #[test]
-    fn agent_tool_registration_profile_can_reference_agent_spawn() {
+    #[tokio::test]
+    async fn agent_tool_registration_profile_can_reference_agent_spawn() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
             directory.path().join("orchestrator.md"),
@@ -300,8 +330,11 @@ mod goal_runtime_tests {
         )
         .unwrap();
         let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
-        let llm: Arc<dyn LlmProvider> =
-            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let llm: Arc<dyn LlmProvider> = Arc::new(
+            PortLlmProvider::resolve(inference.clone(), "shared/model")
+                .await
+                .unwrap(),
+        );
 
         let mut definitions: Vec<fabric::ToolDefinition> = vec![fabric::ToolDefinition {
             name: "file_read".into(),
@@ -318,6 +351,7 @@ mod goal_runtime_tests {
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
         )
+        .await
         .unwrap();
         let registry = result.registry;
         let profiles = result.profiles;
@@ -329,8 +363,8 @@ mod goal_runtime_tests {
         assert!(registry.resolve(&profile.id).is_ok());
     }
 
-    #[test]
-    fn agent_tool_registration_unknown_tool_rejected() {
+    #[tokio::test]
+    async fn agent_tool_registration_unknown_tool_rejected() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
             directory.path().join("bad.md"),
@@ -338,8 +372,11 @@ mod goal_runtime_tests {
         )
         .unwrap();
         let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
-        let llm: Arc<dyn LlmProvider> =
-            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let llm: Arc<dyn LlmProvider> = Arc::new(
+            PortLlmProvider::resolve(inference.clone(), "shared/model")
+                .await
+                .unwrap(),
+        );
         let definitions: Vec<fabric::ToolDefinition> = vec![fabric::ToolDefinition {
             name: "file_read".into(),
             description: "read".into(),
@@ -354,6 +391,7 @@ mod goal_runtime_tests {
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
         )
+        .await
         .unwrap();
         assert_eq!(result.quarantined.len(), 1);
         assert_eq!(result.quarantined[0].name, "bad");
@@ -364,8 +402,8 @@ mod goal_runtime_tests {
         );
     }
 
-    #[test]
-    fn mixed_valid_and_invalid_profiles_degraded_not_fatal() {
+    #[tokio::test]
+    async fn mixed_valid_and_invalid_profiles_degraded_not_fatal() {
         // Phase 3: invalid profiles are quarantined, valid ones remain active
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -379,8 +417,11 @@ mod goal_runtime_tests {
         )
         .unwrap();
         let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
-        let llm: Arc<dyn LlmProvider> =
-            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let llm: Arc<dyn LlmProvider> = Arc::new(
+            PortLlmProvider::resolve(inference.clone(), "shared/model")
+                .await
+                .unwrap(),
+        );
         let definitions: Vec<fabric::ToolDefinition> = vec![fabric::ToolDefinition {
             name: "file_read".into(),
             description: "read".into(),
@@ -395,6 +436,7 @@ mod goal_runtime_tests {
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
         )
+        .await
         .unwrap();
         // Valid profile loaded, invalid profile quarantined
         assert_eq!(result.quarantined.len(), 1);
@@ -405,8 +447,8 @@ mod goal_runtime_tests {
         );
     }
 
-    #[test]
-    fn invalid_profile_error_messages_identify_the_failing_tool() {
+    #[tokio::test]
+    async fn invalid_profile_error_messages_identify_the_failing_tool() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
             directory.path().join("bad.md"),
@@ -414,8 +456,11 @@ mod goal_runtime_tests {
         )
         .unwrap();
         let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
-        let llm: Arc<dyn LlmProvider> =
-            Arc::new(PortLlmProvider::new(inference.clone(), "shared/model"));
+        let llm: Arc<dyn LlmProvider> = Arc::new(
+            PortLlmProvider::resolve(inference.clone(), "shared/model")
+                .await
+                .unwrap(),
+        );
         let definitions: Vec<fabric::ToolDefinition> = vec![fabric::ToolDefinition {
             name: "file_read".into(),
             description: "read".into(),
@@ -430,6 +475,7 @@ mod goal_runtime_tests {
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
         )
+        .await
         .unwrap();
         assert_eq!(
             result.quarantined.len(),

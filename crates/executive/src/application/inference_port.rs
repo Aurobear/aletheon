@@ -14,6 +14,13 @@ pub struct CoreInferenceRequest {
     pub model_spec: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCapabilities {
+    pub model_spec: String,
+    pub display_name: String,
+    pub max_context_tokens: usize,
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("inference provider failed: {0}")]
 pub struct InferenceError(#[source] anyhow::Error);
@@ -27,6 +34,10 @@ impl From<anyhow::Error> for InferenceError {
 /// Object-safe inference operations used by the user runtime.
 #[async_trait::async_trait]
 pub trait InferencePort: Send + Sync {
+    async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
+        Err(anyhow::anyhow!("model capabilities are unavailable for '{model_spec}'").into())
+    }
+
     async fn complete(&self, request: CoreInferenceRequest) -> Result<LlmResponse, InferenceError>;
 
     async fn stream(&self, request: CoreInferenceRequest) -> Result<LlmStream, InferenceError>;
@@ -49,19 +60,30 @@ pub struct PortLlmProvider {
 }
 
 impl PortLlmProvider {
-    pub fn new(inference: Arc<dyn InferencePort>, model_spec: impl Into<String>) -> Self {
-        let model_spec = model_spec.into();
-        let display_name = if model_spec.is_empty() {
-            "core-default".to_string()
-        } else {
-            model_spec.clone()
-        };
-        Self {
-            inference,
-            model_spec,
-            display_name,
-            max_context: 128_000,
+    pub fn new(
+        inference: Arc<dyn InferencePort>,
+        capabilities: ModelCapabilities,
+    ) -> anyhow::Result<Self> {
+        if capabilities.max_context_tokens == 0 {
+            anyhow::bail!(
+                "model '{}' reported a zero-token context window",
+                capabilities.model_spec
+            );
         }
+        Ok(Self {
+            inference,
+            model_spec: capabilities.model_spec,
+            display_name: capabilities.display_name,
+            max_context: capabilities.max_context_tokens,
+        })
+    }
+
+    pub async fn resolve(
+        inference: Arc<dyn InferencePort>,
+        model_spec: impl AsRef<str>,
+    ) -> anyhow::Result<Self> {
+        let capabilities = inference.capabilities(model_spec.as_ref()).await?;
+        Self::new(inference, capabilities)
     }
 }
 
@@ -114,6 +136,19 @@ impl LocalInferencePort {
 
 #[async_trait::async_trait]
 impl InferencePort for LocalInferencePort {
+    async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
+        let display_name = self.provider.name().to_string();
+        Ok(ModelCapabilities {
+            model_spec: if model_spec.trim().is_empty() {
+                display_name.clone()
+            } else {
+                model_spec.trim().to_string()
+            },
+            display_name,
+            max_context_tokens: self.provider.max_context_length(),
+        })
+    }
+
     async fn complete(&self, request: CoreInferenceRequest) -> Result<LlmResponse, InferenceError> {
         self.provider
             .complete(&request.messages, &request.tools)

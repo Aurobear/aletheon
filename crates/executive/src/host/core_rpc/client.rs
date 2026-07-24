@@ -7,7 +7,9 @@ use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
-use crate::application::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
+use crate::application::inference_port::{
+    CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
+};
 use fabric::{LlmResponse, LlmStream};
 
 use super::protocol::{
@@ -52,6 +54,37 @@ impl CoreRpcClient {
 
 #[async_trait::async_trait]
 impl InferencePort for CoreRpcClient {
+    async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
+        let id = self.next_id();
+        let stream = self
+            .connect_and_send(&CoreRequest::capabilities(id, model_spec))
+            .await?;
+        let mut reader = BufReader::new(stream);
+        let frame = read_json_line::<_, CoreFrame>(&mut reader, self.max_frame_bytes)
+            .await
+            .map_err(InferenceError::from)?
+            .ok_or_else(|| {
+                InferenceError::from(anyhow::anyhow!(
+                    "core RPC closed before capabilities response"
+                ))
+            })?;
+        if frame.id() != id {
+            return Err(anyhow::anyhow!(
+                "core RPC response id {} does not match request id {id}",
+                frame.id()
+            )
+            .into());
+        }
+        match frame {
+            CoreFrame::Capabilities { capabilities, .. } => Ok(capabilities),
+            CoreFrame::Error { message, .. } => Err(anyhow::anyhow!(message).into()),
+            other => Err(anyhow::anyhow!(
+                "unexpected core RPC frame for capabilities request: {other:?}"
+            )
+            .into()),
+        }
+    }
+
     async fn complete(&self, request: CoreInferenceRequest) -> Result<LlmResponse, InferenceError> {
         let id = self.next_id();
         let stream = self

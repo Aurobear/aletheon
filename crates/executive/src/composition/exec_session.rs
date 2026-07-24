@@ -103,7 +103,7 @@ impl ExecSessionBuilder {
         } else {
             self.model.clone()
         };
-        let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::new(inference, model));
+        let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::resolve(inference, model).await?);
         info!(provider = llm.name(), model = %self.model, "LLM provider initialized");
 
         let user_paths =

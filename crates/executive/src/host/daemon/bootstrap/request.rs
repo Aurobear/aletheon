@@ -82,6 +82,7 @@ impl RequestHandler {
             // make maintenance inference fail while routed turns still work.
             model_spec: String::new(),
         })
+        .await?
         .provider;
         info!(provider = llm.name(), "LLM provider initialized");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
@@ -927,7 +928,8 @@ impl RequestHandler {
                 definitions: &definitions,
                 runtime_config: &runtime_config_snapshot,
                 profiles_config: &agent_profiles,
-            })?;
+            })
+            .await?;
             let native = Arc::new(crate::adapters::runtime::NativeCognitRuntime::new(
                 crate::adapters::runtime::NativeCognitRuntimeResources {
                     sessions: domains.cognition(),
@@ -967,7 +969,8 @@ impl RequestHandler {
                 corpus_group.tools.lock().await.definitions(),
                 capability_service.clone(),
                 clock.clone(),
-            )?;
+            )
+            .await?;
             if !registered.is_empty() {
                 info!(runtime_ids = ?registered, "Goal runtimes registered");
             }

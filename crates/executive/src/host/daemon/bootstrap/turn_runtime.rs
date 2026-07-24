@@ -177,10 +177,11 @@ struct ProductionModelSelection {
     default_llm: Arc<dyn LlmProvider>,
 }
 
+#[async_trait]
 impl ModelSelectionPort for ProductionModelSelection {
-    fn select(&self, message: &str) -> Arc<dyn LlmProvider> {
+    async fn select(&self, message: &str) -> Arc<dyn LlmProvider> {
         let task = self.router.classify_message(message);
-        match self.router.create_provider(task) {
+        match self.router.create_provider(task).await {
             Ok(provider) => {
                 tracing::info!(task=?task, model=provider.name(), "Model selected by router");
                 Arc::from(provider)

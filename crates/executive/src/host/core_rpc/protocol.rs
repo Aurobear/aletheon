@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::application::inference_port::CoreInferenceRequest;
+use crate::application::inference_port::{CoreInferenceRequest, ModelCapabilities};
 use fabric::{LlmResponse, StreamChunk};
 
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
@@ -9,6 +9,10 @@ pub const DEFAULT_MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CoreRequest {
+    Capabilities {
+        id: u64,
+        model_spec: String,
+    },
     Complete {
         id: u64,
         request: CoreInferenceRequest,
@@ -20,6 +24,13 @@ pub enum CoreRequest {
 }
 
 impl CoreRequest {
+    pub fn capabilities(id: u64, model_spec: impl Into<String>) -> Self {
+        Self::Capabilities {
+            id,
+            model_spec: model_spec.into(),
+        }
+    }
+
     pub fn complete(id: u64, request: CoreInferenceRequest) -> Self {
         Self::Complete { id, request }
     }
@@ -30,7 +41,9 @@ impl CoreRequest {
 
     pub fn id(&self) -> u64 {
         match self {
-            Self::Complete { id, .. } | Self::Stream { id, .. } => *id,
+            Self::Capabilities { id, .. } | Self::Complete { id, .. } | Self::Stream { id, .. } => {
+                *id
+            }
         }
     }
 }
@@ -38,16 +51,32 @@ impl CoreRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CoreFrame {
-    Response { id: u64, response: LlmResponse },
-    Chunk { id: u64, chunk: StreamChunk },
-    Completed { id: u64 },
-    Error { id: u64, message: String },
+    Capabilities {
+        id: u64,
+        capabilities: ModelCapabilities,
+    },
+    Response {
+        id: u64,
+        response: LlmResponse,
+    },
+    Chunk {
+        id: u64,
+        chunk: StreamChunk,
+    },
+    Completed {
+        id: u64,
+    },
+    Error {
+        id: u64,
+        message: String,
+    },
 }
 
 impl CoreFrame {
     pub fn id(&self) -> u64 {
         match self {
-            Self::Response { id, .. }
+            Self::Capabilities { id, .. }
+            | Self::Response { id, .. }
             | Self::Chunk { id, .. }
             | Self::Completed { id }
             | Self::Error { id, .. } => *id,
