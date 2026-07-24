@@ -11,6 +11,22 @@ pub struct CatalogEntry {
     pub exposure: ToolExposure,
 }
 
+impl CatalogEntry {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        search_text: &str,
+        exposure: ToolExposure,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            tokens: tokenize_and_stem(search_text),
+            exposure,
+        }
+    }
+}
+
 /// BM25 parameters and catalog for tool discovery.
 ///
 /// Scoring formula per query term `q` in document `d`:

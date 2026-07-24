@@ -230,6 +230,15 @@ impl std::fmt::Debug for ToolExecutionDescriptor {
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
+
+    /// Host-authored text used by the existing deferred-tool search catalog.
+    ///
+    /// Implementations may add stable synonyms without expanding the
+    /// model-visible description or introducing a second discovery index.
+    fn search_text(&self) -> String {
+        format!("{} {}", self.name(), self.description())
+    }
+
     fn input_schema(&self) -> serde_json::Value;
     fn permission_level(&self) -> PermissionLevel;
 
