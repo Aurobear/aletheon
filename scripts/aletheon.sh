@@ -5,6 +5,30 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 ALETHEON_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)
 export SCRIPT_DIR ALETHEON_ROOT
 
+# `sudo scripts/aletheon.sh deploy` must keep the deployment's user-scoped
+# phase attached to the invoking user's systemd manager. Re-enter before
+# sourcing common.sh so HOME and all derived user paths belong to that user;
+# cmd_deploy will cross the sudo boundary only for reviewed system assets.
+if [[ ${1:-} == deploy ]] &&
+   [[ ${EUID:-$(id -u)} -eq 0 ]] &&
+   [[ -n ${SUDO_USER:-} ]] &&
+   [[ $SUDO_USER != root ]] &&
+   [[ ${ALETHEON_DEPLOY_AS_USER:-0} != 1 ]]; then
+  deploy_user=$SUDO_USER
+  deploy_uid=$(id -u "$deploy_user")
+  deploy_home=$(getent passwd "$deploy_user" | cut -d: -f6)
+  [[ -n $deploy_home ]] || {
+    printf 'Unable to resolve home directory for sudo user: %s\n' "$deploy_user" >&2
+    exit 1
+  }
+  exec sudo -u "$deploy_user" -H env \
+    ALETHEON_DEPLOY_AS_USER=1 \
+    "HOME=$deploy_home" \
+    "XDG_RUNTIME_DIR=/run/user/$deploy_uid" \
+    "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$deploy_uid/bus" \
+    bash "$0" "$@"
+fi
+
 source "$SCRIPT_DIR/lib/aletheon/common.sh"
 source "$SCRIPT_DIR/lib/aletheon/build.sh"
 source "$SCRIPT_DIR/lib/aletheon/install.sh"
