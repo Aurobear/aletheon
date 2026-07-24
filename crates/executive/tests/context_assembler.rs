@@ -100,7 +100,7 @@ async fn fragments_have_one_deterministic_order_before_raw_input() {
         memory_context: String::new(),
     })));
     let assembled = assembler
-        .assemble(&request("raw user"), &[Message::assistant("prior")])
+        .assemble(&request("raw user"), &[Message::assistant("prior")], 1_000)
         .await
         .unwrap();
     let positions: Vec<_> = ["<conscious-context>", "<skills>", "raw user"]
@@ -127,7 +127,11 @@ async fn fragments_and_history_are_bounded_and_utf8_safe() {
         memory_context: String::new(),
     })));
     let assembled = assembler
-        .assemble(&request("raw"), &[Message::user("x".repeat(200_000))])
+        .assemble(
+            &request("raw"),
+            &[Message::user("x".repeat(200_000))],
+            8_000,
+        )
         .await
         .unwrap();
     assert!(assembled.effective_user_message.chars().count() < 50_000);
@@ -157,7 +161,11 @@ fn working_directory_prompt_distinguishes_policy_from_host_mounts() {
 fn turn_pipeline_has_one_context_assembly_route() {
     let pipeline = include_str!("../src/application/turn_pipeline.rs");
     assert!(pipeline.contains(".context_assembler"));
-    assert!(pipeline.contains(".assemble(&context_request, &existing_messages)"));
+    assert!(pipeline.contains(
+        ".assemble(
+                &context_request,
+                &existing_messages,"
+    ));
     assert!(pipeline.contains(".canonical_sessions"));
     assert!(pipeline.contains(".resume(&fabric::SessionId"));
     for removed in [

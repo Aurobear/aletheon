@@ -36,7 +36,7 @@ pub trait SelfPolicyPort: Send + Sync {
 #[async_trait]
 pub trait TurnSessionStatePort: Send + Sync {
     async fn current(&self, session_id: &str) -> anyhow::Result<(String, usize)>;
-    async fn begin_user(&self, session_id: &str, message: &str) -> anyhow::Result<(String, usize)>;
+    async fn begin_user(&self, session_id: &str, message: &str) -> anyhow::Result<BeginUserResult>;
     async fn finish(
         &self,
         session_id: &str,
@@ -45,6 +45,12 @@ pub trait TurnSessionStatePort: Send + Sync {
         tool_results: &[(String, String, bool)],
         output: &str,
     ) -> anyhow::Result<usize>;
+}
+
+pub struct BeginUserResult {
+    pub session_id: String,
+    pub turn_count: usize,
+    pub history_budget_tokens: usize,
 }
 
 #[async_trait]

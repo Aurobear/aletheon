@@ -292,9 +292,9 @@ impl TurnSessionStatePort for ProductionTurnSessions {
         &self,
         requested_session_id: &str,
         message: &str,
-    ) -> anyhow::Result<(String, usize)> {
+    ) -> anyhow::Result<crate::application::turn_runtime_ports::BeginUserResult> {
         let (session_id, manager) = self.manager(requested_session_id).await?;
-        let turn_count = {
+        let (turn_count, history_budget_tokens) = {
             let mut manager = manager.lock().await;
             let mut plan = self.budget_plan(&manager, message).await?;
             if plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
@@ -335,7 +335,7 @@ impl TurnSessionStatePort for ProductionTurnSessions {
             // The pending input becomes part of the projection only after the
             // hard-watermark gate proves that the request can be submitted.
             manager.push_user(message).await;
-            manager.turn_count()
+            (manager.turn_count(), plan.history_budget)
         };
         if let Err(error) = self
             .memory_service
@@ -365,7 +365,11 @@ impl TurnSessionStatePort for ProductionTurnSessions {
                 metadata: HashMap::new(),
             })
             .await;
-        Ok((session_id, turn_count))
+        Ok(crate::application::turn_runtime_ports::BeginUserResult {
+            session_id,
+            turn_count,
+            history_budget_tokens,
+        })
     }
 
     async fn finish(

@@ -4,7 +4,6 @@
 //! and CLI exec paths share the same Pre/Cognit/Post turn pipeline.
 
 use crate::application::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
-use crate::application::daemon_turn::helpers::bounded_text_history;
 use crate::application::governed_capability::CapabilityExecutionContext;
 use crate::application::turn_lifecycle::{TurnPipelineEvent, TurnPipelineLifecycle};
 use crate::core::session_gateway::SessionGateway;
@@ -423,11 +422,13 @@ impl TurnPipeline {
         }
         effective_message.push_str(&message);
 
-        let (sess_id, turn_count) = self
+        let begin = self
             .runtime_ports
             .sessions
             .begin_user(&requested_session_id, &message)
             .await?;
+        let sess_id = begin.session_id;
+        let turn_count = begin.turn_count;
 
         if let Some(conscious) = &self.conscious_core {
             conscious
@@ -456,14 +457,18 @@ impl TurnPipeline {
             }) {
                 full_history.pop();
             }
-            bounded_text_history(&full_history)
+            full_history
         };
 
         let mut context_request = turn_request.clone();
         context_request.input = effective_message;
         let assembled_context = self
             .context_assembler
-            .assemble(&context_request, &existing_messages)
+            .assemble(
+                &context_request,
+                &existing_messages,
+                begin.history_budget_tokens,
+            )
             .await?;
         let context_projection_receipt = assembled_context.projection_receipt;
         let request_messages = assembled_context.messages;
