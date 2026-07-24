@@ -13,6 +13,8 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
+const MAX_DASEIN_CONTEXT_BYTES: usize = 8_000;
+
 pub type CognitiveStreamEvent = crate::harness::event_sink::Event;
 
 /// Cognit-owned streaming event boundary used by interactive frontends.
@@ -368,8 +370,9 @@ impl CognitiveSession for LinearCognitiveSession {
         }
         self.inner.set_goal(request.input.clone());
         if let Ok(view) = services.dasein_view(request.process_id).await {
+            let text = view.text.map(|text| bounded_dasein_context(&text));
             self.inner
-                .set_dasein_context_provider(Box::new(move || view.text.clone()));
+                .set_dasein_context_provider(Box::new(move || text.clone()));
         }
         stream.emit(CognitiveStreamEvent::GoalSet {
             goal: request.input,
@@ -446,4 +449,33 @@ fn bounded_error(message: &str) -> String {
         .filter(|character| !character.is_control())
         .take(512)
         .collect()
+}
+
+fn bounded_dasein_context(content: &str) -> String {
+    if content.len() <= MAX_DASEIN_CONTEXT_BYTES {
+        return content.to_owned();
+    }
+    let mut boundary = MAX_DASEIN_CONTEXT_BYTES;
+    while boundary > 0 && !content.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    format!(
+        "{}\n... [existential context truncated from {} bytes]",
+        &content[..boundary],
+        content.len()
+    )
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn dasein_context_is_bounded_before_repeated_injection() {
+        let input = "状态".repeat(MAX_DASEIN_CONTEXT_BYTES);
+        let bounded = bounded_dasein_context(&input);
+
+        assert!(bounded.len() <= MAX_DASEIN_CONTEXT_BYTES + 80);
+        assert!(bounded.contains("existential context truncated"));
+    }
 }
