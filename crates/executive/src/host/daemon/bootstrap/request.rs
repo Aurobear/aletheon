@@ -381,7 +381,7 @@ impl RequestHandler {
                 clock: clock.clone(),
             });
 
-        // MCP servers. Keep the manager alive: gbrain recall/capture calls the
+        // MCP servers. Keep the manager alive: supplemental memory recall/capture calls the
         // same authenticated connections after startup tool registration.
         let (mcp_registry_tx, mut mcp_registry_rx) = tokio::sync::mpsc::channel::<String>(16);
         let mut mcp_registration_ids = Vec::new();
@@ -431,7 +431,7 @@ impl RequestHandler {
             {
                 tracing::warn!(
                     server = %config.supplemental_memory.server_name,
-                    "GBrain server unavailable; local memory remains active"
+                    "Supplemental memory server unavailable; local memory remains active"
                 );
             }
             Some(Arc::new(mcp))
@@ -690,7 +690,7 @@ impl RequestHandler {
             .with_consolidation_repository(consolidation_repository)
             .with_retention_repository(retention_repository.clone()),
         );
-        let gbrain_runtime =
+        let supplemental_runtime =
             crate::adapters::gbrain::build_supplemental_memory_runtime_with_retention(
                 local_memory,
                 retained_mcp.clone(),
@@ -703,18 +703,19 @@ impl RequestHandler {
             dyn crate::application::request_use_cases::MemoryAdminUseCases,
         > = Arc::new(
             crate::application::request_use_cases::ProductionMemoryAdminUseCases::new(
-                gbrain_runtime.memory_service.clone(),
+                supplemental_runtime.memory_service.clone(),
                 retention_admin_port(retention_repository),
                 fabric::LOCAL_OWNER_PRINCIPAL.to_string(),
             ),
         );
-        let supplemental_memory_worker_task = gbrain_runtime.worker_task;
+        let supplemental_memory_worker_task = supplemental_runtime.worker_task;
         let consolidation_cancel = cancel_token.clone();
-        let consolidation_memory = gbrain_runtime.memory_service.clone();
+        let consolidation_memory = supplemental_runtime.memory_service.clone();
         tokio::spawn(async move {
             crate::application::memory_consolidation_worker::MemoryConsolidationWorker::new(
                 consolidation_memory,
             )
+            .with_promotion(0.7, 20) // Phase 5: promote facts into CoreMemory
             .run(consolidation_cancel)
             .await;
         });
@@ -786,7 +787,7 @@ impl RequestHandler {
                 ),
                 kernel.clone(),
                 clock.clone(),
-                gbrain_runtime.memory_service.clone(),
+                supplemental_runtime.memory_service.clone(),
                 skill_loader.clone(),
                 tools.clone(),
                 agora_service.clone(),
@@ -800,13 +801,18 @@ impl RequestHandler {
                 skill_loader: skill_loader.clone(),
                 skill_router: skill_router.clone(),
                 conscious: conscious_context.clone(),
+                memory_service: Some(supplemental_runtime.memory_service.clone()),
+                recall_enabled: true,
+                recall_max_items: 4,
+                recall_max_bytes: 65536,
+                recall_timeout_ms: 500,
             },
         );
         let context_assembler =
             Arc::new(crate::application::context_assembler::ContextAssembler::new(context_source));
         let memory_group = crate::core::MemoryGroup {
-            memory_service: gbrain_runtime.memory_service,
-            supplemental_memory_health: gbrain_runtime.health,
+            memory_service: supplemental_runtime.memory_service,
+            supplemental_memory_health: supplemental_runtime.health,
             episodic_memory,
             objective_store,
             approval_repository,

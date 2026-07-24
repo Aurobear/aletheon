@@ -342,7 +342,13 @@ pub async fn submit_message(app: &mut App, text: String) {
             Some(CommandType::Builtin(BuiltinCommand::Skills)) => {
                 send_request(app, ClientRpcRequest::SkillsList).await;
                 app.chat
-                    .add_text(ChatRole::System, "查询 Skill 列表中...".to_string());
+                    .add_text(ChatRole::System, "查询技能列表中...".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Memory)) => {
+                send_request(app, ClientRpcRequest::memory_list(None, false)).await;
+                app.chat
+                    .add_text(ChatRole::System, "查询记忆中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::SkillRun { name, args })) => {

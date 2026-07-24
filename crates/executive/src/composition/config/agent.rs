@@ -53,7 +53,7 @@ impl Default for ExecutiveConfig {
             session_id: uuid::Uuid::new_v4().to_string(),
             learning_enabled: true,
             compaction_enabled: true,
-            compaction_v2: false,
+            compaction_v2: true,
             streaming_tools: false,
             tail_token_budget: 16_000,
             target_summary_chars: 2_000,

@@ -47,7 +47,7 @@ data_dir = "~/.aletheon/memory"
 # the matching [[mcp_servers]] entry; no credential is stored here.
 [memory.gbrain]
 enabled = false
-server_name = "gbrain"
+server_name = "supplemental"
 read_sources = ["aletheon", "general"]
 write_source = "aletheon"
 request_timeout_ms = 1200
@@ -55,16 +55,16 @@ delivery_batch_size = 20
 recall_limit = 4
 max_content_bytes = 6000
 projection_enabled = false
-spool_path = "~/.aletheon/memory/gbrain-spool.db"
+spool_path = "~/.aletheon/memory/memory-spool.db"
 spool_max_items = 10000
 spool_max_bytes = 268435456
 retry_initial_ms = 1000
 retry_max_ms = 60000
 retry_max_attempts = 12
 retry_max_age_secs = 86400
-schema_fixture = "config/gbrain/tools-schema.json"
+schema_fixture = ""
 schema_version = "v0.42.59.0"
-legacy_outbox_dir = "~/.aletheon/gbrain-outbox"
+legacy_outbox_dir = "~/.aletheon/memory-outbox"
 # Register the transport only in a local secret-bearing override. See
 # deploy/gbrain/README.md. Keep bearer_token_env out of checked-in values:
 # [[mcp_servers]]
@@ -72,6 +72,29 @@ legacy_outbox_dir = "~/.aletheon/gbrain-outbox"
 # transport = "http"
 # url = "http://127.0.0.1:9020/mcp"
 # bearer_token_env = "GBRAIN_TOKEN"
+
+# Synchronous pre-turn memory recall.  Runs before each turn with a bounded
+# timeout (fail-open).  Results are injected as untrusted context.
+[memory.recall]
+enabled = true
+inject_into_context = true
+max_items = 4
+max_content_bytes = 65536
+timeout_ms = 500
+
+# Post-turn fact extraction.  Feeds into the background consolidation worker.
+[memory.extraction]
+enabled = true
+mode = "local"               # "local" (regex-based) | "llm" (cheap-model)
+max_facts_per_turn = 5
+trigger = "after_turn"       # "after_turn" | "manual" | "after_session"
+
+# Automatic promotion of high-confidence consolidated facts into CoreMemory
+# learned blocks that appear in the agent's system prompt.
+[memory.promotion]
+enabled = false              # disabled until Phase 5 wiring
+min_confidence = 0.7
+max_promoted_facts = 20
 
 [daemon]
 # Canonical socket dir is fabric::paths::SOCKET_DIR = /run/aletheon.

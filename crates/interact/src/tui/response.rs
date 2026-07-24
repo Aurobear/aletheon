@@ -395,6 +395,10 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
             app.registry.set_skills_from_json(skills);
             let formatted = format_skills_list(skills);
             app.chat.set_assistant_stream(formatted);
+        } else if let Some(facts) = result.get("facts") {
+            // /memory response — render fact list
+            let formatted = format_memory_facts(facts);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(tools) = result.get("tools") {
             // tools/list response
             let formatted = format_tools_list(tools);
@@ -900,6 +904,35 @@ pub fn format_skills_list(skills: &serde_json::Value) -> String {
     }
     // Phase B: when SkillsCatalog response arrives, call
     // app.registry.set_skills(skills);
+    lines.join("\n")
+}
+
+pub fn format_memory_facts(facts: &serde_json::Value) -> String {
+    let empty = vec![];
+    let arr = facts.as_array().unwrap_or(&empty);
+    if arr.is_empty() {
+        return "=== Memory Facts ===\n\n(no facts stored yet)".to_string();
+    }
+    let mut lines = vec![format!("=== Memory Facts ({}) ===\n", arr.len())];
+    for fact in arr.iter().take(30) {
+        let content = fact.get("content").and_then(|v| v.as_str()).unwrap_or("?");
+        let category = fact.get("category").and_then(|v| v.as_str()).unwrap_or("");
+        let trust = fact
+            .get("trust_score")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let pinned = fact
+            .get("pinned")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let pin = if pinned { " 📌" } else { "" };
+        lines.push(format!(
+            "  [{category}] trust={trust:.2}{pin}\n    {content}"
+        ));
+    }
+    if arr.len() > 30 {
+        lines.push(format!("  ... and {} more facts", arr.len() - 30));
+    }
     lines.join("\n")
 }
 

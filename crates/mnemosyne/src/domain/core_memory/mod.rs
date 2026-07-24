@@ -1,6 +1,7 @@
 use fabric::ReflectionEntry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// A single memory block in Core Memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,12 +44,64 @@ impl MemoryBlock {
 /// Inspired by Letta (MemGPT) core_memory.
 pub struct CoreMemory {
     blocks: HashMap<String, MemoryBlock>,
+    /// Optional JSON persistence path. Auto-saved on mutation when set.
+    persist_path: Option<PathBuf>,
 }
 
 impl CoreMemory {
     pub fn new() -> Self {
         Self {
             blocks: HashMap::new(),
+            persist_path: None,
+        }
+    }
+
+    /// Load blocks from a JSON file, or create with defaults if the file
+    /// doesn't exist or is corrupted. Auto-saves all future mutations.
+    pub fn load_or_default(path: &Path) -> Self {
+        match std::fs::read_to_string(path) {
+            Ok(json) => match Self::from_json(&json) {
+                Ok(mut mem) => {
+                    mem.persist_path = Some(path.to_path_buf());
+                    mem
+                }
+                Err(_) => {
+                    let mut mem = Self::with_defaults();
+                    mem.persist_path = Some(path.to_path_buf());
+                    let _ = mem.save();
+                    mem
+                }
+            },
+            Err(_) => {
+                let mut mem = Self::with_defaults();
+                mem.persist_path = Some(path.to_path_buf());
+                let _ = mem.save();
+                mem
+            }
+        }
+    }
+
+    /// Persist all blocks to the configured path (no-op if no path set).
+    fn try_save(&self) {
+        if let Some(ref path) = self.persist_path {
+            let _ = self.save_to(path);
+        }
+    }
+
+    fn save_to(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(&self.blocks)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        std::fs::write(path, &json)
+    }
+
+    /// Explicit save to the configured path. Returns Ok(()) if no path set.
+    pub fn save(&self) -> std::io::Result<()> {
+        match self.persist_path.as_ref() {
+            Some(path) => self.save_to(path),
+            None => Ok(()),
         }
     }
 
@@ -86,12 +139,14 @@ impl CoreMemory {
             anyhow::bail!("Block '{}' already exists", block.label);
         }
         self.blocks.insert(block.label.clone(), block);
+        self.try_save();
         Ok(())
     }
 
     /// Insert or replace a block unconditionally.
     pub fn set_block(&mut self, block: MemoryBlock) {
         self.blocks.insert(block.label.clone(), block);
+        self.try_save();
     }
 
     /// Get a block value.
@@ -131,6 +186,7 @@ impl CoreMemory {
         }
 
         block.value = new_value;
+        self.try_save();
         Ok(())
     }
 
@@ -150,6 +206,7 @@ impl CoreMemory {
         }
 
         block.value = block.value.replacen(old, new, 1);
+        self.try_save();
         Ok(())
     }
 
@@ -173,6 +230,7 @@ impl CoreMemory {
         }
 
         block.value = new_content.to_string();
+        self.try_save();
         Ok(())
     }
 
@@ -184,7 +242,10 @@ impl CoreMemory {
     /// Load blocks from JSON.
     pub fn from_json(json: &str) -> anyhow::Result<Self> {
         let blocks: HashMap<String, MemoryBlock> = serde_json::from_str(json)?;
-        Ok(Self { blocks })
+        Ok(Self {
+            blocks,
+            persist_path: None,
+        })
     }
 
     /// Format all blocks for injection into LLM context.

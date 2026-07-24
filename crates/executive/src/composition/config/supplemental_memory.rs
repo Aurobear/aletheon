@@ -12,6 +12,12 @@ pub struct MemoryConfig {
     pub data_dir: String,
     #[serde(default, alias = "gbrain")]
     pub supplemental: SupplementalMemoryConfig,
+    #[serde(default)]
+    pub recall: MemoryRecallConfig,
+    #[serde(default)]
+    pub extraction: MemoryExtractionConfig,
+    #[serde(default)]
+    pub promotion: MemoryPromotionConfig,
 }
 
 impl Default for MemoryConfig {
@@ -20,6 +26,9 @@ impl Default for MemoryConfig {
             backend: default_memory_backend(),
             data_dir: default_memory_data_dir(),
             supplemental: Default::default(),
+            recall: Default::default(),
+            extraction: Default::default(),
+            promotion: Default::default(),
         }
     }
 }
@@ -100,7 +109,7 @@ fn default_memory_data_dir() -> String {
     "~/.aletheon/memory".into()
 }
 fn default_server_name() -> String {
-    "gbrain".into()
+    "supplemental".into()
 }
 fn default_source() -> String {
     "aletheon".into()
@@ -121,7 +130,7 @@ fn default_max_chars() -> usize {
     6000
 }
 fn default_spool_path() -> String {
-    "~/.aletheon/memory/gbrain-spool.db".into()
+    "~/.aletheon/memory/memory-spool.db".into()
 }
 fn default_spool_items() -> usize {
     10_000
@@ -142,11 +151,113 @@ fn default_retry_age_secs() -> u64 {
     86_400
 }
 fn default_schema_fixture() -> String {
-    "config/gbrain/tools-schema.json".into()
+    "".into()
 }
 fn default_schema_version() -> String {
     "v0.42.59.0".into()
 }
 fn default_outbox_dir() -> String {
-    "~/.aletheon/gbrain-outbox".into()
+    "~/.aletheon/memory-outbox".into()
+}
+
+// ── Memory recall / extraction / promotion config ───────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryRecallConfig {
+    #[serde(default = "default_recall_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_inject")]
+    pub inject_into_context: bool,
+    #[serde(default = "default_recall_max_items")]
+    pub max_items: usize,
+    #[serde(default = "default_recall_max_bytes")]
+    pub max_bytes: usize,
+    #[serde(default = "default_recall_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+impl Default for MemoryRecallConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_recall_enabled(),
+            inject_into_context: default_inject(),
+            max_items: default_recall_max_items(),
+            max_bytes: default_recall_max_bytes(),
+            timeout_ms: default_recall_timeout_ms(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryExtractionConfig {
+    #[serde(default = "default_extraction_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_extraction_mode")]
+    pub mode: String,
+    #[serde(default = "default_max_facts")]
+    pub max_facts_per_turn: usize,
+}
+
+impl Default for MemoryExtractionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_extraction_enabled(),
+            mode: default_extraction_mode(),
+            max_facts_per_turn: default_max_facts(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryPromotionConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_min_confidence")]
+    pub min_confidence: f64,
+    #[serde(default = "default_max_promoted")]
+    pub max_promoted_facts: usize,
+}
+
+impl Default for MemoryPromotionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_confidence: default_min_confidence(),
+            max_promoted_facts: default_max_promoted(),
+        }
+    }
+}
+
+fn default_recall_enabled() -> bool {
+    true
+}
+fn default_inject() -> bool {
+    true
+}
+fn default_recall_max_items() -> usize {
+    4
+}
+fn default_recall_max_bytes() -> usize {
+    65536
+}
+fn default_recall_timeout_ms() -> u64 {
+    500
+}
+fn default_extraction_enabled() -> bool {
+    true
+}
+fn default_extraction_mode() -> String {
+    "local".into()
+}
+fn default_max_facts() -> usize {
+    5
+}
+fn default_min_confidence() -> f64 {
+    0.7
+}
+fn default_max_promoted() -> usize {
+    20
 }

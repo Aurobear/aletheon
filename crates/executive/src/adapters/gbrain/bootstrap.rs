@@ -1,4 +1,4 @@
-//! Daemon bootstrap for optional composite GBrain memory.
+//! Daemon bootstrap for optional composite supplemental memory.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -14,9 +14,9 @@ use mnemosyne::{CompositeMemoryHealth, CompositeMemoryService, MemoryService};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::{GbrainMcpAdapter, GbrainSchemaStatus, GbrainWorker};
+use super::{SupplementalDeliveryWorker, SupplementalMcpAdapter, SupplementalSchemaStatus};
 
-pub struct GbrainMemoryRuntime {
+pub struct SupplementalMemoryRuntime {
     pub memory_service: Arc<dyn MemoryService>,
     pub health: Arc<Mutex<CompositeMemoryHealth>>,
     pub worker_task: Option<JoinHandle<()>>,
@@ -55,7 +55,7 @@ pub fn build_supplemental_memory_runtime(
     config: &SupplementalMemoryConfig,
     clock: Arc<dyn fabric::Clock>,
     daemon_cancel: &CancellationToken,
-) -> GbrainMemoryRuntime {
+) -> SupplementalMemoryRuntime {
     build_supplemental_memory_runtime_with_retention(
         local,
         manager,
@@ -73,12 +73,12 @@ pub fn build_supplemental_memory_runtime_with_retention(
     clock: Arc<dyn fabric::Clock>,
     daemon_cancel: &CancellationToken,
     retention: Option<Arc<mnemosyne::RetentionRepository>>,
-) -> GbrainMemoryRuntime {
+) -> SupplementalMemoryRuntime {
     if !config.enabled {
         return local_runtime(local, clock, false, None);
     }
     if !valid_runtime_config(config) {
-        tracing::warn!("GBrain configuration invalid; using local memory only");
+        tracing::warn!("Supplemental memory configuration invalid; using local memory only");
         return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Schema));
     }
     let Some(manager) = manager else {
@@ -89,12 +89,12 @@ pub fn build_supplemental_memory_runtime_with_retention(
             Some(SupplementalErrorCategory::Transport),
         );
     };
-    let adapter = Arc::new(GbrainMcpAdapter::new(
+    let adapter = Arc::new(SupplementalMcpAdapter::new(
         manager,
         config.server_name.clone(),
         Duration::from_millis(config.request_timeout_ms),
     ));
-    if adapter.health().schema != GbrainSchemaStatus::Valid {
+    if adapter.health().schema != SupplementalSchemaStatus::Valid {
         return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Schema));
     }
     let spool = match SupplementalSpool::open(
@@ -106,7 +106,7 @@ pub fn build_supplemental_memory_runtime_with_retention(
     ) {
         Ok(spool) => Arc::new(spool),
         Err(error) => {
-            tracing::warn!(error = %error, "GBrain spool unavailable; using local memory only");
+            tracing::warn!(error = %error, "Supplemental memory spool unavailable; using local memory only");
             return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Spool));
         }
     };
@@ -115,14 +115,14 @@ pub fn build_supplemental_memory_runtime_with_retention(
         if let Err(error) =
             spool.migrate_legacy_outbox(Path::new(&config.legacy_outbox_dir), 1_000, now_ms)
         {
-            tracing::warn!(error = %error, "GBrain legacy outbox migration failed; using local memory only");
+            tracing::warn!(error = %error, "Supplemental memory legacy outbox migration failed; using local memory only");
             return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Spool));
         }
     }
     adapter.set_queue_depth(spool.queue_depth().unwrap_or_default());
     let backend_config = backend_config(config);
     let worker = if config.projection_enabled {
-        match GbrainWorker::new(
+        match SupplementalDeliveryWorker::new(
             spool.clone(),
             adapter.clone(),
             backend_config.retry.clone(),
@@ -135,7 +135,7 @@ pub fn build_supplemental_memory_runtime_with_retention(
                 None => worker,
             }),
             Err(error) => {
-                tracing::warn!(error = %error, "GBrain worker configuration invalid; using local memory only");
+                tracing::warn!(error = %error, "Supplemental memory worker configuration invalid; using local memory only");
                 return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Spool));
             }
         }
@@ -162,7 +162,7 @@ pub fn build_supplemental_memory_runtime_with_retention(
             worker.run(clock, Duration::from_secs(1), cancel).await;
         })
     });
-    GbrainMemoryRuntime {
+    SupplementalMemoryRuntime {
         memory_service,
         health,
         worker_task,
@@ -194,7 +194,7 @@ fn local_runtime(
     clock: Arc<dyn fabric::Clock>,
     configured: bool,
     category: Option<SupplementalErrorCategory>,
-) -> GbrainMemoryRuntime {
+) -> SupplementalMemoryRuntime {
     let composite = CompositeMemoryService::local_only(local, clock);
     let health = composite.health_handle();
     {
@@ -203,7 +203,7 @@ fn local_runtime(
         value.degraded = category.is_some();
         value.error_category = category;
     }
-    GbrainMemoryRuntime {
+    SupplementalMemoryRuntime {
         memory_service: Arc::new(composite),
         health,
         worker_task: None,

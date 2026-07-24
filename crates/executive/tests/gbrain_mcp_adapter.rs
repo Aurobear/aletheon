@@ -6,7 +6,8 @@ use std::time::Duration;
 use corpus::tools::mcp::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use corpus::tools::mcp::manager::McpManager;
 use executive::testing::supplemental_memory::{
-    GbrainErrorCategory, GbrainHealthState, GbrainMcpAdapter, GbrainSchemaStatus,
+    SupplementalAdapterErrorCategory, SupplementalHealthState, SupplementalMcpAdapter,
+    SupplementalSchemaStatus,
 };
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
@@ -169,7 +170,7 @@ fn response(status: StatusCode, body: Value) -> Response<Full<Bytes>> {
         .unwrap()
 }
 
-async fn build_adapter(state: FakeState, timeout: Duration) -> (GbrainMcpAdapter, FakeState) {
+async fn build_adapter(state: FakeState, timeout: Duration) -> (SupplementalMcpAdapter, FakeState) {
     let url = spawn_server(state.clone()).await;
     let mut manager = McpManager::new(McpConfig {
         servers: vec![McpServerConfig {
@@ -191,7 +192,7 @@ async fn build_adapter(state: FakeState, timeout: Duration) -> (GbrainMcpAdapter
     });
     manager.connect_all().await.unwrap();
     (
-        GbrainMcpAdapter::new(Arc::new(manager), "gbrain", timeout),
+        SupplementalMcpAdapter::new(Arc::new(manager), "gbrain", timeout),
         state,
     )
 }
@@ -199,7 +200,7 @@ async fn build_adapter(state: FakeState, timeout: Duration) -> (GbrainMcpAdapter
 #[tokio::test]
 async fn validates_schema_and_supports_put_query_search_and_get() {
     let (adapter, state) = build_adapter(FakeState::valid(), Duration::from_secs(1)).await;
-    assert_eq!(adapter.health().schema, GbrainSchemaStatus::Valid);
+    assert_eq!(adapter.health().schema, SupplementalSchemaStatus::Valid);
     let cancel = CancellationToken::new();
     let page = SupplementalDocument {
         slug: "aletheon/goal/one".into(),
@@ -236,7 +237,7 @@ async fn validates_schema_and_supports_put_query_search_and_get() {
         .iter()
         .filter(|(name, _)| name == "get_page" || name == "put_page")
         .all(|(_, args)| args.get("source_id").is_none()));
-    assert_eq!(adapter.health().state, GbrainHealthState::Healthy);
+    assert_eq!(adapter.health().state, SupplementalHealthState::Healthy);
 }
 
 #[tokio::test]
@@ -247,12 +248,12 @@ async fn schema_drift_degrades_without_calling_remote() {
         .unwrap()
         .retain(|tool| tool["name"] != "put_page");
     let (adapter, state) = build_adapter(state, Duration::from_secs(1)).await;
-    assert_eq!(adapter.health().schema, GbrainSchemaStatus::Invalid);
+    assert_eq!(adapter.health().schema, SupplementalSchemaStatus::Invalid);
     let error = adapter
         .search("x", 1, &CancellationToken::new())
         .await
         .unwrap_err();
-    assert_eq!(error.category, GbrainErrorCategory::Schema);
+    assert_eq!(error.category, SupplementalAdapterErrorCategory::Schema);
     assert!(state.calls.lock().unwrap().is_empty());
 }
 
@@ -265,7 +266,7 @@ async fn timeout_and_cancellation_are_bounded() {
         .search("x", 1, &CancellationToken::new())
         .await
         .unwrap_err();
-    assert_eq!(error.category, GbrainErrorCategory::Timeout);
+    assert_eq!(error.category, SupplementalAdapterErrorCategory::Timeout);
     assert!(error.category.is_transient());
 
     let state = FakeState::valid();
@@ -274,20 +275,23 @@ async fn timeout_and_cancellation_are_bounded() {
     let cancel = CancellationToken::new();
     cancel.cancel();
     let error = adapter.search("x", 1, &cancel).await.unwrap_err();
-    assert_eq!(error.category, GbrainErrorCategory::Cancelled);
+    assert_eq!(error.category, SupplementalAdapterErrorCategory::Cancelled);
 }
 
 #[tokio::test]
 async fn classifies_auth_rate_provider_and_redacts_remote_errors() {
     for (status, expected) in [
-        (StatusCode::UNAUTHORIZED, GbrainErrorCategory::Auth),
+        (
+            StatusCode::UNAUTHORIZED,
+            SupplementalAdapterErrorCategory::Auth,
+        ),
         (
             StatusCode::TOO_MANY_REQUESTS,
-            GbrainErrorCategory::RateLimited,
+            SupplementalAdapterErrorCategory::RateLimited,
         ),
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            GbrainErrorCategory::Provider,
+            SupplementalAdapterErrorCategory::Provider,
         ),
     ] {
         let state = FakeState::valid();
@@ -316,7 +320,7 @@ async fn rejects_malformed_oversized_and_invalid_arguments() {
             .await
             .unwrap_err()
             .category,
-        GbrainErrorCategory::MalformedResponse
+        SupplementalAdapterErrorCategory::MalformedResponse
     );
 
     let state = FakeState::valid();
@@ -331,7 +335,7 @@ async fn rejects_malformed_oversized_and_invalid_arguments() {
             .await
             .unwrap_err()
             .category,
-        GbrainErrorCategory::OversizedResponse
+        SupplementalAdapterErrorCategory::OversizedResponse
     );
 
     let (adapter, _) = build_adapter(FakeState::valid(), Duration::from_secs(1)).await;
@@ -341,7 +345,7 @@ async fn rejects_malformed_oversized_and_invalid_arguments() {
             .await
             .unwrap_err()
             .category,
-        GbrainErrorCategory::RejectedArguments
+        SupplementalAdapterErrorCategory::RejectedArguments
     );
     adapter.set_queue_depth(7);
     assert_eq!(adapter.health().queue_depth, 7);
@@ -356,7 +360,7 @@ async fn connection_and_invalid_json_failures_are_sanitized_transport_errors() {
         .search("x", 1, &CancellationToken::new())
         .await
         .unwrap_err();
-    assert_eq!(error.category, GbrainErrorCategory::Transport);
+    assert_eq!(error.category, SupplementalAdapterErrorCategory::Transport);
     assert!(error.category.is_transient());
     assert!(!error.to_string().contains("connection reset"));
 
@@ -367,6 +371,6 @@ async fn connection_and_invalid_json_failures_are_sanitized_transport_errors() {
         .search("x", 1, &CancellationToken::new())
         .await
         .unwrap_err();
-    assert_eq!(error.category, GbrainErrorCategory::Transport);
+    assert_eq!(error.category, SupplementalAdapterErrorCategory::Transport);
     assert!(!error.to_string().contains("secret-token"));
 }

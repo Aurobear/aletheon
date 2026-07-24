@@ -40,10 +40,10 @@ pub struct SpoolPolicy {
 impl Default for SpoolPolicy {
     fn default() -> Self {
         Self {
-            path: "~/.aletheon/memory/gbrain-spool.db".into(),
+            path: "~/.aletheon/memory/memory-spool.db".into(),
             max_items: 10_000,
             max_bytes: 256 * 1024 * 1024,
-            legacy_outbox_dir: Some("~/.aletheon/gbrain-outbox".into()),
+            legacy_outbox_dir: Some("~/.aletheon/memory-outbox".into()),
         }
     }
 }
@@ -69,13 +69,13 @@ impl Default for SupplementalBackendConfig {
         Self {
             enabled: false,
             projection_enabled: false,
-            server_name: "gbrain".into(),
+            server_name: "supplemental".into(),
             read_sources: vec!["aletheon".into(), "general".into()],
             write_source: "aletheon".into(),
             request_timeout_ms: 1_200,
             delivery_batch_size: 20,
             recall_limit: 4,
-            schema_fixture: "config/gbrain/tools-schema.json".into(),
+            schema_fixture: "".into(),
             schema_version: PINNED_RELEASE.into(),
             retry: RetryPolicy::default(),
             spool: SpoolPolicy::default(),

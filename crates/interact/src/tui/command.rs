@@ -14,27 +14,44 @@ pub enum BuiltinCommand {
     ReflectNow,
     Evolution,
     Genome,
-    Computer { args: String },
+    Computer {
+        args: String,
+    },
     Sessions,
-    Resume { id: String },
+    Resume {
+        id: String,
+    },
     Fork,
     Compact,
     Model,
     Permissions,
-    Mode { name: String },
+    Mode {
+        name: String,
+    },
     Plan,
     Approve,
     Agents,
-    AgentDetail { id: String },
+    AgentDetail {
+        id: String,
+    },
     Hooks,
     Skills,
-    SkillRun { name: String, args: String },
+    SkillRun {
+        name: String,
+        args: String,
+    },
     Interrupt,
     Context,
     Profile,
-    ProfileSet { name: String },
+    ProfileSet {
+        name: String,
+    },
     Diff,
-    Mention { path: String },
+    Mention {
+        path: String,
+    },
+    /// Query session memory (facts, recall, core blocks).
+    Memory,
 }
 
 /// Parsed command type.

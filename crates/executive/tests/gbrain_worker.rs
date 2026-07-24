@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use executive::testing::supplemental_memory::GbrainWorker;
+use executive::testing::supplemental_memory::SupplementalDeliveryWorker;
 use mnemosyne::supplemental::{
     RetryPolicy, SpoolLimits, SupplementalDocument, SupplementalErrorCategory, SupplementalHit,
     SupplementalMemoryTransport, SupplementalSpool, SupplementalTransportError,
@@ -122,8 +122,8 @@ fn worker(
     transport: Arc<FakeTransport>,
     id: &str,
     batch: usize,
-) -> GbrainWorker<FakeTransport> {
-    GbrainWorker::new(
+) -> SupplementalDeliveryWorker<FakeTransport> {
+    SupplementalDeliveryWorker::new(
         spool,
         transport,
         RetryPolicy {

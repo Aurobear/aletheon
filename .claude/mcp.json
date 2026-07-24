@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "aletheon-monitor": {
+      "command": "aletheon-monitor"
+    }
+  }
+}

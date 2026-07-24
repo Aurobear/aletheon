@@ -60,6 +60,7 @@ enum BuiltinId {
     Diff,
     Mention,
     Input,
+    Memory,
 }
 
 #[derive(Debug, Clone)]
@@ -429,6 +430,16 @@ impl CommandRegistry {
                 Always,
                 B::Input,
             ),
+            CommandDescriptor::builtin(
+                "memory",
+                &[],
+                "查看会话记忆（核心记忆块、近期事实、回忆记录）",
+                "信息",
+                "/memory",
+                Rpc,
+                Always,
+                B::Memory,
+            ),
         ];
         builtins.sort_by(|left, right| left.name.cmp(&right.name));
         Self {
@@ -705,6 +716,7 @@ fn to_builtin(id: BuiltinId, args: &str) -> BuiltinCommand {
         BuiltinId::Diff => BuiltinCommand::Diff,
         BuiltinId::Mention => BuiltinCommand::Mention { path: args.into() },
         BuiltinId::Input => BuiltinCommand::Input,
+        BuiltinId::Memory => BuiltinCommand::Memory,
     }
 }
 

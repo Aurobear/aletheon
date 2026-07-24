@@ -20,7 +20,8 @@ pub(super) struct MemoryComposition {
 }
 
 pub(super) fn compose(input: MemoryCompositionInput<'_>) -> anyhow::Result<MemoryComposition> {
-    let core = Arc::new(Mutex::new(CoreMemory::with_defaults()));
+    let core_path = input.data_dir.join("core_memory.json");
+    let core = Arc::new(Mutex::new(CoreMemory::load_or_default(&core_path)));
     let recall = Arc::new(Mutex::new(RecallMemory::new(
         &input.data_dir.join("recall_memory.db"),
         input.clock,

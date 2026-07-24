@@ -29,7 +29,7 @@ tui_assert "help"
 tui_key Escape
 tui_key C-u
 test_pass "automatic command popup"
-case_rendered "/help" "Aletheon 命令|Available Commands|可用命令"
+case_rendered "/help" "Aletheon 命令|Available Commands|可用命令" 120
 case_rendered "/context" "Context:"
 case_rendered "/permissions" "Permissions"
 case_rendered "/diff" "Workspace Diff|没有未暂存差异|files changed"
@@ -48,7 +48,7 @@ case_rendered "/status" "Aletheon Status"
 case_rendered "/sessions" "Sessions|会话"
 case_rendered "/model" "Models|模型"
 case_rendered "/hooks" "Hooks|hooks"
-case_rendered "/skills" "Skills|Skill"
+case_rendered "/skills" "Skills|Skill" 30
 case_rendered "/profile" "profiles|Profiles|profile"
 case_rendered "/reflect" "Reflections|reflection|反思|learned:"
 case_rendered "/reflect_now" "reflection|反思"
@@ -58,6 +58,7 @@ case_rendered "/genome" "Genome|genome|基因"
 # Session and control commands, including their explicit negative paths.
 case_rendered "/resume" "用法: /resume"
 case_rendered "/fork" "无法创建分支|Error:|session"
+case_rendered "/memory" "Memory Facts|facts|memory" 15
 case_rendered "/compact" "压缩上下文中|compacted|Error:"
 case_rendered "/interrupt" "Interrupt sent"
 case_rendered "/mode plan" "Plan|plan"

@@ -17,7 +17,7 @@ const MAX_RESULTS: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GbrainErrorCategory {
+pub enum SupplementalAdapterErrorCategory {
     Auth,
     Schema,
     InvalidPage,
@@ -31,7 +31,7 @@ pub enum GbrainErrorCategory {
     OversizedResponse,
 }
 
-impl GbrainErrorCategory {
+impl SupplementalAdapterErrorCategory {
     pub fn is_transient(self) -> bool {
         matches!(
             self,
@@ -41,14 +41,14 @@ impl GbrainErrorCategory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("GBrain MCP {category:?}: {message}")]
-pub struct GbrainAdapterError {
-    pub category: GbrainErrorCategory,
+#[error("Supplemental MCP {category:?}: {message}")]
+pub struct SupplementalAdapterError {
+    pub category: SupplementalAdapterErrorCategory,
     message: &'static str,
 }
 
-impl GbrainAdapterError {
-    fn new(category: GbrainErrorCategory, message: &'static str) -> Self {
+impl SupplementalAdapterError {
+    fn new(category: SupplementalAdapterErrorCategory, message: &'static str) -> Self {
         Self { category, message }
     }
     pub fn sanitized_message(&self) -> &'static str {
@@ -58,44 +58,44 @@ impl GbrainAdapterError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GbrainHealthState {
+pub enum SupplementalHealthState {
     Healthy,
     Degraded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GbrainSchemaStatus {
+pub enum SupplementalSchemaStatus {
     Valid,
     Invalid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GbrainHealth {
-    pub state: GbrainHealthState,
-    pub schema: GbrainSchemaStatus,
-    pub last_error_category: Option<GbrainErrorCategory>,
+pub struct SupplementalHealth {
+    pub state: SupplementalHealthState,
+    pub schema: SupplementalSchemaStatus,
+    pub last_error_category: Option<SupplementalAdapterErrorCategory>,
     pub consecutive_failures: u64,
     pub last_success_unix_ms: Option<i64>,
     pub queue_depth: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GbrainSearchHit {
+pub struct SupplementalSearchHit {
     pub source_id: String,
     pub slug: String,
     pub content: String,
     pub score: f64,
 }
 
-pub struct GbrainMcpAdapter {
+pub struct SupplementalMcpAdapter {
     manager: Arc<McpManager>,
     server_name: String,
     timeout: Duration,
-    health: Mutex<GbrainHealth>,
+    health: Mutex<SupplementalHealth>,
 }
 
-impl GbrainMcpAdapter {
+impl SupplementalMcpAdapter {
     pub fn new(
         manager: Arc<McpManager>,
         server_name: impl Into<String>,
@@ -112,18 +112,19 @@ impl GbrainMcpAdapter {
             manager,
             server_name,
             timeout,
-            health: Mutex::new(GbrainHealth {
+            health: Mutex::new(SupplementalHealth {
                 state: if schema_valid {
-                    GbrainHealthState::Healthy
+                    SupplementalHealthState::Healthy
                 } else {
-                    GbrainHealthState::Degraded
+                    SupplementalHealthState::Degraded
                 },
                 schema: if schema_valid {
-                    GbrainSchemaStatus::Valid
+                    SupplementalSchemaStatus::Valid
                 } else {
-                    GbrainSchemaStatus::Invalid
+                    SupplementalSchemaStatus::Invalid
                 },
-                last_error_category: (!schema_valid).then_some(GbrainErrorCategory::Schema),
+                last_error_category: (!schema_valid)
+                    .then_some(SupplementalAdapterErrorCategory::Schema),
                 consecutive_failures: u64::from(!schema_valid),
                 last_success_unix_ms: None,
                 queue_depth: 0,
@@ -131,17 +132,17 @@ impl GbrainMcpAdapter {
         }
     }
 
-    pub fn health(&self) -> GbrainHealth {
+    pub fn health(&self) -> SupplementalHealth {
         self.health
             .lock()
-            .expect("gbrain health mutex poisoned")
+            .expect("supplemental health mutex poisoned")
             .clone()
     }
 
     pub fn set_queue_depth(&self, queue_depth: usize) {
         self.health
             .lock()
-            .expect("gbrain health mutex poisoned")
+            .expect("supplemental health mutex poisoned")
             .queue_depth = queue_depth;
     }
 
@@ -149,10 +150,10 @@ impl GbrainMcpAdapter {
         &self,
         page: &SupplementalDocument,
         cancel: &CancellationToken,
-    ) -> Result<(), GbrainAdapterError> {
+    ) -> Result<(), SupplementalAdapterError> {
         if page.slug.len() > MAX_SLUG_BYTES || page.content.len() > MAX_PAGE_BYTES {
             return Err(self.fail(
-                GbrainErrorCategory::InvalidPage,
+                SupplementalAdapterErrorCategory::InvalidPage,
                 "page rejected by local bounds",
             ));
         }
@@ -171,11 +172,11 @@ impl GbrainMcpAdapter {
         source_id: &str,
         limit: usize,
         cancel: &CancellationToken,
-    ) -> Result<Vec<GbrainSearchHit>, GbrainAdapterError> {
+    ) -> Result<Vec<SupplementalSearchHit>, SupplementalAdapterError> {
         self.validate_query(query, limit)?;
         if source_id.trim().is_empty() || source_id.len() > MAX_SLUG_BYTES {
             return Err(self.fail(
-                GbrainErrorCategory::RejectedArguments,
+                SupplementalAdapterErrorCategory::RejectedArguments,
                 "source scope is invalid",
             ));
         }
@@ -194,7 +195,7 @@ impl GbrainMcpAdapter {
         query: &str,
         limit: usize,
         cancel: &CancellationToken,
-    ) -> Result<Vec<GbrainSearchHit>, GbrainAdapterError> {
+    ) -> Result<Vec<SupplementalSearchHit>, SupplementalAdapterError> {
         self.validate_query(query, limit)?;
         let value = self
             .invoke("search", json!({"query": query, "limit": limit}), cancel)
@@ -206,10 +207,10 @@ impl GbrainMcpAdapter {
         &self,
         slug: &str,
         cancel: &CancellationToken,
-    ) -> Result<String, GbrainAdapterError> {
+    ) -> Result<String, SupplementalAdapterError> {
         if slug.trim().is_empty() || slug.len() > MAX_SLUG_BYTES {
             return Err(self.fail(
-                GbrainErrorCategory::RejectedArguments,
+                SupplementalAdapterErrorCategory::RejectedArguments,
                 "page slug is invalid",
             ));
         }
@@ -229,20 +230,20 @@ impl GbrainMcpAdapter {
             .unwrap_or(text);
         if content.len() > MAX_TOOL_TEXT_BYTES {
             return Err(self.fail(
-                GbrainErrorCategory::OversizedResponse,
+                SupplementalAdapterErrorCategory::OversizedResponse,
                 "tool response exceeds byte limit",
             ));
         }
         Ok(content)
     }
 
-    fn validate_query(&self, query: &str, limit: usize) -> Result<(), GbrainAdapterError> {
+    fn validate_query(&self, query: &str, limit: usize) -> Result<(), SupplementalAdapterError> {
         if query.trim().is_empty()
             || query.len() > MAX_QUERY_BYTES
             || !(1..=MAX_RESULTS).contains(&limit)
         {
             return Err(self.fail(
-                GbrainErrorCategory::RejectedArguments,
+                SupplementalAdapterErrorCategory::RejectedArguments,
                 "query arguments are invalid",
             ));
         }
@@ -254,18 +255,18 @@ impl GbrainMcpAdapter {
         tool: &str,
         args: Value,
         cancel: &CancellationToken,
-    ) -> Result<Value, GbrainAdapterError> {
-        if self.health().schema != GbrainSchemaStatus::Valid {
+    ) -> Result<Value, SupplementalAdapterError> {
+        if self.health().schema != SupplementalSchemaStatus::Valid {
             return Err(self.fail(
-                GbrainErrorCategory::Schema,
+                SupplementalAdapterErrorCategory::Schema,
                 "required MCP schema is unavailable",
             ));
         }
         let call = self.manager.call_tool(&self.server_name, tool, args);
         let result = tokio::select! {
-            _ = cancel.cancelled() => return Err(self.fail(GbrainErrorCategory::Cancelled, "request cancelled")),
+            _ = cancel.cancelled() => return Err(self.fail(SupplementalAdapterErrorCategory::Cancelled, "request cancelled")),
             result = tokio::time::timeout(self.timeout, call) => match result {
-                Err(_) => return Err(self.fail(GbrainErrorCategory::Timeout, "request timed out")),
+                Err(_) => return Err(self.fail(SupplementalAdapterErrorCategory::Timeout, "request timed out")),
                 Ok(result) => result,
             }
         };
@@ -285,18 +286,18 @@ impl GbrainMcpAdapter {
         &self,
         value: Value,
         limit: usize,
-    ) -> Result<Vec<GbrainSearchHit>, GbrainAdapterError> {
+    ) -> Result<Vec<SupplementalSearchHit>, SupplementalAdapterError> {
         let text =
             extract_text(&value).map_err(|error| self.fail(error.category, error.message))?;
         if text.len() > MAX_TOOL_TEXT_BYTES {
             return Err(self.fail(
-                GbrainErrorCategory::OversizedResponse,
+                SupplementalAdapterErrorCategory::OversizedResponse,
                 "tool response exceeds byte limit",
             ));
         }
         let values: Vec<Value> = serde_json::from_str(&text).map_err(|_| {
             self.fail(
-                GbrainErrorCategory::MalformedResponse,
+                SupplementalAdapterErrorCategory::MalformedResponse,
                 "tool response is malformed",
             )
         })?;
@@ -308,7 +309,7 @@ impl GbrainMcpAdapter {
                 .filter(|slug| !slug.is_empty() && slug.len() <= MAX_SLUG_BYTES)
                 .ok_or_else(|| {
                     self.fail(
-                        GbrainErrorCategory::MalformedResponse,
+                        SupplementalAdapterErrorCategory::MalformedResponse,
                         "tool response is malformed",
                     )
                 })?;
@@ -323,11 +324,11 @@ impl GbrainMcpAdapter {
                 .unwrap_or("");
             if source_id.len() > MAX_SLUG_BYTES || content.len() > MAX_TOOL_TEXT_BYTES {
                 return Err(self.fail(
-                    GbrainErrorCategory::OversizedResponse,
+                    SupplementalAdapterErrorCategory::OversizedResponse,
                     "tool response exceeds byte limit",
                 ));
             }
-            hits.push(GbrainSearchHit {
+            hits.push(SupplementalSearchHit {
                 source_id: source_id.to_owned(),
                 slug: slug.to_owned(),
                 content: content.to_owned(),
@@ -342,29 +343,39 @@ impl GbrainMcpAdapter {
     }
 
     fn succeed(&self) {
-        let mut health = self.health.lock().expect("gbrain health mutex poisoned");
-        health.state = GbrainHealthState::Healthy;
+        let mut health = self
+            .health
+            .lock()
+            .expect("supplemental health mutex poisoned");
+        health.state = SupplementalHealthState::Healthy;
         health.last_error_category = None;
         health.consecutive_failures = 0;
         health.last_success_unix_ms = Some(chrono::Utc::now().timestamp_millis());
     }
 
-    fn fail(&self, category: GbrainErrorCategory, message: &'static str) -> GbrainAdapterError {
-        let mut health = self.health.lock().expect("gbrain health mutex poisoned");
-        health.state = GbrainHealthState::Degraded;
+    fn fail(
+        &self,
+        category: SupplementalAdapterErrorCategory,
+        message: &'static str,
+    ) -> SupplementalAdapterError {
+        let mut health = self
+            .health
+            .lock()
+            .expect("supplemental health mutex poisoned");
+        health.state = SupplementalHealthState::Degraded;
         health.last_error_category = Some(category);
         health.consecutive_failures = health.consecutive_failures.saturating_add(1);
-        GbrainAdapterError::new(category, message)
+        SupplementalAdapterError::new(category, message)
     }
 }
 
-fn extract_text(value: &Value) -> Result<String, GbrainAdapterError> {
+fn extract_text(value: &Value) -> Result<String, SupplementalAdapterError> {
     let blocks = value
         .get("content")
         .and_then(Value::as_array)
         .ok_or_else(|| {
-            GbrainAdapterError::new(
-                GbrainErrorCategory::MalformedResponse,
+            SupplementalAdapterError::new(
+                SupplementalAdapterErrorCategory::MalformedResponse,
                 "tool response is malformed",
             )
         })?;
@@ -374,81 +385,81 @@ fn extract_text(value: &Value) -> Result<String, GbrainAdapterError> {
             continue;
         }
         let value = block.get("text").and_then(Value::as_str).ok_or_else(|| {
-            GbrainAdapterError::new(
-                GbrainErrorCategory::MalformedResponse,
+            SupplementalAdapterError::new(
+                SupplementalAdapterErrorCategory::MalformedResponse,
                 "tool response is malformed",
             )
         })?;
         if text.len().saturating_add(value.len()) > MAX_TOOL_TEXT_BYTES {
-            return Err(GbrainAdapterError::new(
-                GbrainErrorCategory::OversizedResponse,
+            return Err(SupplementalAdapterError::new(
+                SupplementalAdapterErrorCategory::OversizedResponse,
                 "tool response exceeds byte limit",
             ));
         }
         text.push_str(value);
     }
     if text.is_empty() {
-        return Err(GbrainAdapterError::new(
-            GbrainErrorCategory::MalformedResponse,
+        return Err(SupplementalAdapterError::new(
+            SupplementalAdapterErrorCategory::MalformedResponse,
             "tool response is malformed",
         ));
     }
     Ok(text)
 }
 
-fn classify_error(error: &anyhow::Error) -> GbrainErrorCategory {
+fn classify_error(error: &anyhow::Error) -> SupplementalAdapterErrorCategory {
     let message = format!("{error:#}").to_ascii_lowercase();
     if message.contains("401") || message.contains("403") || message.contains("authentication") {
-        GbrainErrorCategory::Auth
+        SupplementalAdapterErrorCategory::Auth
     } else if message.contains("exceeds byte limit") {
-        GbrainErrorCategory::OversizedResponse
+        SupplementalAdapterErrorCategory::OversizedResponse
     } else if message.contains("429") {
-        GbrainErrorCategory::RateLimited
+        SupplementalAdapterErrorCategory::RateLimited
     } else if message.contains("500")
         || message.contains("502")
         || message.contains("503")
         || message.contains("504")
     {
-        GbrainErrorCategory::Provider
+        SupplementalAdapterErrorCategory::Provider
     } else if message.contains("application error") {
-        GbrainErrorCategory::RejectedArguments
+        SupplementalAdapterErrorCategory::RejectedArguments
     } else {
-        GbrainErrorCategory::Transport
+        SupplementalAdapterErrorCategory::Transport
     }
 }
 
-fn category_message(category: GbrainErrorCategory) -> &'static str {
+fn category_message(category: SupplementalAdapterErrorCategory) -> &'static str {
     match category {
-        GbrainErrorCategory::Auth => "authentication failed",
-        GbrainErrorCategory::RateLimited => "provider rate limited request",
-        GbrainErrorCategory::Provider => "provider request failed",
-        GbrainErrorCategory::RejectedArguments => "tool rejected arguments",
-        GbrainErrorCategory::OversizedResponse => "tool response exceeds byte limit",
+        SupplementalAdapterErrorCategory::Auth => "authentication failed",
+        SupplementalAdapterErrorCategory::RateLimited => "provider rate limited request",
+        SupplementalAdapterErrorCategory::Provider => "provider request failed",
+        SupplementalAdapterErrorCategory::RejectedArguments => "tool rejected arguments",
+        SupplementalAdapterErrorCategory::OversizedResponse => "tool response exceeds byte limit",
         _ => "transport request failed",
     }
 }
 
 fn supplemental_category(
-    category: GbrainErrorCategory,
+    category: SupplementalAdapterErrorCategory,
 ) -> mnemosyne::supplemental::SupplementalErrorCategory {
     use mnemosyne::supplemental::SupplementalErrorCategory as Target;
     match category {
-        GbrainErrorCategory::Auth => Target::Auth,
-        GbrainErrorCategory::Schema => Target::Schema,
-        GbrainErrorCategory::InvalidPage => Target::InvalidPage,
-        GbrainErrorCategory::RejectedArguments => Target::RejectedArguments,
-        GbrainErrorCategory::Timeout => Target::Timeout,
-        GbrainErrorCategory::Cancelled => Target::Cancelled,
-        GbrainErrorCategory::RateLimited => Target::RateLimited,
-        GbrainErrorCategory::Provider => Target::Provider,
-        GbrainErrorCategory::Transport => Target::Transport,
-        GbrainErrorCategory::MalformedResponse => Target::MalformedResponse,
-        GbrainErrorCategory::OversizedResponse => Target::OversizedResponse,
+        SupplementalAdapterErrorCategory::Auth => Target::Auth,
+        SupplementalAdapterErrorCategory::Schema => Target::Schema,
+        SupplementalAdapterErrorCategory::InvalidPage => Target::InvalidPage,
+        SupplementalAdapterErrorCategory::RejectedArguments => Target::RejectedArguments,
+        SupplementalAdapterErrorCategory::Timeout => Target::Timeout,
+        SupplementalAdapterErrorCategory::Cancelled => Target::Cancelled,
+        SupplementalAdapterErrorCategory::RateLimited => Target::RateLimited,
+        SupplementalAdapterErrorCategory::Provider => Target::Provider,
+        SupplementalAdapterErrorCategory::Transport => Target::Transport,
+        SupplementalAdapterErrorCategory::MalformedResponse => Target::MalformedResponse,
+        SupplementalAdapterErrorCategory::OversizedResponse => Target::OversizedResponse,
     }
 }
 
 fn supplemental_error(
-    error: GbrainAdapterError,
+    error: SupplementalAdapterError,
 ) -> mnemosyne::supplemental::SupplementalTransportError {
     mnemosyne::supplemental::SupplementalTransportError::new(
         supplemental_category(error.category),
@@ -457,9 +468,9 @@ fn supplemental_error(
 }
 
 #[async_trait::async_trait]
-impl mnemosyne::supplemental::SupplementalMemoryTransport for GbrainMcpAdapter {
+impl mnemosyne::supplemental::SupplementalMemoryTransport for SupplementalMcpAdapter {
     fn set_queue_depth(&self, queue_depth: usize) {
-        GbrainMcpAdapter::set_queue_depth(self, queue_depth);
+        SupplementalMcpAdapter::set_queue_depth(self, queue_depth);
     }
 
     async fn put_page(
@@ -467,7 +478,7 @@ impl mnemosyne::supplemental::SupplementalMemoryTransport for GbrainMcpAdapter {
         page: &SupplementalDocument,
         cancel: &CancellationToken,
     ) -> Result<Option<String>, mnemosyne::supplemental::SupplementalTransportError> {
-        GbrainMcpAdapter::put_page(self, page, cancel)
+        SupplementalMcpAdapter::put_page(self, page, cancel)
             .await
             .map(|()| None)
             .map_err(supplemental_error)
@@ -483,7 +494,7 @@ impl mnemosyne::supplemental::SupplementalMemoryTransport for GbrainMcpAdapter {
         Vec<mnemosyne::supplemental::SupplementalHit>,
         mnemosyne::supplemental::SupplementalTransportError,
     > {
-        GbrainMcpAdapter::query(self, query, source_id, limit, cancel)
+        SupplementalMcpAdapter::query(self, query, source_id, limit, cancel)
             .await
             .map(|hits| {
                 hits.into_iter()
@@ -507,7 +518,7 @@ impl mnemosyne::supplemental::SupplementalMemoryTransport for GbrainMcpAdapter {
         Vec<mnemosyne::supplemental::SupplementalHit>,
         mnemosyne::supplemental::SupplementalTransportError,
     > {
-        GbrainMcpAdapter::search(self, query, limit, cancel)
+        SupplementalMcpAdapter::search(self, query, limit, cancel)
             .await
             .map(|hits| {
                 hits.into_iter()
@@ -527,7 +538,7 @@ impl mnemosyne::supplemental::SupplementalMemoryTransport for GbrainMcpAdapter {
         slug: &str,
         cancel: &CancellationToken,
     ) -> Result<String, mnemosyne::supplemental::SupplementalTransportError> {
-        GbrainMcpAdapter::get_page(self, slug, cancel)
+        SupplementalMcpAdapter::get_page(self, slug, cancel)
             .await
             .map_err(supplemental_error)
     }

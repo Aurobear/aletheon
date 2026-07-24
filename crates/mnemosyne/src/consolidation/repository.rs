@@ -557,6 +557,36 @@ impl ConsolidationRepository {
             .collect();
         records
     }
+
+    /// Return current records with candidate confidence >= threshold.
+    /// Joins memory_records with the originating memory_candidates via content_hash.
+    pub fn high_confidence_records(
+        &self,
+        scope: &MemoryScope,
+        min_confidence: f64,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(String, String, f64)>> {
+        let scope_json = serde_json::to_string(scope)?;
+        let connection = self.connection.lock().unwrap();
+        let mut query = connection.prepare(
+            "SELECT r.content, r.kind_json, MAX(c.confidence) FROM memory_records r
+             JOIN memory_candidates c ON r.content_hash = c.content_hash
+             WHERE r.scope_json=?1 AND r.status='current' AND c.decision IN ('insert','supersede')
+             GROUP BY r.content_hash HAVING MAX(c.confidence) >= ?2
+             ORDER BY MAX(c.confidence) DESC LIMIT ?3",
+        )?;
+        let records = query
+            .query_map(params![scope_json, min_confidence, limit as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(records)
+    }
     pub fn commit_decisions(
         &self,
         lease: &ScopeLease,

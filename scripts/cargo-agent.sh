@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Ensure cargo is on PATH (sudo strips it).
+export PATH="$HOME/.cargo/bin:$PATH"
+
 cache_root=${ALETHEON_CARGO_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/aletheon-cargo}
 target_dir=${CARGO_TARGET_DIR:-$cache_root/target}
 lock_file=$cache_root/build.lock

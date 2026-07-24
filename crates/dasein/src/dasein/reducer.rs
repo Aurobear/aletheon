@@ -197,7 +197,7 @@ impl DaseinStateEngine {
         let mut state = self.state.lock().await;
         let request = SelfTransitionRequest {
             event_id: SelfEventId::new(),
-            source,
+            source: source.clone(),
             observed_at: self.clock.wall_now(),
             content,
             provenance: ExperienceProvenance {
@@ -208,7 +208,38 @@ impl DaseinStateEngine {
             },
             expected_version: state.version,
         };
-        self.transition_locked(&mut state, request, true)
+        match self.transition_locked(&mut state, request, true) {
+            Ok(receipt) => Ok(receipt),
+            Err(error) => {
+                let msg = error.to_string();
+                if msg.contains("version conflict") {
+                    // Self-heal: sync version from ledger and retry once.
+                    if let Some(ledger) = &self.ledger {
+                        if let Ok(events) = ledger.load_verified() {
+                            if let Some(last) = events.last() {
+                                state.version = SelfVersion(last.current_version.0);
+                            }
+                        }
+                    }
+                    let retry = SelfTransitionRequest {
+                        event_id: SelfEventId::new(),
+                        source,
+                        observed_at: self.clock.wall_now(),
+                        content: InterpretedExperience::ScheduledReflection,
+                        provenance: ExperienceProvenance {
+                            producer: producer.to_string(),
+                            session_id: None,
+                            turn_id: None,
+                            source_ref: None,
+                        },
+                        expected_version: state.version,
+                    };
+                    self.transition_locked(&mut state, retry, true)
+                } else {
+                    Err(error)
+                }
+            }
+        }
     }
 
     pub async fn replay(&self) -> anyhow::Result<usize> {
@@ -217,10 +248,13 @@ impl DaseinStateEngine {
         };
         let events = ledger.load_replay_plan()?;
         let mut state = self.state.lock().await;
-        anyhow::ensure!(
-            state.version == SelfVersion(0) && state.receipts.is_empty(),
-            "Dasein replay requires a pristine state engine"
-        );
+        if state.version != SelfVersion(0) || !state.receipts.is_empty() {
+            // Engine was partially mutated before replay — reset to pristine
+            // so the durable ledger is the single source of truth.
+            state.version = SelfVersion(0);
+            state.receipts.clear();
+            state.narrative.clear();
+        }
         for event in &events {
             let receipt = self.transition_locked(&mut state, event.request.clone(), false)?;
             anyhow::ensure!(

@@ -348,6 +348,16 @@ impl AdvancedCompressor {
             ));
         }
 
+        // V2 structured checkpoint validation (same contract as legacy path).
+        if let Err(error) = validate_structured_checkpoint(&summary) {
+            return Ok(self.push_lineage(
+                unchanged(Some(CompactionFailure::DegenerateSummary {
+                    reason: error.to_string(),
+                })),
+                force,
+            ));
+        }
+
         // Segments that will leave the main buffer — surfaced for promotion.
         // Every removed message is reported to the harness. The harness may
         // promote it through its bounded callback; the strategy controls the
@@ -371,9 +381,29 @@ impl AdvancedCompressor {
         compacted.extend(protected_initial_user);
         compacted.extend_from_slice(tail_messages);
 
+        let tokens_after: usize = compacted.iter().map(|m| m.estimate_tokens()).sum();
+        if tokens_after >= tokens_before {
+            return Ok(self.push_lineage(
+                unchanged(Some(CompactionFailure::DegenerateSummary {
+                    reason: format!("no token benefit ({tokens_before} -> {tokens_after})"),
+                })),
+                force,
+            ));
+        }
+        if tokens_after > self.context_window_tokens {
+            return Ok(self.push_lineage(
+                unchanged(Some(CompactionFailure::DegenerateSummary {
+                    reason: format!(
+                        "result {tokens_after} exceeds history budget {}",
+                        self.context_window_tokens
+                    ),
+                })),
+                force,
+            ));
+        }
+
         self.previous_summary = Some(summary);
         *messages = compacted;
-        let tokens_after: usize = messages.iter().map(|m| m.estimate_tokens()).sum();
 
         Ok(self.push_lineage(
             CompactionOutcome {
@@ -771,8 +801,17 @@ mod tests {
         ) -> anyhow::Result<LlmResponse> {
             Ok(LlmResponse {
                 content: vec![ContentBlock::Text {
-                    text: "The user refactored the auth module: extracted the token validator, \
-                           added regression tests, and fixed a refresh-path race condition."
+                    text: "## Active Task\nAuth refactor.\n\
+                           ## Goal\nExtract validator.\n\
+                           ## Completed Actions\nExtracted TokenValidator.\n\
+                           ## Active State\nCompiles.\n\
+                           ## In Progress\nNone.\n\
+                           ## Blocked\nNone.\n\
+                           ## Key Decisions\nExtract-class pattern.\n\
+                           ## Pending User Asks\nNone.\n\
+                           ## Relevant Files\nvalidator.rs\n\
+                           ## Remaining Work\nFix race condition.\n\
+                           ## Critical Context\nNo constraints."
                         .into(),
                 }],
                 stop_reason: StopReason::EndTurn,
@@ -870,8 +909,16 @@ mod tests {
 
     #[tokio::test]
     async fn v2_applies_with_good_summary_and_reports_outcome() {
-        let mut c = AdvancedCompressor::new(100, 200, 1_000);
-        let mut messages = oversized_messages();
+        let mut c = AdvancedCompressor::new(400, 200, 1_500);
+        let mut messages: Vec<Message> = vec![Message::user("start task")];
+        for i in 0..6 {
+            messages.push(Message::assistant(format!("r{} {}", i, "x".repeat(500))));
+            messages.push(Message::tool_result(
+                format!("t{}", i),
+                "y".repeat(300),
+                false,
+            ));
+        }
         let before = messages.len();
         let outcome = c
             .maybe_compact_v2(&mut messages, &GoodLlm, CompactionStrategy::TailKeep)
@@ -973,7 +1020,7 @@ mod tests {
 
     #[tokio::test]
     async fn full_replace_applies_good_summary_and_preserves_recent_tail() {
-        let mut compressor = AdvancedCompressor::new(100, 200, 1_000);
+        let mut compressor = AdvancedCompressor::new(100, 200, 100_000);
         let mut messages = (0..8)
             .map(|index| {
                 if index % 2 == 0 {

@@ -25,7 +25,7 @@ use tokio::sync::Mutex;
 use crate::adapters::storage::fact_store::FactStore;
 use crate::adapters::storage::recall_memory::RecallMemory;
 use crate::backends::EpisodicMemory;
-use crate::domain::core_memory::CoreMemory;
+use crate::domain::core_memory::{CoreMemory, MemoryBlock};
 pub use crate::model::{
     MemoryAuthority, MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity,
     TemporalState,
@@ -374,6 +374,16 @@ pub trait MemoryService: Send + Sync {
     /// Default implementation returns an error (like `preview_forget`).
     async fn synthesize(&self, _request: SynthesisRequest) -> anyhow::Result<SynthesisResult> {
         anyhow::bail!("synthesis is unavailable")
+    }
+
+    /// Promote high-confidence consolidated facts into CoreMemory learned blocks.
+    /// Returns the count of facts promoted. Default no-op.
+    async fn promote_facts(
+        &self,
+        _min_confidence: f64,
+        _max_count: usize,
+    ) -> anyhow::Result<usize> {
+        Ok(0)
     }
 }
 
@@ -1029,6 +1039,31 @@ impl MemoryService for DefaultMemoryService {
 
     async fn synthesize(&self, request: SynthesisRequest) -> anyhow::Result<SynthesisResult> {
         self.synthesize(request).await
+    }
+
+    async fn promote_facts(&self, min_confidence: f64, max_count: usize) -> anyhow::Result<usize> {
+        let Some(repository) = &self.consolidation else {
+            return Ok(0);
+        };
+        let records =
+            repository.high_confidence_records(&MemoryScope::Global, min_confidence, max_count)?;
+        let count = records.len();
+        if count == 0 {
+            return Ok(0);
+        }
+        use sha2::{Digest, Sha256};
+        let mut core = self.core_memory.lock().await;
+        for (content, kind_json, confidence) in records {
+            let mut hasher = Sha256::new();
+            hasher.update(content.as_bytes());
+            let hash_hex = format!("{:x}", hasher.finalize());
+            let kind: &str = &kind_json;
+            let label = format!("fact:{kind}:{}", &hash_hex[..16]);
+            let value = format!("[{kind}] confidence={confidence:.2}\n{content}");
+            let truncated: String = value.chars().take(2500).collect();
+            core.set_block(MemoryBlock::new(label, truncated, 3000));
+        }
+        Ok(count)
     }
 }
 

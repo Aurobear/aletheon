@@ -1,4 +1,4 @@
-//! Executive supervisor for Mnemosyne-owned GBrain reconciliation.
+//! Executive supervisor for Mnemosyne-owned Supplemental memory reconciliation.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,11 +14,11 @@ pub use mnemosyne::supplemental::ReconciliationDrainReport as DrainReport;
 
 /// Scheduling-only adapter. All claim, receipt, retry, dead-letter, and
 /// tombstone-settlement decisions live in Mnemosyne.
-pub struct GbrainWorker<T: SupplementalMemoryTransport> {
+pub struct SupplementalDeliveryWorker<T: SupplementalMemoryTransport> {
     service: SupplementalReconciliationService<T>,
 }
 
-impl<T: SupplementalMemoryTransport> GbrainWorker<T> {
+impl<T: SupplementalMemoryTransport> SupplementalDeliveryWorker<T> {
     pub fn new(
         spool: Arc<SupplementalSpool>,
         transport: Arc<T>,
@@ -59,7 +59,7 @@ impl<T: SupplementalMemoryTransport> GbrainWorker<T> {
             }
             let now_ms = clock.wall_now().0.max(0);
             if let Err(error) = self.service.drain_once(now_ms, &cancel).await {
-                tracing::warn!(error = %error, "GBrain reconciliation drain degraded");
+                tracing::warn!(error = %error, "Supplemental memory delivery degraded");
             }
             tokio::select! {
                 _ = cancel.cancelled() => break,
