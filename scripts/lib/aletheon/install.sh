@@ -1,5 +1,53 @@
 #!/usr/bin/env bash
 
+cmd_monitor_install() {
+  local source_dir="$ALETHEON_ROOT/tools/aletheon-monitor"
+  [[ -d "$source_dir" ]] || {
+    aletheon_warn "monitor source is unavailable; skipping MCP monitor install"
+    return 0
+  }
+
+  local bin_dir=${ALETHEON_USER_BIN_DIR:-$HOME/.local/bin}
+  local data_dir=${ALETHEON_USER_DATA_DIR:-$HOME/.local/share/aletheon}
+  local monitor_dir="$data_dir/monitor"
+  local venv_dir="$monitor_dir/.venv"
+  local dependency_stamp="$monitor_dir/.dependency-spec.sha256"
+  local expected_stamp
+  expected_stamp=$(sha256sum "$source_dir/pyproject.toml" | awk '{print $1}')
+
+  aletheon_info "installing Aletheon monitor in an isolated Python environment"
+  install -d -m 0755 "$bin_dir" "$monitor_dir"
+  cp -a "$source_dir"/. "$monitor_dir/"
+
+  if [[ ! -x "$venv_dir/bin/python" ]]; then
+    rm -rf -- "$venv_dir"
+    python3 -m venv "$venv_dir"
+  fi
+  if [[ ! -f "$dependency_stamp" ]] ||
+     [[ $(cat "$dependency_stamp") != "$expected_stamp" ]] ||
+     ! "$venv_dir/bin/python" -c 'import mcp' >/dev/null 2>&1; then
+    "$venv_dir/bin/python" -m pip install --disable-pip-version-check "$monitor_dir"
+    printf '%s\n' "$expected_stamp" > "$dependency_stamp"
+  fi
+
+  cat > "$bin_dir/aletheon-monitor" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -f /etc/aletheon/.env ]]; then
+  set -a; source /etc/aletheon/.env; set +a
+elif [[ -f "\$HOME/.config/aletheon/.env" ]]; then
+  set -a; source "\$HOME/.config/aletheon/.env"; set +a
+fi
+
+exec "$venv_dir/bin/python" "$monitor_dir/run.py" "\$@"
+EOF
+  chmod 0755 "$bin_dir/aletheon-monitor"
+  "$venv_dir/bin/python" -c \
+    "import sys; sys.path.insert(0, '$monitor_dir'); from src.server import server"
+  aletheon_ok "MCP monitor installed at $bin_dir/aletheon-monitor"
+}
+
 cmd_install() {
   local enable=1
   [[ ${1:-} == --no-enable ]] && enable=0
@@ -26,6 +74,7 @@ cmd_install() {
   fi
   rmdir "$user_unit_dir/aletheon.service.d" 2>/dev/null || true
   systemctl --user daemon-reload
+  cmd_monitor_install
   aletheon_ok "system assets installed"
 }
 
@@ -51,6 +100,7 @@ cmd_install_user() {
   fi
   [[ -f "$ALETHEON_CONFIG_FILE" ]] ||
     aletheon_warn "no user config at $ALETHEON_CONFIG_FILE; run ./setup.sh --user or create it before first turn"
+  cmd_monitor_install
   aletheon_ok "user-mode assets installed under $bin_dir and $unit_dir"
 }
 

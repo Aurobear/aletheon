@@ -372,10 +372,15 @@ setup_monitor() {
 
     log "Installing MCP monitor bridge..."
 
-    # Copy monitor Python package to data dir
+    # Copy monitor Python package to data dir and install its declared
+    # dependencies into a private environment. The wrapper must not depend on
+    # packages that happen to exist in the invoking user's system Python.
     $USE_SUDO mkdir -p "$MONITOR_DST"
     $USE_SUDO cp -a "$MONITOR_SRC"/* "$MONITOR_DST/"
     $USE_SUDO chmod +x "$MONITOR_DST/run.py"
+    local venv="$MONITOR_DST/.venv"
+    $USE_SUDO python3 -m venv "$venv"
+    $USE_SUDO "$venv/bin/python" -m pip install --disable-pip-version-check "$MONITOR_DST"
 
     # Create wrapper script at $BIN_DIR/aletheon-monitor
     # This wrapper sources the env file so ALETHEON_SOCKET is always set
@@ -391,9 +396,11 @@ elif [[ -f "\$HOME/.config/aletheon/.env" ]]; then
     set -a; source "\$HOME/.config/aletheon/.env"; set +a
 fi
 
-exec python3 "$MONITOR_DST/run.py" "\$@"
+exec "$venv/bin/python" "$MONITOR_DST/run.py" "\$@"
 WRAPPER
     $USE_SUDO chmod +x "$wrapper"
+    $USE_SUDO "$venv/bin/python" -c \
+        "import sys; sys.path.insert(0, '$MONITOR_DST'); from src.server import server"
     log "Monitor wrapper installed: $wrapper"
     log "Monitor files: $MONITOR_DST"
 }
