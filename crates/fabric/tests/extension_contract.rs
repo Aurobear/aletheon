@@ -376,7 +376,7 @@ fn extension_origin_to_asset_origin_projection() {
 
 #[test]
 fn extension_descriptor_to_asset_descriptor_projection() {
-    use fabric::{AssetDescriptor, AssetKind};
+    use fabric::types::extension_asset::{AssetDescriptor, AssetKind};
     let old = ExtensionDescriptor::new(
         ExtensionKind::Skill,
         "review",

@@ -36,7 +36,7 @@ impl SkillAdminPort for NoopSkills {
     async fn reload(&self) -> Result<usize, AdminServiceError> {
         Ok(0)
     }
-    fn list(&self) -> Vec<SkillDescriptor> {
+    async fn list(&self) -> Vec<SkillDescriptor> {
         Vec::new()
     }
 }

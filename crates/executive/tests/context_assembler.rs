@@ -75,6 +75,11 @@ async fn production_source_allows_first_turn_without_conscious_projection() {
         ))),
         skill_router: Arc::new(Mutex::new(corpus::SkillRouter::new())),
         conscious: Arc::new(UnavailableConsciousContext),
+        memory_service: None,
+        recall_enabled: false,
+        recall_max_items: 0,
+        recall_max_bytes: 0,
+        recall_timeout_ms: 0,
     };
 
     let fragments = source.load(&request("first turn")).await.unwrap();
@@ -92,6 +97,7 @@ async fn fragments_have_one_deterministic_order_before_raw_input() {
         system_prefix: "system".into(),
         skills: "S".into(),
         conscious: Some(projection()),
+        memory_context: String::new(),
     })));
     let assembled = assembler
         .assemble(&request("raw user"), &[Message::assistant("prior")])
@@ -118,6 +124,7 @@ async fn fragments_and_history_are_bounded_and_utf8_safe() {
         system_prefix: huge.clone(),
         skills: huge,
         conscious: Some(projection()),
+        memory_context: String::new(),
     })));
     let assembled = assembler
         .assemble(&request("raw"), &[Message::user("x".repeat(200_000))])
