@@ -39,6 +39,13 @@ cmd_restart() {
   aletheon_ok "services restarted"
 }
 
+cmd_restart_user() {
+  aletheon_info "restarting user daemon (rootless, no core)"
+  systemctl --user reset-failed aletheon.service 2>/dev/null || true
+  systemctl --user restart aletheon.service
+  aletheon_ok "user daemon restarted"
+}
+
 cmd_logs() {
   case "${1:-user}" in
     core) journalctl -u aletheon-core.service -n "${ALETHEON_LOG_LINES:-100}" --no-pager ;;

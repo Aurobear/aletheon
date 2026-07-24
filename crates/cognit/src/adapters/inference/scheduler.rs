@@ -92,9 +92,9 @@ pub struct RetryPolicy {
 impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
-            max_retries: 2,
-            base_backoff_ms: 200,
-            max_backoff_ms: 4_000,
+            max_retries: 4,
+            base_backoff_ms: 1_000,
+            max_backoff_ms: 30_000,
         }
     }
 }
@@ -277,10 +277,19 @@ impl LlmScheduler {
                         // Transient + retries remaining -- backoff and retry same provider.
                         ErrorClass::Transient if attempt < self.retry_policy.max_retries => {
                             let shift = attempt as u32;
-                            let backoff = self
+                            let computed_backoff = self
                                 .retry_policy
                                 .base_backoff_ms
                                 .saturating_mul(1u64 << shift)
+                                .min(self.retry_policy.max_backoff_ms);
+                            // Honor a server-advised Retry-After delay (e.g. 429), taking
+                            // whichever is longer, capped at max_backoff_ms.
+                            let retry_after_ms = e
+                                .downcast_ref::<InferenceFailure>()
+                                .and_then(|f| f.retry_after_ms);
+                            let backoff = retry_after_ms
+                                .map(|r| r.max(computed_backoff))
+                                .unwrap_or(computed_backoff)
                                 .min(self.retry_policy.max_backoff_ms);
                             if backoff > 0 {
                                 tokio::time::sleep(Duration::from_millis(backoff)).await;

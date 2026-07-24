@@ -7,17 +7,33 @@ pub struct SkillKeywords {
     pub body: String,
 }
 
-/// Return the bodies of all skills whose any keyword appears in `message`.
+/// Maximum number of matched skill bodies returned by `match_skills`, to
+/// avoid concatenating too many full skill bodies for casual chat.
+const MAX_MATCHED_SKILLS: usize = 3;
+
+/// Return the bodies of the top-matching skills whose any keyword appears in
+/// `message`, ranked by number of distinct keyword hits (descending) and
+/// capped at `MAX_MATCHED_SKILLS`.
 pub fn match_skills(message: &str, skills: &[SkillKeywords]) -> Vec<String> {
     let lower = message.to_lowercase();
-    skills
+    let mut matched: Vec<(usize, &SkillKeywords)> = skills
         .iter()
-        .filter(|s| {
-            s.keywords
+        .filter_map(|s| {
+            let hits = s
+                .keywords
                 .iter()
-                .any(|k| !k.is_empty() && lower.contains(&k.to_lowercase()))
+                .filter(|k| !k.is_empty() && lower.contains(&k.to_lowercase()))
+                .count();
+            (hits > 0).then_some((hits, s))
         })
-        .map(|s| s.body.clone())
+        .collect();
+
+    matched.sort_by(|a, b| b.0.cmp(&a.0));
+
+    matched
+        .into_iter()
+        .take(MAX_MATCHED_SKILLS)
+        .map(|(_, s)| s.body.clone())
         .collect()
 }
 

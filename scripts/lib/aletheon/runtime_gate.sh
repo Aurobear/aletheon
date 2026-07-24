@@ -117,13 +117,14 @@ cmd_verify_runtime_stability() {
 }
 
 cmd_verify_official_client() {
+  local binary=${1:-$ALETHEON_INSTALLED_BINARY}
   [[ "$ALETHEON_SMOKE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] ||
     { aletheon_die "ALETHEON_SMOKE_TIMEOUT_SECONDS must be a positive integer"; return; }
   local output status=0
   output=$(mktemp "${TMPDIR:-/tmp}/aletheon-deployment-smoke.XXXXXX") || return
   chmod 0600 "$output"
   if timeout "$ALETHEON_SMOKE_TIMEOUT_SECONDS" \
-      "$ALETHEON_INSTALLED_BINARY" \
+      "$binary" \
       --socket "$ALETHEON_USER_SOCKET" \
       -m "$ALETHEON_SMOKE_PROMPT" >"$output" 2>/dev/null; then
     :
@@ -148,4 +149,61 @@ cmd_installed_runtime_gate() {
   cmd_verify_official_client || return
   cmd_verify_runtime_provenance || return
   cmd_verify_runtime_stability || return
+}
+
+# User-mode variants: no system core service exists, and the installed binary
+# lives under $HOME instead of /usr/bin. Provenance therefore compares only the
+# release candidate, the user-installed binary, and the running user process.
+_verify_user_provenance() {
+  local bin=$1 candidate installed_path user_path
+  local candidate_hash installed_hash user_hash
+  candidate=$ALETHEON_RELEASE_BINARY
+  [[ -x "$bin" ]] || { aletheon_die "installed user binary is unavailable: $bin"; return; }
+  installed_path=$(readlink -f "$bin") ||
+    { aletheon_die "cannot resolve installed user binary: $bin"; return; }
+  user_path=$(_runtime_executable user "$ALETHEON_USER_UNIT") || return
+  candidate_hash=$(_sha256 "$candidate") || return
+  installed_hash=$(_sha256 "$bin") || return
+  user_hash=$(_sha256 "$user_path") || return
+  if [[ "$installed_hash" != "$candidate_hash" ]]; then
+    aletheon_die "installed user binary hash differs from release candidate: candidate=$candidate_hash installed=$installed_hash"
+    return
+  fi
+  if [[ "$user_hash" != "$candidate_hash" ]]; then
+    aletheon_die "running user executable hash differs from release candidate: candidate=$candidate_hash user=$user_hash"
+    return
+  fi
+  if [[ "$user_path" != "$installed_path" ]]; then
+    aletheon_die "running user executable path differs from installed binary: installed=$installed_path user=$user_path"
+    return
+  fi
+  aletheon_ok "installed user runtime provenance verified: sha256=$candidate_hash"
+}
+
+_verify_user_stability() {
+  [[ "$ALETHEON_STABILITY_SECONDS" =~ ^[0-9]+$ ]] ||
+    { aletheon_die "ALETHEON_STABILITY_SECONDS must be a non-negative integer"; return; }
+  local before after pid
+  before=$(_service_snapshot user "$ALETHEON_USER_UNIT") || return
+  sleep "$ALETHEON_STABILITY_SECONDS"
+  after=$(_service_snapshot user "$ALETHEON_USER_UNIT") || return
+  if [[ "$before" != "$after" ]]; then
+    aletheon_die "user service restart count increased during stability window: $before->$after"
+    return
+  fi
+  pid=${after%%:*}
+  if _service_has_fatal_log user "$ALETHEON_USER_UNIT" "$pid"; then
+    aletheon_die "fatal startup validation error detected for current user runtime process"
+    return
+  fi
+  aletheon_ok "user runtime stability verified: interval=${ALETHEON_STABILITY_SECONDS}s"
+}
+
+cmd_installed_runtime_gate_user() {
+  local bin=${1:-${ALETHEON_USER_BIN_DIR:-$HOME/.local/bin}/aletheon}
+  _verify_user_provenance "$bin" || return
+  _verify_user_stability || return
+  cmd_verify_official_client "$bin" || return
+  _verify_user_provenance "$bin" || return
+  _verify_user_stability || return
 }

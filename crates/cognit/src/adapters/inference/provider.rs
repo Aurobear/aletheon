@@ -24,6 +24,9 @@ pub enum InferenceFailureKind {
 pub struct InferenceFailure {
     pub kind: InferenceFailureKind,
     pub code: &'static str,
+    /// For 429 responses, the server-advised delay (ms) before retrying, per
+    /// the `Retry-After` header. Capped to a sane maximum by the caller.
+    pub retry_after_ms: Option<u64>,
 }
 
 impl InferenceFailure {
@@ -31,6 +34,17 @@ impl InferenceFailure {
         anyhow::Error::new(Self {
             kind: InferenceFailureKind::Transient,
             code,
+            retry_after_ms: None,
+        })
+    }
+
+    /// Transient failure carrying a server-advised retry delay (e.g. from
+    /// a 429 `Retry-After` header).
+    pub fn transient_with_retry_after(code: &'static str, retry_after_ms: Option<u64>) -> anyhow::Error {
+        anyhow::Error::new(Self {
+            kind: InferenceFailureKind::Transient,
+            code,
+            retry_after_ms,
         })
     }
 
@@ -38,6 +52,7 @@ impl InferenceFailure {
         anyhow::Error::new(Self {
             kind: InferenceFailureKind::Terminal,
             code,
+            retry_after_ms: None,
         })
     }
 
@@ -45,11 +60,27 @@ impl InferenceFailure {
         anyhow::Error::new(Self {
             kind: InferenceFailureKind::ContextOverflow,
             code: "context_overflow",
+            retry_after_ms: None,
         })
     }
 
-    pub fn from_http_status(status: reqwest::StatusCode) -> anyhow::Error {
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
+    /// Cap on the `Retry-After` delay we will honor, to avoid unbounded waits.
+    const MAX_RETRY_AFTER_MS: u64 = 60_000;
+
+    /// Parse a `Retry-After` header value as whole seconds (HTTP-date form
+    /// is not handled; absence or malformed values simply yield `None`).
+    fn parse_retry_after_ms(response: &reqwest::Response) -> Option<u64> {
+        let value = response.headers().get(reqwest::header::RETRY_AFTER)?;
+        let secs: u64 = value.to_str().ok()?.trim().parse().ok()?;
+        Some(secs.saturating_mul(1_000).min(Self::MAX_RETRY_AFTER_MS))
+    }
+
+    pub fn from_http_status(response: &reqwest::Response) -> anyhow::Error {
+        let status = response.status();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after_ms = Self::parse_retry_after_ms(response);
+            Self::transient_with_retry_after("provider_unavailable", retry_after_ms)
+        } else if status.is_server_error() {
             Self::transient("provider_unavailable")
         } else {
             Self::terminal("provider_rejected_request")

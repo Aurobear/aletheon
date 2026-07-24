@@ -24,7 +24,10 @@ Deployment:
   build                         Build the release binary through cargo-agent.sh
   install [--no-enable]         Install native systemd assets
   deploy [--no-build] [--no-restart] [--no-enable]
-                                Build, install, stage closure, restart, verify
+                                Build, install, stage closure, restart, verify.
+                                Scope is inferred from sudo: with sudo it
+                                installs system assets, without sudo it installs
+                                a rootless runtime under $HOME.
   configure {show|check}        Display safe paths or validate configuration
 
 Operations:
@@ -66,11 +69,25 @@ cmd_deploy() {
     esac
     shift
   done
+  local install_args=()
+  ((enable)) || install_args+=(--no-enable)
   ((build)) && cmd_build
-  if ((enable)); then cmd_install; else cmd_install --no-enable; fi
-  cmd_closure_install
-  ((restart)) && cmd_restart
-  cmd_verify
+  # Scope is inferred, never flagged: passwordless sudo (or already root)
+  # installs the reviewed system assets; an unprivileged shell installs a
+  # rootless runtime under $HOME.
+  if [[ ${EUID:-$(id -u)} -eq 0 ]] || sudo -n true 2>/dev/null; then
+    aletheon_info "sudo available; installing system assets"
+    cmd_install "${install_args[@]}"
+    cmd_closure_install
+    ((restart)) && cmd_restart
+    cmd_verify
+  else
+    aletheon_info "no sudo; installing rootless runtime under \$HOME"
+    cmd_install_user "${install_args[@]}"
+    cmd_closure_install
+    ((restart)) && cmd_restart_user
+    cmd_verify_user
+  fi
 }
 
 case "${1:-help}" in

@@ -266,7 +266,7 @@ impl LlmProvider for OllamaProvider {
             .await?;
 
         if !response.status().is_success() {
-            return Err(InferenceFailure::from_http_status(response.status()));
+            return Err(InferenceFailure::from_http_status(&response));
         }
 
         let api_resp: ChatResponse = response.json().await?;
@@ -340,7 +340,7 @@ impl LlmProvider for OllamaProvider {
             .await?;
 
         if !response.status().is_success() {
-            return Err(InferenceFailure::from_http_status(response.status()));
+            return Err(InferenceFailure::from_http_status(&response));
         }
 
         let byte_stream = response.bytes_stream().map(|r| r.map(|b| b.to_vec()));

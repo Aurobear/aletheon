@@ -90,8 +90,9 @@ impl StreamController {
         self.thinking_buf.clear();
         self.thinking = false;
         self.thinking_start = None;
-        // Match Codex's presentation: reasoning opens while it is streaming,
-        // then returns to a collapsed summary when the turn completes.
+        // Reasoning stays collapsed by default (both while streaming and once
+        // the turn completes) to avoid leaking injected context verbatim in
+        // the transcript. Users can still expand it via toggle_thinking().
         self.thinking_collapsed = true;
         self.table_holdback = TableHoldbackState::None;
     }
@@ -100,7 +101,6 @@ impl StreamController {
         if !self.thinking {
             self.thinking = true;
             self.thinking_start = Some(self.clock.mono_now());
-            self.thinking_collapsed = false;
         }
         self.thinking_buf.push_str(text);
         // Bounded tail: keep only last THINKING_VIEW_MAX bytes
@@ -318,15 +318,15 @@ mod tests {
     }
 
     #[test]
-    fn thinking_is_expanded_while_streaming_then_collapses_before_answer() {
+    fn thinking_stays_collapsed_by_default_while_streaming_and_after_answer() {
         let clock = Arc::new(TestClock::default());
         let mut stream = StreamController::new(clock.clone());
 
         stream.start_turn();
         stream.push_thinking("先分析问题");
 
-        assert!(!stream.thinking_collapsed());
-        assert!(stream.current_text().contains("先分析问题"));
+        assert!(stream.thinking_collapsed());
+        assert!(!stream.current_text().contains("先分析问题"));
 
         clock.advance(1_250);
         stream.push_text("最终回答");

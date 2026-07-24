@@ -255,11 +255,11 @@ impl ProductionTurnSessions {
         let prefix_tokens = Message::system(self.cached_prefix.lock().await.clone())
             .estimate_tokens()
             .saturating_add(Message::system(profile.system_prompt).estimate_tokens());
-        let tool_schema_tokens = profile
-            .allowed_tools
-            .iter()
-            .map(|name| Message::system(format!("tool:{name}:schema")).estimate_tokens() + 64)
-            .sum();
+        // Real per-tool schema token estimate (name + description +
+        // serialized JSON input_schema), not a fixed ~74 tokens/tool
+        // placeholder — the provider sends the full schema for every
+        // allowed tool, which for large toolsets is thousands of tokens.
+        let tool_schema_tokens = self.active_profile.tool_schema_tokens().await?;
         let pending_user_input_tokens = if pending_user.is_empty() {
             0
         } else {
@@ -560,6 +560,27 @@ impl ActiveAgentProfilePort for ProductionActiveAgentProfile {
             approval_policy: p.approval_policy,
             tool_timeout_ms: p.tool_timeout_ms,
         })
+    }
+
+    async fn tool_schema_tokens(&self) -> anyhow::Result<usize> {
+        let profile_name = self.current.lock().await.clone();
+        let resolved = self
+            .profiles
+            .resolve_by_name(&profile_name)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        // Estimate the real serialized cost of each tool's schema (name +
+        // description + JSON input_schema) using the same chars/4 + overhead
+        // heuristic as `Message::estimate_tokens`, instead of a fixed
+        // per-tool constant that ignores actual schema size.
+        Ok(resolved
+            .tools
+            .iter()
+            .map(|tool| {
+                let serialized_chars =
+                    tool.name.len() + tool.description.len() + tool.input_schema.to_string().len();
+                serialized_chars / 4 + 10
+            })
+            .sum())
     }
 }
 

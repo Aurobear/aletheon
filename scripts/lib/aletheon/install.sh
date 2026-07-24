@@ -29,6 +29,31 @@ cmd_install() {
   aletheon_ok "system assets installed"
 }
 
+cmd_install_user() {
+  local enable=1
+  [[ ${1:-} == --no-enable ]] && enable=0
+  [[ $# -le 1 ]] || aletheon_die "usage: aletheon.sh install-user [--no-enable]"
+  [[ -x "$ALETHEON_RELEASE_BINARY" ]] || aletheon_die "missing release binary; run build first"
+  local bin_dir=${ALETHEON_USER_BIN_DIR:-$HOME/.local/bin}
+  local unit_dir=${ALETHEON_USER_UNIT_DIR:-$HOME/.config/systemd/user}
+  aletheon_info "installing user-mode assets under \$HOME (rootless)"
+  install -d -m 0755 "$bin_dir" "$unit_dir"
+  install -m 0755 "$ALETHEON_RELEASE_BINARY" "$bin_dir/aletheon"
+  # The reviewed unit ships with a %h-relative ExecStart; pin it to the concrete
+  # install directory so the running executable path matches provenance checks.
+  sed "s|ExecStart=%h/.local/bin/aletheon daemon|ExecStart=$bin_dir/aletheon daemon|" \
+    "$ALETHEON_ROOT/config/aletheon.user.service" > "$unit_dir/aletheon.service"
+  install -m 0644 "$ALETHEON_ROOT/config/aletheon.user.socket" "$unit_dir/aletheon.socket"
+  systemd-analyze --user verify "$unit_dir/aletheon.service" "$unit_dir/aletheon.socket"
+  systemctl --user daemon-reload
+  if ((enable)); then
+    systemctl --user enable --now aletheon.socket
+  fi
+  [[ -f "$ALETHEON_CONFIG_FILE" ]] ||
+    aletheon_warn "no user config at $ALETHEON_CONFIG_FILE; run ./setup.sh --user or create it before first turn"
+  aletheon_ok "user-mode assets installed under $bin_dir and $unit_dir"
+}
+
 cmd_closure_install() {
   local bin_dir=${ALETHEON_USER_BIN_DIR:-$HOME/.local/bin}
   local unit_dir=${ALETHEON_USER_UNIT_DIR:-$HOME/.config/systemd/user}

@@ -61,6 +61,23 @@ impl Tool for FileReadTool {
             }
         };
 
+        match std::fs::metadata(filesystem.path.native()) {
+            Ok(metadata) if metadata.is_dir() => {
+                return ToolResult {
+                    content: format!(
+                        "path is a directory; use glob/grep/file_search to enumerate contents: {path}"
+                    ),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                        truncated: false,
+                        patch_delta: None,
+                    },
+                };
+            }
+            _ => {}
+        }
+
         match filesystem.host.read(&filesystem.path).await {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(content) => {

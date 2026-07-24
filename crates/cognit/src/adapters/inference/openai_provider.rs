@@ -419,7 +419,7 @@ impl LlmProvider for OpenAiProvider {
                 .map_err(provider_request_error)?;
 
             if !response.status().is_success() {
-                return Err(InferenceFailure::from_http_status(response.status()));
+                return Err(InferenceFailure::from_http_status(&response));
             }
             response.json().await.map_err(provider_request_error)
         })
@@ -537,7 +537,7 @@ impl LlmProvider for OpenAiProvider {
         .map_err(provider_request_error)?;
 
         if !response.status().is_success() {
-            return Err(InferenceFailure::from_http_status(response.status()));
+            return Err(InferenceFailure::from_http_status(&response));
         }
 
         let byte_stream = response.bytes_stream().map(|r| r.map(|b| b.to_vec()));

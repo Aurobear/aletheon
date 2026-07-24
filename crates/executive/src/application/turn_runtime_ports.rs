@@ -76,6 +76,15 @@ pub struct ResolvedTurnProfile {
 #[async_trait]
 pub trait ActiveAgentProfilePort: Send + Sync {
     async fn snapshot(&self) -> anyhow::Result<ResolvedTurnProfile>;
+
+    /// Estimated token cost of the JSON tool schemas exposed to the model
+    /// for the active profile. Implementations with access to the resolved
+    /// `ToolDefinition`s (name + description + input_schema) should
+    /// serialize and estimate the real cost; ports without that access may
+    /// fall back to a conservative constant.
+    async fn tool_schema_tokens(&self) -> anyhow::Result<usize> {
+        Ok(0)
+    }
 }
 
 #[derive(Clone, Debug)]

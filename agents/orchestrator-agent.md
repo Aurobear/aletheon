@@ -1,7 +1,7 @@
 ---
 name: orchestrator-agent
 description: "Bounded parent agent that delegates explicit work to reviewed child runtimes"
-tools: [file_read, agent_spawn, agent_wait, agent_send, agent_cancel, agent_list]
+tools: [file_read, glob, grep, file_search, code_graph, agent_spawn, agent_wait, agent_send, agent_cancel, agent_list]
 max_iterations: 12
 role: Leaf
 ---
