@@ -5,7 +5,6 @@
 //! with the version, parent version, description, and timestamp.
 //! Optionally persists to a JSONL file via `with_path()`.
 
-use anyhow::Result;
 use fabric::{wall_to_datetime, Clock};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -130,14 +129,6 @@ impl LineageTracker {
         entries.push(entry);
     }
 
-    /// Record a pre-built lineage entry (async, for pipeline use).
-    pub async fn record_entry(&self, entry: &LineageEntry) -> Result<()> {
-        self.append_to_file(entry);
-        let mut entries = self.entries.lock().unwrap();
-        entries.push(entry.clone());
-        Ok(())
-    }
-
     /// Append a single entry to the JSONL file if a path is configured.
     fn append_to_file(&self, entry: &LineageEntry) {
         if let Some(ref path) = self.path {
@@ -153,24 +144,14 @@ impl LineageTracker {
     }
 
     /// Get the full lineage history (sync).
+    #[cfg(test)]
     pub fn history(&self) -> Vec<LineageEntry> {
         let entries = self.entries.lock().unwrap();
         entries.clone()
     }
 
-    /// Get the full lineage history (async, for pipeline use).
-    pub async fn history_async(&self) -> Result<Vec<LineageEntry>> {
-        let entries = self.entries.lock().unwrap();
-        Ok(entries.clone())
-    }
-
-    /// Get the latest version in the lineage, if any.
-    pub fn latest(&self) -> Option<LineageEntry> {
-        let entries = self.entries.lock().unwrap();
-        entries.last().cloned()
-    }
-
     /// Get the number of lineage entries.
+    #[cfg(test)]
     pub fn count(&self) -> usize {
         let entries = self.entries.lock().unwrap();
         entries.len()
