@@ -26,6 +26,7 @@ cmd_test() {
       _run_test_script suites/deployment/systemd_runtime_boundary.sh
       _run_test_script suites/deployment/upgrade_multi_user_test.sh
       _run_test_script production/installed_host_static_test.sh
+      _run_test_script production/sudo_deploy_user_context_static_test.sh
       _run_test_script production/failure_matrix_static_test.sh
       _run_test_script production/release_aggregate_receipt_test.sh
       _run_test_script production/extension_acceptance_static_test.sh
