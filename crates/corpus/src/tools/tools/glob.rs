@@ -7,6 +7,10 @@ use super::{ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolResult, To
 
 pub struct GlobTool;
 
+const DEFAULT_GLOB_RESULTS: usize = 100;
+const MAX_GLOB_RESULTS: usize = 200;
+const MAX_GLOB_RESULT_BYTES: usize = 24 * 1024;
+
 #[async_trait]
 impl Tool for GlobTool {
     fn name(&self) -> &str {
@@ -14,7 +18,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "List files matching a glob pattern. Returns relative paths from the root directory."
+        "Discover files with a bounded, specific glob. Start from known entry files and narrow paths/extensions; avoid an unqualified recursive inventory such as '**/*'. Returns relative paths from the root directory."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -31,7 +35,7 @@ impl Tool for GlobTool {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum results (default: 200). Values above 2000 are capped."
+                    "description": "Maximum results (default: 100, hard cap: 200)."
                 }
             },
             "required": ["pattern"]
@@ -67,6 +71,17 @@ impl Tool for GlobTool {
                 };
             }
         };
+        if matches!(pattern.trim(), "**" | "**/*") {
+            return ToolResult {
+                content: "Error: unqualified recursive inventory is too broad. Read known entry files first, then use a scoped pattern such as 'crates/*/Cargo.toml' or 'crates/executive/src/**/*.rs'.".to_string(),
+                is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                    patch_delta: None,
+                },
+            };
+        }
 
         let root = input
             .get("root")
@@ -77,8 +92,8 @@ impl Tool for GlobTool {
         let max_results = input
             .get("limit")
             .and_then(|v| v.as_u64())
-            .unwrap_or(200)
-            .min(2000) as usize;
+            .unwrap_or(DEFAULT_GLOB_RESULTS as u64)
+            .min(MAX_GLOB_RESULTS as u64) as usize;
 
         // Use walkdir + manual glob matching
         let glob_pattern = match GlobPattern::new(&pattern) {
@@ -138,13 +153,26 @@ impl Tool for GlobTool {
                 },
             }
         } else {
-            let content = matches.join("\n");
+            let mut content = matches.join("\n");
+            let mut byte_truncated = false;
+            if content.len() > MAX_GLOB_RESULT_BYTES {
+                let mut boundary = MAX_GLOB_RESULT_BYTES;
+                while boundary > 0 && !content.is_char_boundary(boundary) {
+                    boundary -= 1;
+                }
+                let omitted = content.len() - boundary;
+                content.truncate(boundary);
+                content.push_str(&format!(
+                    "\n... [glob output truncated; {omitted} bytes omitted]"
+                ));
+                byte_truncated = true;
+            }
             ToolResult {
                 content,
                 is_error: false,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                    truncated,
+                    truncated: truncated || byte_truncated,
                     patch_delta: None,
                 },
             }
@@ -326,6 +354,28 @@ mod tests {
         assert!(result.content.contains("a.rs"));
         assert!(result.content.contains("b.rs"));
         assert!(!result.content.contains("c.txt"));
+    }
+
+    #[tokio::test]
+    async fn rejects_unqualified_recursive_inventory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = GlobTool;
+        let result = tool
+            .execute(
+                json!({"pattern": "**/*", "root": tmp.path()}),
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
+                },
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert!(result.content.contains("too broad"));
     }
 
     #[tokio::test]
