@@ -59,7 +59,9 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     let init_id = super::submit::write_request(&mut app, ClientRpcRequest::SessionLoadRecent).await;
     app.pending_commands
         .insert(init_id, super::super::PendingCommand::InitializeSession);
-    super::submit::write_request(&mut app, ClientRpcRequest::SkillsList).await;
+    let skills_id = super::submit::write_request(&mut app, ClientRpcRequest::SkillsList).await;
+    app.pending_commands
+        .insert(skills_id, super::super::PendingCommand::InitializeSkills);
 
     // If test mode with auto_submit, submit the first line immediately
     if let Some(ref mut reader) = test_input {

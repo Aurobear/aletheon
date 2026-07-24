@@ -376,6 +376,7 @@ impl App {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingCommand {
     InitializeSession,
+    InitializeSkills,
     NewSession { clear_screen: bool },
     Resume { previous_session_id: Option<String> },
 }

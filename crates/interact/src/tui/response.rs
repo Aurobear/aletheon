@@ -447,6 +447,11 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 app.app_state.session_id = Some(session_id.to_owned());
             }
         }
+        (super::PendingCommand::InitializeSkills, Some(result), None) => {
+            if let Some(skills) = result.get("skills") {
+                app.registry.set_skills_from_json(skills);
+            }
+        }
         (super::PendingCommand::NewSession { clear_screen }, Some(result), None)
             if result
                 .get("session_id")
@@ -491,6 +496,10 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
                 .unwrap_or("初始化会话失败");
             app.chat
                 .add_text(ChatRole::System, format!("Error: {message}"));
+        }
+        (super::PendingCommand::InitializeSkills, _, Some(_)) => {
+            // Startup catalog refresh is best-effort. Keep the TUI clean and
+            // retain the built-in command registry when the daemon is unavailable.
         }
         (
             super::PendingCommand::Resume {
@@ -1009,8 +1018,12 @@ pub fn format_memory_status(memory: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{deduplicate_consecutive_text, format_memory_status, handle_event};
-    use crate::tui::{chat::ChatEntry, host_time::ClientClock, term_compat::TermCaps, App};
+    use super::{
+        deduplicate_consecutive_text, format_memory_status, handle_event, process_response,
+    };
+    use crate::tui::{
+        chat::ChatEntry, host_time::ClientClock, term_compat::TermCaps, App, PendingCommand,
+    };
     use executive::application::{tool_stream_bridge::ToolStreamHandle, turn_pipeline};
     use fabric::{
         ipc::{StreamConfig, TurnEventStream, TurnEventV1},
@@ -1048,6 +1061,45 @@ mod tests {
     fn preserves_markdown_that_starts_with_repeated_rule_characters() {
         let response = "----------------------------------------\n邮件分析结果\n- 重点一\n- 重点二";
         assert_eq!(deduplicate_consecutive_text(response), response);
+    }
+
+    #[tokio::test]
+    async fn startup_skill_catalog_updates_registry_without_rendering_chat() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let caps = TermCaps {
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        };
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            caps,
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+        );
+        app.pending_commands
+            .insert(7, PendingCommand::InitializeSkills);
+
+        process_response(
+            &mut app,
+            serde_json::json!({
+                "id": 7,
+                "result": {
+                    "skills": [{
+                        "id": "test-skill",
+                        "name": "test-skill",
+                        "description": "must remain hidden at startup"
+                    }]
+                }
+            }),
+        );
+
+        assert!(app.registry.is_skill("test-skill"));
+        assert!(app.chat.entries.is_empty());
     }
 
     #[tokio::test]
