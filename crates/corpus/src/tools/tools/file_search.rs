@@ -7,6 +7,8 @@ use super::{ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolResult, To
 
 pub struct FileSearchTool;
 
+const MAX_SEARCH_RESULT_BYTES: usize = 24 * 1024;
+
 #[async_trait]
 impl Tool for FileSearchTool {
     fn name(&self) -> &str {
@@ -14,7 +16,7 @@ impl Tool for FileSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search for files and content in the filesystem. Supports regex patterns, file type filtering, and path scoping."
+        "Search file contents with a targeted regex. Prefer known manifests and precise symbols, then narrow by path/include. Do not use '*' or '**/*' to inventory a repository; use glob with a bounded, specific pattern."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -71,6 +73,17 @@ impl Tool for FileSearchTool {
                 };
             }
         };
+        if matches!(query.trim(), "*" | "**" | "**/*" | ".*") {
+            return ToolResult {
+                content: "Error: broad repository inventory is not a content search. Read known entry files first, or use glob with a specific bounded pattern such as 'crates/*/Cargo.toml' or 'src/**/*.rs'.".to_string(),
+                is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                    patch_delta: None,
+                },
+            };
+        }
 
         let path = input
             .get("path")
@@ -198,16 +211,36 @@ async fn try_ripgrep(
     } else {
         lines.join("\n")
     };
+    let (content, byte_truncated) = bound_search_output(content);
 
     Some(ToolResult {
         content,
         is_error: false,
         metadata: ToolResultMeta {
             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
-            truncated,
+            truncated: truncated || byte_truncated,
             patch_delta: None,
         },
     })
+}
+
+fn bound_search_output(content: String) -> (String, bool) {
+    if content.len() <= MAX_SEARCH_RESULT_BYTES {
+        return (content, false);
+    }
+    let mut boundary = MAX_SEARCH_RESULT_BYTES;
+    while boundary > 0 && !content.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    let omitted = content.len() - boundary;
+    (
+        format!(
+            "{}\n... [search output truncated; {} bytes omitted]",
+            &content[..boundary],
+            omitted
+        ),
+        true,
+    )
 }
 
 /// Fallback: grep -r
@@ -259,13 +292,14 @@ async fn try_grep(
     } else {
         lines.join("\n")
     };
+    let (content, byte_truncated) = bound_search_output(content);
 
     Some(ToolResult {
         content,
         is_error: false,
         metadata: ToolResultMeta {
             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
-            truncated,
+            truncated: truncated || byte_truncated,
             patch_delta: None,
         },
     })
@@ -338,13 +372,14 @@ async fn try_find_grep(
     } else {
         lines.join("\n")
     };
+    let (content, byte_truncated) = bound_search_output(content);
 
     Some(ToolResult {
         content,
         is_error: false,
         metadata: ToolResultMeta {
             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
-            truncated,
+            truncated: truncated || byte_truncated,
             patch_delta: None,
         },
     })
@@ -455,6 +490,38 @@ mod tests {
 
         assert!(result.is_error);
         assert!(result.content.contains("required"));
+    }
+
+    #[tokio::test]
+    async fn rejects_repository_wide_wildcard_as_content_search() {
+        let tool = FileSearchTool;
+        let tmp = tempfile::tempdir().unwrap();
+        let result = tool
+            .execute(
+                json!({"query": "**/*"}),
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
+                },
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert!(result.content.contains("not a content search"));
+    }
+
+    #[test]
+    fn bounds_search_output_by_bytes() {
+        let input = "结果".repeat(MAX_SEARCH_RESULT_BYTES);
+        let (output, truncated) = bound_search_output(input);
+
+        assert!(truncated);
+        assert!(output.len() <= MAX_SEARCH_RESULT_BYTES + 80);
+        assert!(output.contains("search output truncated"));
     }
 
     #[tokio::test]
