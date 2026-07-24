@@ -31,10 +31,11 @@ pub enum ErrorClass {
 }
 
 pub fn classify_error(err: &anyhow::Error) -> ErrorClass {
-    match err
-        .downcast_ref::<InferenceFailure>()
-        .map(|failure| failure.kind)
-    {
+    let kind = err
+        .chain()
+        .find_map(|source| source.downcast_ref::<InferenceFailure>())
+        .map(|failure| failure.kind);
+    match kind {
         Some(InferenceFailureKind::Transient) => ErrorClass::Transient,
         Some(InferenceFailureKind::ContextOverflow) => ErrorClass::ContextOverflow,
         Some(InferenceFailureKind::Terminal) | None => ErrorClass::Terminal,
@@ -409,6 +410,13 @@ mod tests {
     fn classify_transient_errors() {
         assert_eq!(
             classify_error(&InferenceFailure::transient("rate_limited")),
+            ErrorClass::Transient
+        );
+        assert_eq!(
+            classify_error(
+                &InferenceFailure::transient("provider_unavailable")
+                    .context("inference provider failed")
+            ),
             ErrorClass::Transient
         );
     }
