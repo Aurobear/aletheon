@@ -507,7 +507,7 @@ async fn connected_manager(state: HttpState) -> McpManager {
     });
     let mut manager = McpManager::new(McpConfig {
         servers: vec![McpServerConfig {
-            name: "gbrain".into(),
+            name: "supplemental".into(),
             transport: McpTransportConfig::StreamableHttp {
                 url: format!("http://{addr}/mcp"),
             },
