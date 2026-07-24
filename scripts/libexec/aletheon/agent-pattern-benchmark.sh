@@ -32,8 +32,10 @@ validate_receipt() {
 case_succeeds() {
   local case_json=$1 output=$2
   jq -e --arg output "$output" '
-    all(.expected_evidence[] as $needle; $output | contains($needle))
-    and all(.forbidden_behavior[] as $needle; ($output | contains($needle)) | not)
+    .expected_evidence as $expected
+    | .forbidden_behavior as $forbidden
+    | all($expected[]; . as $needle | $output | contains($needle))
+      and all($forbidden[]; . as $needle | ($output | contains($needle)) | not)
   ' <<<"$case_json" >/dev/null
 }
 
