@@ -48,6 +48,30 @@ run_message() {
     >"$output_file" 2>"$error_file"
 }
 
+run_valid_message() {
+  local session_id=$1 prompt=$2 output_file=$3 error_file=$4
+  local attempt attempt_output attempt_error metrics
+  for attempt in $(seq 1 "${ALETHEON_BENCHMARK_INFRA_RETRIES:-5}"); do
+    attempt_output="${output_file%.txt}.attempt-$attempt.txt"
+    attempt_error="${error_file%.txt}.attempt-$attempt.txt"
+    run_message "$session_id" "$prompt" "$attempt_output" "$attempt_error"
+    metrics=$(grep '^ALETHEON_BENCHMARK_METRICS=' "$attempt_error" | tail -1 || true)
+    if [[ -n "$metrics" ]] &&
+       ! grep -Fq 'provider_unavailable' "$attempt_output" &&
+       jq -e '.input_tokens > 0 or .output_tokens > 0' <<<"${metrics#ALETHEON_BENCHMARK_METRICS=}" >/dev/null; then
+      cp -- "$attempt_output" "$output_file"
+      cp -- "$attempt_error" "$error_file"
+      return 0
+    fi
+    # Provider availability failures are infrastructure retries, not additional
+    # agent attempts. Keep the delay long enough to avoid measuring a transient
+    # gateway cooldown as model behavior.
+    sleep 10
+  done
+  echo "no completed model turn after ${ALETHEON_BENCHMARK_INFRA_RETRIES:-5} infrastructure retries" >&2
+  return 1
+}
+
 run_case() {
   local variant=$1 run=$2 case_id=$3
   local case_json session_id case_dir output_file error_file metric_line metrics success
@@ -63,13 +87,14 @@ run_case() {
     local fact index
     fact=$(jq -r '.setup_fact' <<<"$case_json")
     for index in $(seq 1 49); do
-      run_message "$session_id" \
+      run_valid_message "$session_id" \
         "Retention setup message $index of 50. Remember benchmark fact '$fact'. Reply only ACK-$index." \
         "$case_dir/setup-$index.out" "$case_dir/setup-$index.err"
     done
   fi
 
-  run_message "$session_id" "$(jq -r '.prompt' <<<"$case_json")" "$output_file" "$error_file"
+  run_valid_message "$session_id" "$(jq -r '.prompt' <<<"$case_json")" \
+    "$output_file" "$error_file"
   metric_line=$(grep '^ALETHEON_BENCHMARK_METRICS=' "$error_file" | tail -1)
   [[ -n "$metric_line" ]] || { echo "missing client metrics for $case_id" >&2; return 1; }
   metrics=${metric_line#ALETHEON_BENCHMARK_METRICS=}
@@ -89,7 +114,34 @@ run_case() {
 }
 
 usage() {
-  echo "usage: $0 [--validate-receipt FILE] [--variant NAME] [--runs N] [--case ID]" >&2
+  echo "usage: $0 [--validate-receipt FILE] [--summarize VARIANT] [--variant NAME] [--runs N] [--case ID]" >&2
+}
+
+summarize_variant() {
+  local selected_variant=$1
+  local variant_root="$artifact_root/$selected_variant"
+  mapfile -t receipts < <(find "$variant_root" -path '*/receipt.json' -type f -print | sort)
+  ((${#receipts[@]} > 0)) || { echo "no receipts for variant: $selected_variant" >&2; return 1; }
+  jq -s --arg variant "$selected_variant" '
+    def median: sort | .[(length / 2 | floor)];
+    group_by(.case_id) as $groups
+    | {
+        schema_version: 1,
+        variant: $variant,
+        cases: ($groups | map({
+          case_id: .[0].case_id,
+          runs: length,
+          successes: (map(select(.success)) | length),
+          median: {
+            input_tokens: (map(.input_tokens) | median),
+            output_tokens: (map(.output_tokens) | median),
+            cache_hit_tokens: (map(.cache_hit_tokens) | median),
+            latency_ms: (map(.latency_ms) | median),
+            tool_calls: (map(.tool_calls) | median)
+          }
+        }))
+      }
+  ' "${receipts[@]}" >"$variant_root/summary.json"
 }
 
 variant=baseline
@@ -98,6 +150,7 @@ only_case=
 while (($#)); do
   case "$1" in
     --validate-receipt) validate_receipt "${2:?missing receipt}"; exit $? ;;
+    --summarize) summarize_variant "${2:?missing variant}"; exit $? ;;
     --variant) variant=${2:?missing variant}; shift 2 ;;
     --runs) runs=${2:?missing runs}; shift 2 ;;
     --case) only_case=${2:?missing case}; shift 2 ;;
