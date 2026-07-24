@@ -33,18 +33,41 @@ BASE
 : > "$tmp/config/architecture-path-inventory.txt"
 ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null
+
+# A refactor may relocate an already-ledgered finding, but it must not increase
+# the number of findings in that category relative to the PR base.
+git -C "$tmp" init -q
+git -C "$tmp" config user.name architecture-fixture
+git -C "$tmp" config user.email architecture-fixture@example.invalid
+git -C "$tmp" add config
+git -C "$tmp" commit -qm baseline
+mv "$tmp/crates/corpus/src/legacy/mod.rs" "$tmp/crates/corpus/src/legacy/moved.rs"
+sed -i 's#legacy/mod.rs#legacy/moved.rs#' "$tmp/config/architecture-allowlist.txt"
+ARCH_ROOT="$tmp" ARCH_BASE_REF=HEAD ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+  bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null
+printf 'tool.execute(y)\n' >> "$tmp/crates/corpus/src/legacy/moved.rs"
+printf 'direct_tool|crates/corpus/src/legacy/moved.rs|tool.execute(y)\n' \
+  >> "$tmp/config/architecture-allowlist.txt"
+sort -o "$tmp/config/architecture-allowlist.txt" "$tmp/config/architecture-allowlist.txt"
+if ARCH_ROOT="$tmp" ARCH_BASE_REF=HEAD ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
+  bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
+  echo 'expected architecture category growth to fail' >&2; exit 1
+fi
+sed -i '/tool.execute(y)/d' "$tmp/crates/corpus/src/legacy/moved.rs"
+sed -i '/tool.execute(y)/d' "$tmp/config/architecture-allowlist.txt"
+
 mkdir -p "$tmp/crates/metacog/src/core"
 if ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected retired Metacog roots to fail' >&2; exit 1
 fi
 rmdir "$tmp/crates/metacog/src/core"
-printf 'tool.execute(y)\n' >> "$tmp/crates/corpus/src/legacy/mod.rs"
+printf 'tool.execute(y)\n' >> "$tmp/crates/corpus/src/legacy/moved.rs"
 if ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh" >/dev/null 2>&1; then
   echo 'expected a new finding to fail' >&2; exit 1
 fi
-sed -i '$d' "$tmp/crates/corpus/src/legacy/mod.rs"
+sed -i '$d' "$tmp/crates/corpus/src/legacy/moved.rs"
 rm "$tmp/crates/dasein/src/lib.rs"
 out=$(ARCH_ROOT="$tmp" ARCH_SKIP_DELETION_GATES=1 ARCH_SKIP_DEPENDENCIES=1 \
   bash "$ROOT/scripts/libexec/aletheon/architecture-check.sh")

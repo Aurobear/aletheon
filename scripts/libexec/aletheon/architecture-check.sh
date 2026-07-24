@@ -880,7 +880,7 @@ fi
 # Migration path inventory is symbol based and intentionally stable across line moves.
 {
   rg -l 'pub struct TurnService' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#turn_path|#; s#$#|TurnService#' || true
-  rg -l 'pub struct TurnPipeline' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#turn_path|#; s#$#|TurnPipeline#' || true
+  rg -l 'pub struct TurnPipeline\b' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#turn_path|#; s#$#|TurnPipeline#' || true
   rg -l 'impl TurnServices for ExecTurnServices' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#capability_path|#; s#$#|ExecTurnServices#' || true
   rg -l 'CapabilityInvoker for' crates -g '*.rs' -g '!**/tests/**' 2>/dev/null \
     | grep -v 'crates/executive/src/application/governed_capability.rs' \
@@ -918,7 +918,37 @@ compare_maximum findings "$ALLOW" "$actual"
 compare_maximum migration-paths "$PATHS" "$path_actual"
 
 if [[ -n ${ARCH_BASE_REF:-} ]]; then
-  for file in config/architecture-allowlist.txt config/architecture-dependencies.txt config/architecture-path-inventory.txt; do
+  # Refactors may relocate a ledgered finding without creating new debt. Keep
+  # the category budget monotonic while compare_maximum above still requires
+  # every current finding to be explicitly ledgered in this branch.
+  reject_category_growth() {
+    local file=$1 base_snapshot growth
+    base_snapshot=$(mktemp)
+    git show "$ARCH_BASE_REF:$file" > "$base_snapshot"
+    growth=$(
+      awk -F'|' '
+        NR == FNR { base[$1]++; next }
+        { current[$1]++ }
+        END {
+          for (category in current) {
+            if (current[category] > base[category]) {
+              printf "%s: %d -> %d\n", category, base[category], current[category]
+            }
+          }
+        }
+      ' "$base_snapshot" "$file" | sort
+    )
+    rm -f "$base_snapshot"
+    if [[ -n "$growth" ]]; then
+      echo "architecture-check: $file category budget grew:" >&2
+      printf '%s\n' "$growth" >&2
+      return 1
+    fi
+  }
+  reject_category_growth config/architecture-allowlist.txt
+  reject_category_growth config/architecture-path-inventory.txt
+
+  for file in config/architecture-dependencies.txt; do
     if git cat-file -e "$ARCH_BASE_REF:$file" 2>/dev/null && \
        git diff --unified=0 "$ARCH_BASE_REF" -- "$file" | grep -q '^+[^+]'; then
       echo "architecture-check: $file may only lose entries" >&2

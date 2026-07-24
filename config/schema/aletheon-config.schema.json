@@ -1370,12 +1370,38 @@
           "default": "~/.aletheon/memory",
           "type": "string"
         },
+        "extraction": {
+          "$ref": "#/$defs/MemoryExtractionConfig",
+          "default": {
+            "enabled": true,
+            "max_facts_per_turn": 5,
+            "mode": "local"
+          }
+        },
+        "promotion": {
+          "$ref": "#/$defs/MemoryPromotionConfig",
+          "default": {
+            "enabled": false,
+            "max_promoted_facts": 20,
+            "min_confidence": 0.7
+          }
+        },
+        "recall": {
+          "$ref": "#/$defs/MemoryRecallConfig",
+          "default": {
+            "enabled": true,
+            "inject_into_context": true,
+            "max_bytes": 65536,
+            "max_items": 4,
+            "timeout_ms": 500
+          }
+        },
         "supplemental": {
           "$ref": "#/$defs/SupplementalMemoryConfig",
           "default": {
             "delivery_batch_size": 20,
             "enabled": false,
-            "legacy_outbox_dir": "~/.aletheon/gbrain-outbox",
+            "legacy_outbox_dir": "~/.aletheon/memory-outbox",
             "max_content_bytes": 6000,
             "projection_enabled": false,
             "read_sources": [
@@ -1388,14 +1414,87 @@
             "retry_max_age_secs": 86400,
             "retry_max_attempts": 12,
             "retry_max_ms": 60000,
-            "schema_fixture": "config/gbrain/tools-schema.json",
+            "schema_fixture": "",
             "schema_version": "v0.42.59.0",
-            "server_name": "gbrain",
+            "server_name": "supplemental",
             "spool_max_bytes": 268435456,
             "spool_max_items": 10000,
-            "spool_path": "~/.aletheon/memory/gbrain-spool.db",
+            "spool_path": "~/.aletheon/memory/memory-spool.db",
             "write_source": "aletheon"
           }
+        }
+      },
+      "type": "object"
+    },
+    "MemoryExtractionConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_facts_per_turn": {
+          "default": 5,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mode": {
+          "default": "local",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "MemoryPromotionConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max_promoted_facts": {
+          "default": 20,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_confidence": {
+          "default": 0.7,
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "MemoryRecallConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "inject_into_context": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_bytes": {
+          "default": 65536,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_items": {
+          "default": 4,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "default": 500,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -1561,9 +1660,29 @@
           ],
           "default": null
         },
+        "max_input_tokens": {
+          "default": null,
+          "description": "Per-profile input budget used by adaptive context planning. Values above\nthe runtime model window are clamped to that authoritative window.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "max_iterations": {
           "default": null,
           "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_output_tokens": {
+          "default": null,
+          "description": "Output reservation subtracted from the context window before admitting\nhistory and pending user input.",
+          "format": "uint64",
           "minimum": 0,
           "type": [
             "integer",
@@ -1901,7 +2020,7 @@
           "type": "boolean"
         },
         "legacy_outbox_dir": {
-          "default": "~/.aletheon/gbrain-outbox",
+          "default": "~/.aletheon/memory-outbox",
           "type": "string"
         },
         "max_content_bytes": {
@@ -1961,7 +2080,7 @@
           "type": "integer"
         },
         "schema_fixture": {
-          "default": "config/gbrain/tools-schema.json",
+          "default": "",
           "type": "string"
         },
         "schema_version": {
@@ -1969,7 +2088,7 @@
           "type": "string"
         },
         "server_name": {
-          "default": "gbrain",
+          "default": "supplemental",
           "type": "string"
         },
         "spool_max_bytes": {
@@ -1985,7 +2104,7 @@
           "type": "integer"
         },
         "spool_path": {
-          "default": "~/.aletheon/memory/gbrain-spool.db",
+          "default": "~/.aletheon/memory/memory-spool.db",
           "type": "string"
         },
         "write_source": {
@@ -2252,10 +2371,27 @@
       "default": {
         "backend": "sqlite",
         "data_dir": "~/.aletheon/memory",
+        "extraction": {
+          "enabled": true,
+          "max_facts_per_turn": 5,
+          "mode": "local"
+        },
+        "promotion": {
+          "enabled": false,
+          "max_promoted_facts": 20,
+          "min_confidence": 0.7
+        },
+        "recall": {
+          "enabled": true,
+          "inject_into_context": true,
+          "max_bytes": 65536,
+          "max_items": 4,
+          "timeout_ms": 500
+        },
         "supplemental": {
           "delivery_batch_size": 20,
           "enabled": false,
-          "legacy_outbox_dir": "~/.aletheon/gbrain-outbox",
+          "legacy_outbox_dir": "~/.aletheon/memory-outbox",
           "max_content_bytes": 6000,
           "projection_enabled": false,
           "read_sources": [
@@ -2268,12 +2404,12 @@
           "retry_max_age_secs": 86400,
           "retry_max_attempts": 12,
           "retry_max_ms": 60000,
-          "schema_fixture": "config/gbrain/tools-schema.json",
+          "schema_fixture": "",
           "schema_version": "v0.42.59.0",
-          "server_name": "gbrain",
+          "server_name": "supplemental",
           "spool_max_bytes": 268435456,
           "spool_max_items": 10000,
-          "spool_path": "~/.aletheon/memory/gbrain-spool.db",
+          "spool_path": "~/.aletheon/memory/memory-spool.db",
           "write_source": "aletheon"
         }
       }

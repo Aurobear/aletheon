@@ -1,5 +1,4 @@
 capability_path|crates/executive/src/composition/exec_session.rs|ExecTurnServices
 capability_path|crates/kernel/src/capability/mod.rs|CapabilityInvoker
-turn_path|crates/executive/src/application/turn_lifecycle.rs|TurnPipeline
 turn_path|crates/executive/src/application/turn_pipeline.rs|TurnPipeline
 turn_path|crates/executive/src/composition/turn_service.rs|TurnService

@@ -79,7 +79,7 @@ legacy_outbox_dir = "~/.aletheon/memory-outbox"
 enabled = true
 inject_into_context = true
 max_items = 4
-max_content_bytes = 65536
+max_bytes = 65536
 timeout_ms = 500
 
 # Post-turn fact extraction.  Feeds into the background consolidation worker.
@@ -87,7 +87,6 @@ timeout_ms = 500
 enabled = true
 mode = "local"               # "local" (regex-based) | "llm" (cheap-model)
 max_facts_per_turn = 5
-trigger = "after_turn"       # "after_turn" | "manual" | "after_session"
 
 # Automatic promotion of high-confidence consolidated facts into CoreMemory
 # learned blocks that appear in the agent's system prompt.
