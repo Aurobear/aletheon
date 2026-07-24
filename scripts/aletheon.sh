@@ -23,6 +23,7 @@ if [[ ${1:-} == deploy ]] &&
   }
   exec sudo -u "$deploy_user" -H env \
     ALETHEON_DEPLOY_AS_USER=1 \
+    ALETHEON_DEPLOY_SCOPE=system \
     "HOME=$deploy_home" \
     "XDG_RUNTIME_DIR=/run/user/$deploy_uid" \
     "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$deploy_uid/bus" \
@@ -96,11 +97,12 @@ cmd_deploy() {
   local install_args=()
   ((enable)) || install_args+=(--no-enable)
   ((build)) && cmd_build
-  # Scope is inferred, never flagged: passwordless sudo (or already root)
-  # installs the reviewed system assets; an unprivileged shell installs a
-  # rootless runtime under $HOME.
-  if [[ ${EUID:-$(id -u)} -eq 0 ]] || sudo -n true 2>/dev/null; then
-    aletheon_info "sudo available; installing system assets"
+  # Scope follows the invocation boundary, not sudo availability:
+  # `sudo ... deploy` installs system assets, while an ordinary invocation
+  # remains rootless even when passwordless sudo is configured.
+  if [[ ${EUID:-$(id -u)} -eq 0 ]] ||
+     [[ ${ALETHEON_DEPLOY_SCOPE:-user} == system ]]; then
+    aletheon_info "sudo deployment requested; installing system assets"
     cmd_install "${install_args[@]}"
     cmd_closure_install
     ((restart)) && cmd_restart
