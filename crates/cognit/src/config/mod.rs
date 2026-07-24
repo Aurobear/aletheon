@@ -573,10 +573,8 @@ fn default_compaction_threshold() -> usize {
 }
 
 fn default_system_prompt() -> String {
-    "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. \
-     Before stating any conclusion about your own runtime state, logs, or configuration, \
-     you MUST read the actual logs and the actually-effective config file first — never guess \
-     or invent an explanation."
+    include_str!("../../prompts/default_system.md")
+        .trim_end_matches('\n')
         .to_string()
 }
 
@@ -742,6 +740,17 @@ impl Default for PerceptionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracted_default_prompt_is_verbatim() {
+        assert_eq!(
+            default_system_prompt(),
+            "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. \
+             Before stating any conclusion about your own runtime state, logs, or configuration, \
+             you MUST read the actual logs and the actually-effective config file first — never guess \
+             or invent an explanation."
+        );
+    }
 
     #[test]
     fn provider_pricing_parses_and_defaults_to_none() {
