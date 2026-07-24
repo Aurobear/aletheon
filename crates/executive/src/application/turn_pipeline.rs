@@ -1206,10 +1206,13 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
         TurnEventV1::Usage {
             tokens_in,
             tokens_out,
-            ..
+            cache_hit_tokens,
+            cache_miss_tokens,
         } => Some(ClientEvent::Usage {
             tokens_in: *tokens_in as u64,
             tokens_out: *tokens_out as u64,
+            cache_hit_tokens: *cache_hit_tokens as u64,
+            cache_miss_tokens: *cache_miss_tokens as u64,
         }),
         TurnEventV1::TurnDone { .. } => Some(ClientEvent::TurnDone),
         TurnEventV1::Error { message } => Some(ClientEvent::Error {
