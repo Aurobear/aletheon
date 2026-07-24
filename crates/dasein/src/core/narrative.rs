@@ -82,7 +82,7 @@ impl NarrativeLayer {
             event: event.to_string(),
             reason: reason.to_string(),
             action: action.map(|s| s.to_string()),
-            verdict: Some(format!("{:?}", verdict)),
+            verdict: Some(format!("{verdict:?}")),
             timestamp: self.clock.wall_now(),
         };
         let mut buffer = self.buffer.write();
@@ -385,7 +385,7 @@ mod tests {
     fn recent_limits() {
         let layer = test_layer(100);
         for i in 0..10 {
-            layer.narrate(&format!("e{}", i), "reason");
+            layer.narrate(&format!("e{i}"), "reason");
         }
 
         let entries = layer.recent(3);

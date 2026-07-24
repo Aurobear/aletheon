@@ -11,6 +11,8 @@ use serde::Serialize;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use super::lifecycle::{reduce_mcp_connection, McpConnectionEvent};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpServerHealthState {
@@ -107,49 +109,40 @@ impl McpTaskSupervisor {
     }
 
     pub fn register_server(&self, server: &str) {
-        self.set_server(server, McpServerHealthState::Connecting, None);
+        self.apply_server_event(server, McpConnectionEvent::Register, None);
     }
 
     pub fn mark_connected(&self, server: &str) {
-        self.set_server(server, McpServerHealthState::Connected, None);
+        self.apply_server_event(server, McpConnectionEvent::ConnectionEstablished, None);
     }
 
     /// A successful ping clears connection/reconnect degradation, but must not
     /// hide an independently failed notification task.
     pub fn mark_ping_healthy(&self, server: &str) {
-        let mut servers = self.servers.write().expect("MCP health lock poisoned");
-        let Some(health) = servers.get_mut(server) else {
-            drop(servers);
-            self.mark_connected(server);
-            return;
-        };
-        let task_failure = health
-            .reason
-            .as_deref()
+        let task_failure = self
+            .servers
+            .read()
+            .expect("MCP health lock poisoned")
+            .get(server)
+            .and_then(|health| health.reason.as_deref())
             .is_some_and(|reason| reason.starts_with("task:"));
         if !task_failure {
-            health.state = McpServerHealthState::Connected;
-            health.reason = None;
+            self.apply_server_event(server, McpConnectionEvent::PingHealthy, None);
         }
     }
 
     pub fn mark_reconnecting(&self, server: &str, reason: impl Into<String>) {
-        let mut servers = self.servers.write().expect("MCP health lock poisoned");
-        let health = servers.entry(server.to_owned()).or_insert(McpServerHealth {
-            server: server.to_owned(),
-            state: McpServerHealthState::Connecting,
-            reason: None,
-            reconnect_count: 0,
-        });
-        health.state = McpServerHealthState::Reconnecting;
-        health.reason = Some(bounded_reason(reason.into()));
-        health.reconnect_count = health.reconnect_count.saturating_add(1);
+        self.apply_server_event(
+            server,
+            McpConnectionEvent::Reconnect,
+            Some(bounded_reason(reason.into())),
+        );
     }
 
     pub fn mark_degraded(&self, server: &str, reason: impl Into<String>) {
-        self.set_server(
+        self.apply_server_event(
             server,
-            McpServerHealthState::Degraded,
+            McpConnectionEvent::Degrade,
             Some(bounded_reason(reason.into())),
         );
     }
@@ -214,15 +207,12 @@ impl McpTaskSupervisor {
                 (McpTaskState::Failed, Some("unexpected_exit".to_owned()))
             };
             if state == McpTaskState::Failed {
-                let mut health = servers.write().expect("MCP health lock poisoned");
-                let entry = health.entry(server.clone()).or_insert(McpServerHealth {
-                    server: server.clone(),
-                    state: McpServerHealthState::Degraded,
-                    reason: None,
-                    reconnect_count: 0,
-                });
-                entry.state = McpServerHealthState::Degraded;
-                entry.reason = Some(format!("task:{task_name}:{}", reason.as_deref().unwrap()));
+                apply_server_transition(
+                    &servers,
+                    &server,
+                    McpConnectionEvent::Degrade,
+                    Some(format!("task:{task_name}:{}", reason.as_deref().unwrap())),
+                );
                 tracing::error!(task = %task_name, server = %server, reason = ?reason, "supervised MCP task terminated");
             }
             if let Some(health) = tasks
@@ -294,29 +284,58 @@ impl McpTaskSupervisor {
                 report.completed_tasks += 1;
             }
         }
-        let mut servers = self.servers.write().expect("MCP health lock poisoned");
-        for server in servers.values_mut() {
-            server.state = McpServerHealthState::Stopped;
-            server.reason = Some("shutdown".into());
+        let server_names: Vec<String> = self
+            .servers
+            .read()
+            .expect("MCP health lock poisoned")
+            .keys()
+            .cloned()
+            .collect();
+        for server in server_names {
+            self.apply_server_event(
+                &server,
+                McpConnectionEvent::Shutdown,
+                Some("shutdown".into()),
+            );
         }
         report
     }
 
-    fn set_server(&self, server: &str, state: McpServerHealthState, reason: Option<String>) {
-        let mut servers = self.servers.write().expect("MCP health lock poisoned");
-        let reconnect_count = servers
-            .get(server)
-            .map_or(0, |health| health.reconnect_count);
-        servers.insert(
-            server.to_owned(),
-            McpServerHealth {
-                server: server.to_owned(),
-                state,
-                reason,
-                reconnect_count,
-            },
-        );
+    fn apply_server_event(&self, server: &str, event: McpConnectionEvent, reason: Option<String>) {
+        apply_server_transition(&self.servers, server, event, reason);
     }
+}
+
+fn apply_server_transition(
+    servers: &Arc<RwLock<BTreeMap<String, McpServerHealth>>>,
+    server: &str,
+    event: McpConnectionEvent,
+    reason: Option<String>,
+) {
+    let mut servers = servers.write().expect("MCP health lock poisoned");
+    let previous = servers.get(server).map(|health| health.state);
+    let Ok(transition) = reduce_mcp_connection(previous, event) else {
+        tracing::warn!(
+            server,
+            ?event,
+            ?previous,
+            "rejected invalid MCP connection transition"
+        );
+        return;
+    };
+    let reconnect_count = servers
+        .get(server)
+        .map_or(0, |health| health.reconnect_count)
+        .saturating_add(u64::from(event == McpConnectionEvent::Reconnect));
+    servers.insert(
+        server.to_owned(),
+        McpServerHealth {
+            server: server.to_owned(),
+            state: transition.next_state,
+            reason,
+            reconnect_count,
+        },
+    );
 }
 
 impl Drop for McpTaskSupervisor {

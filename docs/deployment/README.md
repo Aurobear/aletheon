@@ -47,8 +47,35 @@ bash scripts/aletheon.sh verify
 
 The interface follows a dispatcher/module layout: `scripts/aletheon.sh` is the
 only operator-facing entry point and focused implementations live below
-`scripts/lib/aletheon/`. Existing install, health, backup, restore, cleanup, and
-upgrade scripts remain low-level reviewed contracts.
+`scripts/lib/aletheon/`. Standalone reviewed implementations live below
+`scripts/libexec/aletheon/`; those paths are internal and are not operator
+entrypoints. `setup.sh` remains the first-install bootstrap and
+`scripts/cargo-agent.sh` remains the bounded Rust build wrapper.
+
+Common grouped commands are:
+
+```bash
+sudo bash scripts/aletheon.sh backup
+sudo bash scripts/aletheon.sh restore
+sudo bash scripts/aletheon.sh upgrade --binary FILE --sha256-file FILE
+sudo bash scripts/aletheon.sh cleanup runtime
+bash scripts/aletheon.sh cleanup cargo
+sudo bash scripts/aletheon.sh secrets init
+sudo bash scripts/aletheon.sh secrets audit
+bash scripts/aletheon.sh database check STATE.db
+bash scripts/aletheon.sh verify systemd --user-units \
+  config/aletheon.user.service config/aletheon.user.socket
+bash scripts/aletheon.sh acceptance architecture
+bash scripts/aletheon.sh acceptance release
+bash scripts/aletheon.sh test operations
+bash scripts/aletheon.sh test architecture
+bash scripts/aletheon.sh test deployment
+```
+
+Repository-internal script paths are not compatibility APIs. Production
+installation retains stable reviewed helper names below
+`/usr/libexec/aletheon/`, so existing systemd units do not depend on the source
+checkout layout.
 
 ## Configuration
 
@@ -125,8 +152,36 @@ bounded release build
   -> native system install
   -> byte-identical user closure install
   -> core and user daemon restart
-  -> complete deployed-state verification
+  -> candidate/installed/running binary provenance
+  -> bounded systemd restart-stability observation
+  -> real LLM request through /usr/bin/aletheon and the official user socket
+  -> final provenance, stability, and health verification
 ```
+
+The final request is intentionally made by the installed client. A successful
+debug binary, temporary daemon, alternative socket, direct provider probe, or
+direct bridge test is useful development evidence but is not deployment
+acceptance. This distinction prevents source/profile changes from being tested
+against one binary while systemd continues to run another.
+
+The provenance gate requires identical SHA-256 digests for:
+
+```text
+target/release/aletheon
+/usr/bin/aletheon
+running aletheon-core.service executable
+running per-user aletheon.service executable
+```
+
+The stability gate then verifies that both services remain active with unchanged
+PIDs and restart counters during the observation window. It scans journal
+records for the current service PIDs, so repaired historical failures do not
+poison a healthy deployment.
+
+The smoke prompt is bounded and performs no tool or hardware action. Controlled
+deployments may set `ALETHEON_SMOKE_PROMPT`,
+`ALETHEON_SMOKE_TIMEOUT_SECONDS`, or `ALETHEON_STABILITY_SECONDS`, but the
+default `deploy` command never silently skips the real request.
 
 Useful controlled variants:
 
@@ -178,6 +233,11 @@ After every upgrade or rollback, run:
 bash scripts/aletheon.sh verify
 ```
 
+`verify` repeats the same installed-runtime provenance, stability, and real
+request gates without rebuilding or reinstalling. If the provider is
+deliberately unavailable, record the deployment as blocked rather than claiming
+full production acceptance.
+
 ## Common failures
 
 | Symptom | Check | Resolution |
@@ -187,3 +247,6 @@ bash scripts/aletheon.sh verify
 | Pi runtime is absent | `bash scripts/aletheon.sh logs user` | Verify Pi executable hash, fixed arguments, namespace support, and allowed paths |
 | Closure timer exists but does not run | `bash scripts/aletheon.sh closure status` | Re-run `closure install`, then inspect closure logs |
 | Deploy stops before restart | The first failing phase in output | Correct that phase; deploy intentionally does not continue after failure |
+| Installed/runtime hash mismatch | Gate output paths and SHA-256 values | Reinstall the candidate and restart the official units |
+| Restart count increases | Current-PID user/core journal | Fix bootstrap, profile, migration, or configuration validation before retrying |
+| Real-request smoke fails | Official user socket and provider configuration | Repair the installed client/daemon/provider path; direct API success is insufficient |

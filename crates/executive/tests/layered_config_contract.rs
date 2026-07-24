@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use executive::core::config::{
+use executive::composition::config::{
     merge_layers, schema, AppConfig, ConfigLayer, ConfigSource, ConfigSourceKind,
     EnvironmentCredentialResolver, Transport,
 };
@@ -166,6 +166,53 @@ fn checked_in_schema_is_deterministic() {
     let checked_in = std::fs::read_to_string(path).unwrap();
     assert_eq!(checked_in, generated);
     assert!(!checked_in.contains("top-secret"));
+}
+
+#[test]
+fn legacy_channel_and_coding_keys_decode_to_canonical_owned_types() {
+    let config: AppConfig = toml::from_str(
+        r#"
+[telegram]
+enabled = false
+poll_timeout_secs = 12
+
+[pi_runtime]
+enabled = false
+json_protocol_version = 3
+"#,
+    )
+    .unwrap();
+    let _: &executive::composition::config::TelegramChannelConfig = &config.telegram;
+    let _: &executive::composition::config::CodingRuntimeConfig = &config.pi_runtime;
+    assert_eq!(config.telegram.poll_timeout_secs, 12);
+    assert_eq!(config.pi_runtime.json_protocol_version, 3);
+}
+
+#[test]
+fn legacy_supplemental_memory_keys_are_read_but_never_reemitted() {
+    let memory: executive::composition::config::MemoryConfig = toml::from_str(
+        r#"
+backend = "sqlite"
+data_dir = "/tmp/memory"
+[gbrain]
+enabled = true
+server_name = "deployment-instance"
+"#,
+    )
+    .unwrap();
+    assert!(memory.supplemental.enabled);
+    let rendered = toml::to_string(&memory).unwrap();
+    assert!(rendered.contains("[supplemental]"));
+    assert!(!rendered.contains("[gbrain]"));
+
+    let quotas: cognit::config::DeploymentQuotaConfig = toml::from_str(
+        "gbrain_spool_bytes=1024\ngbrain_spool_soft_bytes=512\ngbrain_spool_items=4\n",
+    )
+    .unwrap();
+    assert_eq!(quotas.supplemental_spool_bytes, 1024);
+    let rendered = toml::to_string(&quotas).unwrap();
+    assert!(rendered.contains("supplemental_spool_bytes"));
+    assert!(!rendered.contains("gbrain_spool_bytes"));
 }
 
 #[test]

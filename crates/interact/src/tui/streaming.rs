@@ -90,6 +90,10 @@ impl StreamController {
         self.thinking_buf.clear();
         self.thinking = false;
         self.thinking_start = None;
+        // Reasoning stays collapsed by default (both while streaming and once
+        // the turn completes) to avoid leaking injected context verbatim in
+        // the transcript. Users can still expand it via toggle_thinking().
+        self.thinking_collapsed = true;
         self.table_holdback = TableHoldbackState::None;
     }
 
@@ -260,14 +264,11 @@ impl StreamController {
         if let Some(start) = self.thinking_start {
             let elapsed_ms = self.clock.mono_now().0.saturating_sub(start.0);
             let elapsed = elapsed_ms as f64 / 1000.0;
-            if self.thinking_collapsed {
-                self.committed
-                    .push_str(&format!("✻ Thought for {:.1}s\n\n", elapsed));
-            } else {
-                self.committed.push_str(&self.format_thinking_expanded());
-            }
+            self.committed
+                .push_str(&format!("✻ Thought for {elapsed:.1}s\n\n"));
         }
         self.thinking = false;
+        self.thinking_collapsed = true;
         self.thinking_buf.clear();
         self.thinking_start = None;
     }
@@ -282,9 +283,86 @@ impl StreamController {
         };
         let mut result = String::from("✻ Thinking...\n");
         for line in display_lines {
-            result.push_str(&format!("│ {}\n", line));
+            result.push_str(&format!("│ {line}\n"));
         }
-        result.push_str(&format!("({:.1}s)\n\n", elapsed));
+        result.push_str(&format!("({elapsed:.1}s)\n\n"));
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fabric::WallTime;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Default)]
+    struct TestClock {
+        mono_ms: AtomicU64,
+    }
+
+    impl TestClock {
+        fn advance(&self, millis: u64) {
+            self.mono_ms.fetch_add(millis, Ordering::SeqCst);
+        }
+    }
+
+    impl Clock for TestClock {
+        fn wall_now(&self) -> WallTime {
+            WallTime(0)
+        }
+
+        fn mono_now(&self) -> MonoTime {
+            MonoTime(self.mono_ms.load(Ordering::SeqCst))
+        }
+    }
+
+    #[test]
+    fn thinking_stays_collapsed_by_default_while_streaming_and_after_answer() {
+        let clock = Arc::new(TestClock::default());
+        let mut stream = StreamController::new(clock.clone());
+
+        stream.start_turn();
+        stream.push_thinking("先分析问题");
+
+        assert!(stream.thinking_collapsed());
+        assert!(!stream.current_text().contains("先分析问题"));
+
+        clock.advance(1_250);
+        stream.push_text("最终回答");
+
+        let rendered = stream.current_text();
+        assert!(stream.thinking_collapsed());
+        assert!(rendered.contains("✻ Thought for 1.2s"));
+        assert!(!rendered.contains("先分析问题"));
+        assert!(rendered.ends_with("最终回答"));
+    }
+
+    #[test]
+    fn completed_thinking_only_turn_is_collapsed() {
+        let clock = Arc::new(TestClock::default());
+        let mut stream = StreamController::new(clock.clone());
+
+        stream.start_turn();
+        stream.push_thinking("内部推理");
+        clock.advance(500);
+        stream.commit();
+
+        assert_eq!(stream.current_text(), "✻ Thought for 0.5s\n\n");
+        assert!(stream.thinking_collapsed());
+        assert!(!stream.is_thinking());
+    }
+
+    #[test]
+    fn new_turn_restores_codex_default_even_after_manual_toggle() {
+        let clock = Arc::new(TestClock::default());
+        let mut stream = StreamController::new(clock);
+
+        stream.start_turn();
+        stream.toggle_thinking();
+        assert!(!stream.thinking_collapsed());
+
+        stream.start_turn();
+        assert!(stream.thinking_collapsed());
     }
 }

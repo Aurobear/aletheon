@@ -138,7 +138,7 @@ mod tests {
     async fn test_mock_perception_push_events_batch() {
         let source = MockPerceptionSource::new("test");
         let events: Vec<PerceptionEvent> = (0..5)
-            .map(|i| make_test_event(i, &format!("event_{}", i)))
+            .map(|i| make_test_event(i, &format!("event_{i}")))
             .collect();
         source.push_events(events);
 

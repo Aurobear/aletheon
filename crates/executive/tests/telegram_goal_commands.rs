@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use executive::r#impl::channel::daemon_adapter::DaemonChannelGoalExecutor;
-use executive::r#impl::goal::ObjectiveStore;
+use executive::goal::ObjectiveStore;
+use executive::testing::channel::daemon_adapter::DaemonChannelGoalExecutor;
 use fabric::channel::{
     ChannelId, ConversationId, ExternalSenderId, InboundMessage, MessageContent, MessageId,
     OutboundMessage,
@@ -9,7 +9,7 @@ use fabric::channel::{
 use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
-use gateway::store::ChannelStore;
+use gateway::ChannelStore;
 use tokio::sync::Mutex;
 
 struct NoTurn;

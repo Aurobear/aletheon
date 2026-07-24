@@ -16,16 +16,16 @@ impl SubAgentViewWidget {
         let (status_str, color) = match &agent.status {
             SubAgentStatus::Planning => ("planning".to_string(), Color::Cyan),
             SubAgentStatus::Executing { current_step } => {
-                let bar = format!("executing: {}", current_step);
+                let bar = format!("executing: {current_step}");
                 (bar, Color::Yellow)
             }
             SubAgentStatus::WaitingApproval => ("waiting approval".to_string(), Color::Magenta),
             SubAgentStatus::Completed { summary } => {
-                let s = format!("completed: {}", summary);
+                let s = format!("completed: {summary}");
                 (s, Color::Green)
             }
             SubAgentStatus::Failed { error } => {
-                let s = format!("failed: {}", error);
+                let s = format!("failed: {error}");
                 (s, Color::Red)
             }
         };

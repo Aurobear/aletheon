@@ -6,7 +6,6 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fmt;
 use std::path::PathBuf;
 
 /// Dynamic model routing — maps task types to model specs.
@@ -135,9 +134,12 @@ pub struct DeploymentQuotaConfig {
     pub google_bytes: u64,
     pub google_soft_bytes: u64,
     pub google_items: u64,
-    pub gbrain_spool_bytes: u64,
-    pub gbrain_spool_soft_bytes: u64,
-    pub gbrain_spool_items: u64,
+    #[serde(alias = "gbrain_spool_bytes")]
+    pub supplemental_spool_bytes: u64,
+    #[serde(alias = "gbrain_spool_soft_bytes")]
+    pub supplemental_spool_soft_bytes: u64,
+    #[serde(alias = "gbrain_spool_items")]
+    pub supplemental_spool_items: u64,
 }
 
 impl Default for DeploymentQuotaConfig {
@@ -162,9 +164,9 @@ impl Default for DeploymentQuotaConfig {
             google_bytes: 5 * 1024 * 1024 * 1024,
             google_soft_bytes: 4 * 1024 * 1024 * 1024,
             google_items: 500_000,
-            gbrain_spool_bytes: 256 * 1024 * 1024,
-            gbrain_spool_soft_bytes: 192 * 1024 * 1024,
-            gbrain_spool_items: 10_000,
+            supplemental_spool_bytes: 256 * 1024 * 1024,
+            supplemental_spool_soft_bytes: 192 * 1024 * 1024,
+            supplemental_spool_items: 10_000,
         }
     }
 }
@@ -175,7 +177,8 @@ impl Default for DeploymentQuotaConfig {
 pub struct DeploymentIntegrationsConfig {
     pub telegram: bool,
     pub google: bool,
-    pub gbrain: bool,
+    #[serde(alias = "gbrain")]
+    pub supplemental_memory: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -185,7 +188,8 @@ pub struct DeploymentSecretFilesConfig {
     pub provider: Option<PathBuf>,
     pub telegram: Option<PathBuf>,
     pub google_vault_key: Option<PathBuf>,
-    pub gbrain: Option<PathBuf>,
+    #[serde(alias = "gbrain")]
+    pub supplemental_memory: Option<PathBuf>,
     pub backup_password: Option<PathBuf>,
 }
 
@@ -286,7 +290,7 @@ impl DeploymentConfig {
             self.secrets.provider.as_ref(),
             self.secrets.telegram.as_ref(),
             self.secrets.google_vault_key.as_ref(),
-            self.secrets.gbrain.as_ref(),
+            self.secrets.supplemental_memory.as_ref(),
             self.secrets.backup_password.as_ref(),
             self.backup.repository_file.as_ref(),
         ]
@@ -337,9 +341,9 @@ impl DeploymentConfig {
                 self.quotas.google_items,
             ),
             (
-                self.quotas.gbrain_spool_soft_bytes,
-                self.quotas.gbrain_spool_bytes,
-                self.quotas.gbrain_spool_items,
+                self.quotas.supplemental_spool_soft_bytes,
+                self.quotas.supplemental_spool_bytes,
+                self.quotas.supplemental_spool_items,
             ),
         ] {
             if soft > hard || hard == 0 || items == 0 {
@@ -348,101 +352,6 @@ impl DeploymentConfig {
         }
         Ok(())
     }
-}
-
-/// Fail-closed configuration for the isolated Pi coding runtime.
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PiRuntimeConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub executable: PathBuf,
-    #[serde(default)]
-    pub trusted_executable_dir: Option<PathBuf>,
-    #[serde(default)]
-    pub fixed_args: Vec<String>,
-    /// Pinned upstream package version recorded in attempt evidence.
-    #[serde(default)]
-    pub package_version: String,
-    /// Lowercase SHA-256 of the trusted Pi executable.
-    #[serde(default)]
-    pub executable_sha256: String,
-    /// Expected Pi JSON session header version.
-    #[serde(default = "default_pi_json_protocol_version")]
-    pub json_protocol_version: u32,
-    #[serde(default)]
-    pub worktree_base: PathBuf,
-    #[serde(default = "default_pi_timeout_ms")]
-    pub timeout_ms: u64,
-    #[serde(default = "default_pi_max_output_bytes")]
-    pub max_output_bytes: usize,
-    #[serde(default)]
-    pub allowed_paths: Vec<PathBuf>,
-    #[serde(default)]
-    pub forbidden_paths: Vec<PathBuf>,
-    #[serde(default = "default_true")]
-    pub require_namespace_isolation: bool,
-    /// Pi has no network access by default. Trusted daemon configuration may
-    /// opt in for the independently authenticated model transport.
-    #[serde(default)]
-    pub network_enabled: bool,
-}
-
-impl Default for PiRuntimeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            executable: PathBuf::new(),
-            trusted_executable_dir: None,
-            fixed_args: Vec::new(),
-            package_version: String::new(),
-            executable_sha256: String::new(),
-            json_protocol_version: default_pi_json_protocol_version(),
-            worktree_base: PathBuf::new(),
-            timeout_ms: default_pi_timeout_ms(),
-            max_output_bytes: default_pi_max_output_bytes(),
-            allowed_paths: Vec::new(),
-            forbidden_paths: Vec::new(),
-            require_namespace_isolation: true,
-            network_enabled: false,
-        }
-    }
-}
-
-impl fmt::Debug for PiRuntimeConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PiRuntimeConfig")
-            .field("enabled", &self.enabled)
-            .field("executable", &self.executable)
-            .field("trusted_executable_dir", &self.trusted_executable_dir)
-            .field("fixed_arg_count", &self.fixed_args.len())
-            .field("package_version", &self.package_version)
-            .field("json_protocol_version", &self.json_protocol_version)
-            .field("worktree_base", &self.worktree_base)
-            .field("timeout_ms", &self.timeout_ms)
-            .field("max_output_bytes", &self.max_output_bytes)
-            .field("allowed_paths", &self.allowed_paths)
-            .field("forbidden_paths", &self.forbidden_paths)
-            .field(
-                "require_namespace_isolation",
-                &self.require_namespace_isolation,
-            )
-            .field("network_enabled", &self.network_enabled)
-            .finish()
-    }
-}
-
-fn default_pi_timeout_ms() -> u64 {
-    30 * 60 * 1_000
-}
-
-fn default_pi_json_protocol_version() -> u32 {
-    3
-}
-
-fn default_pi_max_output_bytes() -> usize {
-    1024 * 1024
 }
 
 /// Provider/model routing for durable Goal worker attempts.
@@ -748,162 +657,6 @@ pub struct PluginsConfig {
     pub directories: Vec<String>,
 }
 
-/// Memory backend configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MemoryConfig {
-    /// "sqlite" or "in_memory"
-    #[serde(default = "default_memory_backend")]
-    pub backend: String,
-    #[serde(default = "default_memory_data_dir")]
-    pub data_dir: String,
-    /// Optional gbrain shared memory integration (disabled by default).
-    #[serde(default)]
-    pub gbrain: McpMemoryConfig,
-}
-
-fn default_memory_backend() -> String {
-    "sqlite".to_string()
-}
-fn default_memory_data_dir() -> String {
-    "~/.aletheon/memory".to_string()
-}
-
-impl Default for MemoryConfig {
-    fn default() -> Self {
-        Self {
-            backend: default_memory_backend(),
-            data_dir: default_memory_data_dir(),
-            gbrain: McpMemoryConfig::default(),
-        }
-    }
-}
-/// Optional GBrain supplemental memory over the configured HTTP MCP server.
-/// Renamed to `McpMemoryConfig` for generic MCP-based memory integration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct McpMemoryConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default = "default_gbrain_server_name")]
-    pub server_name: String,
-    #[serde(default = "default_gbrain_read_sources")]
-    pub read_sources: Vec<String>,
-    #[serde(default = "default_gbrain_source", alias = "source")]
-    pub write_source: String,
-    #[serde(default = "default_gbrain_timeout_ms", alias = "timeout_ms")]
-    pub request_timeout_ms: u64,
-    #[serde(default = "default_gbrain_batch_size")]
-    pub delivery_batch_size: usize,
-    #[serde(default = "default_gbrain_max_results", alias = "max_results")]
-    pub recall_limit: usize,
-    #[serde(default = "default_gbrain_max_chars", alias = "max_chars")]
-    pub max_content_bytes: usize,
-    #[serde(default, alias = "capture_enabled")]
-    pub projection_enabled: bool,
-    #[serde(default = "default_gbrain_spool_path")]
-    pub spool_path: String,
-    #[serde(default = "default_gbrain_spool_items")]
-    pub spool_max_items: usize,
-    #[serde(default = "default_gbrain_spool_bytes")]
-    pub spool_max_bytes: u64,
-    #[serde(default = "default_gbrain_retry_initial_ms")]
-    pub retry_initial_ms: u64,
-    #[serde(default = "default_gbrain_retry_max_ms")]
-    pub retry_max_ms: u64,
-    #[serde(default = "default_gbrain_retry_attempts")]
-    pub retry_max_attempts: u32,
-    #[serde(default = "default_gbrain_retry_age_secs")]
-    pub retry_max_age_secs: u64,
-    #[serde(default = "default_gbrain_schema_fixture")]
-    pub schema_fixture: String,
-    #[serde(default = "default_gbrain_schema_version")]
-    pub schema_version: String,
-    #[serde(default = "default_gbrain_outbox_dir", alias = "outbox_dir")]
-    pub legacy_outbox_dir: String,
-}
-
-/// Backward-compatible type alias for the legacy `GbrainMemoryConfig` name.
-pub type GbrainMemoryConfig = McpMemoryConfig;
-
-fn default_gbrain_server_name() -> String {
-    "gbrain".into()
-}
-fn default_gbrain_source() -> String {
-    "aletheon".into()
-}
-fn default_gbrain_read_sources() -> Vec<String> {
-    vec!["aletheon".into(), "general".into()]
-}
-fn default_gbrain_timeout_ms() -> u64 {
-    1200
-}
-fn default_gbrain_batch_size() -> usize {
-    20
-}
-fn default_gbrain_max_results() -> usize {
-    4
-}
-fn default_gbrain_max_chars() -> usize {
-    6000
-}
-fn default_gbrain_spool_path() -> String {
-    "~/.aletheon/memory/gbrain-spool.db".into()
-}
-fn default_gbrain_spool_items() -> usize {
-    10_000
-}
-fn default_gbrain_spool_bytes() -> u64 {
-    256 * 1024 * 1024
-}
-fn default_gbrain_retry_initial_ms() -> u64 {
-    1_000
-}
-fn default_gbrain_retry_max_ms() -> u64 {
-    60_000
-}
-fn default_gbrain_retry_attempts() -> u32 {
-    12
-}
-fn default_gbrain_retry_age_secs() -> u64 {
-    86_400
-}
-fn default_gbrain_schema_fixture() -> String {
-    "config/gbrain/tools-schema.json".into()
-}
-fn default_gbrain_schema_version() -> String {
-    "v0.42.59.0".into()
-}
-fn default_gbrain_outbox_dir() -> String {
-    "~/.aletheon/gbrain-outbox".into()
-}
-
-impl Default for McpMemoryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            server_name: default_gbrain_server_name(),
-            read_sources: default_gbrain_read_sources(),
-            write_source: default_gbrain_source(),
-            request_timeout_ms: default_gbrain_timeout_ms(),
-            delivery_batch_size: default_gbrain_batch_size(),
-            recall_limit: default_gbrain_max_results(),
-            max_content_bytes: default_gbrain_max_chars(),
-            projection_enabled: false,
-            spool_path: default_gbrain_spool_path(),
-            spool_max_items: default_gbrain_spool_items(),
-            spool_max_bytes: default_gbrain_spool_bytes(),
-            retry_initial_ms: default_gbrain_retry_initial_ms(),
-            retry_max_ms: default_gbrain_retry_max_ms(),
-            retry_max_attempts: default_gbrain_retry_attempts(),
-            retry_max_age_secs: default_gbrain_retry_age_secs(),
-            schema_fixture: default_gbrain_schema_fixture(),
-            schema_version: default_gbrain_schema_version(),
-            legacy_outbox_dir: default_gbrain_outbox_dir(),
-        }
-    }
-}
-
 /// Daemon runtime settings.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -986,84 +739,6 @@ impl Default for PerceptionConfig {
     }
 }
 
-/// Telegram bot configuration for owner-only control channel.
-///
-/// The config stores the environment-variable NAME, never the token value itself.
-/// The runtime reads the token from that env var at startup.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TelegramConfig {
-    /// Master switch. When false (default), the Telegram bot is not started.
-    #[serde(default)]
-    pub enabled: bool,
-    /// Environment variable name that holds the bot token.
-    /// Example value: `"ALETHEON_TELEGRAM_BOT_TOKEN"`.
-    pub bot_token_env: Option<String>,
-    /// Owner's Telegram user ID. Only messages from this user are accepted.
-    pub owner_user_id: Option<i64>,
-    /// Polling timeout in seconds (clamped to 1–50).
-    #[serde(default = "default_poll_timeout_secs")]
-    pub poll_timeout_secs: u64,
-}
-
-fn default_poll_timeout_secs() -> u64 {
-    10
-}
-
-impl Default for TelegramConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            bot_token_env: None,
-            owner_user_id: None,
-            poll_timeout_secs: default_poll_timeout_secs(),
-        }
-    }
-}
-
-impl TelegramConfig {
-    /// Validate the configuration, returning a list of errors.
-    /// Also clamps `poll_timeout_secs` to the allowed 1–50 range.
-    pub fn validate(&mut self) -> Vec<String> {
-        let mut errors: Vec<String> = Vec::new();
-
-        // Clamp poll timeout
-        self.poll_timeout_secs = self.poll_timeout_secs.clamp(1, 50);
-
-        if !self.enabled {
-            // Disabled: no token or owner required
-            return errors;
-        }
-
-        // Enabled: require bot_token_env
-        match &self.bot_token_env {
-            None => {
-                errors.push("telegram.enabled=true but bot_token_env is not set".to_string());
-            }
-            Some(name) if name.trim().is_empty() => {
-                errors.push("telegram.enabled=true but bot_token_env is empty".to_string());
-            }
-            Some(_) => {}
-        }
-
-        // Enabled: require owner_user_id > 0
-        match self.owner_user_id {
-            None => {
-                errors.push("telegram.enabled=true but owner_user_id is not set".to_string());
-            }
-            Some(id) if id <= 0 => {
-                errors.push(format!(
-                    "telegram.enabled=true but owner_user_id={} is not positive",
-                    id
-                ));
-            }
-            Some(_) => {}
-        }
-
-        errors
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1085,196 +760,6 @@ mod tests {
         let without = "name = \"local\"\nbase_url = \"http://localhost:11434\"\n";
         let p2: ProviderConfig = toml::from_str(without).unwrap();
         assert!(p2.pricing.is_none(), "pricing is optional");
-    }
-
-    // ── TelegramConfig validation ──────────────────────────────────────
-
-    #[test]
-    fn telegram_disabled_needs_no_token_or_owner() {
-        let mut cfg = TelegramConfig::default();
-        assert!(!cfg.enabled);
-        assert!(cfg.bot_token_env.is_none());
-        assert!(cfg.owner_user_id.is_none());
-        let errors = cfg.validate();
-        assert!(
-            errors.is_empty(),
-            "disabled config must have no errors, got: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn telegram_enabled_requires_token_env() {
-        let mut cfg = TelegramConfig {
-            enabled: true,
-            bot_token_env: None,
-            owner_user_id: Some(12345),
-            poll_timeout_secs: 10,
-        };
-        let errors = cfg.validate();
-        assert!(!errors.is_empty(), "must reject missing bot_token_env");
-        assert!(
-            errors.iter().any(|e| e.contains("bot_token_env")),
-            "error must mention bot_token_env: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn telegram_enabled_rejects_empty_token_env() {
-        let mut cfg = TelegramConfig {
-            enabled: true,
-            bot_token_env: Some("   ".to_string()),
-            owner_user_id: Some(12345),
-            poll_timeout_secs: 10,
-        };
-        let errors = cfg.validate();
-        assert!(!errors.is_empty(), "must reject empty bot_token_env");
-        assert!(
-            errors.iter().any(|e| e.contains("bot_token_env")),
-            "error must mention bot_token_env: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn telegram_enabled_requires_owner_user_id() {
-        let mut cfg = TelegramConfig {
-            enabled: true,
-            bot_token_env: Some("ALETHEON_TELEGRAM_BOT_TOKEN".into()),
-            owner_user_id: None,
-            poll_timeout_secs: 10,
-        };
-        let errors = cfg.validate();
-        assert!(!errors.is_empty(), "must reject missing owner_user_id");
-        assert!(
-            errors.iter().any(|e| e.contains("owner_user_id")),
-            "error must mention owner_user_id: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn telegram_enabled_rejects_zero_or_negative_owner_id() {
-        for bad_id in [0, -1] {
-            let mut cfg = TelegramConfig {
-                enabled: true,
-                bot_token_env: Some("ALETHEON_TELEGRAM_BOT_TOKEN".into()),
-                owner_user_id: Some(bad_id),
-                poll_timeout_secs: 10,
-            };
-            let errors = cfg.validate();
-            assert!(!errors.is_empty(), "must reject owner_user_id={bad_id}");
-            assert!(
-                errors.iter().any(|e| e.contains("not positive")),
-                "error must say 'not positive' for id={bad_id}: {errors:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn telegram_valid_enabled_passes() {
-        let mut cfg = TelegramConfig {
-            enabled: true,
-            bot_token_env: Some("ALETHEON_TELEGRAM_BOT_TOKEN".into()),
-            owner_user_id: Some(12345),
-            poll_timeout_secs: 10,
-        };
-        let errors = cfg.validate();
-        assert!(
-            errors.is_empty(),
-            "valid config must have no errors, got: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn telegram_clamps_poll_timeout() {
-        // Below minimum
-        let mut cfg = TelegramConfig {
-            enabled: false,
-            bot_token_env: None,
-            owner_user_id: None,
-            poll_timeout_secs: 0,
-        };
-        cfg.validate();
-        assert_eq!(cfg.poll_timeout_secs, 1);
-
-        // Above maximum
-        cfg.poll_timeout_secs = 100;
-        cfg.validate();
-        assert_eq!(cfg.poll_timeout_secs, 50);
-
-        // In range
-        cfg.poll_timeout_secs = 30;
-        cfg.validate();
-        assert_eq!(cfg.poll_timeout_secs, 30);
-    }
-
-    #[test]
-    fn telegram_parses_from_toml() {
-        let toml = r#"
-enabled = true
-bot_token_env = "ALETHEON_TELEGRAM_BOT_TOKEN"
-owner_user_id = 12345
-poll_timeout_secs = 20
-"#;
-        let cfg: TelegramConfig = toml::from_str(toml).unwrap();
-        assert!(cfg.enabled);
-        assert_eq!(
-            cfg.bot_token_env.as_deref(),
-            Some("ALETHEON_TELEGRAM_BOT_TOKEN")
-        );
-        assert_eq!(cfg.owner_user_id, Some(12345));
-        assert_eq!(cfg.poll_timeout_secs, 20);
-    }
-
-    #[test]
-    fn gbrain_parses_from_toml() {
-        let toml = r#"
-enabled = true
-server_name = "gbrain-primary"
-read_sources = ["project", "general"]
-write_source = "project"
-request_timeout_ms = 2500
-delivery_batch_size = 12
-recall_limit = 6
-max_content_bytes = 8192
-projection_enabled = true
-spool_path = "/tmp/gbrain.db"
-spool_max_items = 500
-spool_max_bytes = 1048576
-retry_initial_ms = 250
-retry_max_ms = 10000
-retry_max_attempts = 8
-retry_max_age_secs = 3600
-schema_fixture = "config/gbrain/tools-schema.json"
-schema_version = "v0.42.59.0"
-legacy_outbox_dir = "/tmp/legacy"
-"#;
-        let cfg: McpMemoryConfig = toml::from_str(toml).unwrap();
-        assert!(cfg.enabled);
-        assert_eq!(cfg.server_name, "gbrain-primary");
-        assert_eq!(cfg.read_sources, ["project", "general"]);
-        assert_eq!(cfg.write_source, "project");
-        assert_eq!(cfg.request_timeout_ms, 2500);
-        assert_eq!(cfg.delivery_batch_size, 12);
-        assert_eq!(cfg.spool_max_bytes, 1_048_576);
-        assert!(cfg.projection_enabled);
-    }
-
-    #[test]
-    fn gbrain_nested_in_memory_config() {
-        let toml = r#"
-backend = "sqlite"
-data_dir = "/tmp/mem"
-
-[gbrain]
-enabled = true
-source = "aletheon"
-timeout_ms = 2500
-max_results = 6
-"#;
-        let mem: MemoryConfig = toml::from_str(toml).unwrap();
-        assert!(mem.gbrain.enabled);
-        assert_eq!(mem.gbrain.write_source, "aletheon");
-        assert_eq!(mem.gbrain.request_timeout_ms, 2500);
-        assert_eq!(mem.gbrain.server_name, "gbrain");
     }
 
     #[test]

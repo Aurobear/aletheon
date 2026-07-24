@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use executive::service::memory_consolidation_worker::MemoryConsolidationWorker;
+use executive::application::memory_consolidation_worker::MemoryConsolidationWorker;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,

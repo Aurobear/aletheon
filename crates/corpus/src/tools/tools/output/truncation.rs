@@ -28,15 +28,15 @@ pub fn truncate_head_tail(content: &str, policy: &TruncationPolicy) -> Truncated
     let lines: Vec<&str> = content.lines().collect();
     let head: String = lines[..policy.head_lines]
         .iter()
-        .map(|l| format!("{}\n", l))
+        .map(|l| format!("{l}\n"))
         .collect();
     let tail: String = lines[total_lines - policy.tail_lines..]
         .iter()
-        .map(|l| format!("{}\n", l))
+        .map(|l| format!("{l}\n"))
         .collect();
     let omitted = total_lines - policy.head_lines - policy.tail_lines;
 
-    let truncated = format!("{}[... {} lines omitted ...]\n{}", head, omitted, tail);
+    let truncated = format!("{head}[... {omitted} lines omitted ...]\n{tail}");
 
     if let Some(max_bytes) = policy.max_bytes {
         if truncated.len() > max_bytes {
@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_head_tail_truncation() {
-        let lines: Vec<String> = (0..100).map(|i| format!("line {}", i)).collect();
+        let lines: Vec<String> = (0..100).map(|i| format!("line {i}")).collect();
         let content = lines.join("\n");
         let policy = TruncationPolicy {
             head_lines: 3,

@@ -3,7 +3,7 @@ use super::tool_budget;
 use super::tool_output::{bounded_tool_result, MAX_TOOL_RESULT_BYTES};
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
 
-use crate::r#impl::llm::provider::LlmProvider;
+use crate::adapters::inference::provider::LlmProvider;
 use fabric::message::{ContentBlock, Message, Role};
 use fabric::policy::verifier::Verdict;
 use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
@@ -245,7 +245,7 @@ impl ReActLoop {
                 match self.circuit_breaker.check(&signature) {
                     CircuitBreakerStatus::Tripped(reason) => {
                         warn!("Circuit breaker tripped: {}", reason);
-                        let msg = format!("Loop detected: {}. Stopping.", reason);
+                        let msg = format!("Loop detected: {reason}. Stopping.");
                         let metrics = TurnMetrics {
                             tool_calls_made,
                             tool_errors,
@@ -348,7 +348,7 @@ impl ReActLoop {
             // Inject reflection AFTER all tool results to preserve API message format
             if let Some(summary) = pending_reflection.take() {
                 self.messages
-                    .push(Message::user(format!("[Reflection]\n{}", summary)));
+                    .push(Message::user(format!("[Reflection]\n{summary}")));
             }
 
             // Check if reflection recommended stopping

@@ -1,4 +1,4 @@
-use executive::service::context_assembler::{
+use executive::application::context_assembler::{
     working_directory_policy_prompt, ContextAssembler, ContextAssemblyError, ContextFragments,
     ContextSource, ProductionContextSource,
 };
@@ -75,6 +75,11 @@ async fn production_source_allows_first_turn_without_conscious_projection() {
         ))),
         skill_router: Arc::new(Mutex::new(corpus::SkillRouter::new())),
         conscious: Arc::new(UnavailableConsciousContext),
+        memory_service: None,
+        recall_enabled: false,
+        recall_max_items: 0,
+        recall_max_bytes: 0,
+        recall_timeout_ms: 0,
     };
 
     let fragments = source.load(&request("first turn")).await.unwrap();
@@ -92,6 +97,7 @@ async fn fragments_have_one_deterministic_order_before_raw_input() {
         system_prefix: "system".into(),
         skills: "S".into(),
         conscious: Some(projection()),
+        memory_context: String::new(),
     })));
     let assembled = assembler
         .assemble(&request("raw user"), &[Message::assistant("prior")])
@@ -118,6 +124,7 @@ async fn fragments_and_history_are_bounded_and_utf8_safe() {
         system_prefix: huge.clone(),
         skills: huge,
         conscious: Some(projection()),
+        memory_context: String::new(),
     })));
     let assembled = assembler
         .assemble(&request("raw"), &[Message::user("x".repeat(200_000))])
@@ -148,7 +155,7 @@ fn working_directory_prompt_distinguishes_policy_from_host_mounts() {
 
 #[test]
 fn turn_pipeline_has_one_context_assembly_route() {
-    let pipeline = include_str!("../src/service/turn_pipeline.rs");
+    let pipeline = include_str!("../src/application/turn_pipeline.rs");
     assert!(pipeline.contains(".context_assembler"));
     assert!(pipeline.contains(".assemble(&context_request, &existing_messages)"));
     assert!(pipeline.contains(".canonical_sessions"));
@@ -166,7 +173,7 @@ fn turn_pipeline_has_one_context_assembly_route() {
             "duplicate context route: {removed}"
         );
     }
-    let daemon_modules = include_str!("../src/service/daemon_turn/mod.rs");
+    let daemon_modules = include_str!("../src/application/daemon_turn/mod.rs");
     assert!(!daemon_modules.contains("mod injection"));
 }
 mod turn_request_support;

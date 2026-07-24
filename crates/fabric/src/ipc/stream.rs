@@ -390,7 +390,7 @@ impl TurnEventStream {
         }
         serde_json::from_value::<TurnEventV1>(envelope.payload).map_err(|e| SchemaRejection {
             expected: TURN_EVENT_SCHEMA.to_string(),
-            actual: format!("deserialization error: {}", e),
+            actual: format!("deserialization error: {e}"),
             payload_preview: String::new(),
         })
     }

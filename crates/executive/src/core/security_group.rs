@@ -14,6 +14,6 @@ pub(crate) struct SecurityGroup {
     pub(crate) tool_runner: ToolRunnerHandle,
     pub(crate) storm_breaker: Arc<Mutex<StormBreaker>>,
     pub(crate) approval_rx: Arc<Mutex<mpsc::Receiver<PendingApproval>>>,
-    pub(crate) pending_approvals: crate::service::admin_service::PendingApprovals,
-    pub(crate) session_approvals: crate::service::admin_service::ScopedApprovalCache,
+    pub(crate) pending_approvals: crate::application::admin_service::PendingApprovals,
+    pub(crate) session_approvals: crate::application::admin_service::ScopedApprovalCache,
 }

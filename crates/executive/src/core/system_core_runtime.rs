@@ -8,12 +8,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use cognit::r#impl::provider_registry::ProviderRegistry;
+use cognit::composition::provider_registry::ProviderRegistry;
 use fabric::{LlmResponse, LlmStream};
 use tokio_util::sync::CancellationToken;
 
-use crate::r#impl::core_rpc::{CorePeerPolicy, CoreRpcServer};
-use crate::service::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
+use crate::application::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
+use crate::host::core_rpc::{CorePeerPolicy, CoreRpcServer};
 
 /// A model specification after authoritative machine-registry resolution.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,14 +107,14 @@ impl SystemCoreRuntime {
         // Passing no project directory is intentional: the system core may read
         // machine/user configuration layers plus an explicit operator file, but
         // never configuration from the caller's current workspace.
-        let app_config = crate::core::config::load_for_host(None, config_path)?.value;
-        let crate::core::config::AppConfig {
+        let app_config = crate::composition::config::load_for_host(None, config_path)?.value;
+        let crate::composition::config::AppConfig {
             telegram,
-            memory: crate::core::config::MemoryConfig { gbrain, .. },
+            memory: crate::composition::config::MemoryConfig { supplemental, .. },
             mcp_servers,
             ..
         } = &app_config;
-        if telegram.enabled || gbrain.enabled || !mcp_servers.is_empty() {
+        if telegram.enabled || supplemental.enabled || !mcp_servers.is_empty() {
             anyhow::bail!("system core configuration contains user-scoped integration credentials");
         }
         let registry = Arc::new(ProviderRegistry::from_config(&app_config.cognit())?);

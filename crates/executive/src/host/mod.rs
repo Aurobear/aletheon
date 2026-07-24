@@ -12,8 +12,16 @@
 //! - Object-safe: `serve` takes `self: Box<Self>` for ownership transfer
 
 pub mod container;
+pub mod core_rpc;
+pub mod daemon;
+pub mod doctor;
 pub mod launcher;
 pub mod systemd;
+
+/// Legacy wire-protocol use cases retained only for host compatibility.
+pub mod legacy_session {
+    pub use crate::compatibility::legacy_session_service::*;
+}
 
 use anyhow::{Context, Result};
 use fabric::Timer;
@@ -22,9 +30,9 @@ use std::path::PathBuf;
 
 use tracing::info;
 
+use self::daemon::mcp_embedded::McpEmbedded;
+use self::daemon::server;
 use crate::core::runtime_core::RuntimeCore;
-use crate::r#impl::daemon::mcp_embedded::McpEmbedded;
-use crate::r#impl::daemon::server;
 
 /// Load .env file (simple KEY=VALUE parser, no shell expansion).
 pub fn load_dotenv(path: &PathBuf) {
@@ -165,7 +173,7 @@ impl RuntimeHost for DaemonHost {
         let data_dir = &core.daemon_config.data_dir;
         tracing::info!(data_dir = %data_dir, "Creating data directory...");
         std::fs::create_dir_all(data_dir)
-            .map_err(|e| anyhow::anyhow!("Failed to create data dir '{}': {}", data_dir, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create data dir '{data_dir}': {e}"))?;
 
         // ── Startup log ─────────────────────────────────────────────
         tracing::info!(

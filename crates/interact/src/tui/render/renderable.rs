@@ -252,7 +252,17 @@ impl InputRenderable<'_> {
                 } else {
                     Style::default().fg(Color::White)
                 };
-                ListItem::new(Line::from(Span::styled(format!("  {} ", cmd), item_style)))
+                let disabled = cmd
+                    .disabled_reason
+                    .as_deref()
+                    .map_or(String::new(), |reason| format!(" · {reason}"));
+                ListItem::new(Line::from(Span::styled(
+                    format!(
+                        "  {}  {} · {}{} ",
+                        cmd.label, cmd.description, cmd.metadata, disabled
+                    ),
+                    item_style,
+                )))
             })
             .collect();
 
@@ -260,7 +270,7 @@ impl InputRenderable<'_> {
         let popup = Rect {
             x: area.x + 2,
             y: area.y.saturating_sub(height),
-            width: 30.min(area.width.saturating_sub(4)),
+            width: 72.min(area.width.saturating_sub(4)),
             height,
         };
 

@@ -99,7 +99,7 @@ impl UnixSocketTransport {
         // Create new connection
         UnixStream::connect(path)
             .await
-            .map_err(|e| anyhow::anyhow!("Connect failed: {}", e))
+            .map_err(|e| anyhow::anyhow!("Connect failed: {e}"))
     }
 
     /// Return a connection to the pool.
@@ -143,17 +143,17 @@ impl UnixSocketTransport {
         // Ensure parent directory exists.
         if let Some(parent) = self.socket_path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| anyhow::anyhow!("Failed to create socket directory: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to create socket directory: {e}"))?;
         }
 
         // Remove stale socket file if present.
         if self.socket_path.exists() {
             std::fs::remove_file(&self.socket_path)
-                .map_err(|e| anyhow::anyhow!("Failed to remove stale socket: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to remove stale socket: {e}"))?;
         }
 
         let listener = UnixListener::bind(&self.socket_path)
-            .map_err(|e| anyhow::anyhow!("Failed to bind unix socket: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to bind unix socket: {e}"))?;
 
         info!(path = %self.socket_path.display(), "Unix socket envelope transport listening");
 
@@ -201,9 +201,7 @@ impl UnixSocketTransport {
 
             if len > MAX_MESSAGE_SIZE {
                 return Err(anyhow::anyhow!(
-                    "Envelope too large: {} bytes (max {})",
-                    len,
-                    MAX_MESSAGE_SIZE
+                    "Envelope too large: {len} bytes (max {MAX_MESSAGE_SIZE})"
                 ));
             }
 
@@ -213,7 +211,7 @@ impl UnixSocketTransport {
 
             // Deserialize from JSON.
             let envelope: Envelope = serde_json::from_slice(&payload)
-                .map_err(|e| anyhow::anyhow!("Failed to deserialize envelope: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize envelope: {e}"))?;
 
             // Route to target agent.
             match &envelope.target {
@@ -248,7 +246,7 @@ impl UnixSocketTransport {
         use tokio::io::AsyncWriteExt;
 
         let bytes = serde_json::to_vec(envelope)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize envelope: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to serialize envelope: {e}"))?;
         let len = (bytes.len() as u32).to_be_bytes();
 
         stream.write_all(&len).await?;

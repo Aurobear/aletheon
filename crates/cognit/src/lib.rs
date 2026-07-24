@@ -17,11 +17,13 @@
 //! - **Harness** — production sessions compose the focused components through
 //!   `harness`.
 
+pub(crate) mod adapters;
+mod application;
 pub mod bridge;
+pub mod composition;
 pub mod config;
 pub mod core;
 pub mod harness;
-pub mod r#impl;
 pub mod ports;
 
 // Re-export core components
@@ -45,10 +47,42 @@ pub use harness::{
     CognitRetryDisposition, CognitiveSession, CognitiveSessionDependencies, CognitiveStreamEvent,
     CognitiveStreamSink, HarnessKind,
 };
-pub use r#impl::inference;
-pub use r#impl::learning;
-pub use r#impl::llm;
-pub use r#impl::policy;
-pub use r#impl::provider_registry;
+/// Stable inference contracts and the runtime scheduling facade.
+///
+/// Provider transports remain private under `adapters`; consumers receive only
+/// shared contracts and the host-facing scheduler/pulse types.
+pub mod inference {
+    pub use crate::application::inference::*;
+
+    pub mod provider {
+        pub use crate::adapters::inference::provider::*;
+    }
+    pub use provider::*;
+
+    pub mod pulse {
+        pub use crate::adapters::inference::pulse::*;
+    }
+    pub use pulse::*;
+
+    pub mod scheduler {
+        pub use crate::adapters::inference::scheduler::*;
+    }
+    pub use scheduler::*;
+}
+
+/// Stable learning domain facade.
+pub mod learning {
+    pub use crate::application::learning::*;
+}
+
+/// Host-facing event observers used to connect cognition to the event spine.
+pub mod event_handlers {
+    pub use crate::application::event_handlers::*;
+}
+
+/// Policy client facade. Transport selection remains owned by composition.
+pub mod policy {
+    pub use crate::adapters::policy::*;
+}
 
 pub mod testing;

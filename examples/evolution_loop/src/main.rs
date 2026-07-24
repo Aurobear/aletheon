@@ -16,8 +16,8 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use cognit::config::{ProviderConfig, ProviderTimeoutConfig, Transport};
-use cognit::r#impl::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
-use cognit::r#impl::llm::scheduler::{
+use cognit::event_handlers::{EvolutionEvent, ObserverConfig, ToolObservationHandler};
+use cognit::inference::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
 use fabric::evolution::*;
@@ -195,12 +195,12 @@ async fn main() -> Result<()> {
                                 }
                             }
                             Err(e) => {
-                                println!("  [Handler Error] {}", e);
+                                println!("  [Handler Error] {e}");
                             }
                         }
                     }
                     Err(e) => {
-                        println!("  [Deserialization Error] {}", e);
+                        println!("  [Deserialization Error] {e}");
                     }
                 }
                 true

@@ -8,7 +8,7 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use executive::{core::runtime_core::RuntimeCore, r#impl::daemon::server::ConnectionContext};
+use executive::{core::runtime_core::RuntimeCore, host::daemon::server::ConnectionContext};
 use fabric::{
     protocol::client::{ClientEvent, EventCursor, ItemEvent, ItemPhase, UiSnapshot},
     ApprovalPolicy, ConnectionId, ItemRecord, LocalOsPrincipal, PermissionProfileId,
@@ -26,7 +26,7 @@ use tokio::{
 use executive::host::launcher::WorkspaceLaunch;
 
 struct ExecutiveAcpBackend {
-    handler: executive::r#impl::daemon::handler::RequestHandler,
+    handler: executive::host::daemon::handler::RequestHandler,
     connection: ConnectionContext,
     active_session: Arc<Mutex<Option<String>>>,
 }
@@ -280,8 +280,8 @@ pub async fn run(workspace: WorkspaceLaunch) -> Result<()> {
     let authenticated = AuthenticatedAcpConnection::new(principal);
     let receiver = core.request_handler.create_notify_channel().await;
     let sessions = Arc::new(
-        executive::r#impl::session::canonical_store::CanonicalSessionStore::open(
-            executive::r#impl::session::canonical_store::session_db_path(Path::new(
+        executive::runtime::session::canonical_store::CanonicalSessionStore::open(
+            executive::runtime::session::canonical_store::session_db_path(Path::new(
                 &core.daemon_config.data_dir,
             )),
         )?,

@@ -1,8 +1,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use cognit::config::PiRuntimeConfig;
+use executive::application::coding_runtime::CodingAttemptRequest;
+use executive::composition::config::CodingRuntimeConfig;
 use executive::core::sub_agent::SubAgentRuntime;
-use executive::r#impl::runtime::{PiAttemptRequest, PiRuntime};
+use executive::testing::coding_runtime::PiRuntime;
 use fabric::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
     SandboxResult,
@@ -132,12 +133,12 @@ impl Fixture {
         }
     }
 
-    fn config(&self, output_cap: usize, timeout_ms: u64) -> PiRuntimeConfig {
+    fn config(&self, output_cap: usize, timeout_ms: u64) -> CodingRuntimeConfig {
         let digest = format!(
             "{:x}",
             Sha256::digest(std::fs::read(&self.executable).unwrap())
         );
-        PiRuntimeConfig {
+        CodingRuntimeConfig {
             enabled: true,
             executable: self.executable.clone(),
             fixed_args: Self::fixed_args(),
@@ -152,8 +153,13 @@ impl Fixture {
         }
     }
 
-    fn request(&self, output_cap: usize, timeout_ms: u64, task_input: &str) -> PiAttemptRequest {
-        PiAttemptRequest {
+    fn request(
+        &self,
+        output_cap: usize,
+        timeout_ms: u64,
+        task_input: &str,
+    ) -> CodingAttemptRequest {
+        CodingAttemptRequest {
             job: CodingJobSpec {
                 job_id: CodingJobId::new(),
                 goal_id: GoalId(7),
@@ -207,7 +213,7 @@ fn git_output(repository: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().into()
 }
 
-fn encoded(request: &PiAttemptRequest) -> String {
+fn encoded(request: &CodingAttemptRequest) -> String {
     serde_json::to_string(request).unwrap()
 }
 
@@ -221,7 +227,7 @@ fn report(evidence: &[fabric::AttemptEvidence]) -> CodingJobReport {
 
 fn capability_audit(
     evidence: &[fabric::AttemptEvidence],
-) -> executive::service::verification::CapabilityAuditSummary {
+) -> executive::application::verification::CapabilityAuditSummary {
     let item = evidence
         .iter()
         .find(|item| item.kind == "coding_capability_audit")

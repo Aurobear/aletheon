@@ -280,7 +280,7 @@ async fn topic_list(socket: &std::path::Path) -> Result<()> {
         let module = tp["module"].as_str().unwrap_or("?");
         let level = tp["level"].as_str().unwrap_or("?");
         let desc = tp["description"].as_str().unwrap_or("");
-        println!("{:<30} {:<12} {:<8} {}", name, module, level, desc);
+        println!("{name:<30} {module:<12} {level:<8} {desc}");
     }
 
     Ok(())
@@ -316,14 +316,11 @@ async fn topic_echo(
 
     if resp["error"].is_object() {
         let msg = resp["error"]["message"].as_str().unwrap_or("unknown error");
-        anyhow::bail!("Subscribe failed: {}", msg);
+        anyhow::bail!("Subscribe failed: {msg}");
     }
 
     println!("Listening for debug events (Ctrl+C to stop)...");
-    println!(
-        "Filter: level={}, module={:?}, tracepoint={:?}",
-        level, module, tracepoint
-    );
+    println!("Filter: level={level}, module={module:?}, tracepoint={tracepoint:?}");
     println!("{}", "-".repeat(80));
 
     // Stream events until Ctrl+C
@@ -333,7 +330,7 @@ async fn topic_echo(
             Ok(0) => break, // Connection closed
             Ok(_) => {}
             Err(e) => {
-                eprintln!("Read error: {}", e);
+                eprintln!("Read error: {e}");
                 break;
             }
         }
@@ -355,7 +352,7 @@ async fn topic_echo(
             }
             Err(_) => {
                 // Not JSON, print as-is
-                println!("{}", event_line);
+                println!("{event_line}");
             }
         }
     }
@@ -389,8 +386,7 @@ fn print_event(event: &serde_json::Value) {
 
     let level_display = format!("{:>5}", level.to_uppercase());
     println!(
-        "[{:02}:{:02}:{:02}.{:03}] {} {}.{} {}",
-        hours, minutes, seconds, millis, level_display, module, tracepoint, data
+        "[{hours:02}:{minutes:02}:{seconds:02}.{millis:03}] {level_display} {module}.{tracepoint} {data}"
     );
 }
 
@@ -414,8 +410,8 @@ async fn node_info(socket: &std::path::Path) -> Result<()> {
     let error_count = info["error_count"].as_u64().unwrap_or(0);
 
     println!("=== Aletheon Daemon ===");
-    println!("PID:       {}", pid);
-    println!("Uptime:    {} ({}s)", uptime_human, uptime_secs);
+    println!("PID:       {pid}");
+    println!("Uptime:    {uptime_human} ({uptime_secs}s)");
     println!(
         "Memory:    {} KB RSS ({:.1} MB)",
         rss_kb,
@@ -429,8 +425,8 @@ async fn node_info(socket: &std::path::Path) -> Result<()> {
         tokens_out,
         tokens_in + tokens_out
     );
-    println!("Turns:     {}", turn_count);
-    println!("Errors:    {}", error_count);
+    println!("Turns:     {turn_count}");
+    println!("Errors:    {error_count}");
 
     Ok(())
 }
@@ -458,8 +454,8 @@ async fn bag_record(
         .context("No recording_id in response")?;
     let bag_path = response["result"]["path"].as_str().unwrap_or("unknown");
 
-    println!("Recording started: {}", bag_path);
-    println!("Recording ID: {}", recording_id);
+    println!("Recording started: {bag_path}");
+    println!("Recording ID: {recording_id}");
     println!("Press Ctrl+C to stop recording...");
 
     // Wait for Ctrl+C
@@ -475,14 +471,14 @@ async fn bag_record(
         let msg = stop_response["error"]["message"]
             .as_str()
             .unwrap_or("unknown error");
-        eprintln!("Error stopping recording: {}", msg);
+        eprintln!("Error stopping recording: {msg}");
     } else {
         let events = stop_response["result"]["events"].as_u64().unwrap_or(0);
         let duration = stop_response["result"]["duration_secs"]
             .as_f64()
             .unwrap_or(0.0);
         let path = stop_response["result"]["path"].as_str().unwrap_or(bag_path);
-        println!("Recorded {} events in {:.1}s -> {}", events, duration, path);
+        println!("Recorded {events} events in {duration:.1}s -> {path}");
     }
 
     Ok(())
@@ -502,15 +498,12 @@ async fn bag_play(socket: &std::path::Path, path: PathBuf, speed: f64) -> Result
         let msg = response["error"]["message"]
             .as_str()
             .unwrap_or("unknown error");
-        anyhow::bail!("Replay failed: {}", msg);
+        anyhow::bail!("Replay failed: {msg}");
     }
 
     let events = response["result"]["events"].as_u64().unwrap_or(0);
     let replay_path = response["result"]["path"].as_str().unwrap_or("?");
-    println!(
-        "Replayed {} events from {} (speed: {}x)",
-        events, replay_path, speed
-    );
+    println!("Replayed {events} events from {replay_path} (speed: {speed}x)");
 
     Ok(())
 }
@@ -554,7 +547,7 @@ async fn bag_info(path: PathBuf) -> Result<()> {
     let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
 
     println!("=== Bag Info: {} ===", path.display());
-    println!("Events:    {}", event_count);
+    println!("Events:    {event_count}");
     println!("Duration:  {:.1}s", duration_ms as f64 / 1000.0);
     println!(
         "Size:      {} bytes ({:.1} KB)",
@@ -566,7 +559,7 @@ async fn bag_info(path: PathBuf) -> Result<()> {
     let mut modules: Vec<_> = module_counts.iter().collect();
     modules.sort_by(|a, b| b.1.cmp(a.1));
     for (module, count) in modules {
-        println!("  {}({})", module, count);
+        println!("  {module}({count})");
     }
 
     Ok(())
@@ -591,12 +584,9 @@ async fn perf_stats(socket: &std::path::Path, interval: Option<u64>) -> Result<(
         let tool_calls = &perf["tool_calls"];
 
         println!("=== Performance Stats ===");
-        println!(
-            "Tokens:    {} in / {} out ({} total)",
-            tokens_in, tokens_out, tokens_total
-        );
-        println!("Turns:     {}", turn_count);
-        println!("Errors:    {}", error_count);
+        println!("Tokens:    {tokens_in} in / {tokens_out} out ({tokens_total} total)");
+        println!("Turns:     {turn_count}");
+        println!("Errors:    {error_count}");
 
         if tool_calls.is_object() {
             if let Some(obj) = tool_calls.as_object() {
@@ -605,7 +595,7 @@ async fn perf_stats(socket: &std::path::Path, interval: Option<u64>) -> Result<(
                     let mut tools: Vec<_> = obj.iter().collect();
                     tools.sort_by(|a, b| b.1.as_u64().unwrap_or(0).cmp(&a.1.as_u64().unwrap_or(0)));
                     for (name, count) in tools {
-                        println!("  {}: {}", name, count);
+                        println!("  {name}: {count}");
                     }
                 }
             }
@@ -614,7 +604,7 @@ async fn perf_stats(socket: &std::path::Path, interval: Option<u64>) -> Result<(
         match interval {
             Some(secs) => {
                 println!();
-                println!("Refreshing in {}s (Ctrl+C to stop)...", secs);
+                println!("Refreshing in {secs}s (Ctrl+C to stop)...");
                 ClientTimer
                     .sleep(std::time::Duration::from_secs(secs))
                     .await;
@@ -645,7 +635,7 @@ async fn trace_start(
         let msg = response["error"]["message"]
             .as_str()
             .unwrap_or("unknown error");
-        anyhow::bail!("Trace start failed: {}", msg);
+        anyhow::bail!("Trace start failed: {msg}");
     }
 
     let tracing = response["result"]["tracing"].as_bool().unwrap_or(false);
@@ -653,9 +643,9 @@ async fn trace_start(
     let resp_module = response["result"]["module"].as_str();
 
     if tracing {
-        println!("Tracing started: level={}", resp_level);
+        println!("Tracing started: level={resp_level}");
         if let Some(m) = resp_module {
-            println!("Module filter: {}", m);
+            println!("Module filter: {m}");
         }
     } else {
         println!("Failed to start tracing");
@@ -673,7 +663,7 @@ async fn trace_stop(socket: &std::path::Path) -> Result<()> {
         let msg = response["error"]["message"]
             .as_str()
             .unwrap_or("unknown error");
-        anyhow::bail!("Trace stop failed: {}", msg);
+        anyhow::bail!("Trace stop failed: {msg}");
     }
 
     println!("Tracing stopped");
@@ -689,7 +679,7 @@ async fn trace_status(socket: &std::path::Path) -> Result<()> {
         let msg = response["error"]["message"]
             .as_str()
             .unwrap_or("unknown error");
-        anyhow::bail!("Trace status failed: {}", msg);
+        anyhow::bail!("Trace status failed: {msg}");
     }
 
     let tracing = response["result"]["tracing"].as_bool().unwrap_or(false);
@@ -697,12 +687,9 @@ async fn trace_status(socket: &std::path::Path) -> Result<()> {
     if tracing {
         let level = response["result"]["level"].as_str().unwrap_or("?");
         let module = response["result"]["module"].as_str().unwrap_or("all");
-        println!(
-            "Tracing: ON (level={}, module={}, subscribers={})",
-            level, module, sub_count
-        );
+        println!("Tracing: ON (level={level}, module={module}, subscribers={sub_count})");
     } else {
-        println!("Tracing: OFF (subscribers={})", sub_count);
+        println!("Tracing: OFF (subscribers={sub_count})");
     }
 
     Ok(())
@@ -714,14 +701,13 @@ async fn trace_status(socket: &std::path::Path) -> Result<()> {
 
 async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
     let request = ClientRpcRequest::DebugHealth.to_json_rpc(Some(1))?;
-
     let response = send_rpc(socket, &request).await?;
 
     if response["error"].is_object() {
         let msg = response["error"]["message"]
             .as_str()
             .unwrap_or("unknown error");
-        anyhow::bail!("Health check failed: {}", msg);
+        anyhow::bail!("Health check failed: {msg}");
     }
 
     let h = &response["result"]["health"];
@@ -732,7 +718,7 @@ async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
         "⚠️ "
     };
 
-    println!("{} Overall: {}", icon, overall);
+    println!("{icon} Overall: {overall}");
     println!();
     println!("  PID:         {}", h["pid"].as_u64().unwrap_or(0));
     println!(
@@ -766,7 +752,7 @@ async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
             let mut sorted: Vec<_> = tools.iter().collect();
             sorted.sort_by(|a, b| b.1.as_u64().unwrap_or(0).cmp(&a.1.as_u64().unwrap_or(0)));
             for (name, count) in sorted {
-                println!("    {}: {}", name, count);
+                println!("    {name}: {count}");
             }
         }
     }
@@ -777,6 +763,37 @@ async fn health_dashboard(socket: &std::path::Path) -> Result<()> {
             println!("  Warnings:");
             for w in warnings {
                 println!("    ⚠️  {}", w.as_str().unwrap_or(""));
+            }
+        }
+    }
+
+    let production_request = ClientRpcRequest::Health.to_json_rpc(Some(2))?;
+    let production = send_rpc(socket, &production_request).await?;
+    if !production["error"].is_object() {
+        let result = &production["result"];
+        println!();
+        println!(
+            "  Runtime readiness: {}",
+            result["readiness"].as_str().unwrap_or("unknown")
+        );
+        if let Some(components) = result["components"].as_object() {
+            for name in [
+                "agent_profiles",
+                "extension_runtimes",
+                "extension_rollbacks",
+            ] {
+                let Some(component) = components.get(name) else {
+                    continue;
+                };
+                let class = component["class"].as_str().unwrap_or("unknown");
+                let count = component["count"].as_u64().unwrap_or(0);
+                let category = component["error_category"].as_str().unwrap_or("-");
+                println!("    {name}: {class} count={count} category={category}");
+                if let Some(items) = component["items"].as_array() {
+                    for item in items {
+                        println!("      - {}", item.as_str().unwrap_or("<invalid>"));
+                    }
+                }
             }
         }
     }
@@ -797,7 +814,7 @@ async fn nodes_list(socket: &std::path::Path) -> Result<()> {
         let msg = response["error"]["message"]
             .as_str()
             .unwrap_or("unknown error");
-        anyhow::bail!("Nodes list failed: {}", msg);
+        anyhow::bail!("Nodes list failed: {msg}");
     }
 
     let nodes = response["result"]["nodes"]
@@ -816,7 +833,7 @@ async fn nodes_list(socket: &std::path::Path) -> Result<()> {
         let running = node["running"].as_bool().unwrap_or(false);
         let status = if running { "running" } else { "stopped" };
         let details = node["status_line"].as_str().unwrap_or("");
-        println!("{:<20} {:<10} {}", name, status, details);
+        println!("{name:<20} {status:<10} {details}");
     }
 
     Ok(())
@@ -835,11 +852,11 @@ async fn param_get(socket: &std::path::Path, key: &str) -> Result<()> {
         let msg = response["error"]["message"]
             .as_str()
             .unwrap_or("unknown error");
-        anyhow::bail!("Param get failed: {}", msg);
+        anyhow::bail!("Param get failed: {msg}");
     }
 
     let value = &response["result"]["value"];
-    println!("{} = {}", key, value);
+    println!("{key} = {value}");
     Ok(())
 }
 
@@ -852,7 +869,7 @@ async fn param_list(socket: &std::path::Path) -> Result<()> {
         let msg = response["error"]["message"]
             .as_str()
             .unwrap_or("unknown error");
-        anyhow::bail!("Param list failed: {}", msg);
+        anyhow::bail!("Param list failed: {msg}");
     }
 
     let params = response["result"]["params"]
@@ -877,7 +894,7 @@ async fn param_dump(socket: &std::path::Path) -> Result<()> {
         let msg = response["error"]["message"]
             .as_str()
             .unwrap_or("unknown error");
-        anyhow::bail!("Param dump failed: {}", msg);
+        anyhow::bail!("Param dump failed: {msg}");
     }
 
     let params = &response["result"]["params"];
@@ -909,10 +926,7 @@ async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) 
     let mut response_line = String::new();
     reader.read_line(&mut response_line).await?;
 
-    println!(
-        "Monitoring '{}' for {}s (Ctrl+C to stop)...",
-        tracepoint, window_secs
-    );
+    println!("Monitoring '{tracepoint}' for {window_secs}s (Ctrl+C to stop)...");
     println!();
 
     // Count events in the window
@@ -946,10 +960,7 @@ async fn topic_hz(socket: &std::path::Path, tracepoint: &str, window_secs: u64) 
             let elapsed_ms = clock.mono_now().0 - start.0;
             let elapsed = elapsed_ms as f64 / 1000.0;
             let hz = count as f64 / elapsed;
-            println!(
-                "average rate: {:.3} Hz\t{} messages in {:.1}s",
-                hz, count, elapsed
-            );
+            println!("average rate: {hz:.3} Hz\t{count} messages in {elapsed:.1}s");
             last_report = clock.mono_now();
         }
     }
@@ -972,11 +983,11 @@ async fn show_graph(socket: &std::path::Path, format: &str) -> Result<()> {
             let msg = response["error"]["message"]
                 .as_str()
                 .unwrap_or("unknown error");
-            anyhow::bail!("Topology failed: {}", msg);
+            anyhow::bail!("Topology failed: {msg}");
         }
 
         let dot = response["result"]["topology"]["dot"].as_str().unwrap_or("");
-        println!("{}", dot);
+        println!("{dot}");
     } else {
         // Get graph data and render as ASCII
         let request = ClientRpcRequest::DebugGraph.to_json_rpc(Some(1))?;
@@ -987,7 +998,7 @@ async fn show_graph(socket: &std::path::Path, format: &str) -> Result<()> {
             let msg = response["error"]["message"]
                 .as_str()
                 .unwrap_or("unknown error");
-            anyhow::bail!("Graph failed: {}", msg);
+            anyhow::bail!("Graph failed: {msg}");
         }
 
         let graph = &response["result"]["graph"];
@@ -1011,7 +1022,7 @@ async fn show_graph(socket: &std::path::Path, format: &str) -> Result<()> {
                 "memory" => "💾",
                 _ => "📦",
             };
-            println!("  {} {:<15} {}", icon, id, label);
+            println!("  {icon} {id:<15} {label}");
         }
 
         println!();
@@ -1020,7 +1031,7 @@ async fn show_graph(socket: &std::path::Path, format: &str) -> Result<()> {
             let from = edge["from"].as_str().unwrap_or("?");
             let to = edge["to"].as_str().unwrap_or("?");
             let label = edge["label"].as_str().unwrap_or("");
-            println!("  {} ──({})──> {}", from, label, to);
+            println!("  {from} ──({label})──> {to}");
         }
 
         println!();
@@ -1065,11 +1076,11 @@ async fn log_stream(
 
     if resp["error"].is_object() {
         let msg = resp["error"]["message"].as_str().unwrap_or("unknown error");
-        anyhow::bail!("Log subscribe failed: {}", msg);
+        anyhow::bail!("Log subscribe failed: {msg}");
     }
 
     let sub_id = resp["result"]["subscription_id"].as_str().unwrap_or("?");
-    println!("Log stream started (subscription: {})", sub_id);
+    println!("Log stream started (subscription: {sub_id})");
     println!("Press Ctrl+C to stop");
     println!();
 
@@ -1135,7 +1146,7 @@ async fn log_stream(
                     if data.is_null() {
                         tp.to_string()
                     } else {
-                        format!("{} {}", tp, data)
+                        format!("{tp} {data}")
                     }
                 );
             }

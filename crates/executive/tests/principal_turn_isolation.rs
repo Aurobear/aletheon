@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use executive::r#impl::session::canonical_store::CanonicalSessionStore;
-use executive::service::turn_coordinator::{ActiveTurnKey, TurnCoordinator, TurnExecution};
-use executive::service::turn_policy::TurnPolicy;
+use executive::application::turn_coordinator::{ActiveTurnKey, TurnExecution};
+use executive::application::turn_policy::TurnPolicy;
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use fabric::{
     ApprovalPolicy, ConnectionId, LocalOsPrincipal, OperationId, PermissionProfileId,
     PrincipalContext, PrincipalId, SessionAppendStore, ThreadId, TurnMetrics, TurnRequest,
@@ -28,7 +28,12 @@ async fn concurrent_principals_keep_distinct_thread_authority() {
     let kernel = Arc::new(KernelRuntime::new());
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-    let coordinator = Arc::new(TurnCoordinator::new(kernel.clone(), store));
+    let coordinator = Arc::new(
+        executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
+            kernel.clone(),
+            store,
+        ),
+    );
     let alice_process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await
@@ -167,11 +172,13 @@ async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
     let coordinator = Arc::new(
-        TurnCoordinator::new(kernel.clone(), store).with_backpressure(
-            executive::core::config::BackpressureConfig {
-                max_concurrent_turns: Some(1),
-            },
-        ),
+        executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
+            kernel.clone(),
+            store,
+        )
+        .with_backpressure(executive::composition::config::BackpressureConfig {
+            max_concurrent_turns: Some(1),
+        }),
     );
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
@@ -223,7 +230,12 @@ async fn duplicate_principal_thread_is_rejected_and_kernel_operation_is_cancelle
     let kernel = Arc::new(KernelRuntime::new());
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-    let coordinator = Arc::new(TurnCoordinator::new(kernel.clone(), store));
+    let coordinator = Arc::new(
+        executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
+            kernel.clone(),
+            store,
+        ),
+    );
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await

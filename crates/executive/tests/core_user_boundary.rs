@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use executive::application::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
+use executive::composition::user_runtime::{UserRuntime, UserRuntimeConfig};
 use executive::core::{RegistryInferencePort, SystemCoreRuntime};
-use executive::service::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
-use executive::user_runtime::{UserRuntime, UserRuntimeConfig};
 use fabric::{LlmResponse, LlmStream, StopReason, Usage};
 use futures::stream;
 
@@ -87,7 +87,7 @@ fn system_core_surface_exposes_no_user_execution_authority() {
     for forbidden in ["RequestHandler", "ToolRegistry", "Sandbox"] {
         assert!(!core.contains(forbidden), "core contains {forbidden}");
     }
-    let user = include_str!("../src/user_runtime/mod.rs");
+    let user = include_str!("../src/composition/user_runtime/mod.rs");
     for forbidden in ["ProviderRegistry", "credential loading"] {
         assert!(
             !user.contains(forbidden),

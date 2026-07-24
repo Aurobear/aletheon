@@ -5,6 +5,7 @@ pub mod acix;
 pub mod catalog;
 pub mod core;
 pub mod drivers;
+pub mod extension;
 pub mod hook;
 pub mod security;
 pub mod service;

@@ -677,7 +677,7 @@ impl McpClient {
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            anyhow::bail!("MCP tool '{}' reported an application error", tool_name);
+            anyhow::bail!("MCP tool '{tool_name}' reported an application error");
         }
         Ok(result)
     }
@@ -726,7 +726,7 @@ impl McpClient {
                     } else {
                         c.get("blob")
                             .and_then(|v| v.as_str())
-                            .map(|_| format!("[base64 blob: mimeType={}]", mime_type))
+                            .map(|_| format!("[base64 blob: mimeType={mime_type}]"))
                     }
                 })
                 .collect::<Vec<_>>()
@@ -895,7 +895,7 @@ impl ElicitationHandler for McpElicitationHandler {
             tool: format!("mcp::{}", self.server_name),
             action_summary: message.to_string(),
             risk_level: "medium".to_string(),
-            detail: Some(format!("mode={}", mode)),
+            detail: Some(format!("mode={mode}")),
         };
 
         match self.gate.request(&req).await {
@@ -1159,7 +1159,7 @@ impl McpConnectionManager {
                 continue;
             };
             let prefix = if self.config.tool_name_prefix {
-                format!("{}__", server_name)
+                format!("{server_name}__")
             } else {
                 String::new()
             };
@@ -1269,7 +1269,7 @@ impl McpConnectionManager {
             .expect("MCP clients lock poisoned")
             .get(server_name)
             .cloned()
-            .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
+            .with_context(|| format!("MCP server '{server_name}' is not connected"))?;
         let mut client = client_arc.lock().await;
         client.call_tool(tool_name, args).await
     }
@@ -1339,7 +1339,7 @@ impl McpConnectionManager {
             .iter()
             .filter_map(|(server_name, client)| {
                 let normalized_name = if self.config.tool_name_prefix {
-                    format!("{}__mcp_resource_read", server_name)
+                    format!("{server_name}__mcp_resource_read")
                 } else {
                     "mcp_resource_read".to_string()
                 };
@@ -1361,7 +1361,7 @@ impl McpConnectionManager {
             .expect("MCP clients lock poisoned")
             .get(server_name)
             .cloned()
-            .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
+            .with_context(|| format!("MCP server '{server_name}' is not connected"))?;
         let mut client = client_arc.lock().await;
         client.list_resources().await
     }
@@ -1377,7 +1377,7 @@ impl McpConnectionManager {
             .expect("MCP clients lock poisoned")
             .get(server_name)
             .cloned()
-            .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
+            .with_context(|| format!("MCP server '{server_name}' is not connected"))?;
         let mut client = client_arc.lock().await;
         client.read_resource(uri).await
     }
@@ -1392,7 +1392,7 @@ impl McpConnectionManager {
             .expect("MCP clients lock poisoned")
             .get(server_name)
             .cloned()
-            .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
+            .with_context(|| format!("MCP server '{server_name}' is not connected"))?;
         let mut client = client_arc.lock().await;
         client.list_resource_templates().await
     }
@@ -1434,7 +1434,7 @@ impl McpConnectionManager {
             .expect("MCP clients lock poisoned")
             .get(server_name)
             .cloned()
-            .with_context(|| format!("MCP server '{}' is not connected", server_name))?;
+            .with_context(|| format!("MCP server '{server_name}' is not connected"))?;
         let client = client_arc.lock().await;
         client.handle_elicitation(params).await
     }

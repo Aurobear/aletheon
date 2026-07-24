@@ -146,10 +146,10 @@ impl RecallSearchParams {
 }
 
 // ---------------------------------------------------------------------------
-// Wave 1: Recall Mode Bundles (GBrain "Search Cathedral" absorption)
+// Wave 1: Recall Mode Bundles (supplemental memory "Search Cathedral" absorption)
 // ---------------------------------------------------------------------------
 
-/// Named recall strategy (from GBrain mode.ts).
+/// Named recall strategy (from supplemental memory mode.ts).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecallMode {
@@ -524,6 +524,7 @@ const fn sensitivity_ord(sensitivity: MemorySensitivity) -> u8 {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use chrono::Utc;

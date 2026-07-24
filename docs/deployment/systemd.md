@@ -27,7 +27,7 @@ bash scripts/aletheon.sh deploy
 
 The dispatcher builds through the bounded Cargo wrapper, calls the native
 installer at its explicit sudo boundary, installs the per-user closure assets,
-and verifies readiness. `scripts/install-systemd.sh` remains the low-level
+and verifies readiness. `scripts/libexec/aletheon/install-systemd.sh` remains the low-level
 installer for image construction and advanced automation.
 
 The installer is idempotent. It creates the system account and managed 0750
@@ -96,12 +96,12 @@ rollback inputs.
 ## Validation and recovery
 
 ```bash
-scripts/verify-systemd.sh --core-unit config/aletheon-core.service \
+scripts/aletheon.sh verify systemd --core-unit config/aletheon-core.service \
   --binary target/release/aletheon
-scripts/verify-systemd.sh --user-units \
+scripts/aletheon.sh verify systemd --user-units \
   config/aletheon.user.service config/aletheon.user.socket \
   --binary target/release/aletheon
-scripts/verify-systemd.sh --preflight --binary target/release/aletheon \
+scripts/aletheon.sh verify systemd --preflight --binary target/release/aletheon \
   --config config/production.toml.example
 
 sudo systemctl restart aletheon-core.service
@@ -114,7 +114,7 @@ systemctl --user stop aletheon.service aletheon.socket
 systemctl --user start aletheon.socket
 systemctl --user status aletheon.socket aletheon.service --no-pager
 journalctl --user -u aletheon.service -n 200 --no-pager
-scripts/verify-systemd.sh --readiness \
+scripts/aletheon.sh verify systemd --readiness \
   --socket "$XDG_RUNTIME_DIR/aletheon/aletheon.sock"
 ```
 

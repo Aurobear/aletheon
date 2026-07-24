@@ -1,4 +1,4 @@
-use dasein::r#impl::perception::visual_aggregator::{VisualAggregator, VisualAggregatorConfig};
+use dasein::perception::visual_aggregator::{VisualAggregator, VisualAggregatorConfig};
 
 #[test]
 fn integration_dedup_and_rate_limit() {
@@ -12,8 +12,8 @@ fn integration_dedup_and_rate_limit() {
     for i in 0..10 {
         use fabric::types::frame::FrameRef;
         let f = FrameRef {
-            uri: format!("artifact://sha256:{}", i),
-            sha256: format!("{:064x}", i),
+            uri: format!("artifact://sha256:{i}"),
+            sha256: format!("{i:064x}"),
             mime_type: "image/jpeg".into(),
             width: 640,
             height: 480,
@@ -22,7 +22,7 @@ fn integration_dedup_and_rate_limit() {
             frame_id: i,
         };
         if agg
-            .ingest(f, vec![], format!("frame_{}", i), 0.9, 1000)
+            .ingest(f, vec![], format!("frame_{i}"), 0.9, 1000)
             .is_some()
         {
             count += 1;

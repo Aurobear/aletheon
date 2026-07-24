@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use executive::r#impl::goal::ObjectiveStore;
-use executive::service::goal_service::{GoalAction, GoalService, GoalServiceError, GoalUseCases};
+use executive::application::goal_service::{
+    GoalAction, GoalService, GoalServiceError, GoalUseCases,
+};
+use executive::goal::ObjectiveStore;
 use fabric::{GoalSpec, GoalState, PrincipalId};
 use tempfile::tempdir;
 use tokio::sync::Mutex;
@@ -155,7 +157,7 @@ async fn illegal_and_stale_transitions_are_sanitized() {
 
 #[test]
 fn goal_rpc_has_no_concrete_store_or_lock_access() {
-    let source = include_str!("../src/impl/daemon/handler/rpc/rpc_goal.rs");
+    let source = include_str!("../src/host/daemon/handler/rpc/rpc_goal.rs");
     assert!(source.contains("self.ports.goals"));
     for forbidden in ["subsystems", "ObjectiveStore", "objective_store", ".lock()"] {
         assert!(

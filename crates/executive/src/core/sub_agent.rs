@@ -11,6 +11,14 @@ use tokio_util::sync::CancellationToken;
 
 #[async_trait]
 pub trait SubAgentRuntime: Send + Sync {
+    fn capabilities(&self) -> std::collections::BTreeSet<runtime::RuntimeCapability> {
+        std::collections::BTreeSet::new()
+    }
+
+    fn resource_requirements(&self) -> runtime::RuntimeResourceRequirements {
+        runtime::RuntimeResourceRequirements::default()
+    }
+
     async fn run(&self, task: &str, cancel: CancellationToken) -> Result<String, String>;
 
     async fn run_attempt(

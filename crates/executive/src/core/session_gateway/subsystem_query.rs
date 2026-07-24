@@ -19,7 +19,7 @@ impl QueryError {
     pub fn not_found(id: &str) -> Self {
         Self {
             code: -32051,
-            message: format!("Unknown subsystem: {}", id),
+            message: format!("Unknown subsystem: {id}"),
         }
     }
 }

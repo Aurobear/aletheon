@@ -435,7 +435,7 @@ async fn handle_daemon_action(socket: &PathBuf, action: DaemonAction) -> Result<
             if socket.exists() {
                 match UnixStream::connect(socket).await {
                     Ok(_) => println!("Daemon is running"),
-                    Err(e) => println!("Daemon socket exists but connection failed: {}", e),
+                    Err(e) => println!("Daemon socket exists but connection failed: {e}"),
                 }
             } else {
                 println!("Daemon is not running (no socket)");
@@ -509,8 +509,8 @@ pub async fn single_message_with_workspace(
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("Error reading response: {}", e);
-                    return Err(anyhow::anyhow!("Read error: {}", e));
+                    eprintln!("Error reading response: {e}");
+                    return Err(anyhow::anyhow!("Read error: {e}"));
                 }
             }
 
@@ -530,8 +530,7 @@ pub async fn single_message_with_workspace(
                 let risk_level = params["risk_level"].as_str().unwrap_or("");
                 let approval_id = params["approval_id"].as_str().unwrap_or("");
                 eprintln!(
-                    "\n\u{26a0}  Approval required [{}] {}\n   {}\n   Approve? [y]es / [a]lways / [N]o: ",
-                    risk_level, tool, action_summary,
+                    "\n\u{26a0}  Approval required [{risk_level}] {tool}\n   {action_summary}\n   Approve? [y]es / [a]lways / [N]o: ",
                 );
                 let mut line = String::new();
                 let stdin = io::stdin();
@@ -581,7 +580,7 @@ pub async fn single_message_with_workspace(
             if let Some(text) = resp["result"]["response"].as_str() {
                 // Deduplicate consecutive identical lines (some models repeat text)
                 let deduped = deduplicate_response(text);
-                println!("{}", deduped);
+                println!("{deduped}");
             } else if !resp["result"]["reflections"].is_null() {
                 println!("{}", format_reflections(&resp["result"]["reflections"]));
             } else if !resp["result"]["genome"].is_null() {
@@ -591,7 +590,7 @@ pub async fn single_message_with_workspace(
             } else if let Some(_status) = resp["result"]["status"].as_object() {
                 println!("{}", format_status(&resp["result"]["status"]));
             } else if let Some(err) = resp["error"]["message"].as_str() {
-                eprintln!("Error: {}", err);
+                eprintln!("Error: {err}");
             }
             return Ok(());
         }
@@ -600,10 +599,7 @@ pub async fn single_message_with_workspace(
     match result {
         Ok(inner) => inner?,
         Err(_) => {
-            eprintln!(
-                "\n⏰ Timeout: no response after {}s",
-                SINGLE_MESSAGE_TIMEOUT_SECS
-            );
+            eprintln!("\n⏰ Timeout: no response after {SINGLE_MESSAGE_TIMEOUT_SECS}s");
         }
     }
     Ok(())

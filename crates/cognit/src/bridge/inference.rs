@@ -1,4 +1,4 @@
-use crate::r#impl::inference::{InferenceCandidate, InferenceConfig, InferenceRouter};
+use crate::application::inference::{InferenceCandidate, InferenceConfig, InferenceRouter};
 
 /// Bridges InferenceRouter into CognitCore.
 ///

@@ -19,7 +19,6 @@
     clippy::ptr_arg,
     clippy::new_without_default,
     clippy::vec_init_then_push,
-    clippy::manual_checked_ops,
     clippy::module_inception,
     clippy::too_many_arguments,
     clippy::wrong_self_convention,
@@ -67,8 +66,19 @@ pub mod dasein;
 // Bridge: adapters from impl subsystems into SelfField Verdict system
 pub mod bridge;
 
-// Implementation: concrete subsystem implementations
-pub mod r#impl;
+// Concrete subsystem implementations stay private to the crate. Hosts use the
+// narrow facades below instead of depending on the implementation container.
+mod r#impl;
+
+/// Host-facing perception runtime and its stable event projection.
+pub mod perception {
+    pub use crate::r#impl::perception::*;
+}
+
+/// Host-facing mutation approval policy.
+pub mod mutation {
+    pub use crate::r#impl::mutation::*;
+}
 
 // Re-export the main entry point
 pub use core::{SelfField, SelfFieldConfig};

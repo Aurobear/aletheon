@@ -96,7 +96,7 @@ impl SessionGateway {
         if !state.recent_tools.is_empty() {
             md.push_str("- Recent tools:\n");
             for t in state.recent_tools.iter().rev().take(10) {
-                md.push_str(&format!("  - {}\n", t));
+                md.push_str(&format!("  - {t}\n"));
             }
         }
 

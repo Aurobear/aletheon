@@ -88,7 +88,7 @@ impl Transport for IpcBackendAdapter {
         self.backend
             .send(&msg)
             .await
-            .map_err(|e| anyhow::anyhow!("IPC send failed: {:?}", e))
+            .map_err(|e| anyhow::anyhow!("IPC send failed: {e:?}"))
     }
 
     fn health(&self) -> TransportHealth {

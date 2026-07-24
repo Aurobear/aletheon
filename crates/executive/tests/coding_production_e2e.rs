@@ -1,18 +1,19 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use base64::Engine;
-use executive::r#impl::approval::{
+use executive::application::coding_runtime::CodingAttemptRequest;
+use executive::application::verification::{
+    ArchitecturePolicy, VerificationService, VerificationServiceConfig,
+};
+use executive::approval::{
     ApplyCoordinationOutcome, ApplyCoordinatorConfig, ApprovalDecision, ApprovalRepository,
     ApprovalResolutionContext, ManagedWorktreeCleaner,
 };
-use executive::r#impl::goal::{
+use executive::goal::{
     AttemptCoordinationOutcome, AttemptExecutor, AttemptRequest, GoalCoordinator, ObjectiveStore,
     RetryPolicy,
 };
-use executive::r#impl::runtime::{PiAttemptRequest, PI_CODER_RUNTIME_ID};
-use executive::service::verification::{
-    ArchitecturePolicy, VerificationService, VerificationServiceConfig,
-};
+use executive::testing::coding_runtime::PI_CODER_RUNTIME_ID;
 use fabric::*;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -50,7 +51,7 @@ impl AttemptExecutor for FixedCodingExecutor {
         task: &str,
         _: CancellationToken,
     ) -> Result<RuntimeResult, RuntimeFailure> {
-        let request: PiAttemptRequest = serde_json::from_str(task).unwrap();
+        let request: CodingAttemptRequest = serde_json::from_str(task).unwrap();
         let relative = PathBuf::from(format!("job-{}", request.job.job_id.0));
         let worktree = self.worktree_base.join(&relative);
         git(
@@ -221,7 +222,7 @@ impl Fixture {
             runtime_id: RuntimeId(PI_CODER_RUNTIME_ID.into()),
             escalation_runtime_id: None,
             role: CognitiveRole::Worker,
-            task: serde_json::to_string(&PiAttemptRequest {
+            task: serde_json::to_string(&CodingAttemptRequest {
                 job,
                 task_input: "change value".into(),
             })
@@ -268,7 +269,7 @@ impl Fixture {
         &self,
         pass_verify: bool,
         tamper_hash: bool,
-    ) -> Result<AttemptCoordinationOutcome, executive::r#impl::goal::AttemptCoordinatorError> {
+    ) -> Result<AttemptCoordinationOutcome, executive::goal::AttemptCoordinatorError> {
         GoalCoordinator::new(self.store.clone())
             .approval_coding_attempt_coordinator(
                 Arc::new(FixedCodingExecutor {

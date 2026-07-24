@@ -1,13 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use executive::r#impl::daemon::session_manager::SessionManager;
-use executive::r#impl::session::canonical_store::CanonicalSessionStore;
-use executive::r#impl::session::store::SessionStore;
-use executive::service::legacy_session_service::{
+use executive::application::session_service::SessionService;
+use executive::host::daemon::session_manager::SessionManager;
+use executive::host::legacy_session::{
     LegacySessionResources, LegacySessionService, LegacySessionUseCases,
 };
-use executive::service::session_service::SessionService;
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
+use executive::runtime::session::store::SessionStore;
 use fabric::{
     Clock, ContentBlock, LlmProvider, LlmResponse, LlmStream, Message, SessionAppendStore,
     SessionId, StopReason, ToolDefinition, Usage,
@@ -26,7 +26,20 @@ impl LlmProvider for SummaryLlm {
     ) -> anyhow::Result<LlmResponse> {
         Ok(LlmResponse {
             content: vec![ContentBlock::Text {
-                text: "summary".into(),
+                text: [
+                    "## Active Task\nPreserve the session across compaction.",
+                    "## Goal\nKeep the relevant conversation state.",
+                    "## Completed Actions\nEarlier turns were recorded.",
+                    "## Active State\nThe session is being compacted.",
+                    "## In Progress\nCompaction validation.",
+                    "## Blocked\nNone.",
+                    "## Key Decisions\nUse an immutable projected session.",
+                    "## Pending User Asks\nContinue the conversation.",
+                    "## Relevant Files\nNone.",
+                    "## Remaining Work\nResume from the protected tail.",
+                    "## Critical Context\nRetain the user's requirements and constraints.",
+                ]
+                .join("\n\n"),
             }],
             stop_reason: StopReason::EndTurn,
             usage: Usage::default(),
@@ -176,8 +189,8 @@ async fn compact_materializes_a_new_canonical_session() {
 
 #[test]
 fn session_rpc_and_routing_do_not_construct_concrete_session_stores() {
-    let rpc = include_str!("../src/impl/daemon/handler/rpc/rpc_session.rs");
-    let handler = include_str!("../src/impl/daemon/handler/mod.rs");
+    let rpc = include_str!("../src/host/daemon/handler/rpc/rpc_session.rs");
+    let handler = include_str!("../src/host/daemon/handler/mod.rs");
     for forbidden in [
         "SessionStore::new",
         "SessionManager::new",

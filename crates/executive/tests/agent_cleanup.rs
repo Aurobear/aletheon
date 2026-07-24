@@ -1,9 +1,10 @@
+use executive::testing::agent_control::SqliteAgentRunRepository;
 use std::sync::Arc;
 
-use executive::r#impl::runtime::worktree_recovery::AgentWorktreeReclaimer;
-use executive::service::agent_control::{
+use executive::application::agent_control::cleanup::AgentWorktreeReclaimer;
+use executive::application::agent_control::{
     AgentCleanupCoordinator, AgentResourceLease, AgentResourceLeaseKind, AgentRunRecord,
-    AgentRunRepository, SqliteAgentRunRepository,
+    AgentRunRepository,
 };
 use fabric::{
     AgentBudget, AgentContextFork, AgentHandle, AgentId, AgentProfileId, AgentRunStatus,

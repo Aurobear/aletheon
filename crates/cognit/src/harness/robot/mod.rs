@@ -53,6 +53,7 @@ pub trait PlanPort: Send + Sync {
 
 /// Port for episode persistence. Injected.
 #[async_trait]
+#[allow(clippy::too_many_arguments)]
 pub trait EpisodeSink: Send + Sync {
     async fn append_attempt(
         &self,
@@ -96,6 +97,7 @@ pub struct RobotHarness {
 }
 
 impl RobotHarness {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: RobotHarnessConfig,
         world_state: Arc<dyn WorldStatePort>,

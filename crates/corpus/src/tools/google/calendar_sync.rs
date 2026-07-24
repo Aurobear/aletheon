@@ -3,9 +3,9 @@
 use super::{GoogleApiError, GoogleCalendarAdapter};
 use chrono::DateTime;
 use fabric::{
-    CalendarEvent, ExternalEventDraft, ExternalEventEnvelope, ExternalIdentityId,
-    ExternalObjectRef, ExternalScope, GoogleEvent, IdentityProvider, PrincipalId,
-    ProviderRecordRef,
+    CalendarEntry, ExternalCapabilityId, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
+    ExternalIdentityId, ExternalObjectRef, ExternalProviderId, ExternalRecordRef, OpaqueCursor,
+    OpaqueProviderObjectId, PrincipalId,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -187,7 +187,7 @@ impl CalendarSynchronizer {
             .get_json(
                 principal,
                 account,
-                ExternalScope::CalendarReadonly,
+                ExternalCapabilityId::new("calendar.read").unwrap(),
                 url,
                 cancel,
             )
@@ -247,27 +247,30 @@ fn normalize(
         .unwrap_or_else(|| source_ms.to_string());
     validate_token(&version)?;
     let object = ExternalObjectRef {
-        provider: IdentityProvider::Google,
+        provider: ExternalProviderId::new("google").unwrap(),
         account_id: account,
         object_id: raw.id.clone(),
         object_version: version.clone(),
     };
-    let provenance = ProviderRecordRef {
+    let provenance = ExternalRecordRef {
         account_id: account,
-        provider_object_id: raw.id.clone(),
+        provider_object_id: OpaqueProviderObjectId::new(raw.id.clone())
+            .map_err(|_| GoogleApiError::MalformedResponse)?,
         fetched_at_ms: now,
         source_timestamp_ms: source_ms,
-        etag_or_history: Some(version.clone()),
+        etag_or_history: Some(
+            OpaqueCursor::new(version.clone()).map_err(|_| GoogleApiError::MalformedResponse)?,
+        ),
     };
     let event = if raw.status.as_deref() == Some("cancelled") {
-        GoogleEvent::CalendarEventDeleted(object.clone())
+        ExternalEvent::CalendarEventDeleted(object.clone())
     } else {
         let start = raw.start.ok_or(GoogleApiError::MalformedResponse)?;
         let end = raw.end.ok_or(GoogleApiError::MalformedResponse)?;
         let all_day = start.date_time.is_none();
-        let calendar_event = CalendarEvent {
+        let calendar_event = CalendarEntry {
             source: provenance.clone(),
-            calendar_id: "primary".into(),
+            calendar_id: OpaqueProviderObjectId::new("primary").unwrap(),
             summary: raw.summary,
             location: raw.location,
             start_ms: parse_time(&start)?,
@@ -276,13 +279,13 @@ fn normalize(
             all_day,
         };
         if incremental {
-            GoogleEvent::CalendarEventUpdated(calendar_event)
+            ExternalEvent::CalendarEventUpdated(calendar_event)
         } else {
-            GoogleEvent::CalendarEventCreated(calendar_event)
+            ExternalEvent::CalendarEventCreated(calendar_event)
         }
     };
     ExternalEventEnvelope::from_draft(ExternalEventDraft {
-        provider: IdentityProvider::Google,
+        provider: ExternalProviderId::new("google").unwrap(),
         account_id: account,
         provider_event_id: Some(raw.id),
         object,

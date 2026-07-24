@@ -1,8 +1,9 @@
+use executive::testing::agent_control::SqliteAgentRunRepository;
 use std::sync::Arc;
 
-use executive::service::agent_control::{
+use executive::application::agent_control::{
     AgentControlService, AgentRecoveryCoordinator, AgentRecoveryObservation, AgentRunRecord,
-    AgentRunRepository, AgentRuntimeRegistry, BoundedAgentAdmission, SqliteAgentRunRepository,
+    AgentRunRepository, AgentRuntimeRegistry, BoundedAgentAdmission,
 };
 use fabric::{
     AgentBudget, AgentContextFork, AgentHandle, AgentId, AgentProfileId, AgentRecoveryDecision,
@@ -259,6 +260,7 @@ async fn startup_reconciles_open_rows_before_admission_and_never_replays_native_
         repository.clone(),
         Arc::new(BoundedAgentAdmission::new(1).unwrap()),
         Arc::new(AgentRuntimeRegistry::default()),
+        Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap()),
     );
 
     let report = service

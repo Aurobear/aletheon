@@ -54,17 +54,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     let test_timeout = Duration::from_secs(test_config.test_timeout);
     let mut needs_redraw = true;
 
-    // Clear daemon session on startup (avoids stale data from previous runs)
-    let clear_msg = ClientRpcRequest::Clear.to_json_rpc(Some(0))?;
-    use tokio::io::AsyncWriteExt;
-    let _ = app
-        .stream
-        .write_all(format!("{}\n", clear_msg).as_bytes())
-        .await;
-    let _ = app.stream.flush().await;
-    // Read and discard the clear response so it doesn't pollute the socket buffer
-    ClientTimer.sleep(Duration::from_millis(50)).await;
-    let _ = app.stream.try_read(&mut app.read_buf);
+    // Populate completion/help from the daemon-owned Skill catalog. The
+    // registry retains its last valid catalog if a later refresh fails.
+    let init_id = super::submit::write_request(&mut app, ClientRpcRequest::SessionLoadRecent).await;
+    app.pending_commands
+        .insert(init_id, super::super::PendingCommand::InitializeSession);
+    super::submit::write_request(&mut app, ClientRpcRequest::SkillsList).await;
 
     // If test mode with auto_submit, submit the first line immediately
     if let Some(ref mut reader) = test_input {
@@ -137,6 +132,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                             app.cursor += ch.len_utf8();
                         }
                         app.check_cjk();
+                        super::key_handler::refresh_command_completion(&mut app);
                         needs_redraw = true;
                     }
                     Event::Resize(w, _h) => {
@@ -205,7 +201,7 @@ pub async fn simple_line_mode(
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
 
-    println!("aletheon v0.1.0 (model: {})", model_name);
+    println!("aletheon v0.1.0 (model: {model_name})");
     println!("Type your message and press Enter. /quit to exit.\n");
 
     let stdin = io::stdin();
@@ -259,9 +255,7 @@ pub async fn simple_line_mode(
         };
         let msg = request.to_json_rpc(Some(1))?;
         let payload = serde_json::to_string(&msg)?;
-        stream
-            .write_all(format!("{}\n", payload).as_bytes())
-            .await?;
+        stream.write_all(format!("{payload}\n").as_bytes()).await?;
         stream.flush().await?;
 
         // Wait for response — drain out-of-band notifications until we get
@@ -275,7 +269,7 @@ pub async fn simple_line_mode(
                 match stream.readable().await {
                     Ok(()) => {}
                     Err(e) => {
-                        eprintln!("Error: {}", e);
+                        eprintln!("Error: {e}");
                         return Ok::<(), anyhow::Error>(());
                     }
                 }
@@ -299,8 +293,7 @@ pub async fn simple_line_mode(
                                 let risk_level = params["risk_level"].as_str().unwrap_or("");
                                 let approval_id = params["approval_id"].as_str().unwrap_or("");
                                 println!(
-                                    "\n⚠  Approval required [{}] {}\n   {}\n   Approve? [y]es / [a]lways / [N]o: ",
-                                    risk_level, tool, action_summary,
+                                    "\n⚠  Approval required [{risk_level}] {tool}\n   {action_summary}\n   Approve? [y]es / [a]lways / [N]o: ",
                                 );
                                 io::stdout().flush()?;
                                 let mut line = String::new();
@@ -321,7 +314,7 @@ pub async fn simple_line_mode(
                                 .to_json_rpc(None)?;
                                 let payload = serde_json::to_string(&resp)?;
                                 stream
-                                    .write_all(format!("{}\n", payload).as_bytes())
+                                    .write_all(format!("{payload}\n").as_bytes())
                                     .await?;
                                 stream.flush().await?;
                                 continue; // go back to wait for the actual response
@@ -343,7 +336,7 @@ pub async fn simple_line_mode(
                                         }
                                         "tool_call_start" => {
                                             if let Some(name) = msg.pointer("/params/tool").and_then(|v| v.as_str()) {
-                                                eprintln!("\n🔧 [{}]", name);
+                                                eprintln!("\n🔧 [{name}]");
                                             }
                                         }
                                         "tool_result" => {
@@ -351,7 +344,7 @@ pub async fn simple_line_mode(
                                         }
                                         "error" => {
                                             if let Some(err) = msg.pointer("/params/message").and_then(|v| v.as_str()) {
-                                                eprintln!("\n❌ {}", err);
+                                                eprintln!("\n❌ {err}");
                                             }
                                         }
                                         _ => {} // silently skip other event types
@@ -363,7 +356,7 @@ pub async fn simple_line_mode(
 
                             // This is the actual JSON-RPC response — process it
                             if let Some(text) = msg["result"]["response"].as_str() {
-                                println!("\n{}\n", text);
+                                println!("\n{text}\n");
                             } else if !msg["result"]["reflections"].is_null() {
                                 println!("\n{}\n", format_reflections(&msg["result"]["reflections"]));
                             } else if !msg["result"]["genome"].is_null() {
@@ -377,9 +370,9 @@ pub async fn simple_line_mode(
                             } else if !msg["result"]["models"].is_null() {
                                 println!("\n{}\n", format_models(&msg["result"]));
                             } else if let Some(msg_text) = msg["result"]["message"].as_str() {
-                                println!("\n{}\n", msg_text);
+                                println!("\n{msg_text}\n");
                             } else if let Some(err) = msg["error"]["message"].as_str() {
-                                eprintln!("Error: {}\n", err);
+                                eprintln!("Error: {err}\n");
                             }
                             return Ok(());
                         }

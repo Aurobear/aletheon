@@ -25,13 +25,10 @@ async fn check_container_cli(cmd: &str) -> Result<()> {
         .output()
         .await
         .map_err(|_| {
-            anyhow::anyhow!(
-                "Container runtime '{}' not found. Is docker or podman installed?",
-                cmd
-            )
+            anyhow::anyhow!("Container runtime '{cmd}' not found. Is docker or podman installed?")
         })?;
     if !output.status.success() {
-        anyhow::bail!("Container runtime '{}' returned non-zero exit code", cmd);
+        anyhow::bail!("Container runtime '{cmd}' returned non-zero exit code");
     }
     let version = String::from_utf8_lossy(&output.stdout);
     tracing::info!(runtime = cmd, version = %version.trim(), "Container runtime detected");
@@ -106,15 +103,15 @@ impl crate::host::RuntimeHost for ContainerHost {
             .arg("--name")
             .arg("aletheon-container")
             .arg("-v")
-            .arg(format!("{}:{}", data_dir, data_dir))
+            .arg(format!("{data_dir}:{data_dir}"))
             // Pass through the agent data dir env var
             .arg("-e")
-            .arg(format!("AGENT_DATA_DIR={}", data_dir));
+            .arg(format!("AGENT_DATA_DIR={data_dir}"));
 
         // Forward relevant environment variables.
         for (key, val) in std::env::vars() {
             if key.starts_with("AGENT_") || key.starts_with("LLM_") || key == "RUST_LOG" {
-                cmd.arg("-e").arg(format!("{}={}", key, val));
+                cmd.arg("-e").arg(format!("{key}={val}"));
             }
         }
 
@@ -162,7 +159,7 @@ impl crate::host::RuntimeHost for ContainerHost {
         // ── Block until container exits or cancel_token fires ───────
         let exit_status = tokio::select! {
             status = child.wait() => {
-                status.map_err(|e| anyhow::anyhow!("Container wait error: {}", e))?
+                status.map_err(|e| anyhow::anyhow!("Container wait error: {e}"))?
             }
             _ = cancel_token.cancelled() => {
                 tracing::info!("Shutdown signal received, stopping container...");

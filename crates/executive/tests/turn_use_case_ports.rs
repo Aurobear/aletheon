@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use executive::r#impl::session::canonical_store::CanonicalSessionStore;
-use executive::service::post_turn_projection::{
+use executive::application::post_turn_projection::{
     PostTurnDispatch, PostTurnOutcome, PostTurnProjection,
 };
-use executive::service::turn_coordinator::{TurnCoordinator, TurnExecution};
-use executive::service::turn_policy::TurnPolicy;
+use executive::application::turn_coordinator::TurnExecution;
+use executive::application::turn_policy::TurnPolicy;
+use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use fabric::{
     ItemPayload, OperationId, OperationState, SessionAppendStore, SessionId, TurnMetrics,
     TurnRequest, TurnResult, TurnStop,
@@ -45,7 +45,10 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
     let kernel = Arc::new(KernelRuntime::new());
     let store: Arc<dyn SessionAppendStore> =
         Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
-    let coordinator = TurnCoordinator::new(kernel.clone(), store.clone());
+    let coordinator = executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
+        kernel.clone(),
+        store.clone(),
+    );
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await
@@ -119,7 +122,7 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
 
 #[test]
 fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
-    let pipeline = include_str!("../src/service/turn_pipeline.rs");
+    let pipeline = include_str!("../src/application/turn_pipeline.rs");
     for forbidden in [
         "extract_auto_memory(",
         "record_turn_reflection(",
@@ -154,12 +157,12 @@ fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
     let capability = pipeline.find(".capabilities").unwrap();
     assert!(context < model && model < capability);
 
-    let coordinator = include_str!("../src/service/turn_coordinator.rs");
+    let coordinator = include_str!("../src/application/turn_coordinator.rs");
     let settlement = coordinator.find("terminal?;").unwrap();
     let projection = coordinator.find("dispatch.projector.project").unwrap();
     assert!(settlement < projection);
 
-    let post_turn = include_str!("../src/service/post_turn_projection.rs");
+    let post_turn = include_str!("../src/application/post_turn_projection.rs");
     for forbidden in [
         "MemoryService",
         "AutoMemory",

@@ -50,7 +50,7 @@ fn negative_confidence_rejected() {
 #[test]
 fn too_many_frame_refs_rejected() {
     let mut p = make_valid_proposal();
-    p.frame_refs = (0..5).map(|i| format!("artifact://sha256:{}", i)).collect();
+    p.frame_refs = (0..5).map(|i| format!("artifact://sha256:{i}")).collect();
     assert!(p.validate().is_err());
 }
 

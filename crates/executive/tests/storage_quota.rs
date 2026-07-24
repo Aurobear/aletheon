@@ -1,4 +1,4 @@
-use executive::r#impl::storage_quota::{
+use executive::runtime::storage_quota::{
     QuotaError, StorageClass, StorageLimit, StorageQuota, StorageRoot,
 };
 use std::collections::HashMap;

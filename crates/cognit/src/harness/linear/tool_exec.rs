@@ -4,7 +4,7 @@ use super::tool_output::{bounded_tool_result, MAX_TOOL_RESULT_BYTES};
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
-use crate::r#impl::llm::provider::{LlmProvider, StopReason, StreamChunk};
+use crate::adapters::inference::provider::{LlmProvider, StopReason, StreamChunk};
 use fabric::message::{ContentBlock, Message, Role};
 use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
 use std::future::Future;
@@ -46,7 +46,7 @@ impl ReActLoop {
             // Check for interrupt
             if let Some(ref flag) = self.interrupt_flag {
                 if let Some(reason) = flag.take_reason() {
-                    let msg = format!("[Interrupted: {:?}]", reason);
+                    let msg = format!("[Interrupted: {reason:?}]");
                     event_sink.emit(Event::TurnDone {
                         result: Ok(msg.clone()),
                     });
@@ -372,7 +372,7 @@ impl ReActLoop {
                 match self.circuit_breaker.check(&signature) {
                     CircuitBreakerStatus::Tripped(reason) => {
                         warn!("Circuit breaker tripped: {}", reason);
-                        let msg = format!("Loop detected: {}. Stopping.", reason);
+                        let msg = format!("Loop detected: {reason}. Stopping.");
                         event_sink.emit(Event::CircuitBreakerTripped {
                             reason: reason.clone(),
                         });
@@ -512,7 +512,7 @@ impl ReActLoop {
             // Inject reflection AFTER all tool results to preserve API message format
             if let Some(summary) = pending_reflection.take() {
                 self.messages
-                    .push(Message::user(format!("[Reflection]\n{}", summary)));
+                    .push(Message::user(format!("[Reflection]\n{summary}")));
             }
 
             // Inject Dasein context after tool results for per-turn SelfField state refresh
@@ -520,8 +520,7 @@ impl ReActLoop {
                 if let Some(dasein_ctx) = provider() {
                     if !dasein_ctx.is_empty() {
                         self.messages.push(Message::user(format!(
-                            "<dasein-state-update>\n{}\n</dasein-state-update>",
-                            dasein_ctx
+                            "<dasein-state-update>\n{dasein_ctx}\n</dasein-state-update>"
                         )));
                     }
                 }

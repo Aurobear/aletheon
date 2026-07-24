@@ -308,6 +308,12 @@ pub enum ClientEvent {
         reason: String,
     },
     CompactionTriggered,
+    CompactionCompleted {
+        strategy: String,
+        tokens_before: u64,
+        tokens_after: u64,
+        evicted_messages: u64,
+    },
     Reflection {
         summary: String,
     },

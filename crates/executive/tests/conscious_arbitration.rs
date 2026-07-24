@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use executive::service::governed_capability::{
+use executive::application::governed_capability::{
     ActionModulationSnapshot, AuthorizedInvocation, GovernedActionDecision, GovernedActionLoop,
     GovernedCapabilityInvoker, SelectedActionContext, SelectedActionOutcomeReceipt,
     TurnAuthorityProvider, TurnCapabilityInvoker,
@@ -337,24 +337,24 @@ async fn ac_r3_3_empty_field_proceed_matches_legacy_execution() {
 #[test]
 fn conscious_arbitration_mode_is_strict_and_observe_first() {
     assert_eq!(
-        executive::core::config::ExecutiveConfig::default().conscious_arbitration_mode,
+        executive::composition::config::ExecutiveConfig::default().conscious_arbitration_mode,
         ConsciousArbitrationMode::Observe
     );
     assert_eq!(
-        executive::r#impl::daemon::parse_conscious_arbitration_mode(None).unwrap(),
+        executive::host::daemon::parse_conscious_arbitration_mode(None).unwrap(),
         ConsciousArbitrationMode::Observe
     );
     assert_eq!(
-        executive::r#impl::daemon::parse_conscious_arbitration_mode(Some("enforce")).unwrap(),
+        executive::host::daemon::parse_conscious_arbitration_mode(Some("enforce")).unwrap(),
         ConsciousArbitrationMode::Enforce
     );
-    assert!(executive::r#impl::daemon::parse_conscious_arbitration_mode(Some("warn")).is_err());
-    assert!(executive::r#impl::daemon::parse_conscious_arbitration_mode(Some("ENFORCE")).is_err());
+    assert!(executive::host::daemon::parse_conscious_arbitration_mode(Some("warn")).is_err());
+    assert!(executive::host::daemon::parse_conscious_arbitration_mode(Some("ENFORCE")).is_err());
 }
 
 #[test]
 fn stable_priority_order_keeps_original_tie_order() {
-    let ordered = executive::service::conscious_workspace::stable_priority_order(&[
+    let ordered = executive::application::conscious_workspace::stable_priority_order(&[
         ("low".into(), 0.2),
         ("first-high".into(), 0.9),
         ("second-high".into(), 0.9),

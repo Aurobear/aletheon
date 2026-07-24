@@ -97,6 +97,8 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::ThinkingDelta { text } => {
             app.stream_ctrl.push_thinking(&text);
+            app.chat
+                .set_assistant_stream(app.stream_ctrl.current_text());
         }
         ClientEvent::TextDelta { text } => {
             app.stream_ctrl.push_text(&text);
@@ -173,6 +175,8 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::TurnDone => {
             app.stream_ctrl.commit();
+            app.chat
+                .set_assistant_stream(app.stream_ctrl.current_text());
             app.streaming = false;
             app.status.waiting = false;
             app.app_state.streaming = false;
@@ -181,7 +185,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::Error { message } => {
             app.chat
-                .add_text(ChatRole::System, format!("Error: {}", message));
+                .add_text(ChatRole::System, format!("Error: {message}"));
             app.streaming = false;
             app.status.waiting = false;
             app.app_state.streaming = false;
@@ -189,7 +193,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::AwarenessChanged { level, context } => {
             if let Ok(awareness_level) =
-                serde_json::from_str::<AwarenessLevel>(&format!("\"{}\"", level))
+                serde_json::from_str::<AwarenessLevel>(&format!("\"{level}\""))
             {
                 app.app_state
                     .awareness
@@ -219,7 +223,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             task,
             status,
         } => {
-            if let Ok(s) = serde_json::from_str::<SubAgentStatus>(&format!("\"{}\"", status)) {
+            if let Ok(s) = serde_json::from_str::<SubAgentStatus>(&format!("\"{status}\"")) {
                 let existing = app.sub_agents.iter_mut().find(|a| a.id == agent_id);
                 match existing {
                     Some(handle) => {
@@ -239,7 +243,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             }
         }
         ClientEvent::ModeChanged { new } => {
-            if let Ok(mode) = serde_json::from_str::<CollaborationMode>(&format!("\"{}\"", new)) {
+            if let Ok(mode) = serde_json::from_str::<CollaborationMode>(&format!("\"{new}\"")) {
                 app.app_state.mode = mode;
             }
         }
@@ -261,17 +265,34 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                 .add_text(ChatRole::System, "Interrupted".to_string());
         }
         ClientEvent::BudgetExceeded { limit } => {
-            app.chat.add_text(
-                ChatRole::System,
-                format!("Budget exceeded: {} tokens", limit),
-            );
+            app.chat
+                .add_text(ChatRole::System, format!("Budget exceeded: {limit} tokens"));
         }
         ClientEvent::CircuitBreakerTripped { reason } => {
             app.chat
-                .add_text(ChatRole::System, format!("Circuit breaker: {}", reason));
+                .add_text(ChatRole::System, format!("Circuit breaker: {reason}"));
         }
         ClientEvent::CompactionTriggered => {
-            // compaction is internal, just note it
+            // Wait for the validated outcome; a trigger alone is not success.
+        }
+        ClientEvent::CompactionCompleted {
+            strategy,
+            tokens_before,
+            tokens_after,
+            evicted_messages,
+        } => {
+            let ratio = if tokens_before == 0 {
+                0.0
+            } else {
+                tokens_after as f64 / tokens_before as f64 * 100.0
+            };
+            app.chat.add_text(
+                ChatRole::System,
+                format!(
+                    "自动压缩完成：{tokens_before} → {tokens_after} tokens（{ratio:.1}%），\
+                     移除 {evicted_messages} 条消息，策略 {strategy}"
+                ),
+            );
         }
         ClientEvent::Reflection { summary } => {
             // Routine reflection is internal control flow, not conversation.
@@ -321,6 +342,16 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
 }
 
 pub fn process_response(app: &mut App, msg: serde_json::Value) {
+    if let Some(request_id) = msg.get("id").and_then(serde_json::Value::as_u64) {
+        if app.pending_non_turn.remove(&request_id) {
+            app.streaming = false;
+            app.status.waiting = false;
+            app.app_state.streaming = false;
+        }
+    }
+    if apply_pending_command_response(app, &msg) {
+        return;
+    }
     if apply_typed_protocol_event(app, &msg) {
         return;
     }
@@ -358,6 +389,16 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
             // /hooks response
             let formatted = format_hooks(hooks);
             app.chat.set_assistant_stream(formatted);
+        } else if let Some(skills) = result.get("skills") {
+            // Phase B: SkillsCatalog response — populate the command registry
+            // so Tab-completion and /help reflect daemon skills.
+            app.registry.set_skills_from_json(skills);
+            let formatted = format_skills_list(skills);
+            app.chat.set_assistant_stream(formatted);
+        } else if let Some(facts) = result.get("facts") {
+            // /memory response — render fact list
+            let formatted = format_memory_facts(facts);
+            app.chat.set_assistant_stream(formatted);
         } else if let Some(tools) = result.get("tools") {
             // tools/list response
             let formatted = format_tools_list(tools);
@@ -375,8 +416,7 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
             .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        app.chat
-            .add_text(ChatRole::System, format!("Error: {}", err));
+        app.chat.add_text(ChatRole::System, format!("Error: {err}"));
     }
     // NOTE: Do NOT clear streaming/waiting here. The JSON-RPC result arrives
     // BEFORE the turn_done event. Clearing streaming here causes a visible UI
@@ -384,6 +424,102 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
     //
     // Also do NOT clear response_buf — streaming events may follow in the
     // same try_read chunk.
+}
+
+fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) -> bool {
+    let Some(request_id) = message.get("id").and_then(serde_json::Value::as_u64) else {
+        return false;
+    };
+    let Some(pending) = app.pending_commands.remove(&request_id) else {
+        return false;
+    };
+
+    match (pending, message.get("result"), message.get("error")) {
+        (super::PendingCommand::InitializeSession, Some(result), None) => {
+            if let Some(session_id) = result.get("session_id").and_then(serde_json::Value::as_str) {
+                app.app_state.session_id = Some(session_id.to_owned());
+            }
+        }
+        (super::PendingCommand::NewSession { clear_screen }, Some(result), None)
+            if result
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some() =>
+        {
+            if clear_screen {
+                app.chat = super::chat::ChatWidget::new(app.caps.clone());
+            }
+            let session_id = result
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            app.app_state.session_id = Some(session_id.to_owned());
+            app.chat
+                .add_text(ChatRole::System, format!("已创建新会话：{session_id}"));
+        }
+        (super::PendingCommand::Resume { .. }, Some(result), None)
+            if result
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some() =>
+        {
+            let session_id = result
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            let recovered = result
+                .get("recovered_messages")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            app.app_state.session_id = Some(session_id.to_owned());
+            app.chat.add_text(
+                ChatRole::System,
+                format!("已恢复会话：{session_id}（{recovered} 条消息）"),
+            );
+        }
+        (super::PendingCommand::InitializeSession, _, Some(error)) => {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("初始化会话失败");
+            app.chat
+                .add_text(ChatRole::System, format!("Error: {message}"));
+        }
+        (
+            super::PendingCommand::Resume {
+                previous_session_id,
+            },
+            _,
+            Some(error),
+        ) => {
+            app.app_state.session_id = previous_session_id;
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("恢复会话失败");
+            app.chat.add_text(
+                ChatRole::System,
+                format!("Error: {message}。旧会话保持不变。"),
+            );
+        }
+        (_, _, Some(error)) => {
+            let message = error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("创建新会话失败");
+            app.chat.add_text(
+                ChatRole::System,
+                format!("Error: {message}。旧会话和界面保持不变。"),
+            );
+        }
+        _ => {
+            app.chat.add_text(
+                ChatRole::System,
+                "Error: daemon 返回了无效的会话创建响应；旧会话和界面保持不变。".to_string(),
+            );
+        }
+    }
+    true
 }
 
 fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> bool {
@@ -494,28 +630,28 @@ pub fn format_reflections(entries: &serde_json::Value) -> String {
         if let Some(arr) = entry.get("learned").and_then(|v| v.as_array()) {
             for l in arr {
                 if let Some(s) = l.as_str() {
-                    lines.push(format!("  learned: {}", s));
+                    lines.push(format!("  learned: {s}"));
                 }
             }
         }
         if let Some(arr) = entry.get("behavior_changes").and_then(|v| v.as_array()) {
             for c in arr {
                 if let Some(s) = c.as_str() {
-                    lines.push(format!("  changed: {}", s));
+                    lines.push(format!("  changed: {s}"));
                 }
             }
         }
         if let Some(arr) = entry.get("what_worked").and_then(|v| v.as_array()) {
             for w in arr {
                 if let Some(s) = w.as_str() {
-                    lines.push(format!("  worked: {}", s));
+                    lines.push(format!("  worked: {s}"));
                 }
             }
         }
         if let Some(arr) = entry.get("what_failed").and_then(|v| v.as_array()) {
             for f in arr {
                 if let Some(s) = f.as_str() {
-                    lines.push(format!("  failed: {}", s));
+                    lines.push(format!("  failed: {s}"));
                 }
             }
         }
@@ -529,7 +665,7 @@ pub fn format_genome(genome: &serde_json::Value) -> String {
     if let Some(s) = genome.as_str() {
         return s.to_string();
     }
-    serde_json::to_string_pretty(genome).unwrap_or_else(|_| format!("{:?}", genome))
+    serde_json::to_string_pretty(genome).unwrap_or_else(|_| format!("{genome:?}"))
 }
 
 /// Format evolution history for display.
@@ -544,15 +680,14 @@ pub fn format_evolution(evo: &serde_json::Value) -> String {
         let mut lines = Vec::new();
         lines.push(format!("=== Evolution History ({}) ===\n", arr.len()));
         for entry in arr {
-            lines.push(
-                serde_json::to_string_pretty(entry).unwrap_or_else(|_| format!("{:?}", entry)),
-            );
+            lines
+                .push(serde_json::to_string_pretty(entry).unwrap_or_else(|_| format!("{entry:?}")));
             lines.push(String::new());
         }
         return lines.join("\n");
     }
     // Handle object form with version/message fields
-    serde_json::to_string_pretty(evo).unwrap_or_else(|_| format!("{:?}", evo))
+    serde_json::to_string_pretty(evo).unwrap_or_else(|_| format!("{evo:?}"))
 }
 
 /// Format sessions list for display.
@@ -573,10 +708,7 @@ pub fn format_sessions(sessions: &serde_json::Value) -> String {
             .unwrap_or(0);
         let summary = entry.get("summary").and_then(|v| v.as_str()).unwrap_or("");
         let short_id = &id[..8.min(id.len())];
-        lines.push(format!(
-            "[{}] {} ({} turns) {}",
-            short_id, created, turns, summary
-        ));
+        lines.push(format!("[{short_id}] {created} ({turns} turns) {summary}"));
     }
     lines.join("\n")
 }
@@ -604,7 +736,7 @@ pub fn format_models(result: &serde_json::Value) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let marker = if name == current { " (current)" } else { "" };
-        lines.push(format!("  {}{} - {}", name, marker, desc));
+        lines.push(format!("  {name}{marker} - {desc}"));
     }
     lines.push(String::new());
     lines.push("Use /model <name> to switch.".to_string());
@@ -648,9 +780,35 @@ pub fn format_status(status: &serde_json::Value) -> String {
         "Session: {}",
         &session_id[..8.min(session_id.len())]
     ));
-    lines.push(format!("Turns: {}", turn_count));
-    lines.push(format!("Reflections: {}", reflection_count));
-    lines.push(format!("Evolutions: {}", evolution_count));
+    lines.push(format!("Turns: {turn_count}"));
+    lines.push(format!("Reflections: {reflection_count}"));
+    lines.push(format!("Evolutions: {evolution_count}"));
+    if let Some(compaction) = status.get("compaction") {
+        let attempts = compaction
+            .get("attempts")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let successful = compaction
+            .get("successful")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        lines.push(format!("Compactions: {successful}/{attempts} successful"));
+        if let Some(last) = compaction.get("last").filter(|value| !value.is_null()) {
+            let before = last
+                .get("tokens_before")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let after = last
+                .get("tokens_after")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let strategy = last
+                .get("strategy")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            lines.push(format!("Last compaction: {before} → {after} ({strategy})"));
+        }
+    }
     lines.push(String::new());
     lines.push("Care Weights:".to_string());
 
@@ -658,14 +816,13 @@ pub fn format_status(status: &serde_json::Value) -> String {
         for care in cares {
             let topic = care.get("topic").and_then(|v| v.as_str()).unwrap_or("?");
             let weight = care.get("weight").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            lines.push(format!("  {}: {:.2}", topic, weight));
+            lines.push(format!("  {topic}: {weight:.2}"));
         }
     }
 
     lines.push(String::new());
     lines.push(format!(
-        "Boundary Rules: {} (immutable: {})",
-        boundary_rules, boundary_immutable
+        "Boundary Rules: {boundary_rules} (immutable: {boundary_immutable})"
     ));
 
     let focus_display = if attention_focus.is_empty() {
@@ -673,7 +830,7 @@ pub fn format_status(status: &serde_json::Value) -> String {
     } else {
         attention_focus
     };
-    lines.push(format!("Attention Focus: {}", focus_display));
+    lines.push(format!("Attention Focus: {focus_display}"));
 
     lines.join("\n")
 }
@@ -692,8 +849,7 @@ pub fn format_hooks(hooks: &serde_json::Value) -> String {
         let source = h.get("source").and_then(|v| v.as_str()).unwrap_or("?");
         let priority = h.get("priority").and_then(|v| v.as_i64()).unwrap_or(0);
         lines.push(format!(
-            "  {} [{}] (priority: {}, source: {})",
-            name, point, priority, source
+            "  {name} [{point}] (priority: {priority}, source: {source})"
         ));
     }
     lines.join("\n")
@@ -711,7 +867,7 @@ pub fn format_tools_list(tools: &serde_json::Value) -> String {
         let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("?");
         let desc = t.get("description").and_then(|v| v.as_str()).unwrap_or("");
         let short_desc = if desc.len() > 60 { &desc[..60] } else { desc };
-        lines.push(format!("  {} — {}", name, short_desc));
+        lines.push(format!("  {name} — {short_desc}"));
     }
     lines.join("\n")
 }
@@ -728,7 +884,54 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
         let id = a.get("id").and_then(|v| v.as_str()).unwrap_or("?");
         let task = a.get("task").and_then(|v| v.as_str()).unwrap_or("?");
         let status = a.get("status").and_then(|v| v.as_str()).unwrap_or("?");
-        lines.push(format!("  {} [{}] — {}", id, status, task));
+        lines.push(format!("  {id} [{status}] — {task}"));
+    }
+    lines.join("\n")
+}
+
+pub fn format_skills_list(skills: &serde_json::Value) -> String {
+    let empty = vec![];
+    let arr = skills.as_array().unwrap_or(&empty);
+    if arr.is_empty() {
+        return "No skills available.".to_string();
+    }
+    let mut lines = Vec::new();
+    lines.push(format!("=== Skills ({}) ===\n", arr.len()));
+    for sk in arr {
+        let name = sk.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let desc = sk.get("description").and_then(|v| v.as_str()).unwrap_or("");
+        lines.push(format!("  /{name} — {desc}"));
+    }
+    // Phase B: when SkillsCatalog response arrives, call
+    // app.registry.set_skills(skills);
+    lines.join("\n")
+}
+
+pub fn format_memory_facts(facts: &serde_json::Value) -> String {
+    let empty = vec![];
+    let arr = facts.as_array().unwrap_or(&empty);
+    if arr.is_empty() {
+        return "=== Memory Facts ===\n\n(no facts stored yet)".to_string();
+    }
+    let mut lines = vec![format!("=== Memory Facts ({}) ===\n", arr.len())];
+    for fact in arr.iter().take(30) {
+        let content = fact.get("content").and_then(|v| v.as_str()).unwrap_or("?");
+        let category = fact.get("category").and_then(|v| v.as_str()).unwrap_or("");
+        let trust = fact
+            .get("trust_score")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let pinned = fact
+            .get("pinned")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let pin = if pinned { " 📌" } else { "" };
+        lines.push(format!(
+            "  [{category}] trust={trust:.2}{pin}\n    {content}"
+        ));
+    }
+    if arr.len() > 30 {
+        lines.push(format!("  ... and {} more facts", arr.len() - 30));
     }
     lines.join("\n")
 }
@@ -737,7 +940,7 @@ pub fn format_agents(agents: &serde_json::Value) -> String {
 mod tests {
     use super::{deduplicate_consecutive_text, handle_event};
     use crate::tui::{chat::ChatEntry, host_time::ClientClock, term_compat::TermCaps, App};
-    use executive::service::{tool_stream_bridge::ToolStreamHandle, turn_pipeline};
+    use executive::application::{tool_stream_bridge::ToolStreamHandle, turn_pipeline};
     use fabric::{
         ipc::{StreamConfig, TurnEventStream, TurnEventV1},
         ToolProgress, ToolResult, ToolResultMeta,
@@ -863,7 +1066,7 @@ mod tests {
             TurnEventStream::new(StreamConfig::turn_events(16));
         let bridge_sender = daemon_sender.clone();
         let bridge = tokio::spawn(async move {
-            executive::service::tool_stream_bridge::bridge_tool_stream(
+            executive::application::tool_stream_bridge::bridge_tool_stream(
                 event_rx,
                 bridge_sender,
                 "bash_exec".into(),

@@ -102,7 +102,7 @@ impl Tool for BashExecTool {
                 }
             }
             Ok(Err(e)) => ToolResult {
-                content: format!("Failed to execute command: {}", e),
+                content: format!("Failed to execute command: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,
@@ -111,7 +111,7 @@ impl Tool for BashExecTool {
                 },
             },
             Err(_) => ToolResult {
-                content: format!("Command timed out after {} seconds", timeout_secs),
+                content: format!("Command timed out after {timeout_secs} seconds"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,

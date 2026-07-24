@@ -166,76 +166,67 @@ impl PerceptionEvent {
     /// Human-readable summary for injection into context.
     pub fn summary(&self) -> String {
         match &self.data {
-            EventData::FileCreated { path } => format!("File created: {}", path),
-            EventData::FileModified { path } => format!("File modified: {}", path),
-            EventData::FileDeleted { path } => format!("File deleted: {}", path),
+            EventData::FileCreated { path } => format!("File created: {path}"),
+            EventData::FileModified { path } => format!("File modified: {path}"),
+            EventData::FileDeleted { path } => format!("File deleted: {path}"),
             EventData::ProcessStarted { comm, pid, .. } => {
-                format!("Process started: {} (pid {})", comm, pid)
+                format!("Process started: {comm} (pid {pid})")
             }
             EventData::ProcessExited {
                 comm,
                 pid,
                 exit_code,
             } => {
-                format!(
-                    "Process exited: {} (pid {}, exit {:?})",
-                    comm, pid, exit_code
-                )
+                format!("Process exited: {comm} (pid {pid}, exit {exit_code:?})")
             }
             EventData::HighCpu {
                 comm, cpu_percent, ..
             } => {
-                format!("High CPU: {} ({:.1}%)", comm, cpu_percent)
+                format!("High CPU: {comm} ({cpu_percent:.1}%)")
             }
             EventData::MemoryPressure {
                 available_mb,
                 total_mb,
             } => {
-                format!(
-                    "Memory pressure: {}/{} MB available",
-                    available_mb, total_mb
-                )
+                format!("Memory pressure: {available_mb}/{total_mb} MB available")
             }
             EventData::DiskPressure {
                 mount,
                 available_gb,
                 total_gb,
             } => {
-                format!(
-                    "Disk pressure on {}: {:.1}/{:.1} GB available",
-                    mount, available_gb, total_gb
-                )
+                format!("Disk pressure on {mount}: {available_gb:.1}/{total_gb:.1} GB available")
             }
             EventData::LoadAvg {
                 load1,
                 load5,
                 load15,
             } => {
-                format!("Load avg: {:.2} {:.2} {:.2}", load1, load5, load15)
+                format!("Load avg: {load1:.2} {load5:.2} {load15:.2}")
             }
             EventData::ServiceStateChanged {
                 name,
                 old_state,
                 new_state,
             } => {
-                format!("Service {} changed: {} -> {}", name, old_state, new_state)
+                format!("Service {name} changed: {old_state} -> {new_state}")
             }
             EventData::JournalEntry { unit, message, .. } => {
-                format!("[{}] {}", unit, message)
+                format!("[{unit}] {message}")
             }
             EventData::System {
                 metric,
                 value,
                 unit,
             } => {
-                format!("System metric: {} = {} {}", metric, value, unit)
+                format!("System metric: {metric} = {value} {unit}")
             }
             EventData::EbpfSched {
                 prev_comm,
                 next_comm,
                 ..
             } => {
-                format!("eBPF sched: {} -> {}", prev_comm, next_comm)
+                format!("eBPF sched: {prev_comm} -> {next_comm}")
             }
             EventData::EbpfNet {
                 comm,
@@ -244,10 +235,7 @@ impl PerceptionEvent {
                 direction,
                 ..
             } => {
-                format!(
-                    "eBPF net: {} {} {} bytes on {}",
-                    comm, direction, bytes, iface
-                )
+                format!("eBPF net: {comm} {direction} {bytes} bytes on {iface}")
             }
             EventData::EbpfBlock {
                 comm,
@@ -255,15 +243,12 @@ impl PerceptionEvent {
                 latency_ns,
                 ..
             } => {
-                format!(
-                    "eBPF block: {} {} bytes ({}ns latency)",
-                    comm, bytes, latency_ns
-                )
+                format!("eBPF block: {comm} {bytes} bytes ({latency_ns}ns latency)")
             }
             EventData::EbpfSyscall {
                 comm, syscall_nr, ..
             } => {
-                format!("eBPF syscall: {} nr={}", comm, syscall_nr)
+                format!("eBPF syscall: {comm} nr={syscall_nr}")
             }
             EventData::Visual {
                 labels, summary, ..

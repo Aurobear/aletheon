@@ -6,24 +6,31 @@ use fabric::ui_event::CollaborationMode;
 use fabric::ui_event::InterruptReason;
 use tokio::io::AsyncWriteExt;
 
-use super::super::chat::{ChatWidget, Role as ChatRole};
-use super::super::command::{looks_like_command, parse_command, BuiltinCommand, CommandType};
+use super::super::chat::Role as ChatRole;
+use super::super::command::{looks_like_command, BuiltinCommand, CommandType};
 use super::super::App;
 
-pub(super) async fn write_request(app: &mut App, request: ClientRpcRequest) {
+pub(super) async fn write_request(app: &mut App, request: ClientRpcRequest) -> u64 {
+    let request_id = app.next_request_id;
+    app.next_request_id = app.next_request_id.saturating_add(1);
     let request = request
-        .to_json_rpc(Some(1))
+        .to_json_rpc(Some(request_id))
         .expect("typed client request serializes");
     let payload = serde_json::to_string(&request).unwrap_or_default();
-    let framed = format!("{}\n", payload);
+    let framed = format!("{payload}\n");
     let _ = app.stream.write_all(framed.as_bytes()).await;
     let _ = app.stream.flush().await;
+    request_id
 }
 
 /// Send a typed protocol request whose response is handled by the streaming
 /// response path.
 async fn send_request(app: &mut App, request: ClientRpcRequest) {
-    write_request(app, request).await;
+    let expects_turn = matches!(request, ClientRpcRequest::SkillInvoke(_));
+    let request_id = write_request(app, request).await;
+    if !expects_turn {
+        app.pending_non_turn.insert(request_id);
+    }
     app.streaming = true;
     app.response_buf.clear();
     app.status.waiting = true;
@@ -32,14 +39,48 @@ async fn send_request(app: &mut App, request: ClientRpcRequest) {
 pub async fn submit_message(app: &mut App, text: String) {
     // Check for /commands (but NOT absolute paths like /home/... — those are chat)
     if looks_like_command(&text) {
-        let parsed = parse_command(&text);
+        let parsed = app.registry.parse(&text);
         match parsed {
             Some(CommandType::Builtin(BuiltinCommand::Quit)) => {
                 app.running = false;
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Clear)) => {
-                app.chat = ChatWidget::new(app.caps.clone());
+                let request = app.app_state.session_id.clone().map_or(
+                    ClientRpcRequest::SessionNew,
+                    |session_id| {
+                        ClientRpcRequest::SessionNewFor(fabric::protocol::client::SessionParams {
+                            session_id,
+                        })
+                    },
+                );
+                let request_id = write_request(app, request).await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::NewSession { clear_screen: true },
+                );
+                app.chat
+                    .add_text(ChatRole::System, "正在创建新会话…".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::New)) => {
+                let request = app.app_state.session_id.clone().map_or(
+                    ClientRpcRequest::SessionNew,
+                    |session_id| {
+                        ClientRpcRequest::SessionNewFor(fabric::protocol::client::SessionParams {
+                            session_id,
+                        })
+                    },
+                );
+                let request_id = write_request(app, request).await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::NewSession {
+                        clear_screen: false,
+                    },
+                );
+                app.chat
+                    .add_text(ChatRole::System, "正在创建新会话…".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Copy)) => {
@@ -59,7 +100,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                     Some(text) if !text.is_empty() => {
                         let encoded = base64_encode(&text);
                         // OSC 52: set clipboard to base64-encoded text
-                        let osc = format!("\x1b]52;c;{}\x1b\\", encoded);
+                        let osc = format!("\x1b]52;c;{encoded}\x1b\\");
                         io::stdout().write_all(osc.as_bytes()).ok();
                         io::stdout().flush().ok();
                         app.chat
@@ -73,14 +114,25 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Help)) => {
-                let help = "内置命令：\n  /help         显示帮助\n  /clear        清空对话\n  /copy         复制最后回复到剪贴板\n  /status (st)  查看自我演化状态\n  /reflect      查看反思记录\n  /reflect_now  执行即时反思\n  /evolution    查看演化历史\n  /genome       查看基因组\n  /sessions     列出会话\n  /resume <id>  恢复会话\n  /compact (cmp) 压缩上下文\n  /model (m)    切换模型\n  /quit         退出\n\n输入：\n  Shift+Enter 或 \\+Enter  换行\n  Enter                   发送\n  Ctrl+C                   清空/退出\n  Esc                      清空输入\n  PgUp/PgDn               滚动聊天";
-                app.chat.add_text(ChatRole::System, help.to_string());
+                let help = app.registry.help_text();
+                app.chat.add_text(ChatRole::System, help);
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Status)) => {
-                send_request(app, ClientRpcRequest::Status).await;
-                app.chat
-                    .add_text(ChatRole::System, "查询状态中...".to_string());
+                let Some(session_id) = app.app_state.session_id.clone() else {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "会话仍在初始化，请稍后重试 /status".to_string(),
+                    );
+                    return;
+                };
+                send_request(
+                    app,
+                    ClientRpcRequest::StatusFor(fabric::protocol::client::SessionParams {
+                        session_id,
+                    }),
+                )
+                .await;
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Reflect)) => {
@@ -90,7 +142,20 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::ReflectNow)) => {
-                send_request(app, ClientRpcRequest::ReflectNow).await;
+                let Some(session_id) = app.app_state.session_id.clone() else {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "会话仍在初始化，请稍后重试 /reflect_now".to_string(),
+                    );
+                    return;
+                };
+                send_request(
+                    app,
+                    ClientRpcRequest::ReflectNowFor(fabric::protocol::client::SessionParams {
+                        session_id,
+                    }),
+                )
+                .await;
                 app.chat
                     .add_text(ChatRole::System, "执行即时反思中...".to_string());
                 return;
@@ -119,15 +184,68 @@ pub async fn submit_message(app: &mut App, text: String) {
                         .add_text(ChatRole::System, "用法: /resume <session_id>".to_string());
                     return;
                 }
-                send_request(app, ClientRpcRequest::resume(id.clone())).await;
+                let request_id = write_request(app, ClientRpcRequest::resume(id.clone())).await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::Resume {
+                        previous_session_id: app.app_state.session_id.clone(),
+                    },
+                );
                 app.chat
-                    .add_text(ChatRole::System, format!("恢复会话 {}...", id));
+                    .add_text(ChatRole::System, format!("恢复会话 {id}..."));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
-                send_request(app, ClientRpcRequest::Compact).await;
+                let Some(session_id) = app.app_state.session_id.clone() else {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "会话仍在初始化，请稍后重试 /compact".to_string(),
+                    );
+                    return;
+                };
+                send_request(
+                    app,
+                    ClientRpcRequest::CompactFor(fabric::protocol::client::SessionParams {
+                        session_id,
+                    }),
+                )
+                .await;
                 app.chat
                     .add_text(ChatRole::System, "压缩上下文中...".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Fork)) => {
+                let Some(session_id) = app.app_state.session_id.clone() else {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "当前会话尚未初始化，无法创建分支".to_string(),
+                    );
+                    return;
+                };
+                send_request(
+                    app,
+                    ClientRpcRequest::SessionFork(fabric::protocol::client::SessionForkParams {
+                        session_id: fabric::SessionId(session_id),
+                        through_sequence: app.app_state.cursor.sequence,
+                    }),
+                )
+                .await;
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Permissions)) => {
+                app.chat.add_text(
+                    ChatRole::System,
+                    format!(
+                        "=== Permissions ===\nWorking directory: {}\nWorkspace roots:\n{}",
+                        app.workspace.cwd().display(),
+                        app.workspace
+                            .writable_roots()
+                            .iter()
+                            .map(|path| format!("  - {}", path.display()))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ),
+                );
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Model)) => {
@@ -211,7 +329,7 @@ pub async fn submit_message(app: &mut App, text: String) {
                     app.chat.add_text(ChatRole::System, msg);
                 } else {
                     app.chat
-                        .add_text(ChatRole::System, format!("Agent not found: {}", id));
+                        .add_text(ChatRole::System, format!("Agent not found: {id}"));
                 }
                 return;
             }
@@ -222,40 +340,36 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Skills)) => {
-                let skills = app.skill_loader.list();
-                if skills.is_empty() {
-                    app.chat
-                        .add_text(ChatRole::System, "No skills loaded".to_string());
-                } else {
-                    let lines: Vec<String> = skills
-                        .iter()
-                        .map(|s| format!("  /{} - {}", s.name, s.description))
-                        .collect();
-                    app.chat.add_text(
-                        ChatRole::System,
-                        format!("Available skills:\n{}", lines.join("\n")),
-                    );
-                }
+                send_request(app, ClientRpcRequest::SkillsList).await;
+                app.chat
+                    .add_text(ChatRole::System, "查询技能列表中...".to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Memory)) => {
+                send_request(app, ClientRpcRequest::memory_list(None, false)).await;
+                app.chat
+                    .add_text(ChatRole::System, "查询记忆中...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::SkillRun { name, args })) => {
-                let skill = match app.skill_loader.get(&name) {
-                    Some(s) => s.clone(),
-                    None => {
-                        app.chat
-                            .add_text(ChatRole::System, format!("Unknown skill: /{}", name));
-                        return;
-                    }
-                };
-                let message = if args.is_empty() {
-                    skill.content.clone()
-                } else {
-                    format!("{}\n\nUser input: {}", skill.content, args)
-                };
+                if !app.registry.is_skill(&name) {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        format!("Skill 不可用：{name}。请先运行 /skills 刷新目录。"),
+                    );
+                    return;
+                }
                 app.chat.add_text(ChatRole::User, text.clone());
-                // Assistant entry created lazily on first response delta so it
-                // renders after any tool/reflection logs (ordering fix).
-                send_to_daemon(app, &message).await;
+                let request = match app.app_state.session_id.clone() {
+                    Some(session_id) => ClientRpcRequest::skill_invoke_for(
+                        name,
+                        args,
+                        fabric::SessionId(session_id),
+                        &app.workspace,
+                    ),
+                    None => ClientRpcRequest::skill_invoke(name, args, &app.workspace),
+                };
+                send_request(app, request).await;
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Interrupt)) => {
@@ -294,29 +408,90 @@ pub async fn submit_message(app: &mut App, text: String) {
                 write_request(app, ClientRpcRequest::agent_profile_set(name.clone())).await;
                 app.chat.add_text(
                     ChatRole::System,
-                    format!("Switching agent profile to: {}", name),
+                    format!("Switching agent profile to: {name}"),
                 );
                 return;
             }
-            Some(CommandType::Builtin(_)) => return,
+            Some(CommandType::Builtin(BuiltinCommand::Computer { args })) => {
+                match super::super::computer::ComputerHostRequest::parse(&args) {
+                    Ok(request) => {
+                        send_request(app, ClientRpcRequest::HostComputer(request.0)).await;
+                    }
+                    Err(_) => app.chat.add_text(
+                        ChatRole::System,
+                        "用法: /computer <operation> [args...]".to_string(),
+                    ),
+                }
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Diff)) => {
+                let output = std::process::Command::new("git")
+                    .args(["diff", "--stat"])
+                    .current_dir(app.workspace.cwd())
+                    .output();
+                let message = match output {
+                    Ok(output) if output.status.success() => {
+                        let diff = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        if diff.is_empty() {
+                            "工作区没有未暂存差异".to_string()
+                        } else {
+                            format!("=== Workspace Diff ===\n{diff}")
+                        }
+                    }
+                    Ok(output) => format!(
+                        "无法读取工作区差异：{}",
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ),
+                    Err(error) => format!("无法执行 git diff：{error}"),
+                };
+                app.chat.add_text(ChatRole::System, message);
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Mention { path })) => {
+                if path.is_empty() {
+                    app.chat
+                        .add_text(ChatRole::System, "用法: /mention <path>".to_string());
+                } else {
+                    app.input_buf = format!("@{path} ");
+                    app.cursor = app.input_buf.len();
+                    app.chat
+                        .add_text(ChatRole::System, format!("已将 @{path} 加入输入框"));
+                }
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Input)) => {
+                app.input_buf.push('\n');
+                app.cursor = app.input_buf.len();
+                app.chat.add_text(
+                    ChatRole::System,
+                    "多行输入已开启；继续输入，使用 Alt+Enter 提交".to_string(),
+                );
+                return;
+            }
             Some(CommandType::Skill { name, args }) => {
                 app.chat.add_text(ChatRole::User, text.clone());
-                let skill = match app.skill_loader.get(&name) {
-                    Some(s) => s.clone(),
-                    None => {
-                        app.chat
-                            .add_text(ChatRole::System, format!("未知技能: /{}", name));
-                        return;
-                    }
+                let request = match app.app_state.session_id.clone() {
+                    Some(session_id) => ClientRpcRequest::skill_invoke_for(
+                        name,
+                        args,
+                        fabric::SessionId(session_id),
+                        &app.workspace,
+                    ),
+                    None => ClientRpcRequest::skill_invoke(name, args, &app.workspace),
                 };
-                let message = if args.is_empty() {
-                    skill.content.clone()
+                send_request(app, request).await;
+                return;
+            }
+            Some(CommandType::Unknown {
+                name, suggestions, ..
+            }) => {
+                let hint = if suggestions.is_empty() {
+                    "输入 /help 查看可用命令".to_string()
                 } else {
-                    format!("{}\n\nUser input: {}", skill.content, args)
+                    format!("你是否想输入：{}", suggestions.join("、"))
                 };
-                // Assistant entry created lazily on first response delta so it
-                // renders after any tool/reflection logs (ordering fix).
-                send_to_daemon(app, &message).await;
+                app.chat
+                    .add_text(ChatRole::System, format!("未知命令 /{name}。{hint}"));
                 return;
             }
             None => {
@@ -335,9 +510,19 @@ pub async fn submit_message(app: &mut App, text: String) {
 }
 
 pub async fn send_to_daemon(app: &mut App, text: &str) {
-    let msg = crate::tui::chat_request(text, &app.workspace);
+    let request_id = app.next_request_id;
+    app.next_request_id = app.next_request_id.saturating_add(1);
+    let request = app.app_state.session_id.clone().map_or_else(
+        || ClientRpcRequest::chat(text, &app.workspace),
+        |session_id| {
+            ClientRpcRequest::chat_for(text, fabric::SessionId(session_id), &app.workspace)
+        },
+    );
+    let msg = request
+        .to_json_rpc(Some(request_id))
+        .expect("typed chat request serializes");
     let payload = serde_json::to_string(&msg).unwrap_or_default();
-    let framed = format!("{}\n", payload);
+    let framed = format!("{payload}\n");
 
     if app.stream.write_all(framed.as_bytes()).await.is_err() {
         app.chat

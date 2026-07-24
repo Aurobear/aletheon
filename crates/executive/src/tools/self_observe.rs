@@ -100,10 +100,9 @@ impl<T: DaseinOps + 'static> Tool for SelfObserveTool<T> {
                 ctx.care.fallenness_depth,
                 ctx.care.rhythm_interval_ms
             ),
-            "full" => format!("{:#?}", ctx),
+            "full" => format!("{ctx:#?}"),
             other => format!(
-                "Unknown query: {}. Valid: mood, temporality, world, self_model, care, full",
-                other
+                "Unknown query: {other}. Valid: mood, temporality, world, self_model, care, full"
             ),
         };
 

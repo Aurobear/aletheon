@@ -224,6 +224,86 @@
       ],
       "type": "string"
     },
+    "CodingRuntimeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_paths": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "executable": {
+          "default": "",
+          "type": "string"
+        },
+        "executable_sha256": {
+          "default": "",
+          "type": "string"
+        },
+        "fixed_args": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forbidden_paths": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "json_protocol_version": {
+          "default": 3,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_output_bytes": {
+          "default": 1048576,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "network_enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "package_version": {
+          "default": "",
+          "type": "string"
+        },
+        "require_namespace_isolation": {
+          "default": true,
+          "type": "boolean"
+        },
+        "timeout_ms": {
+          "default": 1800000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "trusted_executable_dir": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "worktree_base": {
+          "default": "",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "DaemonConfig": {
       "additionalProperties": false,
       "description": "Daemon runtime settings.",
@@ -277,8 +357,8 @@
         "integrations": {
           "$ref": "#/$defs/DeploymentIntegrationsConfig",
           "default": {
-            "gbrain": false,
             "google": false,
+            "supplemental_memory": false,
             "telegram": false
           }
         },
@@ -312,9 +392,6 @@
             "audit_bytes": 5368709120,
             "audit_items": 400000,
             "audit_soft_bytes": 4294967296,
-            "gbrain_spool_bytes": 268435456,
-            "gbrain_spool_items": 10000,
-            "gbrain_spool_soft_bytes": 201326592,
             "google_bytes": 5368709120,
             "google_items": 500000,
             "google_soft_bytes": 4294967296,
@@ -322,6 +399,9 @@
             "sessions_bytes": 10737418240,
             "sessions_items": 500000,
             "sessions_soft_bytes": 8589934592,
+            "supplemental_spool_bytes": 268435456,
+            "supplemental_spool_items": 10000,
+            "supplemental_spool_soft_bytes": 201326592,
             "total_data_bytes": 107374182400,
             "total_data_items": 2000000,
             "total_data_soft_bytes": 91268055040,
@@ -334,9 +414,9 @@
           "$ref": "#/$defs/DeploymentSecretFilesConfig",
           "default": {
             "backup_password": null,
-            "gbrain": null,
             "google_vault_key": null,
             "provider": null,
+            "supplemental_memory": null,
             "telegram": null
           }
         }
@@ -370,11 +450,11 @@
     "DeploymentIntegrationsConfig": {
       "additionalProperties": false,
       "properties": {
-        "gbrain": {
+        "google": {
           "default": false,
           "type": "boolean"
         },
-        "google": {
+        "supplemental_memory": {
           "default": false,
           "type": "boolean"
         },
@@ -486,24 +566,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "gbrain_spool_bytes": {
-          "default": 268435456,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "gbrain_spool_items": {
-          "default": 10000,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "gbrain_spool_soft_bytes": {
-          "default": 201326592,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
         "google_bytes": {
           "default": 5368709120,
           "format": "uint64",
@@ -542,6 +604,24 @@
         },
         "sessions_soft_bytes": {
           "default": 8589934592,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "supplemental_spool_bytes": {
+          "default": 268435456,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "supplemental_spool_items": {
+          "default": 10000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "supplemental_spool_soft_bytes": {
+          "default": 201326592,
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -595,13 +675,6 @@
             "null"
           ]
         },
-        "gbrain": {
-          "default": null,
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "google_vault_key": {
           "default": null,
           "type": [
@@ -610,6 +683,13 @@
           ]
         },
         "provider": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "supplemental_memory": {
           "default": null,
           "type": [
             "string",
@@ -855,7 +935,7 @@
       "type": "object"
     },
     "HarnessKind": {
-      "description": "Selects which concrete harness implementation `build_harness` constructs.\n\nPhase 2 fallback (see RFC-018): `ReActLoop::run` is generic over\n`<L: LlmProvider, F: Fn(...) -> Fut, Fut: Future>`, which is not\nobject-safe (generic methods cannot be part of a `dyn Trait`). Rather than\nforce an incompatible trait-object seam, this factory keeps `ReActLoop` as\na concrete return type and provides the config-selected construction seam:\nadding a new harness kind means adding a variant here and a construction\narm in `build_harness`, without touching `executive`'s call sites beyond\nthe `HarnessKind` selection itself.\n\nSelectable from TOML via `harness_kind = \"linear\"` (see\n`executive::core::config::ExecutiveConfig::harness_kind`).",
+      "description": "Selects which concrete harness implementation `build_harness` constructs.\n\nPhase 2 fallback (see RFC-018): `ReActLoop::run` is generic over\n`<L: LlmProvider, F: Fn(...) -> Fut, Fut: Future>`, which is not\nobject-safe (generic methods cannot be part of a `dyn Trait`). Rather than\nforce an incompatible trait-object seam, this factory keeps `ReActLoop` as\na concrete return type and provides the config-selected construction seam:\nadding a new harness kind means adding a variant here and a construction\narm in `build_harness`, without touching `executive`'s call sites beyond\nthe `HarnessKind` selection itself.\n\nSelectable from TOML via `harness_kind = \"linear\"` (see\n`executive::composition::config::ExecutiveConfig::harness_kind`).",
       "oneOf": [
         {
           "enum": [
@@ -1007,115 +1087,6 @@
             "api_url": null,
             "enabled": false
           }
-        }
-      },
-      "type": "object"
-    },
-    "McpMemoryConfig": {
-      "additionalProperties": false,
-      "description": "Optional GBrain supplemental memory over the configured HTTP MCP server.\nRenamed to `McpMemoryConfig` for generic MCP-based memory integration.",
-      "properties": {
-        "delivery_batch_size": {
-          "default": 20,
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "enabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "legacy_outbox_dir": {
-          "default": "~/.aletheon/gbrain-outbox",
-          "type": "string"
-        },
-        "max_content_bytes": {
-          "default": 6000,
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "projection_enabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "read_sources": {
-          "default": [
-            "aletheon",
-            "general"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "recall_limit": {
-          "default": 4,
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "request_timeout_ms": {
-          "default": 1200,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "retry_initial_ms": {
-          "default": 1000,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "retry_max_age_secs": {
-          "default": 86400,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "retry_max_attempts": {
-          "default": 12,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "retry_max_ms": {
-          "default": 60000,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "schema_fixture": {
-          "default": "config/gbrain/tools-schema.json",
-          "type": "string"
-        },
-        "schema_version": {
-          "default": "v0.42.59.0",
-          "type": "string"
-        },
-        "server_name": {
-          "default": "gbrain",
-          "type": "string"
-        },
-        "spool_max_bytes": {
-          "default": 268435456,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "spool_max_items": {
-          "default": 10000,
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "spool_path": {
-          "default": "~/.aletheon/memory/gbrain-spool.db",
-          "type": "string"
-        },
-        "write_source": {
-          "default": "aletheon",
-          "type": "string"
         }
       },
       "type": "object"
@@ -1390,23 +1361,47 @@
     },
     "MemoryConfig": {
       "additionalProperties": false,
-      "description": "Memory backend configuration.",
       "properties": {
         "backend": {
           "default": "sqlite",
-          "description": "\"sqlite\" or \"in_memory\"",
           "type": "string"
         },
         "data_dir": {
           "default": "~/.aletheon/memory",
           "type": "string"
         },
-        "gbrain": {
-          "$ref": "#/$defs/McpMemoryConfig",
+        "extraction": {
+          "$ref": "#/$defs/MemoryExtractionConfig",
+          "default": {
+            "enabled": true,
+            "max_facts_per_turn": 5,
+            "mode": "local"
+          }
+        },
+        "promotion": {
+          "$ref": "#/$defs/MemoryPromotionConfig",
+          "default": {
+            "enabled": false,
+            "max_promoted_facts": 20,
+            "min_confidence": 0.7
+          }
+        },
+        "recall": {
+          "$ref": "#/$defs/MemoryRecallConfig",
+          "default": {
+            "enabled": true,
+            "inject_into_context": true,
+            "max_bytes": 65536,
+            "max_items": 4,
+            "timeout_ms": 500
+          }
+        },
+        "supplemental": {
+          "$ref": "#/$defs/SupplementalMemoryConfig",
           "default": {
             "delivery_batch_size": 20,
             "enabled": false,
-            "legacy_outbox_dir": "~/.aletheon/gbrain-outbox",
+            "legacy_outbox_dir": "~/.aletheon/memory-outbox",
             "max_content_bytes": 6000,
             "projection_enabled": false,
             "read_sources": [
@@ -1419,15 +1414,87 @@
             "retry_max_age_secs": 86400,
             "retry_max_attempts": 12,
             "retry_max_ms": 60000,
-            "schema_fixture": "config/gbrain/tools-schema.json",
+            "schema_fixture": "",
             "schema_version": "v0.42.59.0",
-            "server_name": "gbrain",
+            "server_name": "supplemental",
             "spool_max_bytes": 268435456,
             "spool_max_items": 10000,
-            "spool_path": "~/.aletheon/memory/gbrain-spool.db",
+            "spool_path": "~/.aletheon/memory/memory-spool.db",
             "write_source": "aletheon"
-          },
-          "description": "Optional gbrain shared memory integration (disabled by default)."
+          }
+        }
+      },
+      "type": "object"
+    },
+    "MemoryExtractionConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_facts_per_turn": {
+          "default": 5,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mode": {
+          "default": "local",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "MemoryPromotionConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max_promoted_facts": {
+          "default": 20,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_confidence": {
+          "default": 0.7,
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "MemoryRecallConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "inject_into_context": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_bytes": {
+          "default": 65536,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_items": {
+          "default": 4,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "default": 500,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -1564,91 +1631,6 @@
       },
       "type": "object"
     },
-    "PiRuntimeConfig": {
-      "additionalProperties": false,
-      "description": "Fail-closed configuration for the isolated Pi coding runtime.",
-      "properties": {
-        "allowed_paths": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "enabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "executable": {
-          "default": "",
-          "type": "string"
-        },
-        "executable_sha256": {
-          "default": "",
-          "description": "Lowercase SHA-256 of the trusted Pi executable.",
-          "type": "string"
-        },
-        "fixed_args": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "forbidden_paths": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "json_protocol_version": {
-          "default": 3,
-          "description": "Expected Pi JSON session header version.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "max_output_bytes": {
-          "default": 1048576,
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "network_enabled": {
-          "default": false,
-          "description": "Pi has no network access by default. Trusted daemon configuration may\nopt in for the independently authenticated model transport.",
-          "type": "boolean"
-        },
-        "package_version": {
-          "default": "",
-          "description": "Pinned upstream package version recorded in attempt evidence.",
-          "type": "string"
-        },
-        "require_namespace_isolation": {
-          "default": true,
-          "type": "boolean"
-        },
-        "timeout_ms": {
-          "default": 1800000,
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "trusted_executable_dir": {
-          "default": null,
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "worktree_base": {
-          "default": "",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "PluginsConfig": {
       "additionalProperties": false,
       "description": "Plugin directories.",
@@ -1678,9 +1660,29 @@
           ],
           "default": null
         },
+        "max_input_tokens": {
+          "default": null,
+          "description": "Per-profile input budget used by adaptive context planning. Values above\nthe runtime model window are clamped to that authoritative window.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "max_iterations": {
           "default": null,
           "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_output_tokens": {
+          "default": null,
+          "description": "Output reservation subtracted from the context window before admitting\nhistory and pending user input.",
+          "format": "uint64",
           "minimum": 0,
           "type": [
             "integer",
@@ -2004,12 +2006,118 @@
       ],
       "type": "object"
     },
-    "TelegramConfig": {
+    "SupplementalMemoryConfig": {
       "additionalProperties": false,
-      "description": "Telegram bot configuration for owner-only control channel.\n\nThe config stores the environment-variable NAME, never the token value itself.\nThe runtime reads the token from that env var at startup.",
+      "properties": {
+        "delivery_batch_size": {
+          "default": 20,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "legacy_outbox_dir": {
+          "default": "~/.aletheon/memory-outbox",
+          "type": "string"
+        },
+        "max_content_bytes": {
+          "default": 6000,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "projection_enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "read_sources": {
+          "default": [
+            "aletheon",
+            "general"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "recall_limit": {
+          "default": 4,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "request_timeout_ms": {
+          "default": 1200,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_initial_ms": {
+          "default": 1000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_max_age_secs": {
+          "default": 86400,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_max_attempts": {
+          "default": 12,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_max_ms": {
+          "default": 60000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_fixture": {
+          "default": "",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "v0.42.59.0",
+          "type": "string"
+        },
+        "server_name": {
+          "default": "supplemental",
+          "type": "string"
+        },
+        "spool_max_bytes": {
+          "default": 268435456,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spool_max_items": {
+          "default": 10000,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spool_path": {
+          "default": "~/.aletheon/memory/memory-spool.db",
+          "type": "string"
+        },
+        "write_source": {
+          "default": "aletheon",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "TelegramChannelConfig": {
+      "additionalProperties": false,
       "properties": {
         "bot_token_env": {
-          "description": "Environment variable name that holds the bot token.\nExample value: `\"ALETHEON_TELEGRAM_BOT_TOKEN\"`.",
           "type": [
             "string",
             "null"
@@ -2017,11 +2125,9 @@
         },
         "enabled": {
           "default": false,
-          "description": "Master switch. When false (default), the Telegram bot is not started.",
           "type": "boolean"
         },
         "owner_user_id": {
-          "description": "Owner's Telegram user ID. Only messages from this user are accepted.",
           "format": "int64",
           "type": [
             "integer",
@@ -2030,7 +2136,6 @@
         },
         "poll_timeout_secs": {
           "default": 10,
-          "description": "Polling timeout in seconds (clamped to 1–50).",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -2129,8 +2234,8 @@
           "minimum_free_bytes": 5368709120
         },
         "integrations": {
-          "gbrain": false,
           "google": false,
+          "supplemental_memory": false,
           "telegram": false
         },
         "mode": "user",
@@ -2155,9 +2260,6 @@
           "audit_bytes": 5368709120,
           "audit_items": 400000,
           "audit_soft_bytes": 4294967296,
-          "gbrain_spool_bytes": 268435456,
-          "gbrain_spool_items": 10000,
-          "gbrain_spool_soft_bytes": 201326592,
           "google_bytes": 5368709120,
           "google_items": 500000,
           "google_soft_bytes": 4294967296,
@@ -2165,6 +2267,9 @@
           "sessions_bytes": 10737418240,
           "sessions_items": 500000,
           "sessions_soft_bytes": 8589934592,
+          "supplemental_spool_bytes": 268435456,
+          "supplemental_spool_items": 10000,
+          "supplemental_spool_soft_bytes": 201326592,
           "total_data_bytes": 107374182400,
           "total_data_items": 2000000,
           "total_data_soft_bytes": 91268055040,
@@ -2174,9 +2279,9 @@
         },
         "secrets": {
           "backup_password": null,
-          "gbrain": null,
           "google_vault_key": null,
           "provider": null,
+          "supplemental_memory": null,
           "telegram": null
         }
       }
@@ -2266,10 +2371,27 @@
       "default": {
         "backend": "sqlite",
         "data_dir": "~/.aletheon/memory",
-        "gbrain": {
+        "extraction": {
+          "enabled": true,
+          "max_facts_per_turn": 5,
+          "mode": "local"
+        },
+        "promotion": {
+          "enabled": false,
+          "max_promoted_facts": 20,
+          "min_confidence": 0.7
+        },
+        "recall": {
+          "enabled": true,
+          "inject_into_context": true,
+          "max_bytes": 65536,
+          "max_items": 4,
+          "timeout_ms": 500
+        },
+        "supplemental": {
           "delivery_batch_size": 20,
           "enabled": false,
-          "legacy_outbox_dir": "~/.aletheon/gbrain-outbox",
+          "legacy_outbox_dir": "~/.aletheon/memory-outbox",
           "max_content_bytes": 6000,
           "projection_enabled": false,
           "read_sources": [
@@ -2282,12 +2404,12 @@
           "retry_max_age_secs": 86400,
           "retry_max_attempts": 12,
           "retry_max_ms": 60000,
-          "schema_fixture": "config/gbrain/tools-schema.json",
+          "schema_fixture": "",
           "schema_version": "v0.42.59.0",
-          "server_name": "gbrain",
+          "server_name": "supplemental",
           "spool_max_bytes": 268435456,
           "spool_max_items": 10000,
-          "spool_path": "~/.aletheon/memory/gbrain-spool.db",
+          "spool_path": "~/.aletheon/memory/memory-spool.db",
           "write_source": "aletheon"
         }
       }
@@ -2333,7 +2455,7 @@
       }
     },
     "pi_runtime": {
-      "$ref": "#/$defs/PiRuntimeConfig",
+      "$ref": "#/$defs/CodingRuntimeConfig",
       "default": {
         "allowed_paths": [],
         "enabled": false,
@@ -2380,7 +2502,7 @@
       "description": "S1 sandbox profiles (from trusted daemon config, never from repo)."
     },
     "telegram": {
-      "$ref": "#/$defs/TelegramConfig",
+      "$ref": "#/$defs/TelegramChannelConfig",
       "default": {
         "bot_token_env": null,
         "enabled": false,

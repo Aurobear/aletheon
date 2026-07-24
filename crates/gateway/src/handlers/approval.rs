@@ -33,6 +33,7 @@ impl ApprovalExecutor {
     pub async fn execute_approval_action(
         &self,
         principal: &str,
+        channel: &str,
         action_data: &str,
         now_ms: i64,
     ) -> anyhow::Result<String> {
@@ -42,7 +43,7 @@ impl ApprovalExecutor {
             .ok_or_else(|| anyhow::anyhow!("invalid approval action"))?;
         let id = ApprovalId(uuid::Uuid::parse_str(id)?);
         let principal_id = PrincipalId(principal.to_owned());
-        let channel = "telegram".to_string();
+        let channel = channel.to_string();
         let result = match action {
             "view_diff" => {
                 let approval = port
@@ -95,7 +96,7 @@ impl ApprovalExecutor {
             let resolver = self
                 .resolvers
                 .resolve_category_only(ApprovalCategory::ActivateGoal)
-                .ok_or_else(|| anyhow::anyhow!("Gmail draft executor is not configured"))?;
+                .ok_or_else(|| anyhow::anyhow!("external draft resolver is not configured"))?;
             resolver.execute_resolved(&result.0, action, now_ms).await?;
         } else if let Some(resolver) = self.resolvers.resolve(result.0.category) {
             resolver.execute_resolved(&result.0, action, now_ms).await?;

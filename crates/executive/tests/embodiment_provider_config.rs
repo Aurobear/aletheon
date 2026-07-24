@@ -1,6 +1,6 @@
 //! Integration tests for embodiment provider config selection.
 
-use executive::core::config::EmbodimentProviderConfig;
+use executive::composition::config::EmbodimentProviderConfig;
 
 #[test]
 fn default_provider_config_is_simulator() {

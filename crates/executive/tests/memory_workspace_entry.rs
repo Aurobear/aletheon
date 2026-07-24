@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
-use executive::service::context_assembler::{
+use executive::application::context_assembler::{
     ContextAssembler, ContextAssemblyError, ContextFragments, ContextSource,
 };
 use fabric::dasein::{SelfVersion, Stimmung};
@@ -26,6 +26,7 @@ impl ContextSource for FixedSource {
             system_prefix: "system authority".into(),
             skills: String::new(),
             conscious: Some(self.0.clone()),
+            memory_context: String::new(),
         })
     }
 }

@@ -114,12 +114,12 @@ impl ToolRegistry {
         .map(|tool| self.register(tool))
         .collect::<Result<Vec<_>, _>>()?;
         for name in [
-            "robot.observe",
-            "robot.get_state",
-            "robot.list_skills",
-            "robot.execute_skill",
-            "robot.cancel",
-            "robot.safe_stop",
+            "robot_observe",
+            "robot_get_state",
+            "robot_list_skills",
+            "robot_execute_skill",
+            "robot_cancel",
+            "robot_safe_stop",
         ] {
             self.set_proposal_confidence(name, 0.5)?;
         }
@@ -144,7 +144,7 @@ impl Registry<Arc<dyn Tool>> for ToolRegistry {
         let name = self
             .id_map
             .remove(&id)
-            .ok_or_else(|| AgentError::not_found(&format!("{:?}", id)))?;
+            .ok_or_else(|| AgentError::not_found(&format!("{id:?}")))?;
         self.tools
             .remove(&name)
             .inspect(|_| {
@@ -369,8 +369,7 @@ mod tests {
         for name in expected {
             assert!(
                 names.contains(&name),
-                "expected tool '{}' not found in registry",
-                name
+                "expected tool '{name}' not found in registry"
             );
         }
     }

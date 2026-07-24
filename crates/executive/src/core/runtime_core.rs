@@ -17,8 +17,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use cognit::r#impl::llm::pulse::{LlmPulse, PulseConfig};
-use cognit::r#impl::llm::scheduler::{
+use cognit::inference::pulse::{LlmPulse, PulseConfig};
+use cognit::inference::scheduler::{
     LlmScheduler, RoutingRule, SchedulerConfig, SchedulerProviderConfig,
 };
 use fabric::evolution::LlmPurpose;
@@ -27,15 +27,15 @@ use fabric::Clock;
 
 use kernel::chronos::SystemClock;
 
-use crate::r#impl::daemon::handler::RequestHandler;
-use crate::r#impl::daemon::DaemonConfig;
-use cognit::r#impl::provider_registry::ProviderRegistry;
+use crate::host::daemon::handler::RequestHandler;
+use crate::host::daemon::DaemonConfig;
+use cognit::composition::provider_registry::ProviderRegistry;
 
-use dasein::r#impl::perception::PerceptionEvent;
+use dasein::perception::PerceptionEvent;
 
 /// The agent runtime core — all agent-level state, host-independent.
 pub struct RuntimeCore {
-    pub app_config: crate::core::config::AppConfig,
+    pub app_config: crate::composition::config::AppConfig,
     pub registry: ProviderRegistry,
     pub daemon_config: DaemonConfig,
     pub event_bus: Arc<CanonicalEventBus>,
@@ -56,12 +56,12 @@ impl RuntimeCore {
     pub async fn bootstrap(config_path: Option<PathBuf>, enable_evolution: bool) -> Result<Self> {
         // ── AppConfig ───────────────────────────────────────────────
         // Layered base (defaults → /etc → user → project), then --config on top.
-        let loaded = crate::core::config::load_for_host(None, config_path.as_deref())?;
+        let loaded = crate::composition::config::load_for_host(None, config_path.as_deref())?;
         // Resolve all enabled optional integrations before providers, storage,
         // sessions, or background workers start. Diagnostics contain only typed
         // config paths and credential reference identities, never secret values.
         let integrations = loaded
-            .preflight_integrations(&crate::core::config::EnvironmentCredentialResolver)
+            .preflight_integrations(&crate::composition::config::EnvironmentCredentialResolver)
             .context("optional integration startup preflight")?;
         let app_config = loaded.value;
         tracing::info!(providers = %app_config.providers.len(), "Loaded config");
@@ -105,7 +105,7 @@ impl RuntimeCore {
                 .sandbox_preference
                 .clone()
                 .unwrap_or_else(|| "auto".to_string()),
-            conscious_arbitration_mode: crate::r#impl::daemon::parse_conscious_arbitration_mode(
+            conscious_arbitration_mode: crate::host::daemon::parse_conscious_arbitration_mode(
                 app_config.bootstrap.conscious_arbitration_mode.as_deref(),
             )?,
             enable_evolution,
@@ -116,14 +116,18 @@ impl RuntimeCore {
                 app_config.hooks.clone()
             },
             telegram: app_config.telegram.clone(),
-            gbrain_memory: app_config.memory.gbrain.clone(),
+            supplemental_memory: app_config.memory.supplemental.clone(),
             deployment: app_config.deployment.clone(),
             backpressure: app_config.backpressure.clone(),
             agent_admission: app_config.agent.admission.clone(),
             agent_max_iterations: app_config.agent.max_iterations,
             harness_kind: app_config.agent.harness_kind,
             integrations,
-            embodiment_provider: Default::default(),
+            embodiment_provider: app_config
+                .integrations
+                .embodiment
+                .clone()
+                .unwrap_or_default(),
         };
 
         // ── Event bus ───────────────────────────────────────────────
@@ -204,7 +208,7 @@ impl RuntimeCore {
             let enable_journald = perception_config.enable_journald;
             let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
             tokio::spawn(async move {
-                let mut manager = dasein::r#impl::perception::manager::PerceptionManager::new(
+                let mut manager = dasein::perception::manager::PerceptionManager::new(
                     event_tx,
                     watch_paths,
                     enable_journald,

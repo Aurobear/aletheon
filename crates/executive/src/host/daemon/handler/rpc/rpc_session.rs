@@ -1,0 +1,315 @@
+//! Session lifecycle RPC handlers.
+//!
+//! All session mechanics are delegated to `LegacySessionUseCases`; this file
+//! only adapts the compatibility JSON-RPC shapes and lifecycle side effects.
+
+use super::RequestHandler;
+
+use serde_json::json;
+use tracing::info;
+
+use crate::compatibility::legacy_session_service::LegacySessionSnapshot;
+
+impl RequestHandler {
+    pub(super) async fn handle_clear(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let session_id = match request["params"]["session_id"].as_str() {
+            Some(s) if !s.is_empty() => s,
+            _ => {
+                return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Missing session_id parameter"}})
+            }
+        };
+        let transition = match self.ports.sessions.clear(session_id).await {
+            Ok(transition) => transition,
+            Err(error) => return session_error(id, -32022, error),
+        };
+        if let Err(error) = self.finish_outgoing_session(&transition.previous).await {
+            return session_error(id, -32032, error);
+        }
+        self.distill_session_facts(&transition.previous).await;
+        self.ports.session_lifecycle.reset_turn_token().await;
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "status": "ok",
+                "session_id": transition.current.session_id,
+            }
+        })
+    }
+
+    pub(super) async fn handle_sessions_list(
+        &self,
+        id: &serde_json::Value,
+        _request: &serde_json::Value,
+    ) -> serde_json::Value {
+        match self.ports.sessions.list_available().await {
+            Ok(sessions) => json!({"jsonrpc":"2.0", "id":id, "result":{"sessions":sessions}}),
+            Err(error) => session_error(id, -32020, error),
+        }
+    }
+
+    pub(super) async fn handle_resume(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let target = request["params"]["session_id"].as_str().unwrap_or("");
+        if target.is_empty() {
+            return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32021,"message":"Missing session_id parameter"}});
+        }
+        match self.ports.sessions.resume(target.to_owned()).await {
+            Ok(snapshot) => {
+                info!(session_id = %snapshot.session_id, messages = snapshot.messages.len(), "Session resumed");
+                json!({
+                    "jsonrpc":"2.0",
+                    "id":id,
+                    "result":{
+                        "session_id":snapshot.session_id,
+                        "recovered_messages":snapshot.messages.len(),
+                    }
+                })
+            }
+            Err(error) => session_error(id, -32021, error),
+        }
+    }
+
+    pub(super) async fn handle_compact(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let session_id = match request["params"]["session_id"].as_str() {
+            Some(s) if !s.is_empty() => s,
+            _ => {
+                return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Missing session_id parameter"}})
+            }
+        };
+        match self.ports.sessions.compact(session_id).await {
+            Ok(Some(transition)) => {
+                let receipt = transition.compaction.as_ref();
+                let tokens_before = receipt.map_or_else(
+                    || {
+                        transition
+                            .previous
+                            .messages
+                            .iter()
+                            .map(fabric::Message::estimate_tokens)
+                            .sum()
+                    },
+                    |receipt| receipt.tokens_before,
+                );
+                let tokens_after = receipt.map_or(0, |receipt| receipt.tokens_after);
+                let ratio = if tokens_before == 0 {
+                    0.0
+                } else {
+                    tokens_after as f64 / tokens_before as f64
+                };
+                json!({
+                    "jsonrpc":"2.0",
+                    "id":id,
+                    "result":{
+                        "compacted":true,
+                        "session_id":transition.current.session_id,
+                        "tokens_before":tokens_before,
+                        "tokens_after":tokens_after,
+                        "strategy":receipt.map(|entry| format!("{:?}", entry.strategy)).unwrap_or_else(|| "unknown".into()),
+                        "retained_messages":transition.current.message_count,
+                        "compression_ratio":ratio,
+                        "message":format!(
+                            "上下文压缩完成：{tokens_before} → {tokens_after} tokens，压缩比 {:.1}%，保留 {} 条消息，策略 structured_checkpoint_tail_keep",
+                            ratio * 100.0,
+                            transition.current.message_count
+                        ),
+                    }
+                })
+            }
+            Ok(None) => json!({"jsonrpc":"2.0", "id":id, "result":{
+                "compacted":false,
+                "message":"当前上下文无需压缩或没有可安全压缩的历史；上下文保持不变。"
+            }}),
+            Err(error) => session_error(id, -32023, error),
+        }
+    }
+
+    pub(super) async fn handle_new_session(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let previous_session_id = match request["params"]["session_id"].as_str() {
+            Some(s) if !s.is_empty() => s,
+            _ => {
+                return json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Missing session_id parameter"}})
+            }
+        };
+        let transition = match self
+            .ports
+            .sessions
+            .create_and_switch(previous_session_id)
+            .await
+        {
+            Ok(transition) => transition,
+            Err(error) => return session_error(id, -32030, error),
+        };
+        if let Err(error) = self.finish_outgoing_session(&transition.previous).await {
+            return session_error(id, -32032, error);
+        }
+        if let Err(error) = self
+            .ports
+            .session_lifecycle
+            .start(transition.current.session_id.clone(), true)
+            .await
+        {
+            return session_error(id, -32032, error);
+        }
+        info!(session_id = %transition.current.session_id, "New session created");
+        json!({"jsonrpc":"2.0", "id":id, "result":{"session_id":transition.current.session_id}})
+    }
+
+    pub(super) async fn handle_load_recent(
+        &self,
+        id: &serde_json::Value,
+        _request: &serde_json::Value,
+    ) -> serde_json::Value {
+        match self.ports.sessions.load_recent().await {
+            Ok(snapshot) => {
+                info!(session_id = %snapshot.session_id, messages = snapshot.messages.len(), "Loaded most recent session");
+                json!({
+                    "jsonrpc":"2.0",
+                    "id":id,
+                    "result":{
+                        "session_id":snapshot.session_id,
+                        "recovered_messages":snapshot.messages.len(),
+                    }
+                })
+            }
+            Err(error) => session_error(id, -32031, error),
+        }
+    }
+
+    async fn finish_outgoing_session(
+        &self,
+        snapshot: &LegacySessionSnapshot,
+    ) -> anyhow::Result<()> {
+        self.ports
+            .session_lifecycle
+            .finish(snapshot.session_id.clone(), snapshot.turn_count)
+            .await
+    }
+
+    async fn distill_session_facts(&self, snapshot: &LegacySessionSnapshot) {
+        for message in snapshot.messages.iter().rev().take(10) {
+            if !matches!(message.role, fabric::Role::User) {
+                continue;
+            }
+            for block in &message.content {
+                let fabric::ContentBlock::Text { text } = block else {
+                    continue;
+                };
+                let lower = text.to_lowercase();
+                if text.len() > 20
+                    && ["prefer", "always", "never", "remember"]
+                        .iter()
+                        .any(|keyword| lower.contains(keyword))
+                {
+                    let _ = self
+                        .ports
+                        .facts
+                        .add(mnemosyne::AddFactRequest {
+                            content: text.clone(),
+                            scope: "session".into(),
+                            subject: snapshot.session_id.clone(),
+                            tags: "distilled".into(),
+                        })
+                        .await;
+                }
+            }
+        }
+    }
+
+    pub(super) async fn handle_session_create(
+        &self,
+        id: &serde_json::Value,
+        _request: &serde_json::Value,
+    ) -> serde_json::Value {
+        match self.ports.sessions.create().await {
+            Ok(session) => {
+                json!({"jsonrpc":"2.0", "id":id, "result":{"session_id":session.session_id,"created_at":session.created_at}})
+            }
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32030,"message":format!("Failed to create session: {error}")}})
+            }
+        }
+    }
+
+    pub(super) async fn handle_session_list(
+        &self,
+        id: &serde_json::Value,
+        _request: &serde_json::Value,
+    ) -> serde_json::Value {
+        match self.ports.sessions.list().await {
+            Ok(sessions) => json!({"jsonrpc":"2.0", "id":id, "result":sessions}),
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32020,"message":error.to_string()}})
+            }
+        }
+    }
+
+    pub(super) async fn handle_session_switch(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let target = request["params"]["session_id"].as_str().unwrap_or("");
+        if target.is_empty() {
+            return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602,"message":"Missing session_id parameter"}});
+        }
+        match self.ports.sessions.switch(target.to_string()).await {
+            Ok(session_id) => {
+                json!({"jsonrpc":"2.0", "id":id, "result":{"session_id":session_id,"status":"switched"}})
+            }
+            Err(crate::compatibility::legacy_session_service::LegacySessionError::NotFound(_)) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32021,"message":format!("Session not found: {target}")}})
+            }
+            Err(error) => {
+                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32020,"message":error.to_string()}})
+            }
+        }
+    }
+
+    /// Create a fresh session (no previous session required).
+    /// This is the handler for the `session.new` JSON-RPC method,
+    /// distinct from `session.create` which is a broader API.
+    pub(super) async fn handle_session_new_simple(
+        &self,
+        id: &serde_json::Value,
+        _request: &serde_json::Value,
+    ) -> serde_json::Value {
+        match self.ports.sessions.create().await {
+            Ok(session) => {
+                info!(session_id = %session.session_id, "session.new: created fresh session");
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "method": "session.created",
+                        "session_id": session.session_id,
+                    }
+                })
+            }
+            Err(error) => session_error(id, -32030, format!("Failed to create session: {error}")),
+        }
+    }
+}
+
+fn session_error(
+    id: &serde_json::Value,
+    code: i64,
+    error: impl std::fmt::Display,
+) -> serde_json::Value {
+    json!({"jsonrpc":"2.0", "id":id, "error":{"code":code,"message":error.to_string()}})
+}

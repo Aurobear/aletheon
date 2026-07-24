@@ -128,7 +128,7 @@ impl EbpfSource {
                     {
                         events.push(self.make_event(
                             EventData::System {
-                                metric: format!("net_{}_rx_bytes", iface),
+                                metric: format!("net_{iface}_rx_bytes"),
                                 value: rx_bytes as f64,
                                 unit: "bytes".to_string(),
                             },
@@ -137,7 +137,7 @@ impl EbpfSource {
                         ));
                         events.push(self.make_event(
                             EventData::System {
-                                metric: format!("net_{}_tx_bytes", iface),
+                                metric: format!("net_{iface}_tx_bytes"),
                                 value: tx_bytes as f64,
                                 unit: "bytes".to_string(),
                             },
@@ -171,7 +171,7 @@ impl EbpfSource {
                     ) {
                         events.push(self.make_event(
                             EventData::System {
-                                metric: format!("block_{}_read_ops", dev_name),
+                                metric: format!("block_{dev_name}_read_ops"),
                                 value: reads as f64,
                                 unit: "count".to_string(),
                             },
@@ -180,7 +180,7 @@ impl EbpfSource {
                         ));
                         events.push(self.make_event(
                             EventData::System {
-                                metric: format!("block_{}_write_ops", dev_name),
+                                metric: format!("block_{dev_name}_write_ops"),
                                 value: writes as f64,
                                 unit: "count".to_string(),
                             },
@@ -195,7 +195,7 @@ impl EbpfSource {
                             if avg_latency_us > self.config.block_latency_threshold_ns / 1000 {
                                 events.push(self.make_event(
                                     EventData::System {
-                                        metric: format!("block_{}_avg_latency_us", dev_name),
+                                        metric: format!("block_{dev_name}_avg_latency_us"),
                                         value: avg_latency_us as f64,
                                         unit: "us".to_string(),
                                     },

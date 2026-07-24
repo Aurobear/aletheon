@@ -1,8 +1,8 @@
-use executive::r#impl::approval::{
+use executive::approval::{
     ApprovalApplyReceipt, ApprovalCreate, ApprovalDecision, ApprovalRepository,
     ApprovalResolutionContext,
 };
-use executive::r#impl::goal::{GoalCompletionSummary, ObjectiveStore};
+use executive::goal::{GoalCompletionSummary, ObjectiveStore};
 use fabric::*;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

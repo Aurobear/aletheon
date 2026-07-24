@@ -6,10 +6,11 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use crate::backends::gbrain::{
-    EnqueueOutcome, GbrainBackend, GbrainBackendError, SupplementalErrorCategory,
+use crate::backends::supplemental::{
+    EnqueueOutcome, SupplementalErrorCategory, SupplementalMemoryBackend, SupplementalMemoryError,
     SupplementalMemoryTransport, SupplementalRecall,
 };
+use crate::lifecycle::{MemoryOperationEvent, MemoryOperationLifecycle};
 use crate::service::{
     ExperienceEvent, ForgetPolicy, ForgetReceipt, MemoryScope, MemoryService, RecallRequest,
     RecallSet,
@@ -35,31 +36,33 @@ pub trait SupplementalMemoryService: Send + Sync {
         &self,
         event: &ExperienceEvent,
         now_ms: i64,
-    ) -> Result<EnqueueOutcome, GbrainBackendError>;
+    ) -> Result<EnqueueOutcome, SupplementalMemoryError>;
     async fn recall(
         &self,
         request: RecallRequest,
         cancel: &CancellationToken,
     ) -> SupplementalRecall;
-    fn forget(&self, policy: ForgetPolicy) -> Result<(), GbrainBackendError>;
+    fn forget(&self, policy: ForgetPolicy) -> Result<(), SupplementalMemoryError>;
 }
 
 #[async_trait]
-impl<T: SupplementalMemoryTransport + 'static> SupplementalMemoryService for GbrainBackend<T> {
+impl<T: SupplementalMemoryTransport + 'static> SupplementalMemoryService
+    for SupplementalMemoryBackend<T>
+{
     fn queue_depth(&self) -> usize {
         self.spool().queue_depth().unwrap_or_default()
     }
 
     fn metrics(&self) -> Option<crate::MemoryMetrics> {
-        Some(GbrainBackend::metrics(self).clone())
+        Some(SupplementalMemoryBackend::metrics(self).clone())
     }
 
     fn record(
         &self,
         event: &ExperienceEvent,
         now_ms: i64,
-    ) -> Result<EnqueueOutcome, GbrainBackendError> {
-        GbrainBackend::record(self, event, now_ms)
+    ) -> Result<EnqueueOutcome, SupplementalMemoryError> {
+        SupplementalMemoryBackend::record(self, event, now_ms)
     }
 
     async fn recall(
@@ -67,11 +70,11 @@ impl<T: SupplementalMemoryTransport + 'static> SupplementalMemoryService for Gbr
         request: RecallRequest,
         cancel: &CancellationToken,
     ) -> SupplementalRecall {
-        GbrainBackend::recall(self, request, cancel).await
+        SupplementalMemoryBackend::recall(self, request, cancel).await
     }
 
-    fn forget(&self, policy: ForgetPolicy) -> Result<(), GbrainBackendError> {
-        GbrainBackend::forget(self, policy)
+    fn forget(&self, policy: ForgetPolicy) -> Result<(), SupplementalMemoryError> {
+        SupplementalMemoryBackend::forget(self, policy)
     }
 }
 
@@ -148,17 +151,27 @@ impl CompositeMemoryService {
 #[async_trait]
 impl MemoryService for CompositeMemoryService {
     async fn record(&self, event: ExperienceEvent) -> anyhow::Result<()> {
-        self.local.record(event.clone()).await?;
+        let mut lifecycle = MemoryOperationLifecycle::default();
+        lifecycle.apply(MemoryOperationEvent::BeginWrite)?;
+        if let Err(error) = self.local.record(event.clone()).await {
+            lifecycle.apply(MemoryOperationEvent::Fail)?;
+            return Err(error);
+        }
+        lifecycle.apply(MemoryOperationEvent::LocalWriteFinished)?;
+        lifecycle.apply(MemoryOperationEvent::ProjectionFinished)?;
         let Some(supplemental) = &self.supplemental else {
+            lifecycle.apply(MemoryOperationEvent::SupplementalSkipped)?;
             return Ok(());
         };
         if !Self::selected(&event) {
+            lifecycle.apply(MemoryOperationEvent::SupplementalSkipped)?;
             return Ok(());
         }
         let now_ms = self.clock.wall_now().0.max(0);
         let queue_depth = supplemental.queue_depth();
         match supplemental.record(&event, now_ms) {
             Ok(_) => {
+                lifecycle.apply(MemoryOperationEvent::SupplementalWritten)?;
                 let new_depth = supplemental.queue_depth();
                 self.health
                     .lock()
@@ -166,6 +179,7 @@ impl MemoryService for CompositeMemoryService {
                     .queue_depth = new_depth;
             }
             Err(error) => {
+                lifecycle.apply(MemoryOperationEvent::Degrade)?;
                 tracing::warn!(error = %error, "supplemental memory enqueue degraded");
                 self.update_health(true, Some(SupplementalErrorCategory::Spool), queue_depth);
             }
@@ -174,6 +188,8 @@ impl MemoryService for CompositeMemoryService {
     }
 
     async fn recall(&self, request: RecallRequest) -> anyhow::Result<RecallSet> {
+        let mut lifecycle = MemoryOperationLifecycle::default();
+        lifecycle.apply(MemoryOperationEvent::BeginRecall)?;
         let local_request = request.clone();
         let local = tokio::time::timeout(self.local_budget, self.local.recall(local_request));
         let supplemental = async {
@@ -188,7 +204,7 @@ impl MemoryService for CompositeMemoryService {
                         Ok(recall) => recall,
                         Err(_) => SupplementalRecall {
                             items: Vec::new(),
-                            health: crate::backends::gbrain::SupplementalRecallHealth {
+                            health: crate::backends::supplemental::SupplementalRecallHealth {
                                 degraded: true,
                                 error_category: Some(SupplementalErrorCategory::Timeout),
                                 queue_depth: service.queue_depth(),
@@ -200,10 +216,27 @@ impl MemoryService for CompositeMemoryService {
             }
         };
         let (local, supplemental) = tokio::join!(local, supplemental);
-        let local = local.map_err(|_| anyhow::anyhow!("local memory recall timed out"))??;
+        let local = match local {
+            Ok(Ok(local)) => local,
+            Ok(Err(error)) => {
+                lifecycle.apply(MemoryOperationEvent::Fail)?;
+                return Err(error);
+            }
+            Err(_) => {
+                lifecycle.apply(MemoryOperationEvent::Fail)?;
+                return Err(anyhow::anyhow!("local memory recall timed out"));
+            }
+        };
+        lifecycle.apply(MemoryOperationEvent::LocalRecallFinished)?;
         let Some(supplemental) = supplemental else {
+            lifecycle.apply(MemoryOperationEvent::SupplementalRecallSkipped)?;
             return Ok(local);
         };
+        lifecycle.apply(if supplemental.health.degraded {
+            MemoryOperationEvent::SupplementalRecallDegraded
+        } else {
+            MemoryOperationEvent::SupplementalRecalled
+        })?;
         self.update_health(
             supplemental.health.degraded,
             supplemental.health.error_category,
@@ -215,20 +248,22 @@ impl MemoryService for CompositeMemoryService {
         }
         let mut degraded_sources = local.degraded_sources;
         if supplemental.health.degraded {
-            degraded_sources.push("gbrain".into());
+            degraded_sources.push("supplemental_memory".into());
         }
         let metrics = self
             .supplemental
             .as_ref()
             .and_then(|service| service.metrics());
-        Ok(RecallSet {
+        let result = RecallSet {
             items: crate::recall::merge_items(
                 [local.items, supplemental_items],
                 &request,
                 metrics.as_ref(),
             ),
             degraded_sources,
-        })
+        };
+        lifecycle.apply(MemoryOperationEvent::MergeFinished)?;
+        Ok(result)
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {

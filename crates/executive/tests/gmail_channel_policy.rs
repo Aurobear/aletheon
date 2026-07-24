@@ -1,13 +1,13 @@
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::channel::gmail::classifier::GmailClassification;
-use executive::r#impl::channel::gmail::sender_policy::{
+use executive::testing::channel::gmail::classifier::GmailClassification;
+use executive::testing::channel::gmail::sender_policy::{
     AuthenticationRequirement, GmailHeader, GmailSenderPolicy, SenderPolicyError,
 };
-use executive::r#impl::channel::gmail::{
+use executive::testing::channel::gmail::{
     GmailChannelMessage, GmailChannelStore, GmailInsertOutcome,
 };
-use executive::r#impl::external::ExternalIdentityRepository;
-use fabric::{ExternalIdentityId, ExternalScope, PrincipalId};
+use executive::testing::external::ExternalIdentityRepository;
+use fabric::{ExternalCapabilityId, ExternalIdentityId, PrincipalId};
 use std::collections::HashSet;
 
 struct Fixture {
@@ -31,7 +31,7 @@ impl Fixture {
                     identity_id: account,
                     provider_subject: "subject".into(),
                     email: "owner@example.com".into(),
-                    scopes: vec![ExternalScope::GmailReadonly],
+                    scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
                 },
                 Some("work".into()),
                 1,

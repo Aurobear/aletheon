@@ -299,7 +299,7 @@ fn git(repo: &Path, args: &[&str]) {
         .current_dir(repo)
         .status()
         .unwrap();
-    assert!(status.success(), "git {:?} failed", args);
+    assert!(status.success(), "git {args:?} failed");
 }
 
 fn output(repo: &Path, args: &[&str]) -> String {
@@ -308,7 +308,7 @@ fn output(repo: &Path, args: &[&str]) -> String {
         .current_dir(repo)
         .output()
         .unwrap();
-    assert!(output.status.success(), "git {:?} failed", args);
+    assert!(output.status.success(), "git {args:?} failed");
     String::from_utf8(output.stdout).unwrap()
 }
 

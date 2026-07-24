@@ -1,0 +1,3 @@
+architecture-check: 23 findings, 36 dependencies, 5 paths; no additions
+
+DURATION_SECONDS=1.89

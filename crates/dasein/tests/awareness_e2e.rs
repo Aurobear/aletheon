@@ -48,7 +48,7 @@ fn test_growth_suggestion_flow() {
     let history: Vec<SelfAwareness> = (0..20)
         .map(|i| {
             SelfAwareness::with_extensions(
-                format!("action {}", i),
+                format!("action {i}"),
                 vec![AwarenessExtension::Intent {
                     reason: "reason".into(),
                 }],

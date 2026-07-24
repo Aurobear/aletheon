@@ -71,7 +71,7 @@ impl ProcessTable {
             let mut records = self.records.lock().await;
             let runtime = records
                 .get_mut(&id)
-                .ok_or_else(|| anyhow::anyhow!("unknown process: {:?}", id))?;
+                .ok_or_else(|| anyhow::anyhow!("unknown process: {id:?}"))?;
             let from = runtime.record.state;
             if !from.can_transition_to(next) {
                 anyhow::bail!("illegal process transition {from:?} -> {next:?}");
@@ -92,7 +92,7 @@ impl ProcessTable {
         let mut records = self.records.lock().await;
         let runtime = records
             .get_mut(&id)
-            .ok_or_else(|| anyhow::anyhow!("unknown process: {:?}", id))?;
+            .ok_or_else(|| anyhow::anyhow!("unknown process: {id:?}"))?;
         runtime.active_operation = operation;
         Ok(())
     }
@@ -102,7 +102,7 @@ impl ProcessTable {
             let mut records = self.records.lock().await;
             let runtime = records
                 .get_mut(&id)
-                .ok_or_else(|| anyhow::anyhow!("unknown process: {:?}", id))?;
+                .ok_or_else(|| anyhow::anyhow!("unknown process: {id:?}"))?;
             let from = runtime.record.state;
             anyhow::ensure!(!from.is_terminal(), "process {id:?} is already terminal");
             let terminal = match &reason {
@@ -137,9 +137,9 @@ impl ProcessTable {
         let mut records = self.records.lock().await;
         let runtime = records
             .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("unknown process: {:?}", id))?;
+            .ok_or_else(|| anyhow::anyhow!("unknown process: {id:?}"))?;
         if !runtime.record.state.is_terminal() {
-            anyhow::bail!("cannot reap non-terminal process {:?}", id);
+            anyhow::bail!("cannot reap non-terminal process {id:?}");
         }
         Ok(records.remove(&id).expect("checked above").record)
     }
@@ -150,7 +150,7 @@ impl ProcessTable {
                 let records = self.records.lock().await;
                 let runtime = records
                     .get(&id)
-                    .ok_or_else(|| anyhow::anyhow!("unknown process: {:?}", id))?;
+                    .ok_or_else(|| anyhow::anyhow!("unknown process: {id:?}"))?;
                 if let Some(exit) = &runtime.record.exit {
                     return Ok(exit.clone());
                 }
@@ -279,7 +279,7 @@ impl ProcessManager for ProcessTable {
         let records = self.records.lock().await;
         let runtime = records
             .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("unknown process: {:?}", id))?;
+            .ok_or_else(|| anyhow::anyhow!("unknown process: {id:?}"))?;
         Ok(Self::snapshot(runtime))
     }
 }

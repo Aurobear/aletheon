@@ -139,6 +139,60 @@ enum Commands {
         #[arg(short = 'd', long)]
         project_dir: Option<PathBuf>,
     },
+    /// Manage extension packages.
+    Extension {
+        #[command(subcommand)]
+        sub: ExtensionCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExtensionCmd {
+    /// Inspect an extension package archive.
+    Inspect { path: PathBuf },
+    /// Validate an extension package without installing.
+    Validate { path: PathBuf },
+    /// Install an extension package.
+    Install {
+        path: PathBuf,
+        /// Explicitly trust an archive located under `.aletheon/extensions`.
+        #[arg(long)]
+        trust_workspace: bool,
+    },
+    /// List installed extensions.
+    List,
+    /// Show details for an installed extension.
+    Show { id: String },
+    /// Enable an installed extension.
+    Enable {
+        id: String,
+        /// Explicitly approve newly requested assets and permissions.
+        #[arg(long)]
+        approve_permissions: bool,
+    },
+    /// Disable an active extension.
+    Disable { id: String },
+    /// Upgrade an extension to a newer package.
+    Upgrade {
+        /// Path to the new package archive.
+        path: PathBuf,
+        /// Explicitly approve permission or capability additions.
+        #[arg(long)]
+        approve_permissions: bool,
+        /// Explicitly trust an archive located under `.aletheon/extensions`.
+        #[arg(long)]
+        trust_workspace: bool,
+    },
+    /// Rollback to the previous known-good version.
+    Rollback { id: String },
+    /// Remove an extension (deactivate but keep package).
+    Remove { id: String },
+    /// Purge an extension (remove package and all state).
+    Purge { id: String },
+    /// Run diagnostics on an extension.
+    Doctor { id: String },
+    /// Import legacy filesystem extensions into the package store.
+    ImportLegacy,
 }
 
 #[derive(Subcommand)]
@@ -161,6 +215,123 @@ enum ConfigSub {
         #[arg(short = 'd', long)]
         project_dir: Option<PathBuf>,
     },
+}
+
+// ── Extension handler ────────────────────────────────────────────────────
+
+async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
+    use executive::application::extension_install::ExtensionInstallService;
+    use executive::application::extension_manage::ExtensionManageService;
+    let store_root = ExtensionInstallService::configured_user_root();
+    let install_svc = ExtensionInstallService::new(&store_root)?;
+    let explicit_approval = matches!(
+        cmd,
+        ExtensionCmd::Enable {
+            approve_permissions: true,
+            ..
+        } | ExtensionCmd::Upgrade {
+            approve_permissions: true,
+            ..
+        }
+    );
+    let manage_svc = if explicit_approval {
+        let actor = std::env::var("USER").unwrap_or_else(|_| "local-operator".into());
+        ExtensionManageService::new(&store_root)?.with_approval_port(std::sync::Arc::new(
+            executive::application::extension_manage::ExplicitOperatorApproval::new(actor),
+        ))
+    } else {
+        ExtensionManageService::new(&store_root)?
+    };
+
+    match cmd {
+        ExtensionCmd::Inspect { path } => {
+            let result = install_svc.inspect(path)?;
+            println!("Package: {}", result.manifest.package.id.0);
+            println!("Version: {}", result.manifest.package.version.0);
+            println!("Hash: {}", result.package_hash);
+            println!("Files: {}", result.file_count);
+            println!("Total size: {} bytes", result.total_size);
+            println!("Assets:");
+            for asset in &result.manifest.assets {
+                println!("  - {} ({})", asset.id, serde_json::to_string(&asset.kind)?);
+            }
+        }
+        ExtensionCmd::Validate { path } => {
+            install_svc.inspect(path)?;
+            println!("Package is valid.");
+        }
+        ExtensionCmd::Install {
+            path,
+            trust_workspace,
+        } => {
+            let actor = trust_workspace
+                .then(|| std::env::var("USER").unwrap_or_else(|_| "local-operator".into()));
+            let hash = install_svc.install_with_workspace_trust(path, actor.as_deref())?;
+            println!("Installed package with hash: {hash}");
+        }
+        ExtensionCmd::List => {
+            let packages = install_svc.list()?;
+            if packages.is_empty() {
+                println!("No extensions installed.");
+            } else {
+                for pkg in packages {
+                    println!("{}\t{}\t{}", pkg.id, pkg.version, pkg.hash);
+                }
+            }
+        }
+        ExtensionCmd::Show { id } => {
+            println!("{}", serde_json::to_string_pretty(&install_svc.show(id)?)?);
+        }
+        ExtensionCmd::Enable { id, .. } => {
+            manage_svc.enable(id)?;
+            println!("Extension '{id}' enabled.");
+        }
+        ExtensionCmd::Disable { id } => {
+            manage_svc.disable(id)?;
+            println!("Extension '{id}' disabled.");
+        }
+        ExtensionCmd::Upgrade {
+            path,
+            trust_workspace,
+            ..
+        } => {
+            let actor = trust_workspace
+                .then(|| std::env::var("USER").unwrap_or_else(|_| "local-operator".into()));
+            manage_svc.upgrade_with_workspace_trust(path, actor.as_deref())?;
+            println!("Extension upgraded from '{}'.", path.display());
+        }
+        ExtensionCmd::Rollback { id } => {
+            manage_svc.rollback(id)?;
+            println!("Extension '{id}' rolled back.");
+        }
+        ExtensionCmd::Remove { id } => {
+            manage_svc.remove(id)?;
+            println!("Extension '{id}' removed.");
+        }
+        ExtensionCmd::Purge { id } => {
+            manage_svc.purge(id)?;
+            println!("Extension '{id}' purged.");
+        }
+        ExtensionCmd::Doctor { id } => {
+            let result = manage_svc.doctor(id)?;
+            println!(
+                "Extension '{}': healthy={}, issues={:?}, legacy_reads={:?}, remaining_legacy={}",
+                result.id,
+                result.healthy,
+                result.issues,
+                result.migration_report.compatibility_reads,
+                result.migration_report.remaining_candidates,
+            );
+        }
+        ExtensionCmd::ImportLegacy => {
+            let imported = manage_svc.import_legacy(&store_root.join("legacy"))?;
+            println!(
+                "Imported {} legacy extensions: {imported:?}",
+                imported.len()
+            );
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -264,6 +435,7 @@ async fn main() -> Result<()> {
             init_tracing("aletheon::doctor");
             handle_doctor(*json, config.as_deref(), project_dir.as_deref()).await
         }
+        (Some(Commands::Extension { sub }), _) => handle_extension(sub).await,
         (Some(Commands::RestoreTerminal), _) => {
             interact::tui::restore_terminal();
             println!("Terminal restored to normal state.");
@@ -303,7 +475,7 @@ async fn main() -> Result<()> {
 // ── Config & Doctor handlers ────────────────────────────────────────────────
 
 async fn handle_config(sub: &ConfigSub) -> Result<()> {
-    use executive::core::config;
+    use executive::composition::config;
     match sub {
         ConfigSub::Effective {
             config,
@@ -354,8 +526,8 @@ async fn handle_doctor(
     config_path: Option<&std::path::Path>,
     project_dir: Option<&std::path::Path>,
 ) -> Result<()> {
-    use executive::core::config;
-    use executive::r#impl::doctor::DoctorReport;
+    use executive::composition::config;
+    use executive::host::doctor::DoctorReport;
     let loaded = if let Some(path) = config_path {
         let txt = std::fs::read_to_string(path)?;
         let layer = config::ConfigLayer::from_toml(
@@ -396,6 +568,15 @@ async fn handle_doctor(
             report.turn_recovery.turns_scanned,
             report.turn_recovery.incomplete_turns_recovered
         );
+        println!(
+            "  profiles:  {} quarantined{}",
+            report.quarantined_profiles.count,
+            if report.quarantined_profiles.names.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", report.quarantined_profiles.names.join(", "))
+            }
+        );
         for warning in &report.warnings {
             println!("  WARNING:   {warning}");
         }
@@ -411,8 +592,7 @@ fn init_tracing(target: &str) {
     } else {
         // Capture info-level logs from aletheon + key runtime subsystems
         EnvFilter::new(format!(
-            "{}=info,runtime=info,cognit=info,corpus=info",
-            target
+            "{target}=info,runtime=info,cognit=info,corpus=info"
         ))
     };
 

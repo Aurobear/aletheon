@@ -3,8 +3,8 @@
 //! Tests the complete path from /goal → Draft → resume → tick →
 //! pause → restart recovery → re-tick → cancel → restart (terminal).
 
-use executive::r#impl::goal::coordinator::{GoalCoordinator, GoalTickOutcome};
-use executive::r#impl::goal::ObjectiveStore;
+use executive::goal::coordinator::{GoalCoordinator, GoalTickOutcome};
+use executive::goal::ObjectiveStore;
 use fabric::goal::{GoalBudget, GoalId, GoalSpec, GoalState};
 use fabric::PrincipalId;
 use std::sync::{Arc, Mutex};

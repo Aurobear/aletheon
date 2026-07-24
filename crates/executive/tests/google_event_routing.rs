@@ -1,19 +1,19 @@
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::external::ExternalIdentityRepository;
-use executive::r#impl::goal::coordinator::{GoalCoordinator, GoogleEventWaitCondition};
-use executive::r#impl::goal::ObjectiveStore;
-use executive::r#impl::google::{
+use executive::goal::coordinator::{ExternalEventWaitCondition, GoalCoordinator};
+use executive::goal::ObjectiveStore;
+use executive::testing::external::ExternalIdentityRepository;
+use executive::testing::provider_account::{
     DurableGoogleNotificationSink, GoogleCurrentTaskProjection, GoogleEventDispatcher,
     GoogleEventRouter, GoogleMemoryProposalSink, GoogleSubscription, GoogleSubscriptionQuery,
     GoogleSyncStore, ProjectionWrite, SyncCommit, SyncStream,
 };
 use fabric::goal::{GoalBudget, GoalSpec, GoalState, GoalWaitReason};
 use fabric::{
-    ExternalEventDraft, ExternalEventEnvelope, ExternalEventId, ExternalIdentityId,
-    ExternalObjectRef, ExternalScope, GmailMessageSummary, GoogleEvent, IdentityProvider,
-    MailChange, PrincipalId, ProviderRecordRef,
+    ExternalCapabilityId, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
+    ExternalEventId, ExternalIdentityId, ExternalObjectRef, ExternalProviderId, ExternalRecordRef,
+    MailChange, MailMessageSummary, OpaqueCursor, OpaqueProviderObjectId, PrincipalId,
 };
-use gateway::store::ChannelStore;
+use gateway::ChannelStore;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -38,7 +38,7 @@ impl GoogleCurrentTaskProjection for TaskProjection {
 #[derive(Default)]
 struct MemoryProposals {
     seen: Mutex<HashSet<ExternalEventId>>,
-    provenance: Mutex<Vec<ProviderRecordRef>>,
+    provenance: Mutex<Vec<ExternalRecordRef>>,
 }
 
 impl GoogleMemoryProposalSink for MemoryProposals {
@@ -80,7 +80,7 @@ impl Fixture {
                     identity_id: account,
                     provider_subject: "subject".into(),
                     email: "owner@example.com".into(),
-                    scopes: vec![ExternalScope::GmailReadonly],
+                    scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
                 },
                 Some("work".into()),
                 1,
@@ -97,30 +97,30 @@ impl Fixture {
 
     fn event(&self, version: &str, source_ms: i64) -> ExternalEventEnvelope {
         let object = ExternalObjectRef {
-            provider: IdentityProvider::Google,
+            provider: ExternalProviderId::new("google").unwrap(),
             account_id: self.account,
             object_id: "message-1".into(),
             object_version: version.into(),
         };
-        let source = ProviderRecordRef {
+        let source = ExternalRecordRef {
             account_id: self.account,
-            provider_object_id: "message-1".into(),
+            provider_object_id: OpaqueProviderObjectId::new("message-1").unwrap(),
             fetched_at_ms: source_ms + 1,
             source_timestamp_ms: source_ms,
-            etag_or_history: Some(version.into()),
+            etag_or_history: Some(OpaqueCursor::new(version).unwrap()),
         };
         ExternalEventEnvelope::from_draft(ExternalEventDraft {
-            provider: IdentityProvider::Google,
+            provider: ExternalProviderId::new("google").unwrap(),
             account_id: self.account,
             provider_event_id: Some(format!("history-{version}")),
             object,
             observed_at_ms: source_ms + 1,
             source_timestamp_ms: source_ms,
             provenance: source.clone(),
-            event: GoogleEvent::MailReceived(MailChange {
-                message: GmailMessageSummary {
+            event: ExternalEvent::MailReceived(MailChange {
+                message: MailMessageSummary {
                     source,
-                    thread_id: "thread".into(),
+                    thread_id: OpaqueProviderObjectId::new("thread").unwrap(),
                     subject: "important subject".into(),
                     from: "sender@example.com".into(),
                     snippet: "snippet".into(),
@@ -197,7 +197,7 @@ async fn subscriptions_route_once_wake_explicit_goals_and_keep_memory_as_proposa
             &serde_json::json!({"test":true}),
         )
         .unwrap();
-    let condition = GoogleEventWaitCondition {
+    let condition = ExternalEventWaitCondition {
         account_id: fixture.account,
         event_id: None,
         object_id: Some("message-1".into()),

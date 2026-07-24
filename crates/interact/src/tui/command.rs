@@ -4,6 +4,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum BuiltinCommand {
     Help,
+    New,
     Clear,
     Status,
     Quit,
@@ -13,23 +14,44 @@ pub enum BuiltinCommand {
     ReflectNow,
     Evolution,
     Genome,
-    Computer { args: String },
+    Computer {
+        args: String,
+    },
     Sessions,
-    Resume { id: String },
+    Resume {
+        id: String,
+    },
+    Fork,
     Compact,
     Model,
-    Mode { name: String },
+    Permissions,
+    Mode {
+        name: String,
+    },
     Plan,
     Approve,
     Agents,
-    AgentDetail { id: String },
+    AgentDetail {
+        id: String,
+    },
     Hooks,
     Skills,
-    SkillRun { name: String, args: String },
+    SkillRun {
+        name: String,
+        args: String,
+    },
     Interrupt,
     Context,
     Profile,
-    ProfileSet { name: String },
+    ProfileSet {
+        name: String,
+    },
+    Diff,
+    Mention {
+        path: String,
+    },
+    /// Query session memory (facts, recall, core blocks).
+    Memory,
 }
 
 /// Parsed command type.
@@ -39,68 +61,18 @@ pub enum CommandType {
     Builtin(BuiltinCommand),
     /// Skill-based command with arguments.
     Skill { name: String, args: String },
+    /// Slash token that is neither a registered builtin nor a daemon Skill.
+    Unknown {
+        name: String,
+        args: String,
+        suggestions: Vec<String>,
+    },
 }
 
 /// Parse input starting with '/' into a CommandType.
 /// Returns None if input doesn't start with '/'.
 pub fn parse_command(input: &str) -> Option<CommandType> {
-    let text = input.strip_prefix('/')?;
-    let (name, args) = match text.find(' ') {
-        Some(i) => (&text[..i], text[i + 1..].trim()),
-        None => (text, ""),
-    };
-
-    match name {
-        "help" => Some(CommandType::Builtin(BuiltinCommand::Help)),
-        "clear" => Some(CommandType::Builtin(BuiltinCommand::Clear)),
-        "status" | "st" => Some(CommandType::Builtin(BuiltinCommand::Status)),
-        "quit" | "exit" => Some(CommandType::Builtin(BuiltinCommand::Quit)),
-        "input" | "i" => Some(CommandType::Builtin(BuiltinCommand::Input)),
-        "copy" | "cp" => Some(CommandType::Builtin(BuiltinCommand::Copy)),
-        "reflect" | "r" => Some(CommandType::Builtin(BuiltinCommand::Reflect)),
-        "reflect_now" | "rn" => Some(CommandType::Builtin(BuiltinCommand::ReflectNow)),
-        "evolution" | "evo" => Some(CommandType::Builtin(BuiltinCommand::Evolution)),
-        "genome" | "gene" => Some(CommandType::Builtin(BuiltinCommand::Genome)),
-        "computer" => Some(CommandType::Builtin(BuiltinCommand::Computer {
-            args: args.to_string(),
-        })),
-        "sessions" | "sess" => Some(CommandType::Builtin(BuiltinCommand::Sessions)),
-        "resume" => Some(CommandType::Builtin(BuiltinCommand::Resume {
-            id: args.to_string(),
-        })),
-        "compact" | "cmp" => Some(CommandType::Builtin(BuiltinCommand::Compact)),
-        "model" | "m" => Some(CommandType::Builtin(BuiltinCommand::Model)),
-        "mode" => Some(CommandType::Builtin(BuiltinCommand::Mode {
-            name: args.to_string(),
-        })),
-        "plan" | "p" => Some(CommandType::Builtin(BuiltinCommand::Plan)),
-        "approve" | "a" => Some(CommandType::Builtin(BuiltinCommand::Approve)),
-        "agents" | "ag" => Some(CommandType::Builtin(BuiltinCommand::Agents)),
-        "agent" => Some(CommandType::Builtin(BuiltinCommand::AgentDetail {
-            id: args.to_string(),
-        })),
-        "hooks" | "hk" => Some(CommandType::Builtin(BuiltinCommand::Hooks)),
-        "skills" | "sk" => Some(CommandType::Builtin(BuiltinCommand::Skills)),
-        "skill" => Some(CommandType::Builtin(BuiltinCommand::SkillRun {
-            name: args.to_string(),
-            args: String::new(),
-        })),
-        "interrupt" | "int" => Some(CommandType::Builtin(BuiltinCommand::Interrupt)),
-        "context" | "ctx" => Some(CommandType::Builtin(BuiltinCommand::Context)),
-        "profile" | "prof" => {
-            if args.is_empty() {
-                Some(CommandType::Builtin(BuiltinCommand::Profile))
-            } else {
-                Some(CommandType::Builtin(BuiltinCommand::ProfileSet {
-                    name: args.to_string(),
-                }))
-            }
-        }
-        _ => Some(CommandType::Skill {
-            name: name.to_string(),
-            args: args.to_string(),
-        }),
-    }
+    super::registry::CommandRegistry::new().parse(input)
 }
 
 /// Decide whether input should be treated as a slash command (vs. regular
@@ -142,11 +114,11 @@ mod tests {
     fn test_parse_skill_no_args() {
         let result = parse_command("/code-review").unwrap();
         match result {
-            CommandType::Skill { name, args } => {
+            CommandType::Unknown { name, args, .. } => {
                 assert_eq!(name, "code-review");
                 assert_eq!(args, "");
             }
-            _ => panic!("Expected Skill"),
+            _ => panic!("Expected unknown command"),
         }
     }
 
@@ -154,11 +126,11 @@ mod tests {
     fn test_parse_skill_with_args() {
         let result = parse_command("/code-review main.rs").unwrap();
         match result {
-            CommandType::Skill { name, args } => {
+            CommandType::Unknown { name, args, .. } => {
                 assert_eq!(name, "code-review");
                 assert_eq!(args, "main.rs");
             }
-            _ => panic!("Expected Skill"),
+            _ => panic!("Expected unknown command"),
         }
     }
 

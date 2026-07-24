@@ -83,7 +83,7 @@ impl Tool for ModuleLoadTool {
                 // Check file exists
                 if !std::path::Path::new(ko_path).exists() {
                     return ToolResult {
-                        content: format!("Module file not found: {}", ko_path),
+                        content: format!("Module file not found: {ko_path}"),
                         is_error: true,
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -119,10 +119,9 @@ impl Tool for ModuleLoadTool {
                             ToolResult {
                                 content: format!(
                                     "Kernel module loaded successfully.\n\
-                                     Path: {}\n\
-                                     Module: {}\n\
-                                     Verified in lsmod: {}",
-                                    ko_path, module_name, loaded
+                                     Path: {ko_path}\n\
+                                     Module: {module_name}\n\
+                                     Verified in lsmod: {loaded}"
                                 ),
                                 is_error: false,
                                 metadata: ToolResultMeta {
@@ -138,7 +137,7 @@ impl Tool for ModuleLoadTool {
                         } else {
                             let stderr = String::from_utf8_lossy(&result.stderr);
                             ToolResult {
-                                content: format!("insmod failed:\n{}", stderr),
+                                content: format!("insmod failed:\n{stderr}"),
                                 is_error: true,
                                 metadata: ToolResultMeta {
                                     execution_time_ms: ctx
@@ -153,7 +152,7 @@ impl Tool for ModuleLoadTool {
                         }
                     }
                     Err(e) => ToolResult {
-                        content: format!("Failed to run insmod: {}", e),
+                        content: format!("Failed to run insmod: {e}"),
                         is_error: true,
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -180,7 +179,7 @@ impl Tool for ModuleLoadTool {
                     Ok(result) => {
                         if result.status.success() {
                             ToolResult {
-                                content: format!("Module {} unloaded successfully.", module_name),
+                                content: format!("Module {module_name} unloaded successfully."),
                                 is_error: false,
                                 metadata: ToolResultMeta {
                                     execution_time_ms: ctx
@@ -195,7 +194,7 @@ impl Tool for ModuleLoadTool {
                         } else {
                             let stderr = String::from_utf8_lossy(&result.stderr);
                             ToolResult {
-                                content: format!("rmmod failed:\n{}", stderr),
+                                content: format!("rmmod failed:\n{stderr}"),
                                 is_error: true,
                                 metadata: ToolResultMeta {
                                     execution_time_ms: ctx
@@ -210,7 +209,7 @@ impl Tool for ModuleLoadTool {
                         }
                     }
                     Err(e) => ToolResult {
-                        content: format!("Failed to run rmmod: {}", e),
+                        content: format!("Failed to run rmmod: {e}"),
                         is_error: true,
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -243,7 +242,7 @@ impl Tool for ModuleLoadTool {
             }
             _ => {
                 return ToolResult {
-                    content: format!("Unknown action: {}. Use load, unload, or reload.", action),
+                    content: format!("Unknown action: {action}. Use load, unload, or reload."),
                     is_error: true,
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),

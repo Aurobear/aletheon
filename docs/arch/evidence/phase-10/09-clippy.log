@@ -1,0 +1,10 @@
+    Checking corpus v0.1.0 (/home/aurobear/Workspace/aletheon/crates/corpus)
+    Checking gateway v0.1.0 (/home/aurobear/Workspace/aletheon/crates/gateway)
+    Checking executive v0.1.0 (/home/aurobear/Workspace/aletheon/crates/executive)
+    Checking aletheon v0.1.0 (/home/aurobear/Workspace/aletheon/crates/aletheon)
+    Checking evolution_loop v0.1.0 (/home/aurobear/Workspace/aletheon/examples/evolution_loop)
+    Checking interact v0.1.0 (/home/aurobear/Workspace/aletheon/crates/interact)
+    Checking basic_agent v0.1.0 (/home/aurobear/Workspace/aletheon/examples/basic_agent)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 34.17s
+
+DURATION_SECONDS=34.47

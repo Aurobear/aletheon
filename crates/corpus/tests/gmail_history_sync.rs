@@ -4,7 +4,7 @@ use corpus::tools::google::{
     GoogleApiClient, GoogleApiEndpoints, GoogleApiError, GoogleCredentialSource,
     GoogleGmailAdapter,
 };
-use fabric::{ExternalIdentityId, ExternalScope, GoogleEvent, PrincipalId};
+use fabric::{ExternalCapabilityId, ExternalEvent, ExternalIdentityId, PrincipalId};
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};
 use hyper::service::service_fn;
@@ -28,7 +28,7 @@ impl GoogleCredentialSource for Credentials {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        scope: ExternalScope,
+        scope: ExternalCapabilityId,
     ) -> Result<GoogleAccessToken, GoogleApiError> {
         self.authorize(principal, account, scope)?;
         GoogleAccessToken::new("access-secret".into())
@@ -38,7 +38,7 @@ impl GoogleCredentialSource for Credentials {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        scope: ExternalScope,
+        scope: ExternalCapabilityId,
     ) -> Result<GoogleAccessToken, GoogleApiError> {
         self.authorize(principal, account, scope)?;
         self.refreshes.fetch_add(1, Ordering::SeqCst);
@@ -51,12 +51,12 @@ impl Credentials {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        scope: ExternalScope,
+        scope: ExternalCapabilityId,
     ) -> Result<(), GoogleApiError> {
         if principal != &self.owner || account != self.account {
             return Err(GoogleApiError::UnauthorizedAccount);
         }
-        if scope != ExternalScope::GmailReadonly {
+        if scope != ExternalCapabilityId::new("mail.read").unwrap() {
             return Err(GoogleApiError::ScopeDenied);
         }
         Ok(())
@@ -228,10 +228,16 @@ async fn paginated_add_update_delete_and_duplicate_history_are_ordered_and_bound
     assert_eq!(batch.events.len(), 3);
     assert!(matches!(
         batch.events[0].event,
-        GoogleEvent::MailReceived(_)
+        ExternalEvent::MailReceived(_)
     ));
-    assert!(matches!(batch.events[1].event, GoogleEvent::MailUpdated(_)));
-    assert!(matches!(batch.events[2].event, GoogleEvent::MailDeleted(_)));
+    assert!(matches!(
+        batch.events[1].event,
+        ExternalEvent::MailUpdated(_)
+    ));
+    assert!(matches!(
+        batch.events[2].event,
+        ExternalEvent::MailDeleted(_)
+    ));
     assert!(requests
         .lock()
         .unwrap()

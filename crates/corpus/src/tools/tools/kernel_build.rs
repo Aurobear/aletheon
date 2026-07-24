@@ -106,8 +106,7 @@ impl Tool for KernelBuildTool {
             "install" => self.action_install(&source_dir, &*ctx.clock, start).await,
             _ => ToolResult {
                 content: format!(
-                    "Unknown action: {}. Valid actions: clone, config, build, install",
-                    action
+                    "Unknown action: {action}. Valid actions: clone, config, build, install"
                 ),
                 is_error: true,
                 metadata: ToolResultMeta {
@@ -143,8 +142,7 @@ impl KernelBuildTool {
         if std::path::Path::new(source_dir).exists() {
             return ToolResult {
                 content: format!(
-                    "Directory already exists: {}. Remove it first or use a different source_dir.",
-                    source_dir
+                    "Directory already exists: {source_dir}. Remove it first or use a different source_dir."
                 ),
                 is_error: true,
                 metadata: ToolResultMeta {
@@ -168,10 +166,9 @@ impl KernelBuildTool {
                     ToolResult {
                         content: format!(
                             "Kernel source cloned successfully.\n\
-                             Repository: {}\n\
-                             Branch: {}\n\
-                             Directory: {}",
-                            repo_url, branch, source_dir
+                             Repository: {repo_url}\n\
+                             Branch: {branch}\n\
+                             Directory: {source_dir}"
                         ),
                         is_error: false,
                         metadata: ToolResultMeta {
@@ -183,7 +180,7 @@ impl KernelBuildTool {
                 } else {
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     ToolResult {
-                        content: format!("git clone failed:\n{}", stderr),
+                        content: format!("git clone failed:\n{stderr}"),
                         is_error: true,
                         metadata: ToolResultMeta {
                             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
@@ -194,7 +191,7 @@ impl KernelBuildTool {
                 }
             }
             Err(e) => ToolResult {
-                content: format!("Failed to run git: {}", e),
+                content: format!("Failed to run git: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
@@ -217,14 +214,14 @@ impl KernelBuildTool {
         let copy_result = tokio::process::Command::new("cp")
             .args([
                 &format!("/boot/config-{}", get_running_kernel_version()),
-                &format!("{}/.config", source_dir),
+                &format!("{source_dir}/.config"),
             ])
             .output()
             .await;
 
         if let Err(e) = copy_result {
             return ToolResult {
-                content: format!("Failed to copy kernel config: {}", e),
+                content: format!("Failed to copy kernel config: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
@@ -261,7 +258,7 @@ impl KernelBuildTool {
                 } else {
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     ToolResult {
-                        content: format!("make olddefconfig failed:\n{}", stderr),
+                        content: format!("make olddefconfig failed:\n{stderr}"),
                         is_error: true,
                         metadata: ToolResultMeta {
                             execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
@@ -272,7 +269,7 @@ impl KernelBuildTool {
                 }
             }
             Err(e) => ToolResult {
-                content: format!("Failed to run make: {}", e),
+                content: format!("Failed to run make: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
@@ -298,13 +295,7 @@ impl KernelBuildTool {
         info!("Building kernel with {} jobs", jobs);
 
         let output = tokio::process::Command::new("make")
-            .args([
-                "-C",
-                source_dir,
-                &format!("-j{}", jobs),
-                "bzImage",
-                "modules",
-            ])
+            .args(["-C", source_dir, &format!("-j{jobs}"), "bzImage", "modules"])
             .output()
             .await;
 
@@ -312,7 +303,7 @@ impl KernelBuildTool {
             Ok(result) => {
                 if result.status.success() {
                     // Find the built kernel image
-                    let image_path = format!("{}/arch/x86/boot/bzImage", source_dir);
+                    let image_path = format!("{source_dir}/arch/x86/boot/bzImage");
                     let image_exists = std::path::Path::new(&image_path).exists();
 
                     ToolResult {
@@ -349,8 +340,7 @@ impl KernelBuildTool {
                     ToolResult {
                         content: format!(
                             "Kernel build failed.\n\
-                             Last errors:\n{}",
-                            stderr_tail
+                             Last errors:\n{stderr_tail}"
                         ),
                         is_error: true,
                         metadata: ToolResultMeta {
@@ -362,7 +352,7 @@ impl KernelBuildTool {
                 }
             }
             Err(e) => ToolResult {
-                content: format!("Failed to run make: {}", e),
+                content: format!("Failed to run make: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
@@ -404,7 +394,7 @@ impl KernelBuildTool {
             }
             Err(e) => {
                 return ToolResult {
-                    content: format!("Failed to run make modules_install: {}", e),
+                    content: format!("Failed to run make modules_install: {e}"),
                     is_error: true,
                     metadata: ToolResultMeta {
                         execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
@@ -439,7 +429,7 @@ impl KernelBuildTool {
             }
             Err(e) => {
                 return ToolResult {
-                    content: format!("Failed to run make install: {}", e),
+                    content: format!("Failed to run make install: {e}"),
                     is_error: true,
                     metadata: ToolResultMeta {
                         execution_time_ms: clock.mono_now().0.saturating_sub(start.0),
@@ -466,11 +456,10 @@ impl KernelBuildTool {
         ToolResult {
             content: format!(
                 "Kernel installed successfully.\n\
-                 Source: {}\n\
+                 Source: {source_dir}\n\
                  IMPORTANT: Reboot to use the new kernel.\n\
                  Old kernel is preserved in /boot for rollback.\n\
-                 {}",
-                source_dir, grub_msg
+                 {grub_msg}"
             ),
             is_error: false,
             metadata: ToolResultMeta {

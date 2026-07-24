@@ -136,20 +136,31 @@ else
         systemctl --user stop aletheon.service
         log "Stopped user aletheon.service"
     fi
+    # Stop the socket before unlinking it. Removing the path of an active
+    # socket unit leaves systemd believing it is listening while clients see
+    # ENOENT, and the unit cannot be restarted while the service is active.
+    if systemctl --user is-active --quiet aletheon.socket 2>/dev/null; then
+        systemctl --user stop aletheon.socket
+        log "Stopped user aletheon.socket"
+    fi
 fi
 
-# Stop via systemd (the proper way)
-if systemctl is-active --quiet aletheon.service 2>/dev/null; then
-    echo "Stopping aletheon.service..."
-    systemctl stop aletheon.service
+if [[ "$MODE" == "system" ]]; then
+    # Stop via systemd (the proper way).
+    if systemctl is-active --quiet aletheon.service 2>/dev/null; then
+        echo "Stopping aletheon.service..."
+        $USE_SUDO systemctl stop aletheon.service
+    fi
+    # Fallback: use the system pidfile only for a system install.
+    if [[ -f /run/aletheon/aletheon.pid ]]; then
+        echo "Killing daemon via pidfile..."
+        $USE_SUDO kill "$(cat /run/aletheon/aletheon.pid)" 2>/dev/null || true
+    fi
+    $USE_SUDO rm -f /run/aletheon/aletheon.sock
+else
+    # A user install must never mutate the system daemon boundary.
+    rm -f "$SOCKET_PATH"
 fi
-# Fallback: use pidfile if running outside systemd
-if [[ -f /run/aletheon/aletheon.pid ]]; then
-    echo "Killing daemon via pidfile..."
-    kill "$(cat /run/aletheon/aletheon.pid)" 2>/dev/null || true
-fi
-# Clean stale socket
-rm -f /run/aletheon/aletheon.sock
 
 log "Pre-install cleanup complete"
 
@@ -197,11 +208,13 @@ if ! $SKIP_BUILD; then
         log "Running as root (sudo) — building as $SUDO_USER to reuse cargo cache"
         # ensure target/ is writable by the original user
         chown -R "$SUDO_USER:$SUDO_USER" target/ 2>/dev/null || true
-        log "Building release binary (cargo build --release)..."
-        sudo -u "$SUDO_USER" cargo build -p aletheon --release 2>&1
+        log "Building release binary through scripts/cargo-agent.sh..."
+        sudo -u "$SUDO_USER" env CARGO_TARGET_DIR="$PWD/target" \
+            bash scripts/cargo-agent.sh build -p aletheon --release 2>&1
     else
-        log "Building release binary (cargo build --release)..."
-        cargo build -p aletheon --release 2>&1
+        log "Building release binary through scripts/cargo-agent.sh..."
+        CARGO_TARGET_DIR="$PWD/target" \
+            bash scripts/cargo-agent.sh build -p aletheon --release 2>&1
     fi
 
     if [[ ! -f "$BINARY_PATH" ]]; then
@@ -359,10 +372,15 @@ setup_monitor() {
 
     log "Installing MCP monitor bridge..."
 
-    # Copy monitor Python package to data dir
+    # Copy monitor Python package to data dir and install its declared
+    # dependencies into a private environment. The wrapper must not depend on
+    # packages that happen to exist in the invoking user's system Python.
     $USE_SUDO mkdir -p "$MONITOR_DST"
     $USE_SUDO cp -a "$MONITOR_SRC"/* "$MONITOR_DST/"
     $USE_SUDO chmod +x "$MONITOR_DST/run.py"
+    local venv="$MONITOR_DST/.venv"
+    $USE_SUDO python3 -m venv "$venv"
+    $USE_SUDO "$venv/bin/python" -m pip install --disable-pip-version-check "$MONITOR_DST"
 
     # Create wrapper script at $BIN_DIR/aletheon-monitor
     # This wrapper sources the env file so ALETHEON_SOCKET is always set
@@ -378,9 +396,11 @@ elif [[ -f "\$HOME/.config/aletheon/.env" ]]; then
     set -a; source "\$HOME/.config/aletheon/.env"; set +a
 fi
 
-exec python3 "$MONITOR_DST/run.py" "\$@"
+exec "$venv/bin/python" "$MONITOR_DST/run.py" "\$@"
 WRAPPER
     $USE_SUDO chmod +x "$wrapper"
+    $USE_SUDO "$venv/bin/python" -c \
+        "import sys; sys.path.insert(0, '$MONITOR_DST'); from src.server import server"
     log "Monitor wrapper installed: $wrapper"
     log "Monitor files: $MONITOR_DST"
 }
@@ -460,6 +480,30 @@ setup_systemd() {
 }
 
 setup_systemd
+
+# ── 7. Shell completions ─────────────────────────────────────────────────
+
+install_completions() {
+    local bash_source="$SCRIPT_DIR/scripts/completions/aletheon.bash"
+    local zsh_source="$SCRIPT_DIR/scripts/completions/aletheon.zsh"
+
+    if [[ "$MODE" == "system" ]]; then
+        $USE_SUDO install -Dm644 "$bash_source" \
+            /usr/share/bash-completion/completions/aletheon.sh
+        $USE_SUDO install -Dm644 "$zsh_source" \
+            /usr/share/zsh/site-functions/_aletheon.sh
+    else
+        local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+        install -Dm644 "$bash_source" \
+            "$data_home/bash-completion/completions/aletheon.sh"
+        install -Dm644 "$zsh_source" \
+            "$data_home/zsh/site-functions/_aletheon.sh"
+    fi
+
+    log "Bash and Zsh completions installed"
+}
+
+install_completions
 
 # ── Done ─────────────────────────────────────────────────────────────────
 

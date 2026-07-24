@@ -78,7 +78,7 @@ impl Tool for EbpfCompileTool {
         let source = Path::new(source_path);
         if !source.exists() {
             return ToolResult {
-                content: format!("Source file not found: {}", source_path),
+                content: format!("Source file not found: {source_path}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -116,7 +116,7 @@ impl Tool for EbpfCompileTool {
             }
             Err(e) => {
                 return ToolResult {
-                    content: format!("Failed to check for clang: {}", e),
+                    content: format!("Failed to check for clang: {e}"),
                     is_error: true,
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -175,7 +175,7 @@ impl Tool for EbpfCompileTool {
                 } else {
                     let stderr = String::from_utf8_lossy(&result.stderr);
                     ToolResult {
-                        content: format!("eBPF compilation failed:\n{}", stderr),
+                        content: format!("eBPF compilation failed:\n{stderr}"),
                         is_error: true,
                         metadata: ToolResultMeta {
                             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -186,7 +186,7 @@ impl Tool for EbpfCompileTool {
                 }
             }
             Err(e) => ToolResult {
-                content: format!("Failed to run clang: {}", e),
+                content: format!("Failed to run clang: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -215,12 +215,12 @@ async fn verify_bpf_object(path: &str) -> String {
                 if e_machine == 247 {
                     return "OK (EM_BPF)".to_string();
                 } else {
-                    return format!("WARN (e_machine={}, expected 247/EM_BPF)", e_machine);
+                    return format!("WARN (e_machine={e_machine}, expected 247/EM_BPF)");
                 }
             }
             "OK (ELF valid)".to_string()
         }
-        Err(e) => format!("FAIL (cannot read: {})", e),
+        Err(e) => format!("FAIL (cannot read: {e})"),
     }
 }
 

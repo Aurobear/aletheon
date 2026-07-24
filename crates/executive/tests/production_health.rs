@@ -1,10 +1,13 @@
-use executive::r#impl::health::{ComponentHealth, HealthClass, HealthRegistry};
+use executive::runtime::health::{ComponentHealth, HealthClass, HealthRegistry};
 
 #[test]
 fn required_store_failure_is_unready_but_optional_outages_are_degraded() {
     let health = HealthRegistry::production_ready();
     health.set("gbrain_spool", ComponentHealth::degraded("schema_drift"));
-    health.set("google_sync", ComponentHealth::degraded("auth_unavailable"));
+    health.set(
+        "external_sync",
+        ComponentHealth::degraded("auth_unavailable"),
+    );
     let snapshot = health.snapshot();
     assert_eq!(snapshot.liveness, "alive");
     assert_eq!(snapshot.readiness, "degraded");
@@ -29,7 +32,7 @@ fn full_disk_stale_sync_and_overdue_backup_use_counts_and_categories_only() {
     health.set("disk_quota", disk);
     let mut sync = ComponentHealth::degraded("sync_stale");
     sync.age_seconds = Some(7_200);
-    health.set("google_sync", sync);
+    health.set("external_sync", sync);
     let mut backup = ComponentHealth::degraded("backup_overdue");
     backup.age_seconds = Some(200_000);
     health.set("backup", backup);
@@ -106,10 +109,10 @@ fn health_contract_never_accepts_arbitrary_error_bodies() {
 
 #[test]
 fn unix_server_retains_peer_credential_gate() {
-    let server = include_str!("../src/impl/daemon/server.rs");
+    let server = include_str!("../src/host/daemon/server.rs");
     assert!(server.contains("check_peer_cred"));
     assert!(server.contains("Connection rejected by peer credential check"));
-    let script = include_str!("../../../scripts/aletheon-healthcheck.sh");
+    let script = include_str!("../../../scripts/libexec/aletheon/healthcheck.sh");
     assert!(script.contains("AF_UNIX"));
     assert!(script.contains("\"ready\": 0, \"degraded\": 1, \"unready\": 2"));
 }

@@ -1,28 +1,29 @@
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::approval::{ApprovalDecision, ApprovalResolutionContext};
-use executive::r#impl::artifact::{ArtifactRecord, ArtifactScanStatus};
-use executive::r#impl::channel::daemon_adapter::{
-    ApprovalRepositoryPort, DaemonGmailDraftApprovalExecutor,
+use executive::approval::{ApprovalDecision, ApprovalResolutionContext};
+use executive::goal::ObjectiveStore;
+use executive::testing::artifact::{ArtifactRecord, ArtifactScanStatus};
+use executive::testing::channel::daemon_adapter::{
+    ApprovalRepositoryPort, DaemonExternalDraftApprovalExecutor,
 };
-use executive::r#impl::channel::gmail::ingest::{
-    GmailIngestResult, GmailOriginalReference, IngestedAttachment,
+use executive::testing::channel::gmail::ingest::{
+    ExternalEventIngestResult, GmailOriginalReference, IngestedAttachment,
 };
-use executive::r#impl::channel::gmail::sender_policy::{
+use executive::testing::channel::gmail::sender_policy::{
     AuthenticationRequirement, GmailHeader, GmailSenderPolicy,
 };
-use executive::r#impl::channel::gmail::{
+use executive::testing::channel::gmail::{
     GmailChannelMessage, GmailChannelStore, GmailGoalDraftCoordinator,
 };
-use executive::r#impl::external::ExternalIdentityRepository;
-use executive::r#impl::goal::ObjectiveStore;
+use executive::testing::external::ExternalIdentityRepository;
 use fabric::{
-    ApprovalCategory, ApprovalStatus, ExternalIdentityId, ExternalScope, GoalState, PrincipalId,
+    ApprovalCategory, ApprovalStatus, ExternalCapabilityId, ExternalIdentityId, GoalState,
+    PrincipalId,
 };
 use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
 use gateway::registry::ApprovalResolver;
-use gateway::store::ChannelStore;
+use gateway::ChannelStore;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -50,7 +51,7 @@ impl Fixture {
                     identity_id: account,
                     provider_subject: "subject".into(),
                     email: "owner@example.com".into(),
-                    scopes: vec![ExternalScope::GmailReadonly],
+                    scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
                 },
                 Some("work".into()),
                 1,
@@ -73,7 +74,7 @@ impl Fixture {
         }
     }
 
-    fn accepted(&self, id: &str) -> executive::r#impl::channel::gmail::GmailInboxRecord {
+    fn accepted(&self, id: &str) -> executive::testing::channel::gmail::GmailInboxRecord {
         let store = GmailChannelStore::open(&self.path).unwrap();
         store
             .authenticate_and_persist(
@@ -103,8 +104,8 @@ impl Fixture {
             .1
     }
 
-    fn ingested(&self, id: &str, intent: &str) -> GmailIngestResult {
-        GmailIngestResult {
+    fn ingested(&self, id: &str, intent: &str) -> ExternalEventIngestResult {
+        ExternalEventIngestResult {
             body_text: intent.into(),
             original: GmailOriginalReference {
                 account_id: self.account,
@@ -147,12 +148,12 @@ impl Fixture {
 
     fn resolve(
         &self,
-        draft: &executive::r#impl::channel::gmail::GmailGoalDraft,
+        draft: &executive::testing::channel::gmail::GmailGoalDraft,
         principal: &PrincipalId,
         decision: ApprovalDecision,
         now: i64,
     ) -> anyhow::Result<fabric::ApprovalSnapshot> {
-        let repo = executive::r#impl::approval::ApprovalRepository::open(&self.path)?;
+        let repo = executive::approval::ApprovalRepository::open(&self.path)?;
         Ok(repo.resolve(
             draft.approval.id,
             draft.approval.version,
@@ -230,7 +231,7 @@ fn telegram_owner_confirmation_is_durable_and_wrong_or_email_identity_cannot_act
             110,
         )
         .is_err());
-    let repo = executive::r#impl::approval::ApprovalRepository::open(&f.path).unwrap();
+    let repo = executive::approval::ApprovalRepository::open(&f.path).unwrap();
     assert!(repo
         .resolve(
             draft.approval.id,
@@ -446,7 +447,7 @@ async fn telegram_review_has_confirm_edit_reject_and_replayed_confirm_is_idempot
         .unwrap();
     let approval_repo = coordinator.lock().unwrap().approval_repository();
     let gmail_resolver: Arc<dyn ApprovalResolver> =
-        Arc::new(DaemonGmailDraftApprovalExecutor::new(coordinator));
+        Arc::new(DaemonExternalDraftApprovalExecutor::new(coordinator));
     let mut router = ChannelDispatcher::new(channels, Arc::new(NoTurn))
         .with_approval_port(Arc::new(ApprovalRepositoryPort::new(approval_repo)))
         .with_approval_resolver(ApprovalCategory::ActivateGoal, gmail_resolver);

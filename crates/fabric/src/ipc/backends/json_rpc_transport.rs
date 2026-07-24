@@ -60,7 +60,7 @@ impl Transport for JsonRpcTransport {
         // Connect and send as line-delimited JSON
         let mut stream = UnixStream::connect(&self.socket_path)
             .await
-            .map_err(|e| anyhow::anyhow!("JSON-RPC connect failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("JSON-RPC connect failed: {e}"))?;
 
         stream.write_all(&json).await?;
         stream.write_all(b"\n").await?;

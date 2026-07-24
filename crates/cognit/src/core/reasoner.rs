@@ -81,7 +81,7 @@ impl Reasoner {
             if world_state.is_empty() {
                 "No world observations available.".to_string()
             } else {
-                format!("World state: {}", world_state)
+                format!("World state: {world_state}")
             }
         ));
 
@@ -118,7 +118,7 @@ impl Reasoner {
         let care_section = {
             let mut parts: Vec<String> = care_weights
                 .iter()
-                .map(|(k, v)| format!("  {}: {:.2}", k, v))
+                .map(|(k, v)| format!("  {k}: {v:.2}"))
                 .collect();
             parts.sort();
             format!("\nCare priorities:\n{}", parts.join("\n"))
@@ -129,13 +129,12 @@ impl Reasoner {
             base.replace(
                 "Step 4 — Risk:",
                 &format!(
-                    "Step 4 — Risk (values-aware):{}\n\
-                     Consider how actions align with care priorities above.",
-                    care_section
+                    "Step 4 — Risk (values-aware):{care_section}\n\
+                     Consider how actions align with care priorities above."
                 ),
             )
         } else {
-            format!("{}{}", base, care_section)
+            format!("{base}{care_section}")
         }
     }
 
@@ -161,44 +160,37 @@ impl Reasoner {
         match mood {
             Stimmung::Angst { facing } => {
                 result.push_str(&format!(
-                    "\n[Stimmung: Angst — facing {:?}. Deep reasoning engaged to confront existential uncertainty.]",
-                    facing
+                    "\n[Stimmung: Angst — facing {facing:?}. Deep reasoning engaged to confront existential uncertainty.]"
                 ));
             }
             Stimmung::Entschlossenheit { chosen_possibility } => {
                 result.push_str(&format!(
-                    "\n[Stimmung: Entschlossenheit — committed to '{}'. Clear projection ahead.]",
-                    chosen_possibility
+                    "\n[Stimmung: Entschlossenheit — committed to '{chosen_possibility}'. Clear projection ahead.]"
                 ));
             }
             Stimmung::Verfallenheit { absorbed_in } => {
                 result.push_str(&format!(
-                    "\n[Stimmung: Verfallenheit — absorbed in '{}'. Be wary of losing perspective.]",
-                    absorbed_in
+                    "\n[Stimmung: Verfallenheit — absorbed in '{absorbed_in}'. Be wary of losing perspective.]"
                 ));
             }
             Stimmung::Neugier { curiosity_about } => {
                 result.push_str(&format!(
-                    "\n[Stimmung: Neugier — curious about '{}'. Exploratory mode.]",
-                    curiosity_about
+                    "\n[Stimmung: Neugier — curious about '{curiosity_about}'. Exploratory mode.]"
                 ));
             }
             Stimmung::Langeweile { depth } => {
                 result.push_str(&format!(
-                    "\n[Stimmung: Langeweile — boredom depth {:?}. May need novel stimulus.]",
-                    depth
+                    "\n[Stimmung: Langeweile — boredom depth {depth:?}. May need novel stimulus.]"
                 ));
             }
             Stimmung::Gelaunt { toward } => {
                 result.push_str(&format!(
-                    "\n[Stimmung: Gelaunt — positively disposed toward '{}'.]",
-                    toward
+                    "\n[Stimmung: Gelaunt — positively disposed toward '{toward}'.]"
                 ));
             }
             Stimmung::Geknickt { because } => {
                 result.push_str(&format!(
-                    "\n[Stimmung: Geknickt — dejected because '{}'. Exercise caution.]",
-                    because
+                    "\n[Stimmung: Geknickt — dejected because '{because}'. Exercise caution.]"
                 ));
             }
             Stimmung::Gelassenheit => {

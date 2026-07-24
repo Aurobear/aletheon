@@ -317,8 +317,7 @@ mod tests {
         let backend = setup_backend().await;
 
         for i in 0..5 {
-            let entry =
-                backend.make_entry(format!("entry_{}", i).as_bytes(), vec![], 0.1 * i as f64);
+            let entry = backend.make_entry(format!("entry_{i}").as_bytes(), vec![], 0.1 * i as f64);
             backend.store(entry).await.unwrap();
         }
 

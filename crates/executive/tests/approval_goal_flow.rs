@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use base64::Engine;
-use executive::r#impl::approval::ApprovalRepository;
-use executive::r#impl::goal::{
+use executive::application::coding_runtime::CodingAttemptRequest;
+use executive::approval::ApprovalRepository;
+use executive::goal::{
     AttemptExecutor, AttemptRequest, CodingVerifier, GoalCoordinator, ObjectiveStore, RetryPolicy,
 };
-use executive::r#impl::runtime::{PiAttemptRequest, PI_CODER_RUNTIME_ID};
-use executive::service::verification::{VerificationCheckKind, VerificationContext};
+const TEST_CODING_RUNTIME_ID: &str = "fake-coding-runtime";
+use executive::application::verification::{VerificationCheckKind, VerificationContext};
 use fabric::*;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -71,7 +72,7 @@ struct Executor {
 #[async_trait]
 impl AttemptExecutor for Executor {
     fn is_available(&self, id: &RuntimeId) -> bool {
-        id.0 == PI_CODER_RUNTIME_ID
+        id.0 == TEST_CODING_RUNTIME_ID
     }
     async fn run_once(
         &self,
@@ -80,7 +81,7 @@ impl AttemptExecutor for Executor {
         _: CancellationToken,
     ) -> Result<RuntimeResult, RuntimeFailure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let r: PiAttemptRequest = serde_json::from_str(task).unwrap();
+        let r: CodingAttemptRequest = serde_json::from_str(task).unwrap();
         let relative = PathBuf::from(format!("job-{}", r.job.job_id.0));
         std::fs::create_dir_all(self.base.join(&relative)).unwrap();
         let diff = b"diff --git a/src/lib.rs b/src/lib.rs\n";
@@ -212,7 +213,7 @@ impl Harness {
             vec![PathBuf::from(".git")],
         )
         .unwrap();
-        let task = serde_json::to_string(&PiAttemptRequest {
+        let task = serde_json::to_string(&CodingAttemptRequest {
             job: CodingJobSpec {
                 job_id: job,
                 goal_id: self.goal,
@@ -232,7 +233,7 @@ impl Harness {
             goal_id: self.goal,
             expected_version: version,
             sequence: 1,
-            runtime_id: RuntimeId(PI_CODER_RUNTIME_ID.into()),
+            runtime_id: RuntimeId(TEST_CODING_RUNTIME_ID.into()),
             escalation_runtime_id: None,
             role: CognitiveRole::Worker,
             task,
@@ -243,7 +244,7 @@ impl Harness {
         &self,
         passed: bool,
         approvals: bool,
-    ) -> (executive::r#impl::goal::AttemptCoordinator, Arc<Verifier>) {
+    ) -> (executive::goal::AttemptCoordinator, Arc<Verifier>) {
         let verifier = Arc::new(Verifier {
             passed,
             calls: AtomicUsize::new(0),
@@ -332,7 +333,7 @@ async fn verified_diff_creates_one_hash_bound_apply_approval() {
         .execute_one(req.clone(), CancellationToken::new())
         .await
         .unwrap();
-    let executive::r#impl::goal::AttemptCoordinationOutcome::Succeeded { goal, .. } = out else {
+    let executive::goal::AttemptCoordinationOutcome::Succeeded { goal, .. } = out else {
         panic!()
     };
     assert_eq!(goal.state, GoalState::AwaitingHuman);
@@ -347,7 +348,7 @@ async fn verified_diff_creates_one_hash_bound_apply_approval() {
     assert_eq!(a.subject.apply_target, Some(PathBuf::from(".")));
     let duplicate = c.execute_one(req, CancellationToken::new()).await.unwrap();
     assert!(
-        matches!(duplicate,executive::r#impl::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
+        matches!(duplicate,executive::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
     );
     assert_eq!(h.pending().len(), 1);
     assert_eq!(h.exec.calls.load(Ordering::SeqCst), 1);
@@ -380,7 +381,7 @@ async fn restart_between_verification_and_approval_creation_recovers_without_ree
     let (c2, v2) = h.coordinator(true, true);
     let out = c2.execute_one(req, CancellationToken::new()).await.unwrap();
     assert!(
-        matches!(out,executive::r#impl::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
+        matches!(out,executive::goal::AttemptCoordinationOutcome::Succeeded{ref goal,..} if goal.state==GoalState::AwaitingHuman)
     );
     assert_eq!(h.exec.calls.load(Ordering::SeqCst), 1);
     assert_eq!(v2.calls.load(Ordering::SeqCst), 0);

@@ -22,12 +22,12 @@ pub struct EmbodiedEpisodeRepository {
 impl EmbodiedEpisodeRepository {
     /// Open or create the repository at the given path.
     pub fn open(db_path: &Path) -> Result<Self, String> {
-        let conn = Connection::open(db_path).map_err(|e| format!("open: {}", e))?;
+        let conn = Connection::open(db_path).map_err(|e| format!("open: {e}"))?;
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=FULL;",
         )
-        .map_err(|e| format!("pragma: {}", e))?;
+        .map_err(|e| format!("pragma: {e}"))?;
         let repo = Self {
             conn: Mutex::new(conn),
         };
@@ -36,7 +36,7 @@ impl EmbodiedEpisodeRepository {
     }
 
     fn init_schema(&self) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| format!("lock: {}", e))?;
+        let conn = self.conn.lock().map_err(|e| format!("lock: {e}"))?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS embodied_episodes (
                 episode_id TEXT NOT NULL,
@@ -70,7 +70,7 @@ impl EmbodiedEpisodeRepository {
                 PRIMARY KEY (episode_id, attempt_number, evidence_kind)
             );",
         )
-        .map_err(|e| format!("schema: {}", e))?;
+        .map_err(|e| format!("schema: {e}"))?;
         Ok(())
     }
 
@@ -81,7 +81,7 @@ impl EmbodiedEpisodeRepository {
         goal_id: &str,
         device_id: &DeviceId,
     ) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| format!("lock: {}", e))?;
+        let conn = self.conn.lock().map_err(|e| format!("lock: {e}"))?;
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_millis() as i64);
@@ -90,13 +90,14 @@ impl EmbodiedEpisodeRepository {
              VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![episode_id, goal_id, device_id.0.as_str(), now_ms],
         )
-        .map_err(|e| format!("create_episode: {}", e))?;
+        .map_err(|e| format!("create_episode: {e}"))?;
         Ok(())
     }
 
     /// Append an attempt to an existing episode. Idempotent: replaying the
     /// same (episode_id, attempt_number, operation_id) is a no-op; different
     /// data for the same key is rejected as a conflicting replay.
+    #[allow(clippy::too_many_arguments)]
     pub fn append_attempt(
         &self,
         episode_id: &str,
@@ -110,10 +111,10 @@ impl EmbodiedEpisodeRepository {
         verification: Option<&VerificationReport>,
         recovery: Option<&str>,
     ) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| format!("lock: {}", e))?;
+        let conn = self.conn.lock().map_err(|e| format!("lock: {e}"))?;
 
         let expected_json =
-            serde_json::to_string(expected_outcome).map_err(|e| format!("json: {}", e))?;
+            serde_json::to_string(expected_outcome).map_err(|e| format!("json: {e}"))?;
         let before_json = before.and_then(|s| serde_json::to_string(s).ok());
         let after_json = after.and_then(|s| serde_json::to_string(s).ok());
         let result_json = result.and_then(|r| serde_json::to_string(r).ok());
@@ -130,18 +131,14 @@ impl EmbodiedEpisodeRepository {
             )
             .ok();
 
-        match existing {
-            Some(existing_op) => {
-                if existing_op != op_id_str {
-                    return Err(format!(
-                        "conflicting replay: episode={} attempt={} existing_op={} new_op={}",
-                        episode_id, attempt_number, existing_op, op_id_str
-                    ));
-                }
-                // Same operation_id — idempotent, success
-                return Ok(());
+        if let Some(existing_op) = existing {
+            if existing_op != op_id_str {
+                return Err(format!(
+                    "conflicting replay: episode={episode_id} attempt={attempt_number} existing_op={existing_op} new_op={op_id_str}"
+                ));
             }
-            None => {}
+            // Same operation_id — idempotent, success
+            return Ok(());
         }
 
         conn.execute(
@@ -162,14 +159,14 @@ impl EmbodiedEpisodeRepository {
                 recovery,
             ],
         )
-        .map_err(|e| format!("append_attempt: {}", e))?;
+        .map_err(|e| format!("append_attempt: {e}"))?;
 
         Ok(())
     }
 
     /// Close an episode with a final outcome.
     pub fn close_episode(&self, episode_id: &str, outcome: &str) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| format!("lock: {}", e))?;
+        let conn = self.conn.lock().map_err(|e| format!("lock: {e}"))?;
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_millis() as i64);
@@ -178,19 +175,19 @@ impl EmbodiedEpisodeRepository {
                 "UPDATE embodied_episodes SET closed_at_ms = ?1, outcome = ?2 WHERE episode_id = ?3",
                 rusqlite::params![now_ms, outcome, episode_id],
             )
-            .map_err(|e| format!("close_episode: {}", e))?;
+            .map_err(|e| format!("close_episode: {e}"))?;
         if affected == 0 {
-            return Err(format!("episode not found: {}", episode_id));
+            return Err(format!("episode not found: {episode_id}"));
         }
         Ok(())
     }
 
     /// Load a full episode with all attempts.
     pub fn load_episode(&self, episode_id: &str) -> Result<Option<EmbodiedEpisode>, String> {
-        let conn = self.conn.lock().map_err(|e| format!("lock: {}", e))?;
+        let conn = self.conn.lock().map_err(|e| format!("lock: {e}"))?;
         let mut stmt = conn
             .prepare("SELECT goal_id, device_id FROM embodied_episodes WHERE episode_id = ?1")
-            .map_err(|e| format!("prepare: {}", e))?;
+            .map_err(|e| format!("prepare: {e}"))?;
         let episode_row: Option<(String, String)> = stmt
             .query_row(rusqlite::params![episode_id], |row| {
                 Ok((row.get(0)?, row.get(1)?))
@@ -209,7 +206,7 @@ impl EmbodiedEpisodeRepository {
                         verification_json, recovery
                  FROM episode_attempts WHERE episode_id = ?1 ORDER BY attempt_number",
             )
-            .map_err(|e| format!("prepare attempts: {}", e))?;
+            .map_err(|e| format!("prepare attempts: {e}"))?;
 
         let mut attempts = Vec::new();
         let rows = attempt_stmt
@@ -226,7 +223,7 @@ impl EmbodiedEpisodeRepository {
                     row.get::<_, Option<String>>(8)?,
                 ))
             })
-            .map_err(|e| format!("query attempts: {}", e))?;
+            .map_err(|e| format!("query attempts: {e}"))?;
 
         for row in rows {
             let (
@@ -239,11 +236,11 @@ impl EmbodiedEpisodeRepository {
                 result_json,
                 verif_json,
                 recovery,
-            ) = row.map_err(|e| format!("row: {}", e))?;
+            ) = row.map_err(|e| format!("row: {e}"))?;
 
             let operation_id = Uuid::parse_str(&op_id_str)
                 .map(OperationId)
-                .map_err(|e| format!("parse operation_id {}: {}", op_id_str, e))?;
+                .map_err(|e| format!("parse operation_id {op_id_str}: {e}"))?;
 
             attempts.push(EpisodeAttempt {
                 operation_id,

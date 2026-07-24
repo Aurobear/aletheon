@@ -485,7 +485,7 @@ mod tests {
     fn snapshot_with_urgency(u: f64) -> FieldMetricSnapshot {
         let mut s = FieldMetricSnapshot::zero();
         s.salience[0] = u.clamp(0.0, 1.0);
-        s.trace_event_id = format!("snap-{:.2}", u);
+        s.trace_event_id = format!("snap-{u:.2}");
         s
     }
 
@@ -498,7 +498,7 @@ mod tests {
             s.broadcast_epoch = i;
             s.dasein_version = 1;
             s.salience[0] = u.clamp(0.0, 1.0);
-            s.trace_event_id = format!("cont-{}", i);
+            s.trace_event_id = format!("cont-{i}");
             out.push(s);
         }
         out
@@ -517,7 +517,7 @@ mod tests {
             s.broadcast_epoch = i;
             s.dasein_version = 1;
             s.salience[0] = u.clamp(0.0, 1.0);
-            s.trace_event_id = format!("reset-{}", i);
+            s.trace_event_id = format!("reset-{i}");
             out.push(s);
         }
         out
@@ -526,7 +526,7 @@ mod tests {
     fn quiet_snapshot(_epoch: u64) -> FieldMetricSnapshot {
         // Zero salience, zero delta.
         let mut s = FieldMetricSnapshot::zero();
-        s.trace_event_id = format!("quiet-{}", _epoch);
+        s.trace_event_id = format!("quiet-{_epoch}");
         s
     }
 
@@ -589,9 +589,7 @@ mod tests {
 
         assert!(
             cont_mi > reset_mi,
-            "continuous MI ({:.6}) should exceed reset MI ({:.6})",
-            cont_mi,
-            reset_mi,
+            "continuous MI ({cont_mi:.6}) should exceed reset MI ({reset_mi:.6})",
         );
     }
 

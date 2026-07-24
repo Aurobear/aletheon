@@ -136,7 +136,7 @@ impl Tool for WebSearchTool {
         {
             if let Err(reason) = self.network_policy.allows_url(&config.api_url) {
                 return ToolResult {
-                    content: format!("Error: Network policy blocked URL: {}", reason),
+                    content: format!("Error: Network policy blocked URL: {reason}"),
                     is_error: true,
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -178,7 +178,7 @@ impl Tool for WebSearchTool {
                         },
                     },
                     Err(e) => ToolResult {
-                        content: format!("Error reading search response: {}", e),
+                        content: format!("Error reading search response: {e}"),
                         is_error: true,
                         metadata: ToolResultMeta {
                             execution_time_ms: elapsed,
@@ -189,7 +189,7 @@ impl Tool for WebSearchTool {
                 }
             }
             Err(e) => ToolResult {
-                content: format!("Error executing search request: {}", e),
+                content: format!("Error executing search request: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: elapsed,

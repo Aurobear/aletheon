@@ -1,4 +1,4 @@
-use executive::service::world_state::EmbodimentWorldState;
+use executive::application::world_state::EmbodimentWorldState;
 use fabric::types::embodiment::DeviceId;
 use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
 use fabric::MonoTime;

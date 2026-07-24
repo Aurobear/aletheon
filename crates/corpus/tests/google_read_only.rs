@@ -1,10 +1,12 @@
 use async_trait::async_trait;
 use corpus::tools::google::{
-    CalendarCapability, GmailCapability, GmailIngressCapability, GoogleAccessToken,
-    GoogleApiClient, GoogleApiEndpoints, GoogleApiError, GoogleCalendarAdapter,
+    is_google_write_capability, CalendarCapability, GmailCapability, GmailIngressCapability,
+    GoogleAccessToken, GoogleApiClient, GoogleApiEndpoints, GoogleApiError, GoogleCalendarAdapter,
     GoogleCredentialSource, GoogleGmailAdapter,
 };
-use fabric::{CalendarTimeRange, ExternalIdentityId, ExternalScope, GmailQuery, PrincipalId};
+use fabric::{
+    CalendarQuery, ExternalCapabilityId, ExternalIdentityId, MailQuery, OpaqueCursor, PrincipalId,
+};
 use http_body_util::Full;
 use hyper::body::{Bytes, Incoming};
 use hyper::service::service_fn;
@@ -18,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 struct Credentials {
     owner: PrincipalId,
     account: ExternalIdentityId,
-    allowed_scope: ExternalScope,
+    allowed_scope: ExternalCapabilityId,
     access_calls: AtomicUsize,
     refresh_calls: AtomicUsize,
 }
@@ -40,7 +42,7 @@ async fn gmail_ingress_preserves_auth_headers_mime_tree_and_bounded_attachments(
         Arc::new(Credentials::new(
             owner.clone(),
             account,
-            ExternalScope::GmailReadonly,
+            ExternalCapabilityId::new("mail.read").unwrap(),
         )),
     );
 
@@ -70,7 +72,11 @@ async fn gmail_ingress_preserves_auth_headers_mime_tree_and_bounded_attachments(
 }
 
 impl Credentials {
-    fn new(owner: PrincipalId, account: ExternalIdentityId, allowed_scope: ExternalScope) -> Self {
+    fn new(
+        owner: PrincipalId,
+        account: ExternalIdentityId,
+        allowed_scope: ExternalCapabilityId,
+    ) -> Self {
         Self {
             owner,
             account,
@@ -84,12 +90,12 @@ impl Credentials {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        required_scope: ExternalScope,
+        required_scope: ExternalCapabilityId,
     ) -> Result<(), GoogleApiError> {
         if principal != &self.owner || account != self.account {
             return Err(GoogleApiError::UnauthorizedAccount);
         }
-        if required_scope != self.allowed_scope || required_scope.is_write() {
+        if required_scope != self.allowed_scope || is_google_write_capability(&required_scope) {
             return Err(GoogleApiError::ScopeDenied);
         }
         Ok(())
@@ -102,7 +108,7 @@ impl GoogleCredentialSource for Credentials {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        required_scope: ExternalScope,
+        required_scope: ExternalCapabilityId,
     ) -> Result<GoogleAccessToken, GoogleApiError> {
         self.authorize(principal, account, required_scope)?;
         self.access_calls.fetch_add(1, Ordering::SeqCst);
@@ -113,7 +119,7 @@ impl GoogleCredentialSource for Credentials {
         &self,
         principal: &PrincipalId,
         account: ExternalIdentityId,
-        required_scope: ExternalScope,
+        required_scope: ExternalCapabilityId,
     ) -> Result<GoogleAccessToken, GoogleApiError> {
         self.authorize(principal, account, required_scope)?;
         self.refresh_calls.fetch_add(1, Ordering::SeqCst);
@@ -237,17 +243,17 @@ async fn gmail_pagination_metadata_and_explicit_read_are_bounded() {
     let credentials = Arc::new(Credentials::new(
         owner.clone(),
         account,
-        ExternalScope::GmailReadonly,
+        ExternalCapabilityId::new("mail.read").unwrap(),
     ));
     let adapter = gmail(&endpoint, credentials);
     let page = adapter
         .search_messages(
             &owner,
-            GmailQuery {
+            MailQuery {
                 account_id: account,
                 query: "is:unread".into(),
                 page_size: 10,
-                page_token: Some("input-page".into()),
+                page_token: Some(OpaqueCursor::new("input-page").unwrap()),
             },
             &CancellationToken::new(),
         )
@@ -278,7 +284,7 @@ async fn unauthorized_account_and_wrong_scope_never_reach_provider() {
     let credentials = Arc::new(Credentials::new(
         owner.clone(),
         account,
-        ExternalScope::GmailReadonly,
+        ExternalCapabilityId::new("mail.read").unwrap(),
     ));
     let adapter = gmail(&endpoint, credentials);
     let forged = adapter
@@ -295,7 +301,7 @@ async fn unauthorized_account_and_wrong_scope_never_reach_provider() {
     let wrong_grant = Arc::new(Credentials::new(
         owner.clone(),
         account,
-        ExternalScope::CalendarReadonly,
+        ExternalCapabilityId::new("calendar.read").unwrap(),
     ));
     let denied = gmail(&endpoint, wrong_grant)
         .important_unread(&owner, account, 10, &CancellationToken::new())
@@ -319,19 +325,19 @@ async fn unauthorized_refreshes_once_and_calendar_pagination_is_normalized() {
     let credentials = Arc::new(Credentials::new(
         owner.clone(),
         account,
-        ExternalScope::CalendarReadonly,
+        ExternalCapabilityId::new("calendar.read").unwrap(),
     ));
     let adapter = calendar(&endpoint, credentials.clone());
     let page = adapter
         .list_events(
             &owner,
-            CalendarTimeRange {
+            CalendarQuery {
                 account_id: account,
                 start_ms: 1_752_537_600_000,
                 end_ms: 1_752_624_000_000,
                 timezone: "Asia/Shanghai".into(),
                 page_size: 10,
-                page_token: Some("calendar-input".into()),
+                page_token: Some(OpaqueCursor::new("calendar-input").unwrap()),
             },
             &CancellationToken::new(),
         )
@@ -356,9 +362,9 @@ async fn scope_denial_rate_limit_and_malformed_payload_use_stable_errors() {
     let credentials = Arc::new(Credentials::new(
         owner.clone(),
         account,
-        ExternalScope::CalendarReadonly,
+        ExternalCapabilityId::new("calendar.read").unwrap(),
     ));
-    let range = CalendarTimeRange {
+    let range = CalendarQuery {
         account_id: account,
         start_ms: 1_000,
         end_ms: 2_000,
@@ -385,7 +391,7 @@ async fn scope_denial_rate_limit_and_malformed_payload_use_stable_errors() {
     let credentials = Arc::new(Credentials::new(
         owner.clone(),
         account,
-        ExternalScope::CalendarReadonly,
+        ExternalCapabilityId::new("calendar.read").unwrap(),
     ));
     assert!(calendar(&endpoint, credentials)
         .list_events(&owner, range.clone(), &CancellationToken::new())
@@ -396,7 +402,7 @@ async fn scope_denial_rate_limit_and_malformed_payload_use_stable_errors() {
     let credentials = Arc::new(Credentials::new(
         owner.clone(),
         account,
-        ExternalScope::CalendarReadonly,
+        ExternalCapabilityId::new("calendar.read").unwrap(),
     ));
     let error = calendar(&endpoint, credentials)
         .list_events(&owner, range, &CancellationToken::new())
@@ -410,7 +416,7 @@ async fn scope_denial_rate_limit_and_malformed_payload_use_stable_errors() {
 async fn cancellation_and_response_size_limits_fail_closed() {
     let owner = PrincipalId("owner".into());
     let account = ExternalIdentityId::new();
-    let range = CalendarTimeRange {
+    let range = CalendarQuery {
         account_id: account,
         start_ms: 1_000,
         end_ms: 2_000,
@@ -422,7 +428,7 @@ async fn cancellation_and_response_size_limits_fail_closed() {
     let credentials = Arc::new(Credentials::new(
         owner.clone(),
         account,
-        ExternalScope::CalendarReadonly,
+        ExternalCapabilityId::new("calendar.read").unwrap(),
     ));
     let cancel = CancellationToken::new();
     cancel.cancel();
@@ -443,7 +449,7 @@ async fn cancellation_and_response_size_limits_fail_closed() {
     let credentials = Arc::new(Credentials::new(
         owner.clone(),
         account,
-        ExternalScope::CalendarReadonly,
+        ExternalCapabilityId::new("calendar.read").unwrap(),
     ));
     assert_eq!(
         calendar(&endpoint, credentials)

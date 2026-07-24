@@ -1,4 +1,4 @@
-use executive::service::verification::{
+use executive::application::verification::{
     ArchitecturePolicy, CapabilityAuditSummary, ForbiddenDependencyEdge, VerificationCheckKind,
     VerificationContext, VerificationSelection, VerificationService, VerificationServiceConfig,
 };

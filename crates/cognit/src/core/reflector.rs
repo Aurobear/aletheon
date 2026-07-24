@@ -81,7 +81,7 @@ impl Reflector {
                         what_failed.push(format!("Root cause: {}", root.trim()));
                     }
                 } else {
-                    what_failed.push(format!("Error: {}", error));
+                    what_failed.push(format!("Error: {error}"));
                 }
 
                 // Suggest specific fixes based on error content

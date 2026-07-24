@@ -73,7 +73,7 @@ pub fn validate_proposal(
     if let Err(e) = proposal.expected_outcome.validate() {
         errors.push(ValidationError {
             field: "expected_outcome".into(),
-            message: format!("invalid expected outcome: {}", e),
+            message: format!("invalid expected outcome: {e}"),
         });
     }
 
@@ -86,8 +86,8 @@ pub fn validate_proposal(
                         if let Some(req_key) = req.as_str() {
                             if !params.contains_key(req_key) {
                                 errors.push(ValidationError {
-                                    field: format!("parameters.{}", req_key),
-                                    message: format!("missing required parameter '{}'", req_key),
+                                    field: format!("parameters.{req_key}"),
+                                    message: format!("missing required parameter '{req_key}'"),
                                 });
                             }
                         }
@@ -98,7 +98,7 @@ pub fn validate_proposal(
     }
 
     // 8. Reject proposals that look like raw actuation (joint/torque in params)
-    if proposal.parameters.as_object().map_or(false, |p| {
+    if proposal.parameters.as_object().is_some_and(|p| {
         p.contains_key("joint")
             || p.contains_key("torque")
             || p.contains_key("topic")

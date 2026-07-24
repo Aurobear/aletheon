@@ -12,6 +12,10 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
     app: &mut App,
     frame_recorder: &mut Option<FrameRecorder>,
 ) -> anyhow::Result<()> {
+    // Derive discovery UI from the current input on every redraw.  This keeps
+    // completion correct for key events, bracketed paste, IME replacement and
+    // test/terminal backends that coalesce input differently.
+    super::super::app::key_handler::refresh_command_completion(app);
     let chat_ref = &app.chat;
     let caps_ref = &app.caps;
     let input_buf = &app.input_buf;
@@ -58,6 +62,15 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
         );
         layout.push_fixed(1, StatusRenderable { status: status_ref });
         layout.render(size, f.buffer_mut());
+        // Completion is an overlay, not part of the input widget's clipping
+        // region. Render it last so later siblings cannot erase it.
+        let input_area = ratatui::layout::Rect::new(
+            size.x,
+            size.y + size.height.saturating_sub(3),
+            size.width,
+            2,
+        );
+        completion_ref.render(f, input_area);
 
         // Approval dialog rendered as modal overlay
         if let Some(ref dialog) = pending_approval_ref {

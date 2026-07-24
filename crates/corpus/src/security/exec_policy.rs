@@ -268,7 +268,7 @@ impl ExecPolicyEngine {
             }
             if rule.prefixes.is_empty() {
                 return PolicyDecision::deny(
-                    format!("Program '{}' is denied by rule", program),
+                    format!("Program '{program}' is denied by rule"),
                     &rule.program,
                 );
             }
@@ -276,7 +276,7 @@ impl ExecPolicyEngine {
                 let full_prefix = format!("{} {}", rule.program, prefix);
                 if cmd.starts_with(&full_prefix) {
                     return PolicyDecision::deny(
-                        format!("Command '{}' matches deny rule", cmd),
+                        format!("Command '{cmd}' matches deny rule"),
                         &full_prefix,
                     );
                 }
@@ -304,7 +304,7 @@ impl ExecPolicyEngine {
             if rule.prefixes.is_empty() {
                 // Bare program is allowed (e.g. "ls" matches any ls invocation)
                 return PolicyDecision::allow(
-                    format!("Program '{}' is allowed by rule", program),
+                    format!("Program '{program}' is allowed by rule"),
                     &rule.program,
                 );
             }
@@ -312,7 +312,7 @@ impl ExecPolicyEngine {
                 let full_prefix = format!("{} {}", rule.program, prefix);
                 if cmd.starts_with(&full_prefix) {
                     return PolicyDecision::allow(
-                        format!("Command '{}' matches allow rule", cmd),
+                        format!("Command '{cmd}' matches allow rule"),
                         &full_prefix,
                     );
                 }
@@ -329,7 +329,7 @@ impl ExecPolicyEngine {
             }
             if rule.prefixes.is_empty() {
                 return PolicyDecision::ask(
-                    format!("Program '{}' requires approval", program),
+                    format!("Program '{program}' requires approval"),
                     &rule.program,
                 );
             }
@@ -337,7 +337,7 @@ impl ExecPolicyEngine {
                 let full_prefix = format!("{} {}", rule.program, prefix);
                 if cmd.starts_with(&full_prefix) {
                     return PolicyDecision::ask(
-                        format!("Command '{}' requires approval", cmd),
+                        format!("Command '{cmd}' requires approval"),
                         &full_prefix,
                     );
                 }
@@ -345,7 +345,7 @@ impl ExecPolicyEngine {
         }
 
         // --- 5. Default: unknown commands ask for approval ---
-        PolicyDecision::default_ask(format!("Unknown command '{}'; approval required", program))
+        PolicyDecision::default_ask(format!("Unknown command '{program}'; approval required"))
     }
 
     /// Add a user-approved allow prefix at runtime ("learning").
@@ -375,15 +375,15 @@ impl ExecPolicyEngine {
             if host_matches(&rule.host_pattern, host) {
                 return match rule.action {
                     PolicyAction::Allow => PolicyDecision::allow(
-                        format!("Host '{}' matches network allow rule", host),
+                        format!("Host '{host}' matches network allow rule"),
                         &rule.host_pattern,
                     ),
                     PolicyAction::Deny => PolicyDecision::deny(
-                        format!("Host '{}' matches network deny rule", host),
+                        format!("Host '{host}' matches network deny rule"),
                         &rule.host_pattern,
                     ),
                     PolicyAction::Ask => PolicyDecision::ask(
-                        format!("Host '{}' matches network ask rule", host),
+                        format!("Host '{host}' matches network ask rule"),
                         &rule.host_pattern,
                     ),
                 };
@@ -391,8 +391,7 @@ impl ExecPolicyEngine {
         }
         // Default: ask for unknown network destinations
         PolicyDecision::default_ask(format!(
-            "No network rule for host '{}', approval required",
-            host
+            "No network rule for host '{host}', approval required"
         ))
     }
 
@@ -428,8 +427,8 @@ impl Default for ExecPolicyEngine {
 /// Handles variants like `mkfs` matching `mkfs.ext4`, `mkfs.xfs`, etc.
 fn program_matches(rule_program: &str, actual_program: &str) -> bool {
     rule_program == actual_program
-        || actual_program.starts_with(&format!("{}.", rule_program))
-        || actual_program.starts_with(&format!(".{}", rule_program))
+        || actual_program.starts_with(&format!("{rule_program}."))
+        || actual_program.starts_with(&format!(".{rule_program}"))
 }
 
 /// Match a protocol pattern against a protocol string.

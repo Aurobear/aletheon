@@ -78,7 +78,7 @@ async fn cmd_save(socket: &std::path::Path, name: &str, path: &PathBuf) -> Resul
     if let Some(err) = response.get("error") {
         eprintln!("Error: {}", err["message"].as_str().unwrap_or("unknown"));
     } else {
-        println!("Workflow '{}' saved.", name);
+        println!("Workflow '{name}' saved.");
     }
     Ok(())
 }
@@ -126,7 +126,7 @@ async fn cmd_delete(socket: &std::path::Path, name: &str) -> Result<()> {
     if let Some(err) = response.get("error") {
         eprintln!("Error: {}", err["message"].as_str().unwrap_or("unknown"));
     } else {
-        println!("Workflow '{}' deleted.", name);
+        println!("Workflow '{name}' deleted.");
     }
     Ok(())
 }
@@ -144,7 +144,7 @@ async fn cmd_run(socket: &std::path::Path, name: &str) -> Result<()> {
             serde_json::to_string_pretty(result).unwrap_or_default()
         );
     } else {
-        println!("Workflow '{}' completed.", name);
+        println!("Workflow '{name}' completed.");
     }
     Ok(())
 }

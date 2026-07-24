@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Deterministic mock sandbox backend for integration tests.
 //!
 //! Implements `fabric::SandboxBackend` with pre-configured FIFO result queues per

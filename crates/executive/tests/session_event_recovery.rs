@@ -1,5 +1,5 @@
-use executive::r#impl::events::{DefaultEventProjectionSet, SqliteEventSpine};
-use executive::r#impl::session::{
+use executive::runtime::events::{DefaultEventProjectionSet, SqliteEventSpine};
+use executive::runtime::session::{
     canonical_store::CanonicalSessionStore, event_sourced_store::reconcile_committed_session_events,
 };
 use fabric::{

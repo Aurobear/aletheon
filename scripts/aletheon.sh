@@ -9,6 +9,11 @@ source "$SCRIPT_DIR/lib/aletheon/common.sh"
 source "$SCRIPT_DIR/lib/aletheon/build.sh"
 source "$SCRIPT_DIR/lib/aletheon/install.sh"
 source "$SCRIPT_DIR/lib/aletheon/service.sh"
+source "$SCRIPT_DIR/lib/aletheon/maintenance.sh"
+source "$SCRIPT_DIR/lib/aletheon/security.sh"
+source "$SCRIPT_DIR/lib/aletheon/acceptance.sh"
+source "$SCRIPT_DIR/lib/aletheon/test.sh"
+source "$SCRIPT_DIR/lib/aletheon/runtime_gate.sh"
 source "$SCRIPT_DIR/lib/aletheon/verify.sh"
 
 usage() {
@@ -19,7 +24,10 @@ Deployment:
   build                         Build the release binary through cargo-agent.sh
   install [--no-enable]         Install native systemd assets
   deploy [--no-build] [--no-restart] [--no-enable]
-                                Build, install, stage closure, restart, verify
+                                Build, install, stage closure, restart, verify.
+                                Scope is inferred from sudo: with sudo it
+                                installs system assets, without sudo it installs
+                                a rootless runtime under $HOME.
   configure {show|check}        Display safe paths or validate configuration
 
 Operations:
@@ -27,10 +35,27 @@ Operations:
   health                        Probe core, user daemon, and GBrain
   restart                       Restart core and user daemon
   logs [core|user|closure]      Show recent journal entries
-  verify                        Run the complete deployed-state gate
+  backup | restore | upgrade    Run production lifecycle operations
+  cleanup {runtime|cargo}       Clean managed runtime or Cargo state
+  secrets {init|audit}          Initialize or audit production credentials
+  database check DATABASE...    Run read-only SQLite quick checks
+  verify [TARGET]               Run deployed-state or specialized verification
+  acceptance {architecture|release|extension}
+                                Run architecture or release acceptance
+  test {unit|operations|deployment|architecture|all}
+                                Run a focused test suite
   closure {install|run|status}  Manage the scheduled Pi-memory closure
+  completion {bash|zsh}         Print shell completion definitions
   help                          Show this help
 EOF
+}
+
+cmd_completion() {
+  local shell=${1:-}
+  case "$shell" in
+    bash|zsh) cat "$SCRIPT_DIR/completions/aletheon.$shell" ;;
+    *) aletheon_die "usage: aletheon.sh completion {bash|zsh}" || return 2 ;;
+  esac
 }
 
 cmd_deploy() {
@@ -44,11 +69,25 @@ cmd_deploy() {
     esac
     shift
   done
+  local install_args=()
+  ((enable)) || install_args+=(--no-enable)
   ((build)) && cmd_build
-  if ((enable)); then cmd_install; else cmd_install --no-enable; fi
-  cmd_closure_install
-  ((restart)) && cmd_restart
-  cmd_verify
+  # Scope is inferred, never flagged: passwordless sudo (or already root)
+  # installs the reviewed system assets; an unprivileged shell installs a
+  # rootless runtime under $HOME.
+  if [[ ${EUID:-$(id -u)} -eq 0 ]] || sudo -n true 2>/dev/null; then
+    aletheon_info "sudo available; installing system assets"
+    cmd_install "${install_args[@]}"
+    cmd_closure_install
+    ((restart)) && cmd_restart
+    cmd_verify
+  else
+    aletheon_info "no sudo; installing rootless runtime under \$HOME"
+    cmd_install_user "${install_args[@]}"
+    cmd_closure_install
+    ((restart)) && cmd_restart_user
+    cmd_verify_user
+  fi
 }
 
 case "${1:-help}" in
@@ -60,8 +99,20 @@ case "${1:-help}" in
   health) shift; cmd_health "$@" ;;
   restart) shift; cmd_restart "$@" ;;
   logs) shift; cmd_logs "$@" ;;
-  verify) shift; cmd_verify "$@" ;;
+  backup) shift; cmd_backup "$@" ;;
+  restore) shift; cmd_restore "$@" ;;
+  upgrade) shift; cmd_upgrade "$@" ;;
+  cleanup) shift; cmd_cleanup "$@" ;;
+  secrets) shift; cmd_secrets "$@" ;;
+  database) shift; cmd_database "$@" ;;
+  verify)
+    shift
+    if (($#)); then cmd_verify_specialized "$@"; else cmd_verify; fi
+    ;;
+  acceptance) shift; cmd_acceptance "$@" ;;
+  test) shift; cmd_test "$@" ;;
   closure) shift; cmd_closure "$@" ;;
+  completion) shift; cmd_completion "$@" ;;
   help|--help|-h) usage ;;
   *) printf 'Unknown command: %s\n' "$1" >&2; usage >&2; exit 2 ;;
 esac

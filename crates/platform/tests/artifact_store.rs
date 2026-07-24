@@ -56,8 +56,7 @@ fn size_quota_enforcement() {
     let err = result.unwrap_err();
     assert!(
         err.contains("quota exceeded"),
-        "expected quota error, got: {}",
-        err
+        "expected quota error, got: {err}"
     );
 }
 

@@ -64,7 +64,7 @@ impl ChatMessage {
             Role::Assistant => ("", theme.accent),
             Role::System => ("·", theme.system_icon),
         };
-        let border_prefix = format!("  {} ", border_char);
+        let border_prefix = format!("  {border_char} ");
 
         // Content area width: total - border prefix width (4 chars)
         let content_width = width.saturating_sub(4) as usize;
@@ -734,12 +734,10 @@ fn word_wrap_line_with_prefix(
             chars.len()
         } else if found_break {
             last_break
+        } else if i == pos {
+            (pos + 1).min(chars.len())
         } else {
-            if i == pos {
-                (pos + 1).min(chars.len())
-            } else {
-                i
-            }
+            i
         };
 
         let mut spans = vec![Span::styled(prefix.to_string(), prefix_style)];
@@ -975,7 +973,7 @@ mod tests {
                 .flat_map(|s| s.content.chars())
                 .map(char_display_width)
                 .sum();
-            assert!(width <= 20, "line too wide: {} chars", width);
+            assert!(width <= 20, "line too wide: {width} chars");
         }
     }
 
@@ -1008,8 +1006,7 @@ mod tests {
         let first_span_content = second.spans[0].content.as_ref();
         assert!(
             first_span_content.starts_with("  "),
-            "continuation should be indented, got: {:?}",
-            first_span_content
+            "continuation should be indented, got: {first_span_content:?}"
         );
     }
 
@@ -1100,8 +1097,7 @@ mod tests {
             .join("");
         assert!(
             header_text.contains("⠋"),
-            "should have spinner, got: {}",
-            header_text
+            "should have spinner, got: {header_text}"
         );
         assert!(!entry.finished);
 

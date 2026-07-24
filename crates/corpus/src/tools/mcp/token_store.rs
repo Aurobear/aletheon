@@ -5,7 +5,7 @@
 //! external identity rather than by an untrusted account label.
 
 use anyhow::{Context, Result};
-use fabric::{ExternalIdentityId, IdentityProvider};
+use fabric::{ExternalIdentityId, ExternalProviderId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -44,7 +44,7 @@ impl fmt::Debug for TokenEntry {
 pub struct TokenKey(String);
 
 impl TokenKey {
-    pub fn external(provider: IdentityProvider, identity_id: ExternalIdentityId) -> Self {
+    pub fn external(provider: ExternalProviderId, identity_id: ExternalIdentityId) -> Self {
         Self(format!("external:{provider}:{identity_id}"))
     }
 
@@ -348,8 +348,14 @@ mod tests {
     fn external_keys_keep_multiple_accounts_isolated() {
         let dir = tempfile::tempdir().unwrap();
         let persistence = JsonTokenPersistence::new(dir.path().join("tokens.json"));
-        let first = TokenKey::external(IdentityProvider::Google, ExternalIdentityId::new());
-        let second = TokenKey::external(IdentityProvider::Google, ExternalIdentityId::new());
+        let first = TokenKey::external(
+            ExternalProviderId::new("google").unwrap(),
+            ExternalIdentityId::new(),
+        );
+        let second = TokenKey::external(
+            ExternalProviderId::new("google").unwrap(),
+            ExternalIdentityId::new(),
+        );
         persistence.write(first.clone(), entry("first")).unwrap();
         persistence.write(second.clone(), entry("second")).unwrap();
         assert_eq!(persistence.read(&first).unwrap(), Some(entry("first")));

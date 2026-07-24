@@ -82,7 +82,7 @@ impl Tool for ModuleBuildTool {
                     Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
                     Err(e) => {
                         return ToolResult {
-                            content: format!("Failed to detect kernel version: {}", e),
+                            content: format!("Failed to detect kernel version: {e}"),
                             is_error: true,
                             metadata: ToolResultMeta {
                                 execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -96,12 +96,11 @@ impl Tool for ModuleBuildTool {
         };
 
         // Check kernel headers exist
-        let headers_path = format!("/lib/modules/{}/build", kernel_version);
+        let headers_path = format!("/lib/modules/{kernel_version}/build");
         if !std::path::Path::new(&headers_path).exists() {
             return ToolResult {
                 content: format!(
-                    "Kernel headers not found at {}. Install linux-headers-{}.",
-                    headers_path, kernel_version
+                    "Kernel headers not found at {headers_path}. Install linux-headers-{kernel_version}."
                 ),
                 is_error: true,
                 metadata: ToolResultMeta {
@@ -113,10 +112,10 @@ impl Tool for ModuleBuildTool {
         }
 
         // Check source directory has Makefile
-        let makefile = format!("{}/Makefile", source_dir);
+        let makefile = format!("{source_dir}/Makefile");
         if !std::path::Path::new(&makefile).exists() {
             return ToolResult {
-                content: format!("No Makefile found in {}", source_dir),
+                content: format!("No Makefile found in {source_dir}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -133,7 +132,7 @@ impl Tool for ModuleBuildTool {
 
         // Run: make -C /lib/modules/{kver}/build M={source_dir} modules
         let output = tokio::process::Command::new("make")
-            .args(["-C", &headers_path, &format!("M={}", source_dir), "modules"])
+            .args(["-C", &headers_path, &format!("M={source_dir}"), "modules"])
             .output()
             .await;
 
@@ -168,9 +167,8 @@ impl Tool for ModuleBuildTool {
                     ToolResult {
                         content: format!(
                             "Kernel module build failed:\n\
-                             stdout:\n{}\n\
-                             stderr:\n{}",
-                            stdout, stderr
+                             stdout:\n{stdout}\n\
+                             stderr:\n{stderr}"
                         ),
                         is_error: true,
                         metadata: ToolResultMeta {
@@ -182,7 +180,7 @@ impl Tool for ModuleBuildTool {
                 }
             }
             Err(e) => ToolResult {
-                content: format!("Failed to run make: {}", e),
+                content: format!("Failed to run make: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),

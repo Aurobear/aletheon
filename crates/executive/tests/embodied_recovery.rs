@@ -1,6 +1,6 @@
 //! Integration tests for embodied recovery mapping.
 
-use executive::service::embodied_recovery::{
+use executive::application::embodied_recovery::{
     map_verification_to_recovery, RecoveryAction, MAX_REPLANS, MAX_RETRIES,
 };
 use fabric::types::outcome_verification::{VerificationDecision, VerificationReport};
@@ -63,8 +63,7 @@ fn full_recovery_table() {
         let action = map_verification_to_recovery(&report, retries, replans);
         assert_eq!(
             action, expected,
-            "mismatch for {:?} r={} p={}",
-            decision, retries, replans
+            "mismatch for {decision:?} r={retries} p={replans}"
         );
     }
 }

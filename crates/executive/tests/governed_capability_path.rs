@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
-use executive::service::governed_capability::{
+use executive::application::governed_capability::{
     AuthorizedInvocation, GovernedCapabilityInvoker, RegistryAuthorityProvider,
     TurnAuthorityProvider, TurnCapabilityInvoker,
 };

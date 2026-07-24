@@ -172,3 +172,77 @@ pub struct ExtensionSnapshot {
 pub trait ExtensionCatalog: Send + Sync {
     fn snapshot(&self) -> ExtensionSnapshot;
 }
+
+// ---------------------------------------------------------------------------
+// Compatibility projections: old → new types
+// ---------------------------------------------------------------------------
+// These From impls allow existing code to keep using ExtensionDescriptor /
+// ExtensionKind / ExtensionOrigin, while new code can project them into
+// the Phase 1 layered model (AssetDescriptor, AssetKind, AssetOrigin).
+// All projections are pure read-only conversions.
+
+impl From<ExtensionKind> for super::extension_asset::AssetKind {
+    fn from(kind: ExtensionKind) -> Self {
+        match kind {
+            ExtensionKind::Tool => super::extension_asset::AssetKind::Executable,
+            ExtensionKind::Skill => super::extension_asset::AssetKind::Skill,
+            ExtensionKind::Hook => super::extension_asset::AssetKind::Hook,
+            ExtensionKind::Plugin => super::extension_asset::AssetKind::Executable,
+            ExtensionKind::Mcp => super::extension_asset::AssetKind::Connector,
+        }
+    }
+}
+
+impl From<ExtensionOrigin> for super::extension_asset::AssetOrigin {
+    fn from(origin: ExtensionOrigin) -> Self {
+        match origin {
+            ExtensionOrigin::BuiltIn => super::extension_asset::AssetOrigin::BuiltIn,
+            ExtensionOrigin::FileSystem { path } => {
+                super::extension_asset::AssetOrigin::FileSystem { path }
+            }
+            ExtensionOrigin::Package { package } => super::extension_asset::AssetOrigin::Package {
+                package,
+                version: String::new(),
+            },
+            ExtensionOrigin::Remote { server } => {
+                // Remote origins map to a synthetic package identity
+                super::extension_asset::AssetOrigin::Package {
+                    package: format!("remote:{server}"),
+                    version: String::new(),
+                }
+            }
+        }
+    }
+}
+
+impl From<&ExtensionDescriptor> for super::extension_asset::AssetDescriptor {
+    fn from(desc: &ExtensionDescriptor) -> Self {
+        use super::extension_package::PackageId;
+        let (package_name, asset_name) = match desc.id.as_str().split_once(':') {
+            Some((kind, name)) => (format!("legacy:{kind}"), name.to_string()),
+            None => ("legacy:unknown".to_string(), desc.id.as_str().to_string()),
+        };
+        let capabilities: Vec<super::extension_asset::CapabilityDescriptor> = desc
+            .capabilities
+            .iter()
+            .map(|cap| super::extension_asset::CapabilityDescriptor {
+                id: cap.clone(),
+                kind: super::extension_asset::CapabilityKind::Tool,
+                risk: desc.risk,
+            })
+            .collect();
+        super::extension_asset::AssetDescriptor {
+            id: super::extension_asset::AssetId {
+                package: PackageId(package_name),
+                name: asset_name,
+            },
+            kind: desc.kind.into(),
+            version: desc.version.clone(),
+            description: desc.description.clone(),
+            origin: desc.origin.clone().into(),
+            runtime: None,
+            declared_capabilities: capabilities,
+            requested_permissions: super::extension_package::PermissionRequestSet::default(),
+        }
+    }
+}

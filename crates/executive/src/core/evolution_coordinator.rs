@@ -6,7 +6,7 @@
 //! 3. Periodically triggers the morphogenesis pipeline
 //! 4. Records successful migrations to the lineage tracker
 
-use crate::core::config::GenomeConfig;
+use crate::composition::config::GenomeConfig;
 use anyhow::Result;
 use cognit::core::awareness_signal::{signals_to_awareness, AwarenessSignal};
 use cognit::core::reflector::Reflector;
@@ -14,7 +14,7 @@ use fabric::cognit::{ExecutionResult, ReflectionEntry, ReflectionTrigger};
 use fabric::dasein::Stimmung;
 use fabric::self_field::SelfAwareness;
 use fabric::Clock;
-use metacog::r#impl::morphogenesis::mutation_intent::MutationIntentGenerator;
+use metacog::evolution::MutationIntentGenerator;
 use metacog::{MetacogService, VerificationReceipt, VerifyMutation};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -285,7 +285,7 @@ impl EvolutionCoordinator {
     pub fn negativity_from_stimmung(mood: &Stimmung) -> Option<NegativitySignal> {
         match mood {
             Stimmung::Angst { facing } => Some(NegativitySignal {
-                source: NegativitySource::Angst(format!("{:?}", facing)),
+                source: NegativitySource::Angst(format!("{facing:?}")),
                 depth: match facing {
                     fabric::dasein::AngstSource::Nothingness => 1.0,
                     fabric::dasein::AngstSource::Finitude => 0.9,
@@ -293,7 +293,7 @@ impl EvolutionCoordinator {
                     fabric::dasein::AngstSource::Responsibility => 0.7,
                 },
                 should_force_evolution: true,
-                description: format!("Angst facing {:?} — existential negativity", facing),
+                description: format!("Angst facing {facing:?} — existential negativity"),
             }),
             Stimmung::Langeweile {
                 depth: fabric::dasein::BoredomDepth::Deep,
@@ -307,7 +307,7 @@ impl EvolutionCoordinator {
                 source: NegativitySource::WorldDisclosed(because.clone()),
                 depth: 0.4,
                 should_force_evolution: false,
-                description: format!("Dejected — world disclosed negatively: {}", because),
+                description: format!("Dejected — world disclosed negatively: {because}"),
             }),
             _ => None,
         }
@@ -340,6 +340,37 @@ impl EvolutionCoordinator {
         }
 
         Ok((true, results))
+    }
+
+    /// Run a mood-derived fallback request through the same operator gates and
+    /// governed verification boundary as evidence-derived evolution.
+    ///
+    /// A non-empty intent set comes from the legacy Dasein mood adapter. An
+    /// empty set is its periodic "consider evolution" signal and reuses the
+    /// accumulated reflection window. Neither path applies a mutation.
+    pub async fn run_mood_fallback(
+        &self,
+        intents: &[fabric::MutationIntent],
+        meta: &dyn MetacogService,
+    ) -> Result<(bool, Vec<VerificationReceipt>)> {
+        if !self.config.enabled || !self.config.evolution_permitted {
+            return Ok((false, Vec::new()));
+        }
+        if intents.is_empty() {
+            return self.run_evolution(meta).await;
+        }
+
+        let mut receipts = Vec::with_capacity(intents.len());
+        for intent in intents {
+            receipts.push(
+                meta.verify(VerifyMutation {
+                    mutation_id: Uuid::new_v4(),
+                    intent: intent.clone(),
+                })
+                .await?,
+            );
+        }
+        Ok((true, receipts))
     }
 
     /// Current turn count.

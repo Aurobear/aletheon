@@ -40,7 +40,7 @@ fn main() -> io::Result<()> {
                 let resp = protocol::Response::err(
                     serde_json::Value::Null,
                     protocol::PARSE_ERROR,
-                    format!("I/O error reading input: {}", e),
+                    format!("I/O error reading input: {e}"),
                 );
                 let _ = write_response(&mut stdout, &resp);
                 break;
@@ -57,7 +57,7 @@ fn main() -> io::Result<()> {
                 let resp = protocol::Response::err(
                     serde_json::Value::Null,
                     protocol::PARSE_ERROR,
-                    format!("Parse error: {}", e),
+                    format!("Parse error: {e}"),
                 );
                 if write_response(&mut stdout, &resp).is_err() {
                     break;
@@ -187,7 +187,7 @@ fn handle_handshake(req: &protocol::Request, expected_secret: &str) -> protocol:
             return protocol::Response::err(
                 req.id.clone(),
                 protocol::INVALID_PARAMS,
-                format!("Invalid handshake params: {}", e),
+                format!("Invalid handshake params: {e}"),
             );
         }
     };
@@ -227,7 +227,7 @@ fn handle_process_start(
             return protocol::Response::err(
                 req.id.clone(),
                 protocol::INVALID_PARAMS,
-                format!("Invalid process/start params: {}", e),
+                format!("Invalid process/start params: {e}"),
             );
         }
     };

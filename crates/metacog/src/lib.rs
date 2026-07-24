@@ -1,13 +1,34 @@
-pub mod bridge;
-pub mod core;
-pub mod hil_evidence_verifier;
-#[path = "impl/mod.rs"]
-pub mod r#impl;
-pub mod outcome_verifier;
-pub mod service;
+mod adapters;
+pub mod evaluation;
+pub mod evidence;
+pub mod evolution;
+pub mod experience;
+pub mod genome;
+pub mod governance;
+pub mod improvement;
+pub mod problem;
+pub mod reflection;
 
-pub use core::traits::DefaultMetaRuntime;
-pub use core::types::*;
-pub use r#impl::genome::loader::GenomeLoader;
-pub use r#impl::morphogenesis::pipeline::MorphogenesisPipeline;
-pub use service::*;
+// Compatibility re-exports — remove after migration window (Phase 1 complete).
+pub mod hil_evidence_verifier {
+    pub use crate::evaluation::hil_evidence::HILEvidenceVerifier;
+}
+pub mod outcome_verifier {
+    pub use crate::evaluation::outcome::*;
+}
+
+pub use adapters::{
+    EvolutionAction, EvolutionDecision, MetaCognition, MetaCognitionThresholds, SystemState,
+};
+pub use evolution::{CandidateBridge, EvaluationResult, EvaluatorMetric, EvaluatorSpec};
+pub use genome::{
+    CareExt, ChangeType, EvolutionConfig, GenomeBridge, GenomeChange, GenomeMeta, GenomeRule,
+    IdentityExt, ReasoningConfig,
+};
+pub use governance::{
+    ApplyMutation, DefaultMetaRuntime, DefaultMetacogService, GovernedMutationEvidence,
+    MetacogError, MetacogService, MetacogStatus, MutationLifecycle, MutationOperation,
+    MutationReceipt, MutationStatus, RetryDisposition, RollbackMutation, VerificationDecision,
+    VerificationReceipt, VerifyMutation,
+};
+pub use improvement::{GenomePatch, MorphogenesisCandidate, PatchOperation};

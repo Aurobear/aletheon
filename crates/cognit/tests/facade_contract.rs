@@ -1,9 +1,9 @@
+#![allow(dead_code)]
+
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use cognit::{
-    CognitErrorKind, CognitRetryDisposition, CognitiveSessionDependencies, HarnessConfig,
-};
+use cognit::CognitiveSessionDependencies;
 use fabric::{
     CapabilityCall, CapabilityResult, LlmProvider, LlmResponse, LlmStream, OperationId, ProcessId,
     ToolDefinition, TurnEvent, TurnEventSink, TurnRequest, TurnServices,
@@ -118,7 +118,7 @@ fn production_cognit_has_no_concrete_kernel_dependency() {
     assert!(manifest["dependencies"].get("kernel").is_none());
     assert!(manifest["dev-dependencies"].get("kernel").is_some());
 
-    let scheduler = include_str!("../src/impl/llm/scheduler.rs");
+    let scheduler = include_str!("../src/adapters/inference/scheduler.rs");
     let production = scheduler.split("#[cfg(test)]").next().unwrap();
     assert!(!production.contains("kernel::"));
 }

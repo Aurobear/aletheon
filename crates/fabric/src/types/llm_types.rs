@@ -54,9 +54,24 @@ pub struct ModelInfo {
     pub max_context: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InferenceCapabilities {
+    pub streaming: bool,
+    pub tool_calls: bool,
+    pub max_context_tokens: usize,
+}
+
 /// Canonical LlmProvider trait. See shared/traits.md.
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities {
+            streaming: true,
+            tool_calls: true,
+            max_context_tokens: self.max_context_length(),
+        }
+    }
+
     /// Send messages and get a response with optional tool calls.
     async fn complete(
         &self,

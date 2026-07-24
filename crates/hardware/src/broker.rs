@@ -134,6 +134,7 @@ fn validate_projected_authority(
 }
 
 #[cfg(test)]
+#[allow(clippy::type_complexity)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 

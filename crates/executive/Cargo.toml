@@ -52,5 +52,7 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
 http-body-util = "0.1"
 proptest = "1.11.0"
+flate2 = { workspace = true }
+tar = { workspace = true }
 [lints]
 workspace = true

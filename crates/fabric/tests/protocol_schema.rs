@@ -110,7 +110,7 @@ fn initialize_has_version_and_capabilities_but_no_uid() {
     .unwrap();
     assert_eq!(value["type"], "initialize");
     assert_eq!(value["data"]["protocol_versions"], serde_json::json!([1]));
-    assert!(value.to_string().find("uid").is_none());
+    assert!(!value.to_string().contains("uid"));
 }
 
 #[test]
@@ -251,6 +251,23 @@ fn daemon_compatibility_requests_own_method_and_parameter_names() {
     assert_eq!(chat["method"], "chat");
     assert_eq!(chat["params"]["message"], "hello");
     assert_eq!(chat["params"]["working_dir"], "/tmp/project");
+    assert!(chat["params"].get("session_id").is_none());
+
+    let scoped_chat =
+        ClientRpcRequest::chat_for("hello", fabric::SessionId("session-1".into()), &workspace)
+            .to_json_rpc(Some(71))
+            .unwrap();
+    assert_eq!(scoped_chat["params"]["session_id"], "session-1");
+
+    let scoped_skill = ClientRpcRequest::skill_invoke_for(
+        "review",
+        "src/",
+        fabric::SessionId("session-1".into()),
+        &workspace,
+    )
+    .to_json_rpc(Some(72))
+    .unwrap();
+    assert_eq!(scoped_skill["params"]["session_id"], "session-1");
 
     let resume = ClientRpcRequest::resume("session-1")
         .to_json_rpc(Some(8))

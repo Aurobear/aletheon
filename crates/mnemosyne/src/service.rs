@@ -22,6 +22,10 @@ use fabric::{self, wall_to_datetime, ReflectionEntry, ReflectionOutcome, Reflect
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::adapters::storage::fact_store::FactStore;
+use crate::adapters::storage::recall_memory::RecallMemory;
+use crate::backends::EpisodicMemory;
+use crate::domain::core_memory::{CoreMemory, MemoryBlock};
 pub use crate::model::{
     MemoryAuthority, MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity,
     TemporalState,
@@ -30,7 +34,6 @@ use crate::model::{MemoryKind, MemoryRecord, MemoryRecordId, MemoryStatus};
 use crate::observability::{
     MemoryMetrics, RecallOmittedReason, RecallSourceLabel, TombstoneDestination,
 };
-use crate::{CoreMemory, EpisodicMemory, FactStore, RecallMemory};
 
 /// A unit of experience to be recorded into memory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -290,7 +293,7 @@ impl ForgetReceipt {
 }
 
 // ---------------------------------------------------------------------------
-// Wave 3: Synthesis + Gap Analysis (GBrain "think" absorption)
+// Wave 3: Synthesis + Gap Analysis (supplemental memory "think" absorption)
 // ---------------------------------------------------------------------------
 
 /// A single inline citation linking back to a source record.
@@ -371,6 +374,16 @@ pub trait MemoryService: Send + Sync {
     /// Default implementation returns an error (like `preview_forget`).
     async fn synthesize(&self, _request: SynthesisRequest) -> anyhow::Result<SynthesisResult> {
         anyhow::bail!("synthesis is unavailable")
+    }
+
+    /// Promote high-confidence consolidated facts into CoreMemory learned blocks.
+    /// Returns the count of facts promoted. Default no-op.
+    async fn promote_facts(
+        &self,
+        _min_confidence: f64,
+        _max_count: usize,
+    ) -> anyhow::Result<usize> {
+        Ok(0)
     }
 }
 
@@ -745,7 +758,7 @@ impl DefaultMemoryService {
             self.metrics
                 .recall_omitted(RecallOmittedReason::Tombstoned, before - items.len());
             self.metrics.set_tombstone_pending(
-                TombstoneDestination::Gbrain,
+                TombstoneDestination::Supplemental,
                 retention.pending_remote_count().unwrap_or_default(),
             );
         }
@@ -968,18 +981,33 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {
-        let now_ms = self.clock.wall_now().0.max(0) as u64;
-        if let Some(repository) = &self.consolidation {
-            if matches!(scope, MemoryScope::Session(_) | MemoryScope::Goal(_)) {
-                // A scoped consolidate request is the existing contract's explicit
-                // lifecycle boundary. Periodic Global consolidation cannot infer that
-                // an active Session or Goal has completed.
-                repository.complete_scope(&scope, now_ms)?;
+        let mut lifecycle = crate::lifecycle::MemoryOperationLifecycle::default();
+        lifecycle.apply(crate::lifecycle::MemoryOperationEvent::BeginReconciliation)?;
+        let result: anyhow::Result<()> = async {
+            let now_ms = self.clock.wall_now().0.max(0) as u64;
+            if let Some(repository) = &self.consolidation {
+                if matches!(scope, MemoryScope::Session(_) | MemoryScope::Goal(_)) {
+                    // A scoped consolidate request is the existing contract's explicit
+                    // lifecycle boundary. Periodic Global consolidation cannot infer that
+                    // an active Session or Goal has completed.
+                    repository.complete_scope(&scope, now_ms)?;
+                }
+            }
+            self.advance_consolidation(&scope, now_ms)?;
+            self.fact_store.lock().await.decay_stale()?;
+            Ok(())
+        }
+        .await;
+        match result {
+            Ok(()) => {
+                lifecycle.apply(crate::lifecycle::MemoryOperationEvent::ReconciliationFinished)?;
+                Ok(())
+            }
+            Err(error) => {
+                lifecycle.apply(crate::lifecycle::MemoryOperationEvent::Fail)?;
+                Err(error)
             }
         }
-        self.advance_consolidation(&scope, now_ms)?;
-        self.fact_store.lock().await.decay_stale()?;
-        Ok(())
     }
 
     async fn preview_forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
@@ -987,15 +1015,55 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn forget(&self, policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        let mut lifecycle = crate::lifecycle::MemoryOperationLifecycle::default();
+        lifecycle.apply(crate::lifecycle::MemoryOperationEvent::BeginRetention)?;
         let repository = self
             .retention
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("retention repository is unavailable"))?;
-        repository.forget(&policy, self.clock.wall_now().0.max(0))
+            .ok_or_else(|| anyhow::anyhow!("retention repository is unavailable"));
+        let result = match repository {
+            Ok(repository) => repository.forget(&policy, self.clock.wall_now().0.max(0)),
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(receipt) => {
+                lifecycle.apply(crate::lifecycle::MemoryOperationEvent::RetentionFinished)?;
+                Ok(receipt)
+            }
+            Err(error) => {
+                lifecycle.apply(crate::lifecycle::MemoryOperationEvent::Fail)?;
+                Err(error)
+            }
+        }
     }
 
     async fn synthesize(&self, request: SynthesisRequest) -> anyhow::Result<SynthesisResult> {
         self.synthesize(request).await
+    }
+
+    async fn promote_facts(&self, min_confidence: f64, max_count: usize) -> anyhow::Result<usize> {
+        let Some(repository) = &self.consolidation else {
+            return Ok(0);
+        };
+        let records =
+            repository.high_confidence_records(&MemoryScope::Global, min_confidence, max_count)?;
+        let count = records.len();
+        if count == 0 {
+            return Ok(0);
+        }
+        use sha2::{Digest, Sha256};
+        let mut core = self.core_memory.lock().await;
+        for (content, kind_json, confidence) in records {
+            let mut hasher = Sha256::new();
+            hasher.update(content.as_bytes());
+            let hash_hex = format!("{:x}", hasher.finalize());
+            let kind: &str = &kind_json;
+            let label = format!("fact:{kind}:{}", &hash_hex[..16]);
+            let value = format!("[{kind}] confidence={confidence:.2}\n{content}");
+            let truncated: String = value.chars().take(2500).collect();
+            core.set_block(MemoryBlock::new(label, truncated, 3000));
+        }
+        Ok(count)
     }
 }
 
@@ -1007,7 +1075,7 @@ impl DefaultMemoryService {
     }
 
     /// Fire-and-forget entity/relation extraction into the knowledge graph.
-    /// Failures are logged and swallowed (fail-open, matching GBrain).
+    /// Failures are logged and swallowed (fail-open, matching supplemental memory).
     async fn maybe_extract_to_kg(&self, content: &str, record_id: &str) {
         let Some(kg) = &self.knowledge_graph else {
             return;

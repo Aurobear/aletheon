@@ -58,7 +58,7 @@ impl OperationTable {
         {
             let mut records = self.records.lock().await;
             if records.contains_key(&id) {
-                anyhow::bail!("operation {:?} is already registered", id);
+                anyhow::bail!("operation {id:?} is already registered");
             }
             if let Some(parent) = parent {
                 let parent_record = &records
@@ -125,7 +125,7 @@ impl OperationTable {
         let records = self.records.lock().await;
         let runtime = records
             .get(&id)
-            .ok_or_else(|| anyhow::anyhow!("unknown operation: {:?}", id))?;
+            .ok_or_else(|| anyhow::anyhow!("unknown operation: {id:?}"))?;
         Ok(runtime.record.clone())
     }
 
@@ -139,7 +139,7 @@ impl OperationTable {
             let mut records = self.records.lock().await;
             let runtime = records
                 .get_mut(&id)
-                .ok_or_else(|| anyhow::anyhow!("unknown operation: {:?}", id))?;
+                .ok_or_else(|| anyhow::anyhow!("unknown operation: {id:?}"))?;
             let from = runtime.record.state;
             anyhow::ensure!(
                 from.can_transition_to(state),
@@ -180,7 +180,7 @@ impl OperationTable {
             let mut records = self.records.lock().await;
             let runtime = records
                 .get_mut(&id)
-                .ok_or_else(|| anyhow::anyhow!("unknown operation: {:?}", id))?;
+                .ok_or_else(|| anyhow::anyhow!("unknown operation: {id:?}"))?;
             let from = runtime.record.state;
             if from.is_terminal() {
                 return Ok(());
@@ -214,7 +214,7 @@ impl OperationTable {
                 let records = self.records.lock().await;
                 let runtime = records
                     .get(&id)
-                    .ok_or_else(|| anyhow::anyhow!("unknown operation: {:?}", id))?;
+                    .ok_or_else(|| anyhow::anyhow!("unknown operation: {id:?}"))?;
                 if runtime.record.state.is_terminal() {
                     return Ok(OperationResult {
                         id,

@@ -104,7 +104,7 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
             };
             let frame = spinner_chars[self.status.spinner_frame % spinner_chars.len()];
             spans.push(Span::styled(
-                format!("{} ", frame),
+                format!("{frame} "),
                 Style::default().fg(Color::Yellow),
             ));
         }
@@ -247,7 +247,7 @@ impl<'a> Widget for StatusBarWidget<'a> {
             let pct = ((self.status.total_tokens as f64) / (self.status.context_window as f64)
                 * 100.0)
                 .clamp(0.0, 99.0) as u32;
-            right_parts.push(format!("{}% ctx", pct));
+            right_parts.push(format!("{pct}% ctx"));
         }
         if self.status.session_turns > 0 {
             right_parts.push(format!("turn {}", self.status.session_turns));
@@ -275,7 +275,7 @@ impl<'a> Widget for StatusBarWidget<'a> {
         // Right: push to right edge with separator, then tokens + ctx + turn
         if !right.is_empty() {
             let used: usize = spans.iter().map(|s: &Span| s.width()).sum();
-            let right_with_sep = format!("{}{}", sep, right);
+            let right_with_sep = format!("{sep}{right}");
             let right_pad = total_w.saturating_sub(used + right_with_sep.len());
             spans.push(Span::raw(" ".repeat(right_pad)));
             spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));

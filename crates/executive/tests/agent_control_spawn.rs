@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_control_support::{fixture, spawn_request, TestLauncher, TEST_RUNTIME};
-use executive::service::agent_control::AgentRuntimeLauncher;
+use executive::application::agent_control::AgentRuntimeLauncher;
 use fabric::{AgentControlErrorKind, AgentId, AgentRunStatus, AgentWaitRequest, RuntimeId};
 
 #[tokio::test]

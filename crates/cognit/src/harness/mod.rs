@@ -36,7 +36,7 @@ pub use session::{
 /// the `HarnessKind` selection itself.
 ///
 /// Selectable from TOML via `harness_kind = "linear"` (see
-/// `executive::core::config::ExecutiveConfig::harness_kind`).
+/// `executive::composition::config::ExecutiveConfig::harness_kind`).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -49,6 +49,7 @@ pub enum HarnessKind {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod harness_kind_tests {
     use super::HarnessKind;
 

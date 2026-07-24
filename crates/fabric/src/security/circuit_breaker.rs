@@ -72,8 +72,7 @@ impl LoopCircuitBreaker {
         if window_blocks >= WINDOW_BLOCK_THRESHOLD {
             return Some(LoopVerdict::InterruptTurn {
                 reason: format!(
-                    "Blocks in window: {} (threshold: {})",
-                    window_blocks, WINDOW_BLOCK_THRESHOLD
+                    "Blocks in window: {window_blocks} (threshold: {WINDOW_BLOCK_THRESHOLD})"
                 ),
                 consecutive_blocks: state.consecutive_blocks,
             });

@@ -77,7 +77,7 @@ fn device_schema() -> Value {
 
 robot_tool!(
     RobotObserveTool,
-    "robot.observe",
+    "robot_observe",
     "Read current normalized robot observations",
     PermissionLevel::L0,
     ConcurrencyClass::ReadOnly,
@@ -94,7 +94,7 @@ robot_tool!(
 
 robot_tool!(
     RobotGetStateTool,
-    "robot.get_state",
+    "robot_get_state",
     "Read the latest normalized robot state",
     PermissionLevel::L0,
     ConcurrencyClass::ReadOnly,
@@ -111,7 +111,7 @@ robot_tool!(
 
 robot_tool!(
     RobotListSkillsTool,
-    "robot.list_skills",
+    "robot_list_skills",
     "List registered skills for a robot device",
     PermissionLevel::L0,
     ConcurrencyClass::ReadOnly,
@@ -128,7 +128,7 @@ robot_tool!(
 
 robot_tool!(
     RobotExecuteSkillTool,
-    "robot.execute_skill",
+    "robot_execute_skill",
     "Execute one registered robot skill with JSON parameters",
     PermissionLevel::L2,
     ConcurrencyClass::SideEffect,
@@ -166,7 +166,7 @@ robot_tool!(
 
 robot_tool!(
     RobotCancelTool,
-    "robot.cancel",
+    "robot_cancel",
     "Cancel one active robot operation by host-issued UUID",
     PermissionLevel::L2,
     ConcurrencyClass::SideEffect,
@@ -190,7 +190,7 @@ robot_tool!(
 
 robot_tool!(
     RobotSafeStopTool,
-    "robot.safe_stop",
+    "robot_safe_stop",
     "Request a governed safe stop for one robot device",
     PermissionLevel::L2,
     ConcurrencyClass::SideEffect,
@@ -293,32 +293,32 @@ mod tests {
         ];
         let expected = [
             (
-                "robot.observe",
+                "robot_observe",
                 PermissionLevel::L0,
                 ConcurrencyClass::ReadOnly,
             ),
             (
-                "robot.get_state",
+                "robot_get_state",
                 PermissionLevel::L0,
                 ConcurrencyClass::ReadOnly,
             ),
             (
-                "robot.list_skills",
+                "robot_list_skills",
                 PermissionLevel::L0,
                 ConcurrencyClass::ReadOnly,
             ),
             (
-                "robot.execute_skill",
+                "robot_execute_skill",
                 PermissionLevel::L2,
                 ConcurrencyClass::SideEffect,
             ),
             (
-                "robot.cancel",
+                "robot_cancel",
                 PermissionLevel::L2,
                 ConcurrencyClass::SideEffect,
             ),
             (
-                "robot.safe_stop",
+                "robot_safe_stop",
                 PermissionLevel::L2,
                 ConcurrencyClass::SideEffect,
             ),

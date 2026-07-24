@@ -19,9 +19,9 @@ use std::time::Duration;
 use tracing;
 
 use crate::core::runtime_core::RuntimeCore;
+use crate::host::daemon::mcp_embedded::McpEmbedded;
+use crate::host::daemon::server;
 use crate::host::load_dotenv;
-use crate::r#impl::daemon::mcp_embedded::McpEmbedded;
-use crate::r#impl::daemon::server;
 
 /// Send a status message to systemd via the notification socket.
 ///
@@ -109,7 +109,7 @@ impl crate::host::RuntimeHost for SystemdHost {
         let data_dir = &core.daemon_config.data_dir;
         tracing::info!(data_dir = %data_dir, "Creating data directory...");
         std::fs::create_dir_all(data_dir)
-            .map_err(|e| anyhow::anyhow!("Failed to create data dir '{}': {}", data_dir, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create data dir '{data_dir}': {e}"))?;
 
         // ── Watchdog task ───────────────────────────────────────────
         if let Some(interval_usec) = watchdog_interval_usec() {

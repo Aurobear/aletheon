@@ -48,7 +48,7 @@ impl FrameRecorder {
 
     pub fn write(&mut self, snapshot: &FrameSnapshot) {
         if let Ok(line) = serde_json::to_string(snapshot) {
-            let _ = writeln!(self.file, "{}", line);
+            let _ = writeln!(self.file, "{line}");
         }
     }
 }
@@ -88,7 +88,7 @@ impl EventRecorder {
             "params": event_json,
         });
         if let Ok(line) = serde_json::to_string(&record) {
-            let _ = writeln!(self.file, "{}", line);
+            let _ = writeln!(self.file, "{line}");
         }
     }
 }

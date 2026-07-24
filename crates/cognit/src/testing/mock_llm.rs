@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use futures::stream;
 
-use crate::r#impl::llm::{
+use crate::adapters::inference::{
     LlmProvider, LlmResponse, LlmStream, StopReason, StreamChunk, ToolDefinition, Usage,
 };
 use fabric::message::{ContentBlock, Message};
@@ -201,7 +201,7 @@ mod tests {
         let first = stream.next().await.unwrap().unwrap();
         match first {
             StreamChunk::TextDelta { text } => assert_eq!(text, "streamed"),
-            other => panic!("Expected TextDelta, got {:?}", other),
+            other => panic!("Expected TextDelta, got {other:?}"),
         }
     }
 }

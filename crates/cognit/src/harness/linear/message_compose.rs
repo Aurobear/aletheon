@@ -32,15 +32,15 @@ impl ReActLoop {
             let updates = self
                 .pending_memory
                 .iter()
-                .map(|m| format!("- {}", m))
+                .map(|m| format!("- {m}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            parts.push(format!("<memory-update>\n{}\n</memory-update>", updates));
+            parts.push(format!("<memory-update>\n{updates}\n</memory-update>"));
         }
 
         let goal_ctx = self.goal_tracker.get_context();
         if !goal_ctx.is_empty() {
-            parts.push(format!("<goal-context>\n{}\n</goal-context>", goal_ctx));
+            parts.push(format!("<goal-context>\n{goal_ctx}\n</goal-context>"));
         }
 
         parts.push(input.to_string());
@@ -68,20 +68,20 @@ impl ReActLoop {
             let updates = self
                 .pending_memory
                 .iter()
-                .map(|m| format!("- {}", m))
+                .map(|m| format!("- {m}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            parts.push(format!("<memory-update>\n{}\n</memory-update>", updates));
+            parts.push(format!("<memory-update>\n{updates}\n</memory-update>"));
         }
 
         let goal_ctx = self.goal_tracker.get_context();
         if !goal_ctx.is_empty() {
-            parts.push(format!("<goal-context>\n{}\n</goal-context>", goal_ctx));
+            parts.push(format!("<goal-context>\n{goal_ctx}\n</goal-context>"));
         }
 
         if let Some(ctx) = dasein_context {
             if !ctx.is_empty() {
-                parts.push(format!("<dasein-state>\n{}\n</dasein-state>", ctx));
+                parts.push(format!("<dasein-state>\n{ctx}\n</dasein-state>"));
             }
         }
 

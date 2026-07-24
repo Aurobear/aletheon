@@ -24,22 +24,30 @@ pub enum ClientRpcRequest {
     Chat(ChatParams),
     Clear,
     Status,
+    StatusFor(SessionParams),
     Reflect,
     ReflectNow,
+    ReflectNowFor(SessionParams),
     Evolution,
     Genome,
     Sessions,
     Resume(ResumeParams),
     Compact,
+    CompactFor(SessionParams),
     ModelList,
     AgentProfileList,
     AgentProfileSet(AgentProfileSetParams),
+    SkillsList,
+    SkillInvoke(SkillInvokeParams),
     ModeSwitch(ModeSwitchParams),
     PlanApprove,
     Cancel,
     Interrupt(InterruptParams),
     HooksList,
     DaemonShutdown,
+    SessionNew,
+    SessionNewFor(SessionParams),
+    SessionLoadRecent,
     ApprovalResponse(ApprovalResponseParams),
     MemoryAdd(MemoryAddParams),
     MemoryList(MemoryListParams),
@@ -67,6 +75,7 @@ pub enum ClientRpcRequest {
     DebugTraceStart(DebugTraceStartParams),
     DebugTraceStop,
     DebugTraceStatus,
+    Health,
     DebugHealth,
     DebugNodes,
     DebugParamGet(DebugParamGetParams),
@@ -84,6 +93,20 @@ pub enum ClientRpcRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ChatParams {
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub session_id: Option<SessionId>,
+    pub working_dir: PathBuf,
+    pub workspace_roots: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SkillInvokeParams {
+    pub skill_id: String,
+    pub user_args: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub session_id: Option<SessionId>,
     pub working_dir: PathBuf,
     pub workspace_roots: Vec<PathBuf>,
 }
@@ -92,6 +115,11 @@ pub struct ChatParams {
 pub struct ResumeParams {
     #[schemars(with = "String")]
     pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SessionParams {
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -279,9 +307,51 @@ impl ClientRpcRequest {
     pub fn chat(message: impl Into<String>, workspace: &WorkspacePolicy) -> Self {
         Self::Chat(ChatParams {
             message: message.into(),
+            session_id: None,
             working_dir: workspace.cwd().to_path_buf(),
             workspace_roots: workspace.writable_roots().to_vec(),
         })
+    }
+
+    pub fn chat_for(
+        message: impl Into<String>,
+        session_id: SessionId,
+        workspace: &WorkspacePolicy,
+    ) -> Self {
+        let mut request = match Self::chat(message, workspace) {
+            Self::Chat(params) => params,
+            _ => unreachable!("chat constructor always returns chat"),
+        };
+        request.session_id = Some(session_id);
+        Self::Chat(request)
+    }
+
+    pub fn skill_invoke(
+        skill_id: impl Into<String>,
+        user_args: impl Into<String>,
+        workspace: &WorkspacePolicy,
+    ) -> Self {
+        Self::SkillInvoke(SkillInvokeParams {
+            skill_id: skill_id.into(),
+            user_args: user_args.into(),
+            session_id: None,
+            working_dir: workspace.cwd().to_path_buf(),
+            workspace_roots: workspace.writable_roots().to_vec(),
+        })
+    }
+
+    pub fn skill_invoke_for(
+        skill_id: impl Into<String>,
+        user_args: impl Into<String>,
+        session_id: SessionId,
+        workspace: &WorkspacePolicy,
+    ) -> Self {
+        let mut request = match Self::skill_invoke(skill_id, user_args, workspace) {
+            Self::SkillInvoke(params) => params,
+            _ => unreachable!("skill constructor always returns skill invocation"),
+        };
+        request.session_id = Some(session_id);
+        Self::SkillInvoke(request)
     }
 
     pub fn resume(session_id: impl Into<SessionId>) -> Self {
@@ -460,18 +530,23 @@ impl ClientRpcRequest {
             Self::Chat(params) => ("chat", Some(serde_json::to_value(params)?)),
             Self::Clear => ("clear", None),
             Self::Status => ("status", None),
+            Self::StatusFor(params) => ("status", Some(serde_json::to_value(params)?)),
             Self::Reflect => ("reflect", None),
             Self::ReflectNow => ("reflect_now", None),
+            Self::ReflectNowFor(params) => ("reflect_now", Some(serde_json::to_value(params)?)),
             Self::Evolution => ("evolution", None),
             Self::Genome => ("genome", None),
             Self::Sessions => ("sessions", None),
             Self::Resume(params) => ("resume", Some(serde_json::to_value(params)?)),
             Self::Compact => ("compact", None),
+            Self::CompactFor(params) => ("compact", Some(serde_json::to_value(params)?)),
             Self::ModelList => ("model_list", None),
             Self::AgentProfileList => ("agent.profile.list", None),
             Self::AgentProfileSet(params) => {
                 ("agent.profile.set", Some(serde_json::to_value(params)?))
             }
+            Self::SkillsList => ("skills.list", None),
+            Self::SkillInvoke(params) => ("skill.invoke", Some(serde_json::to_value(params)?)),
             Self::ModeSwitch(params) => ("mode_switch", Some(serde_json::to_value(params)?)),
             Self::PlanApprove => ("plan_approve", None),
             Self::Cancel => ("cancel", None),
@@ -481,6 +556,9 @@ impl ClientRpcRequest {
                 "daemon.shutdown",
                 Some(serde_json::to_value(EmptyParams {})?),
             ),
+            Self::SessionNew => ("session.new", None),
+            Self::SessionNewFor(params) => ("new_session", Some(serde_json::to_value(params)?)),
+            Self::SessionLoadRecent => ("load_recent", None),
             Self::ApprovalResponse(params) => {
                 ("approval_response", Some(serde_json::to_value(params)?))
             }
@@ -518,6 +596,7 @@ impl ClientRpcRequest {
             }
             Self::DebugTraceStop => empty_params("debug.trace_stop")?,
             Self::DebugTraceStatus => empty_params("debug.trace_status")?,
+            Self::Health => empty_params("health")?,
             Self::DebugHealth => empty_params("debug.health")?,
             Self::DebugNodes => empty_params("debug.nodes")?,
             Self::DebugParamGet(params) => ("debug.param_get", Some(serde_json::to_value(params)?)),

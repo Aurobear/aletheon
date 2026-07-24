@@ -68,9 +68,7 @@ impl NegativityEngine {
     /// Check for negation triggers from mood.
     pub fn check_mood_negation(mood: &Stimmung) -> Option<PendingNegation> {
         match mood {
-            Stimmung::Angst { facing } => {
-                Some(PendingNegation::AngstSignal(format!("{:?}", facing)))
-            }
+            Stimmung::Angst { facing } => Some(PendingNegation::AngstSignal(format!("{facing:?}"))),
             Stimmung::Langeweile {
                 depth: fabric::dasein::BoredomDepth::Deep,
             } => Some(PendingNegation::AngstSignal(
@@ -104,7 +102,7 @@ impl NegativityEngine {
             }
             PendingNegation::WorldContradiction(desc) => {
                 vec![SelfPossibility {
-                    content: format!("resolving: {}", desc),
+                    content: format!("resolving: {desc}"),
                     from_negation: position,
                     attraction: 0.7,
                     risk: 0.4,
@@ -112,7 +110,7 @@ impl NegativityEngine {
             }
             PendingNegation::TemporalSurprise(desc) => {
                 vec![SelfPossibility {
-                    content: format!("adapting to: {}", desc),
+                    content: format!("adapting to: {desc}"),
                     from_negation: position,
                     attraction: 0.6,
                     risk: 0.3,
@@ -121,7 +119,7 @@ impl NegativityEngine {
             PendingNegation::AngstSignal(desc) => {
                 vec![
                     SelfPossibility {
-                        content: format!("facing {}", desc),
+                        content: format!("facing {desc}"),
                         from_negation: position,
                         attraction: 0.4,
                         risk: 0.8,

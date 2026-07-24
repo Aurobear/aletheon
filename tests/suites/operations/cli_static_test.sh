@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "$0")/../../.." && pwd -P)
+entry="$root/scripts/aletheon.sh"
+
+bash -n "$entry" "$root"/scripts/lib/aletheon/*.sh
+[[ -x "$entry" ]]
+grep -Fq 'source "$SCRIPT_DIR/lib/aletheon/runtime_gate.sh"' "$entry"
+grep -Fq 'cmd_installed_runtime_gate' "$root/scripts/lib/aletheon/verify.sh"
+
+for command in build install deploy configure status health restart logs verify closure \
+  backup restore upgrade cleanup secrets database acceptance test help; do
+  bash "$entry" help | grep -q "$command"
+done
+
+grep -q 'scripts/cargo-agent.sh.*build -p aletheon --release' \
+  "$root/scripts/lib/aletheon/build.sh"
+grep -q 'sudo env ALETHEON_BINARY=' "$root/scripts/lib/aletheon/install.sh"
+! grep -R -E '(API_KEY|TOKEN)=.+' "$root/scripts/aletheon.sh" "$root/scripts/lib/aletheon"
+
+echo 'operations CLI static tests passed'

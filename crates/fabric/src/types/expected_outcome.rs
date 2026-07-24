@@ -289,7 +289,7 @@ mod tests {
         let mut preds = Vec::new();
         for i in 0..65 {
             preds.push(OutcomePredicate::Equals {
-                path: format!("field_{}", i),
+                path: format!("field_{i}"),
                 value: serde_json::json!(i),
             });
         }
