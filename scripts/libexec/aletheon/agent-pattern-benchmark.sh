@@ -50,14 +50,21 @@ run_message() {
 
 run_valid_message() {
   local session_id=$1 prompt=$2 output_file=$3 error_file=$4
-  local attempt attempt_output attempt_error metrics
+  local preserve_session=${5:-false}
+  local attempt attempt_output attempt_error metrics attempt_session
   for attempt in $(seq 1 "${ALETHEON_BENCHMARK_INFRA_RETRIES:-5}"); do
     attempt_output="${output_file%.txt}.attempt-$attempt.txt"
     attempt_error="${error_file%.txt}.attempt-$attempt.txt"
-    run_message "$session_id" "$prompt" "$attempt_output" "$attempt_error"
+    if [[ "$preserve_session" == true ]]; then
+      attempt_session=$session_id
+    else
+      attempt_session="$session_id-infra-$attempt"
+    fi
+    run_message "$attempt_session" "$prompt" "$attempt_output" "$attempt_error"
     metrics=$(grep '^ALETHEON_BENCHMARK_METRICS=' "$attempt_error" | tail -1 || true)
+    # A failure after a real model/tool iteration is a valid behavioral sample.
+    # Only reject zero-usage failures, which prove no model turn occurred.
     if [[ -n "$metrics" ]] &&
-       ! grep -Fq 'provider_unavailable' "$attempt_output" &&
        jq -e '.input_tokens > 0 or .output_tokens > 0' <<<"${metrics#ALETHEON_BENCHMARK_METRICS=}" >/dev/null; then
       cp -- "$attempt_output" "$output_file"
       cp -- "$attempt_error" "$error_file"
@@ -89,12 +96,12 @@ run_case() {
     for index in $(seq 1 49); do
       run_valid_message "$session_id" \
         "Retention setup message $index of 50. Remember benchmark fact '$fact'. Reply only ACK-$index." \
-        "$case_dir/setup-$index.out" "$case_dir/setup-$index.err"
+        "$case_dir/setup-$index.out" "$case_dir/setup-$index.err" true
     done
   fi
 
   run_valid_message "$session_id" "$(jq -r '.prompt' <<<"$case_json")" \
-    "$output_file" "$error_file"
+    "$output_file" "$error_file" "$([[ "$case_id" == "fifty_message_fact_retention" ]] && echo true || echo false)"
   metric_line=$(grep '^ALETHEON_BENCHMARK_METRICS=' "$error_file" | tail -1)
   [[ -n "$metric_line" ]] || { echo "missing client metrics for $case_id" >&2; return 1; }
   metrics=${metric_line#ALETHEON_BENCHMARK_METRICS=}
@@ -170,5 +177,6 @@ for run in $(seq 1 "$runs"); do
   for case_id in "${case_ids[@]}"; do
     echo "benchmark variant=$variant run=$run case=$case_id"
     run_case "$variant" "$run" "$case_id"
+    sleep "${ALETHEON_BENCHMARK_RUN_INTERVAL_SECS:-10}"
   done
 done
