@@ -49,9 +49,15 @@ impl ModelRouter {
             .resolve_spec(task)
             .or_else(|| self.resolve_spec(TaskType::General))
             .unwrap_or_default();
-        Ok(Box::new(
-            PortLlmProvider::resolve(self.inference.clone(), spec).await?,
-        ))
+        let provider = PortLlmProvider::resolve(self.inference.clone(), spec).await?;
+        tracing::info!(
+            model_spec = provider.model_spec(),
+            display_name = provider.name(),
+            max_context_tokens = provider.max_context_length(),
+            task = ?task,
+            "Model provider selected"
+        );
+        Ok(Box::new(provider))
     }
 
     /// Classify a message into a task type based on content analysis.

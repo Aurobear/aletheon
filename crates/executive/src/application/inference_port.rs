@@ -85,6 +85,10 @@ impl PortLlmProvider {
         let capabilities = inference.capabilities(model_spec.as_ref()).await?;
         Self::new(inference, capabilities)
     }
+
+    pub(crate) fn model_spec(&self) -> &str {
+        &self.model_spec
+    }
 }
 
 #[async_trait::async_trait]

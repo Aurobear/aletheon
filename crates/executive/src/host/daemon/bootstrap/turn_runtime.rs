@@ -267,7 +267,8 @@ impl ProductionTurnSessions {
             Message::user(pending_user).estimate_tokens()
         };
         let effective_context_window = self.context_window.min(profile.max_input_tokens as usize);
-        Ok(ContextBudgetPlanner::plan(ContextBudgetInput {
+        let current_history_tokens = manager.estimate_tokens();
+        let plan = ContextBudgetPlanner::plan(ContextBudgetInput {
             model_context_window: self.context_window,
             profile_input_limit: profile.max_input_tokens as usize,
             system_and_skill_prefix_tokens: prefix_tokens,
@@ -275,8 +276,16 @@ impl ProductionTurnSessions {
             reserved_output_tokens: profile.max_output_tokens as usize,
             pending_user_input_tokens,
             safety_margin_tokens: (effective_context_window / 20).max(1_024),
-            current_history_tokens: manager.estimate_tokens(),
-        }))
+            current_history_tokens,
+        });
+        tracing::info!(
+            history_budget = plan.history_budget,
+            current_history_tokens,
+            projected_history_tokens = plan.projected_history_tokens,
+            budget_action = ?plan.action,
+            "Context budget planned"
+        );
+        Ok(plan)
     }
 }
 

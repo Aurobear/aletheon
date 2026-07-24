@@ -278,7 +278,9 @@ impl RequestHandler {
             })
             .await?;
         info!(
-            context_window = context_window,
+            model_spec = llm.name(),
+            display_name = llm.name(),
+            max_context_tokens = context_window,
             "Session context window configured"
         );
         let initial_session = sessions_composition.initial;
