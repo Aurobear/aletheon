@@ -72,9 +72,9 @@ impl ReActLoop {
                         self.run_reactive_compaction(llm, Some(event_sink)).await?;
                     }
                     Err(e)
-                        if classify_error(&e) == ErrorClass::Transient && transient_attempt < 3 =>
+                        if classify_error(&e) == ErrorClass::Transient && transient_attempt < 4 =>
                     {
-                        let backoff_ms = 250_u64.saturating_mul(1 << transient_attempt);
+                        let backoff_ms = 1_000_u64.saturating_mul(1 << transient_attempt);
                         transient_attempt += 1;
                         warn!(
                             attempt = transient_attempt,
