@@ -2,6 +2,15 @@
 
 /// Maximum number of tool-result bytes retained in the active model context.
 pub(super) const MAX_TOOL_RESULT_BYTES: usize = 8_000;
+/// Maximum combined tool-result bytes added by one parallel tool batch.
+pub(super) const MAX_TOOL_RESULT_BATCH_BYTES: usize = 12_000;
+
+pub(super) fn per_result_budget(result_count: usize) -> usize {
+    if result_count == 0 {
+        return MAX_TOOL_RESULT_BYTES;
+    }
+    (MAX_TOOL_RESULT_BATCH_BYTES / result_count).min(MAX_TOOL_RESULT_BYTES)
+}
 
 /// Return a UTF-8-safe head/tail view of an oversized tool result.
 ///
@@ -82,5 +91,13 @@ mod tests {
         assert!(bounded.starts_with("start"));
         assert!(bounded.ends_with("finish"));
         assert!(bounded.contains("bytes"));
+    }
+
+    #[test]
+    fn parallel_results_share_one_batch_budget() {
+        assert_eq!(per_result_budget(1), 8_000);
+        assert_eq!(per_result_budget(2), 6_000);
+        assert_eq!(per_result_budget(4), 3_000);
+        assert_eq!(per_result_budget(100), 120);
     }
 }

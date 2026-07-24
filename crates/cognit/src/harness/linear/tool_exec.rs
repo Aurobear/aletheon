@@ -1,6 +1,6 @@
 use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
 use super::tool_budget;
-use super::tool_output::{bounded_tool_result, MAX_TOOL_RESULT_BYTES};
+use super::tool_output::{bounded_tool_result, per_result_budget};
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
@@ -283,6 +283,7 @@ impl ReActLoop {
             // assistant(tool_use) message to be in ONE subsequent user message.
             let mut tool_result_blocks: Vec<ContentBlock> = Vec::new();
 
+            let result_budget = per_result_budget(ordered_calls.len());
             for (tool_index, (id, name, input)) in ordered_calls.iter().enumerate() {
                 // Defensive: skip tool calls with empty names — some
                 // OpenAI-compatible providers emit malformed tool-use blocks
@@ -459,7 +460,7 @@ impl ReActLoop {
                 }
                 // The full result was emitted above for durable projection. Keep
                 // only a transient bounded copy in the active model context.
-                let bounded_content = bounded_tool_result(&content, MAX_TOOL_RESULT_BYTES);
+                let bounded_content = bounded_tool_result(&content, result_budget);
                 // Accumulate tool result block for combined push after loop.
                 // Anthropic API requires all tool_result blocks for one assistant
                 // message to be in a SINGLE subsequent user message.
