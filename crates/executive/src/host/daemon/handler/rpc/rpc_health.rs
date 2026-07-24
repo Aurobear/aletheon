@@ -85,12 +85,7 @@ impl RequestHandler {
         };
         match self.ports.health.status().await {
             Ok(status) => {
-                let memory_health = self
-                    .ports
-                    .memory_health
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone();
+                let memory_health = self.ports.memory_health_snapshot();
                 json!({
                     "jsonrpc": "2.0", "id": id,
                     "result": { "status": {
