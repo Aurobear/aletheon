@@ -648,6 +648,46 @@ mod tests {
         calls: Mutex<usize>,
     }
 
+    struct RecordingTextLlm {
+        messages: Mutex<Vec<Vec<Message>>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for RecordingTextLlm {
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            self.messages.lock().unwrap().push(messages.to_vec());
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "done".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+
+        async fn complete_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            unimplemented!("not used in test")
+        }
+
+        fn name(&self) -> &str {
+            "recording-text"
+        }
+
+        fn max_context_length(&self) -> usize {
+            100_000
+        }
+    }
+
     #[async_trait]
     impl LlmProvider for ScriptedLlm {
         async fn complete(
@@ -1075,6 +1115,82 @@ mod tests {
     }
 
     // ── Compose message tests ────────────────────────────────────────────────
+
+    async fn run_and_capture_user_message(lp: &mut ReActLoop) -> String {
+        let llm = RecordingTextLlm {
+            messages: Mutex::new(Vec::new()),
+        };
+        lp.run(
+            "inspect only",
+            &llm,
+            &[],
+            |_id: &str, _name: &str, _input: &serde_json::Value| async move {
+                ("unused".into(), false)
+            },
+        )
+        .await
+        .unwrap();
+        let calls = llm.messages.lock().unwrap();
+        calls[0]
+            .iter()
+            .rev()
+            .find(|message| message.role == fabric::message::Role::User)
+            .and_then(|message| {
+                message.content.iter().find_map(|block| match block {
+                    ContentBlock::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn plan_mode_run_injects_marker() {
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_plan_mode(true);
+
+        let message = run_and_capture_user_message(&mut lp).await;
+
+        assert!(message.starts_with(PLAN_MODE_MARKER));
+        assert!(message.ends_with("inspect only"));
+        assert_eq!(message.matches(PLAN_MODE_MARKER).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn run_without_plan_mode_has_no_marker() {
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+
+        let message = run_and_capture_user_message(&mut lp).await;
+
+        assert_eq!(message, "inspect only");
+    }
+
+    #[tokio::test]
+    async fn run_consumes_pending_memory_once() {
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.queue_memory_update("bounded fact".into());
+
+        let first = run_and_capture_user_message(&mut lp).await;
+        let second = run_and_capture_user_message(&mut lp).await;
+
+        assert!(first.contains("<memory-update>"));
+        assert!(first.contains("bounded fact"));
+        assert!(!second.contains("<memory-update>"));
+        assert!(!second.contains("bounded fact"));
+    }
+
+    #[tokio::test]
+    async fn plan_mode_run_injects_dasein_and_one_marker() {
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_plan_mode(true);
+        lp.set_dasein_context_provider(Box::new(|| Some("mood: attentive".into())));
+
+        let message = run_and_capture_user_message(&mut lp).await;
+
+        assert!(message.contains("<dasein-state>"));
+        assert!(message.contains("mood: attentive"));
+        assert_eq!(message.matches(PLAN_MODE_MARKER).count(), 1);
+    }
 
     #[test]
     fn compose_user_message_plain_input() {

@@ -31,7 +31,17 @@ impl ReActLoop {
         let mut tool_errors: usize = 0;
         self.verify_attempts = 0;
 
-        self.messages.push(Message::user(user_input));
+        let dasein_context = self
+            .dasein_ctx_provider
+            .as_ref()
+            .and_then(|provider| provider());
+        let user_message = if self.dasein_ctx_provider.is_some() {
+            self.compose_user_message_with_dasein(user_input, dasein_context.as_deref())
+        } else {
+            self.compose_user_message(user_input)
+        };
+        self.pending_memory.clear();
+        self.messages.push(Message::user(user_message));
 
         while self.should_continue() {
             self.advance();
