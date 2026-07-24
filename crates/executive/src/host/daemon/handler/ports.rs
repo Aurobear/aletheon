@@ -44,6 +44,13 @@ pub(crate) struct HandlerPorts {
 }
 
 impl HandlerPorts {
+    pub(crate) fn memory_health_snapshot(&self) -> mnemosyne::CompositeMemoryHealth {
+        self.memory_health
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     pub(crate) fn new(
         kernel: Arc<kernel::KernelRuntime>,
         pending_approvals: crate::application::admin_service::PendingApprovals,

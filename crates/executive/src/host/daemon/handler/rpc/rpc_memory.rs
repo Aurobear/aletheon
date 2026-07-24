@@ -23,12 +23,7 @@ fn memory_error(id: &serde_json::Value, error: FactServiceError) -> serde_json::
 
 impl RequestHandler {
     pub(super) async fn handle_memory_status(&self, id: &serde_json::Value) -> serde_json::Value {
-        let health = self
-            .ports
-            .memory_health
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
+        let health = self.ports.memory_health_snapshot();
         json!({
             "jsonrpc": "2.0",
             "id": id,
