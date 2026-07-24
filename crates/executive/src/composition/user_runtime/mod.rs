@@ -89,6 +89,7 @@ impl UserRuntimeConfig {
             hooks: app.hooks.clone(),
             telegram: app.telegram.clone(),
             supplemental_memory: supplemental.clone(),
+            memory_policy: app.memory_config().clone(),
             deployment,
             backpressure: app.backpressure.clone(),
             agent_admission: app.agent.admission.clone(),

@@ -711,13 +711,17 @@ impl RequestHandler {
         let supplemental_memory_worker_task = supplemental_runtime.worker_task;
         let consolidation_cancel = cancel_token.clone();
         let consolidation_memory = supplemental_runtime.memory_service.clone();
+        let promotion = config.memory_policy.promotion.clone();
         tokio::spawn(async move {
-            crate::application::memory_consolidation_worker::MemoryConsolidationWorker::new(
-                consolidation_memory,
-            )
-            .with_promotion(0.7, 20) // Phase 5: promote facts into CoreMemory
-            .run(consolidation_cancel)
-            .await;
+            let mut worker =
+                crate::application::memory_consolidation_worker::MemoryConsolidationWorker::new(
+                    consolidation_memory,
+                );
+            if promotion.enabled {
+                worker =
+                    worker.with_promotion(promotion.min_confidence, promotion.max_promoted_facts);
+            }
+            worker.run(consolidation_cancel).await;
         });
 
         let durable_budget = Arc::new(
@@ -802,10 +806,11 @@ impl RequestHandler {
                 skill_router: skill_router.clone(),
                 conscious: conscious_context.clone(),
                 memory_service: Some(supplemental_runtime.memory_service.clone()),
-                recall_enabled: true,
-                recall_max_items: 4,
-                recall_max_bytes: 65536,
-                recall_timeout_ms: 500,
+                recall_enabled: config.memory_policy.recall.enabled
+                    && config.memory_policy.recall.inject_into_context,
+                recall_max_items: config.memory_policy.recall.max_items,
+                recall_max_bytes: config.memory_policy.recall.max_bytes,
+                recall_timeout_ms: config.memory_policy.recall.timeout_ms,
             },
         );
         let context_assembler =
@@ -1391,6 +1396,8 @@ impl RequestHandler {
             conscious_registry,
             debug_handler,
             session_gateway,
+            memory_group.memory_service.clone(),
+            memory_group.supplemental_memory_health.clone(),
             transport_ports,
         ));
         let workspace_trust =

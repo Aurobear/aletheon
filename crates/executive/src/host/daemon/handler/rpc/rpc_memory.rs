@@ -5,7 +5,7 @@
 
 use super::RequestHandler;
 
-use mnemosyne::{AddFactRequest, FactServiceError, ListFactsRequest, SearchFactsRequest};
+use mnemosyne::{AddFactRequest, FactServiceError, ListFactsRequest, RecallRequest};
 use serde_json::json;
 
 fn memory_error(id: &serde_json::Value, error: FactServiceError) -> serde_json::Value {
@@ -22,6 +22,31 @@ fn memory_error(id: &serde_json::Value, error: FactServiceError) -> serde_json::
 }
 
 impl RequestHandler {
+    pub(super) async fn handle_memory_status(&self, id: &serde_json::Value) -> serde_json::Value {
+        let health = self
+            .ports
+            .memory_health
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "memory": {
+                    "provider": "composite",
+                    "local": "healthy",
+                    "supplemental": {
+                        "enabled": health.supplemental_enabled,
+                        "state": if health.degraded { "degraded" } else { "healthy" },
+                        "error_category": health.error_category.map(|value| format!("{value:?}").to_ascii_lowercase()),
+                        "queue_depth": health.queue_depth,
+                    }
+                }
+            }
+        })
+    }
+
     pub(super) async fn handle_memory_add(
         &self,
         id: &serde_json::Value,
@@ -85,22 +110,23 @@ impl RequestHandler {
     ) -> serde_json::Value {
         let p = &request["params"];
         let query = p["query"].as_str().unwrap_or("");
-        let scope = p["scope"].as_str();
+        let session = p["scope"].as_str().unwrap_or("global");
         match self
             .ports
-            .facts
-            .search(SearchFactsRequest {
-                query: query.to_string(),
-                scope: scope.map(str::to_string),
-            })
+            .recall_service
+            .recall(RecallRequest::bounded(session, query))
             .await
         {
-            Ok(rows) => json!({
+            Ok(recall) => json!({
                 "jsonrpc": "2.0",
                 "id": id,
-                "result": { "facts": rows }
+                "result": { "facts": recall.items }
             }),
-            Err(error) => memory_error(id, error),
+            Err(error) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32010, "message": error.to_string() }
+            }),
         }
     }
 

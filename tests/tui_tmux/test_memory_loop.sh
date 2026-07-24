@@ -45,7 +45,7 @@ fi
 
 # Turn 1: Store facts.
 tmux send-keys -t "$SESSION" "记住: port1=9090, port2=8443" Enter
-if tui_wait_spinner 180; then
+if tui_wait "turn 1" 180; then
   screen=$(tmux capture-pane -t "$SESSION" -p)
   if echo "$screen" | grep -qE "9090|8443"; then
     test_pass "turn-1 stored both values (9090, 8443)"
@@ -58,7 +58,7 @@ fi
 
 # Turn 2: Recall.
 tmux send-keys -t "$SESSION" "刚才说的两个端口号是多少?" Enter
-if tui_wait_spinner 180; then
+if tui_wait "turn 2" 180; then
   screen=$(tmux capture-pane -t "$SESSION" -p)
   if echo "$screen" | grep -qE "9090|8443"; then
     test_pass "turn-2 recalled both values"
@@ -69,12 +69,56 @@ else
   test_fail "turn-2 spinner timeout"
 fi
 
+# Turn 3: repeated recall must survive another completed turn.
+tmux send-keys -t "$SESSION" "再确认一次这两个端口号" Enter
+if tui_wait "turn 3" 180; then
+  screen=$(tmux capture-pane -t "$SESSION" -p)
+  if echo "$screen" | grep -q "9090" && echo "$screen" | grep -q "8443"; then
+    test_pass "turn-3 retained both recalled values"
+  else
+    test_fail "turn-3 response did not retain both values"
+  fi
+else
+  test_fail "turn-3 spinner timeout"
+fi
+
 # /memory command.
 tmux send-keys -t "$SESSION" "/memory" Enter
 if tui_wait "Memory Facts" 20; then
   test_pass "/memory renders"
 else
   test_fail "/memory renders"
+fi
+
+tmux send-keys -t "$SESSION" "/memory search 9090" Enter
+if tui_wait "Memory Facts" 20; then
+  test_pass "/memory search renders"
+else
+  test_fail "/memory search renders"
+fi
+
+tmux send-keys -t "$SESSION" "/memory status" Enter
+if tui_wait "Memory Status|Provider: composite" 20; then
+  test_pass "/memory status renders"
+else
+  test_fail "/memory status renders"
+fi
+
+# Durable facts are global and must remain searchable after /clear creates a
+# new logical session.
+tmux send-keys -t "$SESSION" "/clear" Enter
+if tui_wait "已创建新会话" 120; then
+  # Session close makes the transcript eligible for extraction; the
+  # consolidation worker runs on a bounded 60-second interval.
+  sleep 65
+  tmux send-keys -t "$SESSION" "/memory search 9090" Enter
+  if tui_wait "Memory Facts \\([1-9][0-9]*\\)" 30; then
+    test_pass "facts survive /clear"
+  else
+    test_fail "facts survive /clear"
+  fi
+else
+  test_fail "clear before durability check"
 fi
 
 _cleanup_loop

@@ -107,6 +107,7 @@ impl RequestHandler {
             "memory.add" => self.handle_memory_add(&id, &request).await,
             "memory.list" => self.handle_memory_list(&id, &request).await,
             "memory.search" => self.handle_memory_search(&id, &request).await,
+            "memory.status" => self.handle_memory_status(&id).await,
             "memory.show" => self.handle_memory_show(&id, &request).await,
             "memory.forget" => self.handle_memory_forget(&id, &request).await,
             "memory.pin" | "memory.unpin" => self.handle_memory_pin(&id, &request, method).await,

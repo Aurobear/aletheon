@@ -84,24 +84,42 @@ impl RequestHandler {
             }
         };
         match self.ports.health.status().await {
-            Ok(status) => json!({
-                "jsonrpc": "2.0", "id": id,
-                "result": { "status": {
-                    // Session-scoped fields above were resolved from the
-                    // explicitly requested session. Do not mix them with the
-                    // health service's process-global/default session id.
-                    "session_id": session_id,
-                    "turn_count": turn_count,
-                    "iteration": status.iteration,
-                    "reflection_count": status.reflection_count,
-                    "evolution_count": status.evolution_count,
-                    "care_weights": status.care_weights,
-                    "boundary_rules": status.boundary_rules,
-                    "boundary_immutable": status.boundary_immutable,
-                    "attention_focus": status.attention_focus,
-                    "compaction": compaction,
-                }}
-            }),
+            Ok(status) => {
+                let memory_health = self
+                    .ports
+                    .memory_health
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "result": { "status": {
+                        // Session-scoped fields above were resolved from the
+                        // explicitly requested session. Do not mix them with the
+                        // health service's process-global/default session id.
+                        "session_id": session_id,
+                        "turn_count": turn_count,
+                        "iteration": status.iteration,
+                        "reflection_count": status.reflection_count,
+                        "evolution_count": status.evolution_count,
+                        "care_weights": status.care_weights,
+                        "boundary_rules": status.boundary_rules,
+                        "boundary_immutable": status.boundary_immutable,
+                        "attention_focus": status.attention_focus,
+                        "compaction": compaction,
+                        "memory": {
+                            "provider": "composite",
+                            "local": "healthy",
+                            "supplemental": {
+                                "enabled": memory_health.supplemental_enabled,
+                                "state": if memory_health.degraded { "degraded" } else { "healthy" },
+                                "error_category": memory_health.error_category.map(|value| format!("{value:?}").to_ascii_lowercase()),
+                                "queue_depth": memory_health.queue_depth,
+                            }
+                        },
+                    }}
+                })
+            }
             Err(error) => json!({
                 "jsonrpc": "2.0", "id": id,
                 "error": { "code": -32000, "message": error.to_string() }

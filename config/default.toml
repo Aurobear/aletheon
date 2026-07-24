@@ -91,7 +91,7 @@ max_facts_per_turn = 5
 # Automatic promotion of high-confidence consolidated facts into CoreMemory
 # learned blocks that appear in the agent's system prompt.
 [memory.promotion]
-enabled = false              # disabled until Phase 5 wiring
+enabled = true
 min_confidence = 0.7
 max_promoted_facts = 20
 

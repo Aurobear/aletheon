@@ -119,6 +119,14 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
+    /// Return the provider-neutral memory policy consumed by runtime
+    /// composition without exposing memory implementation internals.
+    pub fn memory_config(&self) -> &MemoryConfig {
+        &self.memory
+    }
+}
+
+impl AppConfig {
     pub fn cognit(&self) -> CognitConfig {
         CognitConfig {
             agent: self.agent.clone(),

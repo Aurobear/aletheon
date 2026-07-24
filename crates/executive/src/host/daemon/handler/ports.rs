@@ -38,6 +38,8 @@ pub(crate) struct HandlerPorts {
         Arc<crate::application::conscious_workspace::ConsciousWorkspaceRegistry>,
     pub(crate) debug: Arc<DebugHandler>,
     pub(crate) session_gateway: Arc<crate::core::session_gateway::SessionGateway>,
+    pub(crate) recall_service: Arc<dyn mnemosyne::MemoryService>,
+    pub(crate) memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
     pub(crate) transport: Arc<TransportPorts>,
 }
 
@@ -62,6 +64,8 @@ impl HandlerPorts {
         >,
         debug: Arc<DebugHandler>,
         session_gateway: Arc<crate::core::session_gateway::SessionGateway>,
+        recall_service: Arc<dyn mnemosyne::MemoryService>,
+        memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
         transport: Arc<TransportPorts>,
     ) -> Self {
         Self {
@@ -82,6 +86,8 @@ impl HandlerPorts {
             conscious_workspaces,
             debug,
             session_gateway,
+            recall_service,
+            memory_health,
             transport,
         }
     }

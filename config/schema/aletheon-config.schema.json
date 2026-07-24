@@ -1381,7 +1381,7 @@
         "promotion": {
           "$ref": "#/$defs/MemoryPromotionConfig",
           "default": {
-            "enabled": false,
+            "enabled": true,
             "max_promoted_facts": 20,
             "min_confidence": 0.7
           }
@@ -1450,7 +1450,7 @@
       "additionalProperties": false,
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "max_promoted_facts": {
@@ -2377,7 +2377,7 @@
           "mode": "local"
         },
         "promotion": {
-          "enabled": false,
+          "enabled": true,
           "max_promoted_facts": 20,
           "min_confidence": 0.7
         },

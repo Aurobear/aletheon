@@ -117,6 +117,7 @@ impl RuntimeCore {
             },
             telegram: app_config.telegram.clone(),
             supplemental_memory: app_config.memory.supplemental.clone(),
+            memory_policy: app_config.memory_config().clone(),
             deployment: app_config.deployment.clone(),
             backpressure: app_config.backpressure.clone(),
             agent_admission: app_config.agent.admission.clone(),

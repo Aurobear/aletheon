@@ -1049,20 +1049,27 @@ impl MemoryService for DefaultMemoryService {
             repository.high_confidence_records(&MemoryScope::Global, min_confidence, max_count)?;
         let count = records.len();
         if count == 0 {
+            self.core_memory
+                .lock()
+                .await
+                .retain_promoted_facts(&std::collections::HashSet::new());
             return Ok(0);
         }
         use sha2::{Digest, Sha256};
         let mut core = self.core_memory.lock().await;
+        let mut promoted_labels = std::collections::HashSet::with_capacity(count);
         for (content, kind_json, confidence) in records {
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
             let hash_hex = format!("{:x}", hasher.finalize());
             let kind: &str = &kind_json;
             let label = format!("fact:{kind}:{}", &hash_hex[..16]);
+            promoted_labels.insert(label.clone());
             let value = format!("[{kind}] confidence={confidence:.2}\n{content}");
             let truncated: String = value.chars().take(2500).collect();
             core.set_block(MemoryBlock::new(label, truncated, 3000));
         }
+        core.retain_promoted_facts(&promoted_labels);
         Ok(count)
     }
 }
