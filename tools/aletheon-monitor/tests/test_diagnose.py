@@ -26,6 +26,51 @@ def test_diagnose_stops_tui_on_capture_error(monkeypatch):
     assert calls["stopped"] is True
 
 
+def test_diagnose_creates_fresh_session_before_task(monkeypatch):
+    sent = []
+
+    async def ok_start(task="", cols=120, rows=50, working_dir=None):
+        return {"ok": True, "session": "s", "frame": "", "turn_done_count": 0}
+
+    async def record_send(text, submit=True):
+        sent.append(text)
+        return {"ok": True}
+
+    async def capture(*args, **kwargs):
+        return {"frame": "ready", "stable": True}
+
+    async def done(*args, **kwargs):
+        return {
+            "frame": "answer\n❯",
+            "stable": True,
+            "turn_done": True,
+            "prompt_visible": True,
+            "checks": [],
+        }
+
+    async def stop():
+        return {"ok": True}
+
+    async def analyze(_client):
+        return {"healthy": True, "recent_journal": []}
+
+    async def logs(_client, last_n=50):
+        return {"lines": []}
+
+    monkeypatch.setattr(tui_tools, "tui_start", ok_start)
+    monkeypatch.setattr(tui_tools, "tui_send", record_send)
+    monkeypatch.setattr(tui_tools, "tui_capture", capture)
+    monkeypatch.setattr(tui_tools, "tui_wait_turn_done", done)
+    monkeypatch.setattr(tui_tools, "tui_stop", stop)
+    monkeypatch.setattr(diag.analyze_mod, "analyze", analyze)
+    monkeypatch.setattr(diag.logs_mod, "logs", logs)
+    monkeypatch.setattr(diag, "_audit_tail", lambda: [])
+
+    asyncio.run(diag.diagnose(client=None, task="inspect"))
+
+    assert sent == ["/new", "inspect"]
+
+
 def test_build_timeline_sorts_sources_by_timestamp():
     journal = [
         {"timestamp": "2026-07-06T11:15:01Z", "type": "user_message"},

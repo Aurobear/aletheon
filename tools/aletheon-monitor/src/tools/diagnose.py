@@ -132,6 +132,15 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         return {"error": "tui_start failed", "detail": started}
 
     try:
+        # Test runs must not inherit a previously failed or structurally
+        # incomplete conversation. The production TUI resumes the most recent
+        # workspace session by default, so explicitly create a clean session
+        # before establishing the task baseline.
+        await tui_tools.tui_send("/new", submit=True)
+        await tui_tools.tui_capture(
+            scrollback=True, wait_stable=True, stable_secs=0.8, timeout=20.0,
+        )
+
         # Phase 1: submit the task and let the input echo settle -> baseline.
         # This baseline includes the user's echoed input but no response yet.
         await tui_tools.tui_send(task, submit=True)
