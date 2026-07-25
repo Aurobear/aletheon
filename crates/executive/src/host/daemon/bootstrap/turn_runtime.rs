@@ -230,6 +230,10 @@ impl ProductionTurnSessions {
             &self.data_dir,
             session_id.clone(),
             self.context_window,
+            // On-demand secondary sessions use the default threshold (80% == the
+            // legacy 0.8); the primary daemon session (see bootstrap::sessions)
+            // carries the configured value.
+            80,
             self.clock.clone(),
         )
         .await?;

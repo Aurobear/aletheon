@@ -122,6 +122,7 @@ impl RuntimeCore {
             backpressure: app_config.backpressure.clone(),
             agent_admission: app_config.agent.admission.clone(),
             agent_max_iterations: app_config.agent.max_iterations,
+            agent_compaction_threshold_percent: app_config.agent.compaction_threshold,
             harness_kind: app_config.agent.harness_kind,
             integrations,
             embodiment_provider: app_config

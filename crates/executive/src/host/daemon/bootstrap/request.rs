@@ -274,6 +274,7 @@ impl RequestHandler {
                 data_dir: &data_dir,
                 session_id: session_id.clone(),
                 context_window,
+                compaction_threshold_percent: config.agent_compaction_threshold_percent,
                 clock: clock.clone(),
             })
             .await?;
@@ -499,6 +500,7 @@ impl RequestHandler {
             // Wave 0: honor configured agent iteration cap (0 = unlimited)
             // instead of the hardcoded Default (50).
             max_iterations: config.agent_max_iterations,
+            compaction_threshold_percent: config.agent_compaction_threshold_percent,
             harness_kind: config.harness_kind,
             ..Default::default()
         };

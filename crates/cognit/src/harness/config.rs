@@ -8,6 +8,10 @@
 pub struct HarnessConfig {
     pub max_iterations: usize,
     pub compaction_enabled: bool,
+    /// Fraction of the context window (as a whole percent, e.g. `80` = 80%) at
+    /// which automatic compaction triggers. Wired into the compressor threshold;
+    /// `80` preserves the historical hardcoded `0.8` behavior.
+    pub compaction_threshold_percent: usize,
     pub tail_token_budget: usize,
     pub target_summary_chars: usize,
     pub context_window_tokens: usize,
@@ -28,16 +32,23 @@ impl Default for HarnessConfig {
         Self {
             max_iterations: 50,
             compaction_enabled: true,
+            compaction_threshold_percent: 80,
             tail_token_budget: 16_000,
             target_summary_chars: 2_000,
             context_window_tokens: 128_000,
-            max_tool_calls: 20,
+            // Claude-style: do NOT cap tool use at a small fixed count. `0` =
+            // unlimited (honored by ToolBudget); the turn is bounded by
+            // `max_iterations` and the context window instead of a tiny per-turn
+            // ceiling. This matches the daemon's AgentLoopConfig default (0) and
+            // avoids marking a complete-but-thorough turn as failed just because
+            // it read many files.
+            max_tool_calls: 0,
             reflection_interval: 5,
-            // Keep the advisory reflection ceiling aligned with the default
-            // execution budget.  A smaller value terminates ordinary coding
-            // work after the first diagnostic test failure, before the model
-            // can apply a fix.
-            reflection_tool_call_limit: 20,
+            // Advisory reflection ceiling. Must stay positive (0 would stop
+            // immediately). Aligned with the daemon's AgentLoopConfig (100) so a
+            // deep, legitimate task is not halted mid-way after a handful of
+            // tool calls.
+            reflection_tool_call_limit: 100,
             circuit_breaker_max_repeats: 5,
             circuit_breaker_window_size: 10,
             learning_enabled: true,

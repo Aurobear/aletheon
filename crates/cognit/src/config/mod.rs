@@ -408,6 +408,9 @@ pub struct AgentConfig {
     pub compaction_enabled: bool,
     #[serde(default = "default_compaction_keep_recent")]
     pub compaction_keep_recent: usize,
+    /// Percent of the context window (e.g. `80` = 80%) at which automatic
+    /// compaction triggers. Carried through to the compressor threshold via
+    /// `ExecutiveConfig`/`HarnessConfig`; `80` preserves the legacy `0.8`.
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: usize,
     #[serde(default = "default_system_prompt")]
@@ -573,7 +576,7 @@ fn default_compaction_keep_recent() -> usize {
     10
 }
 fn default_compaction_threshold() -> usize {
-    30
+    80
 }
 
 fn default_system_prompt() -> String {

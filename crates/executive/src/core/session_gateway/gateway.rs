@@ -266,6 +266,7 @@ mod tests {
             tmp.path(),
             "test-session".into(),
             100000,
+            80,
             Arc::new(kernel::chronos::TestClock::default()),
         )
         .await
