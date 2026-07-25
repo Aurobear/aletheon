@@ -409,17 +409,18 @@ fn extract_text(value: &Value) -> Result<String, SupplementalAdapterError> {
 
 fn classify_error(error: &anyhow::Error) -> SupplementalAdapterErrorCategory {
     let message = format!("{error:#}").to_ascii_lowercase();
-    if message.contains("401") || message.contains("403") || message.contains("authentication") {
+    let has_status = |status: &str| {
+        message
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .any(|token| token == status)
+    };
+    if has_status("401") || has_status("403") || message.contains("authentication") {
         SupplementalAdapterErrorCategory::Auth
     } else if message.contains("exceeds byte limit") {
         SupplementalAdapterErrorCategory::OversizedResponse
-    } else if message.contains("429") {
+    } else if has_status("429") {
         SupplementalAdapterErrorCategory::RateLimited
-    } else if message.contains("500")
-        || message.contains("502")
-        || message.contains("503")
-        || message.contains("504")
-    {
+    } else if has_status("500") || has_status("502") || has_status("503") || has_status("504") {
         SupplementalAdapterErrorCategory::Provider
     } else if message.contains("application error") {
         SupplementalAdapterErrorCategory::RejectedArguments
