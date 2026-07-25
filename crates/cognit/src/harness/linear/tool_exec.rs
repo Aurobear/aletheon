@@ -132,6 +132,8 @@ impl ReActLoop {
                         input_tokens,
                         output_tokens,
                     } => {
+                        self.turn_input_tokens =
+                            self.turn_input_tokens.saturating_add(input_tokens as u64);
                         event_sink.emit(Event::Usage {
                             tokens_in: input_tokens,
                             tokens_out: output_tokens,
@@ -273,6 +275,34 @@ impl ReActLoop {
                 role: Role::Assistant,
                 content: content_blocks,
             });
+
+            if super::should_close_exploration(
+                self.iteration,
+                self.turn_input_tokens,
+                self.config.context_window_tokens,
+                ordered_calls.iter().map(|(_, name, _)| name.as_str()),
+            ) {
+                let budget =
+                    super::exploration_input_token_budget(self.config.context_window_tokens);
+                let results = ordered_calls
+                    .iter()
+                    .map(|(id, _, _)| ContentBlock::ToolResult {
+                        tool_use_id: id.clone(),
+                        content: format!(
+                            "Exploration input-token budget reached ({} / {}). \
+                             Synthesize the best answer from existing evidence now. \
+                             The user can request a focused follow-up for deeper inspection.",
+                            self.turn_input_tokens, budget
+                        ),
+                        is_error: false,
+                    })
+                    .collect();
+                self.messages.push(Message {
+                    role: Role::User,
+                    content: results,
+                });
+                continue;
+            }
 
             // Deferred reflection — injected after all tool results to preserve
             // OpenAI API message format (assistant(tool_use) → tool results only)

@@ -56,6 +56,9 @@ impl ReActLoop {
                 }
                 Err(e) => return Err(e),
             };
+            self.turn_input_tokens = self
+                .turn_input_tokens
+                .saturating_add(response.usage.input_tokens as u64);
 
             let mut text_parts = Vec::new();
             let mut thinking_parts = Vec::new();
@@ -193,6 +196,34 @@ impl ReActLoop {
             } else {
                 tool_calls.iter().collect()
             };
+
+            if super::should_close_exploration(
+                self.iteration,
+                self.turn_input_tokens,
+                self.config.context_window_tokens,
+                ordered_calls.iter().map(|(_, name, _)| name.as_str()),
+            ) {
+                let budget =
+                    super::exploration_input_token_budget(self.config.context_window_tokens);
+                let results = ordered_calls
+                    .iter()
+                    .map(|(id, _, _)| ContentBlock::ToolResult {
+                        tool_use_id: id.clone(),
+                        content: format!(
+                            "Exploration input-token budget reached ({} / {}). \
+                             Synthesize the best answer from existing evidence now. \
+                             The user can request a focused follow-up for deeper inspection.",
+                            self.turn_input_tokens, budget
+                        ),
+                        is_error: false,
+                    })
+                    .collect();
+                self.messages.push(Message {
+                    role: Role::User,
+                    content: results,
+                });
+                continue;
+            }
 
             for (tool_index, (id, name, input)) in ordered_calls.iter().enumerate() {
                 // Defensive: skip tool calls with empty names — some

@@ -13,6 +13,31 @@ mod tool_output;
 pub use batching::{partition_tool_calls, ToolBatch};
 pub use metrics::TurnMetrics;
 
+const MIN_EXPLORATION_INPUT_TOKENS: u64 = 12_000;
+const MAX_EXPLORATION_INPUT_TOKENS: u64 = 24_000;
+
+fn exploration_input_token_budget(context_window_tokens: usize) -> u64 {
+    (context_window_tokens as u64 / 100)
+        .clamp(MIN_EXPLORATION_INPUT_TOKENS, MAX_EXPLORATION_INPUT_TOKENS)
+}
+
+fn is_inspection_tool(name: &str) -> bool {
+    matches!(name, "file_read" | "glob" | "grep" | "file_search")
+}
+
+fn should_close_exploration<'a>(
+    iteration: usize,
+    cumulative_input_tokens: u64,
+    context_window_tokens: usize,
+    tool_names: impl IntoIterator<Item = &'a str>,
+) -> bool {
+    let names = tool_names.into_iter().collect::<Vec<_>>();
+    iteration > 1
+        && !names.is_empty()
+        && names.iter().all(|name| is_inspection_tool(name))
+        && cumulative_input_tokens >= exploration_input_token_budget(context_window_tokens)
+}
+
 use async_trait::async_trait;
 use circuit_breaker::CircuitBreaker;
 use goal_tracker::GoalTracker;
@@ -120,6 +145,9 @@ pub struct ReActLoop {
     signals: Vec<AwarenessSignal>,
     /// Recent tool names for goal-shift detection.
     recent_tools: Vec<String>,
+    /// Provider input tokens spent during the current turn. This is a billed
+    /// work budget, distinct from active context occupancy.
+    turn_input_tokens: u64,
     /// Consecutive tool errors for impasse detection.
     consecutive_errors: usize,
     /// Interrupt flag for canceling the loop externally.
@@ -177,6 +205,7 @@ impl ReActLoop {
             pending_memory: Vec::new(),
             signals: Vec::new(),
             recent_tools: Vec::new(),
+            turn_input_tokens: 0,
             consecutive_errors: 0,
             interrupt_flag: None,
             tool_budget,
@@ -317,6 +346,7 @@ impl ReActLoop {
         self.pending_memory.clear();
         self.signals.clear();
         self.recent_tools.clear();
+        self.turn_input_tokens = 0;
         self.consecutive_errors = 0;
         self.tool_budget.reset();
         self.circuit_breaker.reset();
@@ -423,6 +453,47 @@ impl ReActLoop {
     /// owned batch after the buffer mutation has succeeded.
     pub fn set_evicted_callback(&mut self, callback: EvictedCallback) {
         self.evicted_callback = Some(callback);
+    }
+}
+
+#[cfg(test)]
+mod exploration_budget_tests {
+    use super::*;
+
+    #[test]
+    fn budget_scales_with_context_but_remains_bounded() {
+        assert_eq!(exploration_input_token_budget(128_000), 12_000);
+        assert_eq!(exploration_input_token_budget(1_000_000), 12_000);
+        assert_eq!(exploration_input_token_budget(2_000_000), 20_000);
+        assert_eq!(exploration_input_token_budget(10_000_000), 24_000);
+    }
+
+    #[test]
+    fn closes_only_later_pure_inspection_batches_over_budget() {
+        assert!(!should_close_exploration(
+            1,
+            20_000,
+            1_000_000,
+            ["file_read"]
+        ));
+        assert!(!should_close_exploration(
+            2,
+            11_999,
+            1_000_000,
+            ["file_read", "glob"]
+        ));
+        assert!(should_close_exploration(
+            2,
+            12_000,
+            1_000_000,
+            ["file_read", "glob"]
+        ));
+        assert!(!should_close_exploration(
+            2,
+            20_000,
+            1_000_000,
+            ["file_read", "shell"]
+        ));
     }
 }
 
