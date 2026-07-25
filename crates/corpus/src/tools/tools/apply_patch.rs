@@ -37,6 +37,10 @@ impl Tool for ApplyPatchTool {
                 "base_dir": {
                     "type": "string",
                     "description": "Base directory for applying the patch (default: current dir)"
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "If true, compute and return a preview (unified diff plus per-file summary) of what the patch would change without writing to the filesystem. Default: false."
                 }
             },
             "anyOf": [
@@ -58,6 +62,7 @@ impl Tool for ApplyPatchTool {
         let patch = input["patch"].as_str().unwrap_or("");
         let patch_json = input.get("patch_json").filter(|value| !value.is_null());
         let base_dir = input["base_dir"].as_str();
+        let dry_run = input["dry_run"].as_bool().unwrap_or(false);
 
         let start = ctx.clock.mono_now();
 
@@ -130,6 +135,10 @@ impl Tool for ApplyPatchTool {
                 }
             }
 
+            if dry_run {
+                return preview_result(&structured.operations, &base_path, ctx, start).await;
+            }
+
             let result = apply_structured_scoped(&structured.operations, &base_path, ctx).await;
             let is_error = !result.failed.is_empty();
             return ToolResult {
@@ -162,6 +171,11 @@ impl Tool for ApplyPatchTool {
             Ok(patch) => patch,
             Err(error) => return tool_error(format!("Invalid unified patch: {error}"), start, ctx),
         };
+
+        if dry_run {
+            return preview_result(&structured.operations, &base_path, ctx, start).await;
+        }
+
         let result = apply_structured_scoped(&structured.operations, &base_path, ctx).await;
         let is_error = !result.failed.is_empty();
         ToolResult {
@@ -452,6 +466,268 @@ async fn apply_structured_operation(
     }
 }
 
+/// Build a successful `ToolResult` describing what a patch would change,
+/// without writing anything to the filesystem. Mirrors the same operation
+/// dispatch and read-only validation as `apply_structured_scoped`, but stops
+/// short of the mutating `scoped_write`/`scoped_remove` calls.
+async fn preview_result(
+    operations: &[PatchOperation],
+    base_dir: &std::path::Path,
+    ctx: &ToolContext,
+    start: fabric::MonoTime,
+) -> ToolResult {
+    let (files, failed) = preview_structured_operations(operations, base_dir, ctx).await;
+    let is_error = !failed.is_empty();
+    ToolResult {
+        content: render_patch_preview(&files, &failed),
+        is_error,
+        metadata: ToolResultMeta {
+            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+            truncated: false,
+            patch_delta: None,
+        },
+    }
+}
+
+struct PreviewFile {
+    path: String,
+    change_type: &'static str,
+    bytes_before: u64,
+    bytes_after: u64,
+    lines_added: usize,
+    lines_removed: usize,
+    diff: String,
+}
+
+async fn preview_structured_operations(
+    operations: &[PatchOperation],
+    base_dir: &std::path::Path,
+    ctx: &ToolContext,
+) -> (Vec<PreviewFile>, Vec<FailedOperation>) {
+    let mut files = Vec::new();
+    let mut failed = Vec::new();
+    for operation in operations {
+        let path = operation_paths(operation)[0].to_owned();
+        let operation_name = operation_name(operation);
+        match preview_structured_operation(operation, base_dir, ctx).await {
+            Ok(file) => files.push(file),
+            Err((error, hunks_applied)) => failed.push(FailedOperation {
+                op_type: operation_name.to_string(),
+                path,
+                error,
+                hunks_applied_before_failure: hunks_applied,
+            }),
+        }
+    }
+    (files, failed)
+}
+
+/// Read-only counterpart of `apply_structured_operation`. Performs the same
+/// scoped-filesystem validation and diff computation, but never calls
+/// `scoped_write` or `scoped_remove`.
+async fn preview_structured_operation(
+    operation: &PatchOperation,
+    base_dir: &std::path::Path,
+    ctx: &ToolContext,
+) -> Result<PreviewFile, (String, Option<usize>)> {
+    let failed = |error: String| (error, None);
+    match operation {
+        PatchOperation::AddFile { path, content } => {
+            let target = base_dir.join(path);
+            let filesystem =
+                scoped_filesystem::open(ctx, &target, platform::FilesystemAccess::ReadWrite)
+                    .map_err(failed)?;
+            match filesystem.host.metadata(&filesystem.path).await {
+                Ok(_) => {
+                    return Err(failed(format!(
+                        "cannot add '{path}': target already exists"
+                    )))
+                }
+                Err(platform::HostError {
+                    kind: platform::HostErrorKind::NotFound(_),
+                    ..
+                }) => {}
+                Err(error) => return Err(failed(format!("cannot inspect '{path}': {error}"))),
+            }
+            Ok(PreviewFile {
+                path: path.clone(),
+                change_type: "created",
+                bytes_before: 0,
+                bytes_after: content.len() as u64,
+                lines_added: count_lines(content),
+                lines_removed: 0,
+                diff: added_lines_diff(content),
+            })
+        }
+        PatchOperation::DeleteFile { path } => {
+            let target = base_dir.join(path);
+            let (bytes, _expected) = scoped_read_for_update(ctx, &target).await.map_err(failed)?;
+            let existing = String::from_utf8_lossy(&bytes).into_owned();
+            Ok(PreviewFile {
+                path: path.clone(),
+                change_type: "deleted",
+                bytes_before: bytes.len() as u64,
+                bytes_after: 0,
+                lines_added: 0,
+                lines_removed: count_lines(&existing),
+                diff: removed_lines_diff(&existing),
+            })
+        }
+        PatchOperation::AppendFile { path, content } => {
+            let target = base_dir.join(path);
+            let (bytes, _expected) = scoped_read_for_update(ctx, &target).await.map_err(failed)?;
+            let bytes_before = bytes.len() as u64;
+            let existing_line_count = String::from_utf8_lossy(&bytes).lines().count() as u64;
+            Ok(PreviewFile {
+                path: path.clone(),
+                change_type: "appended",
+                bytes_before,
+                bytes_after: bytes_before + content.len() as u64,
+                lines_added: count_lines(content),
+                lines_removed: 0,
+                diff: appended_lines_diff(existing_line_count, content),
+            })
+        }
+        PatchOperation::UpdateFile {
+            path,
+            move_to,
+            hunks,
+        } => {
+            let source = base_dir.join(path);
+            let (bytes, _expected) = scoped_read_for_update(ctx, &source).await.map_err(failed)?;
+            let bytes_before = bytes.len() as u64;
+            let existing = String::from_utf8(bytes).map_err(|error| failed(error.to_string()))?;
+            let modified = apply_patch_hunks(&existing, hunks)
+                .map_err(|(error, applied)| (error, Some(applied)))?;
+            let result_path = move_to.as_ref().unwrap_or(path);
+            let (lines_added, lines_removed) = count_hunk_lines(hunks);
+            Ok(PreviewFile {
+                path: result_path.clone(),
+                change_type: if move_to.is_some() {
+                    "moved"
+                } else {
+                    "modified"
+                },
+                bytes_before,
+                bytes_after: modified.len() as u64,
+                lines_added,
+                lines_removed,
+                diff: hunks_diff(hunks),
+            })
+        }
+    }
+}
+
+fn count_lines(content: &str) -> usize {
+    if content.is_empty() {
+        0
+    } else {
+        content.lines().count()
+    }
+}
+
+fn added_lines_diff(content: &str) -> String {
+    let count = count_lines(content);
+    let mut diff = format!("@@ -0,0 +1,{count} @@\n");
+    for line in content.lines() {
+        diff.push('+');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    diff
+}
+
+fn removed_lines_diff(content: &str) -> String {
+    let count = count_lines(content);
+    let mut diff = format!("@@ -1,{count} +0,0 @@\n");
+    for line in content.lines() {
+        diff.push('-');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    diff
+}
+
+fn appended_lines_diff(existing_line_count: u64, content: &str) -> String {
+    let count = count_lines(content);
+    let mut diff = format!(
+        "@@ -{existing_line_count},0 +{},{count} @@\n",
+        existing_line_count + 1
+    );
+    for line in content.lines() {
+        diff.push('+');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    diff
+}
+
+fn hunks_diff(hunks: &[platform::structured_patch::PatchHunk]) -> String {
+    let mut diff = String::new();
+    for hunk in hunks {
+        diff.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n",
+            hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count
+        ));
+        diff.push_str(&hunk.content);
+        if !hunk.content.ends_with('\n') {
+            diff.push('\n');
+        }
+    }
+    diff
+}
+
+fn count_hunk_lines(hunks: &[platform::structured_patch::PatchHunk]) -> (usize, usize) {
+    let mut added = 0;
+    let mut removed = 0;
+    for hunk in hunks {
+        for line in hunk.content.lines() {
+            if line.starts_with('+') {
+                added += 1;
+            } else if line.starts_with('-') {
+                removed += 1;
+            }
+        }
+    }
+    (added, removed)
+}
+
+fn render_patch_preview(files: &[PreviewFile], failed: &[FailedOperation]) -> String {
+    let mut out = String::from("DRY RUN — no files were modified\n\n");
+    for file in files {
+        let marker = match file.change_type {
+            "created" => "+",
+            "deleted" => "-",
+            _ => "~",
+        };
+        out.push_str(&format!(
+            "{marker} {} ({}) [+{}/-{}, {} -> {} bytes]\n",
+            file.path,
+            file.change_type,
+            file.lines_added,
+            file.lines_removed,
+            file.bytes_before,
+            file.bytes_after,
+        ));
+        if !file.diff.is_empty() {
+            out.push_str(&file.diff);
+        }
+        out.push('\n');
+    }
+    for failure in failed {
+        out.push_str(&format!(
+            "! {} {} FAILED: {}\n\n",
+            failure.op_type, failure.path, failure.error
+        ));
+    }
+    out.push_str(&format!(
+        "Summary: {} file(s) previewed, {} failed\n",
+        files.len(),
+        failed.len()
+    ));
+    out
+}
+
 async fn scoped_read_for_update(
     ctx: &ToolContext,
     path: &std::path::Path,
@@ -734,6 +1010,87 @@ mod tests {
 
         assert!(!result.is_error, "Expected success: {}", result.content);
         assert!(!file_path.exists(), "File should have been deleted");
+    }
+
+    #[tokio::test]
+    async fn dry_run_previews_new_file_without_writing() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let patch = "--- /dev/null\n+++ b/new_file.txt\n@@ -0,0 +1,3 @@\n+line one\n+line two\n+line three\n";
+
+        let tool = ApplyPatchTool;
+        let result = tool
+            .execute(json!({ "patch": patch, "dry_run": true }), &ctx)
+            .await;
+
+        assert!(!result.is_error, "Expected success: {}", result.content);
+        assert!(result.content.contains("DRY RUN"));
+        assert!(result.content.contains("new_file.txt"));
+        assert!(result.content.contains("+line one"));
+        assert!(result.metadata.patch_delta.is_none());
+        assert!(
+            !tmp.path().join("new_file.txt").exists(),
+            "dry run must not create the file"
+        );
+    }
+
+    #[tokio::test]
+    async fn dry_run_previews_modification_without_writing() {
+        let tmp = TempDir::new().unwrap();
+        let file_path = tmp.path().join("existing.txt");
+        fs::write(&file_path, "line one\nline two\nline three\n")
+            .await
+            .unwrap();
+
+        let ctx = ToolContext {
+            approval_authority: None,
+            agent: None,
+            working_dir: tmp.path().to_path_buf(),
+            session_id: "test".to_string(),
+            clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let patch = "--- a/existing.txt\n+++ b/existing.txt\n@@ -1,3 +1,3 @@\n line one\n-line two\n+line TWO\n line three\n";
+
+        let tool = ApplyPatchTool;
+        let result = tool
+            .execute(json!({ "patch": patch, "dry_run": true }), &ctx)
+            .await;
+
+        assert!(!result.is_error, "Expected success: {}", result.content);
+        assert!(result.content.contains("DRY RUN"));
+        assert!(result.content.contains("existing.txt"));
+        assert!(result.content.contains("-line two"));
+        assert!(result.content.contains("+line TWO"));
+        assert_eq!(
+            fs::read_to_string(&file_path).await.unwrap(),
+            "line one\nline two\nline three\n",
+            "dry run must leave the file unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn dry_run_still_reports_scope_rejections() {
+        let tmp = TempDir::new().unwrap();
+        let context = governed_context(tmp.path(), vec![]);
+        let patch = "*** Begin Patch\nAdd File: denied.txt\n>>>\nno\n>>>\n*** End Patch";
+
+        let result = ApplyPatchTool
+            .execute(json!({"patch": patch, "dry_run": true}), &context)
+            .await;
+
+        assert!(result.is_error);
+        assert!(result.content.contains("empty path scope"));
+        assert!(!tmp.path().join("denied.txt").exists());
     }
 
     #[tokio::test]
