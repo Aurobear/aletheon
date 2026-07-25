@@ -35,6 +35,10 @@ fn repository_overview_checkpoint(goal: Option<&str>, iteration: usize) -> Optio
     repository_overview.then_some(REPOSITORY_OVERVIEW_CHECKPOINT)
 }
 
+fn close_repository_inspection(goal: Option<&str>, iteration: usize) -> bool {
+    iteration > 1 && repository_overview_checkpoint(goal, 1).is_some()
+}
+
 use async_trait::async_trait;
 use circuit_breaker::CircuitBreaker;
 use goal_tracker::GoalTracker;
@@ -121,6 +125,14 @@ mod repository_overview_checkpoint_tests {
         )
         .is_none());
         assert!(repository_overview_checkpoint(Some("修复登录错误"), 1).is_none());
+    }
+
+    #[test]
+    fn closes_repeated_repository_inspection_batches() {
+        let goal = Some("你看看当前项目怎么样？给出架构概览和三个主要风险。");
+        assert!(!close_repository_inspection(goal, 1));
+        assert!(close_repository_inspection(goal, 2));
+        assert!(!close_repository_inspection(Some("修复登录错误"), 2));
     }
 }
 

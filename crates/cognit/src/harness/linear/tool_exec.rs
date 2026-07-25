@@ -274,6 +274,25 @@ impl ReActLoop {
                 content: content_blocks,
             });
 
+            let goal = self.goal_tracker.current_goal_description();
+            if super::close_repository_inspection(goal.as_deref(), self.iteration) {
+                let results = ordered_calls
+                    .iter()
+                    .map(|(id, _, _)| ContentBlock::ToolResult {
+                        tool_use_id: id.clone(),
+                        content: "Inspection call not executed: the repository-overview evidence budget is complete. Answer now from the existing evidence.".to_string(),
+                        is_error: true,
+                    })
+                    .collect();
+                self.messages.push(Message {
+                    role: Role::User,
+                    content: results,
+                });
+                self.messages
+                    .push(Message::user(super::REPOSITORY_OVERVIEW_CHECKPOINT));
+                continue;
+            }
+
             // Deferred reflection — injected after all tool results to preserve
             // OpenAI API message format (assistant(tool_use) → tool results only)
             let mut pending_reflection: Option<String> = None;
