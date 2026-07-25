@@ -18,6 +18,47 @@ pub const MAX_LIST_ITEMS: usize = 1000;
 pub const MAX_AGENT_BROADCAST_REFS: usize = 64;
 pub const AGENT_MESSAGE_SCHEMA_V1: u16 = 1;
 
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRuntimeCapability {
+    CodeRead,
+    CodeSearch,
+    CodeEdit,
+    Shell,
+    Test,
+    Git,
+    Diagnostics,
+    Browser,
+    DeviceObserve,
+    DeviceCommand,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentInteractionMode {
+    OneShot,
+    Resident,
+    Steering,
+    FollowUp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentWorkspaceMode {
+    SharedReadOnly,
+    SharedWritable,
+    IsolatedWorktree,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentTaskEncoding {
+    NaturalLanguage,
+    StructuredJson,
+}
+
 /// Risk tier for agent profiles. Each tier is cumulative: higher tiers include
 /// lower-tier capabilities but add additional risk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

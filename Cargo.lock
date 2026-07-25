@@ -3107,6 +3107,7 @@ name = "runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "fabric",
  "serde",
  "serde_json",
 ]

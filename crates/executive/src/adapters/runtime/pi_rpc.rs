@@ -618,8 +618,14 @@ pub fn pi_manifest() -> &'static runtime::RuntimeManifest {
             runtime::InteractionMode::Steering,
             runtime::InteractionMode::FollowUp,
         ]),
-        workspace_mode: runtime::WorkspaceMode::Shared,
+        workspace_modes: BTreeSet::from([
+            runtime::WorkspaceMode::SharedReadOnly,
+            runtime::WorkspaceMode::SharedWritable,
+        ]),
+        task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
         tool_governance: runtime::ToolGovernance::Observed,
+        priority: 10,
+        max_context_tokens: Some(1_000_000),
         resource_requirements: runtime::RuntimeResourceRequirements {
             storage_bytes: 1024 * 1024 * 1024,
             storage_items: 1,
