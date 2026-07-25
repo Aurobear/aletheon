@@ -234,6 +234,18 @@ impl ToolRegistry {
         policy: fabric::network_policy::NetworkPolicy,
         search: Option<super::web_search::WebSearchConfig>,
     ) -> Self {
+        Self::with_network_policy_search_and_tasks(policy, search, None)
+    }
+
+    /// Same as [`Self::with_network_policy_and_search`], but allows the task
+    /// store to be backed by a SQLite database at `tasks_db` so tasks
+    /// survive daemon restarts. `None` keeps the existing in-memory-only
+    /// behavior.
+    pub fn with_network_policy_search_and_tasks(
+        policy: fabric::network_policy::NetworkPolicy,
+        search: Option<super::web_search::WebSearchConfig>,
+        tasks_db: Option<std::path::PathBuf>,
+    ) -> Self {
         let mut registry = Self::new();
         // Register built-in tools — panics on duplicate names (should never happen)
         registry
@@ -298,8 +310,11 @@ impl ToolRegistry {
                     .with_config(search),
             ))
             .expect("duplicate built-in tool");
-        // Task tools share a single TaskStore.
-        let task_store = super::task_tools::new_shared_task_store();
+        // Task tools share a single TaskStore, optionally persisted to SQLite.
+        let task_store = match tasks_db {
+            Some(path) => super::task_tools::new_persistent_task_store(&path),
+            None => super::task_tools::new_shared_task_store(),
+        };
         registry
             .register(Arc::new(super::task_tools::TaskCreateTool::new(
                 task_store.clone(),

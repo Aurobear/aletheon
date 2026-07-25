@@ -302,6 +302,7 @@ impl RequestHandler {
             search: search_config,
             stores: memory,
             clock: clock.clone(),
+            tasks_db: Some(data_dir.join("tasks.db")),
         });
         let mut tools = tool_composition.registry;
         let core_memory = tool_composition.stores.core;

@@ -41,17 +41,11 @@ impl Tool for GitStatusTool {
             .current_dir(&ctx.working_dir)
             .output()
             .await;
-        ToolResult {
-            content: output
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|e| format!("git_status error: {e}")),
-            is_error: false,
-            metadata: ToolResultMeta {
-                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                truncated: false,
-                patch_delta: None,
-            },
+        let mut result = git_command_result(ctx, start, "git_status", output);
+        if !result.is_error && result.content.trim().is_empty() {
+            result.content = "(working tree clean — no changes)".to_string();
         }
+        result
     }
 }
 
@@ -96,17 +90,11 @@ impl Tool for GitDiffTool {
             .current_dir(&ctx.working_dir)
             .output()
             .await;
-        ToolResult {
-            content: output
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|e| format!("git_diff error: {e}")),
-            is_error: false,
-            metadata: ToolResultMeta {
-                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                truncated: false,
-                patch_delta: None,
-            },
+        let mut result = git_command_result(ctx, start, "git_diff", output);
+        if !result.is_error && result.content.trim().is_empty() {
+            result.content = "(no differences)".to_string();
         }
+        result
     }
 }
 
@@ -144,17 +132,7 @@ impl Tool for GitLogTool {
             .current_dir(&ctx.working_dir)
             .output()
             .await;
-        ToolResult {
-            content: output
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|e| format!("git_log error: {e}")),
-            is_error: false,
-            metadata: ToolResultMeta {
-                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                truncated: false,
-                patch_delta: None,
-            },
-        }
+        git_command_result(ctx, start, "git_log", output)
     }
 }
 
@@ -195,17 +173,7 @@ impl Tool for GitShowTool {
             .current_dir(&ctx.working_dir)
             .output()
             .await;
-        ToolResult {
-            content: output
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|e| format!("git_show error: {e}")),
-            is_error: false,
-            metadata: ToolResultMeta {
-                execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                truncated: false,
-                patch_delta: None,
-            },
-        }
+        git_command_result(ctx, start, "git_show", output)
     }
 }
 
