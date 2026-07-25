@@ -103,3 +103,43 @@ machine-wide concurrency and cooldown are not yet one authoritative mechanism
 across main turns, multiple sessions, and external subagent runtimes. This must
 be solved at the machine/provider boundary, not with prompt rules or
 session-local hardcoded delays.
+
+## Installed acceptance record: 2026-07-26
+
+Source commit `e7150843c899027d361755c6fbe1b22dfda60023` was deployed with
+`sudo bash scripts/aletheon.sh deploy`. The release artifact, installed client,
+machine core, and user daemon all resolved to:
+
+```text
+ef8ab1ac8588b9ecfb9c387ee25e5eece9be5f7114ee1bd861bfb03b3ec27c7d
+```
+
+Both systemd units remained `active` with `NRestarts=0`. The deploy script's
+official-client smoke request passed over the user socket.
+
+The real TUI then completed a sustained three-turn challenge without losing the
+host facts:
+
+```text
+effective_model_id = leju/deepseek/deepseek-v4-pro
+display_name       = deepseek/deepseek-v4-pro
+max_context_tokens = 1000000
+```
+
+Its session evidence is
+`.scenario-runs/tui-events/12ce9882db2a480eb6e56d361d888f92.jsonl`
+with three terminal turns. A later strict three-run sequence used the identical
+runtime-fact prompt in fresh TUI sessions:
+
+```text
+.scenario-runs/tui-events/914dfba1c1a045a994c98fe6b94910ba.jsonl
+.scenario-runs/tui-events/4e2a27a7ccfa4c1c872b1ef5c410340d.jsonl
+.scenario-runs/tui-events/3090525f6c3844bfb4f4955d039c67b7.jsonl
+```
+
+Each file contains one terminal turn, each rendered frame returned `❯`, and
+the journal interval beginning at `2026-07-26 02:42:05 CST` contained none of
+the forbidden provider or infrastructure markers. The monitor reported a
+settle timeout on the third capture even though its three retained final frames
+were byte-identical, the prompt was visible, and the durable turn was terminal;
+that is monitor timing evidence, not a model/runtime failure.
