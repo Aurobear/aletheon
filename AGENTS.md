@@ -55,3 +55,16 @@
   or display the entire cumulative token total as active context pressure.
 - Any monitor PASS that disagrees with the rendered frame, persisted session,
   audit records, or daemon logs is a monitor defect and a failed acceptance.
+- Runtime facts override model claims. Model identity, effective provider/model
+  route, context capacity, active session, selected Agent runtime, and budgets
+  must come from typed host state or effective configuration, never from model
+  self-identification or training priors.
+- Async tool success is not terminal success. A caller must observe the
+  authoritative terminal snapshot (`wait`, terminal event, or durable receipt)
+  before reporting a child/runtime result.
+- Different event semantics require different schemas. Never reuse a public
+  Session/Turn schema for runtime progress or diagnostic payloads merely because
+  their JSON shapes are similar.
+- Provider backpressure must be coordinated at the machine/provider boundary.
+  Per-session retries must honor provider advice and must not be described as a
+  substitute for cross-session concurrency and cooldown governance.

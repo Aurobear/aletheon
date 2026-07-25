@@ -25,6 +25,15 @@
   and a sustained multi-turn run in one unchanged session.
 - Treat disagreement between monitor verdict, TUI frame, session, audit, or
   daemon logs as a failed test and fix the monitor.
+- Treat effective model ID, display name, context capacity, runtime selection,
+  session identity, and budgets as host-owned runtime facts. Never infer them
+  from model prose or training priors.
+- Do not report an asynchronous child result from a spawn handle. Observe its
+  terminal snapshot or durable terminal receipt first.
+- Do not reuse an accepted event schema for a payload with different semantics.
+  Producer/schema/projector compatibility is a contract, not a naming detail.
+- Keep per-session retry behavior distinct from machine-wide provider
+  backpressure; both must be validated when request storms are investigated.
 
 ## Branch and PR workflow
 

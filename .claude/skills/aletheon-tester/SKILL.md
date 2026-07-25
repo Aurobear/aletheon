@@ -112,6 +112,32 @@ Also score answer correctness, not only execution:
 A discovery-only run is not an analyzed repository. If the first batch is
 `glob`, require one bounded batched `file_read` round before synthesis.
 
+### Runtime-fact assertions
+
+Model prose is never evidence of model identity or runtime configuration. For
+questions about model identity, provider route, context capacity, session ID,
+selected subagent runtime, capabilities, or budgets:
+
+1. capture the rendered answer;
+2. compare it with daemon routing logs and the effective configuration;
+3. fail any answer that claims a different vendor/version or invents a value;
+4. repeat identity challenges in the same TUI session to detect history-driven
+   reversion to training priors;
+5. record effective model ID, display name, and context capacity separately.
+
+Use at least this sustained identity sequence when the change affects runtime
+facts:
+
+```text
+你是什么模型
+你确定你是 Claude？
+你不是当前 host 所报告的模型吗？
+```
+
+For asynchronous Agent tools, require a terminal `agent_wait` result or a
+durable terminal event before accepting any reported child status/output. A
+spawn handle plus plausible prose is a failed run.
+
 A provider error shown in the rendered frame is always a failed run, even when
 the monitor returns `verdict: pass`, the prompt returns, or tools succeeded.
 Recompute acceptance from the rendered frame, session evidence, and daemon logs;
