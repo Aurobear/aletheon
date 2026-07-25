@@ -85,7 +85,7 @@ pub fn inspect_package(package_path: &Path) -> Result<InspectionResult> {
         let mut data = Vec::new();
         entry
             .read_to_end(&mut data)
-            .with_context(|| format!("failed to read entry: {}", path_str))?;
+            .with_context(|| format!("failed to read entry: {path_str}"))?;
         let size = data.len() as u64;
 
         validation::validate_file_size(size, &path_str)?;
@@ -94,7 +94,7 @@ pub fn inspect_package(package_path: &Path) -> Result<InspectionResult> {
 
         // Reject duplicate entry paths in the same archive.
         if files.contains_key(&path_str) {
-            bail!("duplicate entry path in archive: {}", path_str);
+            bail!("duplicate entry path in archive: {path_str}");
         }
         files.insert(path_str, data);
     }
@@ -350,7 +350,7 @@ path = "assets/skills/demo/SKILL.md"
         std::fs::write(pkg_dir.join("checksums.sha256"), &checksums_content).unwrap();
 
         // Create tar.gz.
-        let tar_path = dir.join(format!("{}.tar.gz", name));
+        let tar_path = dir.join(format!("{name}.tar.gz"));
         let tar_file = std::fs::File::create(&tar_path).unwrap();
         let encoder = GzEncoder::new(tar_file, Compression::default());
         let mut tar_builder = tar::Builder::new(encoder);
@@ -526,8 +526,7 @@ path = "s.md"
         let err = inspect_package(&tar_path).unwrap_err().to_string();
         assert!(
             err.contains("checksum"),
-            "expected checksum error, got: {}",
-            err
+            "expected checksum error, got: {err}"
         );
     }
 
@@ -599,7 +598,7 @@ path = "s.md"
         // Add checksums.sha256 with correct hashes.
         let toml_hash = format!("{:x}", Sha256::digest(toml.as_bytes()));
         let skill_hash = format!("{:x}", Sha256::digest(skill_data));
-        let checksums = format!("{}  extension.toml\n{}  s.md\n", toml_hash, skill_hash);
+        let checksums = format!("{toml_hash}  extension.toml\n{skill_hash}  s.md\n");
         let mut cs_header = tar::Header::new_gnu();
         cs_header.set_path("checksums.sha256").unwrap();
         cs_header.set_size(checksums.len() as u64);
@@ -623,8 +622,7 @@ path = "s.md"
         let err = inspect_package(&tar_path).unwrap_err().to_string();
         assert!(
             err.contains("unsupported entry type"),
-            "expected unsupported entry type error, got: {}",
-            err
+            "expected unsupported entry type error, got: {err}"
         );
     }
 
@@ -668,8 +666,7 @@ path = "s.md"
         let err = inspect_package(&tar_path).unwrap_err().to_string();
         assert!(
             err.contains("duplicate entry path"),
-            "expected duplicate entry error, got: {}",
-            err
+            "expected duplicate entry error, got: {err}"
         );
     }
 }

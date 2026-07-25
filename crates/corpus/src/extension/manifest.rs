@@ -164,10 +164,10 @@ pub fn parse_checksums(content: &str) -> Result<std::collections::HashMap<String
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
-            bail!("invalid checksum line: {}", line);
+            bail!("invalid checksum line: {line}");
         }
         if checksums.contains_key(path) {
-            bail!("duplicate checksum path: {}", path);
+            bail!("duplicate checksum path: {path}");
         }
         checksums.insert(path.to_string(), hash.to_string());
     }
