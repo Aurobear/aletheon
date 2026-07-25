@@ -469,12 +469,20 @@ fn configured_roots(
         .map_err(|error| runtime_error(format!("resolving trusted Pi RPC cwd: {error}")))?;
     let mut roots = Vec::with_capacity(configured.len());
     for relative in configured {
-        let path = canonical_cwd
-            .join(relative)
-            .canonicalize()
-            .map_err(|error| {
-                runtime_error(format!("resolving Pi RPC workspace allowlist: {error}"))
-            })?;
+        let candidate = canonical_cwd.join(relative);
+        let path = match candidate.canonicalize() {
+            Ok(path) => path,
+            // A configured writable path can legitimately be absent in a
+            // different repository. Omitting it is fail-restrictive: Pi keeps
+            // read-only workspace visibility but receives no write authority
+            // for that path.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(runtime_error(format!(
+                    "resolving Pi RPC workspace allowlist: {error}"
+                )))
+            }
+        };
         if !path.starts_with(&canonical_cwd) {
             return Err(runtime_error(
                 "Pi RPC workspace allowlist escaped trusted cwd",
@@ -533,6 +541,21 @@ fn terminal_error(message: impl Into<String>) -> AgentControlError {
     AgentControlError {
         kind: AgentControlErrorKind::Terminal,
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configured_roots;
+
+    #[test]
+    fn missing_configured_writable_path_degrades_to_read_only() {
+        let workspace = tempfile::tempdir().unwrap();
+
+        let roots =
+            configured_roots(workspace.path(), &[std::path::PathBuf::from("missing.rs")]).unwrap();
+
+        assert!(roots.is_empty());
     }
 }
 
