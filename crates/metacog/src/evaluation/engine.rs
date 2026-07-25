@@ -65,7 +65,7 @@ impl DeterministicEvaluator {
     ///
     /// # Fixed-point calculation
     ///
-    /// weighted_total_millis = sum(score[i] * weight[i]) / sum(applicable_weight[i])
+    /// `weighted_total_millis = sum(score[i] * weight[i]) / sum(applicable_weight[i])`
     ///
     /// where each score is 0-100 and each weight is in fixed-point millis
     /// (1_000_000 = 1.0). The result is also in fixed-point millis
