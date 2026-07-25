@@ -67,11 +67,13 @@ impl Tool for FileReadTool {
         let start = ctx.clock.mono_now();
         let batched = paths.len() > 1;
         let mut sections = Vec::with_capacity(paths.len());
-        let mut any_error = false;
+        let mut successful_reads = 0usize;
         let mut any_truncated = false;
         for path in paths {
             let result = read_path(&path, offset, limit, ctx).await;
-            any_error |= result.is_error;
+            if !result.is_error {
+                successful_reads += 1;
+            }
             any_truncated |= result.metadata.truncated;
             if batched {
                 sections.push(format!("== {path} ==\n{}", result.content));
@@ -81,7 +83,10 @@ impl Tool for FileReadTool {
         }
         ToolResult {
             content: sections.join("\n\n"),
-            is_error: any_error,
+            // A speculative batch is useful when at least one requested file
+            // exists. Preserve individual failures in labeled content without
+            // turning the whole batch into a failed tool round.
+            is_error: successful_reads == 0,
             metadata: ToolResultMeta {
                 execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: any_truncated,

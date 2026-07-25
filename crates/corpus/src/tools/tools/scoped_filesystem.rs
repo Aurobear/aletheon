@@ -265,6 +265,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn file_read_batch_reports_missing_member_without_failing_successes() {
+        let workspace = tempfile::tempdir().unwrap();
+        let root = workspace.path().canonicalize().unwrap();
+        let context = context(&root, vec![root.to_string_lossy().into_owned()]);
+        std::fs::write(root.join("README.md"), "# Demo\n").unwrap();
+
+        let read = FileReadTool
+            .execute(
+                json!({"paths": ["README.md", "package.json"], "limit": 20}),
+                &context,
+            )
+            .await;
+
+        assert!(!read.is_error, "{}", read.content);
+        assert!(read.content.contains("== README.md =="));
+        assert!(read.content.contains("# Demo"));
+        assert!(read.content.contains("== package.json =="));
+        assert!(read.content.contains("Failed to read package.json"));
+    }
+
+    #[tokio::test]
     async fn file_read_accepts_only_the_exact_external_path_in_the_permit() {
         let workspace = tempfile::tempdir().unwrap();
         let external = tempfile::tempdir().unwrap();
