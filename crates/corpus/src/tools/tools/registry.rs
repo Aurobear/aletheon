@@ -278,6 +278,14 @@ impl ToolRegistry {
         registry
             .register(Arc::new(super::grep::GrepTool))
             .expect("duplicate built-in tool");
+        // Git tools: read-only (status/diff/log/show) plus safe write/undo
+        // (restore/stash/reset). These were defined but never registered, so
+        // the agent previously had no git capability at all.
+        for tool in super::git_tools::git_tools() {
+            registry
+                .register(tool)
+                .expect("duplicate built-in git tool");
+        }
         registry
             .register(Arc::new(
                 super::web_fetch::WebFetchTool::new().with_network_policy(policy.clone()),
