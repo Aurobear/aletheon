@@ -746,6 +746,25 @@ impl TurnPipeline {
                                 call_id.clone(), name.clone(), content.clone(), *is_error,
                             );
                             if let Some(ref agora) = agora_for_events {
+                                // Child agents and other turn participants may
+                                // commit while this turn is awaiting a tool.
+                                // Refresh the optimistic base instead of
+                                // reusing the version captured before inference.
+                                match agora
+                                    .view(AgoraViewRequest {
+                                        space: AgoraSpaceId(session_id_for_agora.clone()),
+                                    })
+                                    .await
+                                {
+                                    Ok(view) => agora_version = view.version,
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            target: "agora",
+                                            error = %error,
+                                            "agora view refresh (evidence) failed"
+                                        );
+                                    }
+                                }
                                 let proposal = AgoraProposal {
                                     id: uuid::Uuid::new_v4(),
                                     space: AgoraSpaceId(session_id_for_agora.clone()),
@@ -764,11 +783,11 @@ impl TurnPipeline {
                                 );
                                 match (agora.propose(proposal.clone()).await, permit) {
                                     (Ok(id), Ok(permit)) => {
-                                        let result = agora.commit(id, permit).await;
-                                        if let Err(e) = result {
-                                            tracing::warn!(target: "agora", error = %e, "agora commit (evidence) failed");
-                                        } else {
-                                            agora_version += 1;
+                                        match agora.commit(id, permit).await {
+                                            Err(e) => tracing::warn!(target: "agora", error = %e, "agora commit (evidence) failed"),
+                                            Ok(receipt) => {
+                                                agora_version = receipt.commit.version;
+                                            }
                                         }
                                     }
                                     (Err(e), _) => tracing::warn!(target: "agora", error = %e, "agora propose (evidence) failed"),

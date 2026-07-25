@@ -74,7 +74,7 @@ impl ReActLoop {
                     Err(e)
                         if classify_error(&e) == ErrorClass::Transient && transient_attempt < 4 =>
                     {
-                        let backoff_ms = streaming_backoff_ms(transient_attempt);
+                        let backoff_ms = streaming_retry_delay_ms(&e, transient_attempt);
                         transient_attempt += 1;
                         warn!(
                             attempt = transient_attempt,
@@ -619,6 +619,15 @@ fn streaming_backoff_ms(attempt: u32) -> u64 {
         .min(30_000)
 }
 
+fn streaming_retry_delay_ms(error: &anyhow::Error, attempt: u32) -> u64 {
+    let exponential = streaming_backoff_ms(attempt);
+    let provider_advised = error
+        .downcast_ref::<crate::adapters::inference::provider::InferenceFailure>()
+        .and_then(|failure| failure.retry_after_ms)
+        .unwrap_or(0);
+    exponential.max(provider_advised)
+}
+
 fn exploration_budget_results(
     calls: &[&(String, String, serde_json::Value)],
     content: &str,
@@ -650,7 +659,7 @@ fn exploration_budget_results(
 
 #[cfg(test)]
 mod streaming_backoff_tests {
-    use super::{exploration_budget_results, streaming_backoff_ms};
+    use super::{exploration_budget_results, streaming_backoff_ms, streaming_retry_delay_ms};
     use crate::harness::event_sink::{Event, EventSink};
     use fabric::ContentBlock;
     use std::sync::Mutex;
@@ -669,6 +678,25 @@ mod streaming_backoff_tests {
         assert_eq!(
             (0..4).map(streaming_backoff_ms).collect::<Vec<_>>(),
             vec![5_000, 10_000, 20_000, 30_000]
+        );
+    }
+
+    #[test]
+    fn streaming_retry_honors_a_longer_provider_retry_after() {
+        let error =
+            crate::adapters::inference::provider::InferenceFailure::transient_with_retry_after(
+                "provider_unavailable",
+                Some(42_000),
+            );
+        assert_eq!(streaming_retry_delay_ms(&error, 0), 42_000);
+        assert_eq!(
+            streaming_retry_delay_ms(
+                &crate::adapters::inference::provider::InferenceFailure::transient(
+                    "provider_unavailable"
+                ),
+                1
+            ),
+            10_000
         );
     }
 
