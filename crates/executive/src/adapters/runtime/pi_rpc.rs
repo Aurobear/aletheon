@@ -343,6 +343,29 @@ impl RpcState {
                     accumulate_usage(message.get("usage"), &mut self.usage);
                 }
             }
+            "agent_end" => {
+                if !self.started {
+                    return Err(runtime_error("Pi agent_end preceded agent_start"));
+                }
+                // Pi's retry path can omit the final `message_end` event while
+                // still returning the authoritative conversation snapshot on
+                // `agent_end`. Recover the last assistant message from that
+                // snapshot instead of turning a completed retry into a failed
+                // child run.
+                if let Some(message) =
+                    event
+                        .get("messages")
+                        .and_then(Value::as_array)
+                        .and_then(|messages| {
+                            messages.iter().rev().find(|message| {
+                                message.get("role").and_then(Value::as_str) == Some("assistant")
+                            })
+                        })
+                {
+                    self.final_text = message_text(message).or_else(|| self.final_text.take());
+                    accumulate_usage(message.get("usage"), &mut self.usage);
+                }
+            }
             "tool_execution_end" => {
                 if !self.started {
                     return Err(runtime_error("Pi RPC tool event preceded agent_start"));

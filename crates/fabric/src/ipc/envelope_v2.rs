@@ -297,6 +297,7 @@ impl SchemaId {
     pub const EVENT_HEALTH_CHECK_V1: &'static str = "aletheon.event.health_check/v1";
     // Runtime
     pub const EVENT_AGENT_STARTED_V1: &'static str = "aletheon.event.agent_started/v1";
+    pub const EVENT_AGENT_PROGRESS_V1: &'static str = "aletheon.event.agent_progress/v1";
     pub const EVENT_AGENT_STOPPED_V1: &'static str = "aletheon.event.agent_stopped/v1";
     pub const EVENT_AGENT_FAILED_V1: &'static str = "aletheon.event.agent_failed/v1";
     pub const EVENT_SCHEDULED_TASK_FIRED_V1: &'static str =

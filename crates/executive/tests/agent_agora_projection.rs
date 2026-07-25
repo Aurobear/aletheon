@@ -134,6 +134,13 @@ async fn agent_lifecycle_and_tool_events_append_to_root_tree() {
         operation_id: input.handle.operation_id,
     })
     .await;
+    sink.emit(AgentRuntimeEvent::Progress {
+        agent_id: input.handle.agent_id,
+        process_id: input.handle.process_id,
+        operation_id: input.handle.operation_id,
+        summary: "retrying".into(),
+    })
+    .await;
     sink.emit(AgentRuntimeEvent::Tool {
         agent_id: input.handle.agent_id,
         process_id: input.handle.process_id,
@@ -160,13 +167,17 @@ async fn agent_lifecycle_and_tool_events_append_to_root_tree() {
             },
         )
         .unwrap();
-    assert_eq!(events.len(), 3);
+    assert_eq!(events.len(), 4);
     assert_eq!(events[0].schema.0, fabric::SchemaId::EVENT_AGENT_STARTED_V1);
     assert_eq!(
         events[1].schema.0,
+        fabric::SchemaId::EVENT_AGENT_PROGRESS_V1
+    );
+    assert_eq!(
+        events[2].schema.0,
         fabric::SchemaId::EVENT_TOOL_OBSERVATION_V1
     );
-    assert_eq!(events[2].schema.0, fabric::SchemaId::EVENT_AGENT_STOPPED_V1);
+    assert_eq!(events[3].schema.0, fabric::SchemaId::EVENT_AGENT_STOPPED_V1);
 }
 
 #[test]

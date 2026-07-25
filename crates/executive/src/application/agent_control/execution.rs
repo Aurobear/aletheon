@@ -89,7 +89,7 @@ impl SpineAgentEventSink {
                 serde_json::Value::Null,
             ),
             AgentRuntimeEvent::Progress { summary, .. } => (
-                fabric::SchemaId::TURN_EVENT_V1,
+                fabric::SchemaId::EVENT_AGENT_PROGRESS_V1,
                 "progress",
                 serde_json::json!({"summary": summary.chars().take(4096).collect::<String>()}),
             ),
