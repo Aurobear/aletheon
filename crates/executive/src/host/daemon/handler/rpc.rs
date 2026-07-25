@@ -77,6 +77,17 @@ impl RequestHandler {
                 self.handle_workspace_trust_grant(connection, &id, &request)
                     .await
             }
+            // Compatibility request emitted by the interactive TUI.  Keep it
+            // separate from identity-aware `turn.cancel`: the TUI may need to
+            // interrupt a wedged turn before it has received turn metadata.
+            "cancel" => {
+                self.cancel_current_turn().await;
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": { "status": "cancel_requested" }
+                })
+            }
             "interrupt" => self.handle_interrupt(&id, &request).await,
             "mode_switch" => self.handle_mode_switch(&id, &request).await,
             "model_list" => self.handle_model_list(&id, &request).await,

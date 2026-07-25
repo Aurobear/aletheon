@@ -9,5 +9,6 @@ impl RequestHandler {
     /// runtime and cancelling the per-turn cancellation token.
     pub async fn cancel_current_turn(&self) {
         self.ports.turn.cancel_current().await;
+        tracing::info!("current turn cancellation requested");
     }
 }
