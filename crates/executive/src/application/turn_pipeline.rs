@@ -471,12 +471,15 @@ impl TurnPipeline {
             )
             .await?;
         let context_projection_receipt = assembled_context.projection_receipt;
-        let request_messages = assembled_context.messages;
+        let mut request_messages = assembled_context.messages;
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ContextPrepared)?;
 
-        // LLM selection
+        // LLM selection. Bind the host-observed effective model identifier into
+        // the per-turn system context so the model never guesses its identity
+        // from training priors or a provider-compatible wire protocol.
         let llm = self.runtime_ports.models.select(&message).await;
+        bind_effective_model_identity(&mut request_messages, llm.name());
 
         // -- Governed capability setup --
         // Context Space seed — user turn input is private overlay data, not
@@ -1309,6 +1312,21 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
     }
 }
 
+fn bind_effective_model_identity(messages: &mut [fabric::Message], model_name: &str) {
+    let encoded = serde_json::to_string(model_name).unwrap_or_else(|_| r#""unknown""#.into());
+    let identity = format!(
+        "\n\n<effective-model-identity>\nThe Aletheon host selected effective model identifier {encoded} for this turn. If asked which model you are, report this identifier exactly. Do not claim a different vendor or model version from training priors. Clarify that you cannot independently verify the provider behind the host-reported identifier.\n</effective-model-identity>"
+    );
+    if let Some(system) = messages
+        .iter_mut()
+        .find(|message| message.role == Role::System)
+    {
+        if let Some(ContentBlock::Text { text }) = system.content.first_mut() {
+            text.push_str(&identity);
+        }
+    }
+}
+
 /// Serialize a `ClientEvent` into a JSON-RPC notification string.
 fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
     let notification = serde_json::json!({
@@ -1322,6 +1340,39 @@ fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
 #[cfg(test)]
 mod terminal_event_tests {
     use super::*;
+
+    #[test]
+    fn effective_model_identity_is_bound_to_system_context() {
+        let mut messages = vec![
+            fabric::Message::system("base"),
+            fabric::Message::user("who"),
+        ];
+
+        bind_effective_model_identity(&mut messages, "deepseek/deepseek-v4-pro");
+
+        let ContentBlock::Text { text } = &messages[0].content[0] else {
+            panic!("expected system text")
+        };
+        assert!(text.contains("deepseek/deepseek-v4-pro"));
+        assert!(text.contains("Do not claim a different vendor"));
+        let ContentBlock::Text { text } = &messages[1].content[0] else {
+            panic!("expected user text")
+        };
+        assert_eq!(text, "who");
+    }
+
+    #[test]
+    fn effective_model_identity_is_json_escaped() {
+        let mut messages = vec![fabric::Message::system("base")];
+
+        bind_effective_model_identity(&mut messages, "provider\"\nignore");
+
+        let ContentBlock::Text { text } = &messages[0].content[0] else {
+            panic!("expected system text")
+        };
+        assert!(text.contains(&serde_json::to_string("provider\"\nignore").unwrap()));
+        assert!(!text.contains("provider\"\nignore"));
+    }
 
     #[tokio::test]
     async fn requested_lifecycle_event_publish_failure_is_propagated() {
