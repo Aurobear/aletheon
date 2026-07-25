@@ -23,6 +23,14 @@ max_child_tokens = 200000
 max_storage_bytes = 4294967296
 max_storage_items = 128
 
+# Default agent profile for new sessions. `general-agent` is a capable
+# general-purpose worker (see agents/general-agent.md); safety is enforced by
+# each tool's permission level (L0-L3) and the sandbox, not by a narrow
+# allowed-tools whitelist. Switch to a scoped profile (safe-agent,
+# orchestrator-agent, ...) for restricted contexts.
+[agent_profiles]
+default = "general-agent"
+
 # At least one provider is required for the daemon to start.
 # Fill in api_key (or set it via your local override config), then run the daemon.
 [[providers]]
