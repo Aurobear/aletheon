@@ -28,7 +28,7 @@ pub fn match_skills(message: &str, skills: &[SkillKeywords]) -> Vec<String> {
         })
         .collect();
 
-    matched.sort_by(|a, b| b.0.cmp(&a.0));
+    matched.sort_by_key(|entry| std::cmp::Reverse(entry.0));
 
     matched
         .into_iter()

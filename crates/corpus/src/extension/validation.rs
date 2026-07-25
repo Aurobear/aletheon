@@ -32,16 +32,16 @@ pub fn validate_entry_path(entry_path: &Path) -> Result<()> {
     }
 
     if entry_path.is_absolute() {
-        bail!("absolute path forbidden: {}", path_str);
+        bail!("absolute path forbidden: {path_str}");
     }
 
     for component in entry_path.components() {
         match component {
             std::path::Component::ParentDir => {
-                bail!("parent directory traversal forbidden: {}", path_str);
+                bail!("parent directory traversal forbidden: {path_str}");
             }
             std::path::Component::RootDir => {
-                bail!("absolute path forbidden: {}", path_str);
+                bail!("absolute path forbidden: {path_str}");
             }
             _ => {}
         }
@@ -50,12 +50,7 @@ pub fn validate_entry_path(entry_path: &Path) -> Result<()> {
     // Check depth
     let depth = entry_path.components().count();
     if depth > MAX_DIR_DEPTH {
-        bail!(
-            "directory depth {} exceeds maximum {}: {}",
-            depth,
-            MAX_DIR_DEPTH,
-            path_str
-        );
+        bail!("directory depth {depth} exceeds maximum {MAX_DIR_DEPTH}: {path_str}");
     }
 
     Ok(())
@@ -64,12 +59,7 @@ pub fn validate_entry_path(entry_path: &Path) -> Result<()> {
 /// Check file size against limits.
 pub fn validate_file_size(size: u64, path: &str) -> Result<()> {
     if size > MAX_FILE_SIZE {
-        bail!(
-            "file size {} exceeds maximum {}: {}",
-            size,
-            MAX_FILE_SIZE,
-            path
-        );
+        bail!("file size {size} exceeds maximum {MAX_FILE_SIZE}: {path}");
     }
     Ok(())
 }
@@ -77,11 +67,7 @@ pub fn validate_file_size(size: u64, path: &str) -> Result<()> {
 /// Check running total against maximum.
 pub fn validate_total_size(total: u64) -> Result<()> {
     if total > MAX_TOTAL_SIZE {
-        bail!(
-            "total extracted size {} exceeds maximum {}",
-            total,
-            MAX_TOTAL_SIZE
-        );
+        bail!("total extracted size {total} exceeds maximum {MAX_TOTAL_SIZE}");
     }
     Ok(())
 }
@@ -89,7 +75,7 @@ pub fn validate_total_size(total: u64) -> Result<()> {
 /// Check file count against maximum.
 pub fn validate_file_count(count: usize) -> Result<()> {
     if count > MAX_FILE_COUNT {
-        bail!("file count {} exceeds maximum {}", count, MAX_FILE_COUNT);
+        bail!("file count {count} exceeds maximum {MAX_FILE_COUNT}");
     }
     Ok(())
 }
@@ -98,11 +84,7 @@ pub fn validate_file_count(count: usize) -> Result<()> {
 pub fn verify_hash(data: &[u8], expected_hex: &str) -> Result<()> {
     let actual = format!("{:x}", Sha256::digest(data));
     if actual != expected_hex {
-        bail!(
-            "checksum mismatch: expected {}, got {}",
-            expected_hex,
-            actual
-        );
+        bail!("checksum mismatch: expected {expected_hex}, got {actual}");
     }
     Ok(())
 }
@@ -116,9 +98,9 @@ pub fn verify_all_checksums(
     for (path, expected) in checksums {
         let data = files
             .get(path)
-            .with_context(|| format!("file not found in archive: {}", path))?;
+            .with_context(|| format!("file not found in archive: {path}"))?;
         verify_hash(data, expected)
-            .with_context(|| format!("checksum verification failed for: {}", path))?;
+            .with_context(|| format!("checksum verification failed for: {path}"))?;
     }
 
     // Verify no extra undeclared files exist (except checksums.sha256 itself)
@@ -127,7 +109,7 @@ pub fn verify_all_checksums(
             continue;
         }
         if !checksums.contains_key(path) {
-            bail!("file not declared in checksums.sha256: {}", path);
+            bail!("file not declared in checksums.sha256: {path}");
         }
     }
 
@@ -163,7 +145,7 @@ mod tests {
     #[test]
     fn reject_too_deep() {
         let deep: String = (0..=MAX_DIR_DEPTH)
-            .map(|i| format!("dir{}", i))
+            .map(|i| format!("dir{i}"))
             .collect::<Vec<_>>()
             .join("/");
         assert!(validate_entry_path(Path::new(&deep)).is_err());

@@ -20,19 +20,15 @@ pub enum DeviceClass {
     Bus,
     Composite,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DeviceNamespace {
+    #[default]
     Simulation,
     Lab,
     Hil,
     Production,
 }
 
-impl Default for DeviceNamespace {
-    fn default() -> Self {
-        Self::Simulation
-    }
-}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceManifest {
     pub id: DeviceId,
