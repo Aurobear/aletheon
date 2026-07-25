@@ -70,7 +70,7 @@ impl ContextDisplay {
         let used_k = self.used / 1000;
         let max_k = self.max / 1000;
         let pct = self.usage_percent();
-        format!("ctx: {}k/{}k ({:.0}%)", used_k, max_k, pct)
+        format!("ctx: {used_k}k/{max_k}k ({pct:.0}%)")
     }
 }
 

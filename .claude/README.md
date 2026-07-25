@@ -7,6 +7,7 @@ This directory stores project-level Claude configuration templates and operating
 | File | Purpose |
 |------|---------|
 | `instructions.md` | Project-wide rules: branch/PR workflow, multi-agent coordination, crate conventions, safety invariants, dependency injection, test discipline, commit conventions, Phase 3-6 constraints |
+| `mcp.json` | Project-level MCP servers (aletheon-monitor). Committed — all contributors get it automatically |
 | `settings.local.json` | Local permissions (git, gh, rg). Machine-specific — not committed |
 | `settings.local.json.example` | Template for new contributors to copy |
 | `worktrees/` | Ephemeral git worktrees created during multi-agent workflows (auto-cleaned) |

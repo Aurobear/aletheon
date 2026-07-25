@@ -225,7 +225,7 @@ impl AgentFs {
             Some(FsNode::File { content, .. }) => Ok(content.clone()),
             Some(FsNode::DynamicFile { generator, .. }) => self.generate_content(generator).await,
             Some(FsNode::Directory { children }) => Ok(children.join("\n").into_bytes()),
-            None => anyhow::bail!("File not found: {}", path),
+            None => anyhow::bail!("File not found: {path}"),
         }
     }
 
@@ -253,15 +253,15 @@ impl AgentFs {
             Some(FsNode::File {
                 writable: false, ..
             }) => {
-                anyhow::bail!("File is read-only: {}", path)
+                anyhow::bail!("File is read-only: {path}")
             }
             Some(FsNode::DynamicFile {
                 writable: false, ..
             }) => {
-                anyhow::bail!("File is read-only: {}", path)
+                anyhow::bail!("File is read-only: {path}")
             }
-            None => anyhow::bail!("File not found: {}", path),
-            _ => anyhow::bail!("Cannot write to directory: {}", path),
+            None => anyhow::bail!("File not found: {path}"),
+            _ => anyhow::bail!("Cannot write to directory: {path}"),
         }
     }
 
@@ -270,7 +270,7 @@ impl AgentFs {
         let nodes = self.nodes.read().await;
         match nodes.get(path) {
             Some(FsNode::Directory { children }) => Ok(children.clone()),
-            _ => anyhow::bail!("Not a directory: {}", path),
+            _ => anyhow::bail!("Not a directory: {path}"),
         }
     }
 

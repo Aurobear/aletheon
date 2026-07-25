@@ -64,7 +64,7 @@ impl AuditLogger {
                         }
                         match options.open(&log_path) {
                             Ok(mut file) => {
-                                if let Err(err) = writeln!(file, "{}", json) {
+                                if let Err(err) = writeln!(file, "{json}") {
                                     error!(error = %err, "Failed to write audit record");
                                     Err(format!("failed to write audit record: {err}"))
                                 } else if let Some(hash) =
@@ -101,7 +101,7 @@ impl AuditLogger {
         self.tx
             .send((record, ack_tx))
             .await
-            .map_err(|e| anyhow::anyhow!("Audit logger channel closed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Audit logger channel closed: {e}"))?;
         ack_rx
             .await
             .map_err(|e| anyhow::anyhow!("Audit writer dropped acknowledgement: {e}"))?

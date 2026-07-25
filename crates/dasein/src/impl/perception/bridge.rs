@@ -213,7 +213,7 @@ mod tests {
             bridge.buffer.push(make_event(
                 Priority::Low,
                 EventData::Raw {
-                    message: format!("event {}", i),
+                    message: format!("event {i}"),
                 },
                 &*clock,
             ));
@@ -244,7 +244,7 @@ mod tests {
             let event = make_event(
                 Priority::Normal,
                 EventData::Raw {
-                    message: format!("event {}", i),
+                    message: format!("event {i}"),
                 },
                 &*clock,
             );

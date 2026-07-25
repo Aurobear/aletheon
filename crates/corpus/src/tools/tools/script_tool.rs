@@ -178,7 +178,7 @@ impl Tool for ScriptTool {
             Err(e) => {
                 warn!(script = %self.script_path.display(), error = %e, "Script spawn failed");
                 ToolResult {
-                    content: format!("Failed to execute script: {}", e),
+                    content: format!("Failed to execute script: {e}"),
                     is_error: true,
                     metadata: ToolResultMeta {
                         execution_time_ms: elapsed,

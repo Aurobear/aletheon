@@ -3,6 +3,7 @@
 //! This crate owns the stable host contracts, backend selection, and Linux,
 //! Windows, and macOS implementations.
 
+pub mod artifact_store;
 pub mod backend;
 pub mod desktop;
 pub mod error;

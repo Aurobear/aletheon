@@ -1,7 +1,6 @@
 use std::time::{Duration, Instant};
 
 use cognit::config::ProviderTimeoutConfig;
-use cognit::llm::anthropic::AnthropicProvider;
 use fabric::{LlmProvider, Message};
 use futures::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -22,14 +21,29 @@ async fn server(response: Option<&'static [u8]>) -> String {
     format!("http://{address}")
 }
 
-fn provider(base_url: String) -> AnthropicProvider {
-    AnthropicProvider::new("secret-api-key", "test-model")
-        .with_base_url(base_url)
-        .with_timeouts(ProviderTimeoutConfig {
-            connect_timeout_ms: 50,
-            request_timeout_ms: 80,
-            stream_idle_timeout_ms: 50,
-        })
+fn provider(base_url: String) -> std::sync::Arc<dyn LlmProvider> {
+    let config = cognit::config::ProviderConfig {
+        name: "test-adapter".into(),
+        base_url,
+        api_key: "secret-api-key".into(),
+        transport: cognit::config::Transport::Anthropic,
+        models: vec!["test-model".into()],
+        max_context_length: None,
+        pricing: None,
+    };
+    cognit::composition::inference_factory::create_provider(
+        &config,
+        "test-model",
+        cognit::composition::inference_factory::ProviderBuildOptions {
+            max_tokens: 100_000,
+            timeouts: ProviderTimeoutConfig {
+                connect_timeout_ms: 50,
+                request_timeout_ms: 80,
+                stream_idle_timeout_ms: 50,
+            },
+        },
+    )
+    .unwrap()
 }
 
 #[tokio::test]
@@ -87,6 +101,6 @@ async fn provider_http_error_never_includes_response_body() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(error.contains("529"));
+    assert_eq!(error, "provider_unavailable");
     assert!(!error.contains(secret));
 }

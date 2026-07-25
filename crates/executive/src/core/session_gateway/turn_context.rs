@@ -115,7 +115,7 @@ impl SessionGateway {
             md.push_str("## DaseinModule\n");
             if let Some(d) = sf.dasein() {
                 let m = d.mood();
-                md.push_str(&format!("- Mood: {:?}\n", m));
+                md.push_str(&format!("- Mood: {m:?}\n"));
                 md.push_str(&format!("- Sorge alive: {}\n", d.is_alive()));
 
                 let ts = d.temporality();
@@ -305,7 +305,7 @@ impl SessionGateway {
                     .iter()
                     .filter_map(|block| match block {
                         ContentBlock::Text { text } => Some(text.clone()),
-                        ContentBlock::ToolUse { name, .. } => Some(format!("[tool: {}]", name)),
+                        ContentBlock::ToolUse { name, .. } => Some(format!("[tool: {name}]")),
                         _ => None,
                     })
                     .collect::<Vec<_>>()
@@ -315,7 +315,7 @@ impl SessionGateway {
                 } else {
                     content_str.to_string()
                 };
-                msg_section.push_str(&format!("- [{}] {}\n", role_str, preview));
+                msg_section.push_str(&format!("- [{role_str}] {preview}\n"));
             }
             context_parts.push(msg_section);
         }
@@ -327,9 +327,8 @@ impl SessionGateway {
             "You are an introspection query handler for a running AI agent session. \
              Below is the current session context. Answer the user's question based \
              ONLY on the information provided. If the information is insufficient, say so.\n\n\
-             {}\n\n\
-             ## Question\n{}",
-            context, question
+             {context}\n\n\
+             ## Question\n{question}"
         );
 
         info!(

@@ -298,7 +298,7 @@ async fn dispatch_tool(
     match tools.get(name) {
         Some(tool) => tool.execute(input, ctx).await,
         None => ToolResult {
-            content: format!("Unknown tool: {}", name),
+            content: format!("Unknown tool: {name}"),
             is_error: true,
             metadata: Default::default(),
         },
@@ -497,8 +497,7 @@ mod tests {
         // not ~300ms if serial. Use 200ms as generous bound.
         assert!(
             elapsed < 200,
-            "Expected parallel execution, took {:?}",
-            elapsed
+            "Expected parallel execution, took {elapsed:?}"
         );
         for r in &results {
             assert!(!r.result.is_error);
@@ -617,8 +616,7 @@ mod tests {
         // Same-path writes must be serialized => ~200ms not ~100ms.
         assert!(
             elapsed >= 180,
-            "Expected serialized execution for same-path writes, took {:?}",
-            elapsed
+            "Expected serialized execution for same-path writes, took {elapsed:?}"
         );
     }
 
@@ -677,8 +675,7 @@ mod tests {
         // Disjoint-path writes should run in parallel.
         assert!(
             elapsed < 200,
-            "Expected parallel execution for disjoint writes, took {:?}",
-            elapsed
+            "Expected parallel execution for disjoint writes, took {elapsed:?}"
         );
     }
 
@@ -719,8 +716,7 @@ mod tests {
         // Serialized: 3 x 100ms = ~300ms.
         assert!(
             elapsed >= 280,
-            "Expected serialized execution for side effects, took {:?}",
-            elapsed
+            "Expected serialized execution for side effects, took {elapsed:?}"
         );
     }
 
@@ -894,13 +890,11 @@ mod tests {
         // With concurrency=2 and 4 tasks of 100ms each, should take ~200ms.
         assert!(
             elapsed >= 180,
-            "Expected concurrency limit to enforce batching, took {:?}",
-            elapsed
+            "Expected concurrency limit to enforce batching, took {elapsed:?}"
         );
         assert!(
             elapsed < 350,
-            "But should not be fully serial, took {:?}",
-            elapsed
+            "But should not be fully serial, took {elapsed:?}"
         );
     }
 }

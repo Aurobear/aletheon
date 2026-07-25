@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use cognit::testing::mock_llm::MockLlmProvider;
-use executive::service::inference_port::{CoreInferenceRequest, InferencePort, LocalInferencePort};
+use executive::application::inference_port::{
+    CoreInferenceRequest, InferencePort, LocalInferencePort,
+};
 use fabric::{LlmStream, Message, StopReason, StreamChunk, ToolDefinition};
 
 fn request() -> CoreInferenceRequest {
@@ -23,10 +25,15 @@ async fn next_chunk(stream: &mut LlmStream) -> Option<anyhow::Result<StreamChunk
 
 #[tokio::test]
 async fn local_inference_port_preserves_response_and_stream_frames() {
-    let provider = Arc::new(MockLlmProvider::new("fake"));
+    let provider = Arc::new(MockLlmProvider::new("fake").with_max_context(1_000_000));
     provider.push_text_response("ok", StopReason::EndTurn);
     provider.push_text_response("streamed", StopReason::EndTurn);
     let port = LocalInferencePort::new(provider);
+
+    let capabilities = port.capabilities("fast").await.unwrap();
+    assert_eq!(capabilities.model_spec, "fast");
+    assert_eq!(capabilities.display_name, "fake");
+    assert_eq!(capabilities.max_context_tokens, 1_000_000);
 
     let response = port.complete(request()).await.unwrap();
     assert_eq!(response.stop_reason, StopReason::EndTurn);

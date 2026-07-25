@@ -1,11 +1,12 @@
+use executive::composition::skill_admin::DefaultSkillAdmin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use corpus::security::approval::ApprovalDecision;
-use executive::service::admin_service::{
+use executive::application::admin_service::{
     AdminResources, AdminRuntimePort, AdminService, AdminServiceError, AdminUseCases,
-    ApprovalOwner, DefaultSkillAdmin, ModeChange, PendingApprovals, ScopedApprovalCache,
-    SkillAdminPort, TransientApprovalRequest,
+    ApprovalOwner, ModeChange, PendingApprovals, ScopedApprovalCache, SkillAdminPort,
+    SkillDescriptor, TransientApprovalRequest,
 };
 use fabric::ui_event::{CollaborationMode, InterruptReason};
 use tempfile::tempdir;
@@ -37,7 +38,7 @@ fn test_runtime() -> Arc<dyn AdminRuntimePort> {
 }
 
 fn noop_runtime_shutdown(
-) -> Arc<dyn Fn() -> executive::service::admin_service::RuntimeShutdownFuture + Send + Sync> {
+) -> Arc<dyn Fn() -> executive::application::admin_service::RuntimeShutdownFuture + Send + Sync> {
     Arc::new(|| Box::pin(async { Ok(()) }))
 }
 
@@ -45,6 +46,9 @@ fn noop_runtime_shutdown(
 impl SkillAdminPort for FailingSkillAdmin {
     async fn reload(&self) -> Result<usize, AdminServiceError> {
         Err(AdminServiceError::Operation("reload failed".into()))
+    }
+    async fn list(&self) -> Vec<SkillDescriptor> {
+        Vec::new()
     }
 }
 
@@ -54,7 +58,9 @@ fn setup(skills_dir: std::path::PathBuf) -> (AdminService, CancellationToken, Ar
 
 fn setup_with_rollback(
     skills_dir: std::path::PathBuf,
-    deployment_rollback: Option<Arc<dyn executive::service::admin_service::DeploymentRollbackPort>>,
+    deployment_rollback: Option<
+        Arc<dyn executive::application::admin_service::DeploymentRollbackPort>,
+    >,
 ) -> (AdminService, CancellationToken, Arc<Mutex<String>>) {
     let cancellation = CancellationToken::new();
     let cached_prefix = Arc::new(Mutex::new(String::new()));
@@ -71,8 +77,8 @@ fn setup_with_rollback(
         pending_approvals: PendingApprovals::default(),
         session_approvals: ScopedApprovalCache::default(),
         daemon_cancel: cancellation.clone(),
-        google_sync: None,
-        gbrain_worker: None,
+        external_sync: None,
+        supplemental_memory_worker: None,
         goal_worker: None,
         runtime_shutdown: noop_runtime_shutdown(),
         memory_admin: None,
@@ -80,7 +86,7 @@ fn setup_with_rollback(
         agent_profiles: None,
         current_profile: None,
         profile_switch_events: Arc::new(
-            executive::service::admin_service::NoopProfileSwitchEventSink,
+            executive::application::admin_service::NoopProfileSwitchEventSink,
         ),
         deployment_rollback,
     });
@@ -131,7 +137,7 @@ async fn admin_surface_executes_confirmed_dual_runtime_rollback() {
 }
 
 #[tokio::test]
-async fn skill_reload_rebuilds_prefix_and_missing_directory_is_bounded() {
+async fn skill_reload_refreshes_catalog_without_exposing_it_in_prefix() {
     let directory = tempdir().unwrap();
     std::fs::write(
         directory.path().join("review.md"),
@@ -140,7 +146,8 @@ async fn skill_reload_rebuilds_prefix_and_missing_directory_is_bounded() {
     .unwrap();
     let (service, _, prefix) = setup(directory.path().to_path_buf());
     assert_eq!(service.reload_skills().await.unwrap(), 1);
-    assert!(prefix.lock().await.contains("Review"));
+    assert_eq!(&*prefix.lock().await, "system prompt");
+    assert_eq!(service.list_skills().await[0].name, "Review");
 
     let (missing, _, _) = setup(directory.path().join("missing"));
     assert_eq!(missing.reload_skills().await.unwrap(), 0);
@@ -157,8 +164,8 @@ async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
         pending_approvals: PendingApprovals::default(),
         session_approvals: ScopedApprovalCache::default(),
         daemon_cancel: cancellation,
-        google_sync: None,
-        gbrain_worker: None,
+        external_sync: None,
+        supplemental_memory_worker: None,
         goal_worker: None,
         runtime_shutdown: noop_runtime_shutdown(),
         memory_admin: None,
@@ -166,7 +173,7 @@ async fn skill_reload_failure_is_propagated_without_partial_protocol_state() {
         agent_profiles: None,
         current_profile: None,
         profile_switch_events: Arc::new(
-            executive::service::admin_service::NoopProfileSwitchEventSink,
+            executive::application::admin_service::NoopProfileSwitchEventSink,
         ),
         deployment_rollback: None,
     });
@@ -233,8 +240,8 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
         pending_approvals: pending,
         session_approvals: session.clone(),
         daemon_cancel: cancellation.clone(),
-        google_sync: None,
-        gbrain_worker: None,
+        external_sync: None,
+        supplemental_memory_worker: None,
         goal_worker: None,
         runtime_shutdown: Arc::new(move || {
             let runtime_shutdowns = runtime_shutdowns_for_hook.clone();
@@ -248,7 +255,7 @@ async fn transient_approval_and_shutdown_are_owned_by_admin_service() {
         agent_profiles: None,
         current_profile: None,
         profile_switch_events: Arc::new(
-            executive::service::admin_service::NoopProfileSwitchEventSink,
+            executive::application::admin_service::NoopProfileSwitchEventSink,
         ),
         deployment_rollback: None,
     });
@@ -328,9 +335,46 @@ async fn disconnect_cancels_only_connection_owned_pending_approvals() {
     assert_eq!(live_rx.await.unwrap(), ApprovalDecision::Approve);
 }
 
+#[tokio::test]
+async fn approval_with_closed_consumer_reports_terminal_non_delivery() {
+    let pending = PendingApprovals::default();
+    let connection = fabric::ConnectionId::new();
+    let owner = ApprovalOwner::new(
+        fabric::PrincipalId::local_uid(1001),
+        fabric::ThreadId("thread-closed".into()),
+    );
+    let (sender, receiver) = oneshot::channel();
+    let approval_id = pending
+        .insert(
+            owner.clone(),
+            fabric::TurnId::new(),
+            "call-closed".into(),
+            "bash_exec".into(),
+            connection,
+            sender,
+        )
+        .await;
+    drop(receiver);
+
+    let resolved = pending
+        .resolve(&owner, &approval_id, ApprovalDecision::Approve)
+        .await
+        .unwrap();
+    assert_eq!(
+        resolved.delivery,
+        executive::application::admin_service::ApprovalDecisionDelivery::ConsumerGone
+    );
+    assert!(matches!(
+        pending
+            .resolve(&owner, &approval_id, ApprovalDecision::Approve)
+            .await,
+        Err(executive::application::admin_service::PendingApprovalError::NotFound)
+    ));
+}
+
 #[test]
 fn admin_rpc_has_no_concrete_runtime_registry_or_lock_access() {
-    let source = include_str!("../src/impl/daemon/handler/rpc/rpc_admin.rs");
+    let source = include_str!("../src/host/daemon/handler/rpc/rpc_admin.rs");
     assert!(source.contains("self.ports.admin"));
     for forbidden in [
         "subsystems",

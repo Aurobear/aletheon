@@ -1,8 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use executive::r#impl::core_rpc::{CorePeerPolicy, CoreRpcServer};
-use executive::service::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
+use executive::application::inference_port::{
+    CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
+};
+use executive::host::core_rpc::{CorePeerPolicy, CoreRpcServer};
 use executive::{
     ContentBlock, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk, Usage,
 };
@@ -16,6 +18,14 @@ struct FakeInference;
 
 #[async_trait::async_trait]
 impl InferencePort for FakeInference {
+    async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
+        Ok(ModelCapabilities {
+            model_spec: model_spec.to_owned(),
+            display_name: model_spec.to_owned(),
+            max_context_tokens: 1_000_000,
+        })
+    }
+
     async fn complete(
         &self,
         _request: CoreInferenceRequest,

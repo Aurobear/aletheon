@@ -184,8 +184,7 @@ impl CareStructure {
         if fallenness.depth > 0.8 {
             if let Some(absorbed) = &fallenness.absorbed_in {
                 return CareAction::Negate(format!(
-                    "deeply absorbed in '{}', questioning this pattern",
-                    absorbed
+                    "deeply absorbed in '{absorbed}', questioning this pattern"
                 ));
             }
         }
@@ -283,7 +282,7 @@ mod tests {
     fn make_concern(id: &str, urgency: f64) -> Concern {
         Concern {
             id: id.to_string(),
-            purpose: format!("purpose of {}", id),
+            purpose: format!("purpose of {id}"),
             urgency,
             involvement_chain: vec![],
             last_attended: TemporalPosition(0),

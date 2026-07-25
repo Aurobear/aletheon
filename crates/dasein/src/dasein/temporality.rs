@@ -201,7 +201,7 @@ impl ProtentionField {
             match pattern {
                 TemporalPattern::Repetition { what, interval: _ } => {
                     self.possibilities.push(AnticipatedPossibility {
-                        content: format!("{} may repeat", what),
+                        content: format!("{what} may repeat"),
                         probability: 0.7,
                         consequence: "similar action as before".to_string(),
                         affect: AffectTone::Neutral,
@@ -209,7 +209,7 @@ impl ProtentionField {
                 }
                 TemporalPattern::Trend { direction, toward } => {
                     self.possibilities.push(AnticipatedPossibility {
-                        content: format!("trend {} toward {}", direction, toward),
+                        content: format!("trend {direction} toward {toward}"),
                         probability: 0.6,
                         consequence: "continuation of current trajectory".to_string(),
                         affect: AffectTone::Curious,
@@ -217,7 +217,7 @@ impl ProtentionField {
                 }
                 TemporalPattern::Disruption { what } => {
                     self.possibilities.push(AnticipatedPossibility {
-                        content: format!("disruption in {}", what),
+                        content: format!("disruption in {what}"),
                         probability: 0.5,
                         consequence: "unexpected change".to_string(),
                         affect: AffectTone::Anxious,
@@ -400,7 +400,7 @@ impl PassiveSynthesizer {
         for (a, b, strength) in &self.associations {
             if *strength > 0.5 {
                 patterns.push(TemporalPattern::Trend {
-                    direction: format!("{} -> {}", a, b),
+                    direction: format!("{a} -> {b}"),
                     toward: b.clone(),
                 });
             }
@@ -563,7 +563,7 @@ mod tests {
         let field = RetentionField::new(3, 0.9);
 
         for i in 0..5 {
-            field.push_and_decay(make_moment(&format!("m{}", i), i));
+            field.push_and_decay(make_moment(&format!("m{i}"), i));
         }
 
         assert_eq!(field.len(), 3);
@@ -582,7 +582,7 @@ mod tests {
 
         // Push many more to decay "first" below threshold
         for i in 2..20 {
-            field.push_and_decay(make_moment(&format!("m{}", i), i));
+            field.push_and_decay(make_moment(&format!("m{i}"), i));
         }
 
         // "first" should have faded out (vividness < 0.01)

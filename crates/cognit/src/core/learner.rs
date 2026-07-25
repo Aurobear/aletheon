@@ -51,8 +51,7 @@ impl Learner {
                 id: uuid::Uuid::new_v4().to_string(),
                 pattern: pattern.clone(),
                 action: format!(
-                    "Consider alternative to '{}' — failed with: {}",
-                    action_name, error_summary
+                    "Consider alternative to '{action_name}' — failed with: {error_summary}"
                 ),
                 confidence: 0.6,
                 examples: vec![format!("{}: {}", action_name, error_summary)],
@@ -66,11 +65,11 @@ impl Learner {
         if success {
             let action_lower = action_name.to_lowercase();
             if action_lower.contains("delete") || action_lower.contains("rm") {
-                let pattern = format!("action:{}", action_name);
+                let pattern = format!("action:{action_name}");
                 let rule = LearnedRule {
                     id: uuid::Uuid::new_v4().to_string(),
                     pattern: pattern.clone(),
-                    action: format!("Always create backup before '{}'", action_name),
+                    action: format!("Always create backup before '{action_name}'"),
                     confidence: 0.8,
                     examples: vec![format!("{} succeeded — ensure backups exist", action_name)],
                 };
@@ -82,7 +81,7 @@ impl Learner {
 
         // Pattern 3: Slow action → create "optimize" rule
         if experience.result.elapsed_ms > 10_000 {
-            let pattern = format!("action:{} slow", action_name);
+            let pattern = format!("action:{action_name} slow");
             let rule = LearnedRule {
                 id: uuid::Uuid::new_v4().to_string(),
                 pattern: pattern.clone(),

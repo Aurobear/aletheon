@@ -7,7 +7,10 @@ use aes_gcm::aead::OsRng;
 use anyhow::{Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use fabric::{Clock, ExternalIdentityId, ExternalScope, IdentityProvider};
+use fabric::{
+    CapabilityGrant, Clock, ExternalCapabilityId, ExternalIdentityContractError,
+    ExternalIdentityId, ExternalProviderId, GrantState,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -15,11 +18,106 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::tools::outbound::EndpointPolicy;
+
 pub const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 pub const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 pub const GOOGLE_REVOCATION_URL: &str = "https://oauth2.googleapis.com/revoke";
 pub const GOOGLE_USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 const STATE_LIFETIME_SECS: u64 = 600;
+
+/// Adapter-owned interpretation of otherwise opaque shared capability IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoogleCapability {
+    OpenId,
+    UserInfoEmail,
+    MailRead,
+    CalendarRead,
+    FileRead,
+    MailModify,
+    MailSend,
+    CalendarWrite,
+}
+
+impl GoogleCapability {
+    pub fn id(self) -> ExternalCapabilityId {
+        ExternalCapabilityId::new(match self {
+            Self::OpenId => "identity.openid",
+            Self::UserInfoEmail => "identity.email.read",
+            Self::MailRead => "mail.read",
+            Self::CalendarRead => "calendar.read",
+            Self::FileRead => "file.read",
+            Self::MailModify => "mail.modify",
+            Self::MailSend => "mail.send",
+            Self::CalendarWrite => "calendar.write",
+        })
+        .expect("static Google capability IDs are canonical")
+    }
+
+    pub const fn oauth_scope(self) -> &'static str {
+        match self {
+            Self::OpenId => "openid",
+            Self::UserInfoEmail => "https://www.googleapis.com/auth/userinfo.email",
+            Self::MailRead => "https://www.googleapis.com/auth/gmail.readonly",
+            Self::CalendarRead => "https://www.googleapis.com/auth/calendar.readonly",
+            Self::FileRead => "https://www.googleapis.com/auth/drive.readonly",
+            Self::MailModify => "https://www.googleapis.com/auth/gmail.modify",
+            Self::MailSend => "https://www.googleapis.com/auth/gmail.send",
+            Self::CalendarWrite => "https://www.googleapis.com/auth/calendar.events",
+        }
+    }
+
+    pub const fn is_write(self) -> bool {
+        matches!(
+            self,
+            Self::MailModify | Self::MailSend | Self::CalendarWrite
+        )
+    }
+}
+
+pub fn google_provider_id() -> ExternalProviderId {
+    ExternalProviderId::new("google").expect("static Google provider ID is canonical")
+}
+
+pub fn google_capability(value: GoogleCapability) -> ExternalCapabilityId {
+    value.id()
+}
+
+pub fn classify_google_capability(value: &ExternalCapabilityId) -> Option<GoogleCapability> {
+    match value.as_str() {
+        "identity.openid" | "open_id" => Some(GoogleCapability::OpenId),
+        "identity.email.read" | "user_info_email" => Some(GoogleCapability::UserInfoEmail),
+        "mail.read" | "gmail_readonly" => Some(GoogleCapability::MailRead),
+        "calendar.read" | "calendar_readonly" => Some(GoogleCapability::CalendarRead),
+        "file.read" | "drive_readonly" => Some(GoogleCapability::FileRead),
+        "mail.modify" | "gmail_modify" => Some(GoogleCapability::MailModify),
+        "mail.send" | "gmail_send" => Some(GoogleCapability::MailSend),
+        "calendar.write" | "calendar_events_write" => Some(GoogleCapability::CalendarWrite),
+        _ => None,
+    }
+}
+
+pub fn canonical_google_capability(value: &ExternalCapabilityId) -> Option<ExternalCapabilityId> {
+    classify_google_capability(value).map(GoogleCapability::id)
+}
+
+pub fn is_google_write_capability(value: &ExternalCapabilityId) -> bool {
+    classify_google_capability(value).is_none_or(GoogleCapability::is_write)
+}
+
+pub fn is_google_read_capability(value: &ExternalCapabilityId) -> bool {
+    classify_google_capability(value).is_some_and(|capability| !capability.is_write())
+}
+
+pub fn validate_google_read_grant(
+    grant: &CapabilityGrant,
+) -> Result<(), ExternalIdentityContractError> {
+    grant.validate()?;
+    if grant.state != GrantState::Active || !grant.scopes.iter().all(is_google_read_capability) {
+        return Err(ExternalIdentityContractError::WriteScopeDenied);
+    }
+    Ok(())
+}
 
 #[derive(Clone)]
 pub struct OAuthClientConfig {
@@ -63,16 +161,43 @@ impl fmt::Debug for OAuthClientConfig {
 pub struct AsyncOAuthClient {
     config: OAuthClientConfig,
     client: reqwest::Client,
+    endpoint_policy: EndpointPolicy,
 }
 
 impl AsyncOAuthClient {
     pub fn new(config: OAuthClientConfig) -> Result<Self> {
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .build()
+        Self::with_endpoint_policy(config, EndpointPolicy::public())
+    }
+
+    fn new_local(config: OAuthClientConfig) -> Result<Self> {
+        Self::with_endpoint_policy(config, EndpointPolicy::local_loopback())
+    }
+
+    fn with_endpoint_policy(
+        config: OAuthClientConfig,
+        endpoint_policy: EndpointPolicy,
+    ) -> Result<Self> {
+        for endpoint in [
+            Some(config.auth_url.as_str()),
+            Some(config.token_url.as_str()),
+            config.revocation_url.as_deref(),
+            config.userinfo_url.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            endpoint_policy
+                .validate_identity(endpoint)
+                .context("OAuth endpoint identity denied")?;
+        }
+        let client = endpoint_policy
+            .client(Duration::from_secs(30))
             .context("building OAuth HTTP client")?;
-        Ok(Self { config, client })
+        Ok(Self {
+            config,
+            client,
+            endpoint_policy,
+        })
     }
 
     pub fn authorization_url(
@@ -110,6 +235,10 @@ impl AsyncOAuthClient {
         requested_scopes: &[String],
         now_secs: u64,
     ) -> Result<TokenEntry> {
+        self.endpoint_policy
+            .approve(&self.config.token_url)
+            .await
+            .context("OAuth token endpoint denied")?;
         let mut form = vec![
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -147,6 +276,10 @@ impl AsyncOAuthClient {
         requested_scopes: &[String],
         now_secs: u64,
     ) -> Result<TokenEntry> {
+        self.endpoint_policy
+            .approve(&self.config.token_url)
+            .await
+            .context("OAuth token endpoint denied")?;
         let refresh = current
             .refresh_token
             .as_deref()
@@ -192,6 +325,10 @@ impl AsyncOAuthClient {
             .revocation_url
             .as_deref()
             .context("OAuth revocation endpoint unavailable")?;
+        self.endpoint_policy
+            .approve(endpoint)
+            .await
+            .context("OAuth revocation endpoint denied")?;
         let response = self
             .client
             .post(endpoint)
@@ -209,6 +346,10 @@ impl AsyncOAuthClient {
             .userinfo_url
             .as_deref()
             .context("Google user-info endpoint unavailable")?;
+        self.endpoint_policy
+            .approve(endpoint)
+            .await
+            .context("Google user-info endpoint denied")?;
         let response = self
             .client
             .get(endpoint)
@@ -304,7 +445,7 @@ pub struct GoogleBinding {
     pub identity_id: ExternalIdentityId,
     pub provider_subject: String,
     pub email: String,
-    pub scopes: Vec<ExternalScope>,
+    pub scopes: Vec<ExternalCapabilityId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -355,7 +496,7 @@ impl GoogleOAuthProvider {
         client_id: String,
         client_secret: Option<String>,
         redirect_uri: String,
-        scopes: Vec<ExternalScope>,
+        scopes: Vec<ExternalCapabilityId>,
         tokens: TokenStore,
         clock: Arc<dyn Clock>,
     ) -> Result<Self> {
@@ -378,21 +519,55 @@ impl GoogleOAuthProvider {
 
     pub fn with_endpoints(
         config: OAuthClientConfig,
-        scopes: Vec<ExternalScope>,
+        scopes: Vec<ExternalCapabilityId>,
         tokens: TokenStore,
         clock: Arc<dyn Clock>,
     ) -> Result<Self> {
         anyhow::ensure!(
-            !scopes.is_empty() && scopes.iter().all(|scope| scope.is_m6_allowed()),
+            !scopes.is_empty() && scopes.iter().all(is_google_read_capability),
             "Google OAuth requested a non-read-only scope"
         );
         let scopes = scopes
             .into_iter()
-            .map(|scope| scope.oauth_name().to_owned())
+            .map(|scope| {
+                classify_google_capability(&scope)
+                    .expect("read capability was classified")
+                    .oauth_scope()
+                    .to_owned()
+            })
             .collect();
         Ok(Self {
             oauth: AsyncOAuthClient::new(config)?,
             scopes,
+            pending: HashMap::new(),
+            tokens,
+            clock,
+        })
+    }
+
+    /// Construct a provider for an explicitly host-trusted loopback OAuth
+    /// service. Callers must not select this from model or request input.
+    pub fn with_local_endpoints(
+        config: OAuthClientConfig,
+        scopes: Vec<ExternalCapabilityId>,
+        tokens: TokenStore,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
+        anyhow::ensure!(
+            !scopes.is_empty() && scopes.iter().all(is_google_read_capability),
+            "Google OAuth requested a non-read-only scope"
+        );
+        Ok(Self {
+            oauth: AsyncOAuthClient::new_local(config)?,
+            scopes: scopes
+                .into_iter()
+                .map(|scope| {
+                    classify_google_capability(&scope)
+                        .expect("read capability was classified")
+                        .oauth_scope()
+                        .to_owned()
+                })
+                .collect(),
             pending: HashMap::new(),
             tokens,
             clock,
@@ -447,7 +622,7 @@ impl GoogleOAuthProvider {
             .map(|scope| external_scope(scope))
             .collect::<Result<Vec<_>>>()?;
         self.tokens.set_key(
-            TokenKey::external(IdentityProvider::Google, identity_id),
+            TokenKey::external(ExternalProviderId::new("google").unwrap(), identity_id),
             entry,
         );
         self.tokens.save()?;
@@ -460,7 +635,7 @@ impl GoogleOAuthProvider {
     }
 
     pub async fn refresh(&mut self, identity_id: ExternalIdentityId) -> Result<()> {
-        let key = TokenKey::external(IdentityProvider::Google, identity_id);
+        let key = TokenKey::external(ExternalProviderId::new("google").unwrap(), identity_id);
         let current = self
             .tokens
             .get_key(&key)
@@ -478,7 +653,7 @@ impl GoogleOAuthProvider {
         &self,
         identity_id: ExternalIdentityId,
     ) -> Result<GoogleAccessToken, GoogleApiError> {
-        let key = TokenKey::external(IdentityProvider::Google, identity_id);
+        let key = TokenKey::external(ExternalProviderId::new("google").unwrap(), identity_id);
         let entry = self
             .tokens
             .get_key(&key)
@@ -500,7 +675,7 @@ impl GoogleOAuthProvider {
     }
 
     pub async fn revoke(&mut self, identity_id: ExternalIdentityId) -> Result<()> {
-        let key = TokenKey::external(IdentityProvider::Google, identity_id);
+        let key = TokenKey::external(ExternalProviderId::new("google").unwrap(), identity_id);
         let entry = self.tokens.remove_key(&key);
         self.tokens.save()?;
         if let Some(entry) = entry {
@@ -539,16 +714,17 @@ fn now_secs(clock: &dyn Clock) -> u64 {
     u64::try_from(clock.wall_now().0.max(0)).unwrap_or(0) / 1_000
 }
 
-fn external_scope(scope: &str) -> Result<ExternalScope> {
+fn external_scope(scope: &str) -> Result<ExternalCapabilityId> {
     [
-        ExternalScope::OpenId,
-        ExternalScope::UserInfoEmail,
-        ExternalScope::GmailReadonly,
-        ExternalScope::CalendarReadonly,
-        ExternalScope::DriveReadonly,
+        GoogleCapability::OpenId,
+        GoogleCapability::UserInfoEmail,
+        GoogleCapability::MailRead,
+        GoogleCapability::CalendarRead,
+        GoogleCapability::FileRead,
     ]
     .into_iter()
-    .find(|candidate| candidate.oauth_name() == scope)
+    .find(|candidate| candidate.oauth_scope() == scope)
+    .map(GoogleCapability::id)
     .with_context(|| format!("unsupported Google read scope: {scope}"))
 }
 
@@ -561,9 +737,34 @@ mod tests {
     #[test]
     fn drive_read_scope_is_supported_without_changing_default_scope_sets() {
         assert_eq!(
-            external_scope(ExternalScope::DriveReadonly.oauth_name()).unwrap(),
-            ExternalScope::DriveReadonly
+            external_scope(GoogleCapability::FileRead.oauth_scope()).unwrap(),
+            ExternalCapabilityId::new("file.read").unwrap()
         );
+    }
+
+    #[test]
+    fn capability_policy_is_adapter_owned_and_fail_closed() {
+        for capability in [
+            GoogleCapability::OpenId,
+            GoogleCapability::UserInfoEmail,
+            GoogleCapability::MailRead,
+            GoogleCapability::CalendarRead,
+            GoogleCapability::FileRead,
+        ] {
+            assert!(is_google_read_capability(&capability.id()));
+            assert!(!is_google_write_capability(&capability.id()));
+        }
+        for capability in [
+            GoogleCapability::MailModify,
+            GoogleCapability::MailSend,
+            GoogleCapability::CalendarWrite,
+        ] {
+            assert!(!is_google_read_capability(&capability.id()));
+            assert!(is_google_write_capability(&capability.id()));
+        }
+        let unknown = ExternalCapabilityId::new("unknown.read").unwrap();
+        assert!(!is_google_read_capability(&unknown));
+        assert!(is_google_write_capability(&unknown));
     }
     use hyper::body::{Bytes, Incoming};
     use hyper::service::service_fn;
@@ -589,7 +790,10 @@ mod tests {
                 userinfo_url: Some("https://accounts.example/userinfo".into()),
                 client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
             },
-            vec![ExternalScope::OpenId, ExternalScope::GmailReadonly],
+            vec![
+                ExternalCapabilityId::new("identity.openid").unwrap(),
+                ExternalCapabilityId::new("mail.read").unwrap(),
+            ],
             tokens,
             Arc::new(TestClock::default()),
         )
@@ -642,7 +846,7 @@ mod tests {
             "client".into(),
             None,
             "http://localhost/callback".into(),
-            vec![ExternalScope::GmailSend],
+            vec![ExternalCapabilityId::new("mail.send").unwrap()],
             TokenStore::new(dir.path().join("tokens.json")).unwrap(),
             Arc::new(TestClock::default()),
         );
@@ -711,7 +915,7 @@ mod tests {
     }
 
     fn async_client(endpoint: &str) -> AsyncOAuthClient {
-        AsyncOAuthClient::new(OAuthClientConfig {
+        AsyncOAuthClient::new_local(OAuthClientConfig {
             client_id: "client".into(),
             client_secret: Some("client-secret".into()),
             redirect_uri: "http://localhost/callback".into(),
@@ -760,7 +964,7 @@ mod tests {
         ])
         .await;
         let dir = tempfile::tempdir().unwrap();
-        let mut provider = GoogleOAuthProvider::with_endpoints(
+        let mut provider = GoogleOAuthProvider::with_local_endpoints(
             OAuthClientConfig {
                 client_id: "client".into(),
                 client_secret: None,
@@ -771,7 +975,7 @@ mod tests {
                 userinfo_url: Some(format!("{endpoint}/userinfo")),
                 client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
             },
-            vec![ExternalScope::OpenId],
+            vec![ExternalCapabilityId::new("identity.openid").unwrap()],
             TokenStore::new(dir.path().join("tokens.json")).unwrap(),
             Arc::new(TestClock::default()),
         )
@@ -783,7 +987,10 @@ mod tests {
             .unwrap();
         assert_eq!(binding.provider_subject, "google-subject");
         assert_eq!(binding.email, "owner@example.com");
-        assert_eq!(binding.scopes, vec![ExternalScope::OpenId]);
+        assert_eq!(
+            binding.scopes,
+            vec![ExternalCapabilityId::new("identity.openid").unwrap()]
+        );
         let rendered = format!("{binding:?}");
         assert!(!rendered.contains("access-secret"));
         assert!(!rendered.contains("refresh-secret"));
@@ -861,7 +1068,7 @@ mod tests {
     async fn expired_state_is_consumed_before_network() {
         let dir = tempfile::tempdir().unwrap();
         let clock = Arc::new(TestClock::default());
-        let mut provider = GoogleOAuthProvider::with_endpoints(
+        let mut provider = GoogleOAuthProvider::with_local_endpoints(
             OAuthClientConfig {
                 client_id: "client".into(),
                 client_secret: None,
@@ -872,7 +1079,7 @@ mod tests {
                 userinfo_url: None,
                 client_auth_method: crate::tools::google::oauth::OAuthClientAuthMethod::None,
             },
-            vec![ExternalScope::OpenId],
+            vec![ExternalCapabilityId::new("identity.openid").unwrap()],
             TokenStore::new(dir.path().join("tokens.json")).unwrap(),
             clock.clone(),
         )

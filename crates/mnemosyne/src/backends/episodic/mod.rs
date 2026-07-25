@@ -129,7 +129,7 @@ mod tests {
         init_mem(&mut mem).await;
 
         for i in 0..5 {
-            let mut entry = make_entry(format!("event {}", i).as_bytes());
+            let mut entry = make_entry(format!("event {i}").as_bytes());
             entry.importance = 0.1 * i as f64;
             mem.store(entry).await.unwrap();
         }
@@ -214,7 +214,7 @@ mod tests {
             let entry = make_reflection(
                 ReflectionTrigger::Manual,
                 fabric::ReflectionOutcome::Partial,
-                &format!("task {}", i),
+                &format!("task {i}"),
             );
             mem.store_reflection(&entry).unwrap();
         }
@@ -322,7 +322,7 @@ mod tests {
         init_mem(&mut mem).await;
 
         for i in 0..5 {
-            let entry = make_evolution_entry(&format!("trigger_{}", i), vec![]);
+            let entry = make_evolution_entry(&format!("trigger_{i}"), vec![]);
             mem.store_evolution_log(&entry).unwrap();
         }
 
@@ -388,8 +388,7 @@ mod tests {
         let first_content = String::from_utf8_lossy(&results[0].content);
         assert!(
             first_content.contains("recent") || first_content.contains("old"),
-            "activation ordering should produce a result: got {:?}",
-            first_content
+            "activation ordering should produce a result: got {first_content:?}"
         );
 
         assert!(results[0].importance >= 0.0 && results[0].importance <= 1.0);

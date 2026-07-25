@@ -14,7 +14,7 @@ fn cognitive_exports_are_feature_gated() {
 fn episodic_memory_is_available_by_default() {
     let dir = tempfile::tempdir().unwrap();
     let clock = std::sync::Arc::new(kernel::chronos::TestClock::default());
-    let _mem = mnemosyne::EpisodicMemory::new(dir.path().join("ep.db"), clock);
+    let _mem = mnemosyne::runtime::EpisodicMemory::new(dir.path().join("ep.db"), clock);
 }
 
 #[cfg(feature = "cognitive-memory")]

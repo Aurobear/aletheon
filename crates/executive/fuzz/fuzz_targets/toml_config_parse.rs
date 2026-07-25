@@ -1,6 +1,6 @@
 #![no_main]
 
-use executive::core::config::AppConfig;
+use executive::composition::config::AppConfig;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

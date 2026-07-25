@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use executive::service::turn_coordinator::TurnExecution;
-use executive::service::turn_policy::TurnPolicy;
+use executive::application::turn_coordinator::TurnExecution;
+use executive::application::turn_policy::TurnPolicy;
 use fabric::{
     ItemPayload, OperationKind, OperationState, SessionAppendStore, SessionId, TurnMetrics,
     TurnRequest, TurnResult, TurnStop,
@@ -17,7 +17,7 @@ use fabric::{
 use support::test_aletheon_builder::TestAletheonBuilder;
 
 struct TerminalFailingStore {
-    inner: executive::r#impl::session::canonical_store::CanonicalSessionStore,
+    inner: executive::runtime::session::canonical_store::CanonicalSessionStore,
 }
 
 #[async_trait]
@@ -132,19 +132,22 @@ async fn terminal_writer_failure_prevents_false_success_and_retains_recovery_bou
         clock as Arc<dyn fabric::Clock>,
     ));
     let store: Arc<dyn SessionAppendStore> = Arc::new(TerminalFailingStore {
-        inner: executive::r#impl::session::canonical_store::CanonicalSessionStore::open(":memory:")
-            .unwrap(),
+        inner: executive::runtime::session::canonical_store::CanonicalSessionStore::open(
+            ":memory:",
+        )
+        .unwrap(),
     });
-    let spine = Arc::new(executive::r#impl::events::SqliteEventSpine::open(":memory:").unwrap());
-    let mut hardening = executive::core::config::GrokHardeningConfig::default();
-    hardening.compaction_v2 = true;
-    let coordinator =
-        executive::service::turn_coordinator::TurnCoordinator::with_event_spine_and_grok(
-            kernel.clone(),
-            store.clone(),
-            spine,
-            hardening,
-        );
+    let spine = Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap());
+    let hardening = executive::composition::config::GrokHardeningConfig {
+        compaction_v2: true,
+        ..Default::default()
+    };
+    let coordinator = executive::testing::turn_coordinator::compose_with_event_spine(
+        kernel.clone(),
+        store.clone(),
+        spine,
+        hardening,
+    );
     let process = kernel
         .spawn_process(fabric::SpawnSpec::default())
         .await
@@ -562,7 +565,7 @@ async fn event_spine_sequence_monotonic_across_turns() {
         .event_spine
         .read_tree(
             fabric::EventTreeId::for_root_session("mono-seq"),
-            executive::r#impl::events::EventReadFilter {
+            executive::runtime::events::EventReadFilter {
                 limit: 20,
                 ..Default::default()
             },

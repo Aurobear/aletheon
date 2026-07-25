@@ -26,7 +26,7 @@ mod tests {
     fn make_skill(name: &str, content: &str) -> LoadedSkill {
         LoadedSkill {
             name: name.to_string(),
-            description: format!("{} description", name),
+            description: format!("{name} description"),
             content: content.to_string(),
             source: "system".to_string(),
         }

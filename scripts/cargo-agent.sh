@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Ensure cargo is on PATH (sudo strips it).
+export PATH="$HOME/.cargo/bin:$PATH"
+
 cache_root=${ALETHEON_CARGO_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/aletheon-cargo}
 target_dir=${CARGO_TARGET_DIR:-$cache_root/target}
 lock_file=$cache_root/build.lock
@@ -17,6 +20,14 @@ export CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-0}
 export ALETHEON_CARGO_TARGET_MAX_GIB="$max_gib"
 
 mkdir -p -- "$cache_root" "$target_dir"
+
+# `cargo metadata` only reads manifests and the lockfile. It neither compiles
+# nor mutates the shared target directory, so serializing it behind a long
+# workspace test makes independent architecture jobs appear stalled without
+# protecting any build artifact.
+if [[ ${1:-} == metadata || ( ${1:-} == +* && ${2:-} == metadata ) ]]; then
+  exec cargo "$@"
+fi
 
 # Keep the lock in the supervising `flock` process and close its descriptor in
 # Cargo. Otherwise hook/test subprocesses can inherit the descriptor, outlive

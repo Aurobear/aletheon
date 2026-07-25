@@ -1,0 +1,14 @@
+# frozen_commit=efde4ca11a7c45a72ce7a03fee4cdd0c3c9d8e1e
+# name	protected_pattern	allowed_path_prefixes	reason	canonical_replacement	exit_phase
+google	(?i)\bgoogle\b|Google[A-Z]|GOOGLE_	crates/executive/src/adapters/google/,crates/corpus/src/drivers/google/	external information provider	external identity/source port	6
+gmail	(?i)\bgmail\b|Gmail[A-Z]|GMAIL_	crates/executive/src/adapters/google/,crates/corpus/src/drivers/google/	external message product	message source contract	1
+gbrain	(?i)\bgbrain\b|Gbrain[A-Z]|GBRAIN_	crates/mnemosyne/src/backends/supplemental/	external supplemental-memory backend	supplemental memory port	5
+anthropic	(?i)\banthropic\b|Anthropic[A-Z]|ANTHROPIC_	crates/cognit/src/adapters/inference/	inference provider	inference adapter id/capability	7
+openai	(?i)\bopenai\b|OpenAi[A-Z]|OPENAI_	crates/cognit/src/adapters/inference/	inference provider	inference adapter id/capability	7
+ollama	(?i)\bollama\b|Ollama[A-Z]|OLLAMA_	crates/cognit/src/adapters/inference/	inference provider	inference adapter id/capability	7
+telegram	(?i)\btelegram\b|Telegram[A-Z]|TELEGRAM_	crates/gateway/src/adapters/telegram/	channel provider	channel adapter id	6
+ros	\bROS(?:2)?\b|\bRos[A-Z]|ROS_	crates/hardware/src/grpc/	robot middleware	generic embodiment diagnostics	6
+kuavo	(?i)\bkuavo\b|Kuavo[A-Z]|KUAVO_	crates/hardware/src/grpc/	robot vendor	device capability metadata	6
+pi_runtime	\bPi(?:Runtime|Attempt|Rpc|Coder|Session)\b|\bPI_CODER\b	crates/executive/src/adapters/runtime/	coding-runtime implementation	coding runtime adapter	3
+codex	(?i)\bcodex\b|Codex[A-Z]|CODEX_	crates/executive/src/adapters/runtime/	coding-runtime product	coding runtime adapter	3
+claude	(?i)\bclaude\b|Claude[A-Z]|CLAUDE_	crates/executive/src/adapters/runtime/	coding-runtime or model product	adapter id/capability	3

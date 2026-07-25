@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use executive::r#impl::events::{EventReadFilter, SqliteEventSpine};
-use executive::service::agent_control::{
+use executive::application::agent_control::{
     AgentCandidateProjector, AgentCandidateSubmissionPort, AgentContextProjection, AgentEventSink,
     AgentRuntimeEvent, AgentRuntimeInbox, AgentRuntimeInput, NoopAgentEventSink,
     SpineAgentEventSink,
 };
-use executive::service::conscious_workspace::ConsciousWorkspaceRegistry;
-use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
+use executive::application::conscious_workspace::ConsciousWorkspaceRegistry;
+use executive::application::dasein_workspace_adapter::DaseinWorkspaceAdapter;
+use executive::runtime::events::{EventReadFilter, SqliteEventSpine};
 use fabric::{
     AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork, AgentHandle, AgentId,
     AgentProfileId, AgentResult, AgentRunStatus, AgentSpawnRequest, AgoraSpaceId, AttemptEvidence,
@@ -126,12 +126,19 @@ async fn agent_lifecycle_and_tool_events_append_to_root_tree() {
         Arc::new(NoopAgentEventSink),
         spine.clone(),
         input.clone(),
-        Arc::new(executive::service::event_projection::NoopEventProjectionSink),
+        Arc::new(executive::application::event_projection::NoopEventProjectionSink),
     );
     sink.emit(AgentRuntimeEvent::Started {
         agent_id: input.handle.agent_id,
         process_id: input.handle.process_id,
         operation_id: input.handle.operation_id,
+    })
+    .await;
+    sink.emit(AgentRuntimeEvent::Progress {
+        agent_id: input.handle.agent_id,
+        process_id: input.handle.process_id,
+        operation_id: input.handle.operation_id,
+        summary: "retrying".into(),
     })
     .await;
     sink.emit(AgentRuntimeEvent::Tool {
@@ -160,13 +167,17 @@ async fn agent_lifecycle_and_tool_events_append_to_root_tree() {
             },
         )
         .unwrap();
-    assert_eq!(events.len(), 3);
+    assert_eq!(events.len(), 4);
     assert_eq!(events[0].schema.0, fabric::SchemaId::EVENT_AGENT_STARTED_V1);
     assert_eq!(
         events[1].schema.0,
+        fabric::SchemaId::EVENT_AGENT_PROGRESS_V1
+    );
+    assert_eq!(
+        events[2].schema.0,
         fabric::SchemaId::EVENT_TOOL_OBSERVATION_V1
     );
-    assert_eq!(events[2].schema.0, fabric::SchemaId::EVENT_AGENT_STOPPED_V1);
+    assert_eq!(events[3].schema.0, fabric::SchemaId::EVENT_AGENT_STOPPED_V1);
 }
 
 #[test]

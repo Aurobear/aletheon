@@ -4,17 +4,17 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use executive::r#impl::gbrain::GbrainWorker;
-use mnemosyne::backends::gbrain::{
-    GbrainPage, GbrainSpool, RetryPolicy, SpoolLimits, SupplementalErrorCategory, SupplementalHit,
-    SupplementalMemoryTransport, SupplementalTransportError,
+use executive::testing::supplemental_memory::SupplementalDeliveryWorker;
+use mnemosyne::supplemental::{
+    RetryPolicy, SpoolLimits, SupplementalDocument, SupplementalErrorCategory, SupplementalHit,
+    SupplementalMemoryTransport, SupplementalSpool, SupplementalTransportError,
 };
 use mnemosyne::MemorySensitivity;
 use tokio_util::sync::CancellationToken;
 
 struct FakeTransport {
     outcomes: Mutex<VecDeque<Result<Option<String>, SupplementalTransportError>>>,
-    delivered: Mutex<Vec<GbrainPage>>,
+    delivered: Mutex<Vec<SupplementalDocument>>,
     queue_depth: AtomicUsize,
     wait_for_cancel: bool,
 }
@@ -45,7 +45,7 @@ impl SupplementalMemoryTransport for FakeTransport {
 
     async fn put_page(
         &self,
-        page: &GbrainPage,
+        page: &SupplementalDocument,
         cancel: &CancellationToken,
     ) -> Result<Option<String>, SupplementalTransportError> {
         self.delivered.lock().unwrap().push(page.clone());
@@ -90,9 +90,9 @@ fn error(category: SupplementalErrorCategory) -> SupplementalTransportError {
     SupplementalTransportError::new(category, "sanitized")
 }
 
-fn spool(dir: &tempfile::TempDir) -> Arc<GbrainSpool> {
+fn spool(dir: &tempfile::TempDir) -> Arc<SupplementalSpool> {
     Arc::new(
-        GbrainSpool::open(
+        SupplementalSpool::open(
             dir.path().join("spool.db"),
             SpoolLimits {
                 max_items: 100,
@@ -103,11 +103,11 @@ fn spool(dir: &tempfile::TempDir) -> Arc<GbrainSpool> {
     )
 }
 
-fn enqueue(spool: &GbrainSpool, id: usize) {
+fn enqueue(spool: &SupplementalSpool, id: usize) {
     spool
         .enqueue(
             &format!("goal-{id}"),
-            &GbrainPage {
+            &SupplementalDocument {
                 slug: format!("aletheon/goal/{id}"),
                 content: format!("goal outcome {id}"),
             },
@@ -118,12 +118,12 @@ fn enqueue(spool: &GbrainSpool, id: usize) {
 }
 
 fn worker(
-    spool: Arc<GbrainSpool>,
+    spool: Arc<SupplementalSpool>,
     transport: Arc<FakeTransport>,
     id: &str,
     batch: usize,
-) -> GbrainWorker<FakeTransport> {
-    GbrainWorker::new(
+) -> SupplementalDeliveryWorker<FakeTransport> {
+    SupplementalDeliveryWorker::new(
         spool,
         transport,
         RetryPolicy {
@@ -298,7 +298,7 @@ async fn retention_tombstone_outbox_is_projected_and_settled_asynchronously() {
 
 #[test]
 fn executive_worker_only_schedules_mnemosyne_reconciliation() {
-    let source = include_str!("../src/impl/gbrain/worker.rs");
+    let source = include_str!("../src/adapters/gbrain/worker.rs");
     for forbidden in [
         ".claim(",
         ".acknowledge(",
@@ -312,5 +312,5 @@ fn executive_worker_only_schedules_mnemosyne_reconciliation() {
             "Executive retained GBrain memory-domain operation: {forbidden}"
         );
     }
-    assert!(source.contains("GbrainReconciliationService"));
+    assert!(source.contains("SupplementalReconciliationService"));
 }

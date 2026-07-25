@@ -1,10 +1,11 @@
 use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
 use super::tool_budget;
-use super::tool_output::{bounded_tool_result, MAX_TOOL_RESULT_BYTES};
+use super::tool_output::{bounded_tool_result, per_result_budget};
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
-use crate::r#impl::llm::provider::{LlmProvider, StopReason, StreamChunk};
+use crate::adapters::inference::provider::{LlmProvider, StopReason, StreamChunk};
+use crate::inference::{classify_error, ErrorClass};
 use fabric::message::{ContentBlock, Message, Role};
 use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
 use std::future::Future;
@@ -46,7 +47,7 @@ impl ReActLoop {
             // Check for interrupt
             if let Some(ref flag) = self.interrupt_flag {
                 if let Some(reason) = flag.take_reason() {
-                    let msg = format!("[Interrupted: {:?}]", reason);
+                    let msg = format!("[Interrupted: {reason:?}]");
                     event_sink.emit(Event::TurnDone {
                         result: Ok(msg.clone()),
                     });
@@ -62,43 +63,42 @@ impl ReActLoop {
             }
 
             // Use streaming instead of complete()
-            let mut stream = match llm.complete_stream(&self.messages, tool_defs).await {
-                Ok(s) => s,
-                Err(e) if is_context_overflow(&e) => {
-                    warn!("Context overflow detected, forcing compaction: {e}");
-                    self.run_reactive_compaction(llm, Some(event_sink)).await?;
-                    llm.complete_stream(&self.messages, tool_defs).await?
+            let mut transient_attempt = 0_u32;
+            let mut stream = loop {
+                match llm.complete_stream(&self.messages, tool_defs).await {
+                    Ok(stream) => break stream,
+                    Err(e) if is_context_overflow(&e) => {
+                        warn!("Context overflow detected, forcing compaction: {e}");
+                        self.run_reactive_compaction(llm, Some(event_sink)).await?;
+                    }
+                    Err(e)
+                        if classify_error(&e) == ErrorClass::Transient && transient_attempt < 4 =>
+                    {
+                        let backoff_ms = streaming_retry_delay_ms(&e, transient_attempt);
+                        transient_attempt += 1;
+                        warn!(
+                            attempt = transient_attempt,
+                            backoff_ms, error = %e,
+                            "Streaming inference unavailable; retrying"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    }
+                    Err(e) => return Err(e),
                 }
-                Err(e) => return Err(e),
             };
 
             let mut text_parts = Vec::new();
             let mut current_text = String::new();
-            let mut pending_think = String::new();
             let mut tool_calls: Vec<(String, String, serde_json::Value)> = Vec::new();
             let mut _stop_reason = StopReason::EndTurn;
 
             while let Some(chunk) = stream.next().await {
                 match chunk? {
                     StreamChunk::TextDelta { text } => {
-                        // Flush any pending thinking content first
-                        if !pending_think.is_empty() {
-                            event_sink.emit(Event::TextDelta {
-                                delta: pending_think.clone(),
-                            });
-                            pending_think.clear();
-                        }
                         current_text.push_str(&text);
                         event_sink.emit(Event::TextDelta { delta: text });
                     }
                     StreamChunk::ToolUseStart { id, name } => {
-                        // Flush any pending text/thinking
-                        if !pending_think.is_empty() {
-                            event_sink.emit(Event::TextDelta {
-                                delta: pending_think.clone(),
-                            });
-                            pending_think.clear();
-                        }
                         if !current_text.is_empty() {
                             text_parts.push(current_text.clone());
                             current_text.clear();
@@ -109,11 +109,9 @@ impl ReActLoop {
                         });
                         tool_calls.push((id, name, serde_json::Value::Null));
                     }
-                    StreamChunk::ThinkingDelta { text } => {
-                        // Batch thinking content — emit as single chunk when flushed
-                        // to avoid per-token socket writes (which cause TUI lag).
-                        pending_think.push_str(&text);
-                        current_text.push_str(&text);
+                    StreamChunk::ThinkingDelta { text: _ } => {
+                        // Thinking is internal model state. Keep it out of both
+                        // the visible text stream and the persisted answer.
                     }
                     StreamChunk::ToolUseDelta { id: _, delta: _ } => {
                         // Accumulated in ToolUseComplete
@@ -134,6 +132,8 @@ impl ReActLoop {
                         input_tokens,
                         output_tokens,
                     } => {
+                        self.turn_input_tokens =
+                            self.turn_input_tokens.saturating_add(input_tokens as u64);
                         event_sink.emit(Event::Usage {
                             tokens_in: input_tokens,
                             tokens_out: output_tokens,
@@ -158,12 +158,6 @@ impl ReActLoop {
                 }
             }
 
-            // Flush any remaining thinking content
-            if !pending_think.is_empty() {
-                event_sink.emit(Event::TextDelta {
-                    delta: pending_think,
-                });
-            }
             // Flush remaining text
             if !current_text.is_empty() {
                 text_parts.push(current_text);
@@ -282,6 +276,28 @@ impl ReActLoop {
                 content: content_blocks,
             });
 
+            if super::should_close_exploration(
+                self.iteration,
+                self.turn_input_tokens,
+                self.config.context_window_tokens,
+                ordered_calls.iter().map(|(_, name, _)| name.as_str()),
+            ) {
+                let budget =
+                    super::exploration_input_token_budget(self.config.context_window_tokens);
+                let content = format!(
+                    "Exploration input-token budget reached ({} / {}). \
+                     Synthesize the best answer from existing evidence now. \
+                     The user can request a focused follow-up for deeper inspection.",
+                    self.turn_input_tokens, budget
+                );
+                let results = exploration_budget_results(&ordered_calls, &content, event_sink);
+                self.messages.push(Message {
+                    role: Role::User,
+                    content: results,
+                });
+                continue;
+            }
+
             // Deferred reflection — injected after all tool results to preserve
             // OpenAI API message format (assistant(tool_use) → tool results only)
             let mut pending_reflection: Option<String> = None;
@@ -291,6 +307,7 @@ impl ReActLoop {
             // assistant(tool_use) message to be in ONE subsequent user message.
             let mut tool_result_blocks: Vec<ContentBlock> = Vec::new();
 
+            let result_budget = per_result_budget(ordered_calls.len());
             for (tool_index, (id, name, input)) in ordered_calls.iter().enumerate() {
                 // Defensive: skip tool calls with empty names — some
                 // OpenAI-compatible providers emit malformed tool-use blocks
@@ -372,7 +389,7 @@ impl ReActLoop {
                 match self.circuit_breaker.check(&signature) {
                     CircuitBreakerStatus::Tripped(reason) => {
                         warn!("Circuit breaker tripped: {}", reason);
-                        let msg = format!("Loop detected: {}. Stopping.", reason);
+                        let msg = format!("Loop detected: {reason}. Stopping.");
                         event_sink.emit(Event::CircuitBreakerTripped {
                             reason: reason.clone(),
                         });
@@ -467,7 +484,7 @@ impl ReActLoop {
                 }
                 // The full result was emitted above for durable projection. Keep
                 // only a transient bounded copy in the active model context.
-                let bounded_content = bounded_tool_result(&content, MAX_TOOL_RESULT_BYTES);
+                let bounded_content = bounded_tool_result(&content, result_budget);
                 // Accumulate tool result block for combined push after loop.
                 // Anthropic API requires all tool_result blocks for one assistant
                 // message to be in a SINGLE subsequent user message.
@@ -508,11 +525,10 @@ impl ReActLoop {
                     content: tool_result_blocks,
                 });
             }
-
             // Inject reflection AFTER all tool results to preserve API message format
             if let Some(summary) = pending_reflection.take() {
                 self.messages
-                    .push(Message::user(format!("[Reflection]\n{}", summary)));
+                    .push(Message::user(format!("[Reflection]\n{summary}")));
             }
 
             // Inject Dasein context after tool results for per-turn SelfField state refresh
@@ -520,8 +536,7 @@ impl ReActLoop {
                 if let Some(dasein_ctx) = provider() {
                     if !dasein_ctx.is_empty() {
                         self.messages.push(Message::user(format!(
-                            "<dasein-state-update>\n{}\n</dasein-state-update>",
-                            dasein_ctx
+                            "<dasein-state-update>\n{dasein_ctx}\n</dasein-state-update>"
                         )));
                     }
                 }
@@ -593,5 +608,132 @@ impl ReActLoop {
             completed_normally: false,
         };
         Ok((fallback, metrics))
+    }
+}
+
+fn streaming_backoff_ms(attempt: u32) -> u64 {
+    // Four retries span a typical one-minute provider quota window instead of
+    // exhausting every retry in 15 seconds and amplifying a 429 response.
+    5_000_u64
+        .saturating_mul(1_u64 << attempt.min(3))
+        .min(30_000)
+}
+
+fn streaming_retry_delay_ms(error: &anyhow::Error, attempt: u32) -> u64 {
+    let exponential = streaming_backoff_ms(attempt);
+    let provider_advised = error
+        .downcast_ref::<crate::adapters::inference::provider::InferenceFailure>()
+        .and_then(|failure| failure.retry_after_ms)
+        .unwrap_or(0);
+    exponential.max(provider_advised)
+}
+
+fn exploration_budget_results(
+    calls: &[&(String, String, serde_json::Value)],
+    content: &str,
+    event_sink: &dyn EventSink,
+) -> Vec<ContentBlock> {
+    calls
+        .iter()
+        .map(|(id, name, _)| {
+            // Canonical history persists tool lifecycle events. Every emitted
+            // ToolCallComplete must have a matching ToolResult or the next
+            // turn projects an invalid provider tool-call sequence.
+            event_sink.emit(Event::ToolResult {
+                name: name.clone(),
+                call_id: id.clone(),
+                result: ToolResultEvent {
+                    content: content.to_owned(),
+                    is_error: false,
+                    execution_time_ms: 0,
+                },
+            });
+            ContentBlock::ToolResult {
+                tool_use_id: id.clone(),
+                content: content.to_owned(),
+                is_error: false,
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod streaming_backoff_tests {
+    use super::{exploration_budget_results, streaming_backoff_ms, streaming_retry_delay_ms};
+    use crate::harness::event_sink::{Event, EventSink};
+    use fabric::ContentBlock;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct CollectSink(Mutex<Vec<Event>>);
+
+    impl EventSink for CollectSink {
+        fn emit(&self, event: Event) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    #[test]
+    fn retries_span_a_bounded_quota_window() {
+        assert_eq!(
+            (0..4).map(streaming_backoff_ms).collect::<Vec<_>>(),
+            vec![5_000, 10_000, 20_000, 30_000]
+        );
+    }
+
+    #[test]
+    fn streaming_retry_honors_a_longer_provider_retry_after() {
+        let error =
+            crate::adapters::inference::provider::InferenceFailure::transient_with_retry_after(
+                "provider_unavailable",
+                Some(42_000),
+            );
+        assert_eq!(streaming_retry_delay_ms(&error, 0), 42_000);
+        assert_eq!(
+            streaming_retry_delay_ms(
+                &crate::adapters::inference::provider::InferenceFailure::transient(
+                    "provider_unavailable"
+                ),
+                1
+            ),
+            10_000
+        );
+    }
+
+    #[test]
+    fn budgeted_calls_emit_matching_canonical_results() {
+        let calls = [
+            (
+                "call-1".to_string(),
+                "file_read".to_string(),
+                serde_json::json!({}),
+            ),
+            (
+                "call-2".to_string(),
+                "glob".to_string(),
+                serde_json::json!({}),
+            ),
+        ];
+        let refs = calls.iter().collect::<Vec<_>>();
+        let sink = CollectSink::default();
+        let blocks = exploration_budget_results(&refs, "budget reached", &sink);
+
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::ToolResult { tool_use_id, is_error: false, .. }
+            if tool_use_id == "call-1"
+        ));
+        let events = sink.0.lock().unwrap();
+        assert!(matches!(
+            &events[0],
+            Event::ToolResult { call_id, result, .. }
+            if call_id == "call-1" && !result.is_error
+        ));
+        assert!(matches!(
+            &events[1],
+            Event::ToolResult { call_id, result, .. }
+            if call_id == "call-2" && !result.is_error
+        ));
     }
 }

@@ -327,10 +327,9 @@ pub(super) fn recall_impl(mem: &EpisodicMemory, query: &MemoryQuery) -> Result<V
 
         if let Some(ref text) = query.text {
             sql += &format!(
-                " AND (CAST(m.content AS TEXT) LIKE ?{idx} OR EXISTS (SELECT 1 FROM episodic_events e WHERE e.memory_id = m.id AND (e.summary LIKE ?{idx} OR CAST(e.raw_content AS TEXT) LIKE ?{idx})))",
-                idx = param_idx
+                " AND (CAST(m.content AS TEXT) LIKE ?{param_idx} OR EXISTS (SELECT 1 FROM episodic_events e WHERE e.memory_id = m.id AND (e.summary LIKE ?{param_idx} OR CAST(e.raw_content AS TEXT) LIKE ?{param_idx})))"
             );
-            param_values.push(Box::new(format!("%{}%", text)));
+            param_values.push(Box::new(format!("%{text}%")));
             param_idx += 1;
         }
 
@@ -347,14 +346,14 @@ pub(super) fn recall_impl(mem: &EpisodicMemory, query: &MemoryQuery) -> Result<V
 
         if let Some(ref tags) = query.tags {
             for tag in tags {
-                sql += &format!(" AND m.tags LIKE ?{idx}", idx = param_idx);
-                param_values.push(Box::new(format!("%{}%", tag)));
+                sql += &format!(" AND m.tags LIKE ?{param_idx}");
+                param_values.push(Box::new(format!("%{tag}%")));
                 param_idx += 1;
             }
         }
 
         if let Some(min_imp) = query.min_importance {
-            sql += &format!(" AND m.importance >= ?{idx}", idx = param_idx);
+            sql += &format!(" AND m.importance >= ?{param_idx}");
             param_values.push(Box::new(min_imp));
             param_idx += 1;
         }
@@ -363,7 +362,7 @@ pub(super) fn recall_impl(mem: &EpisodicMemory, query: &MemoryQuery) -> Result<V
 
         let effective_limit = if query.limit > 0 {
             let fetch_limit = (query.limit as i64) * 2;
-            sql += &format!(" LIMIT ?{idx}", idx = param_idx);
+            sql += &format!(" LIMIT ?{param_idx}");
             param_values.push(Box::new(fetch_limit));
             Some(query.limit)
         } else {
@@ -423,8 +422,8 @@ pub(super) fn list_impl(mem: &EpisodicMemory, filter: &MemoryFilter) -> Result<V
 
         if let Some(ref tags) = filter.tags {
             for tag in tags {
-                sql += &format!(" AND tags LIKE ?{idx}", idx = param_idx);
-                param_values.push(Box::new(format!("%{}%", tag)));
+                sql += &format!(" AND tags LIKE ?{param_idx}");
+                param_values.push(Box::new(format!("%{tag}%")));
                 param_idx += 1;
             }
         }
@@ -432,7 +431,7 @@ pub(super) fn list_impl(mem: &EpisodicMemory, filter: &MemoryFilter) -> Result<V
         sql += " ORDER BY created_at DESC";
 
         if filter.limit > 0 {
-            sql += &format!(" LIMIT ?{idx}", idx = param_idx);
+            sql += &format!(" LIMIT ?{param_idx}");
             param_values.push(Box::new(filter.limit as i64));
         }
 

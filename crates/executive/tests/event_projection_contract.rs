@@ -1,4 +1,4 @@
-use executive::service::event_projection::{
+use executive::application::event_projection::{
     EventProjection, ProjectionDescriptor, ProjectionError, SqliteProjectionStore,
 };
 use fabric::{

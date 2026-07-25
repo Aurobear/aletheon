@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn event_debug_works() {
         let event = Event::TurnStarted { iteration: 0 };
-        let debug_str = format!("{:?}", event);
+        let debug_str = format!("{event:?}");
         assert!(debug_str.contains("TurnStarted"));
     }
 
@@ -554,7 +554,7 @@ mod tests {
         let event = Event::TextDelta {
             delta: "hello".into(),
         };
-        let debug_str = format!("{:?}", event);
+        let debug_str = format!("{event:?}");
         assert!(debug_str.contains("TextDelta"));
         assert!(debug_str.contains("hello"));
     }

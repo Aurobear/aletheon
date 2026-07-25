@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use fabric::Clock;
 use serde::{Deserialize, Serialize};
 
+use super::lifecycle::{McpOAuthEvent, McpOAuthLifecycle};
 pub use super::token_store::{TokenEntry, TokenStore};
 use crate::tools::google::oauth::{AsyncOAuthClient, OAuthClientConfig};
 
@@ -94,7 +95,7 @@ fn percent_encode(input: &str) -> String {
             b' ' => out.push('+'),
             _ => {
                 out.push('%');
-                out.push_str(&format!("{:02X}", byte));
+                out.push_str(&format!("{byte:02X}"));
             }
         }
     }
@@ -218,7 +219,7 @@ impl BearerTokenAuth {
         let token = self.token()?;
         match (&self.grant, &self.clock, target_url) {
             // No grant → always allow (backward compatible).
-            (None, _, _) => Some(format!("Bearer {}", token)),
+            (None, _, _) => Some(format!("Bearer {token}")),
             // Grant present but no URL → fail-closed.
             (Some(_), _, None) => None,
             // Grant present with URL → gate on approved_for.
@@ -230,7 +231,7 @@ impl BearerTokenAuth {
                         .iter()
                         .any(|additional| additional.approved_for(url, now))
                 {
-                    Some(format!("Bearer {}", token))
+                    Some(format!("Bearer {token}"))
                 } else {
                     None
                 }
@@ -244,7 +245,7 @@ impl BearerTokenAuth {
     /// without scoping. Used where the transport does not know the
     /// target URL (e.g. SSE long-poll setup).
     pub fn header_value(&self) -> Option<String> {
-        self.token().map(|t| format!("Bearer {}", t))
+        self.token().map(|t| format!("Bearer {t}"))
     }
 }
 
@@ -389,6 +390,7 @@ pub struct McpOAuthProvider {
     clock: Arc<dyn Clock>,
     oauth_client: AsyncOAuthClient,
     endpoint_grant: Option<McpEndpointCredentialGrant>,
+    lifecycle: McpOAuthLifecycle,
 }
 
 impl McpOAuthProvider {
@@ -402,6 +404,8 @@ impl McpOAuthProvider {
         clock: Arc<dyn Clock>,
     ) -> Self {
         let client_id = client_id.into();
+        let server_id = server_id.into();
+        let has_token = token_store.get(&server_id).is_some();
         let oauth_client = AsyncOAuthClient::new(OAuthClientConfig {
             client_id: client_id.clone(),
             client_secret: None,
@@ -418,12 +422,13 @@ impl McpOAuthProvider {
             client_secret: None,
             endpoints,
             scopes,
-            server_id: server_id.into(),
+            server_id,
             token_store,
             pending_states: HashMap::new(),
             clock,
             oauth_client,
             endpoint_grant: None,
+            lifecycle: McpOAuthLifecycle::new(has_token),
         }
     }
 
@@ -489,6 +494,9 @@ impl McpOAuthProvider {
     /// The returned `OAuthState` must be stored and verified when
     /// `callback()` is called.
     pub fn authorize_url(&mut self) -> (String, OAuthState) {
+        self.lifecycle
+            .apply(McpOAuthEvent::BeginAuthorization)
+            .expect("authorization may start only from an OAuth owner state");
         let state_str = generate_state_string();
         let now = now_epoch_secs(&*self.clock);
         let oauth_state = OAuthState {
@@ -519,24 +527,36 @@ impl McpOAuthProvider {
             .remove(state)
             .context("unknown or already-consumed OAuth state")?;
 
-        let age = now_epoch_secs(&*self.clock).saturating_sub(oauth_state.created_at);
-        if age > STATE_MAX_AGE_SECS {
-            anyhow::bail!(
-                "OAuth state expired (age {}s > {}s max)",
-                age,
-                STATE_MAX_AGE_SECS
-            );
+        self.lifecycle
+            .apply(McpOAuthEvent::ExchangeCode)
+            .map_err(anyhow::Error::msg)?;
+
+        let result: Result<TokenEntry> = async {
+            let age = now_epoch_secs(&*self.clock).saturating_sub(oauth_state.created_at);
+            if age > STATE_MAX_AGE_SECS {
+                anyhow::bail!("OAuth state expired (age {age}s > {STATE_MAX_AGE_SECS}s max)");
+            }
+            let entry = self.exchange_code(code, &oauth_state.pkce_verifier).await?;
+            self.token_store
+                .set(oauth_state.server_id.clone(), entry.clone());
+            self.token_store.save()?;
+            Ok(entry)
         }
-
-        // Exchange code for tokens via HTTP POST.
-        let entry = self.exchange_code(code, &oauth_state.pkce_verifier).await?;
-
-        // Persist.
-        self.token_store
-            .set(oauth_state.server_id.clone(), entry.clone());
-        self.token_store.save()?;
-
-        Ok(entry)
+        .await;
+        match result {
+            Ok(entry) => {
+                self.lifecycle
+                    .apply(McpOAuthEvent::TokenStored)
+                    .map_err(anyhow::Error::msg)?;
+                Ok(entry)
+            }
+            Err(error) => {
+                self.lifecycle
+                    .apply(McpOAuthEvent::Fail)
+                    .map_err(anyhow::Error::msg)?;
+                Err(error)
+            }
+        }
     }
 
     /// Perform the token exchange HTTP request.
@@ -613,8 +633,23 @@ impl McpAuth for McpOAuthProvider {
     }
 
     async fn refresh(&mut self) -> Result<()> {
-        self.do_refresh().await?;
-        Ok(())
+        self.lifecycle
+            .apply(McpOAuthEvent::BeginRefresh)
+            .map_err(anyhow::Error::msg)?;
+        match self.do_refresh().await {
+            Ok(_) => {
+                self.lifecycle
+                    .apply(McpOAuthEvent::TokenStored)
+                    .map_err(anyhow::Error::msg)?;
+                Ok(())
+            }
+            Err(error) => {
+                self.lifecycle
+                    .apply(McpOAuthEvent::Fail)
+                    .map_err(anyhow::Error::msg)?;
+                Err(error)
+            }
+        }
     }
 }
 
@@ -656,18 +691,25 @@ pub struct OAuthMetadata {
 /// returns non-200, or the response fails to parse; callers should fall
 /// back to statically configured endpoints.
 pub async fn discover_oauth_metadata(base_url: &str) -> Result<OAuthMetadata> {
+    discover_oauth_metadata_guarded(base_url, crate::tools::outbound::EndpointPolicy::public())
+        .await
+}
+
+pub(crate) async fn discover_oauth_metadata_guarded(
+    base_url: &str,
+    policy: crate::tools::outbound::EndpointPolicy,
+) -> Result<OAuthMetadata> {
     let url = format!(
         "{}/.well-known/oauth-authorization-server",
         base_url.trim_end_matches('/')
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        // Discovery carries no credential and redirects are still rejected:
-        // accepting metadata from a different origin would silently widen
-        // which authorization server controls the configured MCP endpoint.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
+    policy
+        .approve(&url)
+        .await
+        .context("OAuth discovery endpoint denied")?;
+    let client = policy
+        .client(std::time::Duration::from_secs(10))
         .context("failed to build OAuth discovery HTTP client")?;
 
     let resp = client
@@ -825,7 +867,7 @@ mod tests {
     fn display_redacts_token() {
         std::env::set_var("TEST_MCP_TOKEN_DISPLAY", "supersecret");
         let auth = BearerTokenAuth::new("TEST_MCP_TOKEN_DISPLAY");
-        let display = format!("{}", auth);
+        let display = format!("{auth}");
         assert!(!display.contains("supersecret"));
         assert!(display.contains("redacted"));
         std::env::remove_var("TEST_MCP_TOKEN_DISPLAY");
@@ -1333,7 +1375,12 @@ mod tests {
             }
         });
 
-        let metadata = discover_oauth_metadata(&base_url).await.unwrap();
+        let metadata = discover_oauth_metadata_guarded(
+            &base_url,
+            crate::tools::outbound::EndpointPolicy::local_loopback(),
+        )
+        .await
+        .unwrap();
         assert_eq!(metadata.issuer, base_url);
         assert_eq!(
             metadata.authorization_endpoint,
@@ -1390,7 +1437,11 @@ mod tests {
             }
         });
 
-        let result = discover_oauth_metadata(&base_url).await;
+        let result = discover_oauth_metadata_guarded(
+            &base_url,
+            crate::tools::outbound::EndpointPolicy::local_loopback(),
+        )
+        .await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("404"), "expected 404 in error: {err}");
@@ -1425,10 +1476,13 @@ mod tests {
                 .await;
         });
 
-        let error = discover_oauth_metadata(&base_url)
-            .await
-            .unwrap_err()
-            .to_string();
+        let error = discover_oauth_metadata_guarded(
+            &base_url,
+            crate::tools::outbound::EndpointPolicy::local_loopback(),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("302"), "unexpected redirect error: {error}");
         task.await.unwrap();
     }
@@ -1436,7 +1490,11 @@ mod tests {
     #[tokio::test]
     async fn discover_oauth_metadata_connection_refused_returns_error_not_panic() {
         let unreachable_url = "http://127.0.0.1:1";
-        let result = discover_oauth_metadata(unreachable_url).await;
+        let result = discover_oauth_metadata_guarded(
+            unreachable_url,
+            crate::tools::outbound::EndpointPolicy::local_loopback(),
+        )
+        .await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(

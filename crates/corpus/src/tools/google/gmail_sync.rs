@@ -2,8 +2,9 @@
 
 use super::{GmailCapability, GoogleApiError, GoogleGmailAdapter};
 use fabric::{
-    ExternalEventDraft, ExternalEventEnvelope, ExternalIdentityId, ExternalObjectRef,
-    ExternalScope, GmailQuery, GoogleEvent, IdentityProvider, MailChange, PrincipalId,
+    ExternalCapabilityId, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
+    ExternalIdentityId, ExternalObjectRef, ExternalProviderId, MailChange, MailQuery, OpaqueCursor,
+    OpaqueProviderObjectId, PrincipalId,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -138,7 +139,7 @@ impl GmailHistorySynchronizer {
             .get_json(
                 principal,
                 account,
-                ExternalScope::GmailReadonly,
+                ExternalCapabilityId::new("mail.read").unwrap(),
                 url,
                 cancel,
             )
@@ -272,7 +273,7 @@ impl GmailHistorySynchronizer {
                 .gmail
                 .search_messages(
                     principal,
-                    GmailQuery {
+                    MailQuery {
                         account_id: account,
                         query: self.config.reconciliation_query.clone(),
                         page_size: self.config.page_size,
@@ -292,7 +293,7 @@ impl GmailHistorySynchronizer {
                     .source
                     .etag_or_history
                     .clone()
-                    .unwrap_or_else(|| input_cursor.into());
+                    .unwrap_or_else(|| OpaqueCursor::new(input_cursor).unwrap());
                 let event = summary_event(account, &version, None, summary, false)?;
                 if !known_dedup_keys.contains(&event.dedup_key)
                     && emitted_keys.insert(event.dedup_key.clone())
@@ -354,7 +355,7 @@ impl GmailHistorySynchronizer {
             .get_json(
                 principal,
                 account,
-                ExternalScope::GmailReadonly,
+                ExternalCapabilityId::new("mail.read").unwrap(),
                 url,
                 cancel,
             )
@@ -379,7 +380,7 @@ impl GmailHistorySynchronizer {
             .source
             .etag_or_history
             .clone()
-            .unwrap_or_else(|| history_id.to_owned());
+            .unwrap_or_else(|| OpaqueCursor::new(history_id).unwrap());
         summary_event(account, &version, Some(history_id), summary, received).map(Some)
     }
 
@@ -396,28 +397,28 @@ fn summary_event(
     account: ExternalIdentityId,
     version: &str,
     provider_event_id: Option<&str>,
-    summary: fabric::GmailMessageSummary,
+    summary: fabric::MailMessageSummary,
     received: bool,
 ) -> Result<ExternalEventEnvelope, GoogleApiError> {
     let object = ExternalObjectRef {
-        provider: IdentityProvider::Google,
+        provider: ExternalProviderId::new("google").unwrap(),
         account_id: account,
-        object_id: summary.source.provider_object_id.clone(),
+        object_id: summary.source.provider_object_id.to_string(),
         object_version: version.into(),
     };
     let event = if received {
-        GoogleEvent::MailReceived(MailChange {
+        ExternalEvent::MailReceived(MailChange {
             message: summary.clone(),
             content: None,
         })
     } else {
-        GoogleEvent::MailUpdated(MailChange {
+        ExternalEvent::MailUpdated(MailChange {
             message: summary.clone(),
             content: None,
         })
     };
     ExternalEventEnvelope::from_draft(ExternalEventDraft {
-        provider: IdentityProvider::Google,
+        provider: ExternalProviderId::new("google").unwrap(),
         account_id: account,
         provider_event_id: provider_event_id.map(str::to_owned),
         object,
@@ -437,26 +438,26 @@ fn deletion_event(
     validate_message_id(message_id)?;
     let now = chrono::Utc::now().timestamp_millis();
     let object = ExternalObjectRef {
-        provider: IdentityProvider::Google,
+        provider: ExternalProviderId::new("google").unwrap(),
         account_id: account,
         object_id: message_id.into(),
         object_version: history_id.into(),
     };
     ExternalEventEnvelope::from_draft(ExternalEventDraft {
-        provider: IdentityProvider::Google,
+        provider: ExternalProviderId::new("google").unwrap(),
         account_id: account,
         provider_event_id: Some(history_id.into()),
         object: object.clone(),
         observed_at_ms: now,
         source_timestamp_ms: now,
-        provenance: fabric::ProviderRecordRef {
+        provenance: fabric::ExternalRecordRef {
             account_id: account,
-            provider_object_id: message_id.into(),
+            provider_object_id: OpaqueProviderObjectId::new(message_id).unwrap(),
             fetched_at_ms: now,
             source_timestamp_ms: now,
-            etag_or_history: Some(history_id.into()),
+            etag_or_history: Some(OpaqueCursor::new(history_id).unwrap()),
         },
-        event: GoogleEvent::MailDeleted(object),
+        event: ExternalEvent::MailDeleted(object),
     })
     .map_err(|_| GoogleApiError::MalformedResponse)
 }

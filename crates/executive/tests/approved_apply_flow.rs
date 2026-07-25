@@ -1,9 +1,9 @@
 use async_trait::async_trait;
-use executive::r#impl::approval::{
+use executive::approval::{
     ApplyCoordinationOutcome, ApplyCoordinatorConfig, ApprovalCreate, ApprovalDecision,
     ApprovalRepository, ApprovalResolutionContext, ManagedWorktreeCleaner,
 };
-use executive::r#impl::goal::{GoalCoordinator, ObjectiveStore};
+use executive::goal::{GoalCoordinator, ObjectiveStore};
 use fabric::*;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -248,7 +248,7 @@ impl Fixture {
         }
     }
 
-    async fn coordinator(&self) -> (executive::r#impl::approval::ApplyCoordinator, ProcessId) {
+    async fn coordinator(&self) -> (executive::approval::ApplyCoordinator, ProcessId) {
         let goal = GoalCoordinator::new(self.store.clone());
         let kernel = Arc::new(::kernel::KernelRuntime::with_clock(Arc::new(TestClock)));
         let owner = kernel

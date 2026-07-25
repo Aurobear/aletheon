@@ -1,5 +1,5 @@
 # Aletheon 当前架构状态账本（2026-07-20）
-# 由 scripts/architecture-check.sh 校验。这里只记录当前代码事实、已接受边界，
+# 由 scripts/aletheon.sh acceptance architecture 校验。这里只记录当前代码事实、已接受边界，
 # 以及仍需明确“接入或删除”的收敛项；不再使用已经删除的 Wave 路线图。
 
 schema_version = 2

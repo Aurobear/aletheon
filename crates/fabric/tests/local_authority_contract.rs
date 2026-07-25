@@ -2,6 +2,37 @@ use fabric::{
     ApprovalPolicy, ConnectionId, LocalOsPrincipal, PermissionProfileId, PrincipalContext,
     PrincipalId, ThreadId, WorkspacePolicy,
 };
+
+#[test]
+fn workspace_authority_can_be_narrowed_but_not_expanded() {
+    let policy =
+        WorkspacePolicy::from_resolved_roots(PathBuf::from("/tmp/workspace"), vec![]).unwrap();
+    let narrowed = policy
+        .clone()
+        .narrow_writable_roots(vec![PathBuf::from("/tmp/workspace/src/lib.rs")])
+        .unwrap();
+    assert_eq!(
+        narrowed.writable_roots(),
+        &[PathBuf::from("/tmp/workspace/src/lib.rs")]
+    );
+    assert_eq!(narrowed.cwd(), PathBuf::from("/tmp/workspace"));
+
+    let error = policy
+        .narrow_writable_roots(vec![PathBuf::from("/tmp/outside")])
+        .unwrap_err();
+    assert!(error.contains("exceeds existing authority"));
+}
+
+#[test]
+fn workspace_authority_can_be_narrowed_to_read_only() {
+    let policy =
+        WorkspacePolicy::from_resolved_roots(PathBuf::from("/tmp/workspace"), vec![]).unwrap();
+
+    let read_only = policy.narrow_writable_roots(vec![]).unwrap();
+
+    assert_eq!(read_only.cwd(), PathBuf::from("/tmp/workspace"));
+    assert!(read_only.writable_roots().is_empty());
+}
 use std::path::PathBuf;
 
 #[test]

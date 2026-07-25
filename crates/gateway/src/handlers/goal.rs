@@ -52,7 +52,7 @@ impl GoalHandler {
             let resolver = self
                 .approval_resolvers
                 .resolve_category_only(ApprovalCategory::ActivateGoal)
-                .ok_or_else(|| anyhow::anyhow!("Gmail draft executor is not configured"))?;
+                .ok_or_else(|| anyhow::anyhow!("external draft resolver is not configured"))?;
             let approval = resolver
                 .revise_draft(owner, id, intent.trim(), now_ms)
                 .await?;

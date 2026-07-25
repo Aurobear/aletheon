@@ -21,6 +21,8 @@ pub struct StatusBar {
     pub waiting: bool,
     pub token_count: Option<u32>,
     pub total_tokens: u32,
+    /// Estimated tokens currently present in the active model context.
+    pub context_used_tokens: u32,
     pub context_window: u32,
     pub session_turns: u32,
 }
@@ -37,6 +39,7 @@ impl StatusBar {
             waiting: false,
             token_count: None,
             total_tokens: 0,
+            context_used_tokens: 0,
             context_window: 128_000,
             session_turns: 0,
         }
@@ -104,7 +107,7 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
             };
             let frame = spinner_chars[self.status.spinner_frame % spinner_chars.len()];
             spans.push(Span::styled(
-                format!("{} ", frame),
+                format!("{frame} "),
                 Style::default().fg(Color::Yellow),
             ));
         }
@@ -244,10 +247,15 @@ impl<'a> Widget for StatusBarWidget<'a> {
             ));
         }
         if self.status.context_window > 0 {
-            let pct = ((self.status.total_tokens as f64) / (self.status.context_window as f64)
-                * 100.0)
+            // `total_tokens` is cumulative provider usage across every
+            // inference round in the session. It is useful as a cost counter,
+            // but it is not the active context size. Use the harness context
+            // estimate for pressure so a long-lived session does not
+            // appear to fill a 1M window merely by accumulating billed tokens.
+            let active_tokens = self.status.context_used_tokens;
+            let pct = ((active_tokens as f64) / (self.status.context_window as f64) * 100.0)
                 .clamp(0.0, 99.0) as u32;
-            right_parts.push(format!("{}% ctx", pct));
+            right_parts.push(format!("{pct}% ctx"));
         }
         if self.status.session_turns > 0 {
             right_parts.push(format!("turn {}", self.status.session_turns));
@@ -275,7 +283,7 @@ impl<'a> Widget for StatusBarWidget<'a> {
         // Right: push to right edge with separator, then tokens + ctx + turn
         if !right.is_empty() {
             let used: usize = spans.iter().map(|s: &Span| s.width()).sum();
-            let right_with_sep = format!("{}{}", sep, right);
+            let right_with_sep = format!("{sep}{right}");
             let right_pad = total_w.saturating_sub(used + right_with_sep.len());
             spans.push(Span::raw(" ".repeat(right_pad)));
             spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
@@ -319,4 +327,32 @@ fn format_with_commas(n: u32) -> String {
         result.push(ch);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{buffer::Buffer, widgets::Widget};
+
+    #[test]
+    fn legacy_context_percent_uses_active_request_not_cumulative_usage() {
+        let mut status = StatusBar::new(TermCaps::detect());
+        status.total_tokens = 400_000;
+        status.token_count = Some(20_000);
+        status.context_used_tokens = 20_000;
+        status.context_window = 1_000_000;
+
+        let area = Rect::new(0, 0, 100, 1);
+        let mut buffer = Buffer::empty(area);
+        status.render_widget().render(area, &mut buffer);
+        let rendered = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("400,000 tok"));
+        assert!(rendered.contains("2% ctx"));
+        assert!(!rendered.contains("40% ctx"));
+    }
 }

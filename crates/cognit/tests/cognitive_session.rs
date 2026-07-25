@@ -259,6 +259,44 @@ async fn streaming_session_preserves_interactive_events_behind_the_facade() {
         .any(|event| matches!(event, CognitiveStreamEvent::TurnDone { result: Ok(text) } if text == "streamed answer")));
 }
 
+#[tokio::test]
+async fn streaming_session_keeps_thinking_out_of_visible_and_final_text() {
+    let llm = cognit::testing::mock_llm::MockLlmProvider::new("thinking");
+    llm.push_response(LlmResponse {
+        content: vec![
+            ContentBlock::Thinking {
+                text: "internal reasoning".into(),
+                signature: None,
+            },
+            ContentBlock::Text {
+                text: "visible answer".into(),
+            },
+        ],
+        stop_reason: StopReason::EndTurn,
+        usage: Usage::default(),
+        cache_hit_tokens: 0,
+        cache_miss_tokens: 0,
+    });
+    let services = StreamingServices { llm };
+    let stream = RecordingStream::default();
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+
+    let result = session
+        .run_streaming_turn(
+            request("think privately"),
+            &services,
+            &NoopTurnEventSink,
+            &stream,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.output, "visible answer");
+    assert!(!stream.0.lock().unwrap().iter().any(
+        |event| matches!(event, CognitiveStreamEvent::TextDelta { delta } if delta.contains("internal reasoning"))
+    ));
+}
+
 struct InterjectingServices {
     llm: cognit::testing::mock_llm::MockLlmProvider,
     drains: Mutex<VecDeque<Vec<String>>>,

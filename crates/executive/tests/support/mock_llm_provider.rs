@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Deterministic mock LLM provider for integration tests.
 //!
 //! Implements `fabric::LlmProvider` with pre-configured response sequences.

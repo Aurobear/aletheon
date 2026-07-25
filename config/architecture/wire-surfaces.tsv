@@ -1,0 +1,17 @@
+# frozen_commit=efde4ca11a7c45a72ce7a03fee4cdd0c3c9d8e1e
+# classification	symbol	path	participants	protocol_owner	version_mechanism	compatibility_rule	phase
+wire-exposed	ClientRpcRequest/ClientRpcResponse	crates/fabric/src/protocol/client.rs	aletheon,interact,executive	fabric	CLIENT_PROTOCOL_VERSION and JSON_RPC_VERSION	reject unsupported protocol versions; additive fields only within v1	1,9
+wire-exposed	ConsciousCore protocol	crates/fabric/src/protocol/conscious_core.rs	executive,interact	fabric	type-level serde contract	additive evolution; version before incompatible field changes	1
+wire-exposed	Fabric protocol module	crates/fabric/src/protocol/mod.rs	fabric consumers	fabric	module exports	compatibility exports only decrease	1,9
+wire-exposed	execd Request/Response/Handshake	crates/execd/src/protocol.rs	executive,execd	execd	handshake protocol_version	fail closed on version mismatch; preserve JSON-RPC error codes	2,8e
+wire-exposed	Core RPC protocol	crates/executive/src/host/core_rpc/protocol.rs	executive core,host	executive	request schema	version before incompatible request changes	2,8e
+wire-exposed	PolicyGateway service	crates/cognit/proto/aletheon/policy/gateway/v1/policy.proto	cognit,policy gateway	cognit	protobuf package v1	new fields/services additive; incompatible change uses v2	7
+wire-exposed	EmbodimentGateway service	crates/hardware/proto/aletheon/embodiment/gateway/v1/gateway.proto	hardware,embodiment gateway	hardware	protobuf package v1; tonic generated boundary	new fields/RPCs additive; incompatible change uses v2	6
+internal-shared	Fabric ExternalEventEnvelope	crates/fabric/src/types/external_event.rs	executive event store,fabric	fabric	EXTERNAL_EVENT_SCHEMA_VERSION=2; legacy v1 validator	read v1/v2, write v2, reject unknown versions	1,6
+internal-shared	External information source DTOs	crates/fabric/src/types/external_source.rs	corpus adapters,executive	fabric	typed serde contracts	opaque IDs/cursors; additive fields only without schema bump	1,6
+internal-shared	Fabric IPC protocol	crates/fabric/src/ipc/protocol.rs	kernel,executive,platform host	fabric	serialized enum contract	classify transport separately; version incompatible variants	1,2
+wire-exposed	MCP JSON-RPC and tool schemas	crates/corpus/src/tools/mcp/client.rs	corpus,MCP servers	corpus	MCP initialize protocolVersion and per-tool inputSchema	negotiate protocol; opaque payload only inside adapter	8d
+internal-shared	Agent run state	crates/executive/src/application/agent_control/repository.rs	executive service,SQLite repository	executive	SQLite migrations 001-003	migrate durable state before enum/DTO changes	2,3,8a
+internal-shared	Memory/spool DTOs	crates/mnemosyne/src/backends/supplemental/migrations.rs	mnemosyne,supplemental backend	mnemosyne	SQLite PRAGMA user_version	idempotent ordered migration; compatibility read old/write new	5,8c
+internal-shared	Audit/HIL evidence	crates/metacog/src/hil_evidence_verifier.rs	metacog,executive	metacog	schema_version field	fail closed on unknown schema/evidence integrity failure	8c
+internal-shared	Artifact metadata	crates/platform/src/artifact_store.rs	executive,platform	platform	typed metadata plus receipt	preserve receipt validation; version before incompatible persistence	2

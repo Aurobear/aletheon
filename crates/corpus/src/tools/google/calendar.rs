@@ -4,8 +4,8 @@ use super::client::{GoogleApiClient, GoogleApiError};
 use async_trait::async_trait;
 use chrono::DateTime;
 use fabric::{
-    CalendarEvent, CalendarEventPage, CalendarTimeRange, ExternalScope, PrincipalId,
-    ProviderRecordRef,
+    CalendarEntry, CalendarEntryPage, CalendarQuery, ExternalCapabilityId, ExternalRecordRef,
+    OpaqueCursor, OpaqueProviderObjectId, PrincipalId,
 };
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
@@ -15,9 +15,9 @@ pub trait CalendarCapability: Send + Sync {
     async fn list_events(
         &self,
         principal: &PrincipalId,
-        range: CalendarTimeRange,
+        range: CalendarQuery,
         cancel: &CancellationToken,
-    ) -> Result<CalendarEventPage, GoogleApiError>;
+    ) -> Result<CalendarEntryPage, GoogleApiError>;
 }
 
 #[derive(Debug, Clone)]
@@ -36,9 +36,9 @@ impl CalendarCapability for GoogleCalendarAdapter {
     async fn list_events(
         &self,
         principal: &PrincipalId,
-        range: CalendarTimeRange,
+        range: CalendarQuery,
         cancel: &CancellationToken,
-    ) -> Result<CalendarEventPage, GoogleApiError> {
+    ) -> Result<CalendarEntryPage, GoogleApiError> {
         range
             .validate()
             .map_err(|_| GoogleApiError::InvalidRequest)?;
@@ -65,7 +65,7 @@ impl CalendarCapability for GoogleCalendarAdapter {
             .get_json(
                 principal,
                 range.account_id,
-                ExternalScope::CalendarReadonly,
+                ExternalCapabilityId::new("calendar.read").unwrap(),
                 url,
                 cancel,
             )
@@ -77,10 +77,14 @@ impl CalendarCapability for GoogleCalendarAdapter {
         for item in raw.items {
             events.push(normalize_event(range.account_id, &range.timezone, item)?);
         }
-        let page = CalendarEventPage {
+        let page = CalendarEntryPage {
             account_id: range.account_id,
             events,
-            next_page_token: raw.next_page_token,
+            next_page_token: raw
+                .next_page_token
+                .map(OpaqueCursor::new)
+                .transpose()
+                .map_err(|_| GoogleApiError::MalformedResponse)?,
         };
         page.validate()
             .map_err(|_| GoogleApiError::MalformedResponse)?;
@@ -121,7 +125,7 @@ fn normalize_event(
     account: fabric::ExternalIdentityId,
     requested_timezone: &str,
     raw: RawEvent,
-) -> Result<CalendarEvent, GoogleApiError> {
+) -> Result<CalendarEntry, GoogleApiError> {
     if raw.id.is_empty() || raw.id.len() > 1_024 {
         return Err(GoogleApiError::MalformedResponse);
     }
@@ -131,15 +135,20 @@ fn normalize_event(
     let source_timestamp_ms = DateTime::parse_from_rfc3339(&raw.updated)
         .map_err(|_| GoogleApiError::MalformedResponse)?
         .timestamp_millis();
-    let event = CalendarEvent {
-        source: ProviderRecordRef {
+    let event = CalendarEntry {
+        source: ExternalRecordRef {
             account_id: account,
-            provider_object_id: raw.id,
+            provider_object_id: OpaqueProviderObjectId::new(raw.id)
+                .map_err(|_| GoogleApiError::MalformedResponse)?,
             fetched_at_ms: chrono::Utc::now().timestamp_millis(),
             source_timestamp_ms,
-            etag_or_history: raw.etag,
+            etag_or_history: raw
+                .etag
+                .map(OpaqueCursor::new)
+                .transpose()
+                .map_err(|_| GoogleApiError::MalformedResponse)?,
         },
-        calendar_id: "primary".into(),
+        calendar_id: OpaqueProviderObjectId::new("primary").unwrap(),
         summary: raw.summary,
         location: raw.location,
         start_ms,

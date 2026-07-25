@@ -4,13 +4,13 @@ mod support {
 
 use std::sync::Arc;
 
-use executive::service::conscious_core_coordinator::{
+use executive::application::conscious_core_coordinator::{
     ConsciousCoreConfig, ConsciousCoreCoordinator,
 };
-use executive::service::conscious_core_ports::{
+use executive::application::conscious_core_ports::{
     CandidateCause, CandidateSubmission, ConsciousCandidatePort,
 };
-use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
+use executive::application::dasein_workspace_adapter::DaseinWorkspaceAdapter;
 use fabric::{
     AgentId, AgentProfileId, AgoraSpaceId, Clock, ConsciousCoreTrace, ConsciousTraceEvent,
     ContentId, FieldMetricHistory, FieldMetricSnapshot, IndicatorResult, NamespaceId, ProcessId,

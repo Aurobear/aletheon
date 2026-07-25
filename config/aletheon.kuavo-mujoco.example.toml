@@ -1,0 +1,12 @@
+# Aletheon + Kuavo MuJoCo joint simulation configuration
+# Start order:
+#   1. ROS/MuJoCo: roslaunch humanoid_controllers load_kuavo_mujoco_sim.launch
+#   2. Bridge:   cd ../aletheon-kuavo-bridge && python -m aletheon_kuavo_bridge --config config/bridge.kuavo.yaml
+#   3. Aletheon: aletheond --config config/aletheon.kuavo-mujoco.toml
+
+[integrations.embodiment]
+kind = "grpc"
+device_id = "kuavo-mujoco-01"
+endpoint = "http://127.0.0.1:50051"
+connect_timeout_ms = 5000
+request_timeout_ms = 10000

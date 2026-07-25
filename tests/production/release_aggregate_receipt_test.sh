@@ -30,7 +30,7 @@ jq -n --arg candidate "$candidate" '
 runtime_hashes=$(jq -cn --arg candidate "$candidate" \
   '{machine:$candidate,user:$candidate}')
 
-"$repo_root/scripts/release-acceptance.sh" --validate-release-lane-evidence \
+"$repo_root/scripts/libexec/aletheon/release-acceptance.sh" --validate-release-lane-evidence \
   "$candidate" "$tmp/installed.json" "$tmp/monitor.json" "$tmp/failure.json" \
   "$runtime_hashes" "$tmp/inventory.json"
 jq -e '
@@ -47,7 +47,7 @@ printf 'migration\n' >"$tmp/migration.json"
 printf 'activation\n' >"$tmp/activation.json"
 printf 'architecture\n' >"$tmp/architecture.json"
 printf 'dependencies\n' >"$tmp/dependencies.txt"
-"$repo_root/scripts/release-acceptance.sh" --write-lane-evidence-manifest \
+"$repo_root/scripts/libexec/aletheon/release-acceptance.sh" --write-lane-evidence-manifest \
   "$candidate" "$tmp/lanes.json" \
   "$tmp/v01.json" "$tmp/recipe.json" "$tmp/migration.json" "$tmp/installed.json" \
   "$tmp/activation.json" "$tmp/monitor.json" "$tmp/failure.json" \
@@ -62,7 +62,7 @@ jq -e --arg candidate "$candidate" --arg installed_sha256 "$installed_sha256" '
 
 assert_rejected() {
   local label=$1
-  if "$repo_root/scripts/release-acceptance.sh" --validate-release-lane-evidence \
+  if "$repo_root/scripts/libexec/aletheon/release-acceptance.sh" --validate-release-lane-evidence \
     "$candidate" "$tmp/installed.json" "$tmp/monitor.json" "$tmp/failure.json" \
     "$runtime_hashes" "$tmp/rejected.json" >"$tmp/$label.out" 2>&1; then
     echo "release evidence unexpectedly accepted $label" >&2
@@ -85,15 +85,15 @@ mv "$tmp/failure.good" "$tmp/failure.json"
 
 wrong_runtime=$(jq -cn --arg candidate "$candidate" \
   '{machine:$candidate,user:("d" * 64)}')
-if "$repo_root/scripts/release-acceptance.sh" --validate-release-lane-evidence \
+if "$repo_root/scripts/libexec/aletheon/release-acceptance.sh" --validate-release-lane-evidence \
   "$candidate" "$tmp/installed.json" "$tmp/monitor.json" "$tmp/failure.json" \
   "$wrong_runtime" "$tmp/rejected.json" >/dev/null 2>&1; then
   echo "release evidence accepted a non-candidate failure runtime" >&2
   exit 1
 fi
 
-release_script="$repo_root/scripts/release-acceptance.sh"
-migration_script="$repo_root/scripts/verify-migration-matrix.sh"
+release_script="$repo_root/scripts/libexec/aletheon/release-acceptance.sh"
+migration_script="$repo_root/scripts/libexec/aletheon/verify/migration-matrix.sh"
 grep -F 'bash "$repo_root/scripts/cargo-agent.sh" test -p mnemosyne --test gbrain_spool' \
   "$migration_script" >/dev/null
 grep -F 'bash "$repo_root/scripts/cargo-agent.sh" test -p executive --test agent_control_repository' \

@@ -57,14 +57,14 @@ pub enum ToolError {
 impl std::fmt::Display for ToolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::PolicyDenied { reason } => write!(f, "Policy denied: {}", reason),
-            Self::LoopBlocked { reason } => write!(f, "Loop blocked: {}", reason),
-            Self::EscalateToHuman { reason } => write!(f, "Escalate to human: {}", reason),
-            Self::InterruptTurn { reason } => write!(f, "Turn interrupted: {}", reason),
+            Self::PolicyDenied { reason } => write!(f, "Policy denied: {reason}"),
+            Self::LoopBlocked { reason } => write!(f, "Loop blocked: {reason}"),
+            Self::EscalateToHuman { reason } => write!(f, "Escalate to human: {reason}"),
+            Self::InterruptTurn { reason } => write!(f, "Turn interrupted: {reason}"),
             Self::MaxRetriesExceeded => write!(f, "Max retries exceeded"),
-            Self::ExecutionFailed(msg) => write!(f, "Execution failed: {}", msg),
-            Self::OutputRejected(msg) => write!(f, "Output rejected: {}", msg),
-            Self::AuditFailed(msg) => write!(f, "Audit persistence failed: {}", msg),
+            Self::ExecutionFailed(msg) => write!(f, "Execution failed: {msg}"),
+            Self::OutputRejected(msg) => write!(f, "Output rejected: {msg}"),
+            Self::AuditFailed(msg) => write!(f, "Audit persistence failed: {msg}"),
             Self::StructuredSandboxUnavailable { tool } => write!(
                 f,
                 "Structured sandbox transport unavailable for '{tool}' (fail-closed)"
@@ -330,8 +330,8 @@ impl ToolRunnerWithGuard {
                     let summary = input
                         .get("command")
                         .and_then(|v| v.as_str())
-                        .map(|c| format!("{}: {}", tool_name, c))
-                        .unwrap_or_else(|| format!("{}: {}", tool_name, input));
+                        .map(|c| format!("{tool_name}: {c}"))
+                        .unwrap_or_else(|| format!("{tool_name}: {input}"));
 
                     // Consult PermissionContext before the approval gate.
                     match self.permission_ctx.resolve(tool_name, &summary, true) {
@@ -352,7 +352,7 @@ impl ToolRunnerWithGuard {
                             .await
                             .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                             return Err(ToolError::PolicyDenied {
-                                reason: format!("{}: denied by permission rule/mode", reason),
+                                reason: format!("{reason}: denied by permission rule/mode"),
                             });
                         }
                         PermissionBehavior::Ask => {
@@ -372,8 +372,7 @@ impl ToolRunnerWithGuard {
                                 .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                                 return Err(ToolError::PolicyDenied {
                                     reason: format!(
-                                        "{}: authenticated approval authority is unavailable",
-                                        reason
+                                        "{reason}: authenticated approval authority is unavailable"
                                     ),
                                 });
                             };
@@ -417,7 +416,7 @@ impl ToolRunnerWithGuard {
                                         .await
                                         .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                                         return Err(ToolError::PolicyDenied {
-                                            reason: format!("{}: denied by approval gate", reason),
+                                            reason: format!("{reason}: denied by approval gate"),
                                         });
                                     }
                                 }
@@ -518,7 +517,7 @@ impl ToolRunnerWithGuard {
                 .await
                 .map_err(|e| ToolError::AuditFailed(e.to_string()))?;
                 return Err(ToolError::LoopBlocked {
-                    reason: format!("{}. {}", reason, suggestion),
+                    reason: format!("{reason}. {suggestion}"),
                 });
             }
             LoopVerdict::Escalate { reason } => {
@@ -865,7 +864,7 @@ impl ToolRunnerWithGuard {
                             },
                         },
                         Err(e) => ToolResult {
-                            content: format!("Sandbox execution failed: {}", e),
+                            content: format!("Sandbox execution failed: {e}"),
                             is_error: true,
                             metadata: ToolResultMeta {
                                 execution_time_ms: 0,
@@ -908,10 +907,7 @@ impl ToolRunnerWithGuard {
                 {
                     Ok(result) => result,
                     Err(_) => ToolResult {
-                        content: format!(
-                            "Tool '{}' timed out after {}s",
-                            tool_name, TOOL_TIMEOUT_SECS
-                        ),
+                        content: format!("Tool '{tool_name}' timed out after {TOOL_TIMEOUT_SECS}s"),
                         is_error: true,
                         metadata: ToolResultMeta {
                             execution_time_ms: TOOL_TIMEOUT_SECS * 1000,
@@ -937,7 +933,7 @@ impl ToolRunnerWithGuard {
             .post_check(tool_name, &input, &final_result, turn_id);
 
         // 6. Audit log
-        let verdict_str = format!("{:?}", loop_verdict);
+        let verdict_str = format!("{loop_verdict:?}");
         self.log_audit_with_backend(
             audit_id,
             tool_name,
@@ -1762,11 +1758,10 @@ mod tests {
             ToolError::PolicyDenied { reason } => {
                 assert!(
                     reason.contains("denied by approval gate"),
-                    "reason: {}",
-                    reason
+                    "reason: {reason}"
                 );
             }
-            other => panic!("Expected PolicyDenied, got: {:?}", other),
+            other => panic!("Expected PolicyDenied, got: {other:?}"),
         }
     }
 
@@ -1902,11 +1897,10 @@ mod tests {
             ToolError::PolicyDenied { reason } => {
                 assert!(
                     reason.contains("denied by permission rule/mode"),
-                    "reason: {}",
-                    reason
+                    "reason: {reason}"
                 );
             }
-            other => panic!("Expected PolicyDenied, got: {:?}", other),
+            other => panic!("Expected PolicyDenied, got: {other:?}"),
         }
     }
 
@@ -1927,9 +1921,9 @@ mod tests {
         assert!(result.is_err(), "execpolicy should deny bash_exec");
         match result.unwrap_err() {
             ToolError::PolicyDenied { reason } => {
-                assert!(reason.contains("Policy forbids"), "reason: {}", reason);
+                assert!(reason.contains("Policy forbids"), "reason: {reason}");
             }
-            other => panic!("Expected PolicyDenied, got: {:?}", other),
+            other => panic!("Expected PolicyDenied, got: {other:?}"),
         }
     }
 

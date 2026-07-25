@@ -56,7 +56,7 @@ impl ProcessManager {
         if procs.len() >= MAX_HANDLES {
             return Err(RpcError {
                 code: SPAWN_FAILED,
-                message: format!("Maximum concurrent handles reached ({})", MAX_HANDLES),
+                message: format!("Maximum concurrent handles reached ({MAX_HANDLES})"),
                 data: None,
             });
         }
@@ -123,7 +123,7 @@ impl ProcessManager {
         })?;
 
         let pid = child.id().unwrap_or(0);
-        let handle_id = format!("proc_{}", pid);
+        let handle_id = format!("proc_{pid}");
 
         let stdout = child.stdout.take().map(BufReader::new);
         let stderr = child.stderr.take().map(BufReader::new);
@@ -173,7 +173,7 @@ impl ProcessManager {
         let mut procs = self.processes.lock().await;
         let proc = procs.get_mut(handle_id).ok_or_else(|| RpcError {
             code: PROCESS_NOT_FOUND,
-            message: format!("Process handle not found: {}", handle_id),
+            message: format!("Process handle not found: {handle_id}"),
             data: None,
         })?;
 
@@ -327,7 +327,7 @@ impl ProcessManager {
         let mut procs = self.processes.lock().await;
         let proc = procs.get_mut(handle_id).ok_or_else(|| RpcError {
             code: PROCESS_NOT_FOUND,
-            message: format!("Process handle not found: {}", handle_id),
+            message: format!("Process handle not found: {handle_id}"),
             data: None,
         })?;
 
@@ -337,7 +337,7 @@ impl ProcessManager {
                 .await
                 .map_err(|e| RpcError {
                     code: INTERNAL_ERROR,
-                    message: format!("Failed to write to process stdin: {}", e),
+                    message: format!("Failed to write to process stdin: {e}"),
                     data: None,
                 })?;
         }
@@ -349,7 +349,7 @@ impl ProcessManager {
         let mut procs = self.processes.lock().await;
         let proc = procs.get_mut(handle_id).ok_or_else(|| RpcError {
             code: PROCESS_NOT_FOUND,
-            message: format!("Process handle not found: {}", handle_id),
+            message: format!("Process handle not found: {handle_id}"),
             data: None,
         })?;
 
@@ -384,7 +384,7 @@ impl ProcessManager {
             let mut procs = self.processes.lock().await;
             procs.remove(handle_id).ok_or_else(|| RpcError {
                 code: PROCESS_NOT_FOUND,
-                message: format!("Process handle not found: {}", handle_id),
+                message: format!("Process handle not found: {handle_id}"),
                 data: None,
             })?
         };

@@ -10,6 +10,7 @@ pub mod event;
 pub mod fuse;
 pub mod manager;
 pub mod sources;
+pub mod visual_aggregator;
 
 // Re-export key types at module root
 pub use event::{EventCategory, EventData, EventSource, PerceptionEvent, Priority};

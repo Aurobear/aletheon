@@ -58,7 +58,7 @@ evidence bundle.
 
 The authoritative per-component compatibility declaration is
 `config/release/migration-matrix.toml`. Run
-`scripts/verify-migration-matrix.sh` before staging a candidate. The verifier
+`scripts/aletheon.sh verify migration` before staging a candidate. The verifier
 requires every durable component to declare its source and target version,
 backup boundary, forward action, integrity evidence and rollback method.
 

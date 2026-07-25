@@ -96,7 +96,7 @@ impl Tool for McpToolWrapper {
         match client.call_tool(&self.mcp_tool.name, input).await {
             Ok(response) => {
                 let content = serde_json::to_string_pretty(&response)
-                    .unwrap_or_else(|_| format!("{:?}", response));
+                    .unwrap_or_else(|_| format!("{response:?}"));
                 ToolResult {
                     content,
                     is_error: false,
@@ -108,7 +108,7 @@ impl Tool for McpToolWrapper {
                 }
             }
             Err(e) => ToolResult {
-                content: format!("MCP tool error: {}", e),
+                content: format!("MCP tool error: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -279,7 +279,7 @@ impl Tool for McpResourceProvider {
                 },
             },
             Err(e) => ToolResult {
-                content: format!("Error reading resource: {}", e),
+                content: format!("Error reading resource: {e}"),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),

@@ -132,7 +132,7 @@ fn load_hook_file(path: &Path) -> anyhow::Result<HookConfig> {
         "PostTool" | "post_tool" => HookPoint::PostTool,
         "PreResponse" | "pre_response" | "PostTurn" | "post_turn" => HookPoint::PostTurn,
         "SessionEnd" | "session_end" => HookPoint::OnSessionEnd,
-        _ => return Err(anyhow::anyhow!("Unknown hook point: {}", point_str)),
+        _ => return Err(anyhow::anyhow!("Unknown hook point: {point_str}")),
     };
 
     Ok(HookConfig {

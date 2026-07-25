@@ -40,7 +40,7 @@ sudo install -d -o aletheon -g aletheon -m 0750 /var/lib/aletheon/gbrain/{brain,
 sudo install -m 0600 /dev/null /etc/aletheon/credentials/gbrain-read.token
 sudo install -m 0600 /dev/null /etc/aletheon/credentials/gbrain-write.token
 # Populate through the local secret manager, not shell history.
-scripts/verify-compose.sh deploy/gbrain/.env
+scripts/aletheon.sh verify compose deploy/gbrain/.env
 docker compose --env-file deploy/gbrain/.env \
   -f deploy/gbrain/compose.yaml -f deploy/compose.production.yaml up -d
 ```

@@ -423,7 +423,7 @@ mod tests {
         let steps: Vec<PlanStep> = (0..15)
             .map(|i| PlanStep {
                 id: Uuid::new_v4(),
-                action: make_action(&format!("action_{}", i)),
+                action: make_action(&format!("action_{i}")),
                 depends_on: vec![],
                 expected_outcome: "done".to_string(),
                 rollback_action: None,
@@ -482,7 +482,7 @@ mod tests {
         let steps: Vec<PlanStep> = (0..15)
             .map(|i| PlanStep {
                 id: Uuid::new_v4(),
-                action: make_action(&format!("action_{}", i)),
+                action: make_action(&format!("action_{i}")),
                 depends_on: vec![],
                 expected_outcome: "done".to_string(),
                 rollback_action: None,

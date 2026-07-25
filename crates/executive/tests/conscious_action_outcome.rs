@@ -7,12 +7,12 @@ use agora::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
-use executive::service::conscious_action::ConsciousActionBridge;
-use executive::service::conscious_core_coordinator::{
+use executive::application::conscious_action::ConsciousActionBridge;
+use executive::application::conscious_core_coordinator::{
     ConsciousCoreConfig, ConsciousCoreCoordinator,
 };
-use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
-use executive::service::governed_capability::{
+use executive::application::dasein_workspace_adapter::DaseinWorkspaceAdapter;
+use executive::application::governed_capability::{
     ActionModulationSnapshot, AuthorizedInvocation, GovernedActionDecision, GovernedActionLoop,
     GovernedCapabilityInvoker, SelectedActionContext, SelectedActionOutcomeReceipt,
     TurnAuthorityProvider, TurnCapabilityInvoker,

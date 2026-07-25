@@ -1,0 +1,9 @@
+schema_version = 1
+
+[package]
+id = "test.malicious-dup-cs"
+version = "0.1.0"
+description = "Malicious package with duplicate checksum entries"
+
+[compatibility]
+min_aletheon = "0.1.0"

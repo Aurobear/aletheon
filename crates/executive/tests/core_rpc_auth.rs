@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use executive::r#impl::core_rpc::{
+use executive::application::inference_port::{
+    CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
+};
+use executive::host::core_rpc::{
     CoreFrame, CorePeerPolicy, CoreRequest, CoreRpcClient, CoreRpcServer,
 };
-use executive::service::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
 use fabric::{
     ContentBlock, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk, Usage,
 };
@@ -26,6 +28,14 @@ struct FakeInference;
 
 #[async_trait::async_trait]
 impl InferencePort for FakeInference {
+    async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
+        Ok(ModelCapabilities {
+            model_spec: format!("resolved/{model_spec}"),
+            display_name: "fixture-model".into(),
+            max_context_tokens: 1_000_000,
+        })
+    }
+
     async fn complete(
         &self,
         _request: CoreInferenceRequest,
@@ -125,6 +135,14 @@ async fn server_uses_peer_credentials_and_correlates_complete_and_stream_frames(
         0o660
     );
     let client = harness.client();
+    let capabilities = client.capabilities("fast").await.unwrap();
+    assert_eq!(capabilities.model_spec, "resolved/fast");
+    assert_eq!(capabilities.display_name, "fixture-model");
+    assert_eq!(capabilities.max_context_tokens, 1_000_000);
+    assert_eq!(harness.observed_peer().await.uid, unsafe {
+        libc::geteuid()
+    });
+
     let response = client.complete(request()).await.unwrap();
     assert_eq!(response.stop_reason, StopReason::EndTurn);
     assert_eq!(harness.observed_peer().await.uid, unsafe {

@@ -1,4 +1,4 @@
-use executive::service::verification::{
+use executive::application::verification::{
     ArchitecturePolicy, CapabilityAuditSummary, ForbiddenDependencyEdge, VerificationCheckKind,
     VerificationContext, VerificationSelection, VerificationService, VerificationServiceConfig,
 };
@@ -118,6 +118,7 @@ esac
                 audit_present: true,
                 observed_capabilities: vec!["file.write".into()],
                 allowed_capabilities: vec!["file.write".into()],
+                unavailable_capabilities: vec![],
             },
             selection: VerificationSelection::default(),
         }

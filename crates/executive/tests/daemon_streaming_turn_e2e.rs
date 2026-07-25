@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 mod support {
     pub mod mock_llm_provider;
     pub mod test_aletheon_builder;
@@ -8,7 +10,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cognit::{CognitError, CognitErrorKind};
-use executive::service::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
+use executive::application::daemon_react::{
+    submit_streaming_daemon_turn, DaemonStreamingTurnContext,
+};
 use fabric::ipc::{StreamConfig, TurnEventStream, TurnEventV1};
 use fabric::{Message, OperationId, SpawnSpec, TurnRequest, TurnStop};
 use support::mock_llm_provider::{MockLlmProvider, MockTurnResponse, MockTurnSequence};

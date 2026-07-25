@@ -58,15 +58,15 @@ fn production_has_one_governed_capability_construction() {
     }
 
     assert_eq!(default_constructors.len(), 1, "one canonical inner invoker");
-    assert!(default_constructors[0].ends_with("service/governed_capability.rs"));
+    assert!(default_constructors[0].ends_with("application/governed_capability.rs"));
 }
 
 #[test]
 fn external_and_provider_paths_use_the_capability_service() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let provider = production_source(&root.join("src/impl/runtime/provider_worker.rs"));
-    let mcp = production_source(&root.join("src/impl/daemon/mcp_embedded.rs"));
-    let configured = production_source(&root.join("src/impl/orchestration/config_agent.rs"));
+    let provider = production_source(&root.join("src/adapters/runtime/provider_worker.rs"));
+    let mcp = production_source(&root.join("src/host/daemon/mcp_embedded.rs"));
+    let configured = production_source(&root.join("src/application/orchestration/config_agent.rs"));
 
     for (name, source) in [
         ("provider worker", provider),

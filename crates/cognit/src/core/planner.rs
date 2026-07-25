@@ -72,7 +72,7 @@ impl Planner {
                 id: step_id,
                 action,
                 depends_on: prev_id.into_iter().collect(),
-                expected_outcome: format!("Complete '{}'", action_name),
+                expected_outcome: format!("Complete '{action_name}'"),
                 rollback_action: rollback,
             });
 
@@ -119,30 +119,24 @@ impl Planner {
         // Add mood context to the plan's reasoning
         let mood_note = match mood {
             Stimmung::Angst { facing } => {
-                format!(
-                    " [Stimmung: Angst/{:?} — risk elevated, proceed with caution]",
-                    facing
-                )
+                format!(" [Stimmung: Angst/{facing:?} — risk elevated, proceed with caution]")
             }
             Stimmung::Gelassenheit => {
                 " [Stimmung: Gelassenheit — calm, standard risk assessment]".to_string()
             }
             Stimmung::Entschlossenheit { chosen_possibility } => {
                 format!(
-                    " [Stimmung: Entschlossenheit — committed to '{}', risk accepted for projection]",
-                    chosen_possibility
+                    " [Stimmung: Entschlossenheit — committed to '{chosen_possibility}', risk accepted for projection]"
                 )
             }
             Stimmung::Verfallenheit { absorbed_in } => {
                 format!(
-                    " [Stimmung: Verfallenheit — absorbed in '{}', risk may be underestimated]",
-                    absorbed_in
+                    " [Stimmung: Verfallenheit — absorbed in '{absorbed_in}', risk may be underestimated]"
                 )
             }
             Stimmung::Neugier { curiosity_about } => {
                 format!(
-                    " [Stimmung: Neugier — curious about '{}', exploratory risk tolerance]",
-                    curiosity_about
+                    " [Stimmung: Neugier — curious about '{curiosity_about}', exploratory risk tolerance]"
                 )
             }
             _ => " [Stimmung applied to risk assessment]".to_string(),

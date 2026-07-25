@@ -250,11 +250,10 @@ impl BottleneckDetector {
         }
 
         let total_ops = total_reads + total_writes;
-        let avg_latency = if total_ops > 0 {
-            (total_ticks * 1000) / total_ops // Convert ms ticks to us
-        } else {
-            0
-        };
+        let avg_latency = total_ticks
+            .saturating_mul(1000)
+            .checked_div(total_ops)
+            .unwrap_or(0); // Convert ms ticks to us
 
         Ok((total_reads, total_writes, avg_latency))
     }

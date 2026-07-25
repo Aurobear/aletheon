@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
-use crate::backends::gbrain::GbrainPage;
+use crate::backends::supplemental::SupplementalDocument;
 use crate::model::{MemoryKind, MemoryRecord, MemoryRecordId, MemoryScope, MemoryStatus};
 use crate::observability::{MemoryMetrics, TombstoneDestination};
 use crate::service::{ForgetAuthority, ForgetPolicy, ForgetReceipt, ForgetSelector};
@@ -166,7 +166,7 @@ impl RetentionRepository {
             };
             let mut record: MemoryRecord = serde_json::from_str(&record_json)?;
             record.status = MemoryStatus::Tombstoned;
-            let remote_state = if GbrainPage::from_record(&record)?.is_some() {
+            let remote_state = if SupplementalDocument::from_record(&record)?.is_some() {
                 "pending"
             } else {
                 "not_required"
@@ -259,7 +259,7 @@ impl RetentionRepository {
     }
 
     pub(crate) fn refresh_pending_metrics(&self) -> anyhow::Result<()> {
-        let (local, gbrain): (usize, usize) = self
+        let (local, supplemental): (usize, usize) = self
             .connection
             .lock()
             .expect("retention mutex poisoned")
@@ -276,7 +276,7 @@ impl RetentionRepository {
             .expect("retention metrics mutex poisoned")
             .clone();
         metrics.set_tombstone_pending(TombstoneDestination::Local, local);
-        metrics.set_tombstone_pending(TombstoneDestination::Gbrain, gbrain);
+        metrics.set_tombstone_pending(TombstoneDestination::Supplemental, supplemental);
         Ok(())
     }
 

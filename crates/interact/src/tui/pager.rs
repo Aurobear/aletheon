@@ -70,10 +70,7 @@ impl PagerOverlay {
         } else {
             (((scroll as f32 / max_scroll as f32) * 100.0).round()) as u8
         };
-        let footer = format!(
-            " {}%  ↑/↓ scroll  PgUp/PgDn  g top  G bottom  q close ",
-            percent
-        );
+        let footer = format!(" {percent}%  ↑/↓ scroll  PgUp/PgDn  g top  G bottom  q close ");
 
         // Render header
         let header_area = Rect::new(area.x, area.y, area.width, 1);

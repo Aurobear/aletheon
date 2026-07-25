@@ -1,6 +1,6 @@
-use executive::service::context_assembler::{
+use executive::application::context_assembler::{
     working_directory_policy_prompt, ContextAssembler, ContextAssemblyError, ContextFragments,
-    ContextSource,
+    ContextSource, ProductionContextSource,
 };
 use fabric::dasein::{SelfVersion, Stimmung};
 use fabric::{
@@ -8,12 +8,22 @@ use fabric::{
     ProcessId, StructuredSelfView, TurnRequest,
 };
 use std::{path::PathBuf, sync::Arc};
+use tokio::sync::Mutex;
 
 struct FixedSource(ContextFragments);
 #[async_trait::async_trait]
 impl ContextSource for FixedSource {
     async fn load(&self, _: &TurnRequest) -> Result<ContextFragments, ContextAssemblyError> {
         Ok(self.0.clone())
+    }
+}
+
+struct UnavailableConsciousContext;
+
+#[async_trait::async_trait]
+impl fabric::LatestConsciousContextPort for UnavailableConsciousContext {
+    async fn latest_context(&self, _: &AgoraSpaceId) -> anyhow::Result<ConsciousContextProjection> {
+        anyhow::bail!("conscious workspace has not observed a turn")
     }
 }
 
@@ -56,14 +66,41 @@ fn projection() -> ConsciousContextProjection {
 }
 
 #[tokio::test]
+async fn production_source_allows_first_turn_without_conscious_projection() {
+    let skills = tempfile::tempdir().unwrap();
+    let source = ProductionContextSource {
+        cached_prefix: Arc::new(Mutex::new("system".into())),
+        skill_loader: Arc::new(Mutex::new(corpus::SkillLoader::new(
+            skills.path().to_path_buf(),
+        ))),
+        skill_router: Arc::new(Mutex::new(corpus::SkillRouter::new())),
+        conscious: Arc::new(UnavailableConsciousContext),
+        memory_service: None,
+        recall_enabled: false,
+        recall_max_items: 0,
+        recall_max_bytes: 0,
+        recall_timeout_ms: 0,
+    };
+
+    let fragments = source.load(&request("first turn")).await.unwrap();
+
+    assert!(fragments.conscious.is_none());
+    assert!(fragments.system_prefix.contains("system"));
+    assert!(fragments
+        .system_prefix
+        .contains("Current working directory: /workspace"));
+}
+
+#[tokio::test]
 async fn fragments_have_one_deterministic_order_before_raw_input() {
     let assembler = ContextAssembler::new(Arc::new(FixedSource(ContextFragments {
         system_prefix: "system".into(),
         skills: "S".into(),
         conscious: Some(projection()),
+        memory_context: String::new(),
     })));
     let assembled = assembler
-        .assemble(&request("raw user"), &[Message::assistant("prior")])
+        .assemble(&request("raw user"), &[Message::assistant("prior")], 1_000)
         .await
         .unwrap();
     let positions: Vec<_> = ["<conscious-context>", "<skills>", "raw user"]
@@ -87,9 +124,14 @@ async fn fragments_and_history_are_bounded_and_utf8_safe() {
         system_prefix: huge.clone(),
         skills: huge,
         conscious: Some(projection()),
+        memory_context: String::new(),
     })));
     let assembled = assembler
-        .assemble(&request("raw"), &[Message::user("x".repeat(200_000))])
+        .assemble(
+            &request("raw"),
+            &[Message::user("x".repeat(200_000))],
+            8_000,
+        )
         .await
         .unwrap();
     assert!(assembled.effective_user_message.chars().count() < 50_000);
@@ -117,9 +159,13 @@ fn working_directory_prompt_distinguishes_policy_from_host_mounts() {
 
 #[test]
 fn turn_pipeline_has_one_context_assembly_route() {
-    let pipeline = include_str!("../src/service/turn_pipeline.rs");
+    let pipeline = include_str!("../src/application/turn_pipeline.rs");
     assert!(pipeline.contains(".context_assembler"));
-    assert!(pipeline.contains(".assemble(&context_request, &existing_messages)"));
+    assert!(pipeline.contains(
+        ".assemble(
+                &context_request,
+                &existing_messages,"
+    ));
     assert!(pipeline.contains(".canonical_sessions"));
     assert!(pipeline.contains(".resume(&fabric::SessionId"));
     for removed in [
@@ -135,7 +181,7 @@ fn turn_pipeline_has_one_context_assembly_route() {
             "duplicate context route: {removed}"
         );
     }
-    let daemon_modules = include_str!("../src/service/daemon_turn/mod.rs");
+    let daemon_modules = include_str!("../src/application/daemon_turn/mod.rs");
     assert!(!daemon_modules.contains("mod injection"));
 }
 mod turn_request_support;

@@ -1,4 +1,4 @@
-use crate::r#impl::security::{LoopDetector, LoopDetectorConfig, LoopVerdict};
+use fabric::security::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
 use fabric::self_field::{AwarenessRiskLevel, Verdict};
 use fabric::tool::ToolResult;
 use parking_lot::Mutex;
@@ -32,14 +32,14 @@ impl LoopBridge {
             LoopVerdict::Allow => None,
             LoopVerdict::Warn { .. } => None, // Warn but allow
             LoopVerdict::Block { reason, suggestion } => Some(Verdict::Deny {
-                reason: format!("{}. Suggestion: {}", reason, suggestion),
+                reason: format!("{reason}. Suggestion: {suggestion}"),
             }),
             LoopVerdict::Escalate { reason } => Some(Verdict::RequireConfirmation {
                 reason,
                 risk_level: AwarenessRiskLevel::Critical,
             }),
             LoopVerdict::InterruptTurn { reason, .. } => Some(Verdict::Deny {
-                reason: format!("Turn interrupted: {}", reason),
+                reason: format!("Turn interrupted: {reason}"),
             }),
         }
     }

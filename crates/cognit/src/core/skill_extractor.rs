@@ -94,7 +94,7 @@ impl SkillExtractor {
         })?;
 
         let slug = slugify(&skill.name);
-        let filename = format!("{}.md", slug);
+        let filename = format!("{slug}.md");
         let path = skills_dir.join(&filename);
 
         let markdown = self.render_markdown(skill);
@@ -125,12 +125,11 @@ impl SkillExtractor {
             .into_iter()
             .filter(|(_, (count, _))| *count >= self.min_occurrences)
             .map(|(_, (count, source_ids))| {
-                let item_name = format!("Success pattern ({} occurrences)", count);
+                let item_name = format!("Success pattern ({count} occurrences)");
                 ExtractedSkill {
                     name: item_name.clone(),
                     description: format!(
-                        "Pattern observed across {} reflections where the same approach succeeded.",
-                        count
+                        "Pattern observed across {count} reflections where the same approach succeeded."
                     ),
                     category: SkillCategory::SuccessPattern,
                     content: format!(
@@ -140,7 +139,7 @@ impl SkillExtractor {
                         count,
                         source_ids
                             .iter()
-                            .map(|id| format!("- {}", id))
+                            .map(|id| format!("- {id}"))
                             .collect::<Vec<_>>()
                             .join("\n")
                     ),
@@ -175,12 +174,11 @@ impl SkillExtractor {
             .into_iter()
             .filter(|(_, (count, _))| *count >= self.min_occurrences)
             .map(|(_, (count, source_ids))| {
-                let item_name = format!("Avoidance guide ({} occurrences)", count);
+                let item_name = format!("Avoidance guide ({count} occurrences)");
                 ExtractedSkill {
                     name: item_name.clone(),
                     description: format!(
-                        "Recurring failure pattern across {} reflections with a derived lesson.",
-                        count
+                        "Recurring failure pattern across {count} reflections with a derived lesson."
                     ),
                     category: SkillCategory::AvoidanceGuide,
                     content: format!(
@@ -191,7 +189,7 @@ impl SkillExtractor {
                         count,
                         source_ids
                             .iter()
-                            .map(|id| format!("- {}", id))
+                            .map(|id| format!("- {id}"))
                             .collect::<Vec<_>>()
                             .join("\n")
                     ),
@@ -210,7 +208,7 @@ impl SkillExtractor {
                 let lessons = r
                     .learned
                     .iter()
-                    .map(|l| format!("- {}", l))
+                    .map(|l| format!("- {l}"))
                     .collect::<Vec<_>>()
                     .join("\n");
 
@@ -317,7 +315,7 @@ mod tests {
             id: id.to_string(),
             timestamp: fabric::wall_to_datetime(kernel::chronos::TestClock::default().wall_now()),
             trigger: ReflectionTrigger::TaskComplete,
-            task_summary: format!("task {}", id),
+            task_summary: format!("task {id}"),
             outcome: ReflectionOutcome::Success,
             what_worked: what_worked.into_iter().map(String::from).collect(),
             what_failed: what_failed.into_iter().map(String::from).collect(),

@@ -2,9 +2,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use executive::service::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
-use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
-use executive::service::governed_capability::{
+use executive::application::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
+use executive::application::dasein_workspace_adapter::DaseinWorkspaceAdapter;
+use executive::application::governed_capability::{
     GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
 };
 use fabric::{
@@ -363,7 +363,7 @@ async fn production_registry_traces_user_observation_action_and_outcome() {
 
 #[test]
 fn production_context_source_has_no_direct_self_or_memory_store_route() {
-    let source = include_str!("../src/service/context_assembler.rs");
+    let source = include_str!("../src/application/context_assembler.rs");
     for forbidden in [
         "recall_service",
         "core_memory",

@@ -52,7 +52,7 @@ impl Default for OutputConfig {
 
         Self {
             max_output_chars: 100_000,
-            overflow_dir: PathBuf::from("/tmp/agentd/overflow"),
+            overflow_dir: fabric::paths::xdg_cache_dir().join("tool-output-overflow"),
             truncation: TruncationPolicy::default(),
             tool_overrides: HashMap::new(),
             pinned_thresholds: pinned,

@@ -3,8 +3,8 @@
 //! Exercises bounded tick behavior, process linkage, pause/resume/cancel,
 //! and restart recovery of stale process links.
 
-use executive::r#impl::goal::coordinator::{GoalCoordinator, GoalTickOutcome};
-use executive::r#impl::goal::ObjectiveStore;
+use executive::goal::coordinator::{GoalCoordinator, GoalTickOutcome};
+use executive::goal::ObjectiveStore;
 use fabric::goal::{GoalBudget, GoalId, GoalSpec, GoalState};
 use fabric::PrincipalId;
 use fabric::ProcessId;

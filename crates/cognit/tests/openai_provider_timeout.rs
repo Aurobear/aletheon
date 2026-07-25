@@ -1,7 +1,6 @@
 use std::time::{Duration, Instant};
 
 use cognit::config::{CognitConfig, ProviderTimeoutConfig};
-use cognit::llm::openai_provider::OpenAiProvider;
 use fabric::{LlmProvider, Message};
 use futures::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -30,8 +29,25 @@ fn timeouts() -> ProviderTimeoutConfig {
     }
 }
 
-fn provider(base_url: String) -> OpenAiProvider {
-    OpenAiProvider::new("secret-api-key", "test-model", base_url).with_timeouts(timeouts())
+fn provider(base_url: String) -> std::sync::Arc<dyn LlmProvider> {
+    let config = cognit::config::ProviderConfig {
+        name: "test-adapter".into(),
+        base_url,
+        api_key: "secret-api-key".into(),
+        transport: cognit::config::Transport::Openai,
+        models: vec!["test-model".into()],
+        max_context_length: None,
+        pricing: None,
+    };
+    cognit::composition::inference_factory::create_provider(
+        &config,
+        "test-model",
+        cognit::composition::inference_factory::ProviderBuildOptions {
+            max_tokens: 100_000,
+            timeouts: timeouts(),
+        },
+    )
+    .unwrap()
 }
 
 #[test]
@@ -50,7 +66,8 @@ stream_idle_timeout_ms = 30
 
     let defaults = ProviderTimeoutConfig::default();
     assert!(defaults.connect_timeout_ms > 0);
-    assert!(defaults.stream_idle_timeout_ms < defaults.request_timeout_ms);
+    assert_eq!(defaults.stream_idle_timeout_ms, 90_000);
+    assert_eq!(defaults.stream_idle_timeout_ms, defaults.request_timeout_ms);
 
     let mut invalid = parsed;
     invalid.agent.provider_timeouts.request_timeout_ms = 0;
@@ -112,6 +129,6 @@ async fn provider_http_error_never_includes_response_body() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(error.contains("500"));
+    assert_eq!(error, "provider_unavailable");
     assert!(!error.contains(secret));
 }

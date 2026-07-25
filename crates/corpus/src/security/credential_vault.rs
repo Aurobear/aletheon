@@ -269,7 +269,7 @@ fn sync_parent(path: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use crate::tools::mcp::token_store::{JsonTokenPersistence, TokenStore};
-    use fabric::{ExternalIdentityId, IdentityProvider};
+    use fabric::{ExternalIdentityId, ExternalProviderId};
 
     #[cfg(unix)]
     fn fixture() -> (tempfile::TempDir, CredentialVault, TokenKey, TokenEntry) {
@@ -286,7 +286,10 @@ mod tests {
         key.sync_all().unwrap();
         let vault =
             CredentialVault::open_for_test(dir.path().join("tokens.vault"), &key_path).unwrap();
-        let token_key = TokenKey::external(IdentityProvider::Google, ExternalIdentityId::new());
+        let token_key = TokenKey::external(
+            ExternalProviderId::new("google").unwrap(),
+            ExternalIdentityId::new(),
+        );
         let entry = TokenEntry {
             access_token: "access-token-secret".into(),
             refresh_token: Some("refresh-token-secret".into()),

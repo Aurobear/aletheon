@@ -8,12 +8,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use cognit::r#impl::provider_registry::ProviderRegistry;
+use cognit::composition::provider_registry::ProviderRegistry;
 use fabric::{LlmResponse, LlmStream};
 use tokio_util::sync::CancellationToken;
 
-use crate::r#impl::core_rpc::{CorePeerPolicy, CoreRpcServer};
-use crate::service::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
+use crate::application::inference_port::{
+    CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
+};
+use crate::host::core_rpc::{CorePeerPolicy, CoreRpcServer};
 
 /// A model specification after authoritative machine-registry resolution.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +69,22 @@ impl RegistryInferencePort {
 
 #[async_trait::async_trait]
 impl InferencePort for RegistryInferencePort {
+    async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
+        let (config, model) = self
+            .registry
+            .resolve(model_spec)
+            .map_err(InferenceError::from)?;
+        let provider = self
+            .registry
+            .create_provider(&config, &model)
+            .map_err(InferenceError::from)?;
+        Ok(ModelCapabilities {
+            model_spec: format!("{}/{}", config.name, model),
+            display_name: provider.name().to_string(),
+            max_context_tokens: provider.max_context_length(),
+        })
+    }
+
     async fn complete(&self, request: CoreInferenceRequest) -> Result<LlmResponse, InferenceError> {
         let provider = self
             .registry
@@ -107,14 +125,14 @@ impl SystemCoreRuntime {
         // Passing no project directory is intentional: the system core may read
         // machine/user configuration layers plus an explicit operator file, but
         // never configuration from the caller's current workspace.
-        let app_config = crate::core::config::load_for_host(None, config_path)?.value;
-        let crate::core::config::AppConfig {
+        let app_config = crate::composition::config::load_for_host(None, config_path)?.value;
+        let crate::composition::config::AppConfig {
             telegram,
-            memory: crate::core::config::MemoryConfig { gbrain, .. },
+            memory: crate::composition::config::MemoryConfig { supplemental, .. },
             mcp_servers,
             ..
         } = &app_config;
-        if telegram.enabled || gbrain.enabled || !mcp_servers.is_empty() {
+        if telegram.enabled || supplemental.enabled || !mcp_servers.is_empty() {
             anyhow::bail!("system core configuration contains user-scoped integration credentials");
         }
         let registry = Arc::new(ProviderRegistry::from_config(&app_config.cognit())?);

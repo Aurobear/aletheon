@@ -266,6 +266,10 @@ pub enum ClientEvent {
     Usage {
         tokens_in: u64,
         tokens_out: u64,
+        #[serde(default)]
+        cache_hit_tokens: u64,
+        #[serde(default)]
+        cache_miss_tokens: u64,
     },
     ContextUpdate {
         max_tokens: u64,
@@ -308,6 +312,12 @@ pub enum ClientEvent {
         reason: String,
     },
     CompactionTriggered,
+    CompactionCompleted {
+        strategy: String,
+        tokens_before: u64,
+        tokens_after: u64,
+        evicted_messages: u64,
+    },
     Reflection {
         summary: String,
     },

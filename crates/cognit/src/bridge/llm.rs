@@ -1,4 +1,4 @@
-use crate::r#impl::llm::{LlmProvider, LlmResponse, LlmStream, ToolDefinition};
+use crate::adapters::inference::{LlmProvider, LlmResponse, LlmStream, ToolDefinition};
 use anyhow::Result;
 use fabric::{ContentBlock, Message, Role};
 use std::sync::Arc;

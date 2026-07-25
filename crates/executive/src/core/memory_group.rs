@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use mnemosyne::episodic::EpisodicMemory;
+use mnemosyne::runtime::EpisodicMemory;
 use mnemosyne::MemoryService;
 
-use crate::r#impl::approval::ApprovalRepository;
-use crate::r#impl::goal::ObjectiveStore;
+use crate::application::approval::ApprovalRepository;
+use crate::application::goal::ObjectiveStore;
 
 pub(crate) struct MemoryGroup {
     pub(crate) episodic_memory: Arc<Mutex<EpisodicMemory>>,

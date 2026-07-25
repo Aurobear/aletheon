@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use executive::testing::agent_control::SqliteAgentRunRepository;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,20 +9,20 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::Context;
 use async_trait::async_trait;
-use executive::r#impl::events::{
+use executive::application::agent_control::{
+    AgentControlService, AgentEventSink, AgentRunRepository, AgentRuntimeInput,
+    AgentRuntimeLauncher, AgentRuntimeRegistry, BoundedAgentAdmission,
+};
+use executive::application::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
+use executive::application::dasein_workspace_adapter::DaseinWorkspaceAdapter;
+use executive::application::event_projection::{EventProjection, SqliteProjectionStore};
+use executive::application::governed_capability::{
+    GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
+};
+use executive::runtime::events::{
     agent_tree_projection::AgentTreeProjection, debug_projection::DebugProjection,
     memory_job_projection::MemoryJobProjection, metrics_projection::MetricsProjection,
     session_projection::SessionProjection,
-};
-use executive::service::agent_control::{
-    AgentControlService, AgentEventSink, AgentRunRepository, AgentRuntimeInput,
-    AgentRuntimeLauncher, AgentRuntimeRegistry, BoundedAgentAdmission, SqliteAgentRunRepository,
-};
-use executive::service::conscious_workspace::{ConsciousTurnPort, ConsciousWorkspaceRegistry};
-use executive::service::dasein_workspace_adapter::DaseinWorkspaceAdapter;
-use executive::service::event_projection::{EventProjection, SqliteProjectionStore};
-use executive::service::governed_capability::{
-    GovernedActionDecision, GovernedActionLoopResolver, SelectedActionOutcomeReceipt,
 };
 use fabric::{
     AcceptanceEvidence, AgentBudget, AgentContextFork, AgentControlError, AgentControlPort,
@@ -202,7 +204,7 @@ impl AgentRuntimeLauncher for AcceptanceLauncher {
                 .push((input.handle.agent_id, payload.content.clone()));
             events
                 .emit(
-                    executive::service::agent_control::AgentRuntimeEvent::Progress {
+                    executive::application::agent_control::AgentRuntimeEvent::Progress {
                         agent_id: input.handle.agent_id,
                         process_id: input.handle.process_id,
                         operation_id: input.handle.operation_id,
@@ -382,10 +384,10 @@ async fn run_agent_lifecycle(
     let projection_path = root.join("agent-projections.db");
     let repository = Arc::new(SqliteAgentRunRepository::open(&repository_path)?);
     let memory = Arc::new(mnemosyne::AgentMemoryVault::open(&memory_path)?);
-    let spine = Arc::new(executive::r#impl::events::SqliteEventSpine::open(
+    let spine = Arc::new(executive::runtime::events::SqliteEventSpine::open(
         &event_path,
     )?);
-    let projections = Arc::new(executive::r#impl::events::DefaultEventProjectionSet::open(
+    let projections = Arc::new(executive::runtime::events::DefaultEventProjectionSet::open(
         &projection_path,
     )?);
     let launcher = AcceptanceLauncher::new();
@@ -398,6 +400,7 @@ async fn run_agent_lifecycle(
             repository.clone(),
             Arc::new(BoundedAgentAdmission::new(4)?),
             runtimes.clone(),
+            spine.clone(),
         )
         .with_event_spine(spine.clone())
         .with_event_projections(projections)
@@ -538,7 +541,7 @@ async fn run_agent_lifecycle(
     let tree_id = EventTreeId::for_root_session(&root_agent.0.to_string());
     let actual_events = spine.read_tree(
         tree_id,
-        executive::r#impl::events::EventReadFilter {
+        executive::runtime::events::EventReadFilter {
             limit: 100,
             ..Default::default()
         },
@@ -573,10 +576,10 @@ async fn run_agent_lifecycle(
         conflict.is_err() && spine.metrics().rejected > 0,
         "event spine did not expose conflicting duplicate rejection"
     );
-    let reopened_spine = executive::r#impl::events::SqliteEventSpine::open(&event_path)?;
+    let reopened_spine = executive::runtime::events::SqliteEventSpine::open(&event_path)?;
     let reopened_events = reopened_spine.read_tree(
         tree_id,
-        executive::r#impl::events::EventReadFilter {
+        executive::runtime::events::EventReadFilter {
             limit: 100,
             ..Default::default()
         },
@@ -598,8 +601,8 @@ async fn run_agent_lifecycle(
         reopened_repository,
         Arc::new(BoundedAgentAdmission::new(4)?),
         runtimes,
+        Arc::new(reopened_spine),
     )
-    .with_event_spine(Arc::new(reopened_spine))
     .with_memory_vault(Arc::new(reopened_memory));
     let recovery = restarted_service
         .reconcile_startup("daemon:acceptance-restart")
@@ -674,13 +677,13 @@ pub struct AblationRun {
 }
 
 struct CountingDasein {
-    inner: Arc<dyn executive::service::conscious_core_ports::DaseinWorkspacePort>,
+    inner: Arc<dyn executive::application::conscious_core_ports::DaseinWorkspacePort>,
     enabled: bool,
     modulations: AtomicUsize,
 }
 
 #[async_trait]
-impl executive::service::conscious_core_ports::DaseinWorkspacePort for CountingDasein {
+impl executive::application::conscious_core_ports::DaseinWorkspacePort for CountingDasein {
     async fn modulate_salience(
         &self,
         candidate: &fabric::WorkspaceCandidate,
@@ -696,7 +699,7 @@ impl executive::service::conscious_core_ports::DaseinWorkspacePort for CountingD
     async fn integrate_broadcast(
         &self,
         broadcast: &fabric::WorkspaceBroadcast,
-    ) -> anyhow::Result<executive::service::conscious_core_ports::DaseinIntegration> {
+    ) -> anyhow::Result<executive::application::conscious_core_ports::DaseinIntegration> {
         self.inner.integrate_broadcast(broadcast).await
     }
 
@@ -803,7 +806,7 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
     )?);
     let broadcast = Arc::new(agora::BroadcastCoordinator::new(store.clone(), hub));
     let dasein_module = Arc::new(dasein::dasein::DaseinModule::new(clock.clone()).0);
-    let inner: Arc<dyn executive::service::conscious_core_ports::DaseinWorkspacePort> =
+    let inner: Arc<dyn executive::application::conscious_core_ports::DaseinWorkspacePort> =
         Arc::new(DaseinWorkspaceAdapter::new(dasein_module, clock.clone()));
     let dasein = Arc::new(CountingDasein {
         inner,
@@ -811,7 +814,7 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
         modulations: AtomicUsize::new(0),
     });
     let coordinator =
-        executive::service::conscious_core_coordinator::ConsciousCoreCoordinator::new(
+        executive::application::conscious_core_coordinator::ConsciousCoreCoordinator::new(
             space.clone(),
             agora::CandidatePoolConfig::default(),
             broadcast,
@@ -820,7 +823,7 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
             fabric::ProcessId(Uuid::from_u128(804)),
             kernel.clone(),
             Arc::new(agora::AgoraRegistry::new(kernel.clock())),
-            executive::service::conscious_core_coordinator::ConsciousCoreConfig::default(),
+            executive::application::conscious_core_coordinator::ConsciousCoreConfig::default(),
         )?;
     coordinator.register_processor(
         Arc::new(FeedbackProcessor {
@@ -832,9 +835,9 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
     )?;
     let now = clock.mono_now();
     let event_ref = "ablation-observation".to_string();
-    executive::service::conscious_core_ports::ConsciousCandidatePort::submit_candidate(
+    executive::application::conscious_core_ports::ConsciousCandidatePort::submit_candidate(
         &coordinator,
-        executive::service::conscious_core_ports::CandidateSubmission {
+        executive::application::conscious_core_ports::CandidateSubmission {
             candidate: fabric::WorkspaceCandidate {
                 schema_version: fabric::WORKSPACE_SCHEMA_V1,
                 id: fabric::ContentId(Uuid::from_u128(805)),
@@ -869,9 +872,10 @@ pub async fn run_ablation(root: &Path, config: AblationConfig) -> anyhow::Result
                 created_at: now,
                 expires_at: Some(fabric::MonoDeadline::after(now, 10_000)),
             },
-            cause: executive::service::conscious_core_ports::CandidateCause::ExternalObservation {
-                event_ref,
-            },
+            cause:
+                executive::application::conscious_core_ports::CandidateCause::ExternalObservation {
+                    event_ref,
+                },
         },
     )
     .await?;
@@ -1016,7 +1020,7 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
     };
     let forged_outcome_denied = action_loop
         .observe_outcome(
-            &executive::service::governed_capability::SelectedActionContext {
+            &executive::application::governed_capability::SelectedActionContext {
                 candidate_id: fabric::ContentId(Uuid::from_u128(999)),
                 broadcast_epoch: fabric::BroadcastEpoch(1),
                 operation_id: call.operation_id,
@@ -1170,8 +1174,8 @@ pub async fn run(root: &Path) -> anyhow::Result<HarnessRun> {
 fn trace(
     replay: &[agora::BroadcastReplay],
     transition: Option<&fabric::dasein::SelfTransitionReceipt>,
-    processors: &[executive::service::conscious_core_ports::ProcessorCycleStatus],
-    selected: &executive::service::governed_capability::SelectedActionContext,
+    processors: &[executive::application::conscious_core_ports::ProcessorCycleStatus],
+    selected: &executive::application::governed_capability::SelectedActionContext,
     outcome: &SelectedActionOutcomeReceipt,
 ) -> ConsciousCoreTrace {
     let mut events = Vec::new();

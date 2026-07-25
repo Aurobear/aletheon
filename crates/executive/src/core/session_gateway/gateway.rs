@@ -38,18 +38,18 @@ use super::param_registry::ParamRegistry;
 pub use super::session_state::SessionStateRef;
 use super::subsystem_query::SubsystemRegistry;
 
-use crate::core::config::ExecutiveConfig;
-use crate::r#impl::daemon::debug_handler::DebugHandler;
-use crate::r#impl::daemon::session_manager::SessionManager;
-use crate::service::session_service::SessionService;
+use crate::application::session_service::SessionService;
+use crate::composition::config::ExecutiveConfig;
+use crate::host::daemon::debug_handler::DebugHandler;
+use crate::host::daemon::session_manager::SessionManager;
 #[cfg(test)]
 use cognit::harness::linear::circuit_breaker::CircuitBreakerStatus;
 #[cfg(test)]
 use cognit::harness::linear::goal_tracker::GoalTracker;
 use dasein::SelfField;
 use fabric::LlmProvider;
-use mnemosyne::CoreMemory;
-use mnemosyne::RecallMemory;
+use mnemosyne::runtime::CoreMemory;
+use mnemosyne::runtime::RecallMemory;
 
 /// Session Gateway — unified facade for external debug access.
 ///
@@ -272,7 +272,7 @@ mod tests {
         .unwrap();
         let canonical_sessions = Arc::new(SessionService::new(
             Arc::new(
-                crate::r#impl::session::canonical_store::CanonicalSessionStore::open(
+                crate::adapters::session::canonical_store::CanonicalSessionStore::open(
                     tmp.path().join("sessions.db"),
                 )
                 .unwrap(),

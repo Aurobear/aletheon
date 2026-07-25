@@ -124,7 +124,7 @@ impl MutableSelfModel {
 
         // Generate a possibility from the negation
         let possibility = SelfPossibility {
-            content: format!("no longer '{}', open to new ways", content),
+            content: format!("no longer '{content}', open to new ways"),
             from_negation: position,
             attraction: 0.5,
             risk: 0.5,

@@ -1,0 +1,21 @@
+    Checking fabric v0.1.0 (/home/aurobear/Workspace/aletheon/crates/fabric)
+    Checking platform v0.1.0 (/home/aurobear/Workspace/aletheon/crates/platform)
+    Checking runtime v0.1.0 (/home/aurobear/Workspace/aletheon/crates/runtime)
+    Checking execd v0.1.0 (/home/aurobear/Workspace/aletheon/crates/execd)
+    Checking kernel v0.1.0 (/home/aurobear/Workspace/aletheon/crates/kernel)
+    Checking mnemosyne v0.1.0 (/home/aurobear/Workspace/aletheon/crates/mnemosyne)
+    Checking corpus v0.1.0 (/home/aurobear/Workspace/aletheon/crates/corpus)
+    Checking cognit v0.1.0 (/home/aurobear/Workspace/aletheon/crates/cognit)
+    Checking dasein v0.1.0 (/home/aurobear/Workspace/aletheon/crates/dasein)
+    Checking hardware v0.1.0 (/home/aurobear/Workspace/aletheon/crates/hardware)
+    Checking agora v0.1.0 (/home/aurobear/Workspace/aletheon/crates/agora)
+    Checking metacog v0.1.0 (/home/aurobear/Workspace/aletheon/crates/metacog)
+    Checking gateway v0.1.0 (/home/aurobear/Workspace/aletheon/crates/gateway)
+    Checking interact v0.1.0 (/home/aurobear/Workspace/aletheon/crates/interact)
+    Checking executive v0.1.0 (/home/aurobear/Workspace/aletheon/crates/executive)
+    Checking aletheon v0.1.0 (/home/aurobear/Workspace/aletheon/crates/aletheon)
+    Checking basic_agent v0.1.0 (/home/aurobear/Workspace/aletheon/examples/basic_agent)
+    Checking evolution_loop v0.1.0 (/home/aurobear/Workspace/aletheon/examples/evolution_loop)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 45.05s
+
+DURATION_SECONDS=45.32

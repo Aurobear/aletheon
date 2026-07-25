@@ -75,7 +75,7 @@ impl ReActLoop {
 
         self.emit_signal(AwarenessSignal {
             step: StepType::ToolCallEnd,
-            action: format!("tool:{}", tool_name),
+            action: format!("tool:{tool_name}"),
             detected_state: detected,
             timestamp: fabric::wall_to_datetime(self.clock.wall_now()),
         });

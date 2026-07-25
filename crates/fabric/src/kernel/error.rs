@@ -178,7 +178,7 @@ impl AgentError {
                 provider: provider.to_string(),
                 kind: LlmErrorKind::Timeout,
             },
-            format!("LLM provider {} timed out", provider),
+            format!("LLM provider {provider} timed out"),
         )
     }
 
@@ -189,7 +189,7 @@ impl AgentError {
                 provider: provider.to_string(),
                 kind: LlmErrorKind::RateLimited,
             },
-            format!("LLM provider {} rate limited", provider),
+            format!("LLM provider {provider} rate limited"),
         )
     }
 
@@ -200,7 +200,7 @@ impl AgentError {
                 tool: tool.to_string(),
                 kind: ToolErrorKind::Timeout,
             },
-            format!("Tool {} timed out", tool),
+            format!("Tool {tool} timed out"),
         )
     }
 
@@ -211,7 +211,7 @@ impl AgentError {
                 tool: tool.to_string(),
                 kind: ToolErrorKind::PermissionDenied,
             },
-            format!("Tool {} denied: {}", tool, reason),
+            format!("Tool {tool} denied: {reason}"),
         )
     }
 
@@ -221,7 +221,7 @@ impl AgentError {
             ErrorCategory::Config {
                 kind: ConfigErrorKind::Missing,
             },
-            format!("Missing config key: {}", key),
+            format!("Missing config key: {key}"),
         )
     }
 
@@ -231,7 +231,7 @@ impl AgentError {
             ErrorCategory::Registry {
                 kind: RegistryErrorKind::AlreadyExists,
             },
-            format!("'{}' already registered", name),
+            format!("'{name}' already registered"),
         )
     }
 
@@ -241,7 +241,7 @@ impl AgentError {
             ErrorCategory::Registry {
                 kind: RegistryErrorKind::NotFound,
             },
-            format!("'{}' not found", name),
+            format!("'{name}' not found"),
         )
     }
 
@@ -251,7 +251,7 @@ impl AgentError {
             ErrorCategory::Registry {
                 kind: RegistryErrorKind::DependencyCycle,
             },
-            format!("Dependency cycle: {}", detail),
+            format!("Dependency cycle: {detail}"),
         )
     }
 
@@ -262,7 +262,7 @@ impl AgentError {
                 tool: hook.to_string(),
                 kind: ToolErrorKind::Timeout,
             },
-            format!("Hook '{}' timed out after {}s", hook, secs),
+            format!("Hook '{hook}' timed out after {secs}s"),
         )
     }
 }
@@ -413,7 +413,7 @@ pub fn handle_tool_error(error: &AgentError, tool_name: &str, attempt: u32) -> T
                     }
                 } else {
                     ToolErrorAction::Skip {
-                        reason: format!("Tool {} timed out after {} retries", tool_name, attempt),
+                        reason: format!("Tool {tool_name} timed out after {attempt} retries"),
                     }
                 }
             }
@@ -421,10 +421,10 @@ pub fn handle_tool_error(error: &AgentError, tool_name: &str, attempt: u32) -> T
                 required_level: "L2".to_string(),
             },
             ToolErrorKind::ResourceExhausted => ToolErrorAction::Degrade {
-                alternative: format!("Skip {} and inform user", tool_name),
+                alternative: format!("Skip {tool_name} and inform user"),
             },
             ToolErrorKind::SecurityViolation => ToolErrorAction::Abort {
-                reason: format!("Security violation in tool {}", tool_name),
+                reason: format!("Security violation in tool {tool_name}"),
             },
             _ => ToolErrorAction::ReportToUser {
                 message: error.message.clone(),
@@ -440,7 +440,7 @@ pub fn handle_tool_error(error: &AgentError, tool_name: &str, attempt: u32) -> T
                 }
             } else {
                 ToolErrorAction::ReportToUser {
-                    message: format!("LLM unavailable after {} retries", attempt),
+                    message: format!("LLM unavailable after {attempt} retries"),
                 }
             }
         }
@@ -601,7 +601,7 @@ mod tests {
             },
             "request timed out",
         );
-        let display = format!("{}", e);
+        let display = format!("{e}");
         assert!(display.contains("Recoverable"));
         assert!(display.contains("request timed out"));
     }

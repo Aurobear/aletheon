@@ -27,7 +27,7 @@ impl SelfFieldStore {
     /// Open (or create) the SQLite database and ensure the required tables exist.
     pub fn new(db_path: PathBuf) -> Result<Self> {
         let conn = Connection::open(&db_path)
-            .with_context(|| format!("Failed to open SQLite database at {:?}", db_path))?;
+            .with_context(|| format!("Failed to open SQLite database at {db_path:?}"))?;
 
         conn.execute_batch(
             "

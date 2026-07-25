@@ -156,13 +156,13 @@ impl ReflectionEntry {
         if !self.learned.is_empty() {
             lines.push("  学到:".to_string());
             for l in &self.learned {
-                lines.push(format!("    · {}", l));
+                lines.push(format!("    · {l}"));
             }
         }
         if !self.behavior_changes.is_empty() {
             lines.push("  行为调整:".to_string());
             for c in &self.behavior_changes {
-                lines.push(format!("    · {}", c));
+                lines.push(format!("    · {c}"));
             }
         }
         lines.join("\n")

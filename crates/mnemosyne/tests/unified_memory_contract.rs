@@ -4,14 +4,15 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use fabric::{Clock, Subsystem, SubsystemContext};
-use mnemosyne::backends::gbrain::{
-    EnqueueOutcome, GbrainBackendError, SupplementalErrorCategory, SupplementalRecall,
+use mnemosyne::runtime::{CoreMemory, EpisodicMemory, FactStore, MemoryBlock, RecallMemory};
+use mnemosyne::supplemental::{
+    EnqueueOutcome, SupplementalErrorCategory, SupplementalMemoryError, SupplementalRecall,
     SupplementalRecallHealth,
 };
 use mnemosyne::{
-    CompositeMemoryService, CoreMemory, DefaultMemoryService, EpisodicMemory, ExperienceEvent,
-    FactStore, ForgetPolicy, MemoryBlock, MemoryKindLabel, MemoryMetadata, MemoryScopeLabel,
-    MemoryService, RecallMemory, RecallRequest, RecallSourceLabel, SupplementalMemoryService,
+    CompositeMemoryService, DefaultMemoryService, ExperienceEvent, ForgetPolicy, MemoryKindLabel,
+    MemoryMetadata, MemoryScopeLabel, MemoryService, RecallRequest, RecallSourceLabel,
+    SupplementalMemoryService,
 };
 use rusqlite::Connection;
 use serde_json::Value;
@@ -343,8 +344,12 @@ impl SupplementalMemoryService for OutageSupplemental {
         0
     }
 
-    fn record(&self, _: &ExperienceEvent, _: i64) -> Result<EnqueueOutcome, GbrainBackendError> {
-        Err(GbrainBackendError::Unsupported)
+    fn record(
+        &self,
+        _: &ExperienceEvent,
+        _: i64,
+    ) -> Result<EnqueueOutcome, SupplementalMemoryError> {
+        Err(SupplementalMemoryError::Unsupported)
     }
 
     async fn recall(&self, _: RecallRequest, _: &CancellationToken) -> SupplementalRecall {
@@ -358,7 +363,7 @@ impl SupplementalMemoryService for OutageSupplemental {
         }
     }
 
-    fn forget(&self, _: ForgetPolicy) -> Result<(), GbrainBackendError> {
+    fn forget(&self, _: ForgetPolicy) -> Result<(), SupplementalMemoryError> {
         Ok(())
     }
 }

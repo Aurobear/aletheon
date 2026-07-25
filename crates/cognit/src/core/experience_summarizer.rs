@@ -42,10 +42,7 @@ impl ExperienceSummarizer {
         }
         for (topic, count) in &topic_counts {
             if *count >= 3 {
-                patterns.push(format!(
-                    "Repeated topic '{}' appeared {} times",
-                    topic, count
-                ));
+                patterns.push(format!("Repeated topic '{topic}' appeared {count} times"));
             }
         }
 
@@ -97,8 +94,7 @@ impl ExperienceSummarizer {
             for (lesson, count) in &learning_counts {
                 if *count >= 2 {
                     patterns.push(format!(
-                        "Recurring lesson: '{}' (mentioned {} times)",
-                        lesson, count
+                        "Recurring lesson: '{lesson}' (mentioned {count} times)"
                     ));
                 }
             }

@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabric::{
-    AgentBroadcastRef, AgentBudget, AgentContextFork, AgentControlError, AgentControlMessage,
-    AgentControlPort, AgentHandle, AgentId, AgentListRequest, AgentProfileId, AgentRunStatus,
-    AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentWaitRequest, AgoraSpaceId,
-    BroadcastEpoch, ContentId, OperationId, ProcessId, RuntimeId,
+    AgentBroadcastRef, AgentBudget, AgentContextFork, AgentControlError, AgentControlErrorKind,
+    AgentControlMessage, AgentControlPort, AgentHandle, AgentId, AgentListRequest, AgentProfileId,
+    AgentRunStatus, AgentRuntimeCapability, AgentSendRequest, AgentSnapshot, AgentSpawnIntent,
+    AgentSpawnRequest, AgentWaitRequest, AgoraSpaceId, BroadcastEpoch, ContentId, OperationId,
+    ProcessId, RuntimeId,
 };
 use uuid::Uuid;
 
@@ -37,6 +38,42 @@ fn spawn_request() -> AgentSpawnRequest {
         background_decls: vec![],
         budget: budget(),
     }
+}
+
+fn generic_intent(runtime_override: Option<&str>) -> AgentSpawnIntent {
+    AgentSpawnIntent {
+        root_agent_id: AgentId::new(),
+        parent_agent_id: None,
+        parent_process_id: None,
+        profile_id: AgentProfileId("researcher".into()),
+        runtime_override: runtime_override.map(str::to_owned),
+        required_capabilities: vec![AgentRuntimeCapability::CodeRead],
+        trusted_workspace: None,
+        task: "analyze".into(),
+        context: AgentContextFork::None,
+        allowed_tools: vec!["file_read".into()],
+        budget: budget(),
+    }
+}
+
+#[test]
+fn generic_spawn_intent_accepts_automatic_selection() {
+    let intent = generic_intent(None);
+    intent.validate().unwrap();
+    assert!(intent.runtime_override.is_none());
+}
+
+#[test]
+fn generic_spawn_intent_rejects_duplicate_capabilities() {
+    let mut intent = generic_intent(None);
+    intent.required_capabilities = vec![
+        AgentRuntimeCapability::CodeRead,
+        AgentRuntimeCapability::CodeRead,
+    ];
+    assert_eq!(
+        intent.validate().unwrap_err().kind,
+        AgentControlErrorKind::InvalidRequest
+    );
 }
 
 fn handle(root: AgentId) -> AgentHandle {

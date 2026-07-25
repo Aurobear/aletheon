@@ -1,5 +1,14 @@
 # Aletheon Project Instructions
 
+## Tool and debugging efficiency
+
+- Never invoke Cargo directly; use `bash scripts/cargo-agent.sh <cargo arguments>`.
+- For repository overviews, batch-read known entry files before scoped search.
+- Do not inventory one file extension at a time or alternate one model request per independent file.
+- Treat `provider_unavailable`, `provider_rejected_request`, and any rendered inference error as test failures even if a monitor aggregate says PASS.
+- Separate model rounds, provider retries, and tool-call counts in debug reports.
+- System acceptance uses `sudo bash scripts/aletheon.sh deploy` and `/usr/bin/aletheon`; do not deploy or accept `~/.local/bin/aletheon`.
+
 ## Branch and PR workflow
 
 - Treat `dev` as the default integration branch.
@@ -167,24 +176,24 @@ Before approving any design or plan that adds a new subsystem, verify:
 
 - Kernel timeout/deadline tests MUST use `TestClock`. No real `sleep`.
 - New behavior MUST have a test. Refactors without new tests are OK only if
-  `cargo check --workspace --all-targets` + existing tests pass.
+  `bash scripts/cargo-agent.sh check --workspace --all-targets` + existing tests pass.
 
 ### Test scope by phase
 
-Full `cargo test --workspace` is too slow for iterative development (10+ minutes).
+Full `bash scripts/cargo-agent.sh test --workspace` is too slow for iterative development (10+ minutes).
 Scale test scope to the risk of the change:
 
 | Phase | Scope | Command |
 |-------|-------|---------|
-| **Feature work** (per-commit) | Affected crate only | `cargo test -p <crate> --lib --no-fail-fast` |
-| **Cross-crate change** | Affected crates | `cargo test -p <crate1> -p <crate2> --lib --no-fail-fast` |
-| **New integration test** | Specific test file | `cargo test -p <crate> --test <name> --no-fail-fast` |
-| **Pre-PR to dev** | Affected crates all targets | `cargo test -p <crate> --all-targets --no-fail-fast` |
-| **Merge to dev** | Full workspace | `cargo test --workspace --no-fail-fast` (only on PR to dev) |
+| **Feature work** (per-commit) | Affected crate only | `bash scripts/cargo-agent.sh test -p <crate> --lib --no-fail-fast` |
+| **Cross-crate change** | Affected crates | `bash scripts/cargo-agent.sh test -p <crate1> -p <crate2> --lib --no-fail-fast` |
+| **New integration test** | Specific test file | `bash scripts/cargo-agent.sh test -p <crate> --test <name> --no-fail-fast` |
+| **Pre-PR to dev** | Affected crates all targets | `bash scripts/cargo-agent.sh test -p <crate> --all-targets --no-fail-fast` |
+| **Merge to dev** | Full workspace | `bash scripts/cargo-agent.sh test --workspace --no-fail-fast` (only on PR to dev) |
 
-**Rule**: Do NOT run `cargo test --workspace` during feature-branch development.
+**Rule**: Do NOT run `bash scripts/cargo-agent.sh test --workspace` during feature-branch development.
 Only run it when the PR targets `dev`. Before that, test only the crates you touched.
-A `cargo check --workspace --all-targets` is sufficient to catch cross-crate breakage.
+A `bash scripts/cargo-agent.sh check --workspace --all-targets` is sufficient to catch cross-crate breakage.
 
 ## Commit conventions
 
@@ -204,3 +213,29 @@ This is a **wiring-only phase**. The following are prohibited:
 
 Allowed: connecting existing kernel infrastructure to the production execution
 path (`execute.rs`), grouping CoreSystems fields, adding schema enforcement.
+
+## Generalization and answer quality
+
+- Never implement production branches for a fixed test prompt, phrase,
+  language, repository name, checkout path, or expected answer.
+- Test scenarios may be concrete; runtime decisions must use typed state,
+  capability semantics, effective configuration, and token/tool/time budgets.
+- Glob/path discovery is not content evidence. Do not reduce requests by
+  blocking the reads needed to support the answer.
+- Verify every claimed file or symbol and every claim that documentation or
+  configuration is absent. Score analysis correctness, not just completion.
+- Report cumulative provider tokens, active context occupancy, cache tokens,
+  inference rounds, retries, and tools independently.
+- Require both three fresh real-TUI repetitions for model-controlled behavior
+  and a sustained multi-turn run in one unchanged session.
+- Treat disagreement between monitor verdict, TUI frame, session, audit, or
+  daemon logs as a failed test and fix the monitor.
+- Treat effective model ID, display name, context capacity, runtime selection,
+  session identity, and budgets as host-owned runtime facts. Never infer them
+  from model prose or training priors.
+- Do not report an asynchronous child result from a spawn handle. Observe its
+  terminal snapshot or durable terminal receipt first.
+- Do not reuse an accepted event schema for a payload with different semantics.
+  Producer/schema/projector compatibility is a contract, not a naming detail.
+- Keep per-session retry behavior distinct from machine-wide provider
+  backpressure; both must be validated when request storms are investigated.

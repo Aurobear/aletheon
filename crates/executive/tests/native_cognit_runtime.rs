@@ -2,15 +2,15 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use executive::r#impl::runtime::{
-    AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources, ResolvedAgentProfile,
-};
-use executive::service::agent_control::{
+use executive::application::agent_control::{
     AgentContextProjection, AgentEventSink, AgentRuntimeEvent, AgentRuntimeInbox,
     AgentRuntimeInput, AgentRuntimeLauncher,
 };
-use executive::service::harness_factory::LinearCognitiveSessionFactory;
-use executive::service::{CapabilityExecutionContext, CapabilityService};
+use executive::application::harness_factory::LinearCognitiveSessionFactory;
+use executive::application::{CapabilityExecutionContext, CapabilityService};
+use executive::testing::coding_runtime::{
+    AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources, ResolvedAgentProfile,
+};
 use fabric::{
     AgentApprovalPolicy, AgentBudget, AgentContextFork, AgentControlErrorKind, AgentHandle,
     AgentId, AgentMessageKind, AgentMessagePayload, AgentProfile, AgentProfileId,

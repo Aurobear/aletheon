@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-use fabric::{AgentError, RegistrationId, Registry};
+use fabric::{tool::ToolExposure, AgentError, RegistrationId, Registry};
 
+use super::search::{tool_search::ToolSearchTool, BM25Catalog, CatalogEntry};
 use super::Tool;
 
 /// Central registry for all available tools.
@@ -11,6 +12,7 @@ pub struct ToolRegistry {
     proposal_confidences: HashMap<String, f32>,
     id_map: HashMap<RegistrationId, String>,
     next_id: u64,
+    search_catalog: Option<Arc<RwLock<BM25Catalog>>>,
 }
 
 impl ToolRegistry {
@@ -20,6 +22,7 @@ impl ToolRegistry {
             proposal_confidences: HashMap::new(),
             id_map: HashMap::new(),
             next_id: 1,
+            search_catalog: None,
         }
     }
 
@@ -36,12 +39,52 @@ impl ToolRegistry {
     pub fn definitions(&self) -> Vec<fabric::ToolDefinition> {
         self.tools
             .values()
+            .filter(|tool| {
+                matches!(
+                    tool.exposure(),
+                    ToolExposure::Direct | ToolExposure::DirectModelOnly
+                )
+            })
             .map(|t| fabric::ToolDefinition {
                 name: t.name().to_string(),
                 description: t.description().to_string(),
                 input_schema: t.input_schema(),
             })
             .collect()
+    }
+
+    /// Bind the existing BM25 catalog to this registry and expose its single
+    /// bridge tool. Later registrations refresh the same shared catalog.
+    pub fn enable_tool_search(&mut self) -> Result<RegistrationId, AgentError> {
+        if self.tools.contains_key("tool_search") {
+            return Err(AgentError::already_exists("tool_search"));
+        }
+        let catalog = Arc::new(RwLock::new(self.build_search_catalog()));
+        self.search_catalog = Some(catalog.clone());
+        self.register(Arc::new(ToolSearchTool::new(catalog)))
+    }
+
+    fn build_search_catalog(&self) -> BM25Catalog {
+        BM25Catalog::build(
+            self.tools
+                .values()
+                .filter(|tool| tool.name() != "tool_search")
+                .map(|tool| {
+                    CatalogEntry::new(
+                        tool.name(),
+                        tool.description(),
+                        &tool.search_text(),
+                        tool.exposure(),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    fn refresh_search_catalog(&self) {
+        if let Some(catalog) = &self.search_catalog {
+            *catalog.write().expect("tool catalog lock poisoned") = self.build_search_catalog();
+        }
     }
 
     /// Declare trusted, host-only proposal confidence for a registered tool.
@@ -93,6 +136,38 @@ impl ToolRegistry {
         }
         Ok(registrations)
     }
+
+    pub fn register_robot_tools(
+        &mut self,
+        port: Arc<dyn fabric::types::embodiment::EmbodimentExecutionPort>,
+    ) -> Result<Vec<RegistrationId>, AgentError> {
+        use super::robot::{
+            RobotCancelTool, RobotExecuteSkillTool, RobotGetStateTool, RobotListSkillsTool,
+            RobotObserveTool, RobotSafeStopTool,
+        };
+        let registrations = [
+            Arc::new(RobotObserveTool::new(port.clone())) as Arc<dyn Tool>,
+            Arc::new(RobotGetStateTool::new(port.clone())),
+            Arc::new(RobotListSkillsTool::new(port.clone())),
+            Arc::new(RobotExecuteSkillTool::new(port.clone())),
+            Arc::new(RobotCancelTool::new(port.clone())),
+            Arc::new(RobotSafeStopTool::new(port)),
+        ]
+        .into_iter()
+        .map(|tool| self.register(tool))
+        .collect::<Result<Vec<_>, _>>()?;
+        for name in [
+            "robot_observe",
+            "robot_get_state",
+            "robot_list_skills",
+            "robot_execute_skill",
+            "robot_cancel",
+            "robot_safe_stop",
+        ] {
+            self.set_proposal_confidence(name, 0.5)?;
+        }
+        Ok(registrations)
+    }
 }
 
 impl Registry<Arc<dyn Tool>> for ToolRegistry {
@@ -105,6 +180,7 @@ impl Registry<Arc<dyn Tool>> for ToolRegistry {
         self.next_id += 1;
         self.id_map.insert(id, name.clone());
         self.tools.insert(name, tool);
+        self.refresh_search_catalog();
         Ok(id)
     }
 
@@ -112,13 +188,16 @@ impl Registry<Arc<dyn Tool>> for ToolRegistry {
         let name = self
             .id_map
             .remove(&id)
-            .ok_or_else(|| AgentError::not_found(&format!("{:?}", id)))?;
-        self.tools
+            .ok_or_else(|| AgentError::not_found(&format!("{id:?}")))?;
+        let removed = self
+            .tools
             .remove(&name)
             .inspect(|_| {
                 self.proposal_confidences.remove(&name);
             })
-            .ok_or_else(|| AgentError::not_found(&name))
+            .ok_or_else(|| AgentError::not_found(&name))?;
+        self.refresh_search_catalog();
+        Ok(removed)
     }
 
     fn get(&self, name: &str) -> Option<&Arc<dyn Tool>> {
@@ -148,6 +227,13 @@ impl ToolRegistry {
     /// Construct the built-in registry with daemon-trusted network authority.
     /// The policy is host configuration, never tool/model input.
     pub fn with_network_policy(policy: fabric::network_policy::NetworkPolicy) -> Self {
+        Self::with_network_policy_and_search(policy, None)
+    }
+
+    pub fn with_network_policy_and_search(
+        policy: fabric::network_policy::NetworkPolicy,
+        search: Option<super::web_search::WebSearchConfig>,
+    ) -> Self {
         let mut registry = Self::new();
         // Register built-in tools — panics on duplicate names (should never happen)
         registry
@@ -199,7 +285,9 @@ impl ToolRegistry {
             .expect("duplicate built-in tool");
         registry
             .register(Arc::new(
-                super::web_search::WebSearchTool::new().with_network_policy(policy),
+                super::web_search::WebSearchTool::new()
+                    .with_network_policy(policy)
+                    .with_config(search),
             ))
             .expect("duplicate built-in tool");
         // Task tools share a single TaskStore.
@@ -236,6 +324,12 @@ impl ToolRegistry {
                 .set_proposal_confidence(&name, 0.5)
                 .expect("built-in tool must be registered before metadata");
         }
+        registry
+            .enable_tool_search()
+            .expect("tool_search must be registered once");
+        registry
+            .set_proposal_confidence("tool_search", 0.5)
+            .expect("tool_search metadata follows registration");
         registry
     }
 }
@@ -318,6 +412,7 @@ mod tests {
         let expected = [
             "glob",
             "grep",
+            "tool_search",
             "web_fetch",
             "web_search",
             "task_create",
@@ -328,10 +423,18 @@ mod tests {
         for name in expected {
             assert!(
                 names.contains(&name),
-                "expected tool '{}' not found in registry",
-                name
+                "expected tool '{name}' not found in registry"
             );
         }
+    }
+
+    #[test]
+    fn default_registry_exposes_tool_search_to_the_model() {
+        let reg = ToolRegistry::default();
+        assert!(reg
+            .definitions()
+            .iter()
+            .any(|definition| definition.name == "tool_search"));
     }
 
     #[test]

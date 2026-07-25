@@ -62,7 +62,7 @@ pub async fn run(socket: &PathBuf, action: GoalAction) -> Result<()> {
     } else if resp["result"]["objective"].is_null() {
         println!("No active objective.");
     } else if let Some(oid) = resp["result"]["objective_id"].as_i64() {
-        println!("Objective created: id={}", oid);
+        println!("Objective created: id={oid}");
     } else {
         println!(
             "{}",

@@ -611,6 +611,7 @@ fn map_io_error(error: std::io::Error, operation: &str) -> HostError {
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use std::sync::Mutex;

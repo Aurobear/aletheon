@@ -17,7 +17,7 @@ use fabric::channel::{
 use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
-use gateway::store::{ChannelStore, InsertOutcome};
+use gateway::{ChannelStore, InsertOutcome};
 use tokio::sync::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ impl ChannelTurnExecutor for FakeTurnExecutor {
         _correlation_id: &str,
     ) -> anyhow::Result<String> {
         self.calls.lock().await.push(message.to_string());
-        Ok(format!("reply:{}", message))
+        Ok(format!("reply:{message}"))
     }
 }
 

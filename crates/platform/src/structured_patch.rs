@@ -100,8 +100,7 @@ pub fn validate_path(path_str: &str) -> Result<(), String> {
     }
     if path_str.starts_with('/') {
         return Err(format!(
-            "absolute path not allowed: '{}' (use a relative path)",
-            path_str
+            "absolute path not allowed: '{path_str}' (use a relative path)"
         ));
     }
 
@@ -110,14 +109,12 @@ pub fn validate_path(path_str: &str) -> Result<(), String> {
         match component {
             Component::ParentDir => {
                 return Err(format!(
-                    "path traversal not allowed: '{}' (contains '..')",
-                    path_str
+                    "path traversal not allowed: '{path_str}' (contains '..')"
                 ));
             }
             Component::RootDir | Component::Prefix(_) => {
                 return Err(format!(
-                    "absolute or prefixed path not allowed: '{}'",
-                    path_str
+                    "absolute or prefixed path not allowed: '{path_str}'"
                 ));
             }
             _ => {}
@@ -216,8 +213,7 @@ fn parse_patch_block(block: &str) -> Result<PatchOperation, String> {
         Ok(PatchOperation::AppendFile { path, content })
     } else {
         Err(format!(
-            "unknown operation header: '{}'. Expected one of: Add File:, Delete File:, Update File:, Append File:",
-            first_line
+            "unknown operation header: '{first_line}'. Expected one of: Add File:, Delete File:, Update File:, Append File:"
         ))
     }
 }
@@ -228,8 +224,7 @@ fn extract_fenced_content(block: &str, op_name: &str) -> Result<String, String> 
 
     if fence_positions.len() < 2 {
         return Err(format!(
-            "{} operation missing content fences ('>>>'): expected at least two fence markers",
-            op_name
+            "{op_name} operation missing content fences ('>>>'): expected at least two fence markers"
         ));
     }
 
@@ -337,11 +332,11 @@ fn parse_hunk_header(line: &str) -> Result<(u64, u64, u64, u64, Vec<String>), St
     let inner = line
         .strip_prefix("@@ ")
         .and_then(|s| s.strip_suffix(" @@"))
-        .ok_or_else(|| format!("invalid hunk header: '{}'", line))?;
+        .ok_or_else(|| format!("invalid hunk header: '{line}'"))?;
 
     let parts: Vec<&str> = inner.split_whitespace().collect();
     if parts.len() < 2 {
-        return Err(format!("invalid hunk header: '{}'", line));
+        return Err(format!("invalid hunk header: '{line}'"));
     }
 
     let (old_start, old_count) = parse_hunk_range(parts[0])?;
@@ -357,15 +352,15 @@ fn parse_hunk_range(s: &str) -> Result<(u64, u64), String> {
     if let Some((start_str, count_str)) = s.split_once(',') {
         let start: u64 = start_str
             .parse()
-            .map_err(|_| format!("invalid hunk line number: '{}'", start_str))?;
+            .map_err(|_| format!("invalid hunk line number: '{start_str}'"))?;
         let count: u64 = count_str
             .parse()
-            .map_err(|_| format!("invalid hunk count: '{}'", count_str))?;
+            .map_err(|_| format!("invalid hunk count: '{count_str}'"))?;
         Ok((start, count))
     } else {
         let start: u64 = s
             .parse()
-            .map_err(|_| format!("invalid hunk line number: '{}'", s))?;
+            .map_err(|_| format!("invalid hunk line number: '{s}'"))?;
         Ok((start, 1))
     }
 }
@@ -377,7 +372,7 @@ fn parse_hunk_range(s: &str) -> Result<(u64, u64), String> {
 /// Parse a structured patch from JSON format.
 pub fn parse_structured_patch_json(input: &str) -> Result<StructuredPatch, String> {
     let raw: serde_json::Value =
-        serde_json::from_str(input).map_err(|e| format!("invalid JSON: {}", e))?;
+        serde_json::from_str(input).map_err(|e| format!("invalid JSON: {e}"))?;
 
     let ops_array = raw
         .get("operations")
@@ -390,19 +385,19 @@ pub fn parse_structured_patch_json(input: &str) -> Result<StructuredPatch, Strin
         let op_type = op
             .get("type")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| format!("operation at index {} missing 'type' field", idx))?;
+            .ok_or_else(|| format!("operation at index {idx} missing 'type' field"))?;
 
         let path = op
             .get("path")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| format!("operation at index {} missing 'path' field", idx))?;
+            .ok_or_else(|| format!("operation at index {idx} missing 'path' field"))?;
 
         validate_path(path)?;
 
         let operation = match op_type {
             "add" => {
                 let content = op.get("content").and_then(|v| v.as_str()).ok_or_else(|| {
-                    format!("add operation at index {} missing 'content' field", idx)
+                    format!("add operation at index {idx} missing 'content' field")
                 })?;
                 PatchOperation::AddFile {
                     path: path.to_string(),
@@ -430,7 +425,7 @@ pub fn parse_structured_patch_json(input: &str) -> Result<StructuredPatch, Strin
             }
             "append" => {
                 let content = op.get("content").and_then(|v| v.as_str()).ok_or_else(|| {
-                    format!("append operation at index {} missing 'content' field", idx)
+                    format!("append operation at index {idx} missing 'content' field")
                 })?;
                 PatchOperation::AppendFile {
                     path: path.to_string(),
@@ -439,8 +434,7 @@ pub fn parse_structured_patch_json(input: &str) -> Result<StructuredPatch, Strin
             }
             other => {
                 return Err(format!(
-                    "unknown operation type '{}' at index {}. Expected one of: add, update, delete, append",
-                    other, idx
+                    "unknown operation type '{other}' at index {idx}. Expected one of: add, update, delete, append"
                 ));
             }
         };
@@ -582,30 +576,30 @@ fn parse_json_hunks(op: &serde_json::Value, idx: usize) -> Result<Vec<PatchHunk>
     let hunks_array = op
         .get("hunks")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| format!("update operation at index {} missing 'hunks' array", idx))?;
+        .ok_or_else(|| format!("update operation at index {idx} missing 'hunks' array"))?;
 
     let mut hunks: Vec<PatchHunk> = Vec::new();
     for (h_idx, h) in hunks_array.iter().enumerate() {
         let old_start = h
             .get("old_start")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| format!("hunk at index {}.{} missing 'old_start' field", idx, h_idx))?;
+            .ok_or_else(|| format!("hunk at index {idx}.{h_idx} missing 'old_start' field"))?;
         let old_count = h
             .get("old_count")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| format!("hunk at index {}.{} missing 'old_count' field", idx, h_idx))?;
+            .ok_or_else(|| format!("hunk at index {idx}.{h_idx} missing 'old_count' field"))?;
         let new_start = h
             .get("new_start")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| format!("hunk at index {}.{} missing 'new_start' field", idx, h_idx))?;
+            .ok_or_else(|| format!("hunk at index {idx}.{h_idx} missing 'new_start' field"))?;
         let new_count = h
             .get("new_count")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| format!("hunk at index {}.{} missing 'new_count' field", idx, h_idx))?;
+            .ok_or_else(|| format!("hunk at index {idx}.{h_idx} missing 'new_count' field"))?;
         let content = h
             .get("content")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| format!("hunk at index {}.{} missing 'content' field", idx, h_idx))?;
+            .ok_or_else(|| format!("hunk at index {idx}.{h_idx} missing 'content' field"))?;
 
         hunks.push(PatchHunk {
             old_start,

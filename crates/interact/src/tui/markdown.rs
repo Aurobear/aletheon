@@ -182,7 +182,7 @@ fn render_markdown_with_theme(
                             Span::raw(" "),
                         ];
                         if !lang.is_empty() {
-                            top_spans.push(Span::styled(format!("{} ", lang), accent_style));
+                            top_spans.push(Span::styled(format!("{lang} "), accent_style));
                         }
                         top_spans.push(Span::styled(caps.hline().repeat(dash_count), accent_style));
                         top_spans.push(Span::raw(" "));
@@ -192,14 +192,11 @@ fn render_markdown_with_theme(
                         let line_num_width = format!("{}", code_lines.len()).len();
                         for (idx, line) in code_lines.iter().enumerate() {
                             let num = idx + 1;
-                            let num_str = format!("{:>width$}", num, width = line_num_width);
+                            let num_str = format!("{num:>line_num_width$}");
                             let mut spans = vec![
                                 Span::raw("  "),
                                 Span::styled(format!("{} ", caps.vline()), gutter),
-                                Span::styled(
-                                    format!("{:>width$} ", num_str, width = line_num_width),
-                                    gutter,
-                                ),
+                                Span::styled(format!("{num_str:>line_num_width$} "), gutter),
                                 Span::styled(format!("{} ", caps.vline()), gutter),
                             ];
                             spans.extend(line.spans.clone());
@@ -377,7 +374,7 @@ fn render_markdown_with_theme(
             }
             Event::Code(code) => {
                 let style = Style::default().fg(code_fg).bg(code_bg);
-                current_spans.push(Span::styled(format!(" {} ", code), style));
+                current_spans.push(Span::styled(format!(" {code} "), style));
             }
             Event::Rule => {
                 flush_spans(&mut current_spans, &mut lines);
@@ -491,26 +488,24 @@ mod tests {
         };
         let tbl: Vec<String> = lines.iter().map(&text).filter(|t| !t.is_empty()).collect();
         // header + separator + 2 body rows.
-        assert_eq!(tbl.len(), 4, "table lines: {:?}", tbl);
+        assert_eq!(tbl.len(), 4, "table lines: {tbl:?}");
         assert!(!tbl.iter().any(|line| line.contains('│')));
         // All rows align to the same display width (ignoring trailing space).
         let w0 = tbl[0].trim_end().chars().count();
         for t in &tbl {
-            assert_eq!(t.trim_end().chars().count(), w0, "misaligned: {:?}", tbl);
+            assert_eq!(t.trim_end().chars().count(), w0, "misaligned: {tbl:?}");
         }
         // Row index 1 is the header separator: only box-drawing chars, no text.
         let sep = &tbl[1];
-        assert!(sep.contains('─'), "no separator dashes: {:?}", sep);
+        assert!(sep.contains('─'), "no separator dashes: {sep:?}");
         assert!(
             !sep.chars().any(|c| c.is_alphabetic()),
-            "separator has text: {:?}",
-            sep
+            "separator has text: {sep:?}"
         );
         // No raw markdown table syntax leaked as literal characters.
         assert!(
             !tbl.iter().any(|t| t.contains('|') || t.contains("---")),
-            "raw markdown leaked: {:?}",
-            tbl
+            "raw markdown leaked: {tbl:?}"
         );
     }
 

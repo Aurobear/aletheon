@@ -6,6 +6,14 @@
 - [ ] Verify binary, assets, configuration, service units, and image digests.
 - [ ] Initialize/audit credentials; keep recovery keys separately encrypted.
 - [ ] Run systemd preflight, unit verification, and network exposure verification.
+- [ ] Confirm release candidate, `/usr/bin/aletheon`, and both running daemon
+      executables have the same SHA-256 digest.
+- [ ] Observe unchanged machine/user daemon PIDs and restart counters for the
+      configured stability window.
+- [ ] Scan current-PID journals for profile/tool validation failures, panics,
+      main-process exits, and failed unit results.
+- [ ] Complete a real LLM request using `/usr/bin/aletheon` and the official
+      per-user socket; do not substitute a debug or isolated runtime.
 - [ ] Enable daemon, daily backup and cleanup timers; confirm next calendar times.
 - [ ] Wait for readiness and test Telegram, Google, and GBrain only when enabled.
 - [ ] Create a test Goal and verify attempt, approval, audit, and restart recovery.
@@ -21,6 +29,10 @@
 
 ## Release acceptance
 
+- [ ] Run `bash scripts/aletheon.sh deploy` and retain its provenance, stability,
+      real-request, and final-health evidence.
+- [ ] Keep test-only profiles under isolated state roots; verify no unmatched
+      profile was copied into active user state.
 - [ ] Restore a live-WAL/active-Goal snapshot on an empty disposable host.
 - [ ] Exercise upgrade, failed readiness, matching-data rollback, and old-root recovery.
 - [ ] Interrupt Google/GBrain transactions and prove cursor/spool idempotence.

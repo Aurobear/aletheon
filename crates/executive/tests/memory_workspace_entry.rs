@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
-use executive::service::context_assembler::{
+use executive::application::context_assembler::{
     ContextAssembler, ContextAssemblyError, ContextFragments, ContextSource,
 };
 use fabric::dasein::{SelfVersion, Stimmung};
@@ -26,6 +26,7 @@ impl ContextSource for FixedSource {
             system_prefix: "system authority".into(),
             skills: String::new(),
             conscious: Some(self.0.clone()),
+            memory_context: String::new(),
         })
     }
 }
@@ -127,7 +128,7 @@ async fn only_selected_labelled_memory_enters_model_context_with_durable_lineage
         .remove(0);
 
     let unselected = ContextAssembler::new(Arc::new(FixedSource(projection(None))))
-        .assemble(&request(), &[])
+        .assemble(&request(), &[], 1_000)
         .await
         .unwrap();
     assert!(!unselected
@@ -156,7 +157,7 @@ async fn only_selected_labelled_memory_enters_model_context_with_durable_lineage
         .contains(&"broadcast:session-1:9".into()));
 
     let selected = ContextAssembler::new(Arc::new(FixedSource(projection(Some(broadcast)))))
-        .assemble(&request(), &[])
+        .assemble(&request(), &[], 1_000)
         .await
         .unwrap();
     assert!(selected

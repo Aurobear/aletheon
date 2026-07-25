@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde_json::json;
+use std::sync::{Arc, RwLock};
 
 use super::super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use super::BM25Catalog;
@@ -10,11 +11,11 @@ use super::BM25Catalog;
 /// and returns matching tool names and descriptions, enabling the model
 /// to discover tools that are not in its default tool list.
 pub struct ToolSearchTool {
-    catalog: BM25Catalog,
+    catalog: Arc<RwLock<BM25Catalog>>,
 }
 
 impl ToolSearchTool {
-    pub fn new(catalog: BM25Catalog) -> Self {
+    pub fn new(catalog: Arc<RwLock<BM25Catalog>>) -> Self {
         Self { catalog }
     }
 }
@@ -52,9 +53,8 @@ impl Tool for ToolSearchTool {
     }
 
     fn boxed_clone(&self) -> Box<dyn Tool> {
-        // ToolSearchTool owns a catalog; boxed_clone clones the catalog.
         Box::new(ToolSearchTool {
-            catalog: BM25Catalog::build(self.catalog.entries_clone()),
+            catalog: self.catalog.clone(),
         })
     }
 
@@ -62,7 +62,8 @@ impl Tool for ToolSearchTool {
         let query = input["query"].as_str().unwrap_or("");
         let limit = input["limit"].as_u64().unwrap_or(5) as usize;
 
-        let results = self.catalog.search(query, limit);
+        let catalog = self.catalog.read().expect("tool catalog lock poisoned");
+        let results = catalog.search(query, limit);
 
         if results.is_empty() {
             return ToolResult {
@@ -75,11 +76,8 @@ impl Tool for ToolSearchTool {
         let lines: Vec<String> = results
             .iter()
             .map(|(name, score)| {
-                let desc = self
-                    .catalog
-                    .get_description(name)
-                    .unwrap_or("(no description)");
-                format!("- {} (score: {:.2}): {}", name, score, desc)
+                let desc = catalog.get_description(name).unwrap_or("(no description)");
+                format!("- {name} (score: {score:.2}): {desc}")
             })
             .collect();
 
@@ -130,7 +128,7 @@ mod tests {
 
     #[test]
     fn tool_search_name_and_schema() {
-        let tool = ToolSearchTool::new(build_test_catalog());
+        let tool = ToolSearchTool::new(Arc::new(RwLock::new(build_test_catalog())));
         assert_eq!(tool.name(), "tool_search");
         let schema = tool.input_schema();
         assert!(schema["properties"]["query"].is_object());
@@ -138,7 +136,7 @@ mod tests {
 
     #[tokio::test]
     async fn tool_search_finds_deferred() {
-        let tool = ToolSearchTool::new(build_test_catalog());
+        let tool = ToolSearchTool::new(Arc::new(RwLock::new(build_test_catalog())));
         let ctx = ToolContext {
             approval_authority: None,
             agent: None,
@@ -156,7 +154,7 @@ mod tests {
 
     #[tokio::test]
     async fn tool_search_excludes_hidden() {
-        let tool = ToolSearchTool::new(build_test_catalog());
+        let tool = ToolSearchTool::new(Arc::new(RwLock::new(build_test_catalog())));
         let ctx = ToolContext {
             approval_authority: None,
             agent: None,
@@ -174,7 +172,7 @@ mod tests {
 
     #[tokio::test]
     async fn tool_search_no_match() {
-        let tool = ToolSearchTool::new(build_test_catalog());
+        let tool = ToolSearchTool::new(Arc::new(RwLock::new(build_test_catalog())));
         let ctx = ToolContext {
             approval_authority: None,
             agent: None,

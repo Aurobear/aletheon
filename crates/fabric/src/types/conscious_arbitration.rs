@@ -320,9 +320,7 @@ impl CapabilityBatchPlan {
 
         anyhow::ensure!(
             expected == actual,
-            "batch plan is not an exact permutation: expected {:?}, got {:?}",
-            expected,
-            actual,
+            "batch plan is not an exact permutation: expected {expected:?}, got {actual:?}",
         );
 
         // Decisions are also an exact permutation: precisely one bounded
@@ -337,9 +335,7 @@ impl CapabilityBatchPlan {
         actual_decisions.sort_unstable();
         anyhow::ensure!(
             expected_decisions == actual_decisions,
-            "batch decisions are not exactly one per call: expected {:?}, got {:?}",
-            expected_decisions,
-            actual_decisions,
+            "batch decisions are not exactly one per call: expected {expected_decisions:?}, got {actual_decisions:?}",
         );
 
         // Every decision's priority must be finite.
@@ -374,7 +370,7 @@ impl CapabilityBatchPlan {
                     .get(id.as_str())
                     .cloned()
                     .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("call_id '{}' not in input batch", id))
+                    .ok_or_else(|| anyhow::anyhow!("call_id '{id}' not in input batch"))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -532,8 +528,7 @@ mod tests {
         let result = ConsciousFieldReadout::from_projection(&proj);
         assert!(
             result.is_err(),
-            "invalid projection should be Err, got {:?}",
-            result
+            "invalid projection should be Err, got {result:?}"
         );
     }
 

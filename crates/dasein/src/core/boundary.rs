@@ -249,7 +249,7 @@ mod tests {
             action: action.to_string(),
             parameters: json!({}),
             source,
-            description: format!("test intent: {}", action),
+            description: format!("test intent: {action}"),
         }
     }
 

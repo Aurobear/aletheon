@@ -2,10 +2,16 @@
 
 use async_trait::async_trait;
 use serde_json::json;
+use std::collections::BTreeSet;
 
 use super::{ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
 pub struct GlobTool;
+
+const DEFAULT_GLOB_RESULTS: usize = 100;
+const MAX_GLOB_RESULTS: usize = 200;
+const MAX_GLOB_RESULT_BYTES: usize = 24 * 1024;
+const MAX_GLOB_PATTERNS: usize = 20;
 
 #[async_trait]
 impl Tool for GlobTool {
@@ -14,7 +20,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "List files matching a glob pattern. Returns relative paths from the root directory."
+        "Discover an unknown path with bounded, specific globs after known files have been read. Do not use glob to begin a repository overview, and do not inventory language or file extensions. Use `patterns` only to batch a small set of specific missing paths. Avoid unqualified recursive inventory such as '**/*'. Returns deduplicated relative paths from the root directory."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -25,16 +31,21 @@ impl Tool for GlobTool {
                     "type": "string",
                     "description": "Glob pattern to match (e.g. '**/*.rs', '*.txt', 'src/**/*.py')"
                 },
+                "patterns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 20,
+                    "description": "Up to 20 specific missing-path patterns to evaluate together; not for extension inventories."
+                },
                 "root": {
                     "type": "string",
                     "description": "Root directory to search from (default: current working directory)"
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum results (default: 200). Values above 2000 are capped."
+                    "description": "Maximum results (default: 100, hard cap: 200)."
                 }
-            },
-            "required": ["pattern"]
+            }
         })
     }
 
@@ -53,11 +64,11 @@ impl Tool for GlobTool {
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let start = ctx.clock.mono_now();
 
-        let pattern = match input.get("pattern").and_then(|v| v.as_str()) {
-            Some(p) => p.to_string(),
-            None => {
+        let patterns = match parse_patterns(&input) {
+            Ok(patterns) => patterns,
+            Err(message) => {
                 return ToolResult {
-                    content: "Error: 'pattern' parameter is required".to_string(),
+                    content: format!("Error: {message}"),
                     is_error: true,
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -67,6 +78,20 @@ impl Tool for GlobTool {
                 };
             }
         };
+        if let Some(pattern) = patterns
+            .iter()
+            .find(|pattern| matches!(pattern.trim(), "**" | "**/*"))
+        {
+            return ToolResult {
+                content: format!("Error: unqualified recursive inventory '{pattern}' is too broad. Read known entry files first, then use scoped patterns such as 'crates/*/Cargo.toml' or 'crates/executive/src/**/*.rs'."),
+                is_error: true,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                    patch_delta: None,
+                },
+            };
+        }
 
         let root = input
             .get("root")
@@ -77,26 +102,29 @@ impl Tool for GlobTool {
         let max_results = input
             .get("limit")
             .and_then(|v| v.as_u64())
-            .unwrap_or(200)
-            .min(2000) as usize;
+            .unwrap_or(DEFAULT_GLOB_RESULTS as u64)
+            .min(MAX_GLOB_RESULTS as u64) as usize;
 
         // Use walkdir + manual glob matching
-        let glob_pattern = match GlobPattern::new(&pattern) {
-            Ok(p) => p,
-            Err(e) => {
-                return ToolResult {
-                    content: format!("Error: invalid glob pattern '{}': {}", pattern, e),
-                    is_error: true,
-                    metadata: ToolResultMeta {
-                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                        truncated: false,
-                        patch_delta: None,
-                    },
-                };
+        let mut glob_patterns = Vec::with_capacity(patterns.len());
+        for pattern in &patterns {
+            match GlobPattern::new(pattern) {
+                Ok(compiled) => glob_patterns.push(compiled),
+                Err(e) => {
+                    return ToolResult {
+                        content: format!("Error: invalid glob pattern '{pattern}': {e}"),
+                        is_error: true,
+                        metadata: ToolResultMeta {
+                            execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                            truncated: false,
+                            patch_delta: None,
+                        },
+                    }
+                }
             }
-        };
+        }
 
-        let mut matches = Vec::new();
+        let mut matches = BTreeSet::new();
         let walker = walkdir::WalkDir::new(&root).follow_links(false);
 
         for entry in walker {
@@ -116,8 +144,11 @@ impl Tool for GlobTool {
                 Err(_) => continue,
             };
             let relative_str = relative.to_string_lossy();
-            if glob_pattern.matches(&relative_str) {
-                matches.push(relative_str.to_string());
+            if glob_patterns
+                .iter()
+                .any(|pattern| pattern.matches(&relative_str))
+            {
+                matches.insert(relative_str.to_string());
             }
         }
 
@@ -127,7 +158,7 @@ impl Tool for GlobTool {
             ToolResult {
                 content: format!(
                     "No files matching '{}' found in {}",
-                    pattern,
+                    patterns.join("', '"),
                     root.display()
                 ),
                 is_error: false,
@@ -138,18 +169,63 @@ impl Tool for GlobTool {
                 },
             }
         } else {
-            let content = matches.join("\n");
+            let mut content = matches.into_iter().collect::<Vec<_>>().join("\n");
+            let mut byte_truncated = false;
+            if content.len() > MAX_GLOB_RESULT_BYTES {
+                let mut boundary = MAX_GLOB_RESULT_BYTES;
+                while boundary > 0 && !content.is_char_boundary(boundary) {
+                    boundary -= 1;
+                }
+                let omitted = content.len() - boundary;
+                content.truncate(boundary);
+                content.push_str(&format!(
+                    "\n... [glob output truncated; {omitted} bytes omitted]"
+                ));
+                byte_truncated = true;
+            }
             ToolResult {
                 content,
                 is_error: false,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                    truncated,
+                    truncated: truncated || byte_truncated,
                     patch_delta: None,
                 },
             }
         }
     }
+}
+
+fn parse_patterns(input: &serde_json::Value) -> Result<Vec<String>, String> {
+    let mut patterns = Vec::new();
+    if let Some(pattern) = input.get("pattern").and_then(|value| value.as_str()) {
+        patterns.push(pattern.to_string());
+    }
+    if let Some(values) = input.get("patterns") {
+        let values = values
+            .as_array()
+            .ok_or_else(|| "'patterns' must be an array of strings".to_string())?;
+        if values.len() > MAX_GLOB_PATTERNS {
+            return Err(format!(
+                "'patterns' accepts at most {MAX_GLOB_PATTERNS} entries"
+            ));
+        }
+        for value in values {
+            let pattern = value
+                .as_str()
+                .ok_or_else(|| "'patterns' must contain only strings".to_string())?;
+            patterns.push(pattern.to_string());
+        }
+    }
+    if patterns.is_empty() {
+        return Err("'pattern' or non-empty 'patterns' parameter is required".to_string());
+    }
+    if patterns.len() > MAX_GLOB_PATTERNS {
+        return Err(format!(
+            "at most {MAX_GLOB_PATTERNS} combined patterns are allowed"
+        ));
+    }
+    Ok(patterns)
 }
 
 /// Simple glob pattern matcher supporting `*`, `**`, and `?`.
@@ -326,6 +402,57 @@ mod tests {
         assert!(result.content.contains("a.rs"));
         assert!(result.content.contains("b.rs"));
         assert!(!result.content.contains("c.txt"));
+    }
+
+    #[tokio::test]
+    async fn batches_multiple_patterns_and_deduplicates_matches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("Cargo.toml"), "").unwrap();
+        fs::write(root.join("README.md"), "").unwrap();
+        fs::write(root.join("ignored.txt"), "").unwrap();
+
+        let result = GlobTool
+            .execute(
+                json!({
+                    "patterns": ["*.toml", "*.md", "README.*"],
+                    "root": root
+                }),
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: root.to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
+                },
+            )
+            .await;
+
+        assert!(!result.is_error, "{}", result.content);
+        assert_eq!(result.content, "Cargo.toml\nREADME.md");
+    }
+
+    #[tokio::test]
+    async fn rejects_unqualified_recursive_inventory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = GlobTool;
+        let result = tool
+            .execute(
+                json!({"pattern": "**/*", "root": tmp.path()}),
+                &ToolContext {
+                    approval_authority: None,
+                    agent: None,
+                    working_dir: tmp.path().to_path_buf(),
+                    session_id: "test".to_string(),
+                    clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
+                    turn_event_sender: None,
+                },
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert!(result.content.contains("too broad"));
     }
 
     #[tokio::test]

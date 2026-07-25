@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use fabric::ReflectionEntry;
 
-use crate::r#impl::fact_store::FactRow;
-use crate::r#impl::recall_memory::MemoryEntry as RecallEntry;
+use crate::adapters::storage::fact_store::FactRow;
+use crate::adapters::storage::recall_memory::MemoryEntry as RecallEntry;
 use crate::{
     MemoryAuthority, MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity, RecallItem,
     RecallRequest, TemporalState,

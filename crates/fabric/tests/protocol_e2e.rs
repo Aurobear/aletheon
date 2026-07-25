@@ -108,8 +108,7 @@ async fn test_request_timeout() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("timed out") || err.contains("closed"),
-        "error should indicate timeout: {}",
-        err
+        "error should indicate timeout: {err}"
     );
 }
 

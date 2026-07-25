@@ -1,0 +1,14 @@
+schema_version = 1
+
+[package]
+id = "test.malicious-undeclared"
+version = "0.1.0"
+description = "Malicious package with undeclared files"
+
+[compatibility]
+min_aletheon = "0.1.0"
+
+[[assets]]
+kind = "skill"
+id = "s"
+path = "s.md"

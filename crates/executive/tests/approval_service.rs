@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use executive::r#impl::approval::{ApprovalCreate, ApprovalDecision, ApprovalRepository};
-use executive::r#impl::goal::ObjectiveStore;
-use executive::service::admin_service::{ApprovalOwner, PendingApprovals, ScopedApprovalCache};
-use executive::service::approval_service::{
+use executive::application::admin_service::{ApprovalOwner, PendingApprovals, ScopedApprovalCache};
+use executive::application::approval_service::{
     ApprovalContext, ApprovalService, ApprovalServiceError, ApprovalUseCases,
     ResolveApprovalRequest,
 };
+use executive::approval::{ApprovalCreate, ApprovalDecision, ApprovalRepository};
+use executive::goal::ObjectiveStore;
 use fabric::{
     ApprovalCategory, ApprovalRisk, ApprovalSubject, Clock, GoalSpec, GoalState, PrincipalId,
     ThreadId, TurnId,
@@ -260,7 +260,7 @@ async fn list_is_owner_scoped_expiry_aware_and_bounded() {
 
 #[test]
 fn approval_rpc_has_no_repository_clock_or_lock_access() {
-    let source = include_str!("../src/impl/daemon/handler/rpc/rpc_approval.rs");
+    let source = include_str!("../src/host/daemon/handler/rpc/rpc_approval.rs");
     assert!(source.contains("self.ports.approvals"));
     for forbidden in [
         "subsystems",

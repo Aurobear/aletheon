@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
+use executive::application::{PostTurnPipeline, PreTurnPipeline};
+use executive::TurnService;
 use fabric::{
     CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
     NoopTurnEventSink, OperationId, ProcessId, RecallRequest, RecallSet, StopReason,

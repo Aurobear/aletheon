@@ -310,7 +310,7 @@ impl SandboxBackend for BubblewrapBackend {
                 isolation_level: IsolationLevel::Namespace,
                 elapsed_ms: elapsed,
             }),
-            Ok(Err(e)) => Err(anyhow::anyhow!("Bubblewrap execution failed: {}", e)),
+            Ok(Err(e)) => Err(anyhow::anyhow!("Bubblewrap execution failed: {e}")),
             Err(_) => Ok(SandboxResult {
                 stdout: String::new(),
                 stderr: format!("Command timed out after {} seconds", timeout.as_secs()),

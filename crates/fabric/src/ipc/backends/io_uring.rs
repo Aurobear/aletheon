@@ -98,7 +98,7 @@ impl IpcBackend for IoUringBackend {
 
     async fn send(&self, message: &AgentMessage) -> Result<(), IpcProbeError> {
         let data = bincode::serialize(message)
-            .map_err(|e| IpcProbeError::Other(format!("Serialization failed: {}", e)))?;
+            .map_err(|e| IpcProbeError::Other(format!("Serialization failed: {e}")))?;
 
         // Fallback: simulated latency
         tokio::time::sleep(std::time::Duration::from_micros(10)).await;

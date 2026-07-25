@@ -44,7 +44,7 @@ impl InMemorySpaceManager {
         let mut spaces = self
             .spaces
             .lock()
-            .map_err(|e| anyhow::anyhow!("space mutex poisoned: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("space mutex poisoned: {e}"))?;
         let entry = spaces.entry(space).or_insert_with(|| empty_space(space));
         entry.overlay.entries.insert(key.into(), value);
         Ok(())
@@ -107,7 +107,7 @@ impl SpaceManager for InMemorySpaceManager {
         let mut spaces = self
             .spaces
             .lock()
-            .map_err(|e| anyhow::anyhow!("space mutex poisoned: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("space mutex poisoned: {e}"))?;
         let parent_space = spaces
             .entry(parent)
             .or_insert_with(|| empty_space(parent))
@@ -132,7 +132,7 @@ impl SpaceManager for InMemorySpaceManager {
         let mut spaces = self
             .spaces
             .lock()
-            .map_err(|e| anyhow::anyhow!("space mutex poisoned: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("space mutex poisoned: {e}"))?;
         let entry = spaces.entry(space).or_insert_with(|| empty_space(space));
         entry.bindings.push(binding);
         Ok(())

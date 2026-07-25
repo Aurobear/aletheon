@@ -1,8 +1,8 @@
 use std::{collections::HashSet, sync::Arc};
 
 use executive::{
-    r#impl::session::canonical_store::CanonicalSessionStore,
-    service::session_service::SessionService,
+    application::session_service::SessionService,
+    runtime::session::canonical_store::CanonicalSessionStore,
 };
 use fabric::{
     protocol::client::{ClientEvent, EventCursor, ItemPhase},

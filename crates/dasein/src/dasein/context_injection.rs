@@ -66,7 +66,7 @@ pub fn format_dasein_context(ctx: &DaseinContext) -> String {
     }
 
     if let Some(concern) = &ctx.world.ultimate_concern {
-        output.push_str(&format!("Ultimate concern: {}\n", concern));
+        output.push_str(&format!("Ultimate concern: {concern}\n"));
     }
 
     // Self model
@@ -99,7 +99,7 @@ pub fn format_dasein_context(ctx: &DaseinContext) -> String {
     output.push_str("\n## Care Structure\n");
 
     if let Some(proj) = &ctx.care.projection {
-        output.push_str(&format!("Projection: {}\n", proj));
+        output.push_str(&format!("Projection: {proj}\n"));
     }
 
     if !ctx.care.concerns.is_empty() {
@@ -114,7 +114,7 @@ pub fn format_dasein_context(ctx: &DaseinContext) -> String {
     }
 
     if let Some(absorbed) = &ctx.care.absorbed_in {
-        output.push_str(&format!("Currently absorbed in: {}\n", absorbed));
+        output.push_str(&format!("Currently absorbed in: {absorbed}\n"));
     }
 
     output

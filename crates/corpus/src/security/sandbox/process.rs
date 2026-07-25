@@ -81,7 +81,7 @@ impl SandboxBackend for ProcessBackend {
                 isolation_level: IsolationLevel::Process,
                 elapsed_ms: elapsed,
             }),
-            Ok(Err(e)) => Err(anyhow::anyhow!("Process execution failed: {}", e)),
+            Ok(Err(e)) => Err(anyhow::anyhow!("Process execution failed: {e}")),
             Err(_) => Ok(SandboxResult {
                 stdout: String::new(),
                 stderr: format!("Command timed out after {} seconds", timeout.as_secs()),

@@ -3,11 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use corpus::{DefaultCorpusService, ExtensionCatalog, ExtensionGrant};
-use executive::core::config::{ConfigSource, ConfigSourceKind};
-use executive::service::extension_service::{
+use executive::application::extension_service::{
     ExtensionActivationDecision, ExtensionDecisionSink, ExtensionService, SessionExtensionPolicy,
     EXTENSION_ACTIVATION_EVENT_V1,
 };
+use executive::composition::config::{ConfigSource, ConfigSourceKind};
 use fabric::types::admission::RiskLevel;
 use fabric::{
     CapabilityId, CapabilityRequest, CapabilityResult, CapabilityScope, ExecutionPermit,

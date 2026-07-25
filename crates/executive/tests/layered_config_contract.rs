@@ -1,7 +1,8 @@
 use std::path::Path;
 
-use executive::core::config::{
-    merge_layers, schema, AppConfig, ConfigLayer, ConfigSource, ConfigSourceKind, Transport,
+use executive::composition::config::{
+    merge_layers, schema, AppConfig, ConfigLayer, ConfigSource, ConfigSourceKind,
+    EnvironmentCredentialResolver, Transport,
 };
 
 fn layer(kind: ConfigSourceKind, locator: &str, text: &str) -> ConfigLayer {
@@ -168,6 +169,53 @@ fn checked_in_schema_is_deterministic() {
 }
 
 #[test]
+fn legacy_channel_and_coding_keys_decode_to_canonical_owned_types() {
+    let config: AppConfig = toml::from_str(
+        r#"
+[telegram]
+enabled = false
+poll_timeout_secs = 12
+
+[pi_runtime]
+enabled = false
+json_protocol_version = 3
+"#,
+    )
+    .unwrap();
+    let _: &executive::composition::config::TelegramChannelConfig = &config.telegram;
+    let _: &executive::composition::config::CodingRuntimeConfig = &config.pi_runtime;
+    assert_eq!(config.telegram.poll_timeout_secs, 12);
+    assert_eq!(config.pi_runtime.json_protocol_version, 3);
+}
+
+#[test]
+fn legacy_supplemental_memory_keys_are_read_but_never_reemitted() {
+    let memory: executive::composition::config::MemoryConfig = toml::from_str(
+        r#"
+backend = "sqlite"
+data_dir = "/tmp/memory"
+[gbrain]
+enabled = true
+server_name = "deployment-instance"
+"#,
+    )
+    .unwrap();
+    assert!(memory.supplemental.enabled);
+    let rendered = toml::to_string(&memory).unwrap();
+    assert!(rendered.contains("[supplemental]"));
+    assert!(!rendered.contains("[gbrain]"));
+
+    let quotas: cognit::config::DeploymentQuotaConfig = toml::from_str(
+        "gbrain_spool_bytes=1024\ngbrain_spool_soft_bytes=512\ngbrain_spool_items=4\n",
+    )
+    .unwrap();
+    assert_eq!(quotas.supplemental_spool_bytes, 1024);
+    let rendered = toml::to_string(&quotas).unwrap();
+    assert!(rendered.contains("supplemental_spool_bytes"));
+    assert!(!rendered.contains("gbrain_spool_bytes"));
+}
+
+#[test]
 fn checked_in_leju_deepseek_uses_the_openai_transport() {
     for relative_path in [
         "../../config/default.toml",
@@ -185,10 +233,32 @@ fn checked_in_leju_deepseek_uses_the_openai_transport() {
             .models
             .iter()
             .any(|model| model == "deepseek/deepseek-v4-pro"));
+        assert_eq!(provider.max_context_length, Some(1_000_000));
         assert_eq!(config.agent.default_provider.as_deref(), Some("leju"));
         assert_eq!(
             config.agent.default_model.as_deref(),
             Some("deepseek/deepseek-v4-pro")
         );
     }
+}
+
+#[test]
+fn enabled_integration_preflight_reports_source_and_missing_typed_path() {
+    let loaded = merge_layers([layer(
+        ConfigSourceKind::User,
+        "~/.aletheon/config.toml",
+        "[deployment.integrations]\ngoogle=true",
+    )])
+    .unwrap();
+
+    let diagnostic = loaded
+        .preflight_integrations(&EnvironmentCredentialResolver)
+        .unwrap_err()
+        .to_string();
+    assert!(diagnostic.contains("google=user"), "{diagnostic}");
+    assert!(
+        diagnostic.contains("integrations.google.client_id"),
+        "{diagnostic}"
+    );
+    assert!(!diagnostic.contains("~/.aletheon"), "{diagnostic}");
 }

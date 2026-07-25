@@ -4,10 +4,10 @@ use super::client::{GoogleApiClient, GoogleApiError};
 use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use fabric::google::MAX_GMAIL_BODY_BYTES;
+use fabric::external_source::MAX_MAIL_BODY_BYTES;
 use fabric::{
-    ExternalIdentityId, ExternalScope, GmailMessage, GmailMessagePage, GmailMessageSummary,
-    GmailQuery, PrincipalId, ProviderRecordRef,
+    ExternalCapabilityId, ExternalIdentityId, ExternalRecordRef, MailMessage, MailMessagePage,
+    MailMessageSummary, MailQuery, OpaqueCursor, OpaqueProviderObjectId, PrincipalId,
 };
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
@@ -17,9 +17,9 @@ pub trait GmailCapability: Send + Sync {
     async fn search_messages(
         &self,
         principal: &PrincipalId,
-        query: GmailQuery,
+        query: MailQuery,
         cancel: &CancellationToken,
-    ) -> Result<GmailMessagePage, GoogleApiError>;
+    ) -> Result<MailMessagePage, GoogleApiError>;
 
     async fn important_unread(
         &self,
@@ -27,7 +27,7 @@ pub trait GmailCapability: Send + Sync {
         account: ExternalIdentityId,
         page_size: u16,
         cancel: &CancellationToken,
-    ) -> Result<GmailMessagePage, GoogleApiError>;
+    ) -> Result<MailMessagePage, GoogleApiError>;
 
     async fn read_message(
         &self,
@@ -35,7 +35,7 @@ pub trait GmailCapability: Send + Sync {
         account: ExternalIdentityId,
         message_id: &str,
         cancel: &CancellationToken,
-    ) -> Result<GmailMessage, GoogleApiError>;
+    ) -> Result<MailMessage, GoogleApiError>;
 }
 
 /// Bounded full-message view used by the authenticated Gmail channel. This is
@@ -105,7 +105,7 @@ impl GoogleGmailAdapter {
         account: ExternalIdentityId,
         id: &str,
         cancel: &CancellationToken,
-    ) -> Result<GmailMessageSummary, GoogleApiError> {
+    ) -> Result<MailMessageSummary, GoogleApiError> {
         validate_provider_id(id)?;
         let mut url = reqwest::Url::parse(&format!(
             "{}/users/me/messages/{}",
@@ -119,7 +119,7 @@ impl GoogleGmailAdapter {
             .get_json(
                 principal,
                 account,
-                ExternalScope::GmailReadonly,
+                ExternalCapabilityId::new("mail.read").unwrap(),
                 url,
                 cancel,
             )
@@ -133,9 +133,9 @@ impl GmailCapability for GoogleGmailAdapter {
     async fn search_messages(
         &self,
         principal: &PrincipalId,
-        query: GmailQuery,
+        query: MailQuery,
         cancel: &CancellationToken,
-    ) -> Result<GmailMessagePage, GoogleApiError> {
+    ) -> Result<MailMessagePage, GoogleApiError> {
         query
             .validate()
             .map_err(|_| GoogleApiError::InvalidRequest)?;
@@ -158,7 +158,7 @@ impl GmailCapability for GoogleGmailAdapter {
             .get_json(
                 principal,
                 query.account_id,
-                ExternalScope::GmailReadonly,
+                ExternalCapabilityId::new("mail.read").unwrap(),
                 url,
                 cancel,
             )
@@ -173,10 +173,14 @@ impl GmailCapability for GoogleGmailAdapter {
                     .await?,
             );
         }
-        let page = GmailMessagePage {
+        let page = MailMessagePage {
             account_id: query.account_id,
             messages,
-            next_page_token: list.next_page_token,
+            next_page_token: list
+                .next_page_token
+                .map(OpaqueCursor::new)
+                .transpose()
+                .map_err(|_| GoogleApiError::MalformedResponse)?,
         };
         page.validate()
             .map_err(|_| GoogleApiError::MalformedResponse)?;
@@ -189,10 +193,10 @@ impl GmailCapability for GoogleGmailAdapter {
         account: ExternalIdentityId,
         page_size: u16,
         cancel: &CancellationToken,
-    ) -> Result<GmailMessagePage, GoogleApiError> {
+    ) -> Result<MailMessagePage, GoogleApiError> {
         self.search_messages(
             principal,
-            GmailQuery {
+            MailQuery {
                 account_id: account,
                 query: "is:unread is:important".into(),
                 page_size,
@@ -209,7 +213,7 @@ impl GmailCapability for GoogleGmailAdapter {
         account: ExternalIdentityId,
         message_id: &str,
         cancel: &CancellationToken,
-    ) -> Result<GmailMessage, GoogleApiError> {
+    ) -> Result<MailMessage, GoogleApiError> {
         validate_provider_id(message_id)?;
         let mut url = reqwest::Url::parse(&format!(
             "{}/users/me/messages/{}",
@@ -223,13 +227,13 @@ impl GmailCapability for GoogleGmailAdapter {
             .get_json(
                 principal,
                 account,
-                ExternalScope::GmailReadonly,
+                ExternalCapabilityId::new("mail.read").unwrap(),
                 url,
                 cancel,
             )
             .await?;
         let body_text = decode_body(raw.payload.as_ref())?;
-        let message = GmailMessage {
+        let message = MailMessage {
             summary: normalize_summary(account, raw)?,
             body_text,
         };
@@ -262,7 +266,7 @@ impl GmailIngressCapability for GoogleGmailAdapter {
             .get_json(
                 principal,
                 account,
-                ExternalScope::GmailReadonly,
+                ExternalCapabilityId::new("mail.read").unwrap(),
                 url,
                 cancel,
             )
@@ -326,7 +330,7 @@ impl GmailIngressCapability for GoogleGmailAdapter {
             .get_bounded_bytes(
                 principal,
                 account,
-                ExternalScope::GmailReadonly,
+                ExternalCapabilityId::new("mail.read").unwrap(),
                 url,
                 encoded_cap,
                 cancel,
@@ -459,7 +463,7 @@ fn normalize_ingress_part(
 fn normalize_summary(
     account: ExternalIdentityId,
     raw: RawMessage,
-) -> Result<GmailMessageSummary, GoogleApiError> {
+) -> Result<MailMessageSummary, GoogleApiError> {
     validate_provider_id(&raw.id)?;
     let source_timestamp_ms = raw
         .internal_date
@@ -468,15 +472,21 @@ fn normalize_summary(
         .ok_or(GoogleApiError::MalformedResponse)?;
     let subject = header(raw.payload.as_ref(), "Subject");
     let from = header(raw.payload.as_ref(), "From");
-    let summary = GmailMessageSummary {
-        source: ProviderRecordRef {
+    let summary = MailMessageSummary {
+        source: ExternalRecordRef {
             account_id: account,
-            provider_object_id: raw.id,
+            provider_object_id: OpaqueProviderObjectId::new(raw.id)
+                .map_err(|_| GoogleApiError::MalformedResponse)?,
             fetched_at_ms: chrono::Utc::now().timestamp_millis(),
             source_timestamp_ms,
-            etag_or_history: raw.history_id,
+            etag_or_history: raw
+                .history_id
+                .map(OpaqueCursor::new)
+                .transpose()
+                .map_err(|_| GoogleApiError::MalformedResponse)?,
         },
-        thread_id: raw.thread_id,
+        thread_id: OpaqueProviderObjectId::new(raw.thread_id)
+            .map_err(|_| GoogleApiError::MalformedResponse)?,
         subject,
         from,
         snippet: raw.snippet,
@@ -515,7 +525,7 @@ fn decode_body(payload: Option<&RawPayload>) -> Result<String, GoogleApiError> {
     let decoded = URL_SAFE_NO_PAD
         .decode(data)
         .map_err(|_| GoogleApiError::MalformedResponse)?;
-    if decoded.len() > MAX_GMAIL_BODY_BYTES {
+    if decoded.len() > MAX_MAIL_BODY_BYTES {
         return Err(GoogleApiError::ResponseTooLarge);
     }
     String::from_utf8(decoded).map_err(|_| GoogleApiError::MalformedResponse)

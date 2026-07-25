@@ -12,6 +12,7 @@ pub mod config;
 pub mod event_sink;
 pub mod interrupt;
 pub mod linear;
+pub mod robot;
 pub mod session;
 
 pub use config::HarnessConfig;
@@ -35,12 +36,32 @@ pub use session::{
 /// the `HarnessKind` selection itself.
 ///
 /// Selectable from TOML via `harness_kind = "linear"` (see
-/// `executive::core::config::ExecutiveConfig::harness_kind`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// `executive::composition::config::ExecutiveConfig::harness_kind`).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum HarnessKind {
     #[default]
     Linear,
+    /// RobotHarness — bounded embodied execution with outcome verification.
+    Robot,
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod harness_kind_tests {
+    use super::HarnessKind;
+
+    #[test]
+    fn robot_now_parses() {
+        assert!(serde_json::from_str::<HarnessKind>(r#""robot""#).is_ok());
+    }
+
+    #[test]
+    fn linear_remains_default() {
+        assert_eq!(HarnessKind::default(), HarnessKind::Linear);
+    }
 }
 
 /// Construct a harness for the given `kind`.
@@ -56,5 +77,8 @@ pub fn build_harness(
 ) -> ReActLoop {
     match kind {
         HarnessKind::Linear => ReActLoop::new_with_clock(config, compressor, clock),
+        HarnessKind::Robot => {
+            unimplemented!("RobotHarness is constructed by Executive with injected ports, not via build_harness")
+        }
     }
 }

@@ -12,6 +12,8 @@ const MAX_PROVIDER_SUBJECT_BYTES: usize = 512;
 const MAX_EMAIL_BYTES: usize = 320;
 const MAX_ALIAS_BYTES: usize = 128;
 const MAX_SCOPES: usize = 32;
+const MAX_PROVIDER_ID_BYTES: usize = 64;
+const MAX_CAPABILITY_ID_BYTES: usize = 128;
 
 /// Stable authority for the credential-checked single-user native daemon.
 pub const LOCAL_OWNER_PRINCIPAL: &str = "local-owner";
@@ -44,63 +46,67 @@ impl fmt::Display for ExternalIdentityId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IdentityProvider {
-    Google,
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ExternalProviderId(String);
+
+impl ExternalProviderId {
+    pub fn new(value: impl Into<String>) -> Result<Self, ExternalIdentityContractError> {
+        let value = value.into();
+        validate_canonical_id(&value, MAX_PROVIDER_ID_BYTES, "provider")?;
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-impl fmt::Display for IdentityProvider {
+impl<'de> Deserialize<'de> for ExternalProviderId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl fmt::Display for ExternalProviderId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Google => "google",
-        })
+        f.write_str(&self.0)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExternalScope {
-    OpenId,
-    UserInfoEmail,
-    GmailReadonly,
-    CalendarReadonly,
-    DriveReadonly,
-    GmailModify,
-    GmailSend,
-    CalendarEventsWrite,
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ExternalCapabilityId(String);
+
+impl ExternalCapabilityId {
+    pub fn new(value: impl Into<String>) -> Result<Self, ExternalIdentityContractError> {
+        let value = value.into();
+        validate_canonical_id(&value, MAX_CAPABILITY_ID_BYTES, "capability")?;
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-impl ExternalScope {
-    pub const fn oauth_name(self) -> &'static str {
-        match self {
-            Self::OpenId => "openid",
-            Self::UserInfoEmail => "https://www.googleapis.com/auth/userinfo.email",
-            Self::GmailReadonly => "https://www.googleapis.com/auth/gmail.readonly",
-            Self::CalendarReadonly => "https://www.googleapis.com/auth/calendar.readonly",
-            Self::DriveReadonly => "https://www.googleapis.com/auth/drive.readonly",
-            Self::GmailModify => "https://www.googleapis.com/auth/gmail.modify",
-            Self::GmailSend => "https://www.googleapis.com/auth/gmail.send",
-            Self::CalendarEventsWrite => "https://www.googleapis.com/auth/calendar.events",
-        }
+impl<'de> Deserialize<'de> for ExternalCapabilityId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
     }
+}
 
-    pub const fn is_write(self) -> bool {
-        matches!(
-            self,
-            Self::GmailModify | Self::GmailSend | Self::CalendarEventsWrite
-        )
-    }
-
-    pub const fn is_m6_allowed(self) -> bool {
-        matches!(
-            self,
-            Self::OpenId
-                | Self::UserInfoEmail
-                | Self::GmailReadonly
-                | Self::CalendarReadonly
-                | Self::DriveReadonly
-        )
+impl fmt::Display for ExternalCapabilityId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
@@ -114,7 +120,7 @@ pub enum ExternalIdentityState {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExternalIdentity {
     pub id: ExternalIdentityId,
-    pub provider: IdentityProvider,
+    pub provider: ExternalProviderId,
     pub principal_id: PrincipalId,
     pub provider_subject: String,
     pub email: String,
@@ -177,7 +183,10 @@ pub enum GrantState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityGrant {
     pub identity_id: ExternalIdentityId,
-    pub scopes: Vec<ExternalScope>,
+    /// Canonical capability IDs. The persisted field name remains `scopes`
+    /// for backward compatibility; provider policy owns OAuth translation and
+    /// read/write semantics.
+    pub scopes: Vec<ExternalCapabilityId>,
     pub state: GrantState,
     pub granted_at_ms: i64,
     pub revoked_at_ms: Option<i64>,
@@ -190,7 +199,7 @@ impl CapabilityGrant {
             return Err(ExternalIdentityContractError::InvalidField("scopes"));
         }
         let mut scopes = self.scopes.clone();
-        scopes.sort_by_key(|scope| scope.oauth_name());
+        scopes.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         scopes.dedup();
         if scopes.len() != self.scopes.len() {
             return Err(ExternalIdentityContractError::InvalidField("scopes"));
@@ -200,16 +209,6 @@ impl CapabilityGrant {
             (GrantState::Revoked, Some(at)) if at >= self.granted_at_ms => Ok(()),
             _ => Err(ExternalIdentityContractError::InvalidField("revoked_at_ms")),
         }
-    }
-
-    pub fn validate_m6_read_only(&self) -> Result<(), ExternalIdentityContractError> {
-        self.validate()?;
-        if self.state != GrantState::Active
-            || self.scopes.iter().any(|scope| !scope.is_m6_allowed())
-        {
-            return Err(ExternalIdentityContractError::WriteScopeDenied);
-        }
-        Ok(())
     }
 }
 
@@ -246,6 +245,27 @@ fn bounded_nonempty(
     Ok(())
 }
 
+fn validate_canonical_id(
+    value: &str,
+    max: usize,
+    field: &'static str,
+) -> Result<(), ExternalIdentityContractError> {
+    if value.is_empty()
+        || value.len() > max
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        })
+        || !value.as_bytes()[0].is_ascii_alphanumeric()
+    {
+        return Err(if value.len() > max {
+            ExternalIdentityContractError::FieldTooLarge(field)
+        } else {
+            ExternalIdentityContractError::InvalidField(field)
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,9 +273,9 @@ mod tests {
     fn identity() -> ExternalIdentity {
         ExternalIdentity {
             id: ExternalIdentityId::new(),
-            provider: IdentityProvider::Google,
+            provider: ExternalProviderId::new("example").unwrap(),
             principal_id: PrincipalId("owner".into()),
-            provider_subject: "google-subject-secret".into(),
+            provider_subject: "external-subject-secret".into(),
             email: "owner@example.com".into(),
             alias: Some("work".into()),
             state: ExternalIdentityState::Active,
@@ -280,7 +300,7 @@ mod tests {
     fn debug_and_display_redact_provider_pii() {
         let value = identity();
         for rendered in [format!("{value:?}"), value.to_string()] {
-            assert!(!rendered.contains("google-subject-secret"));
+            assert!(!rendered.contains("external-subject-secret"));
             assert!(!rendered.contains("owner@example.com"));
             assert!(!rendered.contains("work"));
         }
@@ -290,26 +310,25 @@ mod tests {
     fn grant_models_revocation_and_rejects_write_scope() {
         let mut grant = CapabilityGrant {
             identity_id: ExternalIdentityId::new(),
-            scopes: vec![ExternalScope::OpenId, ExternalScope::GmailReadonly],
+            scopes: vec![
+                ExternalCapabilityId::new("identity.basic").unwrap(),
+                ExternalCapabilityId::new("mail.read").unwrap(),
+            ],
             state: GrantState::Active,
             granted_at_ms: 10,
             revoked_at_ms: None,
             version: 1,
         };
-        grant.validate_m6_read_only().unwrap();
-        grant.scopes.push(ExternalScope::GmailSend);
-        assert_eq!(
-            grant.validate_m6_read_only(),
-            Err(ExternalIdentityContractError::WriteScopeDenied)
-        );
+        grant.validate().unwrap();
+        grant
+            .scopes
+            .push(ExternalCapabilityId::new("mail.write").unwrap());
+        grant.validate().unwrap();
         grant.scopes.pop();
         grant.state = GrantState::Revoked;
         grant.revoked_at_ms = Some(20);
         grant.validate().unwrap();
-        assert_eq!(
-            grant.validate_m6_read_only(),
-            Err(ExternalIdentityContractError::WriteScopeDenied)
-        );
+        grant.validate().unwrap();
     }
 
     #[test]
@@ -322,5 +341,51 @@ mod tests {
                 "provider_subject"
             ))
         );
+    }
+
+    #[test]
+    fn provider_and_capability_ids_are_bounded_canonical_values() {
+        for value in ["", "Upper", "has space", "line\nbreak", "slash/value"] {
+            assert!(ExternalProviderId::new(value).is_err());
+            assert!(ExternalCapabilityId::new(value).is_err());
+        }
+        assert!(ExternalProviderId::new("x".repeat(MAX_PROVIDER_ID_BYTES + 1)).is_err());
+        assert_eq!(
+            serde_json::from_str::<ExternalCapabilityId>("\"mail.read\"")
+                .unwrap()
+                .as_str(),
+            "mail.read"
+        );
+    }
+
+    #[test]
+    fn legacy_string_schema_for_identity_and_grant_remains_readable() {
+        let identity_json = r#"{
+            "id":"00000000-0000-0000-0000-000000000001",
+            "provider":"google",
+            "principal_id":"owner",
+            "provider_subject":"subject-1",
+            "email":"owner@example.com",
+            "alias":"work",
+            "state":"active",
+            "created_at_ms":10,
+            "updated_at_ms":10,
+            "version":1
+        }"#;
+        let identity: ExternalIdentity = serde_json::from_str(identity_json).unwrap();
+        identity.validate().unwrap();
+        assert_eq!(identity.provider.as_str(), "google");
+
+        let grant_json = r#"{
+            "identity_id":"00000000-0000-0000-0000-000000000001",
+            "scopes":["open_id","gmail_readonly"],
+            "state":"active",
+            "granted_at_ms":10,
+            "revoked_at_ms":null,
+            "version":1
+        }"#;
+        let grant: CapabilityGrant = serde_json::from_str(grant_json).unwrap();
+        grant.validate().unwrap();
+        assert_eq!(grant.scopes[1].as_str(), "gmail_readonly");
     }
 }

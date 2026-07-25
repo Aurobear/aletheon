@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use executive::application::inference_port::{
+    CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
+};
+use executive::composition::user_runtime::{UserRuntime, UserRuntimeConfig};
 use executive::core::{RegistryInferencePort, SystemCoreRuntime};
-use executive::service::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
-use executive::user_runtime::{UserRuntime, UserRuntimeConfig};
 use fabric::{LlmResponse, LlmStream, StopReason, Usage};
 use futures::stream;
 
@@ -11,6 +13,14 @@ struct FakeInferencePort;
 
 #[async_trait::async_trait]
 impl InferencePort for FakeInferencePort {
+    async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
+        Ok(ModelCapabilities {
+            model_spec: model_spec.to_owned(),
+            display_name: "fixture-model".into(),
+            max_context_tokens: 1_000_000,
+        })
+    }
+
     async fn complete(
         &self,
         _request: CoreInferenceRequest,
@@ -43,14 +53,16 @@ async fn user_runtime_builds_from_inference_port_without_provider_registry() {
 
 #[tokio::test]
 async fn two_user_runtime_configs_never_share_state_paths() {
+    let alice_root = tempfile::tempdir().unwrap();
+    let bob_root = tempfile::tempdir().unwrap();
     let alice = UserRuntime::bootstrap(
-        UserRuntimeConfig::fixture_at("/tmp/alice-state"),
+        UserRuntimeConfig::fixture_at(alice_root.path()),
         Arc::new(FakeInferencePort),
     )
     .await
     .unwrap();
     let bob = UserRuntime::bootstrap(
-        UserRuntimeConfig::fixture_at("/tmp/bob-state"),
+        UserRuntimeConfig::fixture_at(bob_root.path()),
         Arc::new(FakeInferencePort),
     )
     .await
@@ -59,11 +71,11 @@ async fn two_user_runtime_configs_never_share_state_paths() {
     assert!(alice
         .state_paths()
         .iter()
-        .all(|path| path.starts_with("/tmp/alice-state")));
+        .all(|path| path.starts_with(alice_root.path())));
     assert!(bob
         .state_paths()
         .iter()
-        .all(|path| path.starts_with("/tmp/bob-state")));
+        .all(|path| path.starts_with(bob_root.path())));
 }
 
 #[test]
@@ -85,7 +97,7 @@ fn system_core_surface_exposes_no_user_execution_authority() {
     for forbidden in ["RequestHandler", "ToolRegistry", "Sandbox"] {
         assert!(!core.contains(forbidden), "core contains {forbidden}");
     }
-    let user = include_str!("../src/user_runtime/mod.rs");
+    let user = include_str!("../src/composition/user_runtime/mod.rs");
     for forbidden in ["ProviderRegistry", "credential loading"] {
         assert!(
             !user.contains(forbidden),

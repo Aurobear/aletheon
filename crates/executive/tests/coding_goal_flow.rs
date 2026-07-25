@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use base64::Engine;
-use executive::r#impl::goal::{
-    AttemptCoordinationOutcome, AttemptExecutor, AttemptRequest, CodingVerifier, GoalCoordinator,
-    ObjectiveStore, RetryPolicy,
+use executive::application::coding_runtime::CodingAttemptRequest;
+use executive::goal::{
+    AttemptCoordinationOutcome, AttemptCoordinatorError, AttemptExecutor, AttemptRequest,
+    CodingVerifier, GoalCoordinator, ObjectiveStore, RetryPolicy,
 };
-use executive::r#impl::runtime::{PiAttemptRequest, PI_CODER_RUNTIME_ID};
-use executive::service::verification::{VerificationCheckKind, VerificationContext};
+const TEST_CODING_RUNTIME_ID: &str = "fake-coding-runtime";
+use executive::application::verification::{VerificationCheckKind, VerificationContext};
 use fabric::{
     AttemptEvidence, AttemptId, AttemptUsage, Clock, CodingJobId, CodingJobReport, CodingJobSpec,
     CodingJobStatus, CodingNetworkPolicy, CognitiveRole, GoalBudget, GoalId, GoalSpec, GoalState,
@@ -105,15 +106,15 @@ impl CodingVerifier for FakeVerifier {
     }
 }
 
-struct FakePiExecutor {
+struct FakeCodingExecutor {
     worktree_base: PathBuf,
     calls: AtomicUsize,
     task_inputs: Mutex<Vec<String>>,
 }
 #[async_trait]
-impl AttemptExecutor for FakePiExecutor {
+impl AttemptExecutor for FakeCodingExecutor {
     fn is_available(&self, runtime_id: &RuntimeId) -> bool {
-        runtime_id.0 == PI_CODER_RUNTIME_ID
+        runtime_id.0 == TEST_CODING_RUNTIME_ID
     }
     async fn run_once(
         &self,
@@ -122,7 +123,7 @@ impl AttemptExecutor for FakePiExecutor {
         _cancel: CancellationToken,
     ) -> Result<RuntimeResult, RuntimeFailure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let request: PiAttemptRequest = serde_json::from_str(task).unwrap();
+        let request: CodingAttemptRequest = serde_json::from_str(task).unwrap();
         self.task_inputs
             .lock()
             .unwrap()
@@ -161,9 +162,9 @@ struct Harness {
     worktrees: TempDir,
     store: Arc<Mutex<ObjectiveStore>>,
     goal_id: GoalId,
-    executor: Arc<FakePiExecutor>,
+    executor: Arc<FakeCodingExecutor>,
     verifier: Arc<FakeVerifier>,
-    coordinator: executive::r#impl::goal::AttemptCoordinator,
+    coordinator: executive::goal::AttemptCoordinator,
 }
 impl Harness {
     fn new(results: Vec<VerifyResult>) -> Self {
@@ -205,7 +206,7 @@ impl Harness {
                 &serde_json::json!({}),
             )
             .unwrap();
-        let executor = Arc::new(FakePiExecutor {
+        let executor = Arc::new(FakeCodingExecutor {
             worktree_base: worktrees.path().to_owned(),
             calls: AtomicUsize::new(0),
             task_inputs: Mutex::new(vec![]),
@@ -249,7 +250,7 @@ impl Harness {
             vec![PathBuf::from(".git")],
         )
         .unwrap();
-        let task = serde_json::to_string(&PiAttemptRequest {
+        let task = serde_json::to_string(&CodingAttemptRequest {
             job: CodingJobSpec {
                 job_id,
                 goal_id: self.goal_id,
@@ -269,7 +270,7 @@ impl Harness {
             goal_id: self.goal_id,
             expected_version: version,
             sequence,
-            runtime_id: RuntimeId(PI_CODER_RUNTIME_ID.into()),
+            runtime_id: RuntimeId(TEST_CODING_RUNTIME_ID.into()),
             escalation_runtime_id: None,
             role: CognitiveRole::Worker,
             task,
@@ -393,10 +394,68 @@ async fn advisory_warning_is_approval_ready_and_duplicate_call_is_idempotent() {
 }
 
 #[tokio::test]
-async fn restart_after_pi_before_verification_resumes_without_pi() {
+async fn coding_settlement_failure_preserves_diff_and_recovers_without_runtime_reinvocation() {
+    let h = Harness::new(vec![VerifyResult::Report(true, false)]);
+    let job_id = CodingJobId::new();
+    let injector = rusqlite::Connection::open(h._db.path()).unwrap();
+    injector
+        .execute_batch(
+            "CREATE TRIGGER fail_test_coding_settlement
+             BEFORE UPDATE OF status ON goal_budget_ledger
+             WHEN NEW.status='settled'
+             BEGIN SELECT RAISE(ABORT, 'injected coding settlement failure'); END;",
+        )
+        .unwrap();
+
+    let first = h
+        .coordinator
+        .execute_one(h.request(1, job_id), CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(matches!(first, AttemptCoordinatorError::Budget(_)));
+    let attempts = h
+        .store
+        .lock()
+        .unwrap()
+        .attempts_for_goal(h.goal_id, usize::MAX)
+        .unwrap();
+    let report = attempts[0]
+        .evidence
+        .iter()
+        .find(|evidence| evidence.kind == "coding_job_report")
+        .and_then(|evidence| serde_json::from_str::<CodingJobReport>(&evidence.content).ok())
+        .unwrap();
+    assert!(report.diff_sha256.is_some());
+
+    injector
+        .execute_batch("DROP TRIGGER fail_test_coding_settlement;")
+        .unwrap();
+    let recovered = h
+        .coordinator
+        .execute_one(h.request(1, job_id), CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(matches!(
+        recovered,
+        AttemptCoordinationOutcome::Succeeded { .. }
+    ));
+    let coding = h
+        .store
+        .lock()
+        .unwrap()
+        .load_coding_job(job_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(coding.diff_sha256, report.diff_sha256.unwrap());
+    assert_eq!(h.executor.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(h.verifier.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn restart_after_runtime_before_verification_resumes_without_reinvocation() {
     let h = Harness::new(vec![VerifyResult::Report(true, false)]);
     let request = h.request(1, CodingJobId::new());
-    let parsed: PiAttemptRequest = serde_json::from_str(&request.task).unwrap();
+    let parsed: CodingAttemptRequest = serde_json::from_str(&request.task).unwrap();
     let attempt = h
         .store
         .lock()
@@ -459,7 +518,7 @@ async fn restart_after_pi_before_verification_resumes_without_pi() {
 async fn restart_after_report_persistence_does_not_verify_twice() {
     let h = Harness::new(vec![]);
     let request = h.request(1, CodingJobId::new());
-    let parsed: PiAttemptRequest = serde_json::from_str(&request.task).unwrap();
+    let parsed: CodingAttemptRequest = serde_json::from_str(&request.task).unwrap();
     let attempt = h
         .store
         .lock()

@@ -31,14 +31,14 @@ impl SpecFile {
     /// Load a spec from a YAML file path.
     pub fn load_from_file(path: &str) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read spec file '{}': {}", path, e))?;
+            .map_err(|e| format!("Failed to read spec file '{path}': {e}"))?;
         serde_yaml::from_str(&content)
-            .map_err(|e| format!("Failed to parse spec file '{}': {}", path, e))
+            .map_err(|e| format!("Failed to parse spec file '{path}': {e}"))
     }
 
     /// Serialize the spec to YAML string.
     pub fn to_yaml(&self) -> Result<String, String> {
-        serde_yaml::to_string(self).map_err(|e| format!("Failed to serialize spec: {}", e))
+        serde_yaml::to_string(self).map_err(|e| format!("Failed to serialize spec: {e}"))
     }
 }
 
@@ -271,7 +271,7 @@ impl GoalTracker {
             let spec = self.to_spec();
             let yaml = spec.to_yaml()?;
             std::fs::write(path, yaml)
-                .map_err(|e| format!("Failed to write spec back to '{}': {}", path, e))?;
+                .map_err(|e| format!("Failed to write spec back to '{path}': {e}"))?;
             info!(path = path.as_str(), "Spec written back to file");
             Ok(())
         } else {

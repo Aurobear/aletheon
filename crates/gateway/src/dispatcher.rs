@@ -22,7 +22,7 @@ use super::registry::{
     ApprovalResolver, ApprovalResolverRegistry, CapabilityHandler, CapabilityRegistry,
     HandlerContext,
 };
-use super::store::{ChannelStore, InsertOutcome};
+use crate::adapters::sqlite_store::{ChannelStore, InsertOutcome};
 
 // ---------------------------------------------------------------------------
 // Transport trait
@@ -173,7 +173,7 @@ pub struct ChannelDispatcher {
 
 impl ChannelDispatcher {
     /// Create a new dispatcher that owns `store` and answers `Chat`/
-    /// `Greeting` intents using `turn_executor`. No goal/approval/google
+    /// `Greeting` intents using `turn_executor`. No goal/approval/external-source
     /// capability is registered — use [`Self::with_registry`] or the
     /// `with_*` builders to add more.
     pub fn new(store: ChannelStore, turn_executor: Arc<dyn ChannelTurnExecutor>) -> Self {
@@ -184,7 +184,7 @@ impl ChannelDispatcher {
     }
 
     /// Create a dispatcher from an already-assembled [`CapabilityRegistry`]
-    /// (e.g. a `ChatHandler` wired with Google account support).
+    /// (e.g. a `ChatHandler` wired with external account support).
     pub fn with_registry(store: ChannelStore, registry: CapabilityRegistry) -> Self {
         Self {
             store,
@@ -214,7 +214,7 @@ impl ChannelDispatcher {
     }
 
     /// Register an [`ApprovalResolver`] for a specific [`ApprovalCategory`]
-    /// (e.g. Gmail registers its `ActivateGoal` resolver here).
+    /// (e.g. An external source registers its `ActivateGoal` resolver here).
     pub fn with_approval_resolver(
         self,
         category: ApprovalCategory,
@@ -323,6 +323,7 @@ impl ChannelDispatcher {
     async fn execute_approval_action(
         &mut self,
         principal: &str,
+        channel: &str,
         action_data: &str,
         now_ms: i64,
     ) -> anyhow::Result<String> {
@@ -331,7 +332,7 @@ impl ChannelDispatcher {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("durable approvals are not configured"))?;
         ApprovalExecutor::new(port, self.approval_resolvers.clone())
-            .execute_approval_action(principal, action_data, now_ms)
+            .execute_approval_action(principal, channel, action_data, now_ms)
             .await
     }
 
@@ -381,7 +382,7 @@ impl ChannelDispatcher {
         // callback payload contains no subject details.
         let approval_reply = if let Some(action) = message.reply_to_action.as_deref() {
             Some(
-                self.execute_approval_action(&principal, action, message.timestamp_ms)
+                self.execute_approval_action(&principal, channel, action, message.timestamp_ms)
                     .await,
             )
         } else {

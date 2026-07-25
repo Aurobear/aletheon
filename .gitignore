@@ -33,3 +33,6 @@ backup-staging/
 
 # Host-verified production scenario artifacts
 .scenario-runs/
+
+# Local agent worktrees must never be committed as gitlinks
+.claude/worktrees/

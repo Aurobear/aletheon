@@ -2,7 +2,7 @@
 //!
 //! Provides structured state queries and real-time event streams under the
 //! `session.*` JSON-RPC namespace.  Built on top of the existing
-//! [`DebugHandler`](crate::impl::daemon::debug_handler) infrastructure.
+//! [`DebugHandler`](crate::host::daemon::debug_handler) infrastructure.
 //!
 //! ## Sub-modules
 //!

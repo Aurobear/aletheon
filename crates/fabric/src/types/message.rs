@@ -155,7 +155,7 @@ mod tests {
                 assert_eq!(text, "Let me think about this...");
                 assert_eq!(signature, Some("sig_abc123".to_string()));
             }
-            other => panic!("Expected Thinking, got {:?}", other),
+            other => panic!("Expected Thinking, got {other:?}"),
         }
     }
 
@@ -172,7 +172,7 @@ mod tests {
                 assert_eq!(text, "reasoning here");
                 assert_eq!(signature, None);
             }
-            other => panic!("Expected Thinking, got {:?}", other),
+            other => panic!("Expected Thinking, got {other:?}"),
         }
     }
 

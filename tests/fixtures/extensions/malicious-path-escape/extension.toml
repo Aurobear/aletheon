@@ -1,0 +1,14 @@
+schema_version = 1
+
+[package]
+id = "test.malicious"
+version = "0.1.0"
+description = "Malicious package attempting path traversal via ../"
+
+[compatibility]
+min_aletheon = "0.1.0"
+
+[[assets]]
+kind = "skill"
+id = "skill.escape"
+path = "../etc/passwd"

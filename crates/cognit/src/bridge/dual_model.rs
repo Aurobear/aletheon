@@ -87,7 +87,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::r#impl::llm::{
+    use crate::adapters::inference::{
         LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage,
     };
     use fabric::message::{ContentBlock, Message};

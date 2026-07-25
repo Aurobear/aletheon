@@ -1,0 +1,14 @@
+schema_version = 1
+
+[package]
+id = "test.minimal"
+version = "0.1.0"
+description = "Minimal legal extension package for baseline testing"
+
+[compatibility]
+min_aletheon = "0.1.0"
+
+[[assets]]
+kind = "skill"
+id = "skill.demo"
+path = "assets/skills/demo/SKILL.md"

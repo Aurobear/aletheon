@@ -98,7 +98,7 @@ impl PermissionContext {
         is_dangerous: bool,
     ) -> PermissionBehavior {
         // 1. Session approvals
-        let key = format!("{}:{}", tool, action_summary);
+        let key = format!("{tool}:{action_summary}");
         if self.session_approvals.contains(&key) {
             return PermissionBehavior::Allow;
         }

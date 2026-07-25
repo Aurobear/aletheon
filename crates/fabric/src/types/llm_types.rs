@@ -54,9 +54,34 @@ pub struct ModelInfo {
     pub max_context: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InferenceCapabilities {
+    pub streaming: bool,
+    pub tool_calls: bool,
+    pub max_context_tokens: usize,
+}
+
+/// Host-observed facts about the effective inference route for one turn.
+///
+/// These values are runtime metadata, not claims made by the model itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelRuntimeFacts {
+    pub effective_model_id: String,
+    pub display_name: String,
+    pub max_context_tokens: usize,
+}
+
 /// Canonical LlmProvider trait. See shared/traits.md.
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
+    fn capabilities(&self) -> InferenceCapabilities {
+        InferenceCapabilities {
+            streaming: true,
+            tool_calls: true,
+            max_context_tokens: self.max_context_length(),
+        }
+    }
+
     /// Send messages and get a response with optional tool calls.
     async fn complete(
         &self,
@@ -73,6 +98,17 @@ pub trait LlmProvider: Send + Sync {
 
     /// Provider name (e.g., "anthropic", "llama-cpp").
     fn name(&self) -> &str;
+
+    /// Return authoritative host metadata for the effective route.
+    /// Compatibility providers may expose only their display name; routed
+    /// adapters should override this with the resolved model specification.
+    fn runtime_facts(&self) -> ModelRuntimeFacts {
+        ModelRuntimeFacts {
+            effective_model_id: self.name().to_string(),
+            display_name: self.name().to_string(),
+            max_context_tokens: self.max_context_length(),
+        }
+    }
 
     /// Maximum context length in tokens.
     fn max_context_length(&self) -> usize;

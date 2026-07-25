@@ -6,12 +6,13 @@ use fabric::tool::{Tool, ToolContext};
 use fabric::{
     AgentControlError, AgentControlMessage, AgentControlPort, AgentHandle, AgentId,
     AgentListRequest, AgentProfileId, AgentResult, AgentRunStatus, AgentSendRequest, AgentSnapshot,
-    AgentSpawnRequest, AgentToolContext, AgentWaitRequest, AttemptUsage, OperationId, ProcessId,
-    RuntimeId,
+    AgentSpawnIntent, AgentSpawnRequest, AgentToolContext, AgentWaitRequest, AttemptUsage,
+    OperationId, ProcessId, RuntimeId,
 };
 
 #[derive(Default)]
 struct Calls {
+    spawn_intent: Vec<AgentSpawnIntent>,
     spawn: Vec<AgentSpawnRequest>,
     wait: Vec<AgentWaitRequest>,
     send: Vec<AgentSendRequest>,
@@ -61,6 +62,28 @@ fn snapshot(root: AgentId, agent: AgentId, status: AgentRunStatus) -> AgentSnaps
 
 #[async_trait]
 impl AgentControlPort for FakeControl {
+    async fn spawn_intent(
+        &self,
+        request: AgentSpawnIntent,
+    ) -> Result<AgentHandle, AgentControlError> {
+        let value = AgentHandle {
+            agent_id: AgentId::new(),
+            root_agent_id: request.root_agent_id,
+            parent_agent_id: request.parent_agent_id,
+            process_id: ProcessId::new(),
+            operation_id: OperationId::new(),
+            runtime_id: RuntimeId(
+                request
+                    .runtime_override
+                    .clone()
+                    .unwrap_or_else(|| "auto-selected".into()),
+            ),
+            profile_id: request.profile_id.clone(),
+        };
+        self.0.lock().unwrap().spawn_intent.push(request);
+        Ok(value)
+    }
+
     async fn spawn(&self, request: AgentSpawnRequest) -> Result<AgentHandle, AgentControlError> {
         let value = handle(&request);
         self.0.lock().unwrap().spawn.push(request);
@@ -176,6 +199,20 @@ fn exposes_five_exact_bounded_schemas() {
     for tool in tools {
         let schema = tool.input_schema();
         assert_eq!(schema["additionalProperties"], false);
+        if tool.name() == "agent_spawn" {
+            let serialized = serde_json::to_string(&schema).unwrap();
+            assert!(tool.description().contains("Call agent_wait"));
+            assert!(tool.description().contains("does not wait"));
+            assert!(!tool.description().contains("pi"));
+            assert!(!serialized.contains("pi-rpc"));
+            assert!(!serialized.contains("pi-coder"));
+            assert!(!serialized.contains("codex"));
+            assert!(!serialized.contains("claude"));
+            assert!(!schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("runtime")));
+        }
     }
 }
 
@@ -194,11 +231,11 @@ async fn spawn_injects_trusted_parent_and_rejects_forged_identity() {
     });
     let result = find(&tools, "agent_spawn").execute(input, &ctx).await;
     assert!(!result.is_error);
-    let request = control.0.lock().unwrap().spawn[0].clone();
+    let request = control.0.lock().unwrap().spawn_intent[0].clone();
     assert_eq!(request.root_agent_id, root);
     assert_eq!(request.parent_agent_id, Some(parent));
     assert_eq!(request.parent_process_id, Some(process));
-    assert_eq!(request.runtime_id.0, "native-cognit");
+    assert_eq!(request.runtime_override.as_deref(), Some("native-cognit"));
     assert_eq!(
         request
             .trusted_workspace
@@ -218,7 +255,29 @@ async fn spawn_injects_trusted_parent_and_rejects_forged_identity() {
             .await
             .is_error
     );
-    assert_eq!(control.0.lock().unwrap().spawn.len(), 1);
+    assert_eq!(control.0.lock().unwrap().spawn_intent.len(), 1);
+}
+
+#[tokio::test]
+async fn spawn_allows_automatic_runtime_selection() {
+    let control = Arc::new(FakeControl::default());
+    let tools = tools(control.clone());
+    let ctx = context(AgentId::new(), AgentId::new(), ProcessId::new());
+    let result = find(&tools, "agent_spawn")
+        .execute(
+            serde_json::json!({
+                "profile":"researcher",
+                "task":"analyze",
+                "required_capabilities":["code_read","code_search"],
+                "budget":{"max_input_tokens":100,"max_output_tokens":100,"max_tool_calls":2,"max_elapsed_ms":1000,"max_depth":2}
+            }),
+            &ctx,
+        )
+        .await;
+    assert!(!result.is_error, "{}", result.content);
+    let intent = control.0.lock().unwrap().spawn_intent[0].clone();
+    assert!(intent.runtime_override.is_none());
+    assert_eq!(intent.required_capabilities.len(), 2);
 }
 
 #[tokio::test]

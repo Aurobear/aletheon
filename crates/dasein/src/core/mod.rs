@@ -461,7 +461,7 @@ impl fabric::SelfFieldOps for SelfField {
         if let Some(verdict) = self.policy_bridge.check(&intent.action, &intent.parameters) {
             self.narrative.record(
                 "policy_check",
-                &format!("Blocked by policy: {:?}", verdict),
+                &format!("Blocked by policy: {verdict:?}"),
                 Some(&intent.action),
                 &verdict,
             );
@@ -472,7 +472,7 @@ impl fabric::SelfFieldOps for SelfField {
         if let Some(verdict) = self.boundary.check(intent) {
             self.narrative.record(
                 "boundary_check",
-                &format!("Boundary rule matched: {:?}", verdict),
+                &format!("Boundary rule matched: {verdict:?}"),
                 Some(&intent.action),
                 &verdict,
             );
@@ -519,7 +519,7 @@ impl fabric::SelfFieldOps for SelfField {
         let verdict = Verdict::Allow;
         self.narrative.record(
             "review",
-            &format!("Allowed: care_score={:.2}", care_score),
+            &format!("Allowed: care_score={care_score:.2}"),
             Some(&intent.action),
             &verdict,
         );
@@ -547,7 +547,7 @@ impl fabric::SelfFieldOps for SelfField {
         let resolution = self.conflict.resolve(conflict);
         self.narrative.record(
             "conflict_resolution",
-            &format!("Resolved: {:?}", resolution),
+            &format!("Resolved: {resolution:?}"),
             None,
             &resolution,
         );

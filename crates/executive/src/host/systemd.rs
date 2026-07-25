@@ -19,9 +19,9 @@ use std::time::Duration;
 use tracing;
 
 use crate::core::runtime_core::RuntimeCore;
+use crate::host::daemon::mcp_embedded::McpEmbedded;
+use crate::host::daemon::server;
 use crate::host::load_dotenv;
-use crate::r#impl::daemon::mcp_embedded::McpEmbedded;
-use crate::r#impl::daemon::server;
 
 /// Send a status message to systemd via the notification socket.
 ///
@@ -109,7 +109,7 @@ impl crate::host::RuntimeHost for SystemdHost {
         let data_dir = &core.daemon_config.data_dir;
         tracing::info!(data_dir = %data_dir, "Creating data directory...");
         std::fs::create_dir_all(data_dir)
-            .map_err(|e| anyhow::anyhow!("Failed to create data dir '{}': {}", data_dir, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create data dir '{data_dir}': {e}"))?;
 
         // ── Watchdog task ───────────────────────────────────────────
         if let Some(interval_usec) = watchdog_interval_usec() {
@@ -144,10 +144,7 @@ impl crate::host::RuntimeHost for SystemdHost {
         let socket = self.socket;
         let pulse_handle = core.pulse_handle;
         // ── MCP embedded server ─────────────────────────────────────
-        let mcp_socket = socket
-            .parent()
-            .unwrap_or(&PathBuf::from("/tmp/aletheon"))
-            .join("aletheon-mcp.sock");
+        let mcp_socket = super::runtime_sidecar_path(&socket, "aletheon-mcp.sock")?;
         let mcp_server = McpEmbedded::new(
             request_handler.corpus_service(),
             request_handler.corpus_grant(),

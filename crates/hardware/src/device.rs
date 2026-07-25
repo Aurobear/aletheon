@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct DeviceId(pub String);
+pub use fabric::types::embodiment::DeviceId;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PrincipalId(pub String);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -21,12 +20,15 @@ pub enum DeviceClass {
     Bus,
     Composite,
 }
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DeviceNamespace {
+    #[default]
     Simulation,
     Lab,
+    Hil,
     Production,
 }
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceManifest {
     pub id: DeviceId,

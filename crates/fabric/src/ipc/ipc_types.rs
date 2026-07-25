@@ -103,7 +103,7 @@ impl std::fmt::Display for IpcProbeError {
             Self::NotSupported => write!(f, "IPC backend not supported"),
             Self::PermissionDenied => write!(f, "permission denied"),
             Self::ResourceExhausted => write!(f, "resource exhausted"),
-            Self::Other(msg) => write!(f, "{}", msg),
+            Self::Other(msg) => write!(f, "{msg}"),
         }
     }
 }

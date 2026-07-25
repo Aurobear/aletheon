@@ -240,7 +240,7 @@ impl AgoraOps for AgoraRegistry {
             .lock()
             .await
             .reject(proposal_id, reason)
-            .ok_or_else(|| format!("proposal {} not found in session {}", proposal_id, session))?;
+            .ok_or_else(|| format!("proposal {proposal_id} not found in session {session}"))?;
         self.proposal_index.lock().await.remove(&proposal_id);
         Ok(())
     }

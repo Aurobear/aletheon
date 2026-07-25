@@ -1,15 +1,15 @@
 use async_trait::async_trait;
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::external::ExternalIdentityRepository;
-use executive::r#impl::google::{
+use executive::testing::external::ExternalIdentityRepository;
+use executive::testing::provider_account::{
     GoogleEventDispatcher, GoogleEventSink, GooglePollBatch, GooglePollFailure, GoogleSyncManager,
     GoogleSyncManagerConfig, GoogleSyncPoller, GoogleSyncRegistration, GoogleSyncStore,
     ProjectionWrite, SyncCommit, SyncStream,
 };
 use fabric::{
-    ExternalEventDraft, ExternalEventEnvelope, ExternalEventId, ExternalIdentityId,
-    ExternalObjectRef, ExternalScope, GmailMessageSummary, GoogleEvent, IdentityProvider,
-    MailChange, PrincipalId, ProviderRecordRef,
+    ExternalCapabilityId, ExternalEvent, ExternalEventDraft, ExternalEventEnvelope,
+    ExternalEventId, ExternalIdentityId, ExternalObjectRef, ExternalProviderId, ExternalRecordRef,
+    MailChange, MailMessageSummary, OpaqueCursor, OpaqueProviderObjectId, PrincipalId,
 };
 use kernel::chronos::TestClock;
 use std::collections::{HashSet, VecDeque};
@@ -36,7 +36,7 @@ impl Fixture {
                     identity_id: account,
                     provider_subject: "subject".into(),
                     email: "owner@example.com".into(),
-                    scopes: vec![ExternalScope::GmailReadonly],
+                    scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
                 },
                 Some("work".into()),
                 1,
@@ -55,30 +55,30 @@ impl Fixture {
 
     fn event(&self, version: &str, source_ms: i64) -> ExternalEventEnvelope {
         let object = ExternalObjectRef {
-            provider: IdentityProvider::Google,
+            provider: ExternalProviderId::new("google").unwrap(),
             account_id: self.account,
             object_id: "message-1".into(),
             object_version: version.into(),
         };
-        let provenance = ProviderRecordRef {
+        let provenance = ExternalRecordRef {
             account_id: self.account,
-            provider_object_id: "message-1".into(),
+            provider_object_id: OpaqueProviderObjectId::new("message-1").unwrap(),
             fetched_at_ms: source_ms + 1,
             source_timestamp_ms: source_ms,
-            etag_or_history: Some(version.into()),
+            etag_or_history: Some(OpaqueCursor::new(version).unwrap()),
         };
         ExternalEventEnvelope::from_draft(ExternalEventDraft {
-            provider: IdentityProvider::Google,
+            provider: ExternalProviderId::new("google").unwrap(),
             account_id: self.account,
             provider_event_id: Some(format!("history-{version}")),
             object,
             observed_at_ms: source_ms + 1,
             source_timestamp_ms: source_ms,
             provenance: provenance.clone(),
-            event: GoogleEvent::MailUpdated(MailChange {
-                message: GmailMessageSummary {
+            event: ExternalEvent::MailUpdated(MailChange {
+                message: MailMessageSummary {
                     source: provenance,
-                    thread_id: "thread".into(),
+                    thread_id: OpaqueProviderObjectId::new("thread").unwrap(),
                     subject: "subject".into(),
                     from: "sender@example.com".into(),
                     snippet: "snippet".into(),
@@ -231,7 +231,7 @@ impl GoogleSyncPoller for ScriptedPoller {
     async fn poll(
         &self,
         _principal: &PrincipalId,
-        _cursor: &executive::r#impl::google::GoogleSyncCursor,
+        _cursor: &executive::testing::provider_account::GoogleSyncCursor,
         cancel: &CancellationToken,
     ) -> Result<GooglePollBatch, GooglePollFailure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
@@ -391,7 +391,7 @@ impl GoogleSyncPoller for ConcurrencyPoller {
     async fn poll(
         &self,
         _principal: &PrincipalId,
-        cursor: &executive::r#impl::google::GoogleSyncCursor,
+        cursor: &executive::testing::provider_account::GoogleSyncCursor,
         cancel: &CancellationToken,
     ) -> Result<GooglePollBatch, GooglePollFailure> {
         let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;

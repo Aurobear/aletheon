@@ -405,7 +405,7 @@ mod tests {
         layer.record_outcome(true, 500, &scores);
         // Safety was 1.0, over-cautious success → should be reduced by 0.02
         let w = layer.weight_of("safety").unwrap();
-        assert!((w - 0.98).abs() < 1e-9, "expected ~0.98, got {}", w);
+        assert!((w - 0.98).abs() < 1e-9, "expected ~0.98, got {w}");
     }
 
     #[test]
@@ -419,7 +419,7 @@ mod tests {
         layer.record_outcome(false, 5000, &scores);
         // Safety was 0.8, under-cautious failure → increase by 0.03
         let w = layer.weight_of("safety").unwrap();
-        assert!((w - 0.83).abs() < 1e-9, "expected ~0.83, got {}", w);
+        assert!((w - 0.83).abs() < 1e-9, "expected ~0.83, got {w}");
     }
 
     #[test]
@@ -429,7 +429,7 @@ mod tests {
         layer.record_outcome(true, 100, &scores);
         // Efficiency was 0.5, fast success → +0.02
         let w = layer.weight_of("efficiency").unwrap();
-        assert!((w - 0.52).abs() < 1e-9, "expected ~0.52, got {}", w);
+        assert!((w - 0.52).abs() < 1e-9, "expected ~0.52, got {w}");
     }
 
     #[test]
@@ -439,7 +439,7 @@ mod tests {
         layer.record_outcome(false, 15_000, &scores);
         // Efficiency was 0.5, slow failure → +0.03
         let w = layer.weight_of("efficiency").unwrap();
-        assert!((w - 0.53).abs() < 1e-9, "expected ~0.53, got {}", w);
+        assert!((w - 0.53).abs() < 1e-9, "expected ~0.53, got {w}");
     }
 
     #[test]

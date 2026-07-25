@@ -22,3 +22,5 @@ pub mod chronos;
 pub mod process;
 
 pub mod compaction;
+
+pub mod extension_provider;

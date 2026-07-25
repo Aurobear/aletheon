@@ -8,6 +8,15 @@ use super::submit::{submit_message, write_request};
 use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
 use fabric::ui_event::CollaborationMode;
 
+pub(crate) fn refresh_command_completion(app: &mut App) {
+    if app.input_buf.starts_with('/') {
+        app.completion
+            .show_commands(&app.input_buf, &app.registry, app.turn_active);
+    } else {
+        app.completion.hide();
+    }
+}
+
 pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
     use crossterm::event::MouseEventKind;
     match mouse.kind {
@@ -66,7 +75,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                     .expect("typed approval response serializes");
                 use tokio::io::AsyncWriteExt;
                 let payload = serde_json::to_string(&resp).unwrap_or_default();
-                let framed = format!("{}\n", payload);
+                let framed = format!("{payload}\n");
                 let _ = app.stream.write_all(framed.as_bytes()).await;
                 let _ = app.stream.flush().await;
                 app.chat.add_text(
@@ -91,8 +100,20 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
 
     // Ctrl+C: cancel streaming / clear input / double-press quits
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        // If streaming, send cancel to daemon
+        // While streaming, the first press requests cancellation and the
+        // second press remains an unconditional escape hatch.  Do not wait
+        // for the daemon to acknowledge cancellation before allowing exit:
+        // an unavailable provider or wedged turn may never send that event.
         if app.streaming {
+            let now = app.clock.mono_now();
+            if matches!(
+                app.last_ctrl_c,
+                Some(t) if now.0.saturating_sub(t.0) < 2000
+            ) {
+                app.running = false;
+                return;
+            }
+            app.last_ctrl_c = Some(now);
             write_request(app, ClientRpcRequest::Cancel).await;
             return;
         }
@@ -112,6 +133,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             app.cursor = 0;
             app.has_cjk = false;
             app.pending_submit = None;
+            app.completion.hide();
             return;
         }
     }
@@ -256,35 +278,8 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         // Tab: trigger completion for slash commands
         KeyCode::Tab => {
             if app.input_buf.starts_with('/') {
-                let commands: Vec<String> = vec![
-                    "/help",
-                    "/clear",
-                    "/copy",
-                    "/status",
-                    "/reflect",
-                    "/reflect_now",
-                    "/evolution",
-                    "/genome",
-                    "/sessions",
-                    "/resume",
-                    "/compact",
-                    "/model",
-                    "/quit",
-                    "/mode",
-                    "/plan",
-                    "/approve",
-                    "/agents",
-                    "/agent",
-                    "/hooks",
-                    "/skills",
-                    "/skill",
-                    "/interrupt",
-                    "/context",
-                ]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
-                app.completion.show(&app.input_buf, &commands);
+                app.completion
+                    .show_commands(&app.input_buf, &app.registry, app.turn_active);
             }
         }
 
@@ -293,11 +288,14 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
             // Accept completion if visible
             if app.completion.visible {
                 if let Some(selected) = app.completion.selected() {
-                    app.input_buf = selected.to_string();
-                    app.cursor = app.input_buf.len();
+                    if selected != app.input_buf {
+                        app.input_buf = selected.to_string();
+                        app.cursor = app.input_buf.len();
+                        app.completion.hide();
+                        return;
+                    }
                     app.completion.hide();
                 }
-                return;
             }
 
             // Shift+Enter or Alt+Enter → newline
@@ -348,6 +346,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 app.input_buf.replace_range(prev..app.cursor, "");
                 app.cursor = prev;
                 app.check_cjk();
+                refresh_command_completion(app);
             }
         }
 
@@ -361,6 +360,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                     .unwrap_or(app.input_buf.len());
                 app.input_buf.replace_range(app.cursor..next, "");
                 app.check_cjk();
+                refresh_command_completion(app);
             }
         }
 
@@ -370,6 +370,7 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
                 app.input_buf.insert(app.cursor, c);
                 app.cursor += c.len_utf8();
                 app.check_cjk();
+                refresh_command_completion(app);
             }
         }
 
@@ -439,5 +440,58 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         }
 
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::host_time::ClientClock;
+    use crate::tui::term_compat::TermCaps;
+    use crate::tui::App;
+    use std::sync::Arc;
+
+    async fn streaming_app() -> App {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+        );
+        app.streaming = true;
+        app
+    }
+
+    fn ctrl_c() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+    }
+
+    #[tokio::test]
+    async fn first_ctrl_c_requests_cancel_without_exiting_streaming_turn() {
+        let mut app = streaming_app().await;
+
+        handle_key(&mut app, ctrl_c()).await;
+
+        assert!(app.running);
+        assert!(app.last_ctrl_c.is_some());
+    }
+
+    #[tokio::test]
+    async fn second_ctrl_c_exits_even_when_streaming_never_stops() {
+        let mut app = streaming_app().await;
+
+        handle_key(&mut app, ctrl_c()).await;
+        handle_key(&mut app, ctrl_c()).await;
+
+        assert!(!app.running);
     }
 }

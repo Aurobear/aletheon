@@ -1,10 +1,10 @@
 use async_trait::async_trait;
-use executive::kernel::chronos::TestClock;
-use executive::r#impl::goal::{
+use executive::goal::{
     goal_progress_from_outcome, AttemptCoordinationOutcome, AttemptCoordinator,
     AttemptCoordinatorError, AttemptExecutor, AttemptRequest, GoalCoordinator, ObjectiveStore,
     RetryDecision, RetryPolicy,
 };
+use executive::kernel::chronos::TestClock;
 use fabric::channel::{ConversationId, OutboundMessage};
 use fabric::{
     AttemptEvidence, AttemptUsage, CognitiveRole, FailureClass, GoalBudget, GoalId, GoalSpec,
@@ -13,7 +13,7 @@ use fabric::{
 use gateway::dispatcher::{
     ChannelDispatcher, ChannelTransport, ChannelTurnExecutor, ProviderEnvelope,
 };
-use gateway::store::ChannelStore;
+use gateway::ChannelStore;
 use rusqlite::Connection;
 use std::collections::VecDeque;
 use std::path::PathBuf;

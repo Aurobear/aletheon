@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule Aletheon Pi-to-memory closure
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=30min
+Persistent=true
+AccuracySec=1min
+Unit=aletheon-pi-closure.service
+
+[Install]
+WantedBy=timers.target

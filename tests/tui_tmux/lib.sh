@@ -5,9 +5,10 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DAEMON_BIN="$PROJECT_ROOT/target/release/aletheond"
-CLI_BIN="$PROJECT_ROOT/target/release/aletheon"
-SOCKET="/tmp/aletheon-tmux-test-$$.sock"
+CLI_BIN="${ALETHEON_TEST_BIN:-$HOME/.cache/aletheon-cargo/target/release/aletheon}"
+[[ -x "$CLI_BIN" ]] || CLI_BIN="$PROJECT_ROOT/target/release/aletheon"
+SOCKET_DIR="${XDG_RUNTIME_DIR:-/tmp}/aletheon-tmux-test-$$"
+SOCKET="$SOCKET_DIR/aletheon.sock"
 SESSION="aletheon-test-$$"
 TMUX_WIDTH=120
 TMUX_HEIGHT=40
@@ -35,6 +36,7 @@ _cleanup() {
         wait "$DAEMON_PID" 2>/dev/null || true
     fi
     rm -f "$SOCKET"
+    rmdir "$SOCKET_DIR" 2>/dev/null || true
 }
 
 tui_start() {
@@ -45,18 +47,19 @@ tui_start() {
         fail "tmux not found. Install it first."
         exit 1
     fi
-    if [[ ! -x "$DAEMON_BIN" ]] || [[ ! -x "$CLI_BIN" ]]; then
-        fail "Binaries not found. Run: cargo build --release"
+    if [[ ! -x "$CLI_BIN" ]]; then
+        fail "Binary not found. Run: bash scripts/cargo-agent.sh build --release -p aletheon"
         exit 1
     fi
 
     # Kill stale sessions
     tmux kill-session -t "$SESSION" 2>/dev/null || true
-    rm -f "$SOCKET"
+    rm -rf "$SOCKET_DIR"
+    mkdir -m 700 -p "$SOCKET_DIR"
 
     # Start daemon
     log "Starting daemon..."
-    "$DAEMON_BIN" -s "$SOCKET" &>/dev/null &
+    "$CLI_BIN" daemon --socket "$SOCKET" &>/dev/null &
     DAEMON_PID=$!
 
     # Wait for socket
@@ -93,6 +96,7 @@ tui_stop() {
         wait "$DAEMON_PID" 2>/dev/null || true
     fi
     rm -f "$SOCKET"
+    rmdir "$SOCKET_DIR" 2>/dev/null || true
     DAEMON_PID=""
 }
 

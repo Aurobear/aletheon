@@ -1,14 +1,14 @@
 use corpus::tools::google::oauth::GoogleBinding;
-use executive::r#impl::approval::{
-    ApprovalDecision, ApprovalRepository, ApprovalResolutionContext,
-};
-use executive::r#impl::channel::gmail::report::{
+use executive::approval::{ApprovalDecision, ApprovalRepository, ApprovalResolutionContext};
+use executive::goal::ObjectiveStore;
+use executive::testing::channel::gmail::report::{
     GmailDeliveryOutcome, GmailReconciliation, GmailReportBoundary, GmailReportProvider,
     GmailSendResult,
 };
-use executive::r#impl::external::ExternalIdentityRepository;
-use executive::r#impl::goal::ObjectiveStore;
-use fabric::{ApprovalId, ExternalIdentityId, ExternalScope, GoalBudget, GoalSpec, PrincipalId};
+use executive::testing::external::ExternalIdentityRepository;
+use fabric::{
+    ApprovalId, ExternalCapabilityId, ExternalIdentityId, GoalBudget, GoalSpec, PrincipalId,
+};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -37,7 +37,7 @@ impl Fixture {
                     identity_id: account,
                     provider_subject: "subject".into(),
                     email: "owner@example.com".into(),
-                    scopes: vec![ExternalScope::GmailReadonly],
+                    scopes: vec![ExternalCapabilityId::new("mail.read").unwrap()],
                 },
                 Some("work".into()),
                 1,
@@ -81,8 +81,8 @@ impl Fixture {
                  WHERE identity_id=?2 AND state='active'",
                 rusqlite::params![
                     serde_json::to_string(&vec![
-                        ExternalScope::GmailReadonly,
-                        ExternalScope::GmailSend,
+                        ExternalCapabilityId::new("mail.read").unwrap(),
+                        ExternalCapabilityId::new("mail.send").unwrap(),
                     ])
                     .unwrap(),
                     self.account.to_string()
@@ -188,7 +188,7 @@ fn read_only_default_creates_local_artifact_and_never_authorizes_gmail_send() {
         .unwrap();
     assert_eq!(
         report.artifact.scan_status,
-        executive::r#impl::artifact::ArtifactScanStatus::Clean
+        executive::testing::artifact::ArtifactScanStatus::Clean
     );
     assert!(report.telegram_summary.contains("Report ready"));
     assert!(f

@@ -1,4 +1,4 @@
-use executive::r#impl::session::canonical_store::{project_messages, CanonicalSessionStore};
+use executive::runtime::session::canonical_store::{project_messages, CanonicalSessionStore};
 use fabric::*;
 
 fn session(id: &str, parent: Option<SessionFork>) -> SessionRecord {

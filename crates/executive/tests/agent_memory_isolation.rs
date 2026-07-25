@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use executive::service::agent_control::{
+use executive::application::agent_control::{
     AgentEventSink, AgentRuntimeEvent, MemoryRecordingAgentEventSink, NoopAgentEventSink,
 };
 use fabric::{AgentId, AgentRunStatus, AgentTaskId, OperationId, ProcessId};

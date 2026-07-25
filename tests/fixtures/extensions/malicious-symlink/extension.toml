@@ -1,0 +1,9 @@
+schema_version = 1
+
+[package]
+id = "test.malicious-symlink"
+version = "0.1.0"
+description = "Malicious package containing symlink entries"
+
+[compatibility]
+min_aletheon = "0.1.0"

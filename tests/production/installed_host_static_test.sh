@@ -60,7 +60,7 @@ grep -Fq '/run/user/%s/aletheon/aletheon.sock' "${scoped_files[@]}"
 # wrappers are not permitted to translate stale system-service assumptions.
 ! grep -Fq 'ALETHEON_SYSTEMCTL_COMMAND=' "$repo_root/tests/production/install_upgrade_restart.sh"
 ! grep -Fq 'ALETHEON_HEALTHCHECK_COMMAND=' "$repo_root/tests/production/install_upgrade_restart.sh"
-grep -Fq 'core_unit=${ALETHEON_CORE_UNIT:-aletheon-core.service}' "$repo_root/scripts/upgrade-aletheon.sh"
+grep -Fq 'core_unit=${ALETHEON_CORE_UNIT:-aletheon-core.service}' "$repo_root/scripts/libexec/aletheon/upgrade.sh"
 grep -Fq -- '--authorized-users' "$repo_root/tests/production/install_upgrade_restart.sh"
 grep -Fq -- '--user-backup-command' "$repo_root/tests/production/install_upgrade_restart.sh"
 

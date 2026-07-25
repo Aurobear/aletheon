@@ -117,12 +117,11 @@ mod tests {
     #[tokio::test]
     async fn systemd_status_returns_state_or_unsupported() {
         let host = LinuxServiceHost::new();
-        match host.status("sshd.service").await {
-            Ok(state) => assert!(matches!(
+        if let Ok(state) = host.status("sshd.service").await {
+            assert!(matches!(
                 state,
                 ServiceState::Running | ServiceState::Stopped | ServiceState::Unknown
-            )),
-            Err(_) => {} // no systemd = Unsupported, acceptable
+            ));
         }
     }
 

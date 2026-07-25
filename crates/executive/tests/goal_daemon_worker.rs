@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use executive::core::sub_agent::SubAgentRuntime;
 use executive::core::RuntimeRegistry;
-use executive::r#impl::goal::{GoalWorker, ObjectiveStore};
+use executive::goal::{GoalWorker, ObjectiveStore};
 use fabric::{GoalBudget, GoalSpec, GoalState, PrincipalId, RuntimeId};
 use std::sync::{Arc, Mutex};
 use tempfile::NamedTempFile;

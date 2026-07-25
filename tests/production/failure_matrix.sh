@@ -27,7 +27,7 @@ jq -e --arg report_sha256 "$report_sha256" \
   "$v01_recipe_receipt" >/dev/null || {
   echo "BLOCKED: V01 recipe receipt does not match the acceptance report" >&2; exit 78;
 }
-"$repo_root/scripts/release-acceptance.sh" --validate-v01-report "$v01_report"
+"$repo_root/scripts/libexec/aletheon/release-acceptance.sh" --validate-v01-report "$v01_report"
 
 target_user=${ALETHEON_FAILURE_TEST_USER:-${ALETHEON_TEST_USER_A:-}}
 mapfile -t installed_users < <(installed_test_users)
@@ -161,7 +161,7 @@ capture_runtime_integrity() {
 # integrations and Agent execution without falling back to the compatibility unit.
 systemctl is-active --quiet "$machine_unit"
 run_as_installed_user "$target_user" systemctl --user start "$user_unit"
-"$repo_root/scripts/verify-systemd.sh" --readiness --socket "$target_socket" --timeout 30
+"$repo_root/scripts/libexec/aletheon/verify/systemd.sh" --readiness --socket "$target_socket" --timeout 30
 
 for phase in event_append memory_lease gbrain_remote_success agent_runtime_completion; do
   before="$artifacts/$phase-before.json"
@@ -185,7 +185,7 @@ for phase in event_append memory_lease gbrain_remote_success agent_runtime_compl
     --kill-who=main --signal=KILL "$user_unit"
   run_as_installed_user "$target_user" systemctl --user reset-failed "$user_unit" || true
   run_as_installed_user "$target_user" systemctl --user start "$user_unit"
-  "$repo_root/scripts/verify-systemd.sh" --readiness --socket "$target_socket" --timeout 30
+  "$repo_root/scripts/libexec/aletheon/verify/systemd.sh" --readiness --socket "$target_socket" --timeout 30
 
   after_provenance=$(runtime_provenance)
   [[ $(jq -r '.machine.pid' <<<"$after_provenance") == "$before_machine_pid" ]] || {

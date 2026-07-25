@@ -113,7 +113,7 @@ impl MutationLayer {
     fn is_core_identity(&self, target: &str) -> bool {
         CORE_IDENTITY_FIELDS
             .iter()
-            .any(|f| target == *f || target.starts_with(&format!("{}.", f)))
+            .any(|f| target == *f || target.starts_with(&format!("{f}.")))
     }
 
     /// Get all mutation records.

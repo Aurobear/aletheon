@@ -25,7 +25,8 @@
 
 mod turn_request_support;
 
-use executive::service::{PostTurnPipeline, PreTurnPipeline, TurnService};
+use executive::application::{PostTurnPipeline, PreTurnPipeline};
+use executive::TurnService;
 use fabric::{
     CancelReason, MonoDeadlineMillis, NoopTurnEventSink, OperationExitReason, OperationId,
     OperationKind, OperationRequest, OperationState, ProcessId, ProcessSignal, ProcessState,
@@ -124,7 +125,7 @@ fn agent_control_is_the_only_subagent_process_owner() {
     let compatibility = include_str!("../src/core/sub_agent.rs");
     assert!(!compatibility.contains("struct SubAgentSpawner"));
     assert!(!compatibility.contains("HashMap<"));
-    let authority = include_str!("../src/service/agent_control/mod.rs");
+    let authority = include_str!("../src/application/agent_control/mod.rs");
     assert!(authority.contains(".spawn_process("));
     assert!(authority.contains("repository.create"));
 }

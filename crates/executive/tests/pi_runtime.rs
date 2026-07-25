@@ -1,8 +1,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use cognit::config::PiRuntimeConfig;
+use executive::application::coding_runtime::CodingAttemptRequest;
+use executive::composition::config::CodingRuntimeConfig;
 use executive::core::sub_agent::SubAgentRuntime;
-use executive::r#impl::runtime::{PiAttemptRequest, PiRuntime};
+use executive::testing::coding_runtime::PiRuntime;
 use fabric::sandbox::{
     IsolationLevel, SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig,
     SandboxResult,
@@ -132,12 +133,12 @@ impl Fixture {
         }
     }
 
-    fn config(&self, output_cap: usize, timeout_ms: u64) -> PiRuntimeConfig {
+    fn config(&self, output_cap: usize, timeout_ms: u64) -> CodingRuntimeConfig {
         let digest = format!(
             "{:x}",
             Sha256::digest(std::fs::read(&self.executable).unwrap())
         );
-        PiRuntimeConfig {
+        CodingRuntimeConfig {
             enabled: true,
             executable: self.executable.clone(),
             fixed_args: Self::fixed_args(),
@@ -152,8 +153,13 @@ impl Fixture {
         }
     }
 
-    fn request(&self, output_cap: usize, timeout_ms: u64, task_input: &str) -> PiAttemptRequest {
-        PiAttemptRequest {
+    fn request(
+        &self,
+        output_cap: usize,
+        timeout_ms: u64,
+        task_input: &str,
+    ) -> CodingAttemptRequest {
+        CodingAttemptRequest {
             job: CodingJobSpec {
                 job_id: CodingJobId::new(),
                 goal_id: GoalId(7),
@@ -207,7 +213,7 @@ fn git_output(repository: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap().trim().into()
 }
 
-fn encoded(request: &PiAttemptRequest) -> String {
+fn encoded(request: &CodingAttemptRequest) -> String {
     serde_json::to_string(request).unwrap()
 }
 
@@ -216,6 +222,16 @@ fn report(evidence: &[fabric::AttemptEvidence]) -> CodingJobReport {
         .iter()
         .find(|item| item.kind == "coding_job_report")
         .expect("coding report evidence");
+    serde_json::from_str(&item.content).unwrap()
+}
+
+fn capability_audit(
+    evidence: &[fabric::AttemptEvidence],
+) -> executive::application::verification::CapabilityAuditSummary {
+    let item = evidence
+        .iter()
+        .find(|item| item.kind == "coding_capability_audit")
+        .expect("capability audit evidence");
     serde_json::from_str(&item.content).unwrap()
 }
 
@@ -229,7 +245,8 @@ printf '%s\n' \
   '{"type":"session","version":3,"id":"fixture-session"}' \
   '{"type":"agent_start"}' \
   '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"inputTokens":11,"outputTokens":7}}}' \
-  '{"type":"agent_end","messages":[]}'
+  '{"type":"agent_end","messages":[]}' \
+  '{"type":"agent_settled"}'
 "##,
     );
     let before = git_output(&fixture.repository, &["status", "--porcelain=v2"]);
@@ -250,7 +267,33 @@ printf '%s\n' \
         .any(|item| item.kind == "pi_build_identity"));
     assert_eq!(report.changed_files.len(), 1);
     assert_eq!(report.changed_files[0].path, PathBuf::from("src/lib.rs"));
-    assert!(report.diff_sha256.is_some());
+    let diff_evidence = result
+        .evidence
+        .iter()
+        .find(|item| item.kind == "coding_diff_base64")
+        .unwrap();
+    let diff = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &diff_evidence.content,
+    )
+    .unwrap();
+    let diff_sha256 = format!("{:x}", Sha256::digest(&diff));
+    assert_eq!(report.diff_sha256.as_deref(), Some(diff_sha256.as_str()));
+    assert_eq!(
+        report.diff_artifact,
+        Some(PathBuf::from("coding-diffs").join(format!("{}.diff", request.job.job_id.0)))
+    );
+    let audit = capability_audit(&result.evidence);
+    assert!(audit.audit_present);
+    assert_eq!(
+        audit.observed_capabilities,
+        vec![
+            "filesystem_isolation",
+            "network_isolation",
+            "resource_limits"
+        ]
+    );
+    assert_eq!(audit.unavailable_capabilities, vec!["seccomp_filter"]);
     assert_eq!(
         std::fs::read_to_string(fixture.repository.join("src/lib.rs")).unwrap(),
         "pub fn value() -> u8 { 1 }\n"

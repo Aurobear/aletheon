@@ -89,7 +89,7 @@ impl HelpOverlay {
         for (key, desc) in shortcuts {
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled(format!("{:<16}", key), key_style),
+                Span::styled(format!("{key:<16}"), key_style),
                 Span::styled(*desc, desc_style),
             ]));
         }
@@ -129,7 +129,7 @@ impl HelpOverlay {
         for (cmd, desc) in commands {
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled(format!("{:<16}", cmd), key_style),
+                Span::styled(format!("{cmd:<16}"), key_style),
                 Span::styled(*desc, desc_style),
             ]));
         }

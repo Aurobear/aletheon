@@ -22,9 +22,6 @@ use fabric::Timer;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-/// Default socket path for the aletheond daemon.
-pub const DEFAULT_SOCKET: &str = "/run/aletheon/aletheon.sock";
-
 #[derive(Parser)]
 #[command(
     name = "aletheon",
@@ -34,8 +31,8 @@ pub const DEFAULT_SOCKET: &str = "/run/aletheon/aletheon.sock";
 )]
 pub struct Args {
     /// Socket path
-    #[arg(short, long, default_value = DEFAULT_SOCKET, global = true)]
-    pub socket: PathBuf,
+    #[arg(short, long, global = true)]
+    pub socket: Option<PathBuf>,
 
     /// Use this directory as the primary workspace.
     #[arg(short = 'C', long = "chdir", global = true)]
@@ -223,10 +220,11 @@ pub enum GoalAction {
 /// CLI entry point — parses args and dispatches to the appropriate mode.
 pub async fn run() -> Result<()> {
     let args = Args::parse();
+    let socket = crate::host::resolve_user_socket(args.socket.clone())?;
 
     // Handle subcommands
     if let Some(cmd) = args.command {
-        return handle_command(&args.socket, cmd).await;
+        return handle_command(&socket, cmd).await;
     }
 
     // Resolve once for this client lifetime. Subcommands that do not open a
@@ -239,12 +237,12 @@ pub async fn run() -> Result<()> {
     // Handle positional message args
     if !args.message_args.is_empty() {
         let msg = args.message_args.join(" ");
-        return single_message_with_workspace(&args.socket, &msg, &workspace).await;
+        return single_message_with_workspace(&socket, &msg, &workspace).await;
     }
 
     // Handle -m flag
     if let Some(msg) = args.message {
-        return single_message_with_workspace(&args.socket, &msg, &workspace).await;
+        return single_message_with_workspace(&socket, &msg, &workspace).await;
     }
 
     // Interactive mode: use the line-based TUI (IME-compatible)
@@ -255,12 +253,8 @@ pub async fn run() -> Result<()> {
         auto_submit: args.auto_submit,
         test_timeout: args.test_timeout,
     };
-    super::run_with_workspace_config(
-        args.socket.to_str().unwrap_or(DEFAULT_SOCKET),
-        test_config,
-        workspace,
-    )
-    .await
+    super::run_with_workspace_config(socket.to_string_lossy().as_ref(), test_config, workspace)
+        .await
 }
 
 /// Handle subcommands.
@@ -402,7 +396,7 @@ async fn handle_daemon_action(socket: &PathBuf, action: DaemonAction) -> Result<
             if detach {
                 // Start daemon in background
                 let mut cmd = tokio::process::Command::new(exe);
-                cmd.arg("--socket").arg(DEFAULT_SOCKET);
+                cmd.arg("--socket").arg(socket);
                 cmd.stdout(std::process::Stdio::null());
                 cmd.stderr(std::process::Stdio::null());
                 cmd.stdin(std::process::Stdio::null());
@@ -414,13 +408,13 @@ async fn handle_daemon_action(socket: &PathBuf, action: DaemonAction) -> Result<
                         .map(|pid| pid.to_string())
                         .unwrap_or_else(|| "unknown".into())
                 );
-                println!("Socket: {}", DEFAULT_SOCKET);
+                println!("Socket: {}", socket.display());
             } else {
                 // Start daemon in foreground
                 println!("Starting daemon (Ctrl+C to stop)...");
                 let status = tokio::process::Command::new(exe)
                     .arg("--socket")
-                    .arg(DEFAULT_SOCKET)
+                    .arg(socket)
                     .status()
                     .await?;
                 std::process::exit(status.code().unwrap_or(1));
@@ -438,11 +432,10 @@ async fn handle_daemon_action(socket: &PathBuf, action: DaemonAction) -> Result<
         DaemonAction::Status => {
             println!("Daemon status: checking...");
             // Try to connect to socket
-            let socket = std::path::Path::new(DEFAULT_SOCKET);
             if socket.exists() {
                 match UnixStream::connect(socket).await {
                     Ok(_) => println!("Daemon is running"),
-                    Err(e) => println!("Daemon socket exists but connection failed: {}", e),
+                    Err(e) => println!("Daemon socket exists but connection failed: {e}"),
                 }
             } else {
                 println!("Daemon is not running (no socket)");
@@ -488,10 +481,10 @@ pub async fn single_message_with_workspace(
                 println!("{}", workspace.cwd().display());
                 return Ok(());
             }
-            _ => ClientRpcRequest::chat(msg, workspace),
+            _ => benchmark_chat_request(msg, workspace),
         }
     } else {
-        ClientRpcRequest::chat(msg, workspace)
+        benchmark_chat_request(msg, workspace)
     };
     let request = typed_request.to_json_rpc(Some(1))?;
     let req_str = serde_json::to_string(&request)?;
@@ -500,6 +493,12 @@ pub async fn single_message_with_workspace(
 
     // Track whether we received any streaming text to avoid duplicate output.
     let mut had_streaming_text = false;
+    let benchmark_metrics = std::env::var_os("ALETHEON_BENCHMARK_METRICS").is_some();
+    let started_at = std::time::Instant::now();
+    let mut tokens_in = 0u64;
+    let mut tokens_out = 0u64;
+    let mut cache_hit_tokens = 0u64;
+    let mut tool_calls = 0u64;
 
     // Use Timer::timeout to wrap the entire response reading loop.
     // This provides a clean timeout mechanism.
@@ -516,8 +515,8 @@ pub async fn single_message_with_workspace(
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("Error reading response: {}", e);
-                    return Err(anyhow::anyhow!("Read error: {}", e));
+                    eprintln!("Error reading response: {e}");
+                    return Err(anyhow::anyhow!("Read error: {e}"));
                 }
             }
 
@@ -537,8 +536,7 @@ pub async fn single_message_with_workspace(
                 let risk_level = params["risk_level"].as_str().unwrap_or("");
                 let approval_id = params["approval_id"].as_str().unwrap_or("");
                 eprintln!(
-                    "\n\u{26a0}  Approval required [{}] {}\n   {}\n   Approve? [y]es / [a]lways / [N]o: ",
-                    risk_level, tool, action_summary,
+                    "\n\u{26a0}  Approval required [{risk_level}] {tool}\n   {action_summary}\n   Approve? [y]es / [a]lways / [N]o: ",
                 );
                 let mut line = String::new();
                 let stdin = io::stdin();
@@ -567,7 +565,19 @@ pub async fn single_message_with_workspace(
                                 // args arrive later via ToolCallComplete — skip here
                             }
                             ClientEvent::ToolCallComplete { tool, args, .. } => {
+                                tool_calls = tool_calls.saturating_add(1);
                                 eprintln!("[tool] {} {}", tool, serde_json::to_string(&args).unwrap_or_default());
+                            }
+                            ClientEvent::Usage {
+                                tokens_in: event_tokens_in,
+                                tokens_out: event_tokens_out,
+                                cache_hit_tokens: event_cache_hit_tokens,
+                                ..
+                            } => {
+                                tokens_in = tokens_in.saturating_add(event_tokens_in);
+                                tokens_out = tokens_out.saturating_add(event_tokens_out);
+                                cache_hit_tokens =
+                                    cache_hit_tokens.saturating_add(event_cache_hit_tokens);
                             }
                             ClientEvent::ToolProgress { tool, payload, .. } => {
                                 eprintln!("[tool:{tool}] {payload}");
@@ -588,7 +598,7 @@ pub async fn single_message_with_workspace(
             if let Some(text) = resp["result"]["response"].as_str() {
                 // Deduplicate consecutive identical lines (some models repeat text)
                 let deduped = deduplicate_response(text);
-                println!("{}", deduped);
+                println!("{deduped}");
             } else if !resp["result"]["reflections"].is_null() {
                 println!("{}", format_reflections(&resp["result"]["reflections"]));
             } else if !resp["result"]["genome"].is_null() {
@@ -598,7 +608,19 @@ pub async fn single_message_with_workspace(
             } else if let Some(_status) = resp["result"]["status"].as_object() {
                 println!("{}", format_status(&resp["result"]["status"]));
             } else if let Some(err) = resp["error"]["message"].as_str() {
-                eprintln!("Error: {}", err);
+                eprintln!("Error: {err}");
+            }
+            if benchmark_metrics {
+                eprintln!(
+                    "ALETHEON_BENCHMARK_METRICS={}",
+                    serde_json::json!({
+                        "input_tokens": tokens_in,
+                        "output_tokens": tokens_out,
+                        "cache_hit_tokens": cache_hit_tokens,
+                        "latency_ms": started_at.elapsed().as_millis() as u64,
+                        "tool_calls": tool_calls,
+                    })
+                );
             }
             return Ok(());
         }
@@ -607,13 +629,19 @@ pub async fn single_message_with_workspace(
     match result {
         Ok(inner) => inner?,
         Err(_) => {
-            eprintln!(
-                "\n⏰ Timeout: no response after {}s",
-                SINGLE_MESSAGE_TIMEOUT_SECS
-            );
+            eprintln!("\n⏰ Timeout: no response after {SINGLE_MESSAGE_TIMEOUT_SECS}s");
         }
     }
     Ok(())
+}
+
+fn benchmark_chat_request(message: &str, workspace: &fabric::WorkspacePolicy) -> ClientRpcRequest {
+    match std::env::var("ALETHEON_BENCHMARK_SESSION_ID") {
+        Ok(session_id) if !session_id.trim().is_empty() => {
+            ClientRpcRequest::chat_for(message, fabric::SessionId(session_id), workspace)
+        }
+        _ => ClientRpcRequest::chat(message, workspace),
+    }
 }
 
 #[cfg(test)]

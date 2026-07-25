@@ -7,3 +7,6 @@ integration_branch = "dev"
 
 [workflow]
 delete_merged_branches = true
+
+[mcp_servers.aletheon-monitor]
+command = "aletheon-monitor"
