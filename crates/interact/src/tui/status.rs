@@ -21,6 +21,8 @@ pub struct StatusBar {
     pub waiting: bool,
     pub token_count: Option<u32>,
     pub total_tokens: u32,
+    /// Estimated tokens currently present in the active model context.
+    pub context_used_tokens: u32,
     pub context_window: u32,
     pub session_turns: u32,
 }
@@ -37,6 +39,7 @@ impl StatusBar {
             waiting: false,
             token_count: None,
             total_tokens: 0,
+            context_used_tokens: 0,
             context_window: 128_000,
             session_turns: 0,
         }
@@ -246,10 +249,10 @@ impl<'a> Widget for StatusBarWidget<'a> {
         if self.status.context_window > 0 {
             // `total_tokens` is cumulative provider usage across every
             // inference round in the session. It is useful as a cost counter,
-            // but it is not the active context size. Use the latest request's
-            // usage for context pressure so a long-lived session does not
+            // but it is not the active context size. Use the harness context
+            // estimate for pressure so a long-lived session does not
             // appear to fill a 1M window merely by accumulating billed tokens.
-            let active_tokens = self.status.token_count.unwrap_or(0);
+            let active_tokens = self.status.context_used_tokens;
             let pct = ((active_tokens as f64) / (self.status.context_window as f64) * 100.0)
                 .clamp(0.0, 99.0) as u32;
             right_parts.push(format!("{pct}% ctx"));
@@ -336,6 +339,7 @@ mod tests {
         let mut status = StatusBar::new(TermCaps::detect());
         status.total_tokens = 400_000;
         status.token_count = Some(20_000);
+        status.context_used_tokens = 20_000;
         status.context_window = 1_000_000;
 
         let area = Rect::new(0, 0, 100, 1);

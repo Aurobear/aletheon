@@ -254,6 +254,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         } => {
             app.app_state.context.used = used_tokens as usize;
             app.app_state.context.max = max_tokens as usize;
+            app.status.context_used_tokens = used_tokens as u32;
             app.status.context_window = max_tokens as u32;
         }
         ClientEvent::ModelSwitch { model } => {
