@@ -13,7 +13,7 @@ mod tool_output;
 pub use batching::{partition_tool_calls, ToolBatch};
 pub use metrics::TurnMetrics;
 
-const MIN_EXPLORATION_INPUT_TOKENS: u64 = 12_000;
+const MIN_EXPLORATION_INPUT_TOKENS: u64 = 10_000;
 const MAX_EXPLORATION_INPUT_TOKENS: u64 = 24_000;
 
 fn exploration_input_token_budget(context_window_tokens: usize) -> u64 {
@@ -462,8 +462,8 @@ mod exploration_budget_tests {
 
     #[test]
     fn budget_scales_with_context_but_remains_bounded() {
-        assert_eq!(exploration_input_token_budget(128_000), 12_000);
-        assert_eq!(exploration_input_token_budget(1_000_000), 12_000);
+        assert_eq!(exploration_input_token_budget(128_000), 10_000);
+        assert_eq!(exploration_input_token_budget(1_000_000), 10_000);
         assert_eq!(exploration_input_token_budget(2_000_000), 20_000);
         assert_eq!(exploration_input_token_budget(10_000_000), 24_000);
     }
@@ -478,13 +478,13 @@ mod exploration_budget_tests {
         ));
         assert!(!should_close_exploration(
             2,
-            11_999,
+            9_999,
             1_000_000,
             ["file_read", "glob"]
         ));
         assert!(should_close_exploration(
             2,
-            12_000,
+            10_000,
             1_000_000,
             ["file_read", "glob"]
         ));
