@@ -1,5 +1,14 @@
 # Aletheon Project Instructions
 
+## Tool and debugging efficiency
+
+- Never invoke Cargo directly; use `bash scripts/cargo-agent.sh <cargo arguments>`.
+- For repository overviews, batch-read known entry files before scoped search.
+- Do not inventory one file extension at a time or alternate one model request per independent file.
+- Treat `provider_unavailable`, `provider_rejected_request`, and any rendered inference error as test failures even if a monitor aggregate says PASS.
+- Separate model rounds, provider retries, and tool-call counts in debug reports.
+- System acceptance uses `sudo bash scripts/aletheon.sh deploy` and `/usr/bin/aletheon`; do not deploy or accept `~/.local/bin/aletheon`.
+
 ## Branch and PR workflow
 
 - Treat `dev` as the default integration branch.
@@ -167,24 +176,24 @@ Before approving any design or plan that adds a new subsystem, verify:
 
 - Kernel timeout/deadline tests MUST use `TestClock`. No real `sleep`.
 - New behavior MUST have a test. Refactors without new tests are OK only if
-  `cargo check --workspace --all-targets` + existing tests pass.
+  `bash scripts/cargo-agent.sh check --workspace --all-targets` + existing tests pass.
 
 ### Test scope by phase
 
-Full `cargo test --workspace` is too slow for iterative development (10+ minutes).
+Full `bash scripts/cargo-agent.sh test --workspace` is too slow for iterative development (10+ minutes).
 Scale test scope to the risk of the change:
 
 | Phase | Scope | Command |
 |-------|-------|---------|
-| **Feature work** (per-commit) | Affected crate only | `cargo test -p <crate> --lib --no-fail-fast` |
-| **Cross-crate change** | Affected crates | `cargo test -p <crate1> -p <crate2> --lib --no-fail-fast` |
-| **New integration test** | Specific test file | `cargo test -p <crate> --test <name> --no-fail-fast` |
-| **Pre-PR to dev** | Affected crates all targets | `cargo test -p <crate> --all-targets --no-fail-fast` |
-| **Merge to dev** | Full workspace | `cargo test --workspace --no-fail-fast` (only on PR to dev) |
+| **Feature work** (per-commit) | Affected crate only | `bash scripts/cargo-agent.sh test -p <crate> --lib --no-fail-fast` |
+| **Cross-crate change** | Affected crates | `bash scripts/cargo-agent.sh test -p <crate1> -p <crate2> --lib --no-fail-fast` |
+| **New integration test** | Specific test file | `bash scripts/cargo-agent.sh test -p <crate> --test <name> --no-fail-fast` |
+| **Pre-PR to dev** | Affected crates all targets | `bash scripts/cargo-agent.sh test -p <crate> --all-targets --no-fail-fast` |
+| **Merge to dev** | Full workspace | `bash scripts/cargo-agent.sh test --workspace --no-fail-fast` (only on PR to dev) |
 
-**Rule**: Do NOT run `cargo test --workspace` during feature-branch development.
+**Rule**: Do NOT run `bash scripts/cargo-agent.sh test --workspace` during feature-branch development.
 Only run it when the PR targets `dev`. Before that, test only the crates you touched.
-A `cargo check --workspace --all-targets` is sufficient to catch cross-crate breakage.
+A `bash scripts/cargo-agent.sh check --workspace --all-targets` is sufficient to catch cross-crate breakage.
 
 ## Commit conventions
 

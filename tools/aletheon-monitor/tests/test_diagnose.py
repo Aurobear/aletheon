@@ -1,7 +1,7 @@
 import asyncio
 from src.tools import tui as tui_tools
 from src.tools import diagnose as diag
-from src.tools.diagnose import build_timeline
+from src.tools.diagnose import build_timeline, frame_assertions, provider_metrics
 
 
 def test_diagnose_stops_tui_on_capture_error(monkeypatch):
@@ -39,3 +39,25 @@ def test_build_timeline_sorts_sources_by_timestamp():
     assert [e["source"] for e in tl] == ["journal", "audit", "journal"]
     assert tl[0]["ts"] == "2026-07-06T11:15:01Z"
     assert tl[1]["summary"].startswith("glob") or "glob" in tl[1]["summary"]
+
+
+def test_provider_error_frame_cannot_pass_as_final_answer():
+    assertions = frame_assertions(
+        "│ hello\nerror: cognitive session: provider_unavailable\n❯",
+        prompt_visible=True,
+    )
+    assert next(a for a in assertions if a["name"] == "final_answer")["passed"] is False
+    assert next(
+        a for a in assertions if a["name"] == "forbidden:provider_unavailable"
+    )["passed"] is False
+
+
+def test_provider_metrics_count_retries_and_errors():
+    metrics = provider_metrics({
+        "lines": [
+            "Streaming inference unavailable; retrying attempt=1 provider_unavailable",
+            "inference provider failed: provider_unavailable",
+        ]
+    })
+    assert metrics["retry_attempts"] >= 1
+    assert metrics["provider_error_markers"] >= 2

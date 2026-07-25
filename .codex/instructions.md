@@ -1,5 +1,14 @@
 # Codex Project Instructions: Aletheon
 
+## Tool and debugging efficiency
+
+- Never invoke Cargo directly; use `bash scripts/cargo-agent.sh <cargo arguments>`.
+- For repository overviews, batch-read known entry files before scoped search.
+- Do not inventory one file extension at a time or alternate one model request per independent file.
+- Treat `provider_unavailable`, `provider_rejected_request`, and any rendered inference error as test failures even if a monitor aggregate says PASS.
+- Separate model rounds, provider retries, and tool-call counts in debug reports.
+- System acceptance uses `sudo bash scripts/aletheon.sh deploy` and `/usr/bin/aletheon`; do not deploy or accept `~/.local/bin/aletheon`.
+
 ## Branch and PR workflow
 
 - Treat `dev` as the default integration branch unless the user says otherwise.
@@ -40,18 +49,18 @@ exceed 2000 lines without a split plan.
 
 ### Test scope by phase
 
-Full `cargo test --workspace` is too slow for iterative development. Scale up with risk:
+Full `bash scripts/cargo-agent.sh test --workspace` is too slow for iterative development. Scale up with risk:
 
 | Phase | Scope | Command |
 |-------|-------|---------|
-| **Feature work** (per-commit) | Affected crate only | `cargo test -p <crate> --lib --no-fail-fast` |
-| **Cross-crate change** | Affected crates | `cargo test -p <crate1> -p <crate2> --lib --no-fail-fast` |
-| **New integration test** | Specific test file | `cargo test -p <crate> --test <name> --no-fail-fast` |
-| **Pre-PR to dev** | Affected crates all targets | `cargo test -p <crate> --all-targets --no-fail-fast` |
-| **Merge to dev** | Full workspace | `cargo test --workspace --no-fail-fast` (only on PR to dev) |
+| **Feature work** (per-commit) | Affected crate only | `bash scripts/cargo-agent.sh test -p <crate> --lib --no-fail-fast` |
+| **Cross-crate change** | Affected crates | `bash scripts/cargo-agent.sh test -p <crate1> -p <crate2> --lib --no-fail-fast` |
+| **New integration test** | Specific test file | `bash scripts/cargo-agent.sh test -p <crate> --test <name> --no-fail-fast` |
+| **Pre-PR to dev** | Affected crates all targets | `bash scripts/cargo-agent.sh test -p <crate> --all-targets --no-fail-fast` |
+| **Merge to dev** | Full workspace | `bash scripts/cargo-agent.sh test --workspace --no-fail-fast` (only on PR to dev) |
 
-**Do NOT run `cargo test --workspace` during feature-branch work.**
-Use `cargo check --workspace --all-targets` to verify cross-crate compatibility.
+**Do NOT run `bash scripts/cargo-agent.sh test --workspace` during feature-branch work.**
+Use `bash scripts/cargo-agent.sh check --workspace --all-targets` to verify cross-crate compatibility.
 Full workspace tests only at dev merge time.
 
 ## Phase constraints (current wiring window)
@@ -70,4 +79,4 @@ Allowed:
 ## Commit format
 
 `type(domain): message` — types: feat, refactor, fix, test, chore, security.
-Never include local AI tool names. End with `Co-Authored-By: Claude <noreply@anthropic.com>`.
+Never include local AI tool names. Do not add automated co-author trailers.
