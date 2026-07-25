@@ -45,7 +45,7 @@ impl AgentControlTools {
     fn describe(operation: AgentControlOperation) -> &'static str {
         match operation {
             AgentControlOperation::Spawn => {
-                "Spawn a bounded child Agent and return its durable handle. The runtime is selected automatically from the profile and required capabilities; runtime is an optional constrained diagnostic override."
+                "Spawn a bounded child Agent and return only its durable handle; this call does not wait for completion or return the child result. Call agent_wait with the returned agent_id before reporting the child's status or output. The runtime is selected automatically from the profile and required capabilities; runtime is an optional constrained diagnostic override."
             }
             AgentControlOperation::Wait => {
                 "Wait for a child Agent terminal snapshot with an explicit timeout"
@@ -200,7 +200,7 @@ impl Tool for AgentControlTool {
     fn description(&self) -> &str {
         match self.operation {
             AgentControlOperation::Spawn => {
-                "Spawn a bounded child Agent and return its durable handle. The runtime is selected automatically from the profile and required capabilities; runtime is an optional constrained diagnostic override."
+                "Spawn a bounded child Agent and return only its durable handle; this call does not wait for completion or return the child result. Call agent_wait with the returned agent_id before reporting the child's status or output. The runtime is selected automatically from the profile and required capabilities; runtime is an optional constrained diagnostic override."
             }
             AgentControlOperation::Wait => {
                 "Wait for a child Agent terminal snapshot with an explicit timeout"

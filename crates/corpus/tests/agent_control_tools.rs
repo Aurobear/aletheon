@@ -201,6 +201,8 @@ fn exposes_five_exact_bounded_schemas() {
         assert_eq!(schema["additionalProperties"], false);
         if tool.name() == "agent_spawn" {
             let serialized = serde_json::to_string(&schema).unwrap();
+            assert!(tool.description().contains("Call agent_wait"));
+            assert!(tool.description().contains("does not wait"));
             assert!(!tool.description().contains("pi"));
             assert!(!serialized.contains("pi-rpc"));
             assert!(!serialized.contains("pi-coder"));
