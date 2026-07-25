@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use fabric::{LlmProvider, LlmResponse, LlmStream, Message, ToolDefinition};
+use fabric::{LlmProvider, LlmResponse, LlmStream, Message, ModelRuntimeFacts, ToolDefinition};
 use serde::{Deserialize, Serialize};
 
 /// Wire-safe model input. Filesystem and operating-system authority are
@@ -125,6 +125,14 @@ impl LlmProvider for PortLlmProvider {
 
     fn name(&self) -> &str {
         &self.display_name
+    }
+
+    fn runtime_facts(&self) -> ModelRuntimeFacts {
+        ModelRuntimeFacts {
+            effective_model_id: self.model_spec.clone(),
+            display_name: self.display_name.clone(),
+            max_context_tokens: self.max_context,
+        }
     }
 
     fn max_context_length(&self) -> usize {

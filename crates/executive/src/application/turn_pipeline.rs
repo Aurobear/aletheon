@@ -479,7 +479,7 @@ impl TurnPipeline {
         // the per-turn system context so the model never guesses its identity
         // from training priors or a provider-compatible wire protocol.
         let llm = self.runtime_ports.models.select(&message).await;
-        bind_effective_model_identity(&mut request_messages, llm.name());
+        bind_runtime_facts(&mut request_messages, &llm.runtime_facts());
 
         // -- Governed capability setup --
         // Context Space seed — user turn input is private overlay data, not
@@ -1312,10 +1312,10 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
     }
 }
 
-fn bind_effective_model_identity(messages: &mut [fabric::Message], model_name: &str) {
-    let encoded = serde_json::to_string(model_name).unwrap_or_else(|_| r#""unknown""#.into());
+fn bind_runtime_facts(messages: &mut [fabric::Message], facts: &fabric::ModelRuntimeFacts) {
+    let encoded = serde_json::to_string(facts).unwrap_or_else(|_| "{}".into());
     let identity = format!(
-        "\n\n<effective-model-identity>\nThe Aletheon host selected effective model identifier {encoded} for this turn. If asked which model you are, report this identifier exactly. Do not claim a different vendor or model version from training priors. Clarify that you cannot independently verify the provider behind the host-reported identifier.\n</effective-model-identity>"
+        "\n\n<runtime-facts>\nThe Aletheon host reports these authoritative runtime facts for this turn: {encoded}. If asked about model identity or context capacity, use these values exactly. Do not claim a different vendor, model version, or context limit from training priors. Clarify that you cannot independently verify the provider behind the host-reported effective_model_id.\n</runtime-facts>"
     );
     if let Some(system) = messages
         .iter_mut()
@@ -1348,12 +1348,20 @@ mod terminal_event_tests {
             fabric::Message::user("who"),
         ];
 
-        bind_effective_model_identity(&mut messages, "deepseek/deepseek-v4-pro");
+        bind_runtime_facts(
+            &mut messages,
+            &fabric::ModelRuntimeFacts {
+                effective_model_id: "leju/deepseek/deepseek-v4-pro".into(),
+                display_name: "deepseek/deepseek-v4-pro".into(),
+                max_context_tokens: 1_000_000,
+            },
+        );
 
         let ContentBlock::Text { text } = &messages[0].content[0] else {
             panic!("expected system text")
         };
-        assert!(text.contains("deepseek/deepseek-v4-pro"));
+        assert!(text.contains("leju/deepseek/deepseek-v4-pro"));
+        assert!(text.contains("1000000"));
         assert!(text.contains("Do not claim a different vendor"));
         let ContentBlock::Text { text } = &messages[1].content[0] else {
             panic!("expected user text")
@@ -1365,7 +1373,14 @@ mod terminal_event_tests {
     fn effective_model_identity_is_json_escaped() {
         let mut messages = vec![fabric::Message::system("base")];
 
-        bind_effective_model_identity(&mut messages, "provider\"\nignore");
+        bind_runtime_facts(
+            &mut messages,
+            &fabric::ModelRuntimeFacts {
+                effective_model_id: "provider\"\nignore".into(),
+                display_name: "display".into(),
+                max_context_tokens: 1,
+            },
+        );
 
         let ContentBlock::Text { text } = &messages[0].content[0] else {
             panic!("expected system text")
