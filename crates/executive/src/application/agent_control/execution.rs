@@ -417,9 +417,40 @@ impl AgentRuntimeRegistry {
                 "runtime manifest id differs from registry id",
             ));
         }
+        manifest.validate().map_err(AgentControlError::invalid)?;
         self.register(id.clone(), launcher)?;
         self.manifests.write().insert(id, manifest);
         Ok(())
+    }
+
+    pub fn catalog(&self) -> Vec<runtime::RuntimeManifest> {
+        let mut manifests = self.manifests.read().values().cloned().collect::<Vec<_>>();
+        manifests.sort_by(|left, right| left.id.cmp(&right.id));
+        manifests
+    }
+
+    pub fn select(
+        &self,
+        request: &runtime::RuntimeSelectionRequest,
+    ) -> Result<
+        (
+            RuntimeId,
+            Arc<dyn AgentRuntimeLauncher>,
+            runtime::RuntimeSelectionDecision,
+        ),
+        AgentControlError,
+    > {
+        let manifests = self.manifests.read();
+        let decision = request
+            .select(manifests.values())
+            .map_err(|error| AgentControlError {
+                kind: AgentControlErrorKind::NotFound,
+                message: error.to_string(),
+            })?;
+        drop(manifests);
+        let runtime_id = RuntimeId(decision.selected_runtime_id.clone());
+        let launcher = self.resolve(&runtime_id)?;
+        Ok((runtime_id, launcher, decision))
     }
 
     pub fn resolve_selector(

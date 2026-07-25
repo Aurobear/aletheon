@@ -1,6 +1,6 @@
 //! Native child-Agent runtime backed by one Cognit cognitive session.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -159,6 +159,38 @@ impl NativeCognitRuntime {
 
     pub fn runtime_id() -> RuntimeId {
         RuntimeId(NATIVE_COGNIT_RUNTIME_ID.into())
+    }
+
+    pub fn manifest() -> runtime::RuntimeManifest {
+        runtime::RuntimeManifest {
+            id: NATIVE_COGNIT_RUNTIME_ID.into(),
+            aliases: vec!["native".into(), "cognit".into()],
+            display_name: "Native Cognit Runtime".into(),
+            capabilities: BTreeSet::from([
+                runtime::RuntimeCapability::CodeRead,
+                runtime::RuntimeCapability::CodeSearch,
+                runtime::RuntimeCapability::CodeEdit,
+                runtime::RuntimeCapability::Shell,
+                runtime::RuntimeCapability::Test,
+                runtime::RuntimeCapability::Git,
+                runtime::RuntimeCapability::Diagnostics,
+                runtime::RuntimeCapability::Browser,
+            ]),
+            interaction_modes: BTreeSet::from([
+                runtime::InteractionMode::Resident,
+                runtime::InteractionMode::Steering,
+                runtime::InteractionMode::FollowUp,
+            ]),
+            workspace_modes: BTreeSet::from([
+                runtime::WorkspaceMode::SharedReadOnly,
+                runtime::WorkspaceMode::SharedWritable,
+            ]),
+            task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
+            tool_governance: runtime::ToolGovernance::Intercepted,
+            priority: 20,
+            max_context_tokens: None,
+            resource_requirements: runtime::RuntimeResourceRequirements::default(),
+        }
     }
 
     async fn execute(

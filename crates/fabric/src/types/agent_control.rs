@@ -330,6 +330,51 @@ pub struct AgentSpawnRequest {
     pub background_decls: Vec<BackgroundResourceDecl>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentSpawnIntent {
+    pub root_agent_id: AgentId,
+    pub parent_agent_id: Option<AgentId>,
+    pub parent_process_id: Option<ProcessId>,
+    pub profile_id: AgentProfileId,
+    #[serde(default)]
+    pub runtime_override: Option<String>,
+    #[serde(default)]
+    pub required_capabilities: Vec<AgentRuntimeCapability>,
+    /// Host-injected workspace authority. Model-visible input cannot mint it.
+    #[serde(skip)]
+    pub trusted_workspace: Option<crate::WorkspacePolicy>,
+    pub task: String,
+    pub context: AgentContextFork,
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    pub budget: AgentBudget,
+}
+
+impl AgentSpawnIntent {
+    pub fn validate(&self) -> Result<(), AgentControlError> {
+        ensure_text(&self.profile_id.0, 512, "profile ID")?;
+        if let Some(runtime_override) = &self.runtime_override {
+            ensure_text(runtime_override, 512, "runtime override")?;
+        }
+        ensure_text(&self.task, MAX_AGENT_TASK_BYTES, "Agent task")?;
+        ensure_count(self.allowed_tools.len(), 256, "allowed tools")?;
+        for tool in &self.allowed_tools {
+            ensure_text(tool, 512, "allowed tool")?;
+        }
+        let mut capabilities = self.required_capabilities.clone();
+        capabilities.sort();
+        let original_len = capabilities.len();
+        capabilities.dedup();
+        if capabilities.len() != original_len {
+            return Err(AgentControlError::invalid(
+                "required runtime capabilities contain duplicates",
+            ));
+        }
+        self.context.validate()?;
+        self.budget.validate()
+    }
+}
+
 impl AgentSpawnRequest {
     pub fn validate(&self) -> Result<(), AgentControlError> {
         ensure_text(&self.profile_id.0, 512, "profile ID")?;
@@ -643,6 +688,16 @@ impl AgentControlError {
 
 #[async_trait]
 pub trait AgentControlPort: Send + Sync {
+    async fn spawn_intent(
+        &self,
+        _intent: AgentSpawnIntent,
+    ) -> Result<AgentHandle, AgentControlError> {
+        Err(AgentControlError {
+            kind: AgentControlErrorKind::Runtime,
+            message: "generic subagent selection is unavailable".into(),
+        })
+    }
+
     async fn spawn(&self, request: AgentSpawnRequest) -> Result<AgentHandle, AgentControlError>;
     async fn wait(&self, request: AgentWaitRequest) -> Result<AgentSnapshot, AgentControlError>;
     async fn send(

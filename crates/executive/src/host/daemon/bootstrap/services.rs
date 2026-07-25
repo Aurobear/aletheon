@@ -44,6 +44,10 @@ pub(super) async fn build_agent_services(
     agent_runtimes: Arc<crate::application::agent_control::AgentRuntimeRegistry>,
     tools: Arc<Mutex<corpus::tools::tools::ToolRegistry>>,
     agent_profiles_for_tools: HashMap<String, fabric::AgentProfile>,
+    runtime_profile_requirements: HashMap<
+        fabric::AgentProfileId,
+        Vec<fabric::AgentRuntimeCapability>,
+    >,
     granted_capabilities: Arc<tokio::sync::RwLock<Vec<fabric::CapabilityId>>>,
     durable_memory: Arc<dyn mnemosyne::MemoryService>,
 ) -> anyhow::Result<AgentServices> {
@@ -92,6 +96,7 @@ pub(super) async fn build_agent_services(
             agent_runtimes,
             canonical_event_spine.clone(),
         )
+        .with_runtime_profile_requirements(runtime_profile_requirements)
         .with_budget_controller(kernel.budget_controller())
         .with_event_spine(canonical_event_spine.clone())
         .with_event_projections(event_projections.clone())

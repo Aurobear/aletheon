@@ -7,7 +7,7 @@ use fabric::agent_control::MAX_LIST_ITEMS;
 use fabric::tool::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use fabric::{
     AgentBudget, AgentContextFork, AgentControlError, AgentControlPort, AgentId, AgentListRequest,
-    AgentProfileId, AgentSendRequest, AgentSpawnRequest, AgentWaitRequest, RuntimeId,
+    AgentProfileId, AgentRuntimeCapability, AgentSendRequest, AgentSpawnIntent, AgentWaitRequest,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -45,7 +45,7 @@ impl AgentControlTools {
     fn describe(operation: AgentControlOperation) -> &'static str {
         match operation {
             AgentControlOperation::Spawn => {
-                "Spawn a bounded child Agent and return its durable handle. Runtime is a registered runtime ID: use pi-rpc for a natural-language Pi analysis task; pi-coder accepts only a serialized coding-attempt request."
+                "Spawn a bounded child Agent and return its durable handle. The runtime is selected automatically from the profile and required capabilities; runtime is an optional constrained diagnostic override."
             }
             AgentControlOperation::Wait => {
                 "Wait for a child Agent terminal snapshot with an explicit timeout"
@@ -63,8 +63,9 @@ impl AgentControlTools {
                 "type":"object","additionalProperties":false,
                 "properties":{
                     "profile":{"type":"string","minLength":1,"maxLength":512},
-                    "runtime":{"type":"string","minLength":1,"maxLength":512,"description":"Registered runtime ID. pi-rpc accepts natural-language Pi tasks; pi-coder requires a serialized coding-attempt request."},
-                    "task":{"type":"string","minLength":1,"maxLength":65536,"description":"Task in the selected runtime's input format. Use ordinary instructions with pi-rpc."},
+                    "runtime":{"type":"string","minLength":1,"maxLength":512,"description":"Optional registered runtime ID or alias override. The override must satisfy all effective requirements."},
+                    "required_capabilities":{"type":"array","maxItems":10,"uniqueItems":true,"items":{"type":"string","enum":["code_read","code_search","code_edit","shell","test","git","diagnostics","browser","device_observe","device_command"]}},
+                    "task":{"type":"string","minLength":1,"maxLength":65536,"description":"Provider-neutral natural-language task for the child Agent."},
                     "context":{"type":"object"},
                     "tools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":512}},
                     "budget":{
@@ -80,7 +81,7 @@ impl AgentControlTools {
                         "required":["max_input_tokens","max_output_tokens","max_tool_calls","max_elapsed_ms","max_depth"]
                     }
                 },
-                "required":["profile","runtime","task","budget"]
+                "required":["profile","task","budget"]
             }),
             AgentControlOperation::Wait => json!({
                 "type":"object","additionalProperties":false,
@@ -142,7 +143,10 @@ struct AgentControlTool {
 #[serde(deny_unknown_fields)]
 struct SpawnInput {
     profile: String,
-    runtime: String,
+    #[serde(default)]
+    runtime: Option<String>,
+    #[serde(default)]
+    required_capabilities: Vec<AgentRuntimeCapability>,
     task: String,
     #[serde(default)]
     context: AgentContextFork,
@@ -196,7 +200,7 @@ impl Tool for AgentControlTool {
     fn description(&self) -> &str {
         match self.operation {
             AgentControlOperation::Spawn => {
-                "Spawn a bounded child Agent and return its durable handle. Runtime is a registered runtime ID: use pi-rpc for a natural-language Pi analysis task; pi-coder accepts only a serialized coding-attempt request."
+                "Spawn a bounded child Agent and return its durable handle. The runtime is selected automatically from the profile and required capabilities; runtime is an optional constrained diagnostic override."
             }
             AgentControlOperation::Wait => {
                 "Wait for a child Agent terminal snapshot with an explicit timeout"
@@ -213,8 +217,9 @@ impl Tool for AgentControlTool {
                 "type":"object","additionalProperties":false,
                 "properties":{
                     "profile":{"type":"string","minLength":1,"maxLength":512},
-                    "runtime":{"type":"string","minLength":1,"maxLength":512,"description":"Registered runtime ID. pi-rpc accepts natural-language Pi tasks; pi-coder requires a serialized coding-attempt request."},
-                    "task":{"type":"string","minLength":1,"maxLength":65536,"description":"Task in the selected runtime's input format. Use ordinary instructions with pi-rpc."},
+                    "runtime":{"type":"string","minLength":1,"maxLength":512,"description":"Optional registered runtime ID or alias override. The override must satisfy all effective requirements."},
+                    "required_capabilities":{"type":"array","maxItems":10,"uniqueItems":true,"items":{"type":"string","enum":["code_read","code_search","code_edit","shell","test","git","diagnostics","browser","device_observe","device_command"]}},
+                    "task":{"type":"string","minLength":1,"maxLength":65536,"description":"Provider-neutral natural-language task for the child Agent."},
                     "context":{"type":"object"},
                     "tools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":512}},
                     "budget":{
@@ -230,7 +235,7 @@ impl Tool for AgentControlTool {
                         "required":["max_input_tokens","max_output_tokens","max_tool_calls","max_elapsed_ms","max_depth"]
                     }
                 },
-                "required":["profile","runtime","task","budget"]
+                "required":["profile","task","budget"]
             }),
             AgentControlOperation::Wait => json!({
                 "type":"object","additionalProperties":false,
@@ -277,22 +282,21 @@ impl Tool for AgentControlTool {
                         Ok(workspace) => workspace,
                         Err(_) => return error_json("invalid_trusted_workspace"),
                     };
-                    let request = AgentSpawnRequest {
+                    let request = AgentSpawnIntent {
                         root_agent_id: trusted.caller_root_agent_id,
                         parent_agent_id: Some(trusted.parent_agent_id),
                         parent_process_id: Some(trusted.parent_process_id),
                         profile_id: AgentProfileId(input.profile),
-                        runtime_id: RuntimeId(input.runtime),
+                        runtime_override: input.runtime,
+                        required_capabilities: input.required_capabilities,
                         trusted_workspace: Some(trusted_workspace),
                         task: input.task,
                         context: input.context,
-                        broadcast_refs: vec![],
                         allowed_tools: input.tools,
-                        background_decls: vec![],
                         budget: input.budget,
                     };
                     match request.validate() {
-                        Ok(()) => self.control.spawn(request).await.and_then(to_value),
+                        Ok(()) => self.control.spawn_intent(request).await.and_then(to_value),
                         Err(error) => Err(error),
                     }
                 }

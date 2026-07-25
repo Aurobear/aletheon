@@ -942,9 +942,10 @@ impl RequestHandler {
                     conscious_candidates: Some(conscious_registry.clone()),
                 },
             ));
-            agent_runtimes.register(
+            agent_runtimes.register_manifested(
                 crate::adapters::runtime::NativeCognitRuntime::runtime_id(),
                 native,
+                crate::adapters::runtime::NativeCognitRuntime::manifest(),
             )?;
             composition
         };
@@ -1049,6 +1050,16 @@ impl RequestHandler {
         };
 
         let clock_2 = clock.clone();
+        let runtime_profile_requirements = agent_profiles
+            .overrides
+            .iter()
+            .map(|(profile, override_config)| {
+                (
+                    fabric::AgentProfileId(profile.clone()),
+                    override_config.runtime_capabilities.clone(),
+                )
+            })
+            .collect();
         let agent_svc = super::services::build_agent_services(
             &data_dir,
             kernel.clone(),
@@ -1060,6 +1071,7 @@ impl RequestHandler {
             agent_runtimes,
             corpus_group.tools.clone(),
             agent_profiles_for_tools,
+            runtime_profile_requirements,
             granted_capabilities.clone(),
             memory_group.memory_service.clone(),
         )

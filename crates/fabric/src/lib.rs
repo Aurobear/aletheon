@@ -200,8 +200,9 @@ pub use types::agent_control::{
     AgentInteractionMode, AgentListRequest, AgentMessageDeliveryState, AgentMessageKind,
     AgentMessagePayload, AgentMessageReceipt, AgentProfile, AgentRecoveryDecision,
     AgentRecoveryReceipt, AgentResult, AgentRunStatus, AgentRuntimeCapability, AgentSendRequest,
-    AgentSnapshot, AgentSpawnRequest, AgentTaskEncoding, AgentTaskId, AgentWaitRequest,
-    AgentWorkspaceMode, ParentRestriction, RiskTier, RuntimeResumability, AGENT_MESSAGE_SCHEMA_V1,
+    AgentSnapshot, AgentSpawnIntent, AgentSpawnRequest, AgentTaskEncoding, AgentTaskId,
+    AgentWaitRequest, AgentWorkspaceMode, ParentRestriction, RiskTier, RuntimeResumability,
+    AGENT_MESSAGE_SCHEMA_V1,
 };
 pub use types::agent_profile_event::{
     AgentProfileSwitchDecision, AgentProfileSwitchEventV1, AGENT_PROFILE_SWITCH_EVENT_SCHEMA_V1,

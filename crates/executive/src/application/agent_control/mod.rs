@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -7,11 +7,12 @@ use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
 use fabric::ipc::mailbox::{InProcessMailbox, Mailbox};
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
-    AgentId, AgentListRequest, AgentMessageDeliveryState, AgentMessagePayload, AgentRunStatus,
-    AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentWaitRequest, AgoraVersion,
-    CancelReason, Clock, ContextBinding, EventSpine, ExitReason, NamespaceId, OperationExitReason,
-    OperationKind, OperationRequest, ProcessId, ProcessSignal, SettlementTerminal, SpawnSpec,
-    Timer,
+    AgentId, AgentInteractionMode, AgentListRequest, AgentMessageDeliveryState,
+    AgentMessagePayload, AgentRunStatus, AgentRuntimeCapability, AgentSendRequest, AgentSnapshot,
+    AgentSpawnIntent, AgentSpawnRequest, AgentTaskEncoding, AgentWaitRequest, AgentWorkspaceMode,
+    AgoraVersion, CancelReason, Clock, ContextBinding, EventSpine, ExitReason, NamespaceId,
+    OperationExitReason, OperationKind, OperationRequest, ProcessId, ProcessSignal,
+    SettlementTerminal, SpawnSpec, Timer,
 };
 use kernel::chronos::SystemTimer;
 use kernel::operation::OperationScope;
@@ -19,6 +20,7 @@ use kernel::KernelRuntime;
 use sha2::{Digest, Sha256};
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
+use tracing::info;
 
 pub mod admission;
 pub mod candidate_projection;
@@ -144,6 +146,7 @@ pub struct AgentControlService {
     settlement_metrics: Arc<SettlementMetrics>,
     budget_controller: Option<Arc<dyn fabric::BudgetController>>,
     lifecycle_hooks: Arc<dyn AgentLifecycleHookSink>,
+    runtime_profile_requirements: HashMap<fabric::AgentProfileId, Vec<AgentRuntimeCapability>>,
 }
 
 #[async_trait]
@@ -209,7 +212,16 @@ impl AgentControlService {
             settlement_metrics: Arc::new(SettlementMetrics::default()),
             budget_controller: None,
             lifecycle_hooks: Arc::new(NoopAgentLifecycleHookSink),
+            runtime_profile_requirements: HashMap::new(),
         }
+    }
+
+    pub fn with_runtime_profile_requirements(
+        mut self,
+        requirements: HashMap<fabric::AgentProfileId, Vec<AgentRuntimeCapability>>,
+    ) -> Self {
+        self.runtime_profile_requirements = requirements;
+        self
     }
 
     pub fn with_lifecycle_hooks(mut self, hooks: Arc<dyn AgentLifecycleHookSink>) -> Self {
@@ -746,6 +758,95 @@ impl AgentControlService {
 
 #[async_trait]
 impl AgentControlPort for AgentControlService {
+    async fn spawn_intent(
+        &self,
+        intent: AgentSpawnIntent,
+    ) -> Result<AgentHandle, AgentControlError> {
+        intent.validate()?;
+        let mut required_capabilities = self
+            .runtime_profile_requirements
+            .get(&intent.profile_id)
+            .cloned()
+            .unwrap_or_default();
+        required_capabilities.extend(intent.required_capabilities.iter().cloned());
+        required_capabilities.sort();
+        required_capabilities.dedup();
+
+        let workspace_mode = match intent.trusted_workspace.as_ref() {
+            Some(workspace) if !workspace.writable_roots().is_empty() => {
+                AgentWorkspaceMode::SharedWritable
+            }
+            _ => AgentWorkspaceMode::SharedReadOnly,
+        };
+        let selector = intent
+            .runtime_override
+            .as_ref()
+            .map(|value| runtime::RuntimeSelector::Alias(value.clone()))
+            .unwrap_or(runtime::RuntimeSelector::Auto);
+        let selection = runtime::RuntimeSelectionRequest {
+            selector,
+            required_capabilities: required_capabilities.clone(),
+            interaction_mode: AgentInteractionMode::Resident,
+            workspace_mode,
+            task_encoding: AgentTaskEncoding::NaturalLanguage,
+            max_input_tokens: intent.budget.max_input_tokens,
+        };
+        let runtime_id = match self.runtimes.select(&selection) {
+            Ok((runtime_id, _launcher, decision)) => {
+                info!(
+                    profile_id = %intent.profile_id.0,
+                    runtime_id = %runtime_id.0,
+                    override_used = decision.override_used,
+                    required_capabilities = ?decision.effective_capabilities,
+                    reason = %decision.reason,
+                    "generic subagent runtime selected"
+                );
+                runtime_id
+            }
+            Err(_selection_error)
+                if required_capabilities.is_empty()
+                    && intent
+                        .runtime_override
+                        .as_ref()
+                        .is_some_and(|runtime_override| {
+                            !self.runtimes.catalog().iter().any(|manifest| {
+                                manifest.id == *runtime_override
+                                    || manifest
+                                        .aliases
+                                        .iter()
+                                        .any(|alias| alias == runtime_override)
+                            })
+                        }) =>
+            {
+                let runtime_id =
+                    fabric::RuntimeId(intent.runtime_override.clone().unwrap_or_default());
+                self.runtimes.resolve(&runtime_id)?;
+                info!(
+                    profile_id = %intent.profile_id.0,
+                    runtime_id = %runtime_id.0,
+                    "explicit-only compatibility subagent runtime selected"
+                );
+                runtime_id
+            }
+            Err(error) => return Err(error),
+        };
+        self.spawn(AgentSpawnRequest {
+            root_agent_id: intent.root_agent_id,
+            parent_agent_id: intent.parent_agent_id,
+            parent_process_id: intent.parent_process_id,
+            profile_id: intent.profile_id,
+            runtime_id,
+            trusted_workspace: intent.trusted_workspace,
+            task: intent.task,
+            context: intent.context,
+            broadcast_refs: vec![],
+            allowed_tools: intent.allowed_tools,
+            budget: intent.budget,
+            background_decls: vec![],
+        })
+        .await
+    }
+
     async fn spawn(&self, request: AgentSpawnRequest) -> Result<AgentHandle, AgentControlError> {
         request.validate()?;
         let launcher = self.runtimes.resolve(&request.runtime_id)?;
