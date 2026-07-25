@@ -81,11 +81,16 @@ impl RequestHandler {
             // separate from identity-aware `turn.cancel`: the TUI may need to
             // interrupt a wedged turn before it has received turn metadata.
             "cancel" => {
-                self.cancel_current_turn().await;
+                let cancelled = self
+                    .cancel_current_turn_for_principal(connection.principal_id.clone())
+                    .await;
                 serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": id,
-                    "result": { "status": "cancel_requested" }
+                    "result": {
+                        "status": "cancel_requested",
+                        "active_turns": cancelled
+                    }
                 })
             }
             "interrupt" => self.handle_interrupt(&id, &request).await,

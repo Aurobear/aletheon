@@ -152,6 +152,31 @@ impl TurnCoordinator {
         }
     }
 
+    /// Cancel every active turn owned by one authenticated principal.
+    ///
+    /// Compatibility clients can request cancellation before receiving the
+    /// versioned turn and operation identifiers.  Scoping this fallback by
+    /// principal prevents one connection from cancelling another user's work.
+    pub async fn cancel_active_for_principal(&self, principal_id: &PrincipalId) -> usize {
+        let active = self.active.lock().await;
+        let mut cancelled = 0;
+        for (key, turn) in active.iter() {
+            if &key.principal_id == principal_id {
+                turn.cancel.cancel();
+                cancelled += 1;
+            }
+        }
+        cancelled
+    }
+
+    pub async fn cancel_all_active(&self) -> usize {
+        let active = self.active.lock().await;
+        for turn in active.values() {
+            turn.cancel.cancel();
+        }
+        active.len()
+    }
+
     /// Identity-aware cancel: look up by (principal_id, thread_id), verify
     /// operation_id matches, and optionally validate via `evaluate_cancel`.
     pub async fn cancel_operation_by_key(
