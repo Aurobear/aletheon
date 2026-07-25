@@ -243,6 +243,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn file_read_batches_known_files_in_one_call() {
+        let workspace = tempfile::tempdir().unwrap();
+        let root = workspace.path().canonicalize().unwrap();
+        let context = context(&root, vec![root.to_string_lossy().into_owned()]);
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"demo\"\n").unwrap();
+        std::fs::write(root.join("README.md"), "# Demo\n").unwrap();
+
+        let read = FileReadTool
+            .execute(
+                json!({"paths": ["Cargo.toml", "README.md"], "limit": 20}),
+                &context,
+            )
+            .await;
+
+        assert!(!read.is_error, "{}", read.content);
+        assert!(read.content.contains("== Cargo.toml =="));
+        assert!(read.content.contains("name = \"demo\""));
+        assert!(read.content.contains("== README.md =="));
+        assert!(read.content.contains("# Demo"));
+    }
+
+    #[tokio::test]
     async fn file_read_accepts_only_the_exact_external_path_in_the_permit() {
         let workspace = tempfile::tempdir().unwrap();
         let external = tempfile::tempdir().unwrap();
