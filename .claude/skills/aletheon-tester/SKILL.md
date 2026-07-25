@@ -99,6 +99,19 @@ Record these separately:
 - tool calls per model round;
 - batched tool arguments (`file_read.paths`, `glob.patterns`).
 
+Also score answer correctness, not only execution:
+
+- every claimed file/module must exist;
+- claims such as “README/documentation is absent” must be checked against the
+  actual workspace;
+- architecture and maturity conclusions must cite content returned by
+  `file_read`, not filenames returned by `glob`;
+- compare token usage and latency with the previous accepted run, and fail a
+  material regression unless the task or evidence volume increased.
+
+A discovery-only run is not an analyzed repository. If the first batch is
+`glob`, require one bounded batched `file_read` round before synthesis.
+
 A provider error shown in the rendered frame is always a failed run, even when
 the monitor returns `verdict: pass`, the prompt returns, or tools succeeded.
 Recompute acceptance from the rendered frame, session evidence, and daemon logs;

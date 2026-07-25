@@ -194,25 +194,6 @@ impl ReActLoop {
                 tool_calls.iter().collect()
             };
 
-            let goal = self.goal_tracker.current_goal_description();
-            if super::close_repository_inspection(goal.as_deref(), self.iteration) {
-                let results = ordered_calls
-                    .iter()
-                    .map(|(id, _, _)| ContentBlock::ToolResult {
-                        tool_use_id: id.clone(),
-                        content: "Inspection call not executed: the repository-overview evidence budget is complete. Answer now from the existing evidence.".to_string(),
-                        is_error: true,
-                    })
-                    .collect();
-                self.messages.push(Message {
-                    role: Role::User,
-                    content: results,
-                });
-                self.messages
-                    .push(Message::user(super::REPOSITORY_OVERVIEW_CHECKPOINT));
-                continue;
-            }
-
             for (tool_index, (id, name, input)) in ordered_calls.iter().enumerate() {
                 // Defensive: skip tool calls with empty names — some
                 // OpenAI-compatible providers emit malformed tool-use blocks
@@ -373,13 +354,6 @@ impl ReActLoop {
                     content: tool_result_blocks,
                 });
             }
-            let goal = self.goal_tracker.current_goal_description();
-            if let Some(checkpoint) =
-                super::repository_overview_checkpoint(goal.as_deref(), self.iteration)
-            {
-                self.messages.push(Message::user(checkpoint));
-            }
-
             // Inject reflection AFTER all tool results to preserve API message format
             if let Some(summary) = pending_reflection.take() {
                 self.messages

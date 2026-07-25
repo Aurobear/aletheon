@@ -244,8 +244,13 @@ impl<'a> Widget for StatusBarWidget<'a> {
             ));
         }
         if self.status.context_window > 0 {
-            let pct = ((self.status.total_tokens as f64) / (self.status.context_window as f64)
-                * 100.0)
+            // `total_tokens` is cumulative provider usage across every
+            // inference round in the session. It is useful as a cost counter,
+            // but it is not the active context size. Use the latest request's
+            // usage for context pressure so a long-lived session does not
+            // appear to fill a 1M window merely by accumulating billed tokens.
+            let active_tokens = self.status.token_count.unwrap_or(0);
+            let pct = ((active_tokens as f64) / (self.status.context_window as f64) * 100.0)
                 .clamp(0.0, 99.0) as u32;
             right_parts.push(format!("{pct}% ctx"));
         }
@@ -319,4 +324,31 @@ fn format_with_commas(n: u32) -> String {
         result.push(ch);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{buffer::Buffer, widgets::Widget};
+
+    #[test]
+    fn legacy_context_percent_uses_active_request_not_cumulative_usage() {
+        let mut status = StatusBar::new(TermCaps::detect());
+        status.total_tokens = 400_000;
+        status.token_count = Some(20_000);
+        status.context_window = 1_000_000;
+
+        let area = Rect::new(0, 0, 100, 1);
+        let mut buffer = Buffer::empty(area);
+        status.render_widget().render(area, &mut buffer);
+        let rendered = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("400,000 tok"));
+        assert!(rendered.contains("2% ctx"));
+        assert!(!rendered.contains("40% ctx"));
+    }
 }

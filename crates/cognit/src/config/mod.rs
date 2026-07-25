@@ -752,11 +752,12 @@ mod tests {
             "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. \
              When independent inspection work is known up front, batch it in one tool call (for example, \
              use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with \
-             each file or pattern. For a repository overview, start by batch-reading known entry files such \
-             as README, the root manifest, repository instructions, and architecture status; do not inventory \
-             every language or extension first. Complete a repository overview from the first successful \
-             inspection batch and answer on the next model round; request another inspection batch only when \
-             a specific required fact is still missing. Stop searching once the evidence needed to answer is sufficient. \
+             each file or pattern. For an unfamiliar workspace overview, make `file_read.paths` the first \
+             inspection call and include conventional entry candidates such as README, the root manifest, \
+             repository instructions, and architecture status; batch reads tolerate candidates that do not \
+             exist. Use glob only afterward when a specific required path remains unknown, and never inventory \
+             every language or extension. Base conclusions on file contents rather than filenames. Stop \
+             searching once the evidence needed to answer is sufficient. \
              Before stating any conclusion about your own runtime state, logs, or configuration, \
              you MUST read the actual logs and the actually-effective config file first — never guess \
              or invent an explanation."

@@ -13,32 +13,6 @@ mod tool_output;
 pub use batching::{partition_tool_calls, ToolBatch};
 pub use metrics::TurnMetrics;
 
-const REPOSITORY_OVERVIEW_CHECKPOINT: &str = "\
-[Repository inspection checkpoint]\n\
-The first inspection batch completed. Use the evidence already returned and \
-answer the repository-overview request now. Do not call more tools unless you \
-can name a specific required fact that is absent from the results.";
-
-fn repository_overview_checkpoint(goal: Option<&str>, iteration: usize) -> Option<&'static str> {
-    if iteration != 1 {
-        return None;
-    }
-    let goal = goal?.to_lowercase();
-    let repository_overview = (goal.contains("当前项目")
-        || goal.contains("项目怎么样")
-        || goal.contains("repository overview")
-        || goal.contains("analyze this project"))
-        && (goal.contains("架构")
-            || goal.contains("风险")
-            || goal.contains("architecture")
-            || goal.contains("risk"));
-    repository_overview.then_some(REPOSITORY_OVERVIEW_CHECKPOINT)
-}
-
-fn close_repository_inspection(goal: Option<&str>, iteration: usize) -> bool {
-    iteration > 1 && repository_overview_checkpoint(goal, 1).is_some()
-}
-
 use async_trait::async_trait;
 use circuit_breaker::CircuitBreaker;
 use goal_tracker::GoalTracker;
@@ -102,38 +76,6 @@ pub trait BatchPlanner: Send + Sync {
         &self,
         calls: Vec<fabric::CapabilityCall>,
     ) -> anyhow::Result<fabric::CapabilityBatchPlan>;
-}
-
-#[cfg(test)]
-mod repository_overview_checkpoint_tests {
-    use super::*;
-
-    #[test]
-    fn injects_after_first_repository_overview_batch() {
-        let checkpoint = repository_overview_checkpoint(
-            Some("你看看当前项目怎么样？给出架构概览和三个主要风险。"),
-            1,
-        );
-        assert_eq!(checkpoint, Some(REPOSITORY_OVERVIEW_CHECKPOINT));
-    }
-
-    #[test]
-    fn does_not_inject_for_later_batches_or_other_tasks() {
-        assert!(repository_overview_checkpoint(
-            Some("你看看当前项目怎么样？给出架构概览和三个主要风险。"),
-            2
-        )
-        .is_none());
-        assert!(repository_overview_checkpoint(Some("修复登录错误"), 1).is_none());
-    }
-
-    #[test]
-    fn closes_repeated_repository_inspection_batches() {
-        let goal = Some("你看看当前项目怎么样？给出架构概览和三个主要风险。");
-        assert!(!close_repository_inspection(goal, 1));
-        assert!(close_repository_inspection(goal, 2));
-        assert!(!close_repository_inspection(Some("修复登录错误"), 2));
-    }
 }
 
 /// Marker injected into user messages when plan mode is active.
