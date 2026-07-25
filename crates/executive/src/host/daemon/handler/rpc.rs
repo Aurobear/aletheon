@@ -36,6 +36,7 @@ impl RequestHandler {
             "compact" => self.handle_compact(&id, &request).await,
             "new_session" => self.handle_new_session(&id, &request).await,
             "load_recent" => self.handle_load_recent(&id, &request).await,
+            "load_previous" => self.handle_load_previous(&id, &request).await,
             "session.create" => self.handle_session_create(&id, &request).await,
             "session.list" => self.handle_session_list(&id, &request).await,
             "session.new" => self.handle_session_new_simple(&id, &request).await,

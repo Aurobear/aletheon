@@ -59,6 +59,10 @@ pub trait LegacySessionUseCases: Send + Sync {
     async fn resume(&self, session_id: String)
         -> Result<LegacySessionSnapshot, LegacySessionError>;
     async fn load_recent(&self) -> Result<LegacySessionSnapshot, LegacySessionError>;
+    async fn load_previous(
+        &self,
+        current_session_id: &str,
+    ) -> Result<LegacySessionSnapshot, LegacySessionError>;
     async fn clear(&self, thread_id: &str) -> Result<LegacySessionTransition, LegacySessionError>;
     async fn compact(
         &self,
@@ -330,6 +334,23 @@ impl LegacySessionUseCases for LegacySessionService {
                 let current = self.create_with_messages(&[]).await?;
                 self.snapshot(&current.session_id).await
             }
+        }
+    }
+
+    async fn load_previous(
+        &self,
+        current_session_id: &str,
+    ) -> Result<LegacySessionSnapshot, LegacySessionError> {
+        let previous = SessionStore::new(&self.data_dir)
+            .and_then(|store| store.list_sessions())
+            .map_err(operation_error)?
+            .into_iter()
+            .find(|session_id| session_id != current_session_id);
+        match previous {
+            Some(session_id) => self.resume(session_id).await,
+            None => Err(LegacySessionError::NotFound(
+                "no previous session is available".into(),
+            )),
         }
     }
 

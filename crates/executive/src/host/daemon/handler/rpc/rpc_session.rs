@@ -191,6 +191,28 @@ impl RequestHandler {
         }
     }
 
+    pub(super) async fn handle_load_previous(
+        &self,
+        id: &serde_json::Value,
+        request: &serde_json::Value,
+    ) -> serde_json::Value {
+        let current = request["params"]["session_id"].as_str().unwrap_or("");
+        if current.is_empty() {
+            return json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32602,"message":"Missing current session_id parameter"}});
+        }
+        match self.ports.sessions.load_previous(current).await {
+            Ok(snapshot) => json!({
+                "jsonrpc":"2.0",
+                "id":id,
+                "result":{
+                    "session_id":snapshot.session_id,
+                    "recovered_messages":snapshot.messages.len(),
+                }
+            }),
+            Err(error) => session_error(id, -32031, error),
+        }
+    }
+
     async fn finish_outgoing_session(
         &self,
         snapshot: &LegacySessionSnapshot,
