@@ -190,7 +190,7 @@ impl NativeCognitRuntime {
             task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
             supported_profiles: Some(supported_profiles.into_iter().collect()),
             tool_governance: runtime::ToolGovernance::Intercepted,
-            priority: 10,
+            priority: 20,
             max_context_tokens: None,
             resource_requirements: runtime::RuntimeResourceRequirements::default(),
         }
