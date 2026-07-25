@@ -180,7 +180,10 @@ while IFS= read -r line; do
   type=$(printf '%s' "$line" | sed -n 's/.*"type":"\([^"]*\)".*/\1/p')
   printf '{"type":"response","command":"%s","id":"%s","success":true' "$type" "$id"
   if [ "$type" = get_state ]; then printf ',"data":{"isStreaming":false}}\n'; exit 0; else printf '}\n'; fi
-  if [ "$type" = prompt ]; then printf '{"type":"agent_start"}\n'; fi
+  if [ "$type" = prompt ]; then
+    printf '{"type":"agent_start"}\n'
+    printf '{"type":"agent_start"}\n'
+  fi
   if [ "$type" = steer ]; then printf '{"type":"queue_update","steering":[]}\n'; fi
   if [ "$type" = follow_up ]; then
     printf '{"type":"tool_execution_end","toolCallId":"t1","toolName":"bash","result":{"content":"ok"},"isError":false}\n'

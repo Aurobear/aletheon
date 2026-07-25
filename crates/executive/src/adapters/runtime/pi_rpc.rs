@@ -317,10 +317,13 @@ impl RpcState {
             .unwrap_or_default()
         {
             "agent_start" => {
-                if self.started {
-                    return Err(runtime_error("Pi RPC emitted duplicate agent_start"));
+                if !self.started {
+                    self.started = true;
                 }
-                self.started = true;
+                // Pi emits another start marker when it restarts generation
+                // after a provider retry. The marker carries no identity or
+                // authorization state, so treating it as idempotent avoids
+                // turning a recoverable provider retry into a failed child.
             }
             "agent_settled" => {
                 if !self.started {
