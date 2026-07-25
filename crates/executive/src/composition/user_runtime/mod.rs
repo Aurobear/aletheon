@@ -94,6 +94,7 @@ impl UserRuntimeConfig {
             backpressure: app.backpressure.clone(),
             agent_admission: app.agent.admission.clone(),
             agent_max_iterations: app.agent.max_iterations,
+            agent_compaction_threshold_percent: app.agent.compaction_threshold,
             harness_kind: app.agent.harness_kind,
             integrations,
             embodiment_provider: app.integrations.embodiment.clone().unwrap_or_default(),

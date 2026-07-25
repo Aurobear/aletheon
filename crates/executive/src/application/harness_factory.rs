@@ -184,17 +184,21 @@ fn compactor(config: &HarnessConfig) -> Box<dyn fabric::CompactorTrait> {
     } else {
         config.tail_token_budget
     };
-    Box::new(AdvancedCompressor::new(
-        effective_tail,
-        config.target_summary_chars,
-        config.context_window_tokens,
-    ))
+    Box::new(
+        AdvancedCompressor::new(
+            effective_tail,
+            config.target_summary_chars,
+            config.context_window_tokens,
+        )
+        .with_threshold_fraction(config.compaction_threshold_percent as f64 / 100.0),
+    )
 }
 
 pub fn harness_config_from_executive(config: &ExecutiveConfig) -> HarnessConfig {
     HarnessConfig {
         max_iterations: config.max_iterations,
         compaction_enabled: config.compaction_enabled,
+        compaction_threshold_percent: config.compaction_threshold_percent,
         compaction_v2: config.compaction_v2,
         tail_token_budget: config.tail_token_budget,
         target_summary_chars: config.target_summary_chars,

@@ -33,6 +33,21 @@ transport = "openai"
 models = ["deepseek/deepseek-v4-pro"]
 max_context_length = 1000000
 
+# Optional local/offline fallback provider.
+# The LLM scheduler fails over to the next configured provider when the primary
+# is unavailable/terminal AND (since the context-overflow hardening) when a
+# prompt overflows the primary's context window. Adding a local Ollama provider
+# here gives the daemon an offline safety net for both cases.
+# To activate: install Ollama (https://ollama.com), pull a model
+# (e.g. `ollama pull qwen2.5-coder`), then uncomment:
+# [[providers]]
+# name = "ollama"
+# base_url = "http://localhost:11434/v1"
+# api_key = "ollama"           # placeholder — Ollama ignores it
+# transport = "openai"
+# models = ["qwen2.5-coder"]
+# max_context_length = 32768
+
 [sandbox]
 preference = "auto"
 # bubblewrap_path = "/usr/bin/bwrap"

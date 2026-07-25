@@ -24,6 +24,7 @@ impl SessionManager {
         _data_dir: &Path,
         session_id: String,
         max_tokens: usize,
+        compaction_threshold_percent: usize,
         _clock: Arc<dyn Clock>,
     ) -> Result<Self> {
         Ok(Self {
@@ -34,7 +35,11 @@ impl SessionManager {
                 (max_tokens as f64 * 0.25) as usize,
                 4_000,
                 max_tokens,
-            ),
+            )
+            // Honor the configured compaction threshold on this projection path
+            // too (previously it silently used the hardcoded default). `80` ==
+            // the historical `0.8`, so unset config is byte-identical.
+            .with_threshold_fraction(compaction_threshold_percent as f64 / 100.0),
         })
     }
 
@@ -279,9 +284,10 @@ mod tests {
     #[tokio::test]
     async fn canonical_replay_can_hydrate_working_projection() {
         let dir = tempfile::tempdir().unwrap();
-        let mut manager = SessionManager::new(dir.path(), "session".into(), 1_000, test_clock())
-            .await
-            .unwrap();
+        let mut manager =
+            SessionManager::new(dir.path(), "session".into(), 1_000, 80, test_clock())
+                .await
+                .unwrap();
         manager.restore_messages(vec![
             Message::user("restored"),
             Message::assistant("answer"),
@@ -293,9 +299,10 @@ mod tests {
     #[tokio::test]
     async fn clear_drops_only_working_projection() {
         let dir = tempfile::tempdir().unwrap();
-        let mut manager = SessionManager::new(dir.path(), "session".into(), 1_000, test_clock())
-            .await
-            .unwrap();
+        let mut manager =
+            SessionManager::new(dir.path(), "session".into(), 1_000, 80, test_clock())
+                .await
+                .unwrap();
         manager.push_user("old context").await;
         manager.clear_history().await.unwrap();
         assert!(manager.history().is_empty());
@@ -305,7 +312,7 @@ mod tests {
     #[tokio::test]
     async fn compaction_error_is_propagated() {
         let dir = tempfile::tempdir().unwrap();
-        let mut manager = SessionManager::new(dir.path(), "fails".into(), 1_000, test_clock())
+        let mut manager = SessionManager::new(dir.path(), "fails".into(), 1_000, 80, test_clock())
             .await
             .unwrap();
         for index in 0..8 {
@@ -323,9 +330,10 @@ mod tests {
     #[tokio::test]
     async fn compaction_tail_never_starts_with_tool_result() {
         let dir = tempfile::tempdir().unwrap();
-        let mut manager = SessionManager::new(dir.path(), "session".into(), 1_000, test_clock())
-            .await
-            .unwrap();
+        let mut manager =
+            SessionManager::new(dir.path(), "session".into(), 1_000, 80, test_clock())
+                .await
+                .unwrap();
         for index in 0..12 {
             manager
                 .push_message(Message {

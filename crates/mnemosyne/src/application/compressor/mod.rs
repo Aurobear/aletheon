@@ -15,6 +15,11 @@ use fabric::{
 use tail::{find_tail_cut, TailProtectionConfig};
 use template::{SummaryTemplate, SUMMARY_PREFIX};
 
+/// Default fraction of the context window at which automatic compaction
+/// triggers. `0.8` preserves the historical hardcoded behavior; the effective
+/// value is configurable via [`AdvancedCompressor::with_threshold_fraction`].
+pub const DEFAULT_COMPACTION_THRESHOLD_FRACTION: f64 = 0.8;
+
 /// Immutable record of one compaction run.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CompactionLineage {
@@ -41,6 +46,8 @@ pub struct AdvancedCompressor {
     pub tail_config: TailProtectionConfig,
     pub target_summary_chars: usize,
     context_window_tokens: usize,
+    /// Fraction of the context window at which automatic compaction triggers.
+    threshold_fraction: f64,
     previous_summary: Option<String>,
     template: SummaryTemplate,
     run_counter: u64,
@@ -60,11 +67,30 @@ impl AdvancedCompressor {
             },
             target_summary_chars,
             context_window_tokens,
+            threshold_fraction: DEFAULT_COMPACTION_THRESHOLD_FRACTION,
             previous_summary: None,
             template: SummaryTemplate,
             run_counter: 0,
             lineage: Vec::new(),
         }
+    }
+
+    /// Override the automatic-compaction trigger point, expressed as a fraction
+    /// of the context window. Values are clamped to `[0.1, 0.98]`; non-finite
+    /// input falls back to [`DEFAULT_COMPACTION_THRESHOLD_FRACTION`]. `force_*`
+    /// paths ignore the threshold entirely.
+    pub fn with_threshold_fraction(mut self, fraction: f64) -> Self {
+        self.threshold_fraction = if fraction.is_finite() {
+            fraction.clamp(0.1, 0.98)
+        } else {
+            DEFAULT_COMPACTION_THRESHOLD_FRACTION
+        };
+        self
+    }
+
+    /// The effective automatic-compaction threshold fraction.
+    pub fn threshold_fraction(&self) -> f64 {
+        self.threshold_fraction
     }
 
     /// Check if compaction is needed and perform it. Returns true if performed.
@@ -142,7 +168,7 @@ impl AdvancedCompressor {
         let total_tokens: usize = messages.iter().map(|m| m.estimate_tokens()).sum();
 
         if !force {
-            let threshold = (self.context_window_tokens as f64 * 0.8) as usize;
+            let threshold = (self.context_window_tokens as f64 * self.threshold_fraction) as usize;
             if total_tokens < threshold {
                 return Ok(false);
             }
@@ -284,7 +310,7 @@ impl AdvancedCompressor {
         };
 
         if !force {
-            let threshold = (self.context_window_tokens as f64 * 0.8) as usize;
+            let threshold = (self.context_window_tokens as f64 * self.threshold_fraction) as usize;
             if tokens_before < threshold {
                 return Ok(self.push_lineage(unchanged(None), force));
             }

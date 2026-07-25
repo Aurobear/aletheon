@@ -263,7 +263,10 @@ impl AttemptCoordinator {
         // evidence survives a transient ledger error. A repeated request must
         // recover that exact attempt rather than invoke the runtime again.
         let existing_attempt = {
-            let store = self.store.lock().unwrap();
+            let store = self
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let goal = store
                 .get_goal(request.goal_id)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
@@ -298,7 +301,10 @@ impl AttemptCoordinator {
         let running_attempt;
         let rendered_task;
         {
-            let store = self.store.lock().unwrap();
+            let store = self
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let goal = store
                 .get_goal(request.goal_id)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
@@ -389,7 +395,10 @@ impl AttemptCoordinator {
         };
 
         let terminal_attempt = {
-            let store = self.store.lock().unwrap();
+            let store = self
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let persisted = match &runtime_outcome {
                 Err(failure) if failure.class == FailureClass::Cancelled => {
                     store.cancel_attempt(running_attempt.id, failure.clone())
@@ -455,7 +464,7 @@ impl AttemptCoordinator {
             })?;
         self.store
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .settle_goal_budget(reservation_id, usage_for_budget(&attempt.usage))
             .map_err(AttemptCoordinatorError::Budget)?;
 
@@ -523,7 +532,10 @@ impl AttemptCoordinator {
         cancel: CancellationToken,
     ) -> Result<Option<AttemptCoordinationOutcome>, AttemptCoordinatorError> {
         let (persisted, verification, attempt, goal) = {
-            let store = self.store.lock().unwrap();
+            let store = self
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let Some(persisted) = store
                 .load_coding_job(coding_request.job.job_id)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
@@ -613,7 +625,10 @@ impl AttemptCoordinator {
             );
         }
         let persisted = {
-            let store = self.store.lock().unwrap();
+            let store = self
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             match store
                 .load_coding_job(bundle.report.job_id)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
@@ -680,7 +695,10 @@ impl AttemptCoordinator {
             .verify_coding_attempt(&context, cancel)
             .await
             .map_err(AttemptCoordinatorError::Persistence)?;
-        let store = self.store.lock().unwrap();
+        let store = self
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         store
             .persist_verification_report(&report, self.clock.wall_now().0)
             .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?;
@@ -710,7 +728,7 @@ impl AttemptCoordinator {
         } else {
             self.store
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .append_attempt_evidence(attempt.id, &verification_evidence)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
         };
@@ -774,7 +792,10 @@ impl AttemptCoordinator {
         failure: RuntimeFailure,
     ) -> Result<AttemptCoordinationOutcome, AttemptCoordinatorError> {
         let attempt_count = {
-            let store = self.store.lock().unwrap();
+            let store = self
+                .store
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             store
                 .attempts_for_goal(request.goal_id, usize::MAX)
                 .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
@@ -887,7 +908,10 @@ impl AttemptCoordinator {
         wait_reason: Option<GoalWaitReason>,
         payload: serde_json::Value,
     ) -> Result<GoalSnapshot, AttemptCoordinatorError> {
-        let store = self.store.lock().unwrap();
+        let store = self
+            .store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let current = store
             .get_goal(goal_id)
             .map_err(|error| AttemptCoordinatorError::Persistence(error.to_string()))?
@@ -1043,7 +1067,7 @@ fn create_apply_approval(
     };
     let approval = approvals
         .lock()
-        .unwrap()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .create(ApprovalCreate {
             subject,
             risk: ApprovalRisk::High,

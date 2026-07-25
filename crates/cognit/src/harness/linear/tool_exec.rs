@@ -285,9 +285,13 @@ impl ReActLoop {
                 let budget =
                     super::exploration_input_token_budget(self.config.context_window_tokens);
                 let content = format!(
-                    "Exploration input-token budget reached ({} / {}). \
-                     Synthesize the best answer from existing evidence now. \
-                     The user can request a focused follow-up for deeper inspection.",
+                    "Broad-scanning budget reached ({} / {} input tokens). \
+                     Stop broad scanning (glob/grep/search). You MAY still read a \
+                     specific file if it is essential to answer, but do not keep \
+                     scanning. Answer now from the evidence you have ACTUALLY \
+                     gathered from tool output. Do not present unverified inferences \
+                     as fact: mark any claim you could not confirm as \"(unverified)\" \
+                     and say what you would need to check to confirm it.",
                     self.turn_input_tokens, budget
                 );
                 let results = exploration_budget_results(&ordered_calls, &content, event_sink);
@@ -548,14 +552,44 @@ impl ReActLoop {
             self.messages
                 .extend(drain_interjections().await?.into_iter().map(Message::user));
 
-            // Check if reflection recommended stopping
+            // Check if reflection recommended stopping.
             if self.reflection_engine.should_stop() {
-                let fallback = text_parts.join("\n");
-                let fallback = if fallback.is_empty() {
-                    "Reflection recommended stopping.".to_string()
-                } else {
-                    fallback
-                };
+                let mut fallback = text_parts.join("\n");
+                // Reflection halts the tool loop, but must not surface an empty
+                // or stub answer. When no substantive answer exists yet, force
+                // ONE final tool-free synthesis pass over the gathered evidence.
+                if fallback.trim().chars().count() < super::MIN_SUBSTANTIVE_ANSWER_CHARS {
+                    self.messages.push(Message::user(
+                        "[synthesis] You must stop calling tools now. Provide your best \
+                         final answer based only on the evidence you have actually gathered. \
+                         Mark any claim you could not verify from tool output as \"(unverified)\"."
+                            .to_string(),
+                    ));
+                    let no_tools: &[ToolDefinition] = &[];
+                    match llm.complete(&self.messages, no_tools).await {
+                        Ok(resp) => {
+                            let synth: String = resp
+                                .content
+                                .iter()
+                                .filter_map(|block| match block {
+                                    ContentBlock::Text { text } => Some(text.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            if !synth.trim().is_empty() {
+                                fallback = synth;
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "forced synthesis after reflection-stop failed (streaming)");
+                        }
+                    }
+                }
+                if fallback.trim().is_empty() {
+                    fallback = "Reflection recommended stopping; no answer could be synthesized."
+                        .to_string();
+                }
                 event_sink.emit(Event::TurnDone {
                     result: Ok(fallback.clone()),
                 });

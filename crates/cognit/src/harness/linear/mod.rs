@@ -16,13 +16,25 @@ pub use metrics::TurnMetrics;
 const MIN_EXPLORATION_INPUT_TOKENS: u64 = 10_000;
 const MAX_EXPLORATION_INPUT_TOKENS: u64 = 24_000;
 
+/// Minimum length (trimmed chars) an answer must have before a
+/// reflection-triggered stop is treated as terminal. Below this, both run loops
+/// force one final tool-free synthesis pass instead of surfacing an empty/stub
+/// answer, so reflection can halt tool use without discarding the turn.
+pub(super) const MIN_SUBSTANTIVE_ANSWER_CHARS: usize = 40;
+
 fn exploration_input_token_budget(context_window_tokens: usize) -> u64 {
     (context_window_tokens as u64 / 100)
         .clamp(MIN_EXPLORATION_INPUT_TOKENS, MAX_EXPLORATION_INPUT_TOKENS)
 }
 
+/// Breadth-scanning tools that count toward the exploration budget.
+///
+/// `file_read` is deliberately excluded: reading a specific file is the
+/// productive step the model must always be allowed to take before answering,
+/// so the exploration cutoff never blocks "read the key file, then answer".
+/// Only cheap, potentially-unbounded scanning (glob/grep/search) is clamped.
 fn is_inspection_tool(name: &str) -> bool {
-    matches!(name, "file_read" | "glob" | "grep" | "file_search")
+    matches!(name, "glob" | "grep" | "file_search")
 }
 
 fn should_close_exploration<'a>(
@@ -470,29 +482,43 @@ mod exploration_budget_tests {
 
     #[test]
     fn closes_only_later_pure_inspection_batches_over_budget() {
+        // Iteration 1 never closes, regardless of tools.
+        assert!(!should_close_exploration(1, 20_000, 1_000_000, ["grep"]));
+        // Under budget never closes.
         assert!(!should_close_exploration(
-            1,
+            2,
+            9_999,
+            1_000_000,
+            ["grep", "glob"]
+        ));
+        // Later, over-budget, pure breadth-scanning batch closes.
+        assert!(should_close_exploration(
+            2,
+            10_000,
+            1_000_000,
+            ["grep", "glob"]
+        ));
+        // A batch containing a non-inspection tool never closes.
+        assert!(!should_close_exploration(
+            2,
+            20_000,
+            1_000_000,
+            ["grep", "shell"]
+        ));
+        // `file_read` is deliberately NOT inspection: reading a specific file is
+        // always allowed and must not trip the exploration cutoff, even when a
+        // batch is otherwise pure breadth-scanning and over budget.
+        assert!(!should_close_exploration(
+            2,
             20_000,
             1_000_000,
             ["file_read"]
         ));
         assert!(!should_close_exploration(
             2,
-            9_999,
-            1_000_000,
-            ["file_read", "glob"]
-        ));
-        assert!(should_close_exploration(
-            2,
-            10_000,
-            1_000_000,
-            ["file_read", "glob"]
-        ));
-        assert!(!should_close_exploration(
-            2,
             20_000,
             1_000_000,
-            ["file_read", "shell"]
+            ["file_read", "glob"]
         ));
     }
 }

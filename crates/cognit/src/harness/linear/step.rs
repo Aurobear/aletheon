@@ -210,9 +210,13 @@ impl ReActLoop {
                     .map(|(id, _, _)| ContentBlock::ToolResult {
                         tool_use_id: id.clone(),
                         content: format!(
-                            "Exploration input-token budget reached ({} / {}). \
-                             Synthesize the best answer from existing evidence now. \
-                             The user can request a focused follow-up for deeper inspection.",
+                            "Broad-scanning budget reached ({} / {} input tokens). \
+                             Stop broad scanning (glob/grep/search). You MAY still read a \
+                             specific file if it is essential to answer, but do not keep \
+                             scanning. Answer now from the evidence you have ACTUALLY \
+                             gathered from tool output. Do not present unverified inferences \
+                             as fact: mark any claim you could not confirm as \"(unverified)\" \
+                             and say what you would need to check to confirm it.",
                             self.turn_input_tokens, budget
                         ),
                         is_error: false,
@@ -391,14 +395,47 @@ impl ReActLoop {
                     .push(Message::user(format!("[Reflection]\n{summary}")));
             }
 
-            // Check if reflection recommended stopping
+            // Check if reflection recommended stopping.
             if self.reflection_engine.should_stop() {
-                let final_text = text_parts.join("\n");
-                let final_text = if final_text.is_empty() {
-                    "Reflection recommended stopping.".to_string()
-                } else {
-                    final_text
-                };
+                let mut final_text = text_parts.join("\n");
+                // Reflection halts the tool loop, but it must not surface an
+                // empty or stub answer. When the model has not yet produced a
+                // substantive answer, force ONE final tool-free synthesis pass
+                // over the evidence already gathered (bounded: no tools, so it
+                // cannot re-enter exploration).
+                if final_text.trim().chars().count() < super::MIN_SUBSTANTIVE_ANSWER_CHARS {
+                    self.messages.push(Message::user(
+                        "[synthesis] You must stop calling tools now. Provide your best \
+                         final answer based only on the evidence you have actually gathered. \
+                         Mark any claim you could not verify from tool output as \"(unverified)\"."
+                            .to_string(),
+                    ));
+                    let no_tools: &[ToolDefinition] = &[];
+                    match llm.complete(&self.messages, no_tools).await {
+                        Ok(resp) => {
+                            let synth: String = resp
+                                .content
+                                .iter()
+                                .filter_map(|block| match block {
+                                    ContentBlock::Text { text } => Some(text.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            if !synth.trim().is_empty() {
+                                final_text = synth;
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "forced synthesis after reflection-stop failed");
+                        }
+                    }
+                }
+                if final_text.trim().is_empty() {
+                    final_text = "Reflection recommended stopping; no answer could be synthesized."
+                        .to_string();
+                }
+                self.messages.push(Message::assistant(&final_text));
                 let metrics = TurnMetrics {
                     tool_calls_made,
                     tool_errors,

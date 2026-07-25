@@ -60,6 +60,9 @@ pub struct DaemonConfig {
     pub agent_admission: cognit::config::AgentAdmissionConfig,
     /// 0 = unlimited agent iterations; populated from AppConfig.agent.max_iterations.
     pub agent_max_iterations: usize,
+    /// Percent of the context window at which automatic compaction triggers;
+    /// populated from AppConfig.agent.compaction_threshold. `80` = legacy `0.8`.
+    pub agent_compaction_threshold_percent: usize,
     /// Cognitive harness selected by the typed root application config.
     pub harness_kind: cognit::harness::HarnessKind,
     /// Secret-safe integration settings resolved by the host startup preflight.

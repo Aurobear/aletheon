@@ -275,8 +275,19 @@ impl LlmScheduler {
                 match provider.complete(messages, tools).await {
                     Ok(resp) => return Ok(resp),
                     Err(e) => match classify_error(&e) {
-                        // Context overflow -- failover/retry won't help.
-                        ErrorClass::ContextOverflow => return Err(e),
+                        // Context overflow: retrying the SAME provider is futile,
+                        // but a different provider (larger context window, e.g. a
+                        // local/offline fallback) may still accept the prompt. Fail
+                        // over to the next candidate instead of hard-failing; if
+                        // none succeeds, the accumulated error is returned below.
+                        ErrorClass::ContextOverflow => {
+                            tracing::warn!(
+                                provider = name.as_str(),
+                                "context overflow; failing over to next provider"
+                            );
+                            last_err = Some(e);
+                            break;
+                        }
                         // Transient + retries remaining -- backoff and retry same provider.
                         ErrorClass::Transient if attempt < self.retry_policy.max_retries => {
                             let shift = attempt as u32;
