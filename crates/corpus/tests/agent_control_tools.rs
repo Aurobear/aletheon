@@ -176,6 +176,13 @@ fn exposes_five_exact_bounded_schemas() {
     for tool in tools {
         let schema = tool.input_schema();
         assert_eq!(schema["additionalProperties"], false);
+        if tool.name() == "agent_spawn" {
+            assert!(tool.description().contains("pi-rpc"));
+            assert!(schema["properties"]["runtime"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("natural-language Pi tasks"));
+        }
     }
 }
 

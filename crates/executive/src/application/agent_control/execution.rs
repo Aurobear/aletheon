@@ -442,14 +442,22 @@ impl AgentRuntimeRegistry {
         &self,
         id: &RuntimeId,
     ) -> Result<Arc<dyn AgentRuntimeLauncher>, AgentControlError> {
-        self.runtimes
-            .read()
-            .get(id)
-            .cloned()
-            .ok_or_else(|| AgentControlError {
+        let runtimes = self.runtimes.read();
+        runtimes.get(id).cloned().ok_or_else(|| {
+            let mut available = runtimes
+                .keys()
+                .map(|runtime_id| runtime_id.0.as_str())
+                .collect::<Vec<_>>();
+            available.sort_unstable();
+            AgentControlError {
                 kind: AgentControlErrorKind::NotFound,
-                message: format!("runtime is not registered: {}", id.0),
-            })
+                message: format!(
+                    "runtime is not registered: {}; available runtimes: {}",
+                    id.0,
+                    available.join(", ")
+                ),
+            }
+        })
     }
 }
 

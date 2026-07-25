@@ -45,7 +45,7 @@ impl AgentControlTools {
     fn describe(operation: AgentControlOperation) -> &'static str {
         match operation {
             AgentControlOperation::Spawn => {
-                "Spawn a bounded child Agent and return its durable handle"
+                "Spawn a bounded child Agent and return its durable handle. Runtime is a registered runtime ID: use pi-rpc for a natural-language Pi analysis task; pi-coder accepts only a serialized coding-attempt request."
             }
             AgentControlOperation::Wait => {
                 "Wait for a child Agent terminal snapshot with an explicit timeout"
@@ -63,8 +63,8 @@ impl AgentControlTools {
                 "type":"object","additionalProperties":false,
                 "properties":{
                     "profile":{"type":"string","minLength":1,"maxLength":512},
-                    "runtime":{"type":"string","minLength":1,"maxLength":512},
-                    "task":{"type":"string","minLength":1,"maxLength":65536},
+                    "runtime":{"type":"string","minLength":1,"maxLength":512,"description":"Registered runtime ID. pi-rpc accepts natural-language Pi tasks; pi-coder requires a serialized coding-attempt request."},
+                    "task":{"type":"string","minLength":1,"maxLength":65536,"description":"Task in the selected runtime's input format. Use ordinary instructions with pi-rpc."},
                     "context":{"type":"object"},
                     "tools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":512}},
                     "budget":{
@@ -196,7 +196,7 @@ impl Tool for AgentControlTool {
     fn description(&self) -> &str {
         match self.operation {
             AgentControlOperation::Spawn => {
-                "Spawn a bounded child Agent and return its durable handle"
+                "Spawn a bounded child Agent and return its durable handle. Runtime is a registered runtime ID: use pi-rpc for a natural-language Pi analysis task; pi-coder accepts only a serialized coding-attempt request."
             }
             AgentControlOperation::Wait => {
                 "Wait for a child Agent terminal snapshot with an explicit timeout"
@@ -213,8 +213,8 @@ impl Tool for AgentControlTool {
                 "type":"object","additionalProperties":false,
                 "properties":{
                     "profile":{"type":"string","minLength":1,"maxLength":512},
-                    "runtime":{"type":"string","minLength":1,"maxLength":512},
-                    "task":{"type":"string","minLength":1,"maxLength":65536},
+                    "runtime":{"type":"string","minLength":1,"maxLength":512,"description":"Registered runtime ID. pi-rpc accepts natural-language Pi tasks; pi-coder requires a serialized coding-attempt request."},
+                    "task":{"type":"string","minLength":1,"maxLength":65536,"description":"Task in the selected runtime's input format. Use ordinary instructions with pi-rpc."},
                     "context":{"type":"object"},
                     "tools":{"type":"array","maxItems":256,"items":{"type":"string","minLength":1,"maxLength":512}},
                     "budget":{
