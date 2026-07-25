@@ -66,7 +66,7 @@
 | 编排 | [executive/orchestration.md](executive/orchestration.md) | 多 Agent 编排、Selector/Handoff/DiGraph |
 | 自我演化 | [metacog/](metacog/) | MetaRuntime、Morphogenesis、Genome |
 | 测试 | [testing/](testing/), [../testing/runtime-correctness.md](../testing/runtime-correctness.md) | 测试策略、installed acceptance、运行事实与长期 TUI 验收 |
-| 路线图 | [roadmap/](roadmap/) | 6 Phase 路线图、开放问题 |
+| 路线图 | [roadmap/](roadmap/) | 6 Phase 路线图、[开放问题](roadmap/open-questions.md)、[运行时正确性问题台账](roadmap/runtime-correctness-backlog.md) |
 
 ---
 
