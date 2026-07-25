@@ -814,6 +814,7 @@ dependencies = [
  "png",
  "regex",
  "reqwest",
+ "rusqlite",
  "schemars",
  "serde",
  "serde_json",

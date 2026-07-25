@@ -13,6 +13,9 @@ pub(super) struct ToolCompositionInput {
     pub(super) search: Option<WebSearchConfig>,
     pub(super) stores: MemoryComposition,
     pub(super) clock: Arc<dyn Clock>,
+    /// SQLite path for persisting the task list across daemon restarts.
+    /// `None` keeps tasks in-memory only.
+    pub(super) tasks_db: Option<std::path::PathBuf>,
 }
 
 pub(super) struct ToolComposition {
@@ -21,8 +24,11 @@ pub(super) struct ToolComposition {
 }
 
 pub(super) fn compose(input: ToolCompositionInput) -> ToolComposition {
-    let mut registry =
-        ToolRegistry::with_network_policy_and_search(input.network_policy, input.search);
+    let mut registry = ToolRegistry::with_network_policy_search_and_tasks(
+        input.network_policy,
+        input.search,
+        input.tasks_db,
+    );
     let _ = registry.register(Arc::new(CoreMemoryAppendTool {
         memory: input.stores.core.clone(),
         clock: input.clock.clone(),
@@ -62,6 +68,7 @@ mod tests {
             search: None,
             stores: memory,
             clock,
+            tasks_db: None,
         });
 
         for name in ["core_memory_append", "core_memory_replace", "memory_search"] {

@@ -66,16 +66,103 @@ pub struct Task {
 // Task store
 // ---------------------------------------------------------------------------
 
-/// In-memory task store backed by a `HashMap`. Thread-safe via `Mutex`.
-#[derive(Debug, Clone, Default)]
+/// Task store backed by an in-memory `HashMap`, optionally write-through to a
+/// SQLite database on disk so tasks survive daemon restarts. Thread-safe via
+/// `Mutex`.
+#[derive(Debug, Default)]
 pub struct TaskStore {
     tasks: HashMap<String, Task>,
+    conn: Option<rusqlite::Connection>,
+}
+
+impl Clone for TaskStore {
+    /// Clones only the in-memory cache; the SQLite connection (if any) is not
+    /// cloneable and is dropped. Existing callers only clone the pure
+    /// in-memory variant, so this keeps prior behavior intact.
+    fn clone(&self) -> Self {
+        Self {
+            tasks: self.tasks.clone(),
+            conn: None,
+        }
+    }
 }
 
 impl TaskStore {
     pub fn new() -> Self {
         Self {
             tasks: HashMap::new(),
+            conn: None,
+        }
+    }
+
+    /// Open (or create) a SQLite-backed task store at `path`, loading any
+    /// existing rows into the in-memory cache.
+    pub fn open(path: &std::path::Path) -> anyhow::Result<Self> {
+        let conn = rusqlite::Connection::open(path)?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                subject TEXT NOT NULL,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
+
+        let mut tasks = HashMap::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT id, subject, description, status, created_at, updated_at FROM tasks",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let id: String = row.get(0)?;
+                let subject: String = row.get(1)?;
+                let description: String = row.get(2)?;
+                let status: String = row.get(3)?;
+                let created_at: i64 = row.get(4)?;
+                let updated_at: i64 = row.get(5)?;
+                Ok((id, subject, description, status, created_at, updated_at))
+            })?;
+            for row in rows {
+                let (id, subject, description, status, created_at, updated_at) = row?;
+                let status = TaskStatus::from_str(&status).unwrap_or(TaskStatus::Pending);
+                tasks.insert(
+                    id.clone(),
+                    Task {
+                        id,
+                        subject,
+                        description,
+                        status,
+                        created_at: WallTime(created_at),
+                        updated_at: WallTime(updated_at),
+                    },
+                );
+            }
+        }
+
+        Ok(Self {
+            tasks,
+            conn: Some(conn),
+        })
+    }
+
+    fn write_through(&self, task: &Task) {
+        if let Some(conn) = &self.conn {
+            if let Err(error) = conn.execute(
+                "INSERT OR REPLACE INTO tasks (id, subject, description, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    task.id,
+                    task.subject,
+                    task.description,
+                    task.status.as_str(),
+                    task.created_at.0,
+                    task.updated_at.0,
+                ],
+            ) {
+                tracing::warn!(error = %error, task_id = %task.id, "Failed to persist task to SQLite");
+            }
         }
     }
 
@@ -90,6 +177,7 @@ impl TaskStore {
             updated_at: now,
         };
         self.tasks.insert(id, task.clone());
+        self.write_through(&task);
         task
     }
 
@@ -105,7 +193,9 @@ impl TaskStore {
         if let Some(task) = self.tasks.get_mut(id) {
             task.status = status;
             task.updated_at = now;
-            Some(task.clone())
+            let updated = task.clone();
+            self.write_through(&updated);
+            Some(updated)
         } else {
             None
         }
@@ -117,6 +207,23 @@ pub type SharedTaskStore = Arc<Mutex<TaskStore>>;
 
 pub fn new_shared_task_store() -> SharedTaskStore {
     Arc::new(Mutex::new(TaskStore::new()))
+}
+
+/// Build a shared task store backed by a SQLite database at `path`. If the
+/// database cannot be opened, falls back to an in-memory store (persistence
+/// is best-effort and must never crash the daemon).
+pub fn new_persistent_task_store(path: &std::path::Path) -> SharedTaskStore {
+    match TaskStore::open(path) {
+        Ok(store) => Arc::new(Mutex::new(store)),
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                path = %path.display(),
+                "Failed to open persistent task store, falling back to in-memory"
+            );
+            new_shared_task_store()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -502,6 +609,34 @@ mod tests {
             clock: std::sync::Arc::new(kernel::chronos::TestClock::default()),
             turn_event_sender: None,
         }
+    }
+
+    // --- Persistent TaskStore round-trip ---
+
+    #[test]
+    fn persistent_task_store_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("tasks.db");
+
+        let id = {
+            let mut store = TaskStore::open(&db_path).unwrap();
+            let task = store.create(
+                "Persisted task".to_string(),
+                "Should survive a reopen".to_string(),
+                WallTime(42),
+            );
+            task.id
+        };
+        // `store` is dropped here, closing the connection.
+
+        let reopened = TaskStore::open(&db_path).unwrap();
+        let tasks = reopened.list();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, id);
+        assert_eq!(tasks[0].subject, "Persisted task");
+
+        let got = reopened.get(&id).unwrap();
+        assert_eq!(got.description, "Should survive a reopen");
     }
 
     // --- TaskStore round-trip ---
