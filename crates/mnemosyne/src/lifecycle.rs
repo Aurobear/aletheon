@@ -2,8 +2,9 @@
 
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryOperationState {
+    #[default]
     Ready,
     LocalWrite,
     Projection,
@@ -124,12 +125,6 @@ pub fn reduce_memory_operation(
 #[derive(Debug, Default)]
 pub struct MemoryOperationLifecycle {
     state: MemoryOperationState,
-}
-
-impl Default for MemoryOperationState {
-    fn default() -> Self {
-        Self::Ready
-    }
 }
 
 impl MemoryOperationLifecycle {

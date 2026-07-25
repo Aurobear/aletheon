@@ -101,12 +101,9 @@ impl VisualAggregator {
                     oldest_cam = Some(cam.clone());
                 }
             }
-            if let Some(cam) = oldest_cam {
-                self.camera_latest.remove(&cam);
-                self.total_events = self.total_events.saturating_sub(1);
-            } else {
-                return None;
-            }
+            let cam = oldest_cam?;
+            self.camera_latest.remove(&cam);
+            self.total_events = self.total_events.saturating_sub(1);
         }
 
         // 5. Clamp confidence

@@ -190,8 +190,9 @@ impl EbpfSource {
                         // Detect high latency (ticks > threshold implies IO pressure)
                         let total_ticks = read_ticks + write_ticks;
                         let total_ops = reads + writes;
-                        if total_ops > 0 {
-                            let avg_latency_us = (total_ticks * 1000) / total_ops;
+                        if let Some(avg_latency_us) =
+                            total_ticks.saturating_mul(1000).checked_div(total_ops)
+                        {
                             if avg_latency_us > self.config.block_latency_threshold_ns / 1000 {
                                 events.push(self.make_event(
                                     EventData::System {
