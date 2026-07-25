@@ -152,7 +152,7 @@ fn turn_pipeline_has_no_direct_post_turn_domain_writes() {
         );
     }
 
-    let context = pipeline.find(".assemble(&context_request").unwrap();
+    let context = pipeline.find("let assembled_context").unwrap();
     let model = pipeline.find(".models.select").unwrap();
     let capability = pipeline.find(".capabilities").unwrap();
     assert!(context < model && model < capability);
