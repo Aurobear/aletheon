@@ -284,19 +284,13 @@ impl ReActLoop {
             ) {
                 let budget =
                     super::exploration_input_token_budget(self.config.context_window_tokens);
-                let results = ordered_calls
-                    .iter()
-                    .map(|(id, _, _)| ContentBlock::ToolResult {
-                        tool_use_id: id.clone(),
-                        content: format!(
-                            "Exploration input-token budget reached ({} / {}). \
-                             Synthesize the best answer from existing evidence now. \
-                             The user can request a focused follow-up for deeper inspection.",
-                            self.turn_input_tokens, budget
-                        ),
-                        is_error: false,
-                    })
-                    .collect();
+                let content = format!(
+                    "Exploration input-token budget reached ({} / {}). \
+                     Synthesize the best answer from existing evidence now. \
+                     The user can request a focused follow-up for deeper inspection.",
+                    self.turn_input_tokens, budget
+                );
+                let results = exploration_budget_results(&ordered_calls, &content, event_sink);
                 self.messages.push(Message {
                     role: Role::User,
                     content: results,
@@ -625,9 +619,50 @@ fn streaming_backoff_ms(attempt: u32) -> u64 {
         .min(30_000)
 }
 
+fn exploration_budget_results(
+    calls: &[&(String, String, serde_json::Value)],
+    content: &str,
+    event_sink: &dyn EventSink,
+) -> Vec<ContentBlock> {
+    calls
+        .iter()
+        .map(|(id, name, _)| {
+            // Canonical history persists tool lifecycle events. Every emitted
+            // ToolCallComplete must have a matching ToolResult or the next
+            // turn projects an invalid OpenAI tool-call sequence.
+            event_sink.emit(Event::ToolResult {
+                name: name.clone(),
+                call_id: id.clone(),
+                result: ToolResultEvent {
+                    content: content.to_owned(),
+                    is_error: false,
+                    execution_time_ms: 0,
+                },
+            });
+            ContentBlock::ToolResult {
+                tool_use_id: id.clone(),
+                content: content.to_owned(),
+                is_error: false,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod streaming_backoff_tests {
-    use super::streaming_backoff_ms;
+    use super::{exploration_budget_results, streaming_backoff_ms};
+    use crate::harness::event_sink::{Event, EventSink};
+    use fabric::ContentBlock;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct CollectSink(Mutex<Vec<Event>>);
+
+    impl EventSink for CollectSink {
+        fn emit(&self, event: Event) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
 
     #[test]
     fn retries_span_a_bounded_quota_window() {
@@ -635,5 +670,42 @@ mod streaming_backoff_tests {
             (0..4).map(streaming_backoff_ms).collect::<Vec<_>>(),
             vec![5_000, 10_000, 20_000, 30_000]
         );
+    }
+
+    #[test]
+    fn budgeted_calls_emit_matching_canonical_results() {
+        let calls = [
+            (
+                "call-1".to_string(),
+                "file_read".to_string(),
+                serde_json::json!({}),
+            ),
+            (
+                "call-2".to_string(),
+                "glob".to_string(),
+                serde_json::json!({}),
+            ),
+        ];
+        let refs = calls.iter().collect::<Vec<_>>();
+        let sink = CollectSink::default();
+        let blocks = exploration_budget_results(&refs, "budget reached", &sink);
+
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(
+            &blocks[0],
+            ContentBlock::ToolResult { tool_use_id, is_error: false, .. }
+            if tool_use_id == "call-1"
+        ));
+        let events = sink.0.lock().unwrap();
+        assert!(matches!(
+            &events[0],
+            Event::ToolResult { call_id, result, .. }
+            if call_id == "call-1" && !result.is_error
+        ));
+        assert!(matches!(
+            &events[1],
+            Event::ToolResult { call_id, result, .. }
+            if call_id == "call-2" && !result.is_error
+        ));
     }
 }
