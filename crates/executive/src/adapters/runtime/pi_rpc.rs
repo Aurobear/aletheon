@@ -627,7 +627,7 @@ pub fn pi_manifest() -> &'static runtime::RuntimeManifest {
         ]),
         task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
         tool_governance: runtime::ToolGovernance::Observed,
-        priority: 10,
+        priority: 20,
         max_context_tokens: Some(1_000_000),
         resource_requirements: runtime::RuntimeResourceRequirements {
             storage_bytes: 1024 * 1024 * 1024,

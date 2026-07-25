@@ -187,7 +187,7 @@ impl NativeCognitRuntime {
             ]),
             task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
             tool_governance: runtime::ToolGovernance::Intercepted,
-            priority: 20,
+            priority: 10,
             max_context_tokens: None,
             resource_requirements: runtime::RuntimeResourceRequirements::default(),
         }
