@@ -197,10 +197,12 @@ pub use types::agent::Pid;
 pub use types::agent_control::{
     AgentApprovalPolicy, AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork,
     AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
-    AgentListRequest, AgentMessageDeliveryState, AgentMessageKind, AgentMessagePayload,
-    AgentMessageReceipt, AgentProfile, AgentRecoveryDecision, AgentRecoveryReceipt, AgentResult,
-    AgentRunStatus, AgentSendRequest, AgentSnapshot, AgentSpawnRequest, AgentTaskId,
-    AgentWaitRequest, ParentRestriction, RiskTier, RuntimeResumability, AGENT_MESSAGE_SCHEMA_V1,
+    AgentInteractionMode, AgentListRequest, AgentMessageDeliveryState, AgentMessageKind,
+    AgentMessagePayload, AgentMessageReceipt, AgentProfile, AgentRecoveryDecision,
+    AgentRecoveryReceipt, AgentResult, AgentRunStatus, AgentRuntimeCapability, AgentSendRequest,
+    AgentSnapshot, AgentSpawnIntent, AgentSpawnRequest, AgentTaskEncoding, AgentTaskId,
+    AgentWaitRequest, AgentWorkspaceMode, ParentRestriction, RiskTier, RuntimeResumability,
+    AGENT_MESSAGE_SCHEMA_V1,
 };
 pub use types::agent_profile_event::{
     AgentProfileSwitchDecision, AgentProfileSwitchEventV1, AGENT_PROFILE_SWITCH_EVENT_SCHEMA_V1,
@@ -256,8 +258,8 @@ pub use types::goal::{
 pub use types::hook::{HookContext, HookMode, HookPoint, HookResult, HookToolResult};
 pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};
 pub use types::llm_types::{
-    InferenceCapabilities, LlmProvider, LlmResponse, LlmStream, ModelInfo, StopReason, StreamChunk,
-    ToolDefinition, Usage,
+    InferenceCapabilities, LlmProvider, LlmResponse, LlmStream, ModelInfo, ModelRuntimeFacts,
+    StopReason, StreamChunk, ToolDefinition, Usage,
 };
 pub use types::local_authority::{
     ApprovalPolicy, ConnectionId, LocalOsPrincipal, PermissionProfileId, PrincipalContext,

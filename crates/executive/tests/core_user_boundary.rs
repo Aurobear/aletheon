@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use executive::application::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
+use executive::application::inference_port::{
+    CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
+};
 use executive::composition::user_runtime::{UserRuntime, UserRuntimeConfig};
 use executive::core::{RegistryInferencePort, SystemCoreRuntime};
 use fabric::{LlmResponse, LlmStream, StopReason, Usage};
@@ -11,6 +13,14 @@ struct FakeInferencePort;
 
 #[async_trait::async_trait]
 impl InferencePort for FakeInferencePort {
+    async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
+        Ok(ModelCapabilities {
+            model_spec: model_spec.to_owned(),
+            display_name: "fixture-model".into(),
+            max_context_tokens: 1_000_000,
+        })
+    }
+
     async fn complete(
         &self,
         _request: CoreInferenceRequest,

@@ -177,10 +177,11 @@ struct ProductionModelSelection {
     default_llm: Arc<dyn LlmProvider>,
 }
 
+#[async_trait]
 impl ModelSelectionPort for ProductionModelSelection {
-    fn select(&self, message: &str) -> Arc<dyn LlmProvider> {
+    async fn select(&self, message: &str) -> Arc<dyn LlmProvider> {
         let task = self.router.classify_message(message);
-        match self.router.create_provider(task) {
+        match self.router.create_provider(task).await {
             Ok(provider) => {
                 tracing::info!(task=?task, model=provider.name(), "Model selected by router");
                 Arc::from(provider)
@@ -266,7 +267,8 @@ impl ProductionTurnSessions {
             Message::user(pending_user).estimate_tokens()
         };
         let effective_context_window = self.context_window.min(profile.max_input_tokens as usize);
-        Ok(ContextBudgetPlanner::plan(ContextBudgetInput {
+        let current_history_tokens = manager.estimate_tokens();
+        let plan = ContextBudgetPlanner::plan(ContextBudgetInput {
             model_context_window: self.context_window,
             profile_input_limit: profile.max_input_tokens as usize,
             system_and_skill_prefix_tokens: prefix_tokens,
@@ -274,8 +276,16 @@ impl ProductionTurnSessions {
             reserved_output_tokens: profile.max_output_tokens as usize,
             pending_user_input_tokens,
             safety_margin_tokens: (effective_context_window / 20).max(1_024),
-            current_history_tokens: manager.estimate_tokens(),
-        }))
+            current_history_tokens,
+        });
+        tracing::info!(
+            history_budget = plan.history_budget,
+            current_history_tokens,
+            projected_history_tokens = plan.projected_history_tokens,
+            budget_action = ?plan.action,
+            "Context budget planned"
+        );
+        Ok(plan)
     }
 }
 
@@ -291,9 +301,9 @@ impl TurnSessionStatePort for ProductionTurnSessions {
         &self,
         requested_session_id: &str,
         message: &str,
-    ) -> anyhow::Result<(String, usize)> {
+    ) -> anyhow::Result<crate::application::turn_runtime_ports::BeginUserResult> {
         let (session_id, manager) = self.manager(requested_session_id).await?;
-        let turn_count = {
+        let (turn_count, history_budget_tokens) = {
             let mut manager = manager.lock().await;
             let mut plan = self.budget_plan(&manager, message).await?;
             if plan.action == mnemosyne::runtime::BudgetAction::HardCompact {
@@ -334,7 +344,7 @@ impl TurnSessionStatePort for ProductionTurnSessions {
             // The pending input becomes part of the projection only after the
             // hard-watermark gate proves that the request can be submitted.
             manager.push_user(message).await;
-            manager.turn_count()
+            (manager.turn_count(), plan.history_budget)
         };
         if let Err(error) = self
             .memory_service
@@ -364,7 +374,11 @@ impl TurnSessionStatePort for ProductionTurnSessions {
                 metadata: HashMap::new(),
             })
             .await;
-        Ok((session_id, turn_count))
+        Ok(crate::application::turn_runtime_ports::BeginUserResult {
+            session_id,
+            turn_count,
+            history_budget_tokens,
+        })
     }
 
     async fn finish(
@@ -399,7 +413,10 @@ impl TurnSessionStatePort for ProductionTurnSessions {
                             .iter()
                             .map(|(id, content, is_error)| ContentBlock::ToolResult {
                                 tool_use_id: id.clone(),
-                                content: content.clone(),
+                                content:
+                                    crate::application::session_projection::bounded_tool_result(
+                                        content,
+                                    ),
                                 is_error: *is_error,
                             })
                             .collect(),

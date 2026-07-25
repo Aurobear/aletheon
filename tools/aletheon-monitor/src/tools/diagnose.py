@@ -8,6 +8,7 @@ parsing is required.
 import json
 import os
 import asyncio
+import re
 
 from . import analyze as analyze_mod
 from . import logs as logs_mod
@@ -17,8 +18,54 @@ from . import tui as tui_tools
 def _audit_path() -> str:
     return os.environ.get(
         "ALETHEON_AUDIT",
-        "/home/aurobear/Bear-ws/aletheon/.aletheon-audit.jsonl",
+        os.path.expanduser("~/.local/state/aletheon/audit.jsonl"),
     )
+
+
+INFRASTRUCTURE_ERRORS = (
+    "provider_unavailable",
+    "provider_rejected_request",
+    "provider_timeout",
+    "inference provider failed",
+    "google_unauthorized_account",
+    "Can't mount proc",
+    "Permission denied",
+    "Aletheon authorization failed",
+)
+
+
+def frame_assertions(frame: str, prompt_visible: bool,
+                     forbidden_strings: list[str] | None = None) -> list[dict]:
+    """Return semantic TUI assertions; prompt/input text alone is not success."""
+    forbidden = list(INFRASTRUCTURE_ERRORS)
+    forbidden.extend(forbidden_strings or [])
+    assertions = [
+        {
+            "name": f"forbidden:{text}",
+            "passed": text.lower() not in frame.lower(),
+        }
+        for text in dict.fromkeys(forbidden)
+    ]
+    infrastructure_clean = all(item["passed"] for item in assertions)
+    assertions.append({
+        "name": "final_answer",
+        "passed": infrastructure_clean and len(frame.strip()) > 20,
+    })
+    assertions.append({"name": "prompt_returned", "passed": prompt_visible})
+    return assertions
+
+
+def provider_metrics(daemon_logs: dict) -> dict:
+    lines = daemon_logs.get("lines", []) if isinstance(daemon_logs, dict) else []
+    text = "\n".join(str(line) for line in lines)
+    retry_attempts = len(re.findall(r"(?:retrying|attempt)", text, re.IGNORECASE))
+    provider_errors = sum(
+        text.lower().count(marker.lower()) for marker in INFRASTRUCTURE_ERRORS[:4]
+    )
+    return {
+        "retry_attempts": retry_attempts,
+        "provider_error_markers": provider_errors,
+    }
 
 
 def _audit_tail(n: int = 20) -> list[str]:
@@ -86,6 +133,15 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         return {"error": "tui_start failed", "detail": started}
 
     try:
+        # Test runs must not inherit a previously failed or structurally
+        # incomplete conversation. The production TUI resumes the most recent
+        # workspace session by default, so explicitly create a clean session
+        # before establishing the task baseline.
+        await tui_tools.tui_send("/new", submit=True)
+        await tui_tools.tui_capture(
+            scrollback=True, wait_stable=True, stable_secs=0.8, timeout=20.0,
+        )
+
         # Phase 1: submit the task and let the input echo settle -> baseline.
         # This baseline includes the user's echoed input but no response yet.
         await tui_tools.tui_send(task, submit=True)
@@ -125,12 +181,11 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
     if expected:
         assertions.append({"name": "expected_cwd", "passed": expected in frame,
                            "expected": expected})
-    for forbidden in forbidden_strings or []:
-        assertions.append({"name": f"forbidden:{forbidden}",
-                           "passed": forbidden not in frame})
-    assertions.append({"name": "final_answer", "passed": len(frame.strip()) > 20})
-    assertions.append({"name": "prompt_returned",
-                       "passed": cap.get("prompt_visible") is True})
+    assertions.extend(frame_assertions(
+        frame,
+        cap.get("prompt_visible") is True,
+        forbidden_strings,
+    ))
     if any(not item["passed"] for item in assertions):
         verdict = "fail"
 
@@ -165,6 +220,7 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         "daemon": {"analyze": daemon_analyze, "logs": daemon_logs},
         "audit_tail": audit_tail,
         "timeline": build_timeline(recent_journal, audit_tail),
+        "provider_metrics": provider_metrics(daemon_logs),
         "preflight": preflight,
         "assertions": assertions,
         "verdict": verdict,

@@ -1,6 +1,6 @@
 //! Deterministic, bounded turn context assembly.
 
-use crate::application::daemon_turn::helpers::{bounded_text_history, build_request_messages};
+use crate::application::daemon_turn::helpers::{build_request_messages, select_text_history};
 use async_trait::async_trait;
 use fabric::{
     AgoraSpaceId, ConsciousContextProjection, ContextProjectionReceipt, LatestConsciousContextPort,
@@ -174,6 +174,7 @@ impl ContextAssembler {
         &self,
         request: &TurnRequest,
         canonical_history: &[Message],
+        history_budget_tokens: usize,
     ) -> Result<AssembledContext, ContextAssemblyError> {
         let fragments = self.source.load(request).await?;
         let projection_receipt = fragments
@@ -201,7 +202,7 @@ impl ContextAssembler {
             effective.push('\n');
         }
         effective.push_str(&request.input);
-        let history = bounded_text_history(canonical_history);
+        let history = select_text_history(canonical_history, history_budget_tokens);
         let messages = build_request_messages(
             truncate(&fragments.system_prefix, MAX_SYSTEM_PREFIX_CHARS),
             &history,

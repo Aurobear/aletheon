@@ -36,6 +36,7 @@ impl RequestHandler {
             "compact" => self.handle_compact(&id, &request).await,
             "new_session" => self.handle_new_session(&id, &request).await,
             "load_recent" => self.handle_load_recent(&id, &request).await,
+            "load_previous" => self.handle_load_previous(&id, &request).await,
             "session.create" => self.handle_session_create(&id, &request).await,
             "session.list" => self.handle_session_list(&id, &request).await,
             "session.new" => self.handle_session_new_simple(&id, &request).await,
@@ -76,6 +77,22 @@ impl RequestHandler {
             "workspace.trust.grant" => {
                 self.handle_workspace_trust_grant(connection, &id, &request)
                     .await
+            }
+            // Compatibility request emitted by the interactive TUI.  Keep it
+            // separate from identity-aware `turn.cancel`: the TUI may need to
+            // interrupt a wedged turn before it has received turn metadata.
+            "cancel" => {
+                let cancelled = self
+                    .cancel_current_turn_for_principal(connection.principal_id.clone())
+                    .await;
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "status": "cancel_requested",
+                        "active_turns": cancelled
+                    }
+                })
             }
             "interrupt" => self.handle_interrupt(&id, &request).await,
             "mode_switch" => self.handle_mode_switch(&id, &request).await,

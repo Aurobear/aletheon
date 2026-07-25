@@ -29,7 +29,7 @@ same client path the user reported.
 
 ### Source and deployment preflight
 
-Do not assume `/home/aurobear/Bear-ws/aletheon` is the source being deployed.
+Do not assume any historical checkout path is the source being deployed.
 Record all of the following before changing or testing anything:
 
 ```bash
@@ -62,6 +62,10 @@ diagnostic metrics, not success criteria. At minimum assert:
 Always forbid these strings unless the test explicitly targets them:
 
 ```text
+provider_unavailable
+provider_rejected_request
+provider_timeout
+inference provider failed
 google_unauthorized_account
 Can't mount proc
 Permission denied
@@ -69,7 +73,90 @@ Aletheon authorization failed
 ```
 
 For model-controlled tool arguments or routing, run the same real-TUI task
-three consecutive times. A single success is insufficient.
+three consecutive times. A single success is insufficient. Deterministic unit
+or contract tests do not require three repetitions.
+
+For long-running acceptance, also keep one fresh TUI session open for at least
+three user turns: a repository overview, a scoped follow-up grounded in the
+first answer, and a short unrelated prompt. Require every turn to return the
+input prompt without restarting the daemon or creating a new session. Record
+per-turn latency and cumulative context usage. This catches poisoned history,
+stuck busy state, broken cancellation, and limits that only appear after the
+first successful turn.
+
+### Repository-analysis efficiency assertions
+
+For repository overview tasks, require the agent to batch-read known entry files
+(`README`, root manifest, repository instructions, architecture status) before
+any broad discovery. Fail the run when it performs extension-by-extension
+inventory, alternates one inference round per independent file, or continues
+searching after sufficient evidence is available.
+
+Record these separately:
+
+- model inference rounds;
+- provider retry attempts;
+- tool calls per model round;
+- batched tool arguments (`file_read.paths`, `glob.patterns`).
+
+Also score answer correctness, not only execution:
+
+- every claimed file/module must exist;
+- claims such as “README/documentation is absent” must be checked against the
+  actual workspace;
+- architecture and maturity conclusions must cite content returned by
+  `file_read`, not filenames returned by `glob`;
+- compare token usage and latency with the previous accepted run, and fail a
+  material regression unless the task or evidence volume increased.
+
+A discovery-only run is not an analyzed repository. If the first batch is
+`glob`, require one bounded batched `file_read` round before synthesis.
+
+### Runtime-fact assertions
+
+Model prose is never evidence of model identity or runtime configuration. For
+questions about model identity, provider route, context capacity, session ID,
+selected subagent runtime, capabilities, or budgets:
+
+1. capture the rendered answer;
+2. compare it with daemon routing logs and the effective configuration;
+3. fail any answer that claims a different vendor/version or invents a value;
+4. repeat identity challenges in the same TUI session to detect history-driven
+   reversion to training priors;
+5. record effective model ID, display name, and context capacity separately.
+
+Use at least this sustained identity sequence when the change affects runtime
+facts:
+
+```text
+你是什么模型
+你确定你是 Claude？
+你不是当前 host 所报告的模型吗？
+```
+
+For asynchronous Agent tools, require a terminal `agent_wait` result or a
+durable terminal event before accepting any reported child status/output. A
+spawn handle plus plausible prose is a failed run.
+
+A provider error shown in the rendered frame is always a failed run, even when
+the monitor returns `verdict: pass`, the prompt returns, or tools succeeded.
+Recompute acceptance from the rendered frame, session evidence, and daemon logs;
+never trust the aggregate verdict without checking its assertions.
+
+Use the installed TUI itself as the canonical end-to-end repository-analysis
+scenario:
+
+```text
+你看看当前项目怎么样？请给出项目定位、架构概览、当前成熟度和三个主要风险。
+```
+
+Launch `/usr/bin/aletheon` from the active repository root, submit that task in
+the TUI, monitor the actual rendered session, and inspect its audit/log evidence.
+The scenario passes only when a substantive answer is visible before `❯`
+returns, no provider/infrastructure error is rendered, known entry files are
+read in a batch, and the analysis does not degrade into extension-by-extension
+inventory. This TUI scenario supplements focused deterministic tests; it does
+not replace them.
 
 ### Completion and evidence
 
@@ -118,9 +205,9 @@ Ask the user or infer from context:
 
 - **Task complexity** — Simple (file listing), Medium (code search + read), Hard (multi-file analysis/refactor)?
 - **Success criteria**:
-  - Agent produces a substantive response (>200 chars, not "Reflection recommended stopping")
-  - No unrecoverable errors in tool calls (sandbox Permission denied, provider auth failures)
-  - Agent uses at least N tool calls before responding (N≥3 for simple, N≥10 for hard)
+  - Agent produces a substantive, task-complete response
+  - No provider, timeout, authorization, sandbox, or rendering failure occurs
+  - Tool calls are necessary and batched; more tool calls are not evidence of quality
 - **Max iterations** — default: 5, ask user if the environment looks unstable
 - **Aletheon source path** — discover with `git rev-parse --show-toplevel`; never hard-code a checkout
 - **Example test tasks**:
@@ -177,7 +264,7 @@ Check the response against these criteria:
 For fast iteration, use a simple test:
 
 ```
-aletheon_ask(question="List the top-level directories in /home/aurobear/Bear-ws/aletheon/")
+aletheon_ask(question="Read the known repository entry files and summarize the project.")
 ```
 
 Expected: returns a list of directories. If this fails, the daemon has fundamental issues.
@@ -311,7 +398,7 @@ Map symptoms to likely root causes:
 
 ### 5.1 Apply Fixes to Aletheon Source
 
-Based on the analysis, edit the relevant source files. Fixes are in the aletheon repo at `/home/aurobear/Bear-ws/aletheon/`.
+Based on the analysis, edit the relevant source files. Fixes belong in the checkout returned by `git rev-parse --show-toplevel`; never hard-code a historical checkout.
 
 Common fix locations:
 
@@ -328,12 +415,12 @@ Common fix locations:
 | OpenAI provider | `crates/cognit/src/impl/llm/openai_provider.rs` |
 | Storm breaker | `crates/runtime/src/core/storm_breaker.rs` |
 
-### 5.2 Rebuild
+### 5.2 Build and deploy the installed runtime
 
 ```bash
 repo=$(git rev-parse --show-toplevel)
 cd "$repo"
-cargo build --release -p aletheon-bin
+sudo bash scripts/aletheon.sh deploy
 ```
 
 If build fails, fix compilation errors before proceeding. Common issues:
@@ -341,18 +428,9 @@ If build fails, fix compilation errors before proceeding. Common issues:
 - Type mismatches (usize vs u32)
 - Unused variable warnings that became errors
 
-### 5.3 Restart Daemon
-
-```bash
-sudo systemctl restart aletheon
-sleep 2
-aletheon_health  # verify it came back up
-```
-
-If daemon fails to start:
-```bash
-journalctl -u aletheon --no-pager -n 30  # check startup errors
-```
+The deploy command owns service restart and installed-runtime verification.
+Do not replace it with a source build plus a manual restart, and do not use a
+fixed sleep as readiness evidence.
 
 ## Phase 6: Verify
 
@@ -457,7 +535,7 @@ When checking for performance regressions:
 
 ## Guardrails
 
-- **Write scope**: Only modify files under `/home/aurobear/Bear-ws/aletheon/`. Do not touch aurb, system config, or unrelated projects.
+- **Write scope**: Only modify files under the active `git rev-parse --show-toplevel` checkout. Do not touch unrelated projects.
 - **Config safety**: Do not modify `setup.sh`, `config/default.toml`, or provider config unless the analyze phase explicitly identifies a config-level issue. Changing config can break production deployments.
 - **Restart safety**: `systemctl restart aletheon` is allowed without user approval (it's a test daemon). Any other destructive system operations require user confirmation.
 - **Fix discipline**: One fix at a time. Don't batch unrelated changes — you can't isolate which fix worked if you apply 3 at once.

@@ -44,12 +44,20 @@ impl ModelRouter {
 
     /// Create an LLM provider for the given task type.
     /// Falls back through the routing chain: task-specific → default → core default.
-    pub fn create_provider(&self, task: TaskType) -> anyhow::Result<Box<dyn LlmProvider>> {
+    pub async fn create_provider(&self, task: TaskType) -> anyhow::Result<Box<dyn LlmProvider>> {
         let spec = self
             .resolve_spec(task)
             .or_else(|| self.resolve_spec(TaskType::General))
             .unwrap_or_default();
-        Ok(Box::new(PortLlmProvider::new(self.inference.clone(), spec)))
+        let provider = PortLlmProvider::resolve(self.inference.clone(), spec).await?;
+        tracing::info!(
+            model_spec = provider.model_spec(),
+            display_name = provider.name(),
+            max_context_tokens = provider.max_context_length(),
+            task = ?task,
+            "Model provider selected"
+        );
+        Ok(Box::new(provider))
     }
 
     /// Classify a message into a task type based on content analysis.

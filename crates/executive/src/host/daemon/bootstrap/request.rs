@@ -82,6 +82,7 @@ impl RequestHandler {
             // make maintenance inference fail while routed turns still work.
             model_spec: String::new(),
         })
+        .await?
         .provider;
         info!(provider = llm.name(), "LLM provider initialized");
         let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
@@ -277,7 +278,9 @@ impl RequestHandler {
             })
             .await?;
         info!(
-            context_window = context_window,
+            model_spec = llm.name(),
+            display_name = llm.name(),
+            max_context_tokens = context_window,
             "Session context window configured"
         );
         let initial_session = sessions_composition.initial;
@@ -927,7 +930,8 @@ impl RequestHandler {
                 definitions: &definitions,
                 runtime_config: &runtime_config_snapshot,
                 profiles_config: &agent_profiles,
-            })?;
+            })
+            .await?;
             let native = Arc::new(crate::adapters::runtime::NativeCognitRuntime::new(
                 crate::adapters::runtime::NativeCognitRuntimeResources {
                     sessions: domains.cognition(),
@@ -938,9 +942,12 @@ impl RequestHandler {
                     conscious_candidates: Some(conscious_registry.clone()),
                 },
             ));
-            agent_runtimes.register(
+            agent_runtimes.register_manifested(
                 crate::adapters::runtime::NativeCognitRuntime::runtime_id(),
                 native,
+                crate::adapters::runtime::NativeCognitRuntime::manifest(
+                    composition.profiles.names(),
+                ),
             )?;
             composition
         };
@@ -967,7 +974,8 @@ impl RequestHandler {
                 corpus_group.tools.lock().await.definitions(),
                 capability_service.clone(),
                 clock.clone(),
-            )?;
+            )
+            .await?;
             if !registered.is_empty() {
                 info!(runtime_ids = ?registered, "Goal runtimes registered");
             }
@@ -1044,6 +1052,16 @@ impl RequestHandler {
         };
 
         let clock_2 = clock.clone();
+        let runtime_profile_requirements = agent_profiles
+            .overrides
+            .iter()
+            .map(|(profile, override_config)| {
+                (
+                    fabric::AgentProfileId(profile.clone()),
+                    override_config.runtime_capabilities.clone(),
+                )
+            })
+            .collect();
         let agent_svc = super::services::build_agent_services(
             &data_dir,
             kernel.clone(),
@@ -1055,6 +1073,7 @@ impl RequestHandler {
             agent_runtimes,
             corpus_group.tools.clone(),
             agent_profiles_for_tools,
+            runtime_profile_requirements,
             granted_capabilities.clone(),
             memory_group.memory_service.clone(),
         )

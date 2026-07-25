@@ -517,6 +517,8 @@ impl LlmProvider for OpenAiProvider {
             max_tokens: Some(self.max_tokens),
             stream: Some(true),
         };
+        let request_body = serde_json::to_vec(&request).map_err(anyhow::Error::from)?;
+        let request_bytes = request_body.len();
 
         let url = format!(
             "{}/v1/chat/completions",
@@ -529,7 +531,7 @@ impl LlmProvider for OpenAiProvider {
                 .post(&url)
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
-                .json(&request)
+                .body(request_body)
                 .send(),
         )
         .await
@@ -537,6 +539,33 @@ impl LlmProvider for OpenAiProvider {
         .map_err(provider_request_error)?;
 
         if !response.status().is_success() {
+            let message_bytes = messages
+                .iter()
+                .map(|message| serde_json::to_vec(message).map_or(0, |value| value.len()))
+                .collect::<Vec<_>>();
+            let tool_bytes = tools
+                .iter()
+                .map(|tool| serde_json::to_vec(tool).map_or(0, |value| value.len()))
+                .collect::<Vec<_>>();
+            tracing::warn!(
+                status = %response.status(),
+                request_bytes,
+                messages = messages.len(),
+                tools = tools.len(),
+                message_bytes = ?message_bytes,
+                tool_bytes = ?tool_bytes,
+                request_id = response
+                    .headers()
+                    .get("x-request-id")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or(""),
+                retry_after = response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or(""),
+                "Streaming provider request rejected"
+            );
             return Err(InferenceFailure::from_http_status(&response));
         }
 

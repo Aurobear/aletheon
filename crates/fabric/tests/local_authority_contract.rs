@@ -22,6 +22,17 @@ fn workspace_authority_can_be_narrowed_but_not_expanded() {
         .unwrap_err();
     assert!(error.contains("exceeds existing authority"));
 }
+
+#[test]
+fn workspace_authority_can_be_narrowed_to_read_only() {
+    let policy =
+        WorkspacePolicy::from_resolved_roots(PathBuf::from("/tmp/workspace"), vec![]).unwrap();
+
+    let read_only = policy.narrow_writable_roots(vec![]).unwrap();
+
+    assert_eq!(read_only.cwd(), PathBuf::from("/tmp/workspace"));
+    assert!(read_only.writable_roots().is_empty());
+}
 use std::path::PathBuf;
 
 #[test]

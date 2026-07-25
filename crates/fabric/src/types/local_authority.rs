@@ -112,12 +112,9 @@ impl WorkspacePolicy {
     ///
     /// The working directory is intentionally independent from the writable
     /// roots so a sandboxed process may start at the repository root while only
-    /// a reviewed file or subdirectory is writable.
+    /// a reviewed file or subdirectory is writable. An empty subset is valid
+    /// and represents a fully read-only workspace.
     pub fn narrow_writable_roots(mut self, roots: Vec<PathBuf>) -> Result<Self, String> {
-        if roots.is_empty() {
-            return Err("narrowed workspace roots must not be empty".into());
-        }
-
         let mut seen = HashSet::new();
         let mut narrowed = Vec::with_capacity(roots.len());
         for root in roots {

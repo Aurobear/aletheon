@@ -137,7 +137,7 @@ async fn admin_surface_executes_confirmed_dual_runtime_rollback() {
 }
 
 #[tokio::test]
-async fn skill_reload_rebuilds_prefix_and_missing_directory_is_bounded() {
+async fn skill_reload_refreshes_catalog_without_exposing_it_in_prefix() {
     let directory = tempdir().unwrap();
     std::fs::write(
         directory.path().join("review.md"),
@@ -146,7 +146,8 @@ async fn skill_reload_rebuilds_prefix_and_missing_directory_is_bounded() {
     .unwrap();
     let (service, _, prefix) = setup(directory.path().to_path_buf());
     assert_eq!(service.reload_skills().await.unwrap(), 1);
-    assert!(prefix.lock().await.contains("Review"));
+    assert_eq!(&*prefix.lock().await, "system prompt");
+    assert_eq!(service.list_skills().await[0].name, "Review");
 
     let (missing, _, _) = setup(directory.path().join("missing"));
     assert_eq!(missing.reload_skills().await.unwrap(), 0);

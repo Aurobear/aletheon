@@ -438,7 +438,11 @@ impl Default for ProviderTimeoutConfig {
         Self {
             connect_timeout_ms: 10_000,
             request_timeout_ms: 90_000,
-            stream_idle_timeout_ms: 30_000,
+            // Reasoning and tool-follow-up rounds can sit behind the provider's
+            // rate-limit queue without producing SSE bytes. Keep the idle bound
+            // finite, but align it with the request-header budget so a healthy
+            // multi-round turn is not aborted after only 30 seconds of silence.
+            stream_idle_timeout_ms: 90_000,
         }
     }
 }
@@ -573,10 +577,8 @@ fn default_compaction_threshold() -> usize {
 }
 
 fn default_system_prompt() -> String {
-    "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. \
-     Before stating any conclusion about your own runtime state, logs, or configuration, \
-     you MUST read the actual logs and the actually-effective config file first — never guess \
-     or invent an explanation."
+    include_str!("../../prompts/default_system.md")
+        .trim_end_matches('\n')
         .to_string()
 }
 
@@ -742,6 +744,25 @@ impl Default for PerceptionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracted_default_prompt_is_verbatim() {
+        assert_eq!(
+            default_system_prompt(),
+            "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. \
+             When independent inspection work is known up front, batch it in one tool call (for example, \
+             use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with \
+             each file or pattern. For an unfamiliar workspace overview, make `file_read.paths` the first \
+             inspection call and include conventional entry candidates such as README, the root manifest, \
+             repository instructions, and architecture status; batch reads tolerate candidates that do not \
+             exist. Use glob only afterward when a specific required path remains unknown, and never inventory \
+             every language or extension. Base conclusions on file contents rather than filenames. Stop \
+             searching once the evidence needed to answer is sufficient. \
+             Before stating any conclusion about your own runtime state, logs, or configuration, \
+             you MUST read the actual logs and the actually-effective config file first — never guess \
+             or invent an explanation."
+        );
+    }
 
     #[test]
     fn provider_pricing_parses_and_defaults_to_none() {

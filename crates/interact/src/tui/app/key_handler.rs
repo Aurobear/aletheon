@@ -100,8 +100,20 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
 
     // Ctrl+C: cancel streaming / clear input / double-press quits
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        // If streaming, send cancel to daemon
+        // While streaming, the first press requests cancellation and the
+        // second press remains an unconditional escape hatch.  Do not wait
+        // for the daemon to acknowledge cancellation before allowing exit:
+        // an unavailable provider or wedged turn may never send that event.
         if app.streaming {
+            let now = app.clock.mono_now();
+            if matches!(
+                app.last_ctrl_c,
+                Some(t) if now.0.saturating_sub(t.0) < 2000
+            ) {
+                app.running = false;
+                return;
+            }
+            app.last_ctrl_c = Some(now);
             write_request(app, ClientRpcRequest::Cancel).await;
             return;
         }
@@ -428,5 +440,58 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         }
 
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::host_time::ClientClock;
+    use crate::tui::term_compat::TermCaps;
+    use crate::tui::App;
+    use std::sync::Arc;
+
+    async fn streaming_app() -> App {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            TermCaps {
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+        );
+        app.streaming = true;
+        app
+    }
+
+    fn ctrl_c() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+    }
+
+    #[tokio::test]
+    async fn first_ctrl_c_requests_cancel_without_exiting_streaming_turn() {
+        let mut app = streaming_app().await;
+
+        handle_key(&mut app, ctrl_c()).await;
+
+        assert!(app.running);
+        assert!(app.last_ctrl_c.is_some());
+    }
+
+    #[tokio::test]
+    async fn second_ctrl_c_exits_even_when_streaming_never_stops() {
+        let mut app = streaming_app().await;
+
+        handle_key(&mut app, ctrl_c()).await;
+        handle_key(&mut app, ctrl_c()).await;
+
+        assert!(!app.running);
     }
 }

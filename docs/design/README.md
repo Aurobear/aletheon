@@ -20,12 +20,12 @@
 | **Execution (tool, sandbox, IPC, MCP)** | Tool trait, 9 built-in tools, OutputManager, BubblewrapBackend, ProcessBackend, NoopBackend, SplitSandbox, ContainerSandbox, UnixSocket, PriorityQueue, IpcManager, MCP stdio/StreamableHTTP/SSE transports, BM25+TF-IDF tool search, parallel execution (RwLock+PathConflictDetector) | IoUringBackend (feature gate), SharedMemBackend (stub) | Tool exposure layers | — |
 | **Security** | PolicyEngine, LoopDetector, CircuitBreaker, RiskClassifier, OutputGuardrail, Audit, ToolRunnerWithGuard, RollbackEngine, WritableRoot, IntegrityMonitor, SelfProtection, ErrorHandling | — | File-level rollback, NetworkSandboxPolicy | — |
 | **Orchestration** | Agent trait, Registry, DelegateTool, Selector, Handoff, DiGraph, Termination, Budget | — | — | — |
-| **Inference** | IntentClassifier, InferenceRouter (代码已实现，未接入 Engine) | — | — | — |
+| **Inference** | Core/daemon typed inference boundary, effective model capability resolution, task model routing, 1M-aware context budgeting, host-owned `ModelRuntimeFacts`, bounded retry with `Retry-After` | Machine-wide cross-session provider concurrency/cooldown | Provider health and quota telemetry | — |
 | **Perception** | PerceptionEvent, Manager, Aggregator, ProcSource, JournaldSource, Perception→Engine feed, FUSE AgentFs (fuse3 real mount) | eBPF source (mock /proc only), InotifySource (polling), Network monitoring (passive) | — | Hardware sensors (GPU/SMART/temp/ECC) |
 | **Platform** | PlatformAdapter (Linux+Android), Boot, Agent Awareness | — | Multi-Device | Kernel IPC module (agent_ipc.ko) |
-| **Resilience** | Error handling, Panic recovery | — | Rate limiting | — |
-| **Observability** | EventJournal, Observability modules | — | Durable/Ephemeral split, Prometheus metrics, Debug CLI | — |
-| **Testing** | 614 unit tests, Mock infrastructure (MockLlm, MockMemory, MockPerception) | Integration tests (inline) | CI pipeline (GitHub Actions), E2E tests, Performance benchmarks | — |
+| **Resilience** | Error handling, panic recovery, exponential provider retry, provider-advised cooldown | Machine-wide request coordination | Durable quota-aware admission | — |
+| **Observability** | EventJournal, structured daemon logs, session JSONL, runtime provenance, inference/retry/tool separation | Unified runtime-fact projection to every UI/API | Prometheus metrics | — |
+| **Testing** | Focused unit/contract tests, real-TUI monitor scenarios, installed binary provenance and real-request deployment gate | Long-duration and concurrent-session coverage | Performance and provider-storm benchmarks | — |
 | **Automation** | Automation system | — | — | — |
 | **MCP** | MCP OAuth 2.0, StreamableHTTP + SSE transports | — | — | — |
 
@@ -65,8 +65,8 @@
 | 感知 | [dasein/perception.md](dasein/perception.md) | eBPF、事件聚合、背压控制 |
 | 编排 | [executive/orchestration.md](executive/orchestration.md) | 多 Agent 编排、Selector/Handoff/DiGraph |
 | 自我演化 | [metacog/](metacog/) | MetaRuntime、Morphogenesis、Genome |
-| 测试 | [testing/](testing/) | 测试策略、Mock、CI |
-| 路线图 | [roadmap/](roadmap/) | 6 Phase 路线图、开放问题 |
+| 测试 | [testing/](testing/), [../testing/runtime-correctness.md](../testing/runtime-correctness.md) | 测试策略、installed acceptance、运行事实与长期 TUI 验收 |
+| 路线图 | [roadmap/](roadmap/) | 6 Phase 路线图、[开放问题](roadmap/open-questions.md)、[运行时正确性问题台账](roadmap/runtime-correctness-backlog.md) |
 
 ---
 

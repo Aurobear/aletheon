@@ -48,6 +48,7 @@ pub enum ClientRpcRequest {
     SessionNew,
     SessionNewFor(SessionParams),
     SessionLoadRecent,
+    SessionLoadPrevious(SessionParams),
     ApprovalResponse(ApprovalResponseParams),
     MemoryAdd(MemoryAddParams),
     MemoryList(MemoryListParams),
@@ -561,6 +562,9 @@ impl ClientRpcRequest {
             Self::SessionNew => ("session.new", None),
             Self::SessionNewFor(params) => ("new_session", Some(serde_json::to_value(params)?)),
             Self::SessionLoadRecent => ("load_recent", None),
+            Self::SessionLoadPrevious(params) => {
+                ("load_previous", Some(serde_json::to_value(params)?))
+            }
             Self::ApprovalResponse(params) => {
                 ("approval_response", Some(serde_json::to_value(params)?))
             }

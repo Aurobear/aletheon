@@ -107,6 +107,16 @@ impl DaemonTurnOrchestrator {
         }
     }
 
+    pub async fn cancel_turns_for_principal(&self, principal_id: &PrincipalId) -> usize {
+        self.coordinator
+            .cancel_active_for_principal(principal_id)
+            .await
+    }
+
+    pub async fn cancel_all_turns(&self) -> usize {
+        self.coordinator.cancel_all_active().await
+    }
+
     /// Cancel an in-flight turn with identity-aware lookup (G3 prompt_queue).
     ///
     /// When `grok_hardening.prompt_queue` is enabled, this validates the

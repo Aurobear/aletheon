@@ -180,7 +180,10 @@ while IFS= read -r line; do
   type=$(printf '%s' "$line" | sed -n 's/.*"type":"\([^"]*\)".*/\1/p')
   printf '{"type":"response","command":"%s","id":"%s","success":true' "$type" "$id"
   if [ "$type" = get_state ]; then printf ',"data":{"isStreaming":false}}\n'; exit 0; else printf '}\n'; fi
-  if [ "$type" = prompt ]; then printf '{"type":"agent_start"}\n'; fi
+  if [ "$type" = prompt ]; then
+    printf '{"type":"agent_start"}\n'
+    printf '{"type":"agent_start"}\n'
+  fi
   if [ "$type" = steer ]; then printf '{"type":"queue_update","steering":[]}\n'; fi
   if [ "$type" = follow_up ]; then
     printf '{"type":"tool_execution_end","toolCallId":"t1","toolName":"bash","result":{"content":"ok"},"isError":false}\n'
@@ -282,6 +285,71 @@ done
     }
 }
 
+#[tokio::test]
+async fn resident_runtime_recovers_terminal_text_from_agent_end_after_retry() {
+    let temp = TempDir::new().unwrap();
+    let workspace = temp.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let script = temp.path().join("pi-rpc-retry-fixture.sh");
+    std::fs::write(
+        &script,
+        r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  type=$(printf '%s' "$line" | sed -n 's/.*"type":"\([^"]*\)".*/\1/p')
+  printf '{"type":"response","command":"%s","id":"%s","success":true' "$type" "$id"
+  if [ "$type" = get_state ]; then printf ',"data":{"isStreaming":false}}\n'; exit 0; else printf '}\n'; fi
+  if [ "$type" = prompt ]; then
+    printf '{"type":"agent_start"}\n'
+    printf '{"type":"auto_retry_start","attempt":1}\n'
+    printf '{"type":"agent_start"}\n'
+    printf '{"type":"agent_end","messages":[{"role":"assistant","content":"recovered","usage":{"inputTokens":7,"outputTokens":2}}]}\n'
+    printf '{"type":"agent_settled"}\n'
+  fi
+done
+"#,
+    )
+    .unwrap();
+
+    let policy = WorkspacePolicy::from_resolved_roots(workspace.clone(), vec![]).unwrap();
+    let executable_sha256 = format!("{:x}", Sha256::digest(std::fs::read(&script).unwrap()));
+    let config = executive::composition::config::CodingRuntimeConfig {
+        enabled: true,
+        executable: script.clone(),
+        trusted_executable_dir: None,
+        fixed_args: fixed_args(),
+        package_version: "0.80.10".into(),
+        executable_sha256,
+        json_protocol_version: 3,
+        worktree_base: workspace.clone(),
+        timeout_ms: 5_000,
+        max_output_bytes: 64 * 1024,
+        allowed_paths: vec![PathBuf::from(".")],
+        forbidden_paths: vec![],
+        require_namespace_isolation: true,
+        network_enabled: true,
+    };
+    let runtime = PiRpcRuntime::prepare(
+        &config,
+        Arc::new(FixtureSandbox {
+            script,
+            restrict_network: false,
+        }),
+        Arc::new(kernel::chronos::SystemClock::new()),
+        BTreeMap::new(),
+    )
+    .unwrap()
+    .unwrap();
+    let (_sender, input) = input_with_inbox(policy, "retry");
+    let result = runtime
+        .launch(input, Arc::new(Events::default()))
+        .await
+        .unwrap();
+    assert_eq!(result.output, "recovered");
+    assert_eq!(result.usage.input_tokens, 7);
+    assert_eq!(result.usage.output_tokens, 2);
+}
+
 #[test]
 fn trusted_workspace_is_not_deserializable_or_serialized() {
     let value = serde_json::json!({
@@ -296,6 +364,15 @@ fn trusted_workspace_is_not_deserializable_or_serialized() {
         .unwrap()
         .get("trusted_workspace")
         .is_none());
+}
+
+#[test]
+fn external_pi_precedes_native_until_native_subagent_synthesis_is_reliable() {
+    assert!(
+        executive::testing::coding_runtime::NativeCognitRuntime::manifest(["code-agent".into()])
+            .priority
+            > executive::testing::coding_runtime::pi_manifest().priority
+    );
 }
 
 #[tokio::test]

@@ -56,10 +56,15 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
     // Populate completion/help from the daemon-owned Skill catalog. The
     // registry retains its last valid catalog if a later refresh fails.
-    let init_id = super::submit::write_request(&mut app, ClientRpcRequest::SessionLoadRecent).await;
+    // A terminal connection owns a fresh session by default. Reusing the
+    // workspace's most recent session makes concurrent TUI instances share
+    // history and lets one client's output appear in another client's view.
+    let init_id = super::submit::write_request(&mut app, ClientRpcRequest::SessionNew).await;
     app.pending_commands
         .insert(init_id, super::super::PendingCommand::InitializeSession);
-    super::submit::write_request(&mut app, ClientRpcRequest::SkillsList).await;
+    let skills_id = super::submit::write_request(&mut app, ClientRpcRequest::SkillsList).await;
+    app.pending_commands
+        .insert(skills_id, super::super::PendingCommand::InitializeSkills);
 
     // If test mode with auto_submit, submit the first line immediately
     if let Some(ref mut reader) = test_input {

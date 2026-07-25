@@ -31,7 +31,17 @@ impl ReActLoop {
         let mut tool_errors: usize = 0;
         self.verify_attempts = 0;
 
-        self.messages.push(Message::user(user_input));
+        let dasein_context = self
+            .dasein_ctx_provider
+            .as_ref()
+            .and_then(|provider| provider());
+        let user_message = if self.dasein_ctx_provider.is_some() {
+            self.compose_user_message_with_dasein(user_input, dasein_context.as_deref())
+        } else {
+            self.compose_user_message(user_input)
+        };
+        self.pending_memory.clear();
+        self.messages.push(Message::user(user_message));
 
         while self.should_continue() {
             self.advance();
@@ -46,6 +56,9 @@ impl ReActLoop {
                 }
                 Err(e) => return Err(e),
             };
+            self.turn_input_tokens = self
+                .turn_input_tokens
+                .saturating_add(response.usage.input_tokens as u64);
 
             let mut text_parts = Vec::new();
             let mut thinking_parts = Vec::new();
@@ -183,6 +196,34 @@ impl ReActLoop {
             } else {
                 tool_calls.iter().collect()
             };
+
+            if super::should_close_exploration(
+                self.iteration,
+                self.turn_input_tokens,
+                self.config.context_window_tokens,
+                ordered_calls.iter().map(|(_, name, _)| name.as_str()),
+            ) {
+                let budget =
+                    super::exploration_input_token_budget(self.config.context_window_tokens);
+                let results = ordered_calls
+                    .iter()
+                    .map(|(id, _, _)| ContentBlock::ToolResult {
+                        tool_use_id: id.clone(),
+                        content: format!(
+                            "Exploration input-token budget reached ({} / {}). \
+                             Synthesize the best answer from existing evidence now. \
+                             The user can request a focused follow-up for deeper inspection.",
+                            self.turn_input_tokens, budget
+                        ),
+                        is_error: false,
+                    })
+                    .collect();
+                self.messages.push(Message {
+                    role: Role::User,
+                    content: results,
+                });
+                continue;
+            }
 
             for (tool_index, (id, name, input)) in ordered_calls.iter().enumerate() {
                 // Defensive: skip tool calls with empty names — some
@@ -344,7 +385,6 @@ impl ReActLoop {
                     content: tool_result_blocks,
                 });
             }
-
             // Inject reflection AFTER all tool results to preserve API message format
             if let Some(summary) = pending_reflection.take() {
                 self.messages

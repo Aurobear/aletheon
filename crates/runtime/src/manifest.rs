@@ -29,6 +29,7 @@ impl RuntimeResourceRequirements {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RuntimeCapability {
     CodeRead,
     CodeSearch,
@@ -42,7 +43,8 @@ pub enum RuntimeCapability {
     DeviceCommand,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InteractionMode {
     OneShot,
     Resident,
@@ -50,10 +52,19 @@ pub enum InteractionMode {
     FollowUp,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WorkspaceMode {
-    Shared,
+    SharedReadOnly,
+    SharedWritable,
     IsolatedWorktree,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskEncoding {
+    NaturalLanguage,
+    StructuredJson,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -71,8 +82,17 @@ pub struct RuntimeManifest {
     pub display_name: String,
     pub capabilities: BTreeSet<RuntimeCapability>,
     pub interaction_modes: BTreeSet<InteractionMode>,
-    pub workspace_mode: WorkspaceMode,
+    pub workspace_modes: BTreeSet<WorkspaceMode>,
+    pub task_encodings: BTreeSet<TaskEncoding>,
+    /// `None` means the adapter accepts arbitrary profile IDs. A non-empty set
+    /// restricts selection to profiles the runtime can actually resolve.
+    #[serde(default)]
+    pub supported_profiles: Option<BTreeSet<String>>,
     pub tool_governance: ToolGovernance,
+    #[serde(default)]
+    pub priority: i32,
+    #[serde(default)]
+    pub max_context_tokens: Option<u64>,
     #[serde(default)]
     pub resource_requirements: RuntimeResourceRequirements,
 }
@@ -80,6 +100,33 @@ pub struct RuntimeManifest {
 impl RuntimeManifest {
     pub fn has(&self, cap: &RuntimeCapability) -> bool {
         self.capabilities.contains(cap)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.id.trim().is_empty() {
+            return Err("runtime id must not be empty".into());
+        }
+        if self.interaction_modes.is_empty() {
+            return Err("runtime interaction modes must not be empty".into());
+        }
+        if self.workspace_modes.is_empty() {
+            return Err("runtime workspace modes must not be empty".into());
+        }
+        if self.task_encodings.is_empty() {
+            return Err("runtime task encodings must not be empty".into());
+        }
+        if self
+            .supported_profiles
+            .as_ref()
+            .is_some_and(BTreeSet::is_empty)
+        {
+            return Err("runtime supported profile set must not be empty".into());
+        }
+        if self.max_context_tokens == Some(0) {
+            return Err("runtime context limit must be nonzero".into());
+        }
+        self.resource_requirements.validate()?;
+        Ok(())
     }
 }
 
@@ -109,5 +156,58 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn selectable_manifest_round_trips_generic_constraints() {
+        let manifest = RuntimeManifest {
+            id: "analysis-a".into(),
+            aliases: vec!["analysis".into()],
+            display_name: "Analysis A".into(),
+            capabilities: BTreeSet::from([
+                RuntimeCapability::CodeRead,
+                RuntimeCapability::CodeSearch,
+            ]),
+            interaction_modes: BTreeSet::from([InteractionMode::Resident]),
+            workspace_modes: BTreeSet::from([WorkspaceMode::SharedReadOnly]),
+            task_encodings: BTreeSet::from([TaskEncoding::NaturalLanguage]),
+            supported_profiles: None,
+            tool_governance: ToolGovernance::Observed,
+            priority: 10,
+            max_context_tokens: Some(1_000_000),
+            resource_requirements: Default::default(),
+        };
+        manifest.validate().unwrap();
+        let encoded = serde_json::to_value(&manifest).unwrap();
+        assert_eq!(encoded["priority"], 10);
+        assert_eq!(
+            serde_json::from_value::<RuntimeManifest>(encoded)
+                .unwrap()
+                .workspace_modes,
+            manifest.workspace_modes
+        );
+    }
+
+    #[test]
+    fn selectable_manifest_requires_an_input_encoding() {
+        let mut manifest = RuntimeManifest {
+            id: "analysis-a".into(),
+            aliases: vec![],
+            display_name: "Analysis A".into(),
+            capabilities: BTreeSet::new(),
+            interaction_modes: BTreeSet::from([InteractionMode::Resident]),
+            workspace_modes: BTreeSet::from([WorkspaceMode::SharedReadOnly]),
+            task_encodings: BTreeSet::from([TaskEncoding::NaturalLanguage]),
+            supported_profiles: None,
+            tool_governance: ToolGovernance::Observed,
+            priority: 0,
+            max_context_tokens: None,
+            resource_requirements: Default::default(),
+        };
+        manifest.task_encodings.clear();
+        assert_eq!(
+            manifest.validate().unwrap_err(),
+            "runtime task encodings must not be empty"
+        );
     }
 }

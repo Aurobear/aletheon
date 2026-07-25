@@ -35,7 +35,7 @@ pub(super) struct ProfileLoadResult {
     pub quarantined: Vec<QuarantinedProfile>,
 }
 
-pub(super) fn load_agent_profiles(
+pub(super) async fn load_agent_profiles(
     agents_dir: &std::path::Path,
     inference: Arc<dyn InferencePort>,
     default_llm: Arc<dyn LlmProvider>,
@@ -97,7 +97,7 @@ pub(super) fn load_agent_profiles(
         }
 
         let llm: Arc<dyn LlmProvider> = match role.model.as_deref() {
-            Some(model) => Arc::new(PortLlmProvider::new(inference.clone(), model)),
+            Some(model) => Arc::new(PortLlmProvider::resolve(inference.clone(), model).await?),
             None => default_llm.clone(),
         };
 
@@ -254,7 +254,7 @@ use crate::adapters::runtime::ProviderWorkerRuntime;
 use crate::application::CapabilityService;
 use crate::core::runtime_registry::RuntimeRegistry;
 
-pub(crate) fn register_goal_runtimes(
+pub(crate) async fn register_goal_runtimes(
     registry: &mut RuntimeRegistry,
     config: &cognit::config::GoalRuntimeConfig,
     inference: Arc<dyn InferencePort>,
@@ -296,7 +296,7 @@ pub(crate) fn register_goal_runtimes(
                 .with_context(|| format!("model alias '{}' not found", route.model_alias))?
         };
         let provider: Arc<dyn LlmProvider> =
-            Arc::new(PortLlmProvider::new(inference.clone(), model_spec));
+            Arc::new(PortLlmProvider::resolve(inference.clone(), model_spec).await?);
         let runtime_id = fabric::RuntimeId(route.runtime_id.clone());
         let runtime = Arc::new(ProviderWorkerRuntime::new(
             runtime_id.clone(),

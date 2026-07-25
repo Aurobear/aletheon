@@ -13,6 +13,31 @@ mod tool_output;
 pub use batching::{partition_tool_calls, ToolBatch};
 pub use metrics::TurnMetrics;
 
+const MIN_EXPLORATION_INPUT_TOKENS: u64 = 10_000;
+const MAX_EXPLORATION_INPUT_TOKENS: u64 = 24_000;
+
+fn exploration_input_token_budget(context_window_tokens: usize) -> u64 {
+    (context_window_tokens as u64 / 100)
+        .clamp(MIN_EXPLORATION_INPUT_TOKENS, MAX_EXPLORATION_INPUT_TOKENS)
+}
+
+fn is_inspection_tool(name: &str) -> bool {
+    matches!(name, "file_read" | "glob" | "grep" | "file_search")
+}
+
+fn should_close_exploration<'a>(
+    iteration: usize,
+    cumulative_input_tokens: u64,
+    context_window_tokens: usize,
+    tool_names: impl IntoIterator<Item = &'a str>,
+) -> bool {
+    let names = tool_names.into_iter().collect::<Vec<_>>();
+    iteration > 1
+        && !names.is_empty()
+        && names.iter().all(|name| is_inspection_tool(name))
+        && cumulative_input_tokens >= exploration_input_token_budget(context_window_tokens)
+}
+
 use async_trait::async_trait;
 use circuit_breaker::CircuitBreaker;
 use goal_tracker::GoalTracker;
@@ -120,6 +145,9 @@ pub struct ReActLoop {
     signals: Vec<AwarenessSignal>,
     /// Recent tool names for goal-shift detection.
     recent_tools: Vec<String>,
+    /// Provider input tokens spent during the current turn. This is a billed
+    /// work budget, distinct from active context occupancy.
+    turn_input_tokens: u64,
     /// Consecutive tool errors for impasse detection.
     consecutive_errors: usize,
     /// Interrupt flag for canceling the loop externally.
@@ -177,6 +205,7 @@ impl ReActLoop {
             pending_memory: Vec::new(),
             signals: Vec::new(),
             recent_tools: Vec::new(),
+            turn_input_tokens: 0,
             consecutive_errors: 0,
             interrupt_flag: None,
             tool_budget,
@@ -317,6 +346,7 @@ impl ReActLoop {
         self.pending_memory.clear();
         self.signals.clear();
         self.recent_tools.clear();
+        self.turn_input_tokens = 0;
         self.consecutive_errors = 0;
         self.tool_budget.reset();
         self.circuit_breaker.reset();
@@ -423,6 +453,47 @@ impl ReActLoop {
     /// owned batch after the buffer mutation has succeeded.
     pub fn set_evicted_callback(&mut self, callback: EvictedCallback) {
         self.evicted_callback = Some(callback);
+    }
+}
+
+#[cfg(test)]
+mod exploration_budget_tests {
+    use super::*;
+
+    #[test]
+    fn budget_scales_with_context_but_remains_bounded() {
+        assert_eq!(exploration_input_token_budget(128_000), 10_000);
+        assert_eq!(exploration_input_token_budget(1_000_000), 10_000);
+        assert_eq!(exploration_input_token_budget(2_000_000), 20_000);
+        assert_eq!(exploration_input_token_budget(10_000_000), 24_000);
+    }
+
+    #[test]
+    fn closes_only_later_pure_inspection_batches_over_budget() {
+        assert!(!should_close_exploration(
+            1,
+            20_000,
+            1_000_000,
+            ["file_read"]
+        ));
+        assert!(!should_close_exploration(
+            2,
+            9_999,
+            1_000_000,
+            ["file_read", "glob"]
+        ));
+        assert!(should_close_exploration(
+            2,
+            10_000,
+            1_000_000,
+            ["file_read", "glob"]
+        ));
+        assert!(!should_close_exploration(
+            2,
+            20_000,
+            1_000_000,
+            ["file_read", "shell"]
+        ));
     }
 }
 
@@ -646,6 +717,46 @@ mod tests {
 
     struct ScriptedLlm {
         calls: Mutex<usize>,
+    }
+
+    struct RecordingTextLlm {
+        messages: Mutex<Vec<Vec<Message>>>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for RecordingTextLlm {
+        async fn complete(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            self.messages.lock().unwrap().push(messages.to_vec());
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: "done".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+
+        async fn complete_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            unimplemented!("not used in test")
+        }
+
+        fn name(&self) -> &str {
+            "recording-text"
+        }
+
+        fn max_context_length(&self) -> usize {
+            100_000
+        }
     }
 
     #[async_trait]
@@ -1075,6 +1186,82 @@ mod tests {
     }
 
     // ── Compose message tests ────────────────────────────────────────────────
+
+    async fn run_and_capture_user_message(lp: &mut ReActLoop) -> String {
+        let llm = RecordingTextLlm {
+            messages: Mutex::new(Vec::new()),
+        };
+        lp.run(
+            "inspect only",
+            &llm,
+            &[],
+            |_id: &str, _name: &str, _input: &serde_json::Value| async move {
+                ("unused".into(), false)
+            },
+        )
+        .await
+        .unwrap();
+        let calls = llm.messages.lock().unwrap();
+        calls[0]
+            .iter()
+            .rev()
+            .find(|message| message.role == fabric::message::Role::User)
+            .and_then(|message| {
+                message.content.iter().find_map(|block| match block {
+                    ContentBlock::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn plan_mode_run_injects_marker() {
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_plan_mode(true);
+
+        let message = run_and_capture_user_message(&mut lp).await;
+
+        assert!(message.starts_with(PLAN_MODE_MARKER));
+        assert!(message.ends_with("inspect only"));
+        assert_eq!(message.matches(PLAN_MODE_MARKER).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn run_without_plan_mode_has_no_marker() {
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+
+        let message = run_and_capture_user_message(&mut lp).await;
+
+        assert_eq!(message, "inspect only");
+    }
+
+    #[tokio::test]
+    async fn run_consumes_pending_memory_once() {
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.queue_memory_update("bounded fact".into());
+
+        let first = run_and_capture_user_message(&mut lp).await;
+        let second = run_and_capture_user_message(&mut lp).await;
+
+        assert!(first.contains("<memory-update>"));
+        assert!(first.contains("bounded fact"));
+        assert!(!second.contains("<memory-update>"));
+        assert!(!second.contains("bounded fact"));
+    }
+
+    #[tokio::test]
+    async fn plan_mode_run_injects_dasein_and_one_marker() {
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_plan_mode(true);
+        lp.set_dasein_context_provider(Box::new(|| Some("mood: attentive".into())));
+
+        let message = run_and_capture_user_message(&mut lp).await;
+
+        assert!(message.contains("<dasein-state>"));
+        assert!(message.contains("mood: attentive"));
+        assert_eq!(message.matches(PLAN_MODE_MARKER).count(), 1);
+    }
 
     #[test]
     fn compose_user_message_plain_input() {

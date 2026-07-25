@@ -75,6 +75,9 @@ pub struct ProfileOverride {
     pub max_output_tokens: Option<u64>,
     pub tool_timeout_ms: Option<u64>,
     pub approval_policy: Option<fabric::AgentApprovalPolicy>,
+    /// Runtime capabilities this role needs in addition to capabilities
+    /// explicitly requested by an `agent_spawn` caller.
+    pub runtime_capabilities: Vec<fabric::AgentRuntimeCapability>,
 }
 
 /// The one application root schema. Its fields are typed domain inputs; it does

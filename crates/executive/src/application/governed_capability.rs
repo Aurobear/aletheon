@@ -16,7 +16,7 @@ use fabric::{
     SandboxRequirement, UsageReport, WorkspaceAttribution,
 };
 use kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 /// Canonical construction point for Kernel's admit-execute-settle invoker.
@@ -546,25 +546,52 @@ fn requested_scope_for_call(
     // parent-directory authority. Corpus applies the sensitive-path denylist
     // before projecting this grant into a Platform FilesystemScope.
     if call.name == "file_read" {
-        let requested = call
-            .input
-            .get("path")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow!("file_read requires a path before admission"))?;
-        let candidate = if std::path::Path::new(requested).is_absolute() {
-            PathBuf::from(requested)
-        } else {
-            workspace.cwd().join(requested)
-        };
-        let canonical = std::fs::canonicalize(&candidate).map_err(|error| {
-            anyhow!(
-                "file_read path '{}' cannot be admitted: {error}",
-                candidate.display()
-            )
-        })?;
-        let canonical = canonical.to_string_lossy().to_string();
-        if !allowed_paths.contains(&canonical) {
-            allowed_paths.push(canonical);
+        #[derive(Deserialize)]
+        struct FileReadScopeInput {
+            path: Option<String>,
+            #[serde(default)]
+            paths: Vec<String>,
+        }
+
+        let parsed: FileReadScopeInput = serde_json::from_value(call.input.clone())
+            .map_err(|error| anyhow!("invalid file_read scope input: {error}"))?;
+        let mut requested_paths = parsed.paths;
+        if let Some(path) = parsed.path {
+            requested_paths.insert(0, path);
+        }
+        if requested_paths.is_empty() {
+            return Err(anyhow!("file_read requires path or paths before admission"));
+        }
+        for requested in requested_paths {
+            let candidate = if std::path::Path::new(&requested).is_absolute() {
+                PathBuf::from(&requested)
+            } else {
+                workspace.cwd().join(&requested)
+            };
+            let has_parent_traversal = std::path::Path::new(&requested)
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir));
+            let inside_workspace = !has_parent_traversal
+                && workspace
+                    .writable_roots()
+                    .iter()
+                    .any(|root| candidate.starts_with(root));
+            if inside_workspace {
+                // Workspace roots are already present in the requested scope.
+                // Do not require a speculative read target to exist merely to
+                // authorize it; Corpus will return a per-file not-found result.
+                continue;
+            }
+            let canonical = std::fs::canonicalize(&candidate).map_err(|error| {
+                anyhow!(
+                    "file_read path '{}' cannot be admitted: {error}",
+                    candidate.display()
+                )
+            })?;
+            let canonical = canonical.to_string_lossy().to_string();
+            if !allowed_paths.contains(&canonical) {
+                allowed_paths.push(canonical);
+            }
         }
     }
 
@@ -660,5 +687,79 @@ mod filesystem_scope_tests {
         assert!(!scope
             .allowed_paths
             .contains(&external_root.path().to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn file_read_batch_requests_each_exact_external_path() {
+        let workspace_root = tempfile::tempdir().unwrap();
+        let external_root = tempfile::tempdir().unwrap();
+        let first = external_root.path().join("first.txt");
+        let second = external_root.path().join("second.txt");
+        std::fs::write(&first, "first").unwrap();
+        std::fs::write(&second, "second").unwrap();
+        let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+            workspace_root.path().canonicalize().unwrap(),
+            vec![],
+        )
+        .unwrap();
+        let call = CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            name: "file_read".into(),
+            input: serde_json::json!({"paths": [first, second]}),
+            call_id: "batch-scope-test".into(),
+            deadline: None,
+        };
+
+        let scope = requested_scope_for_call(&call, &workspace).unwrap();
+        assert!(scope
+            .allowed_paths
+            .contains(&first.canonicalize().unwrap().to_string_lossy().into_owned()));
+        assert!(scope.allowed_paths.contains(
+            &second
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        ));
+        assert!(!scope
+            .allowed_paths
+            .contains(&external_root.path().to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn file_read_admits_missing_workspace_path_for_tool_level_reporting() {
+        let workspace_root = tempfile::tempdir().unwrap();
+        let root = workspace_root.path().canonicalize().unwrap();
+        let workspace = fabric::WorkspacePolicy::from_resolved_roots(root.clone(), vec![]).unwrap();
+        let missing = root.join("package.json");
+        let call = CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            name: "file_read".into(),
+            input: serde_json::json!({"paths": ["README.md", missing]}),
+            call_id: "missing-workspace-path".into(),
+            deadline: None,
+        };
+
+        let scope = requested_scope_for_call(&call, &workspace).unwrap();
+        assert_eq!(scope.allowed_paths, vec![root.to_string_lossy()]);
+    }
+
+    #[test]
+    fn file_read_does_not_admit_parent_traversal_as_workspace_relative() {
+        let workspace_root = tempfile::tempdir().unwrap();
+        let root = workspace_root.path().canonicalize().unwrap();
+        let workspace = fabric::WorkspacePolicy::from_resolved_roots(root.clone(), vec![]).unwrap();
+        let call = CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            name: "file_read".into(),
+            input: serde_json::json!({"path": "../missing.txt"}),
+            call_id: "parent-traversal".into(),
+            deadline: None,
+        };
+
+        assert!(requested_scope_for_call(&call, &workspace).is_err());
     }
 }

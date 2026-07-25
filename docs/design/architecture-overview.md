@@ -2,7 +2,7 @@
 
 > **Status:** Current design overview
 >
-> **Verified:** 2026-07-19
+> **Verified:** 2026-07-26
 
 ## 1. 系统定位
 
@@ -76,6 +76,27 @@ Input
   -> durable authority + projections
 ```
 
+### 4.1 权威运行事实
+
+模型关于自身、上下文和运行状态的自然语言陈述不是系统事实。每轮模型选择后，
+host 从实际路由对象生成 `ModelRuntimeFacts`：
+
+```text
+machine provider registry
+  -> resolved model specification
+  -> PortLlmProvider::runtime_facts()
+  -> TurnPipeline system context
+  -> model answer / logs / diagnostics
+```
+
+当前事实包含 effective model ID、显示名称和最大上下文长度。它们来自
+`crates/fabric/src/types/llm_types.rs` 的共享契约及
+`crates/executive/src/application/inference_port.rs` 的 resolved adapter；模型不得
+根据训练先验猜测厂商、版本或上下文窗口。
+
+同一原则适用于 session ID、Agent runtime、capability 与预算：authority/projection
+可以提供事实，模型输出不能反向覆盖 authority。
+
 `TurnEngine` 的权威接口位于
 `crates/executive/src/service/turn_engine.rs:14-22`。入口不得自行运行另一套 LLM
 loop。
@@ -106,8 +127,10 @@ verification 与 settlement 权威。
   `crates/corpus/src/tools/mcp/config.rs:54-56`；
 - Platform selector 已接通 target 对应的原生 probe：`crates/platform/src/selector.rs:26-59`，完整 Host contract 仍在收敛；
 - Runtime selector 尚未统一所有真实外部执行路由；
-- Pi receipt 仍缺真实 output/usage/diff evidence：
-  `crates/executive/src/impl/runtime/pi_rpc.rs:632-639`；
+- machine-wide provider concurrency/cooldown 尚未统一；当前重试已遵循指数退避和
+  `Retry-After`，但跨 session、主 Agent 与 subagent 的请求协调仍需收敛到 machine core；
+- Pi RPC 已回收 `agent_end` 中的 terminal assistant text 与 usage；完整 diff/artifact
+  receipt 仍需继续完善：`crates/executive/src/adapters/runtime/pi_rpc.rs`；
 - Hardware 没有生产调用者；
 - Coding benchmark 尚未以真实 fixture/harness/receipt 落地。
 

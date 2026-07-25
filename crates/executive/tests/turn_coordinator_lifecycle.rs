@@ -174,6 +174,55 @@ async fn failure_is_terminal_and_remains_replayable() {
     assert!(matches!(items[1].payload, ItemPayload::SystemNotice { .. }));
 }
 
+#[tokio::test]
+async fn compatibility_cancel_reaches_active_turn_for_principal() {
+    let kernel = Arc::new(KernelRuntime::new());
+    let store: Arc<dyn SessionAppendStore> =
+        Arc::new(CanonicalSessionStore::open(":memory:").unwrap());
+    let coordinator = Arc::new(
+        executive::testing::turn_coordinator::compose_in_memory_turn_coordinator(
+            kernel.clone(),
+            store,
+        ),
+    );
+    let process = kernel
+        .spawn_process(fabric::SpawnSpec::default())
+        .await
+        .unwrap();
+    let request = request("cancelled", process.id);
+    let principal_id = request.context.principal_id.clone();
+    let running = {
+        let coordinator = coordinator.clone();
+        tokio::spawn(async move {
+            coordinator
+                .submit_with(
+                    request,
+                    &TurnPolicy::daemon(),
+                    |_request, cancel| async move {
+                        cancel.cancelled().await;
+                        anyhow::bail!("cancelled")
+                    },
+                )
+                .await
+        })
+    };
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while coordinator.active_turn_count().await == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        coordinator.cancel_active_for_principal(&principal_id).await,
+        1
+    );
+    assert!(running.await.unwrap().is_err());
+    assert_eq!(coordinator.active_turn_count().await, 0);
+}
+
 struct SeedCapturingFactory(Arc<tokio::sync::Mutex<Vec<usize>>>);
 
 #[async_trait]

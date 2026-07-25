@@ -12,7 +12,9 @@ use cognit::composition::provider_registry::ProviderRegistry;
 use fabric::{LlmResponse, LlmStream};
 use tokio_util::sync::CancellationToken;
 
-use crate::application::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
+use crate::application::inference_port::{
+    CoreInferenceRequest, InferenceError, InferencePort, ModelCapabilities,
+};
 use crate::host::core_rpc::{CorePeerPolicy, CoreRpcServer};
 
 /// A model specification after authoritative machine-registry resolution.
@@ -67,6 +69,22 @@ impl RegistryInferencePort {
 
 #[async_trait::async_trait]
 impl InferencePort for RegistryInferencePort {
+    async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
+        let (config, model) = self
+            .registry
+            .resolve(model_spec)
+            .map_err(InferenceError::from)?;
+        let provider = self
+            .registry
+            .create_provider(&config, &model)
+            .map_err(InferenceError::from)?;
+        Ok(ModelCapabilities {
+            model_spec: format!("{}/{}", config.name, model),
+            display_name: provider.name().to_string(),
+            max_context_tokens: provider.max_context_length(),
+        })
+    }
+
     async fn complete(&self, request: CoreInferenceRequest) -> Result<LlmResponse, InferenceError> {
         let provider = self
             .registry

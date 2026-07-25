@@ -48,6 +48,17 @@ EOF
   aletheon_ok "MCP monitor installed at $bin_dir/aletheon-monitor"
 }
 
+remove_user_cli_shadow() {
+  local bin_dir=${ALETHEON_USER_BIN_DIR:-$HOME/.local/bin}
+  local shadow="$bin_dir/aletheon"
+  [[ -e "$shadow" || -L "$shadow" ]] || return 0
+  [[ ! -d "$shadow" ]] ||
+    aletheon_die "cannot remove CLI shadow directory: $shadow"
+
+  rm -f -- "$shadow"
+  aletheon_ok "removed PATH-shadowing legacy CLI: $shadow"
+}
+
 cmd_install() {
   local enable=1
   [[ ${1:-} == --no-enable ]] && enable=0
@@ -73,6 +84,7 @@ cmd_install() {
     rm -f -- "$legacy_binary_override"
   fi
   rmdir "$user_unit_dir/aletheon.service.d" 2>/dev/null || true
+  remove_user_cli_shadow
   systemctl --user daemon-reload
   cmd_monitor_install
   aletheon_ok "system assets installed"

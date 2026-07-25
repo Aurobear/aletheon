@@ -602,7 +602,8 @@ pub trait TurnUseCases: Send + Sync {
         prompt_index: u64,
         workspace: fabric::types::workspace_checkpoint::WorkspaceIdentity,
     ) -> fabric::types::workspace_checkpoint::RestoreOutcome;
-    async fn cancel_current(&self);
+    async fn cancel_current(&self) -> usize;
+    async fn cancel_current_for_principal(&self, principal_id: PrincipalId) -> usize;
     async fn cancel_current_with_thread(&self, thread_id: String);
     async fn session_resume(&self, id: SessionId) -> anyhow::Result<ResumeResult>;
     async fn session_fork(
@@ -696,13 +697,25 @@ impl TurnUseCases for ProductionTurnUseCases {
             .rewind_workspace(&principal_id, &session_id, prompt_index, &workspace)
             .await
     }
-    async fn cancel_current(&self) {
+    async fn cancel_current(&self) -> usize {
         self.runtime_port
-            .request_interrupt(InterruptReason::Timeout)
+            .request_interrupt(InterruptReason::UserCancelled)
             .await;
         if let Some(token) = self.cancel_token.lock().await.take() {
             token.cancel();
         }
+        self.orchestrator.cancel_all_turns().await
+    }
+    async fn cancel_current_for_principal(&self, principal_id: PrincipalId) -> usize {
+        self.runtime_port
+            .request_interrupt(InterruptReason::UserCancelled)
+            .await;
+        if let Some(token) = self.cancel_token.lock().await.take() {
+            token.cancel();
+        }
+        self.orchestrator
+            .cancel_turns_for_principal(&principal_id)
+            .await
     }
     async fn cancel_current_with_thread(&self, thread_id: String) {
         self.runtime_port

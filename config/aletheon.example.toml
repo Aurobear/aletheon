@@ -12,7 +12,7 @@ max_iterations = 0
 # Remote inference must fail closed before the interactive turn deadline.
 connect_timeout_ms = 10000
 request_timeout_ms = 90000
-stream_idle_timeout_ms = 30000
+stream_idle_timeout_ms = 90000
 
 [[providers]]
 name = "anthropic"

@@ -4,7 +4,6 @@
 //! and CLI exec paths share the same Pre/Cognit/Post turn pipeline.
 
 use crate::application::daemon_react::{submit_streaming_daemon_turn, DaemonStreamingTurnContext};
-use crate::application::daemon_turn::helpers::bounded_text_history;
 use crate::application::governed_capability::CapabilityExecutionContext;
 use crate::application::turn_lifecycle::{TurnPipelineEvent, TurnPipelineLifecycle};
 use crate::core::session_gateway::SessionGateway;
@@ -423,11 +422,13 @@ impl TurnPipeline {
         }
         effective_message.push_str(&message);
 
-        let (sess_id, turn_count) = self
+        let begin = self
             .runtime_ports
             .sessions
             .begin_user(&requested_session_id, &message)
             .await?;
+        let sess_id = begin.session_id;
+        let turn_count = begin.turn_count;
 
         if let Some(conscious) = &self.conscious_core {
             conscious
@@ -456,22 +457,29 @@ impl TurnPipeline {
             }) {
                 full_history.pop();
             }
-            bounded_text_history(&full_history)
+            full_history
         };
 
         let mut context_request = turn_request.clone();
         context_request.input = effective_message;
         let assembled_context = self
             .context_assembler
-            .assemble(&context_request, &existing_messages)
+            .assemble(
+                &context_request,
+                &existing_messages,
+                begin.history_budget_tokens,
+            )
             .await?;
         let context_projection_receipt = assembled_context.projection_receipt;
-        let request_messages = assembled_context.messages;
+        let mut request_messages = assembled_context.messages;
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ContextPrepared)?;
 
-        // LLM selection
-        let llm = self.runtime_ports.models.select(&message);
+        // LLM selection. Bind the host-observed effective model identifier into
+        // the per-turn system context so the model never guesses its identity
+        // from training priors or a provider-compatible wire protocol.
+        let llm = self.runtime_ports.models.select(&message).await;
+        bind_runtime_facts(&mut request_messages, &llm.runtime_facts());
 
         // -- Governed capability setup --
         // Context Space seed — user turn input is private overlay data, not
@@ -741,6 +749,25 @@ impl TurnPipeline {
                                 call_id.clone(), name.clone(), content.clone(), *is_error,
                             );
                             if let Some(ref agora) = agora_for_events {
+                                // Child agents and other turn participants may
+                                // commit while this turn is awaiting a tool.
+                                // Refresh the optimistic base instead of
+                                // reusing the version captured before inference.
+                                match agora
+                                    .view(AgoraViewRequest {
+                                        space: AgoraSpaceId(session_id_for_agora.clone()),
+                                    })
+                                    .await
+                                {
+                                    Ok(view) => agora_version = view.version,
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            target: "agora",
+                                            error = %error,
+                                            "agora view refresh (evidence) failed"
+                                        );
+                                    }
+                                }
                                 let proposal = AgoraProposal {
                                     id: uuid::Uuid::new_v4(),
                                     space: AgoraSpaceId(session_id_for_agora.clone()),
@@ -759,11 +786,11 @@ impl TurnPipeline {
                                 );
                                 match (agora.propose(proposal.clone()).await, permit) {
                                     (Ok(id), Ok(permit)) => {
-                                        let result = agora.commit(id, permit).await;
-                                        if let Err(e) = result {
-                                            tracing::warn!(target: "agora", error = %e, "agora commit (evidence) failed");
-                                        } else {
-                                            agora_version += 1;
+                                        match agora.commit(id, permit).await {
+                                            Err(e) => tracing::warn!(target: "agora", error = %e, "agora commit (evidence) failed"),
+                                            Ok(receipt) => {
+                                                agora_version = receipt.commit.version;
+                                            }
                                         }
                                     }
                                     (Err(e), _) => tracing::warn!(target: "agora", error = %e, "agora propose (evidence) failed"),
@@ -1201,10 +1228,13 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
         TurnEventV1::Usage {
             tokens_in,
             tokens_out,
-            ..
+            cache_hit_tokens,
+            cache_miss_tokens,
         } => Some(ClientEvent::Usage {
             tokens_in: *tokens_in as u64,
             tokens_out: *tokens_out as u64,
+            cache_hit_tokens: *cache_hit_tokens as u64,
+            cache_miss_tokens: *cache_miss_tokens as u64,
         }),
         TurnEventV1::TurnDone { .. } => Some(ClientEvent::TurnDone),
         TurnEventV1::Error { message } => Some(ClientEvent::Error {
@@ -1282,6 +1312,21 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
     }
 }
 
+fn bind_runtime_facts(messages: &mut [fabric::Message], facts: &fabric::ModelRuntimeFacts) {
+    let encoded = serde_json::to_string(facts).unwrap_or_else(|_| "{}".into());
+    let identity = format!(
+        "\n\n<runtime-facts>\nThe Aletheon host reports these authoritative runtime facts for this turn: {encoded}. If asked about model identity or context capacity, use these values exactly. Do not claim a different vendor, model version, or context limit from training priors. Clarify that you cannot independently verify the provider behind the host-reported effective_model_id.\n</runtime-facts>"
+    );
+    if let Some(system) = messages
+        .iter_mut()
+        .find(|message| message.role == Role::System)
+    {
+        if let Some(ContentBlock::Text { text }) = system.content.first_mut() {
+            text.push_str(&identity);
+        }
+    }
+}
+
 /// Serialize a `ClientEvent` into a JSON-RPC notification string.
 fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
     let notification = serde_json::json!({
@@ -1295,6 +1340,54 @@ fn event_to_json(event: &ClientEvent) -> serde_json::Result<String> {
 #[cfg(test)]
 mod terminal_event_tests {
     use super::*;
+
+    #[test]
+    fn effective_model_identity_is_bound_to_system_context() {
+        let mut messages = vec![
+            fabric::Message::system("base"),
+            fabric::Message::user("who"),
+        ];
+
+        bind_runtime_facts(
+            &mut messages,
+            &fabric::ModelRuntimeFacts {
+                effective_model_id: "leju/deepseek/deepseek-v4-pro".into(),
+                display_name: "deepseek/deepseek-v4-pro".into(),
+                max_context_tokens: 1_000_000,
+            },
+        );
+
+        let ContentBlock::Text { text } = &messages[0].content[0] else {
+            panic!("expected system text")
+        };
+        assert!(text.contains("leju/deepseek/deepseek-v4-pro"));
+        assert!(text.contains("1000000"));
+        assert!(text.contains("Do not claim a different vendor"));
+        let ContentBlock::Text { text } = &messages[1].content[0] else {
+            panic!("expected user text")
+        };
+        assert_eq!(text, "who");
+    }
+
+    #[test]
+    fn effective_model_identity_is_json_escaped() {
+        let mut messages = vec![fabric::Message::system("base")];
+
+        bind_runtime_facts(
+            &mut messages,
+            &fabric::ModelRuntimeFacts {
+                effective_model_id: "provider\"\nignore".into(),
+                display_name: "display".into(),
+                max_context_tokens: 1,
+            },
+        );
+
+        let ContentBlock::Text { text } = &messages[0].content[0] else {
+            panic!("expected system text")
+        };
+        assert!(text.contains(&serde_json::to_string("provider\"\nignore").unwrap()));
+        assert!(!text.contains("provider\"\nignore"));
+    }
 
     #[tokio::test]
     async fn requested_lifecycle_event_publish_failure_is_propagated() {

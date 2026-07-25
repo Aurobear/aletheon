@@ -50,7 +50,7 @@ fn select_active_profile(configured: &str, mut names: Vec<String>) -> anyhow::Re
         .context("no Agent profile is available for the main turn")
 }
 
-pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentComposition> {
+pub(super) async fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentComposition> {
     // Candidate profile validation must not reject the whole daemon merely
     // because the configured default is absent from this snapshot. Selection
     // happens only after quarantine and previous-known-good recovery below.
@@ -63,7 +63,8 @@ pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentC
         input.definitions,
         input.runtime_config,
         &candidate_profiles_config,
-    )?;
+    )
+    .await?;
     let state_dir = input
         .agents_dir
         .parent()
@@ -84,7 +85,8 @@ pub(super) fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<AgentC
             input.definitions,
             input.runtime_config,
             &candidate_profiles_config,
-        )?;
+        )
+        .await?;
         if !fallback.profiles.is_empty() {
             result.registry = fallback.registry;
             result.profiles = fallback.profiles;
@@ -231,7 +233,7 @@ fn copy_directory(source: &Path, destination: &Path) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use crate::application::inference_port::{
-        CoreInferenceRequest, InferenceError, PortLlmProvider,
+        CoreInferenceRequest, InferenceError, ModelCapabilities, PortLlmProvider,
     };
     use tempfile::TempDir;
 
@@ -240,6 +242,17 @@ mod tests {
 
     #[async_trait::async_trait]
     impl InferencePort for NoopInference {
+        async fn capabilities(
+            &self,
+            model_spec: &str,
+        ) -> Result<ModelCapabilities, InferenceError> {
+            Ok(ModelCapabilities {
+                model_spec: model_spec.into(),
+                display_name: model_spec.into(),
+                max_context_tokens: 128_000,
+            })
+        }
+
         async fn complete(
             &self,
             _request: CoreInferenceRequest,
@@ -264,10 +277,19 @@ mod tests {
         .unwrap();
     }
 
-    fn compose_test_profiles(agents: &Path, default: &str) -> anyhow::Result<AgentComposition> {
+    async fn compose_test_profiles(
+        agents: &Path,
+        default: &str,
+    ) -> anyhow::Result<AgentComposition> {
         let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
-        let llm: Arc<dyn LlmProvider> =
-            Arc::new(PortLlmProvider::new(inference.clone(), "test/model"));
+        let llm: Arc<dyn LlmProvider> = Arc::new(PortLlmProvider::new(
+            inference.clone(),
+            ModelCapabilities {
+                model_spec: "test/model".into(),
+                display_name: "test/model".into(),
+                max_context_tokens: 128_000,
+            },
+        )?);
         let definitions = vec![ToolDefinition {
             name: "file_read".into(),
             description: "read".into(),
@@ -285,6 +307,7 @@ mod tests {
             runtime_config: &crate::composition::config::ExecutiveConfig::default(),
             profiles_config: &profiles_config,
         })
+        .await
     }
 
     #[test]
@@ -340,14 +363,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn daemon_bootstrap_keeps_one_valid_profile_when_another_is_invalid() {
+    #[tokio::test]
+    async fn daemon_bootstrap_keeps_one_valid_profile_when_another_is_invalid() {
         let temp = TempDir::new().unwrap();
         let agents = temp.path().join("agents");
         write_profile(&agents, "reviewer", "file_read");
         write_profile(&agents, "broken", "unknown_tool");
 
-        let result = compose_test_profiles(&agents, "").unwrap();
+        let result = compose_test_profiles(&agents, "").await.unwrap();
 
         assert_eq!(result.active_profile_name, "reviewer");
         assert!(result.tool_profiles.contains_key("reviewer"));
@@ -355,59 +378,59 @@ mod tests {
         assert_eq!(result.quarantined_profiles[0].name, "broken");
     }
 
-    #[test]
-    fn daemon_bootstrap_falls_back_when_configured_default_is_invalid() {
+    #[tokio::test]
+    async fn daemon_bootstrap_falls_back_when_configured_default_is_invalid() {
         let temp = TempDir::new().unwrap();
         let agents = temp.path().join("agents");
         write_profile(&agents, "reviewer", "file_read");
         write_profile(&agents, "broken", "unknown_tool");
 
-        let result = compose_test_profiles(&agents, "broken").unwrap();
+        let result = compose_test_profiles(&agents, "broken").await.unwrap();
 
         assert_eq!(result.active_profile_name, "reviewer");
         assert_eq!(result.quarantined_profiles.len(), 1);
     }
 
-    #[test]
-    fn daemon_bootstrap_first_boot_with_all_invalid_is_degraded_not_fatal() {
+    #[tokio::test]
+    async fn daemon_bootstrap_first_boot_with_all_invalid_is_degraded_not_fatal() {
         let temp = TempDir::new().unwrap();
         let agents = temp.path().join("agents");
         write_profile(&agents, "broken", "unknown_tool");
 
-        let result = compose_test_profiles(&agents, "broken").unwrap();
+        let result = compose_test_profiles(&agents, "broken").await.unwrap();
 
         assert!(result.active_profile_name.is_empty());
         assert!(result.tool_profiles.is_empty());
         assert_eq!(result.quarantined_profiles.len(), 1);
     }
 
-    #[test]
-    fn daemon_bootstrap_restores_known_good_when_all_current_profiles_are_invalid() {
+    #[tokio::test]
+    async fn daemon_bootstrap_restores_known_good_when_all_current_profiles_are_invalid() {
         let temp = TempDir::new().unwrap();
         let agents = temp.path().join("agents");
         write_profile(&agents, "reviewer", "file_read");
-        let initial = compose_test_profiles(&agents, "reviewer").unwrap();
+        let initial = compose_test_profiles(&agents, "reviewer").await.unwrap();
         assert_eq!(initial.active_profile_name, "reviewer");
 
         std::fs::remove_file(agents.join("reviewer.md")).unwrap();
         write_profile(&agents, "broken", "unknown_tool");
-        let recovered = compose_test_profiles(&agents, "reviewer").unwrap();
+        let recovered = compose_test_profiles(&agents, "reviewer").await.unwrap();
 
         assert_eq!(recovered.active_profile_name, "reviewer");
         assert!(recovered.tool_profiles.contains_key("reviewer"));
         assert_eq!(recovered.quarantined_profiles.len(), 1);
     }
 
-    #[test]
-    fn daemon_bootstrap_recovers_after_quarantined_profile_is_repaired() {
+    #[tokio::test]
+    async fn daemon_bootstrap_recovers_after_quarantined_profile_is_repaired() {
         let temp = TempDir::new().unwrap();
         let agents = temp.path().join("agents");
         write_profile(&agents, "worker", "unknown_tool");
-        let degraded = compose_test_profiles(&agents, "worker").unwrap();
+        let degraded = compose_test_profiles(&agents, "worker").await.unwrap();
         assert_eq!(degraded.quarantined_profiles.len(), 1);
 
         write_profile(&agents, "worker", "file_read");
-        let repaired = compose_test_profiles(&agents, "worker").unwrap();
+        let repaired = compose_test_profiles(&agents, "worker").await.unwrap();
 
         assert_eq!(repaired.active_profile_name, "worker");
         assert!(repaired.quarantined_profiles.is_empty());

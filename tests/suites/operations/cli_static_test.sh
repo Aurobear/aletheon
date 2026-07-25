@@ -8,6 +8,13 @@ bash -n "$entry" "$root"/scripts/lib/aletheon/*.sh
 [[ -x "$entry" ]]
 grep -Fq 'source "$SCRIPT_DIR/lib/aletheon/runtime_gate.sh"' "$entry"
 grep -Fq 'cmd_installed_runtime_gate' "$root/scripts/lib/aletheon/verify.sh"
+grep -Fq 'remove_user_cli_shadow' "$root/scripts/lib/aletheon/install.sh"
+grep -Fq 'PATH resolves aletheon to a stale binary' "$root/scripts/lib/aletheon/verify.sh"
+grep -Fq 'ALETHEON_DEPLOY_SCOPE=system' "$root/scripts/aletheon.sh"
+if grep -Fq 'sudo -n true' "$root/scripts/aletheon.sh"; then
+  echo 'deploy scope must not be inferred from passwordless sudo availability' >&2
+  exit 1
+fi
 
 for command in build install deploy configure status health restart logs verify closure \
   backup restore upgrade cleanup secrets database acceptance test help; do

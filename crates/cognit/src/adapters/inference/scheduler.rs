@@ -31,10 +31,11 @@ pub enum ErrorClass {
 }
 
 pub fn classify_error(err: &anyhow::Error) -> ErrorClass {
-    match err
-        .downcast_ref::<InferenceFailure>()
-        .map(|failure| failure.kind)
-    {
+    let kind = err
+        .chain()
+        .find_map(|source| source.downcast_ref::<InferenceFailure>())
+        .map(|failure| failure.kind);
+    match kind {
         Some(InferenceFailureKind::Transient) => ErrorClass::Transient,
         Some(InferenceFailureKind::ContextOverflow) => ErrorClass::ContextOverflow,
         Some(InferenceFailureKind::Terminal) | None => ErrorClass::Terminal,
@@ -93,7 +94,9 @@ impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
             max_retries: 4,
-            base_backoff_ms: 1_000,
+            // Spread default retries across the common minute-scale provider
+            // quota window instead of issuing a burst that prolongs a 429.
+            base_backoff_ms: 5_000,
             max_backoff_ms: 30_000,
         }
     }
@@ -411,6 +414,21 @@ mod tests {
             classify_error(&InferenceFailure::transient("rate_limited")),
             ErrorClass::Transient
         );
+        assert_eq!(
+            classify_error(
+                &InferenceFailure::transient("provider_unavailable")
+                    .context("inference provider failed")
+            ),
+            ErrorClass::Transient
+        );
+    }
+
+    #[test]
+    fn default_retry_policy_spans_provider_quota_window() {
+        let policy = RetryPolicy::default();
+        assert_eq!(policy.max_retries, 4);
+        assert_eq!(policy.base_backoff_ms, 5_000);
+        assert_eq!(policy.max_backoff_ms, 30_000);
     }
 
     #[test]

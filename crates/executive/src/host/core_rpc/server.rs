@@ -197,6 +197,29 @@ async fn handle_connection(
             anyhow::bail!(message);
         }
         match request {
+            CoreRequest::Capabilities { model_spec, .. } => {
+                match inference.capabilities(&model_spec).await {
+                    Ok(capabilities) => {
+                        write_json_line(
+                            &mut writer,
+                            &CoreFrame::Capabilities { id, capabilities },
+                            max_frame_bytes,
+                        )
+                        .await?;
+                    }
+                    Err(error) => {
+                        write_json_line(
+                            &mut writer,
+                            &CoreFrame::Error {
+                                id,
+                                message: error.to_string(),
+                            },
+                            max_frame_bytes,
+                        )
+                        .await?;
+                    }
+                }
+            }
             CoreRequest::Complete { request, .. } => match inference.complete(request).await {
                 Ok(response) => {
                     write_json_line(

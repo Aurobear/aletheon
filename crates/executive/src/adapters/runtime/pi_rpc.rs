@@ -317,10 +317,13 @@ impl RpcState {
             .unwrap_or_default()
         {
             "agent_start" => {
-                if self.started {
-                    return Err(runtime_error("Pi RPC emitted duplicate agent_start"));
+                if !self.started {
+                    self.started = true;
                 }
-                self.started = true;
+                // Pi emits another start marker when it restarts generation
+                // after a provider retry. The marker carries no identity or
+                // authorization state, so treating it as idempotent avoids
+                // turning a recoverable provider retry into a failed child.
             }
             "agent_settled" => {
                 if !self.started {
@@ -335,6 +338,29 @@ impl RpcState {
                 if let Some(message) = event
                     .get("message")
                     .filter(|m| m.get("role").and_then(Value::as_str) == Some("assistant"))
+                {
+                    self.final_text = message_text(message).or_else(|| self.final_text.take());
+                    accumulate_usage(message.get("usage"), &mut self.usage);
+                }
+            }
+            "agent_end" => {
+                if !self.started {
+                    return Err(runtime_error("Pi agent_end preceded agent_start"));
+                }
+                // Pi's retry path can omit the final `message_end` event while
+                // still returning the authoritative conversation snapshot on
+                // `agent_end`. Recover the last assistant message from that
+                // snapshot instead of turning a completed retry into a failed
+                // child run.
+                if let Some(message) =
+                    event
+                        .get("messages")
+                        .and_then(Value::as_array)
+                        .and_then(|messages| {
+                            messages.iter().rev().find(|message| {
+                                message.get("role").and_then(Value::as_str) == Some("assistant")
+                            })
+                        })
                 {
                     self.final_text = message_text(message).or_else(|| self.final_text.take());
                     accumulate_usage(message.get("usage"), &mut self.usage);
@@ -469,12 +495,20 @@ fn configured_roots(
         .map_err(|error| runtime_error(format!("resolving trusted Pi RPC cwd: {error}")))?;
     let mut roots = Vec::with_capacity(configured.len());
     for relative in configured {
-        let path = canonical_cwd
-            .join(relative)
-            .canonicalize()
-            .map_err(|error| {
-                runtime_error(format!("resolving Pi RPC workspace allowlist: {error}"))
-            })?;
+        let candidate = canonical_cwd.join(relative);
+        let path = match candidate.canonicalize() {
+            Ok(path) => path,
+            // A configured writable path can legitimately be absent in a
+            // different repository. Omitting it is fail-restrictive: Pi keeps
+            // read-only workspace visibility but receives no write authority
+            // for that path.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(runtime_error(format!(
+                    "resolving Pi RPC workspace allowlist: {error}"
+                )))
+            }
+        };
         if !path.starts_with(&canonical_cwd) {
             return Err(runtime_error(
                 "Pi RPC workspace allowlist escaped trusted cwd",
@@ -533,6 +567,21 @@ fn terminal_error(message: impl Into<String>) -> AgentControlError {
     AgentControlError {
         kind: AgentControlErrorKind::Terminal,
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configured_roots;
+
+    #[test]
+    fn missing_configured_writable_path_degrades_to_read_only() {
+        let workspace = tempfile::tempdir().unwrap();
+
+        let roots =
+            configured_roots(workspace.path(), &[std::path::PathBuf::from("missing.rs")]).unwrap();
+
+        assert!(roots.is_empty());
     }
 }
 
@@ -595,8 +644,15 @@ pub fn pi_manifest() -> &'static runtime::RuntimeManifest {
             runtime::InteractionMode::Steering,
             runtime::InteractionMode::FollowUp,
         ]),
-        workspace_mode: runtime::WorkspaceMode::Shared,
+        workspace_modes: BTreeSet::from([
+            runtime::WorkspaceMode::SharedReadOnly,
+            runtime::WorkspaceMode::SharedWritable,
+        ]),
+        task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
+        supported_profiles: None,
         tool_governance: runtime::ToolGovernance::Observed,
+        priority: 10,
+        max_context_tokens: Some(1_000_000),
         resource_requirements: runtime::RuntimeResourceRequirements {
             storage_bytes: 1024 * 1024 * 1024,
             storage_items: 1,

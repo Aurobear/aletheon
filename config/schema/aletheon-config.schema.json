@@ -169,11 +169,11 @@
           "default": {
             "connect_timeout_ms": 10000,
             "request_timeout_ms": 90000,
-            "stream_idle_timeout_ms": 30000
+            "stream_idle_timeout_ms": 90000
           }
         },
         "system_prompt": {
-          "default": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation.",
+          "default": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. When independent inspection work is known up front, batch it in one tool call (for example, use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with each file or pattern. For an unfamiliar workspace overview, make `file_read.paths` the first inspection call and include conventional entry candidates such as README, the root manifest, repository instructions, and architecture status; batch reads tolerate candidates that do not exist. Use glob only afterward when a specific required path remains unknown, and never inventory every language or extension. Base conclusions on file contents rather than filenames. Stop searching once the evidence needed to answer is sufficient. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation.",
           "type": "string"
         }
       },
@@ -198,6 +198,21 @@
         }
       },
       "type": "object"
+    },
+    "AgentRuntimeCapability": {
+      "enum": [
+        "code_read",
+        "code_search",
+        "code_edit",
+        "shell",
+        "test",
+        "git",
+        "diagnostics",
+        "browser",
+        "device_observe",
+        "device_command"
+      ],
+      "type": "string"
     },
     "BackpressureConfig": {
       "additionalProperties": false,
@@ -1698,6 +1713,14 @@
             "null"
           ]
         },
+        "runtime_capabilities": {
+          "default": [],
+          "description": "Runtime capabilities this role needs in addition to capabilities\nexplicitly requested by an `agent_spawn` caller.",
+          "items": {
+            "$ref": "#/$defs/AgentRuntimeCapability"
+          },
+          "type": "array"
+        },
         "tool_timeout_ms": {
           "default": null,
           "format": "uint64",
@@ -1804,7 +1827,7 @@
           "type": "integer"
         },
         "stream_idle_timeout_ms": {
-          "default": 30000,
+          "default": 90000,
           "description": "Maximum silence between streaming response body chunks.",
           "format": "uint64",
           "maximum": 120000,
@@ -2185,9 +2208,9 @@
         "provider_timeouts": {
           "connect_timeout_ms": 10000,
           "request_timeout_ms": 90000,
-          "stream_idle_timeout_ms": 30000
+          "stream_idle_timeout_ms": 90000
         },
-        "system_prompt": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation."
+        "system_prompt": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. When independent inspection work is known up front, batch it in one tool call (for example, use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with each file or pattern. For an unfamiliar workspace overview, make `file_read.paths` the first inspection call and include conventional entry candidates such as README, the root manifest, repository instructions, and architecture status; batch reads tolerate candidates that do not exist. Use glob only afterward when a specific required path remains unknown, and never inventory every language or extension. Base conclusions on file contents rather than filenames. Stop searching once the evidence needed to answer is sufficient. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation."
       }
     },
     "agent_profiles": {
