@@ -64,7 +64,7 @@ impl ExperienceStore for InMemoryExperienceStore {
         let mut items = self
             .items
             .lock()
-            .map_err(|e| ExperienceIngestError::Persistence(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| ExperienceIngestError::Persistence(format!("lock poisoned: {e}")))?;
         if items
             .iter()
             .any(|e| e.experience_id == envelope.experience_id)
@@ -82,7 +82,7 @@ impl ExperienceStore for InMemoryExperienceStore {
         let items = self
             .items
             .lock()
-            .map_err(|e| ExperienceIngestError::Persistence(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| ExperienceIngestError::Persistence(format!("lock poisoned: {e}")))?;
         Ok(items.iter().find(|e| &e.experience_id == id).cloned())
     }
 }

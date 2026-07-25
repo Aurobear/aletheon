@@ -133,7 +133,7 @@ fn one_unknown_dimension() {
     // (100*500000 + 50*200000) / (500000+200000)
     // = (50000000 + 10000000) / 700000 = 60000000 / 700000 ≈ 85.714...
     let wt = report.weighted_total_millis.unwrap();
-    assert!((85710..85720).contains(&wt), "got {}", wt);
+    assert!((85710..85720).contains(&wt), "got {wt}");
 
     // 2 applicable out of 3 → 666
     assert_eq!(report.evidence_coverage_millis, 666);
@@ -308,7 +308,7 @@ fn missing_evidence_dimension_becomes_unknown() {
 
     let wt = report.weighted_total_millis.unwrap();
     // (70*500000 + 80*200000) / 700000 = (35000000 + 16000000) / 700000 ≈ 72857
-    assert!((72850..72860).contains(&wt), "got {}", wt);
+    assert!((72850..72860).contains(&wt), "got {wt}");
 
     assert_eq!(report.evidence_coverage_millis, 666);
     assert!(report.eligible);
@@ -347,8 +347,7 @@ fn weight_overflow_rejected() {
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("overflow"),
-        "expected overflow, got: {}",
-        err_msg
+        "expected overflow, got: {err_msg}"
     );
 }
 

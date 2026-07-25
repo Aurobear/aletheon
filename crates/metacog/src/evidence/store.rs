@@ -148,7 +148,7 @@ impl EvidenceStore for JsonlEvidenceStore {
         let mut items = self
             .items
             .lock()
-            .map_err(|e| EvidenceStoreError::Persistence(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| EvidenceStoreError::Persistence(format!("lock poisoned: {e}")))?;
 
         // Check for duplicates
         if let Some(existing) = items.iter().find(|i| i.evidence_id == item.evidence_id) {
@@ -169,7 +169,7 @@ impl EvidenceStore for JsonlEvidenceStore {
         let items = self
             .items
             .lock()
-            .map_err(|e| EvidenceStoreError::Persistence(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| EvidenceStoreError::Persistence(format!("lock poisoned: {e}")))?;
         Ok(items.iter().find(|i| &i.evidence_id == id).cloned())
     }
 
@@ -180,7 +180,7 @@ impl EvidenceStore for JsonlEvidenceStore {
         let items = self
             .items
             .lock()
-            .map_err(|e| EvidenceStoreError::Persistence(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| EvidenceStoreError::Persistence(format!("lock poisoned: {e}")))?;
         Ok(items
             .iter()
             .filter(|i| &i.experience_id == id)

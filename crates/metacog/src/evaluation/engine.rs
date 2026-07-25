@@ -337,7 +337,7 @@ mod tests {
         // In millis: ~85714
         let wt = report.weighted_total_millis.unwrap();
         // Allow small rounding due to integer division
-        assert!((85710..85720).contains(&wt), "got {}", wt);
+        assert!((85710..85720).contains(&wt), "got {wt}");
 
         // 2 applicable out of 3 total → 2/3 ≈ 667
         assert_eq!(report.evidence_coverage_millis, 666);
@@ -498,7 +498,7 @@ mod tests {
         // Safety is Unknown → excluded from weighted total
         let wt = report.weighted_total_millis.unwrap();
         // (70*500000 + 80*200000) / (500000+200000) = (35000000+16000000)/700000 ≈ 72857
-        assert!((72850..72860).contains(&wt), "got {}", wt);
+        assert!((72850..72860).contains(&wt), "got {wt}");
 
         // 2/3 applicable → 666
         assert_eq!(report.evidence_coverage_millis, 666);
