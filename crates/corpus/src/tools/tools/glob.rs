@@ -11,7 +11,7 @@ pub struct GlobTool;
 const DEFAULT_GLOB_RESULTS: usize = 100;
 const MAX_GLOB_RESULTS: usize = 200;
 const MAX_GLOB_RESULT_BYTES: usize = 24 * 1024;
-const MAX_GLOB_PATTERNS: usize = 12;
+const MAX_GLOB_PATTERNS: usize = 20;
 
 #[async_trait]
 impl Tool for GlobTool {
@@ -34,8 +34,8 @@ impl Tool for GlobTool {
                 "patterns": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "maxItems": 12,
-                    "description": "Up to 12 independent glob patterns to evaluate together. Prefer this for repository discovery."
+                    "maxItems": 20,
+                    "description": "Up to 20 independent glob patterns to evaluate together. Prefer this for repository discovery."
                 },
                 "root": {
                     "type": "string",

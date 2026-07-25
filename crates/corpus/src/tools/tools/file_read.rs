@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 pub struct FileReadTool;
-const MAX_BATCH_FILES: usize = 8;
+const MAX_BATCH_FILES: usize = 16;
 
 #[async_trait]
 impl Tool for FileReadTool {
@@ -27,8 +27,8 @@ impl Tool for FileReadTool {
                 "paths": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "maxItems": 8,
-                    "description": "Up to 8 known files to read together. Prefer this for independent repository entry files."
+                    "maxItems": 16,
+                    "description": "Up to 16 known files to read together. Prefer this for independent repository entry files."
                 },
                 "offset": {
                     "type": "integer",

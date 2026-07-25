@@ -546,25 +546,41 @@ fn requested_scope_for_call(
     // parent-directory authority. Corpus applies the sensitive-path denylist
     // before projecting this grant into a Platform FilesystemScope.
     if call.name == "file_read" {
-        let requested = call
+        let mut requested_paths = Vec::new();
+        if let Some(path) = call.input.get("path").and_then(serde_json::Value::as_str) {
+            requested_paths.push(path);
+        }
+        if let Some(paths) = call
             .input
-            .get("path")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow!("file_read requires a path before admission"))?;
-        let candidate = if std::path::Path::new(requested).is_absolute() {
-            PathBuf::from(requested)
-        } else {
-            workspace.cwd().join(requested)
-        };
-        let canonical = std::fs::canonicalize(&candidate).map_err(|error| {
-            anyhow!(
-                "file_read path '{}' cannot be admitted: {error}",
-                candidate.display()
-            )
-        })?;
-        let canonical = canonical.to_string_lossy().to_string();
-        if !allowed_paths.contains(&canonical) {
-            allowed_paths.push(canonical);
+            .get("paths")
+            .and_then(serde_json::Value::as_array)
+        {
+            for path in paths {
+                requested_paths.push(
+                    path.as_str()
+                        .ok_or_else(|| anyhow!("file_read paths must contain only strings"))?,
+                );
+            }
+        }
+        if requested_paths.is_empty() {
+            return Err(anyhow!("file_read requires path or paths before admission"));
+        }
+        for requested in requested_paths {
+            let candidate = if std::path::Path::new(requested).is_absolute() {
+                PathBuf::from(requested)
+            } else {
+                workspace.cwd().join(requested)
+            };
+            let canonical = std::fs::canonicalize(&candidate).map_err(|error| {
+                anyhow!(
+                    "file_read path '{}' cannot be admitted: {error}",
+                    candidate.display()
+                )
+            })?;
+            let canonical = canonical.to_string_lossy().to_string();
+            if !allowed_paths.contains(&canonical) {
+                allowed_paths.push(canonical);
+            }
         }
     }
 
@@ -652,6 +668,44 @@ mod filesystem_scope_tests {
         let scope = requested_scope_for_call(&call("file_read", &external), &workspace).unwrap();
         assert!(scope.allowed_paths.contains(
             &external
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        ));
+        assert!(!scope
+            .allowed_paths
+            .contains(&external_root.path().to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn file_read_batch_requests_each_exact_external_path() {
+        let workspace_root = tempfile::tempdir().unwrap();
+        let external_root = tempfile::tempdir().unwrap();
+        let first = external_root.path().join("first.txt");
+        let second = external_root.path().join("second.txt");
+        std::fs::write(&first, "first").unwrap();
+        std::fs::write(&second, "second").unwrap();
+        let workspace = fabric::WorkspacePolicy::from_resolved_roots(
+            workspace_root.path().canonicalize().unwrap(),
+            vec![],
+        )
+        .unwrap();
+        let call = CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            name: "file_read".into(),
+            input: serde_json::json!({"paths": [first, second]}),
+            call_id: "batch-scope-test".into(),
+            deadline: None,
+        };
+
+        let scope = requested_scope_for_call(&call, &workspace).unwrap();
+        assert!(scope
+            .allowed_paths
+            .contains(&first.canonicalize().unwrap().to_string_lossy().into_owned()));
+        assert!(scope.allowed_paths.contains(
+            &second
                 .canonicalize()
                 .unwrap()
                 .to_string_lossy()
