@@ -354,6 +354,12 @@ impl ReActLoop {
                     content: tool_result_blocks,
                 });
             }
+            let goal = self.goal_tracker.current_goal_description();
+            if let Some(checkpoint) =
+                super::repository_overview_checkpoint(goal.as_deref(), self.iteration)
+            {
+                self.messages.push(Message::user(checkpoint));
+            }
 
             // Inject reflection AFTER all tool results to preserve API message format
             if let Some(summary) = pending_reflection.take() {
