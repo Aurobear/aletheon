@@ -130,7 +130,8 @@
           "type": "integer"
         },
         "compaction_threshold": {
-          "default": 30,
+          "default": 80,
+          "description": "Percent of the context window (e.g. `80` = 80%) at which automatic\ncompaction triggers. Carried through to the compressor threshold via\n`ExecutiveConfig`/`HarnessConfig`; `80` preserves the legacy `0.8`.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -2199,7 +2200,7 @@
         },
         "compaction_enabled": true,
         "compaction_keep_recent": 10,
-        "compaction_threshold": 30,
+        "compaction_threshold": 80,
         "default_model": null,
         "default_provider": null,
         "harness_kind": "linear",
