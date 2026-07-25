@@ -1,11 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub use fabric::{
-    AgentInteractionMode as InteractionMode, AgentRuntimeCapability as RuntimeCapability,
-    AgentTaskEncoding as TaskEncoding, AgentWorkspaceMode as WorkspaceMode,
-};
-
 pub const MAX_RUNTIME_STORAGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 pub const MAX_RUNTIME_STORAGE_ITEMS: u64 = 1_000_000;
 
@@ -31,6 +26,45 @@ impl RuntimeResourceRequirements {
         }
         Ok(self)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeCapability {
+    CodeRead,
+    CodeSearch,
+    CodeEdit,
+    Shell,
+    Test,
+    Git,
+    Diagnostics,
+    Browser,
+    DeviceObserve,
+    DeviceCommand,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionMode {
+    OneShot,
+    Resident,
+    Steering,
+    FollowUp,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceMode {
+    SharedReadOnly,
+    SharedWritable,
+    IsolatedWorktree,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskEncoding {
+    NaturalLanguage,
+    StructuredJson,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

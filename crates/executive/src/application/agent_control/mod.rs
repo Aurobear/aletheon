@@ -7,12 +7,11 @@ use fabric::ipc::envelope_v2::{DeliveryPattern, EnvelopeV2, SchemaId, Target};
 use fabric::ipc::mailbox::{InProcessMailbox, Mailbox};
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
-    AgentId, AgentInteractionMode, AgentListRequest, AgentMessageDeliveryState,
-    AgentMessagePayload, AgentRunStatus, AgentRuntimeCapability, AgentSendRequest, AgentSnapshot,
-    AgentSpawnIntent, AgentSpawnRequest, AgentTaskEncoding, AgentWaitRequest, AgentWorkspaceMode,
-    AgoraVersion, CancelReason, Clock, ContextBinding, EventSpine, ExitReason, NamespaceId,
-    OperationExitReason, OperationKind, OperationRequest, ProcessId, ProcessSignal,
-    SettlementTerminal, SpawnSpec, Timer,
+    AgentId, AgentListRequest, AgentMessageDeliveryState, AgentMessagePayload, AgentRunStatus,
+    AgentRuntimeCapability, AgentSendRequest, AgentSnapshot, AgentSpawnIntent, AgentSpawnRequest,
+    AgentWaitRequest, AgentWorkspaceMode, AgoraVersion, CancelReason, Clock, ContextBinding,
+    EventSpine, ExitReason, NamespaceId, OperationExitReason, OperationKind, OperationRequest,
+    ProcessId, ProcessSignal, SettlementTerminal, SpawnSpec, Timer,
 };
 use kernel::chronos::SystemTimer;
 use kernel::operation::OperationScope;
@@ -86,6 +85,21 @@ pub use settlement::{
     SettlementRequest, SettlementResourcePort, SpineSettlementEvidenceSink,
     SqliteSettlementReceiptStore,
 };
+
+fn runtime_capability(value: &AgentRuntimeCapability) -> runtime::RuntimeCapability {
+    match value {
+        AgentRuntimeCapability::CodeRead => runtime::RuntimeCapability::CodeRead,
+        AgentRuntimeCapability::CodeSearch => runtime::RuntimeCapability::CodeSearch,
+        AgentRuntimeCapability::CodeEdit => runtime::RuntimeCapability::CodeEdit,
+        AgentRuntimeCapability::Shell => runtime::RuntimeCapability::Shell,
+        AgentRuntimeCapability::Test => runtime::RuntimeCapability::Test,
+        AgentRuntimeCapability::Git => runtime::RuntimeCapability::Git,
+        AgentRuntimeCapability::Diagnostics => runtime::RuntimeCapability::Diagnostics,
+        AgentRuntimeCapability::Browser => runtime::RuntimeCapability::Browser,
+        AgentRuntimeCapability::DeviceObserve => runtime::RuntimeCapability::DeviceObserve,
+        AgentRuntimeCapability::DeviceCommand => runtime::RuntimeCapability::DeviceCommand,
+    }
+}
 
 const DEFAULT_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 const MAILBOX_CAPACITY: usize = 64;
@@ -786,10 +800,17 @@ impl AgentControlPort for AgentControlService {
         let selection = runtime::RuntimeSelectionRequest {
             selector,
             profile_id: intent.profile_id.0.clone(),
-            required_capabilities: required_capabilities.clone(),
-            interaction_mode: AgentInteractionMode::Resident,
-            workspace_mode,
-            task_encoding: AgentTaskEncoding::NaturalLanguage,
+            required_capabilities: required_capabilities
+                .iter()
+                .map(runtime_capability)
+                .collect(),
+            interaction_mode: runtime::InteractionMode::Resident,
+            workspace_mode: match workspace_mode {
+                AgentWorkspaceMode::SharedReadOnly => runtime::WorkspaceMode::SharedReadOnly,
+                AgentWorkspaceMode::SharedWritable => runtime::WorkspaceMode::SharedWritable,
+                AgentWorkspaceMode::IsolatedWorktree => runtime::WorkspaceMode::IsolatedWorktree,
+            },
+            task_encoding: runtime::TaskEncoding::NaturalLanguage,
             max_input_tokens: intent.budget.max_input_tokens,
         };
         let runtime_id = match self.runtimes.select(&selection) {

@@ -16,7 +16,7 @@ use fabric::{
     SandboxRequirement, UsageReport, WorkspaceAttribution,
 };
 use kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 /// Canonical construction point for Kernel's admit-execute-settle invoker.
@@ -546,32 +546,29 @@ fn requested_scope_for_call(
     // parent-directory authority. Corpus applies the sensitive-path denylist
     // before projecting this grant into a Platform FilesystemScope.
     if call.name == "file_read" {
-        let mut requested_paths = Vec::new();
-        if let Some(path) = call.input.get("path").and_then(serde_json::Value::as_str) {
-            requested_paths.push(path);
+        #[derive(Deserialize)]
+        struct FileReadScopeInput {
+            path: Option<String>,
+            #[serde(default)]
+            paths: Vec<String>,
         }
-        if let Some(paths) = call
-            .input
-            .get("paths")
-            .and_then(serde_json::Value::as_array)
-        {
-            for path in paths {
-                requested_paths.push(
-                    path.as_str()
-                        .ok_or_else(|| anyhow!("file_read paths must contain only strings"))?,
-                );
-            }
+
+        let parsed: FileReadScopeInput = serde_json::from_value(call.input.clone())
+            .map_err(|error| anyhow!("invalid file_read scope input: {error}"))?;
+        let mut requested_paths = parsed.paths;
+        if let Some(path) = parsed.path {
+            requested_paths.insert(0, path);
         }
         if requested_paths.is_empty() {
             return Err(anyhow!("file_read requires path or paths before admission"));
         }
         for requested in requested_paths {
-            let candidate = if std::path::Path::new(requested).is_absolute() {
-                PathBuf::from(requested)
+            let candidate = if std::path::Path::new(&requested).is_absolute() {
+                PathBuf::from(&requested)
             } else {
-                workspace.cwd().join(requested)
+                workspace.cwd().join(&requested)
             };
-            let has_parent_traversal = std::path::Path::new(requested)
+            let has_parent_traversal = std::path::Path::new(&requested)
                 .components()
                 .any(|component| matches!(component, std::path::Component::ParentDir));
             let inside_workspace = !has_parent_traversal

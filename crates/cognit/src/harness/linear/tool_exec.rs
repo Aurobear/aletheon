@@ -5,7 +5,7 @@ use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
 use crate::adapters::inference::provider::{LlmProvider, StopReason, StreamChunk};
-use crate::adapters::inference::scheduler::{classify_error, ErrorClass};
+use crate::inference::{classify_error, ErrorClass};
 use fabric::message::{ContentBlock, Message, Role};
 use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
 use std::future::Future;
@@ -638,7 +638,7 @@ fn exploration_budget_results(
         .map(|(id, name, _)| {
             // Canonical history persists tool lifecycle events. Every emitted
             // ToolCallComplete must have a matching ToolResult or the next
-            // turn projects an invalid OpenAI tool-call sequence.
+            // turn projects an invalid provider tool-call sequence.
             event_sink.emit(Event::ToolResult {
                 name: name.clone(),
                 call_id: id.clone(),
