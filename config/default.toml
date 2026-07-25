@@ -10,7 +10,7 @@ max_iterations = 0
 # Bound connection setup, whole non-stream responses / stream headers, and SSE silence.
 connect_timeout_ms = 10000
 request_timeout_ms = 90000
-stream_idle_timeout_ms = 30000
+stream_idle_timeout_ms = 90000
 
 [agent.admission]
 max_agents_per_root = 64

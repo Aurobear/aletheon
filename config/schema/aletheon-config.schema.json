@@ -169,7 +169,7 @@
           "default": {
             "connect_timeout_ms": 10000,
             "request_timeout_ms": 90000,
-            "stream_idle_timeout_ms": 30000
+            "stream_idle_timeout_ms": 90000
           }
         },
         "system_prompt": {
@@ -2185,7 +2185,7 @@
         "provider_timeouts": {
           "connect_timeout_ms": 10000,
           "request_timeout_ms": 90000,
-          "stream_idle_timeout_ms": 30000
+          "stream_idle_timeout_ms": 90000
         },
         "system_prompt": "You are a helpful AI assistant with tools. Use tools when appropriate to help the user. Before stating any conclusion about your own runtime state, logs, or configuration, you MUST read the actual logs and the actually-effective config file first — never guess or invent an explanation."
       }

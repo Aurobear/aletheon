@@ -438,7 +438,11 @@ impl Default for ProviderTimeoutConfig {
         Self {
             connect_timeout_ms: 10_000,
             request_timeout_ms: 90_000,
-            stream_idle_timeout_ms: 30_000,
+            // Reasoning and tool-follow-up rounds can sit behind the provider's
+            // rate-limit queue without producing SSE bytes. Keep the idle bound
+            // finite, but align it with the request-header budget so a healthy
+            // multi-round turn is not aborted after only 30 seconds of silence.
+            stream_idle_timeout_ms: 90_000,
         }
     }
 }

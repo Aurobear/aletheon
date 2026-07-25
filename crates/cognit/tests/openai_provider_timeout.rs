@@ -66,7 +66,8 @@ stream_idle_timeout_ms = 30
 
     let defaults = ProviderTimeoutConfig::default();
     assert!(defaults.connect_timeout_ms > 0);
-    assert!(defaults.stream_idle_timeout_ms < defaults.request_timeout_ms);
+    assert_eq!(defaults.stream_idle_timeout_ms, 90_000);
+    assert_eq!(defaults.stream_idle_timeout_ms, defaults.request_timeout_ms);
 
     let mut invalid = parsed;
     invalid.agent.provider_timeouts.request_timeout_ms = 0;
