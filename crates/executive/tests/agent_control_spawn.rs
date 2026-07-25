@@ -145,6 +145,7 @@ async fn generic_spawn_selects_only_a_compatible_manifested_runtime() {
                 interaction_modes: BTreeSet::from([AgentInteractionMode::Resident]),
                 workspace_modes: BTreeSet::from([AgentWorkspaceMode::SharedReadOnly]),
                 task_encodings: BTreeSet::from([AgentTaskEncoding::NaturalLanguage]),
+                supported_profiles: None,
                 tool_governance: runtime::ToolGovernance::Observed,
                 priority: 0,
                 max_context_tokens: Some(10_000),

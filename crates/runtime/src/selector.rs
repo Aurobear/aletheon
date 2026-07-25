@@ -15,6 +15,7 @@ pub enum RuntimeSelector {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeSelectionRequest {
     pub selector: RuntimeSelector,
+    pub profile_id: String,
     pub required_capabilities: Vec<RuntimeCapability>,
     pub interaction_mode: InteractionMode,
     pub workspace_mode: WorkspaceMode,
@@ -84,6 +85,13 @@ impl RuntimeSelectionRequest {
                 if manifest.id != *alias && !manifest.aliases.iter().any(|item| item == alias) {
                     reasons.push(format!("does not match runtime override: {alias}"));
                 }
+            }
+            if manifest
+                .supported_profiles
+                .as_ref()
+                .is_some_and(|profiles| !profiles.contains(&self.profile_id))
+            {
+                reasons.push(format!("unsupported profile: {}", self.profile_id));
             }
             for capability in &effective_capabilities {
                 if !manifest.has(capability) {
@@ -161,6 +169,7 @@ impl RuntimeSelector {
     ) -> Result<String, String> {
         RuntimeSelectionRequest {
             selector: self.clone(),
+            profile_id: String::new(),
             required_capabilities: required.to_vec(),
             interaction_mode: InteractionMode::Resident,
             workspace_mode: WorkspaceMode::SharedReadOnly,
@@ -193,6 +202,7 @@ mod tests {
             interaction_modes: BTreeSet::from([InteractionMode::Resident]),
             workspace_modes: BTreeSet::from([WorkspaceMode::SharedReadOnly]),
             task_encodings: BTreeSet::from([TaskEncoding::NaturalLanguage]),
+            supported_profiles: None,
             tool_governance: ToolGovernance::Observed,
             priority,
             max_context_tokens: Some(1_000_000),
@@ -203,6 +213,7 @@ mod tests {
     fn selection_request() -> RuntimeSelectionRequest {
         RuntimeSelectionRequest {
             selector: RuntimeSelector::Auto,
+            profile_id: "researcher".into(),
             required_capabilities: vec![RuntimeCapability::CodeRead],
             interaction_mode: InteractionMode::Resident,
             workspace_mode: WorkspaceMode::SharedReadOnly,
@@ -259,5 +270,17 @@ mod tests {
         assert!(error.rejections[0]
             .reasons
             .contains(&"missing capability: CodeEdit".into()));
+    }
+
+    #[test]
+    fn automatic_selection_skips_a_runtime_that_cannot_resolve_the_profile() {
+        let mut native = manifest("native", &[], &[RuntimeCapability::CodeRead], 0);
+        native.supported_profiles = Some(["code-agent".into()].into_iter().collect());
+        let fallback = manifest("external", &[], &[RuntimeCapability::CodeRead], 10);
+        let decision = selection_request().select([&native, &fallback]).unwrap();
+        assert_eq!(decision.selected_runtime_id, "external");
+        assert!(decision.rejections[0]
+            .reasons
+            .contains(&"unsupported profile: researcher".into()));
     }
 }

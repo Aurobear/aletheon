@@ -304,7 +304,8 @@ fn trusted_workspace_is_not_deserializable_or_serialized() {
 #[test]
 fn native_runtime_is_the_default_generic_runtime_before_external_pi() {
     assert!(
-        executive::testing::coding_runtime::NativeCognitRuntime::manifest().priority
+        executive::testing::coding_runtime::NativeCognitRuntime::manifest(["code-agent".into()])
+            .priority
             < executive::testing::coding_runtime::pi_manifest().priority
     );
 }

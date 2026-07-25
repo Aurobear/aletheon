@@ -945,7 +945,9 @@ impl RequestHandler {
             agent_runtimes.register_manifested(
                 crate::adapters::runtime::NativeCognitRuntime::runtime_id(),
                 native,
-                crate::adapters::runtime::NativeCognitRuntime::manifest(),
+                crate::adapters::runtime::NativeCognitRuntime::manifest(
+                    composition.profiles.names(),
+                ),
             )?;
             composition
         };

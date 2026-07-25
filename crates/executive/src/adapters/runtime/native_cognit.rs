@@ -161,7 +161,9 @@ impl NativeCognitRuntime {
         RuntimeId(NATIVE_COGNIT_RUNTIME_ID.into())
     }
 
-    pub fn manifest() -> runtime::RuntimeManifest {
+    pub fn manifest(
+        supported_profiles: impl IntoIterator<Item = String>,
+    ) -> runtime::RuntimeManifest {
         runtime::RuntimeManifest {
             id: NATIVE_COGNIT_RUNTIME_ID.into(),
             aliases: vec!["native".into(), "cognit".into()],
@@ -186,6 +188,7 @@ impl NativeCognitRuntime {
                 runtime::WorkspaceMode::SharedWritable,
             ]),
             task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
+            supported_profiles: Some(supported_profiles.into_iter().collect()),
             tool_governance: runtime::ToolGovernance::Intercepted,
             priority: 10,
             max_context_tokens: None,

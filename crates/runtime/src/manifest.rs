@@ -50,6 +50,10 @@ pub struct RuntimeManifest {
     pub interaction_modes: BTreeSet<InteractionMode>,
     pub workspace_modes: BTreeSet<WorkspaceMode>,
     pub task_encodings: BTreeSet<TaskEncoding>,
+    /// `None` means the adapter accepts arbitrary profile IDs. A non-empty set
+    /// restricts selection to profiles the runtime can actually resolve.
+    #[serde(default)]
+    pub supported_profiles: Option<BTreeSet<String>>,
     pub tool_governance: ToolGovernance,
     #[serde(default)]
     pub priority: i32,
@@ -76,6 +80,13 @@ impl RuntimeManifest {
         }
         if self.task_encodings.is_empty() {
             return Err("runtime task encodings must not be empty".into());
+        }
+        if self
+            .supported_profiles
+            .as_ref()
+            .is_some_and(BTreeSet::is_empty)
+        {
+            return Err("runtime supported profile set must not be empty".into());
         }
         if self.max_context_tokens == Some(0) {
             return Err("runtime context limit must be nonzero".into());
@@ -126,6 +137,7 @@ mod tests {
             interaction_modes: BTreeSet::from([InteractionMode::Resident]),
             workspace_modes: BTreeSet::from([WorkspaceMode::SharedReadOnly]),
             task_encodings: BTreeSet::from([TaskEncoding::NaturalLanguage]),
+            supported_profiles: None,
             tool_governance: ToolGovernance::Observed,
             priority: 10,
             max_context_tokens: Some(1_000_000),
@@ -152,6 +164,7 @@ mod tests {
             interaction_modes: BTreeSet::from([InteractionMode::Resident]),
             workspace_modes: BTreeSet::from([WorkspaceMode::SharedReadOnly]),
             task_encodings: BTreeSet::from([TaskEncoding::NaturalLanguage]),
+            supported_profiles: None,
             tool_governance: ToolGovernance::Observed,
             priority: 0,
             max_context_tokens: None,

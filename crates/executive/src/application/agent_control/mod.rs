@@ -785,6 +785,7 @@ impl AgentControlPort for AgentControlService {
             .unwrap_or(runtime::RuntimeSelector::Auto);
         let selection = runtime::RuntimeSelectionRequest {
             selector,
+            profile_id: intent.profile_id.0.clone(),
             required_capabilities: required_capabilities.clone(),
             interaction_mode: AgentInteractionMode::Resident,
             workspace_mode,
