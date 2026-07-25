@@ -34,3 +34,24 @@
 - `provider_unavailable`, `provider_rejected_request`, or any rendered inference error makes a real-TUI run fail even if the prompt returns or a monitor aggregate reports PASS.
 - Validate monitor verdicts against the rendered frame, session evidence, and daemon logs.
 - Model-controlled routing or arguments require three consecutive real-TUI runs; deterministic unit and contract tests do not.
+
+## Generalization and quality policy
+
+- Never add production behavior keyed to an acceptance prompt, natural-language
+  phrase, language, repository name, fixed checkout path, or expected test
+  answer. Test fixtures may be specific; runtime policy must derive from typed
+  state, capability semantics, effective configuration, and explicit budgets.
+- Do not optimize a scenario by suppressing evidence collection. Path discovery
+  is not content evidence, and fewer tools or model rounds are not improvements
+  when the resulting answer is unsupported.
+- Repository-analysis acceptance must verify that claimed paths and symbols
+  exist and that absence claims are true. Architecture and maturity conclusions
+  must be grounded in content actually returned to the model.
+- Keep cumulative provider usage, active context occupancy, cache usage,
+  inference rounds, retries, and tool calls as separate metrics. Never derive
+  context-window percentage from cumulative billed/session tokens.
+- Long-running acceptance requires multiple turns in one unchanged TUI session
+  in addition to repeated fresh-session runs. A short follow-up must not pay for
+  or display the entire cumulative token total as active context pressure.
+- Any monitor PASS that disagrees with the rendered frame, persisted session,
+  audit records, or daemon logs is a monitor defect and a failed acceptance.

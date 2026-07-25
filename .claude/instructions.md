@@ -213,3 +213,20 @@ This is a **wiring-only phase**. The following are prohibited:
 
 Allowed: connecting existing kernel infrastructure to the production execution
 path (`execute.rs`), grouping CoreSystems fields, adding schema enforcement.
+
+## Generalization and answer quality
+
+- Never implement production branches for a fixed test prompt, phrase,
+  language, repository name, checkout path, or expected answer.
+- Test scenarios may be concrete; runtime decisions must use typed state,
+  capability semantics, effective configuration, and token/tool/time budgets.
+- Glob/path discovery is not content evidence. Do not reduce requests by
+  blocking the reads needed to support the answer.
+- Verify every claimed file or symbol and every claim that documentation or
+  configuration is absent. Score analysis correctness, not just completion.
+- Report cumulative provider tokens, active context occupancy, cache tokens,
+  inference rounds, retries, and tools independently.
+- Require both three fresh real-TUI repetitions for model-controlled behavior
+  and a sustained multi-turn run in one unchanged session.
+- Treat disagreement between monitor verdict, TUI frame, session, audit, or
+  daemon logs as a failed test and fix the monitor.
