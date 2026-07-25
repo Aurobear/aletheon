@@ -36,7 +36,7 @@ impl Default for HarnessConfig {
             tail_token_budget: 16_000,
             target_summary_chars: 2_000,
             context_window_tokens: 128_000,
-            // Claude-style: do NOT cap tool use at a small fixed count. `0` =
+            // Context-bounded budget: do NOT cap tool use at a small fixed count. `0` =
             // unlimited (honored by ToolBudget); the turn is bounded by
             // `max_iterations` and the context window instead of a tiny per-turn
             // ceiling. This matches the daemon's AgentLoopConfig default (0) and
