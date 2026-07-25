@@ -75,9 +75,10 @@ async fn service_with_history(
         .unwrap()
         .create_session(&initial_id)
         .unwrap();
-    let mut manager = SessionManager::new(temp.path(), initial_id.clone(), 8_000, clock.clone())
-        .await
-        .unwrap();
+    let mut manager =
+        SessionManager::new(temp.path(), initial_id.clone(), 8_000, 80, clock.clone())
+            .await
+            .unwrap();
     for message in messages {
         match (&message.role, message.content.as_slice()) {
             (fabric::Role::User, [ContentBlock::Text { text }]) => manager.push_user(text).await,
