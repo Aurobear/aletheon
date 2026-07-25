@@ -94,7 +94,9 @@ impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
             max_retries: 4,
-            base_backoff_ms: 1_000,
+            // Spread default retries across the common minute-scale provider
+            // quota window instead of issuing a burst that prolongs a 429.
+            base_backoff_ms: 5_000,
             max_backoff_ms: 30_000,
         }
     }
@@ -419,6 +421,14 @@ mod tests {
             ),
             ErrorClass::Transient
         );
+    }
+
+    #[test]
+    fn default_retry_policy_spans_provider_quota_window() {
+        let policy = RetryPolicy::default();
+        assert_eq!(policy.max_retries, 4);
+        assert_eq!(policy.base_backoff_ms, 5_000);
+        assert_eq!(policy.max_backoff_ms, 30_000);
     }
 
     #[test]

@@ -74,7 +74,7 @@ impl ReActLoop {
                     Err(e)
                         if classify_error(&e) == ErrorClass::Transient && transient_attempt < 4 =>
                     {
-                        let backoff_ms = 1_000_u64.saturating_mul(1 << transient_attempt);
+                        let backoff_ms = streaming_backoff_ms(transient_attempt);
                         transient_attempt += 1;
                         warn!(
                             attempt = transient_attempt,
@@ -584,5 +584,26 @@ impl ReActLoop {
             completed_normally: false,
         };
         Ok((fallback, metrics))
+    }
+}
+
+fn streaming_backoff_ms(attempt: u32) -> u64 {
+    // Four retries span a typical one-minute provider quota window instead of
+    // exhausting every retry in 15 seconds and amplifying a 429 response.
+    5_000_u64
+        .saturating_mul(1_u64 << attempt.min(3))
+        .min(30_000)
+}
+
+#[cfg(test)]
+mod streaming_backoff_tests {
+    use super::streaming_backoff_ms;
+
+    #[test]
+    fn retries_span_a_bounded_quota_window() {
+        assert_eq!(
+            (0..4).map(streaming_backoff_ms).collect::<Vec<_>>(),
+            vec![5_000, 10_000, 20_000, 30_000]
+        );
     }
 }

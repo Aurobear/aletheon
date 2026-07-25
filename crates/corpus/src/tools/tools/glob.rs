@@ -20,7 +20,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "Discover files with bounded, specific globs. Batch independent repository discovery in one call with `patterns` instead of issuing one model round per extension. Start from known entry files and narrow paths/extensions; avoid an unqualified recursive inventory such as '**/*'. Returns deduplicated relative paths from the root directory."
+        "Discover an unknown path with bounded, specific globs after known files have been read. Do not use glob to begin a repository overview, and do not inventory language or file extensions. Use `patterns` only to batch a small set of specific missing paths. Avoid unqualified recursive inventory such as '**/*'. Returns deduplicated relative paths from the root directory."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -35,7 +35,7 @@ impl Tool for GlobTool {
                     "type": "array",
                     "items": {"type": "string"},
                     "maxItems": 20,
-                    "description": "Up to 20 independent glob patterns to evaluate together. Prefer this for repository discovery."
+                    "description": "Up to 20 specific missing-path patterns to evaluate together; not for extension inventories."
                 },
                 "root": {
                     "type": "string",
