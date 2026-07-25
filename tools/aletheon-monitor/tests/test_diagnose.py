@@ -97,6 +97,17 @@ def test_provider_error_frame_cannot_pass_as_final_answer():
     )["passed"] is False
 
 
+def test_provider_timeout_frame_cannot_pass_as_final_answer():
+    assertions = frame_assertions(
+        "partial answer\nerror: cognitive session TerminalRuntime: provider_timeout\n❯",
+        prompt_visible=True,
+    )
+    assert next(a for a in assertions if a["name"] == "final_answer")["passed"] is False
+    assert next(
+        a for a in assertions if a["name"] == "forbidden:provider_timeout"
+    )["passed"] is False
+
+
 def test_provider_metrics_count_retries_and_errors():
     metrics = provider_metrics({
         "lines": [

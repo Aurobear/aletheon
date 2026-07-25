@@ -64,6 +64,7 @@ Always forbid these strings unless the test explicitly targets them:
 ```text
 provider_unavailable
 provider_rejected_request
+provider_timeout
 inference provider failed
 google_unauthorized_account
 Can't mount proc
@@ -74,6 +75,14 @@ Aletheon authorization failed
 For model-controlled tool arguments or routing, run the same real-TUI task
 three consecutive times. A single success is insufficient. Deterministic unit
 or contract tests do not require three repetitions.
+
+For long-running acceptance, also keep one fresh TUI session open for at least
+three user turns: a repository overview, a scoped follow-up grounded in the
+first answer, and a short unrelated prompt. Require every turn to return the
+input prompt without restarting the daemon or creating a new session. Record
+per-turn latency and cumulative context usage. This catches poisoned history,
+stuck busy state, broken cancellation, and limits that only appear after the
+first successful turn.
 
 ### Repository-analysis efficiency assertions
 
@@ -157,9 +166,9 @@ Ask the user or infer from context:
 
 - **Task complexity** — Simple (file listing), Medium (code search + read), Hard (multi-file analysis/refactor)?
 - **Success criteria**:
-  - Agent produces a substantive response (>200 chars, not "Reflection recommended stopping")
-  - No unrecoverable errors in tool calls (sandbox Permission denied, provider auth failures)
-  - Agent uses at least N tool calls before responding (N≥3 for simple, N≥10 for hard)
+  - Agent produces a substantive, task-complete response
+  - No provider, timeout, authorization, sandbox, or rendering failure occurs
+  - Tool calls are necessary and batched; more tool calls are not evidence of quality
 - **Max iterations** — default: 5, ask user if the environment looks unstable
 - **Aletheon source path** — discover with `git rev-parse --show-toplevel`; never hard-code a checkout
 - **Example test tasks**:

@@ -25,6 +25,7 @@ def _audit_path() -> str:
 INFRASTRUCTURE_ERRORS = (
     "provider_unavailable",
     "provider_rejected_request",
+    "provider_timeout",
     "inference provider failed",
     "google_unauthorized_account",
     "Can't mount proc",
@@ -59,7 +60,7 @@ def provider_metrics(daemon_logs: dict) -> dict:
     text = "\n".join(str(line) for line in lines)
     retry_attempts = len(re.findall(r"(?:retrying|attempt)", text, re.IGNORECASE))
     provider_errors = sum(
-        text.lower().count(marker.lower()) for marker in INFRASTRUCTURE_ERRORS[:3]
+        text.lower().count(marker.lower()) for marker in INFRASTRUCTURE_ERRORS[:4]
     )
     return {
         "retry_attempts": retry_attempts,
