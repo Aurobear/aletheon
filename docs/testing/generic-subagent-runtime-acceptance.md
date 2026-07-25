@@ -1,20 +1,20 @@
 # Generic Subagent Runtime Acceptance
 
 **Date:** 2026-07-26
-**Source commit:** `8430433d` plus profile-compatibility commit `1d6e2b7`
+**Source commit:** `824a245`
 **Track:** `aletheon-tester` real-TUI track using `/usr/bin/aletheon`
-**Verdict:** PARTIAL — functional behavior passed; strict provider-error gate failed
+**Verdict:** PASS
 
 ## Installed provenance
 
-- `target/release/aletheon`: `a1315ad61f7a0e0724515b960557078858c07c351ae5ffad825922c5f7395f82`
-- `/usr/bin/aletheon`: `a1315ad61f7a0e0724515b960557078858c07c351ae5ffad825922c5f7395f82`
-- machine-core executable: `a1315ad61f7a0e0724515b960557078858c07c351ae5ffad825922c5f7395f82`
-- user-daemon executable: `a1315ad61f7a0e0724515b960557078858c07c351ae5ffad825922c5f7395f82`
+- `target/release/aletheon`: `afd6f152701ba378792a201a7532eaf5a76b4cda855a56359965e340b261ba0f`
+- `/usr/bin/aletheon`: `afd6f152701ba378792a201a7532eaf5a76b4cda855a56359965e340b261ba0f`
+- machine-core executable: `afd6f152701ba378792a201a7532eaf5a76b4cda855a56359965e340b261ba0f`
+- user-daemon executable: `afd6f152701ba378792a201a7532eaf5a76b4cda855a56359965e340b261ba0f`
 - machine core: active, `NRestarts=0`
 - user daemon: active, `NRestarts=0`
 
-System deployment completed successfully with:
+System deployment and its official real-request smoke test completed with:
 
 ```text
 sudo bash scripts/aletheon.sh deploy
@@ -24,39 +24,55 @@ No user-local Aletheon binary was deployed.
 
 ## Three consecutive real-TUI runs
 
-Each run used a fresh TUI from the repository root and requested:
+Each run used a fresh `/usr/bin/aletheon` TUI from the repository root and the
+same model-controlled request:
 
 ```text
 profile=researcher
 runtime omitted
 required_capabilities=[code_read, code_search]
-read-only README analysis
+child reads README.md read-only
+call agent_wait and display the result
 ```
 
-| Run event ID | Selected runtime | Tools | Inference rounds | Input tokens | Output tokens | Prompt returned |
+| Run event ID | Selected runtime | Tool calls | Inference rounds | Input tokens | Output tokens | Prompt returned |
 |---|---|---:|---:|---:|---:|---|
-| `efd7e1bced3b49d9b119f6cfc418a037` | `pi-rpc` | 2 | 3 | 20,888 | 538 | yes |
-| `3abfee5b624d4825b0f8024b0e0595db` | `pi-rpc` | 2 | 3 | 21,030 | 538 | yes |
-| `30f218a31667447b82175a7a94520aa5` | `pi-rpc` | 2 | 3 | 21,060 | 507 | yes |
+| `301bcbc1f5f84b88b530d83b886b360f` | `pi-rpc` | 2 | 3 | 21,083 | 604 | yes |
+| `ff03e5ef9f4340d2af10545413b8da00` | `pi-rpc` | 2 | 3 | 21,297 | 516 | yes |
+| `b5a256d5ed754f08bd15b25f573d6b8f` | `pi-rpc` | 4 | 4 | 36,653 | 769 | yes |
 
-All three rendered substantive final answers. Each used exactly one
-`agent_spawn` and one `agent_wait`. Executive logs recorded
-`override_used=false` and effective capabilities `[CodeRead, CodeSearch]`.
+All three runs:
 
-## Failed strict gate
+- called `agent_spawn` and `agent_wait` successfully;
+- selected `pi-rpc` with `override_used=false`;
+- applied effective capabilities `[CodeRead, CodeSearch]`;
+- rendered a substantive README-grounded result;
+- returned the input prompt without restarting either daemon.
 
-The second run logged two provider retry attempts:
+The third parent performed an additional bounded `glob` plus `file_read` before
+spawning the child; inference rounds, provider retries, and tool calls remain
+reported separately rather than treating tool count as provider request count.
+
+## Strict error gate
+
+Daemon logs covering the three-run window contained none of:
 
 ```text
-Streaming inference unavailable; retrying attempt=1 ... provider_unavailable
-Streaming inference unavailable; retrying attempt=2 ... provider_unavailable
+provider_unavailable
+provider_rejected_request
+provider_timeout
+inference provider failed
+retrying
+version conflict
+projection poison
+missing field schema_version
+google_unauthorized_account
+Can't mount proc
+Permission denied
+Aletheon authorization failed
 ```
 
-No provider error was rendered in the final TUI frame and all three tasks
-succeeded, but repository acceptance policy treats any such daemon-log marker
-as a failed real-TUI run. Therefore this evidence must not be reported as full
-installed acceptance.
-
-The generic selection and lifecycle behavior is accepted by deterministic
-tests and observable TUI results. Provider request pacing/retry behavior remains
-a separate unresolved acceptance blocker.
+The earlier retry-completion failure was corrected by recovering terminal
+assistant text from Pi `agent_end` snapshots. Subagent progress now uses its own
+event schema instead of poisoning the public session projection, and the spawn
+tool contract explicitly requires `agent_wait` before reporting child output.
