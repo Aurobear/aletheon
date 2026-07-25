@@ -6,9 +6,8 @@ use std::time::Duration;
 use agent_control_support::{fixture, spawn_request, TestLauncher, TEST_RUNTIME};
 use executive::application::agent_control::AgentRuntimeLauncher;
 use fabric::{
-    AgentBudget, AgentContextFork, AgentControlErrorKind, AgentId, AgentInteractionMode,
-    AgentProfileId, AgentRunStatus, AgentRuntimeCapability, AgentSpawnIntent, AgentTaskEncoding,
-    AgentWaitRequest, AgentWorkspaceMode, RuntimeId,
+    AgentBudget, AgentContextFork, AgentControlErrorKind, AgentId, AgentProfileId, AgentRunStatus,
+    AgentRuntimeCapability, AgentSpawnIntent, AgentWaitRequest, RuntimeId,
 };
 use std::collections::BTreeSet;
 
@@ -139,12 +138,12 @@ async fn generic_spawn_selects_only_a_compatible_manifested_runtime() {
                 aliases: vec!["analysis".into()],
                 display_name: "Selectable Analysis".into(),
                 capabilities: BTreeSet::from([
-                    AgentRuntimeCapability::CodeRead,
-                    AgentRuntimeCapability::CodeSearch,
+                    runtime::RuntimeCapability::CodeRead,
+                    runtime::RuntimeCapability::CodeSearch,
                 ]),
-                interaction_modes: BTreeSet::from([AgentInteractionMode::Resident]),
-                workspace_modes: BTreeSet::from([AgentWorkspaceMode::SharedReadOnly]),
-                task_encodings: BTreeSet::from([AgentTaskEncoding::NaturalLanguage]),
+                interaction_modes: BTreeSet::from([runtime::InteractionMode::Resident]),
+                workspace_modes: BTreeSet::from([runtime::WorkspaceMode::SharedReadOnly]),
+                task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
                 supported_profiles: None,
                 tool_governance: runtime::ToolGovernance::Observed,
                 priority: 0,
