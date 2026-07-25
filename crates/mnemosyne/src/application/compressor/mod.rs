@@ -914,7 +914,7 @@ mod tests {
         for i in 0..6 {
             messages.push(Message::assistant(format!("r{} {}", i, "x".repeat(500))));
             messages.push(Message::tool_result(
-                format!("t{}", i),
+                format!("t{i}"),
                 "y".repeat(300),
                 false,
             ));

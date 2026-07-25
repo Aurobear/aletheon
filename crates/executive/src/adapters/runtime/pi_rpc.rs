@@ -570,21 +570,6 @@ fn terminal_error(message: impl Into<String>) -> AgentControlError {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::configured_roots;
-
-    #[test]
-    fn missing_configured_writable_path_degrades_to_read_only() {
-        let workspace = tempfile::tempdir().unwrap();
-
-        let roots =
-            configured_roots(workspace.path(), &[std::path::PathBuf::from("missing.rs")]).unwrap();
-
-        assert!(roots.is_empty());
-    }
-}
-
 fn message_text(message: &Value) -> Option<String> {
     let content = message.get("content")?;
     if let Some(text) = content.as_str() {
@@ -658,4 +643,19 @@ pub fn pi_manifest() -> &'static runtime::RuntimeManifest {
             storage_items: 1,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configured_roots;
+
+    #[test]
+    fn missing_configured_writable_path_degrades_to_read_only() {
+        let workspace = tempfile::tempdir().unwrap();
+
+        let roots =
+            configured_roots(workspace.path(), &[std::path::PathBuf::from("missing.rs")]).unwrap();
+
+        assert!(roots.is_empty());
+    }
 }

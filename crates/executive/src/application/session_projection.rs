@@ -63,7 +63,7 @@ pub fn project_messages(items: &[ItemRecord]) -> Result<Vec<Message>> {
                 ..
             } => Some(Message::tool_result(
                 call_id,
-                &bounded_tool_result(content),
+                bounded_tool_result(content),
                 *is_error,
             )),
             ItemPayload::ContextProjection { .. } => None,

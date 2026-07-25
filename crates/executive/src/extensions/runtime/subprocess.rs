@@ -254,7 +254,7 @@ impl AgentRuntimeProvider for SubprocessAgentRuntimeProvider {
             self.sessions
                 .lock()
                 .await
-                .insert(handle.agent_id.clone(), session)
+                .insert(handle.agent_id, session)
                 .is_none(),
             "runtime returned a duplicate Agent handle"
         );

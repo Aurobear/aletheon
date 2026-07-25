@@ -136,8 +136,7 @@ fn completion_only_message_produces_zero_evidence_coverage() {
     let threshold = rubric.min_evidence_coverage_millis;
     assert!(
         report.evidence_coverage_millis < threshold,
-        "completion-only message (0 evidence) must be below coverage threshold of {}",
-        threshold
+        "completion-only message (0 evidence) must be below coverage threshold of {threshold}"
     );
 }
 

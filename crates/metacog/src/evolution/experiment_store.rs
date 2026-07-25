@@ -202,7 +202,7 @@ impl ExperimentStore for JsonlExperimentStore {
         let mut records = self
             .records
             .lock()
-            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {e}")))?;
 
         // Check for existing active experiment with same pair
         for r in records.iter() {
@@ -234,7 +234,7 @@ impl ExperimentStore for JsonlExperimentStore {
         let mut records = self
             .records
             .lock()
-            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {e}")))?;
 
         // Verify the experiment was started
         let started = records.iter().any(|r| {
@@ -262,7 +262,7 @@ impl ExperimentStore for JsonlExperimentStore {
         let records = self
             .records
             .lock()
-            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {e}")))?;
         for r in records.iter() {
             if let ExperimentRecord::Started {
                 experiment_id: eid,
@@ -285,7 +285,7 @@ impl ExperimentStore for JsonlExperimentStore {
         let records = self
             .records
             .lock()
-            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {e}")))?;
         for r in records.iter() {
             if let ExperimentRecord::Completed {
                 experiment_id: eid,
@@ -309,7 +309,7 @@ impl ExperimentStore for JsonlExperimentStore {
         let mut records = self
             .records
             .lock()
-            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {e}")))?;
         let record = ExperimentRecord::Lineage {
             schema_version: EXPERIMENT_EVENT_SCHEMA_V1,
             experiment_id: experiment_id.to_string(),
@@ -327,7 +327,7 @@ impl ExperimentStore for JsonlExperimentStore {
         let records = self
             .records
             .lock()
-            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {}", e)))?;
+            .map_err(|e| ExperimentStoreError::Persistence(format!("lock poisoned: {e}")))?;
         Ok(records
             .iter()
             .filter_map(|r| {
@@ -386,7 +386,7 @@ mod tests {
             "mutation-1".into(),
             "candidate-1".into(),
             "approval-1".into(),
-            format!("hash-of-{}", experiment_id),
+            format!("hash-of-{experiment_id}"),
             "outcome-1".into(),
         )
     }
