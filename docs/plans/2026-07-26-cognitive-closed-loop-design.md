@@ -71,7 +71,7 @@ copying external product internals wholesale.
 | Reference | Mechanism to absorb | Aletheon destination |
 |---|---|---|
 | Pi | Small, predictable model/tool/result loop; project instructions, skills, and focused coding tools provide most practical leverage | Keep the linear harness small; inject Aletheon-owned project context and skills into external-agent task packets |
-| Codex | Explicit work discipline: inspect, plan when needed, edit, verify narrowly, continue until the request is resolved, and report residual gaps | Cognitive workflow policy, typed plan state, validation strategy, and final reporting contract |
+| Codex | Explicit work discipline plus named role configuration, bounded context forking, parent/child communication, agent lifecycle control, and observable wait semantics | Cognitive workflow policy, typed plan state, role profiles, projection policy, mailbox/lifecycle protocol, validation strategy, and final reporting contract |
 | Grok Build | Completion requirements, todo/progress gates, terminal-task observation, subagent specialization, and claim-versus-tool-evidence audit | Required actions, progress auditor, completion gate, external-agent receipts, and evidence audit |
 
 Pi demonstrates that a capable agent does not require a large cognitive loop;
@@ -138,6 +138,66 @@ follow-up draining, context transformation, and event emission remain runtime
 responsibilities. This separation keeps Pi's useful loop discipline while
 allowing Aletheon's evidence, persistence, security, Dasein, and conscious-field
 layers to operate on typed state.
+
+### Pi and Codex orchestration mechanics to absorb
+
+Pi and Codex contribute at different layers and should not be described as the
+same kind of orchestrator:
+
+- Pi's core strength is the execution loop. Its separate experimental
+  `pi-orchestrator` supervises RPC processes and persists instance/session
+  metadata; it provides spawn, status, stop, event subscription, unexpected-exit
+  cleanup, and restart reconciliation. It does **not** by itself implement a
+  planner/executor/reviewer/tester acceptance graph.
+- Codex's multi-agent runtime supplies named role configuration, canonical child
+  paths, parent linkage, spawn-depth tracking, explicit `send`, `followup`,
+  `wait`, `interrupt`, and `list` operations, and selectable context inheritance.
+  `fork_turns` may carry no history, all history, or only the last N turns.
+
+Aletheon should absorb the following contracts:
+
+1. **Pi-style leaf runtime.** Each role runs through one small, observable
+   model/tool/result loop with steering, follow-up draining, terminal error
+   handling, and complete event emission.
+2. **Pi-style process supervision.** External role runtimes have durable instance
+   identity, explicit lifecycle state, session linkage, event subscriptions,
+   unexpected-exit cleanup, and restart reconciliation.
+3. **Codex-style named roles.** A role is a configuration layer over a common
+   runtime, not a separate hard-coded agent implementation. Role configuration
+   may constrain instructions, capabilities, model, reasoning effort, and
+   service tier while preserving caller-owned effective settings unless the role
+   explicitly overrides them.
+4. **Codex-style context inheritance controls.** Spawn requests declare a
+   projection mode equivalent to `none`, `all`, or last-N-turns, but Aletheon
+   defaults to `none + typed Agora projection`. Full-history inheritance is an
+   exceptional compatibility/debug mode because it couples roles, duplicates
+   tokens, and leaks irrelevant or untrusted context.
+5. **Codex-style mailbox and lifecycle control.** Spawn, message, follow-up,
+   wait, interrupt, resume, list, and close are distinct operations with typed
+   events. A successful spawn or message-send receipt does not mean the child
+   completed its task.
+6. **Aletheon terminal result contract.** Parent and gate logic must observe an
+   authoritative child terminal snapshot containing status, artifact IDs,
+   evidence references, usage counters, and failure classification before it may
+   accept the child node.
+7. **Aletheon shared-workspace contract.** Unlike raw transcript forking, Agora
+   carries versioned task nodes and accepted artifacts across roles. Mailbox
+   messages steer or notify; they do not silently become shared facts.
+
+This yields a deliberate composition rather than a copy:
+
+```text
+Pi leaf loop + Pi lifecycle supervision
+                  |
+                  v
+Codex role/spawn/mailbox/context-control semantics
+                  |
+                  v
+Agora task graph + typed artifacts + acceptance gates
+                  |
+                  v
+Cognit completion audit + grounded Dasein experience
+```
 
 ## Practical work capability model
 
@@ -294,6 +354,19 @@ evidence references, confidence, lifecycle status, and content digest. A child
 Agent's prose is not automatically a shared fact; its result is a proposal until
 the owning stage validates and commits it.
 
+Agent coordination uses two related but non-interchangeable channels:
+
+```text
+Mailbox: transient command / steering / notification
+Agora:   versioned shared task state / artifact / decision
+```
+
+Every mailbox envelope carries message ID, root-task ID, sender and receiver
+paths, target task-node ID, intent (`assign`, `steer`, `followup`, `notify`, or
+`cancel`), referenced artifact versions, and delivery state. Receipt of an
+envelope proves delivery only. Completion is represented separately by a
+terminal `AgentResultReceipt` committed against the assigned task node.
+
 ## Multi-agent cognitive workflow
 
 Complex work uses a workflow graph rather than asking one model context to plan,
@@ -380,6 +453,14 @@ every Agent context.
 Simple tasks bypass unnecessary roles. The workflow policy may run one native
 Agent through inspect/edit/verify when risk and scope are small, but the same
 artifact and gate contracts still apply.
+
+Spawn policy is explicit rather than inferred from prompt wording. Each child
+launch records role profile, parent path, task-node ownership, allowed write
+scope, capability set, budget, context projection mode, and expected terminal
+artifact. Parallel children must have independent work or disjoint mutation
+scope. The parent may continue independent work, but it cannot pass the stage
+gate until required children have terminal receipts and their Agora commits have
+been reconciled against the versions used to produce them.
 
 ## Scope
 
