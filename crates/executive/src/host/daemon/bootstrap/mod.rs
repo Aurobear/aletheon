@@ -5,6 +5,7 @@
 
 mod agents;
 mod approval_gate;
+mod bundled_profiles;
 mod channels;
 pub(crate) mod embodiment;
 mod extensions;

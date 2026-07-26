@@ -242,6 +242,7 @@ crates/executive/src/host/core_rpc/protocol.rs	host	executive	daemon, transport,
 crates/executive/src/host/core_rpc/server.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/agents.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/approval_gate.rs	host	executive	daemon, transport, or process lifecycle
+crates/executive/src/host/daemon/bootstrap/bundled_profiles.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/channels.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/embodiment.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/extensions.rs	host	executive	daemon, transport, or process lifecycle
