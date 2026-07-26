@@ -4,6 +4,8 @@ use fabric::message::Message;
 use fabric::policy::verifier::Verdict;
 use tracing::warn;
 
+use crate::core::ProgressAuditor;
+
 use super::ReActLoop;
 
 pub(super) enum FinalizationDecision {
@@ -33,6 +35,15 @@ impl ReActLoop {
                 assistant_text: (!final_text.is_empty()).then_some(final_text),
                 interjections,
             });
+        }
+
+        if let Some(state) = self.cognitive_state.as_mut() {
+            state.completion_attempts = state.completion_attempts.saturating_add(1);
+            let decision = ProgressAuditor.audit(state, &self.evidence_ledger);
+            if !decision.is_complete() {
+                warn!(decision = ?decision, "cognitive completion gate would reject in shadow mode");
+            }
+            self.latest_completion_audit = Some(decision);
         }
 
         if let Some(verifier) = self.verifier.clone() {

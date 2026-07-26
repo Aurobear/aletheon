@@ -6,6 +6,10 @@ use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
 use crate::adapters::inference::provider::{LlmProvider, StopReason, StreamChunk};
+use crate::core::{
+    EvidenceId, EvidenceLevel, EvidenceLocator, EvidenceRecord, EvidenceSource, EvidenceSubject,
+    TerminalStatus,
+};
 use crate::inference::{classify_error, ErrorClass};
 use fabric::message::{ContentBlock, Message, Role};
 use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
@@ -464,6 +468,24 @@ impl ReActLoop {
                 });
 
                 let (content, is_error) = execute_tool(id, name, input).await;
+
+                self.evidence_ledger.record(EvidenceRecord {
+                    id: EvidenceId(format!("tool:{id}")),
+                    subject: EvidenceSubject::ToolInvocation {
+                        tool_name: name.clone(),
+                    },
+                    source: EvidenceSource::Tool { name: name.clone() },
+                    level: EvidenceLevel::Observed,
+                    terminal_status: if is_error {
+                        TerminalStatus::Failed
+                    } else {
+                        TerminalStatus::Succeeded
+                    },
+                    locator: EvidenceLocator::DurableReceipt {
+                        receipt_id: id.clone(),
+                    },
+                    digest: None,
+                });
 
                 event_sink.emit(Event::ToolResult {
                     name: name.clone(),

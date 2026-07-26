@@ -1,13 +1,14 @@
 //! Deterministic comparison of declared obligations with authoritative evidence.
 
 use fabric::OperationId;
+use serde::{Deserialize, Serialize};
 
 use super::cognitive_task::{
     CognitiveTurnState, Obligation, RequiredAction, ValidationRequirement,
 };
 use super::evidence::{EvidenceLedger, EvidenceSubject};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProgressDecision {
     Continue {
         missing: Vec<Obligation>,
@@ -22,6 +23,35 @@ pub enum ProgressDecision {
     Blocked {
         reason: String,
     },
+}
+
+impl ProgressDecision {
+    pub fn is_complete(&self) -> bool {
+        matches!(self, Self::Complete)
+    }
+
+    pub fn recovery_message(&self) -> Option<String> {
+        let lines = match self {
+            Self::Complete => return None,
+            Self::Continue { missing } => missing
+                .iter()
+                .map(|item| format!("- missing obligation: {item:?}"))
+                .collect(),
+            Self::NeedsValidation { requirements } => requirements
+                .iter()
+                .map(|item| format!("- validation `{}` has not completed", item.id))
+                .collect(),
+            Self::WaitingForTerminalEvidence { operations } => operations
+                .iter()
+                .map(|id| format!("- terminal evidence for operation `{:?}` is missing", id))
+                .collect(),
+            Self::Blocked { reason } => vec![format!("- blocked: {reason}")],
+        };
+        Some(format!(
+            "[cognitive_completion_rejected]\n{}\nContinue the task. Do not claim completion until these obligations are met.",
+            lines.join("\n")
+        ))
+    }
 }
 
 #[derive(Debug, Default)]

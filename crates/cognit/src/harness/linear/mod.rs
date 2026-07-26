@@ -64,6 +64,7 @@ use tool_budget::ToolBudget;
 
 use crate::adapters::inference::provider::{LlmProvider, LlmResponse, LlmStream};
 use crate::core::awareness_signal::AwarenessSignal;
+use crate::core::{CognitiveTurnState, EvidenceLedger, ProgressDecision};
 use crate::harness::config::HarnessConfig;
 use crate::harness::interrupt::InterruptFlag;
 use fabric::body::Action;
@@ -194,6 +195,12 @@ pub struct ReActLoop {
     evicted_callback: Option<EvictedCallback>,
     /// Clock for deterministic time (mono/wall).
     clock: Arc<dyn Clock>,
+    /// Typed task state is deliberately separate from compactable model messages.
+    cognitive_state: Option<CognitiveTurnState>,
+    /// Authoritative adapter-produced evidence for the active task.
+    evidence_ledger: EvidenceLedger,
+    /// Latest deterministic completion audit. Initially observed in shadow mode.
+    latest_completion_audit: Option<ProgressDecision>,
 }
 
 impl ReActLoop {
@@ -237,6 +244,9 @@ impl ReActLoop {
             batch_planner: None,
             evicted_callback: None,
             clock,
+            cognitive_state: None,
+            evidence_ledger: EvidenceLedger::default(),
+            latest_completion_audit: None,
         }
     }
 
@@ -370,6 +380,7 @@ impl ReActLoop {
         self.circuit_breaker.reset();
         self.goal_tracker.reset();
         self.reflection_engine.reset();
+        self.latest_completion_audit = None;
         // Note: plan_mode persists across resets (user choice)
         // Note: system_prompt never resets (immutable after construction)
     }
@@ -440,6 +451,22 @@ impl ReActLoop {
     /// Install a result verifier. Without this, verification is a no-op.
     pub fn set_verifier(&mut self, verifier: Arc<dyn Verifier>) {
         self.verifier = Some(verifier);
+    }
+
+    /// Install typed task state for completion auditing. Evidence is retained
+    /// across inference iterations and message compaction within the task.
+    pub fn set_cognitive_state(&mut self, state: CognitiveTurnState) {
+        self.cognitive_state = Some(state);
+        self.evidence_ledger = EvidenceLedger::default();
+        self.latest_completion_audit = None;
+    }
+
+    pub fn evidence_ledger_mut(&mut self) -> &mut EvidenceLedger {
+        &mut self.evidence_ledger
+    }
+
+    pub fn latest_completion_audit(&self) -> Option<&ProgressDecision> {
+        self.latest_completion_audit.as_ref()
     }
 
     /// Set the goal for this turn.
@@ -1604,6 +1631,39 @@ mod tests {
             crate::harness::event_sink::Event::TurnDone { result: Ok(text) }
                 if text == "answer 2"
         )));
+    }
+
+    #[tokio::test]
+    async fn completion_gate_records_missing_obligation_in_shadow_mode() {
+        use crate::core::{
+            CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState, ProgressDecision,
+            RequiredAction,
+        };
+
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "inspect through a configured tool".into(),
+            task_kind: CognitiveTaskKind::RepositoryAnalysis,
+            required_actions: vec![RequiredAction::InvokeTool {
+                tool_name: "file_read".into(),
+            }],
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+
+        let decision = lp
+            .finalize_candidate("premature answer".into(), &|| async { Ok(Vec::new()) })
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            decision,
+            completion::FinalizationDecision::Accept { .. }
+        ));
+        assert!(matches!(
+            lp.latest_completion_audit(),
+            Some(ProgressDecision::Continue { missing }) if missing.len() == 1
+        ));
     }
 
     #[tokio::test]
