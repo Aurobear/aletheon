@@ -1,5 +1,9 @@
 //! Object-safe cognitive session adapter used by the executive turn service.
 
+use crate::core::{
+    AgentRuntimeId, CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState,
+    CompletionGateMode, RequiredAction,
+};
 use crate::harness::config::HarnessConfig;
 use crate::harness::linear::DynLlmRef;
 use crate::harness::linear::{BatchPlanner, CompactorTrait, ReActLoop};
@@ -222,6 +226,48 @@ impl LinearCognitiveSession {
             clock,
         }
     }
+
+    fn configure_turn_contract(&mut self, request: &TurnRequest, services: &dyn TurnServices) {
+        let requirements = services.turn_requirements(request);
+        if requirements.is_empty() {
+            self.inner.clear_cognitive_state();
+            return;
+        }
+        let required_actions = requirements
+            .into_iter()
+            .map(|requirement| match requirement {
+                fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => {
+                    RequiredAction::InvokeAgent {
+                        runtime: AgentRuntimeId(runtime_id),
+                    }
+                }
+                fabric::TurnRequirement::InvokeCapability { name } => {
+                    RequiredAction::InvokeTool { tool_name: name }
+                }
+                fabric::TurnRequirement::ObserveTerminal { operation_id } => {
+                    RequiredAction::ObserveTerminal { operation_id }
+                }
+            })
+            .collect::<Vec<_>>();
+        let task_kind = if required_actions
+            .iter()
+            .any(|action| matches!(action, RequiredAction::InvokeAgent { .. }))
+        {
+            CognitiveTaskKind::RequiredAgentExecution
+        } else {
+            CognitiveTaskKind::General
+        };
+        self.inner
+            .set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+                objective: request.input.clone(),
+                task_kind,
+                required_actions,
+                deliverables: Vec::new(),
+                validation_requirements: Vec::new(),
+            }));
+        self.inner
+            .set_completion_gate_mode(CompletionGateMode::Enforce);
+    }
 }
 
 async fn invoke_with_terminal_receipt(
@@ -326,6 +372,7 @@ impl CognitiveSession for LinearCognitiveSession {
 
         let result = if let Some(llm) = services.llm_provider() {
             self.inner.reset();
+            self.configure_turn_contract(&request, services);
             let seed_messages = services.seed_messages(&request);
             if !seed_messages.is_empty() {
                 self.inner.seed_messages(seed_messages);
@@ -373,7 +420,7 @@ impl CognitiveSession for LinearCognitiveSession {
             };
             TurnResult {
                 output,
-                stop: TurnStop::Completed,
+                stop: metrics.stop.clone(),
                 metrics: FabricTurnMetrics {
                     tool_calls_made: metrics.tool_calls_made,
                     tool_errors: metrics.tool_errors,
@@ -449,6 +496,7 @@ impl CognitiveSession for LinearCognitiveSession {
         };
 
         self.inner.reset();
+        self.configure_turn_contract(&request, services);
         let seed_messages = services.seed_messages(&request);
         if !seed_messages.is_empty() {
             self.inner.seed_messages(seed_messages);
@@ -511,7 +559,7 @@ impl CognitiveSession for LinearCognitiveSession {
         };
         let result = TurnResult {
             output,
-            stop: TurnStop::Completed,
+            stop: metrics.stop.clone(),
             metrics: FabricTurnMetrics {
                 tool_calls_made: metrics.tool_calls_made,
                 tool_errors: metrics.tool_errors,

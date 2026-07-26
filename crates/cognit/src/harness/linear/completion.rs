@@ -4,7 +4,7 @@ use fabric::message::Message;
 use fabric::policy::verifier::Verdict;
 use tracing::warn;
 
-use crate::core::ProgressAuditor;
+use crate::core::{CompletionGateMode, ProgressAuditor};
 
 use super::ReActLoop;
 
@@ -14,6 +14,9 @@ pub(super) enum FinalizationDecision {
         interjections: Vec<String>,
     },
     ContinueAfterRejection,
+    Incomplete {
+        message: String,
+    },
     Accept {
         final_text: String,
     },
@@ -41,6 +44,23 @@ impl ReActLoop {
             state.completion_attempts = state.completion_attempts.saturating_add(1);
             let decision = ProgressAuditor.audit(state, &self.evidence_ledger);
             if !decision.is_complete() {
+                if self.completion_gate_mode == CompletionGateMode::Enforce {
+                    let recovery = decision.recovery_message().unwrap_or_else(|| {
+                        "[cognitive_completion_rejected]\nRequired evidence is missing.".into()
+                    });
+                    self.latest_completion_audit = Some(decision);
+                    if state.completion_attempts <= self.max_completion_retries {
+                        self.messages.push(Message::assistant(&final_text));
+                        self.messages.push(Message::user(recovery));
+                        return Ok(FinalizationDecision::ContinueAfterRejection);
+                    }
+                    return Ok(FinalizationDecision::Incomplete {
+                        message: format!(
+                            "Task incomplete after {} completion attempts.\n{}",
+                            state.completion_attempts, recovery
+                        ),
+                    });
+                }
                 warn!(decision = ?decision, "cognitive completion gate would reject in shadow mode");
             }
             self.latest_completion_audit = Some(decision);

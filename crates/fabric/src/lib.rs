@@ -183,7 +183,7 @@ pub use include::turn::{
     AgoraView, CapabilityAuthority, CapabilityCall, CapabilityErrorClass, CapabilityReceiptDetails,
     CapabilityRequest, CapabilityResult, CapabilityRetryDisposition, CapabilityTerminalReceipt,
     CapabilityTerminalStatus, DaseinView, InvocationControl, NoopTurnEventSink, RecallRequest,
-    RecallSet, StubTurnServices, TurnEventSink, TurnServices,
+    RecallSet, StubTurnServices, TurnEventSink, TurnRequirement, TurnServices,
 };
 
 // Shared types (from types/)

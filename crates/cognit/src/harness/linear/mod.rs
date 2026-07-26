@@ -64,7 +64,7 @@ use tool_budget::ToolBudget;
 
 use crate::adapters::inference::provider::{LlmProvider, LlmResponse, LlmStream};
 use crate::core::awareness_signal::AwarenessSignal;
-use crate::core::{CognitiveTurnState, EvidenceLedger, ProgressDecision};
+use crate::core::{CognitiveTurnState, CompletionGateMode, EvidenceLedger, ProgressDecision};
 use crate::harness::config::HarnessConfig;
 use crate::harness::interrupt::InterruptFlag;
 use fabric::body::Action;
@@ -201,6 +201,8 @@ pub struct ReActLoop {
     evidence_ledger: EvidenceLedger,
     /// Latest deterministic completion audit. Initially observed in shadow mode.
     latest_completion_audit: Option<ProgressDecision>,
+    completion_gate_mode: CompletionGateMode,
+    max_completion_retries: u32,
 }
 
 impl ReActLoop {
@@ -247,6 +249,8 @@ impl ReActLoop {
             cognitive_state: None,
             evidence_ledger: EvidenceLedger::default(),
             latest_completion_audit: None,
+            completion_gate_mode: CompletionGateMode::Shadow,
+            max_completion_retries: 2,
         }
     }
 
@@ -463,6 +467,17 @@ impl ReActLoop {
         self.cognitive_state = Some(state);
         self.evidence_ledger = EvidenceLedger::default();
         self.latest_completion_audit = None;
+    }
+
+    pub fn clear_cognitive_state(&mut self) {
+        self.cognitive_state = None;
+        self.evidence_ledger = EvidenceLedger::default();
+        self.latest_completion_audit = None;
+        self.completion_gate_mode = CompletionGateMode::Shadow;
+    }
+
+    pub fn set_completion_gate_mode(&mut self, mode: CompletionGateMode) {
+        self.completion_gate_mode = mode;
     }
 
     pub fn evidence_ledger_mut(&mut self) -> &mut EvidenceLedger {
@@ -1668,6 +1683,93 @@ mod tests {
             lp.latest_completion_audit(),
             Some(ProgressDecision::Continue { missing }) if missing.len() == 1
         ));
+    }
+
+    #[tokio::test]
+    async fn enforced_gate_blocks_bounded_false_completion() {
+        use crate::core::{
+            CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState, CompletionGateMode,
+            RequiredAction,
+        };
+
+        let mut lp = ReActLoop::new(
+            HarnessConfig {
+                max_iterations: 5,
+                learning_enabled: false,
+                compaction_enabled: false,
+                ..HarnessConfig::default()
+            },
+            Box::new(NoopCompressor),
+        );
+        lp.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "read before answering".into(),
+            task_kind: CognitiveTaskKind::RepositoryAnalysis,
+            required_actions: vec![RequiredAction::InvokeTool {
+                tool_name: "file_read".into(),
+            }],
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+        lp.set_completion_gate_mode(CompletionGateMode::Enforce);
+        let llm = TextLlm {
+            calls: Mutex::new(0),
+        };
+
+        let (output, metrics) = lp
+            .run(
+                "go",
+                &llm,
+                &[],
+                |_id: &str, _name: &str, _input: &serde_json::Value| async {
+                    unreachable!("model never requested a tool")
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(metrics.stop, fabric::TurnStop::Blocked);
+        assert!(!metrics.completed_normally);
+        assert!(output.contains("Task incomplete after 3 completion attempts"));
+        assert_eq!(*llm.calls.lock().unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn enforced_gate_accepts_matching_terminal_tool_evidence() {
+        use crate::core::{
+            CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState, CompletionGateMode,
+            RequiredAction,
+        };
+
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "use echo".into(),
+            task_kind: CognitiveTaskKind::General,
+            required_actions: vec![RequiredAction::InvokeTool {
+                tool_name: "echo_tool".into(),
+            }],
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+        lp.set_completion_gate_mode(CompletionGateMode::Enforce);
+        let llm = ScriptedLlm {
+            calls: Mutex::new(0),
+        };
+
+        let (output, metrics) = lp
+            .run(
+                "go",
+                &llm,
+                &[],
+                |_id: &str, _name: &str, _input: &serde_json::Value| async {
+                    ("echoed".into(), false)
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output, "done: hi");
+        assert_eq!(metrics.stop, fabric::TurnStop::Completed);
+        assert!(metrics.completed_normally);
     }
 
     #[tokio::test]

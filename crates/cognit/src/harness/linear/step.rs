@@ -137,6 +137,11 @@ impl ReActLoop {
             Some(Ok(_)) => {
                 anyhow::bail!("collecting adapter observed inconsistent terminal output")
             }
+            Some(Err(error))
+                if outcome.1.stop == fabric::TurnStop::Blocked && error == outcome.0 =>
+            {
+                Ok(outcome)
+            }
             Some(Err(error)) => anyhow::bail!(error),
             None => anyhow::bail!("streaming cognitive loop ended without a terminal event"),
         }

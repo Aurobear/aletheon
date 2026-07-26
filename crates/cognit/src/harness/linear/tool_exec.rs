@@ -7,8 +7,8 @@ use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
 use crate::adapters::inference::provider::{LlmProvider, StopReason, StreamChunk};
 use crate::core::{
-    EvidenceId, EvidenceLevel, EvidenceLocator, EvidenceRecord, EvidenceSource, EvidenceSubject,
-    TerminalStatus,
+    AgentRuntimeId, EvidenceId, EvidenceLevel, EvidenceLocator, EvidenceRecord, EvidenceSource,
+    EvidenceSubject, TerminalStatus,
 };
 use crate::inference::{classify_error, ErrorClass};
 use fabric::message::{ContentBlock, Message, Role};
@@ -63,6 +63,7 @@ impl ReActLoop {
                         elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
+                        stop: fabric::TurnStop::Cancelled,
                     };
                     return Ok((msg, metrics));
                 }
@@ -190,6 +191,20 @@ impl ReActLoop {
                         continue;
                     }
                     FinalizationDecision::ContinueAfterRejection => continue,
+                    FinalizationDecision::Incomplete { message } => {
+                        event_sink.emit(Event::TurnDone {
+                            result: Err(message.clone()),
+                        });
+                        let metrics = TurnMetrics {
+                            tool_calls_made,
+                            tool_errors,
+                            elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
+                            iterations: self.iteration,
+                            completed_normally: false,
+                            stop: fabric::TurnStop::Blocked,
+                        };
+                        return Ok((message, metrics));
+                    }
                     FinalizationDecision::Accept { final_text } => final_text,
                 };
                 // Emit awareness: uncertainty from response + final response signal
@@ -212,6 +227,7 @@ impl ReActLoop {
                     elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     iterations: self.iteration,
                     completed_normally: true,
+                    stop: fabric::TurnStop::Completed,
                 };
                 return Ok((final_text, metrics));
             }
@@ -400,6 +416,7 @@ impl ReActLoop {
                         elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
+                        stop: fabric::TurnStop::Blocked,
                     };
                     return Ok((msg, metrics));
                 }
@@ -452,6 +469,7 @@ impl ReActLoop {
                             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                             iterations: self.iteration,
                             completed_normally: false,
+                            stop: fabric::TurnStop::Blocked,
                         };
                         return Ok((msg, metrics));
                     }
@@ -486,6 +504,23 @@ impl ReActLoop {
                     },
                     digest: None,
                 });
+                if let Some((runtime, terminal_status)) =
+                    agent_terminal_evidence(name, &content, is_error)
+                {
+                    self.evidence_ledger.record(EvidenceRecord {
+                        id: EvidenceId(format!("agent:{id}")),
+                        subject: EvidenceSubject::AgentInvocation {
+                            runtime: runtime.clone(),
+                        },
+                        source: EvidenceSource::AgentRuntime { runtime },
+                        level: EvidenceLevel::RuntimeVerified,
+                        terminal_status,
+                        locator: EvidenceLocator::DurableReceipt {
+                            receipt_id: id.clone(),
+                        },
+                        digest: None,
+                    });
+                }
 
                 event_sink.emit(Event::ToolResult {
                     name: name.clone(),
@@ -649,6 +684,7 @@ impl ReActLoop {
                     elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     iterations: self.iteration,
                     completed_normally: false,
+                    stop: fabric::TurnStop::Blocked,
                 };
                 return Ok((fallback, metrics));
             }
@@ -690,9 +726,35 @@ impl ReActLoop {
             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
             iterations: self.iteration,
             completed_normally: false,
+            stop: fabric::TurnStop::Blocked,
         };
         Ok((fallback, metrics))
     }
+}
+
+fn agent_terminal_evidence(
+    capability: &str,
+    content: &str,
+    is_error: bool,
+) -> Option<(AgentRuntimeId, TerminalStatus)> {
+    if capability != "agent_wait" || is_error {
+        return None;
+    }
+    let payload: serde_json::Value = serde_json::from_str(content).ok()?;
+    if payload.get("ok").and_then(|value| value.as_bool()) != Some(true) {
+        return None;
+    }
+    let snapshot = payload.get("result")?;
+    let status = match snapshot.get("status").and_then(|value| value.as_str())? {
+        "succeeded" => TerminalStatus::Succeeded,
+        "failed" => TerminalStatus::Failed,
+        "cancelled" | "interrupted" => TerminalStatus::Cancelled,
+        _ => return None,
+    };
+    let runtime = snapshot
+        .pointer("/handle/runtime_id")
+        .and_then(|value| value.as_str())?;
+    Some((AgentRuntimeId(runtime.to_string()), status))
 }
 
 fn streaming_backoff_ms(attempt: u32) -> u64 {
@@ -744,7 +806,11 @@ fn exploration_budget_results(
 
 #[cfg(test)]
 mod streaming_backoff_tests {
-    use super::{exploration_budget_results, streaming_backoff_ms, streaming_retry_delay_ms};
+    use super::{
+        agent_terminal_evidence, exploration_budget_results, streaming_backoff_ms,
+        streaming_retry_delay_ms,
+    };
+    use crate::core::{AgentRuntimeId, TerminalStatus};
     use crate::harness::event_sink::{Event, EventSink};
     use fabric::ContentBlock;
     use std::sync::Mutex;
@@ -820,5 +886,29 @@ mod streaming_backoff_tests {
             Event::ToolResult { call_id, result, .. }
             if call_id == "call-2" && !result.is_error
         ));
+    }
+
+    #[test]
+    fn only_terminal_agent_wait_snapshot_creates_runtime_evidence() {
+        let running = serde_json::json!({
+            "ok": true,
+            "result": {"handle": {"runtime_id": "runtime-a"}, "status": "running"}
+        })
+        .to_string();
+        assert!(agent_terminal_evidence("agent_wait", &running, false).is_none());
+
+        let succeeded = serde_json::json!({
+            "ok": true,
+            "result": {"handle": {"runtime_id": "runtime-a"}, "status": "succeeded"}
+        })
+        .to_string();
+        assert_eq!(
+            agent_terminal_evidence("agent_wait", &succeeded, false),
+            Some((
+                AgentRuntimeId("runtime-a".into()),
+                TerminalStatus::Succeeded
+            ))
+        );
+        assert!(agent_terminal_evidence("agent_spawn", &succeeded, false).is_none());
     }
 }

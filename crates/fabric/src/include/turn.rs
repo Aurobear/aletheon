@@ -50,6 +50,16 @@ pub struct CapabilityCall {
     pub deadline: Option<MonoDeadlineMillis>,
 }
 
+/// Host-authored, typed requirements for a cognitive turn. Implementations
+/// derive these from explicit client metadata or workflow policy, never by
+/// matching prompt phrases in the execution loop.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TurnRequirement {
+    InvokeAgentRuntime { runtime_id: String },
+    InvokeCapability { name: String },
+    ObserveTerminal { operation_id: OperationId },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilityAuthority {
     pub agent: Option<crate::AgentToolContext>,
@@ -238,6 +248,10 @@ pub trait TurnServices: Send + Sync {
     /// Persist or project an authoritative terminal receipt. The default is a
     /// compatibility no-op; callers invoke it only after terminal observation.
     async fn record_capability_receipt(&self, _receipt: CapabilityTerminalReceipt) {}
+
+    fn turn_requirements(&self, _request: &TurnRequest) -> Vec<TurnRequirement> {
+        Vec::new()
+    }
 
     async fn plan_capability_batch(
         &self,

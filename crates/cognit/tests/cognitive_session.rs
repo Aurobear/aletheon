@@ -297,6 +297,95 @@ async fn streaming_session_keeps_thinking_out_of_visible_and_final_text() {
     ));
 }
 
+struct RequiredCapabilityServices {
+    llm: cognit::testing::mock_llm::MockLlmProvider,
+}
+
+#[async_trait]
+impl TurnServices for RequiredCapabilityServices {
+    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+        Ok(Default::default())
+    }
+
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
+        Ok(Default::default())
+    }
+
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+        Ok(Default::default())
+    }
+
+    async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
+        CapabilityResult {
+            call_id: call.call_id,
+            output: "unused".into(),
+            is_error: false,
+            usage: Default::default(),
+            audit_id: None,
+            patch_delta: None,
+        }
+    }
+
+    fn llm_provider(&self) -> Option<&dyn LlmProvider> {
+        Some(&self.llm)
+    }
+
+    fn turn_requirements(&self, _request: &TurnRequest) -> Vec<fabric::TurnRequirement> {
+        vec![fabric::TurnRequirement::InvokeCapability {
+            name: "file_read".into(),
+        }]
+    }
+}
+
+fn required_capability_services(name: &str) -> RequiredCapabilityServices {
+    let llm = cognit::testing::mock_llm::MockLlmProvider::new(name);
+    for _ in 0..3 {
+        llm.push_text_response("claimed complete", StopReason::EndTurn);
+    }
+    RequiredCapabilityServices { llm }
+}
+
+#[tokio::test]
+async fn collecting_session_cannot_bypass_typed_completion_requirement() {
+    let services = required_capability_services("collecting-gate");
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+
+    let result = session
+        .run_turn(request("inspect the target"), &services, &NoopTurnEventSink)
+        .await
+        .expect("missing evidence is a typed blocked outcome");
+
+    assert_eq!(result.stop, TurnStop::Blocked);
+    assert!(!result.metrics.completed_normally);
+    assert!(result.output.contains("file_read"));
+    assert_eq!(services.llm.call_log.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn streaming_session_cannot_bypass_typed_completion_requirement() {
+    let services = required_capability_services("streaming-gate");
+    let stream = RecordingStream::default();
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+
+    let result = session
+        .run_streaming_turn(
+            request("inspect the target"),
+            &services,
+            &NoopTurnEventSink,
+            &stream,
+        )
+        .await
+        .expect("missing evidence is a typed blocked outcome");
+
+    assert_eq!(result.stop, TurnStop::Blocked);
+    assert!(!result.metrics.completed_normally);
+    assert!(result.output.contains("file_read"));
+    assert!(stream.0.lock().unwrap().iter().any(|event| {
+        matches!(event, CognitiveStreamEvent::TurnDone { result: Err(message) } if message.contains("file_read"))
+    }));
+    assert_eq!(services.llm.call_log.lock().unwrap().len(), 3);
+}
+
 struct InterjectingServices {
     llm: cognit::testing::mock_llm::MockLlmProvider,
     drains: Mutex<VecDeque<Vec<String>>>,

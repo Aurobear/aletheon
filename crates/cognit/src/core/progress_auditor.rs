@@ -35,7 +35,33 @@ impl ProgressDecision {
             Self::Complete => return None,
             Self::Continue { missing } => missing
                 .iter()
-                .map(|item| format!("- missing obligation: {item:?}"))
+                .map(|item| match item {
+                    Obligation::RequiredAction(RequiredAction::InvokeAgent { runtime }) => {
+                        format!(
+                            "- invoke agent runtime `{}` and observe its terminal result",
+                            runtime.0
+                        )
+                    }
+                    Obligation::RequiredAction(RequiredAction::InvokeTool { tool_name }) => {
+                        format!("- invoke capability `{tool_name}` successfully")
+                    }
+                    Obligation::RequiredAction(RequiredAction::ObserveTerminal {
+                        operation_id,
+                    }) => {
+                        format!("- observe a terminal result for operation `{operation_id:?}`")
+                    }
+                    Obligation::Deliverable(deliverable) => format!(
+                        "- produce deliverable `{}`: {}",
+                        deliverable.id, deliverable.description
+                    ),
+                    Obligation::Validation(requirement) => format!(
+                        "- complete validation `{}`: {}",
+                        requirement.id, requirement.description
+                    ),
+                    Obligation::UnresolvedRequirement { description } => {
+                        format!("- resolve requirement: {description}")
+                    }
+                })
                 .collect(),
             Self::NeedsValidation { requirements } => requirements
                 .iter()
@@ -56,6 +82,12 @@ impl ProgressDecision {
 
 #[derive(Debug, Default)]
 pub struct ProgressAuditor;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CompletionGateMode {
+    Shadow,
+    Enforce,
+}
 
 impl ProgressAuditor {
     pub fn audit(&self, state: &CognitiveTurnState, evidence: &EvidenceLedger) -> ProgressDecision {
