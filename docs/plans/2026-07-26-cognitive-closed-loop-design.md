@@ -565,6 +565,80 @@ activate Planner/Explorer/Executor/Reviewer/Tester roles. This avoids building a
 multi-agent scheduler around a leaf Agent that still guesses, stops early, or
 cannot prove its own work.
 
+### Built-in tool capability uplift
+
+The practical-work core includes the built-in tools. Aletheon already registers
+many tools, so the problem is not primarily tool count. The current weakness is
+that the coding tools are uneven, their results carry too little structured
+meaning, role exposure is inconsistent, and several tools are disconnected from
+the cognitive task state.
+
+Current strengths that must be retained:
+
+- batched known-file reads;
+- bounded glob/grep/file search;
+- structured patching and scoped filesystem enforcement;
+- shell execution with streaming progress and one terminal event;
+- structured Git status/diff/log/show and guarded mutations;
+- MCP discovery, tool exposure tiers, BM25 `tool_search`, tool concurrency
+  classes, permissions, output persistence, and truncation handling.
+
+The first tool increment should target the repository-work path rather than add
+more unrelated integrations:
+
+| Capability | Current gap | First required behavior |
+|---|---|---|
+| Repository overview | Separate read/search tools do not produce a common evidence map | Add one bounded `repo_inspect` operation that batch-reads known entry files, reports missing candidates, identifies repository instructions/manifests, and returns content-backed path/symbol references |
+| Exact code navigation | `code_graph` and text search do not provide a consistent symbol contract | Add `code_symbols`/`code_references` backed by Tree-sitter first and optional LSP later; every result includes path, range, symbol kind, and parser/index freshness |
+| File reading | Text output is useful but not an evidence object | Return line ranges, file digest/version, encoding, truncation, missing-path results, and a stable content reference for every requested file |
+| Search | Results are formatted text with weak completeness semantics | Return structured matches, searched roots/globs, engine used, limit/truncation state, and an explicit completeness boundary |
+| Editing | `apply_patch` is strong but completion cannot reliably bind claims to the resulting files | Return before/after digests, changed ranges, created/deleted paths, rejected hunks, and a change-set artifact ID; retain atomic scoped application |
+| Shell/process | `bash_exec` is effectively one-shot for model control | Add a managed command/session pair equivalent to `exec_command` + `write_stdin`, with session ID, incremental output cursor, timeout, cancellation, exit status, and authoritative terminal snapshot |
+| Validation | Tests are generic shell commands and therefore semantically opaque | Add `validation_run` as a governed wrapper over repository-approved commands; classify check/test/lint/build/deploy, preserve exact command and cwd, and return terminal validation evidence without hiding raw output |
+| Diagnostics | No first-class compiler/LSP diagnostic artifact is available to the loop | Add `diagnostics` with toolchain/source, file/range/severity/code/message, freshness, and terminal status; never claim a clean tree from an unavailable diagnostic source |
+| Work tracking | Existing `task_*` tools use a separate task store | Replace their cognitive use with Agora-backed task operations so model-visible updates and host completion gates observe the same versioned task nodes |
+| User clarification | The model lacks a typed pause/resume clarification operation | Add `request_user_input` that records the blocking question, suspends the task node, and resumes it from a canonical response event |
+| Runtime evidence | Tool results expose mainly text, error, duration, truncation, and optional patch delta | Introduce a common terminal receipt containing invocation ID, operation/process IDs, status, timestamps, exit/error classification, artifact/evidence IDs, output reference, truncation, and retry disposition |
+
+Pi's lesson is to keep the default leaf toolset compact: read, search, list,
+edit, write, and shell must be extremely reliable. Codex contributes persistent
+shell sessions, patching, explicit permission escalation, image inspection,
+dynamic/namespaced tools, and multi-agent lifecycle tools. Grok Build contributes
+LSP diagnostics, monitored background tasks, task output/wait/kill semantics,
+completion reminders, and a richer read-file path. Aletheon should absorb the
+contracts needed for real work while retaining Corpus governance and typed
+receipts.
+
+The default coding role should receive a coherent small surface:
+
+```text
+repo_inspect      file_read        file_search
+code_symbols      code_references  apply_patch
+exec_command      write_stdin      validation_run
+diagnostics       git_status       git_diff
+task_read/update  request_user_input
+```
+
+Large optional catalogs remain behind `tool_search` and namespaces. The model
+must not receive every registered schema on every turn. Role profiles select the
+small direct set; deferred tools are discovered on demand and added with an
+auditable exposure receipt.
+
+Tool quality acceptance is behavioral, not based on registration count:
+
+1. A repository-analysis run must batch-read real content and cite existing
+   paths/symbols; absence claims are independently checked.
+2. A coding run must inspect, edit, inspect the diff, run focused validation,
+   observe its terminal receipt, and reconcile the final claims with evidence.
+3. A long-running command must be steerable, pollable, cancellable, and reapable
+   across more than one model turn.
+4. Truncated search/read/command output must be declared and retrievable by
+   stable reference; it cannot silently count as complete evidence.
+5. Tool schemas must be measured as active-context cost separately from tool
+   calls and provider inference usage.
+6. Profiles and toolsets must be validated against the actual registry; stale
+   names cannot silently produce a weaker Agent.
+
 ### Included in the first implementation increment
 
 - Typed task contract for explicit required actions and deliverables.
