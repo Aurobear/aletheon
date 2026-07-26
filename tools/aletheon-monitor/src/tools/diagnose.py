@@ -179,7 +179,9 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
     frame = cap.get("frame", "")
     expected = os.path.realpath(expected_cwd) if expected_cwd else None
     if expected:
-        assertions.append({"name": "expected_cwd", "passed": expected in frame,
+        actual_cwd = os.path.realpath(started.get("working_dir", ""))
+        assertions.append({"name": "expected_cwd", "passed": actual_cwd == expected,
+                           "actual": actual_cwd,
                            "expected": expected})
     assertions.extend(frame_assertions(
         frame,

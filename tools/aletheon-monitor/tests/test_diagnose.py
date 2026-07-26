@@ -71,6 +71,41 @@ def test_diagnose_creates_fresh_session_before_task(monkeypatch):
     assert sent == ["/new", "inspect"]
 
 
+def test_expected_cwd_uses_authoritative_tmux_launch_state(monkeypatch, tmp_path):
+    async def ok_start(task="", cols=120, rows=50, working_dir=None):
+        return {"ok": True, "session": "s", "frame": "", "turn_done_count": 0,
+                "working_dir": str(tmp_path)}
+
+    async def ok_send(text, submit=True):
+        return {"ok": True}
+
+    async def capture(*args, **kwargs):
+        return {"frame": "ready", "stable": True}
+
+    async def done(*args, **kwargs):
+        return {"frame": "answer without cwd\n❯", "stable": True,
+                "turn_done": True, "prompt_visible": True, "checks": []}
+
+    async def noop(*args, **kwargs):
+        return {"healthy": True, "recent_journal": [], "lines": []}
+
+    monkeypatch.setattr(tui_tools, "tui_start", ok_start)
+    monkeypatch.setattr(tui_tools, "tui_send", ok_send)
+    monkeypatch.setattr(tui_tools, "tui_capture", capture)
+    monkeypatch.setattr(tui_tools, "tui_wait_turn_done", done)
+    monkeypatch.setattr(tui_tools, "tui_stop", lambda: noop())
+    monkeypatch.setattr(diag.analyze_mod, "analyze", noop)
+    monkeypatch.setattr(diag.logs_mod, "logs", noop)
+    monkeypatch.setattr(diag, "_audit_tail", lambda: [])
+
+    result = asyncio.run(diag.diagnose(
+        client=None, task="inspect", working_dir=str(tmp_path),
+        expected_cwd=str(tmp_path),
+    ))
+
+    assert next(a for a in result["assertions"] if a["name"] == "expected_cwd")["passed"]
+
+
 def test_build_timeline_sorts_sources_by_timestamp():
     journal = [
         {"timestamp": "2026-07-06T11:15:01Z", "type": "user_message"},

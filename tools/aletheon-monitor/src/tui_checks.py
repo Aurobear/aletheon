@@ -14,8 +14,12 @@ def check_dup_render(frame: str, min_block: int = 3) -> list[dict]:
     seen: dict[tuple, int] = {}
     for i in range(n - min_block + 1):
         window = tuple(lines[i:i + min_block])
-        if all(w.strip() == "" for w in window):
-            continue  # ignore all-blank windows (padding, not real content)
+        if any(w.strip() == "" for w in window):
+            # Section templates commonly repeat around blank separators (for
+            # example "severity / evidence" headings). A duplicated renderer
+            # repeats contiguous painted content, so blank-spanning windows
+            # are structural noise rather than render evidence.
+            continue
         if window in seen:
             prev = seen[window]
             if i - prev >= min_block:  # non-overlapping duplicate

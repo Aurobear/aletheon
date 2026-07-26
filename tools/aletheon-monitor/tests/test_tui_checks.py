@@ -31,6 +31,15 @@ def test_dup_render_ignores_short_or_blank_repeats():
     assert check_dup_render(frame, min_block=3) == []
 
 
+def test_dup_render_ignores_repeated_section_templates_across_blank_lines():
+    frame = "\n".join([
+        "risk one", "", " • severity: high", " • evidence:",
+        "first fact", "risk two", "", " • severity: high", " • evidence:",
+        "second fact",
+    ])
+    assert check_dup_render(frame, min_block=3) == []
+
+
 import os
 from src.tui_checks import (
     check_raw_markdown,
