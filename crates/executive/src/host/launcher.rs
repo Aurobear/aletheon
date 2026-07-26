@@ -160,6 +160,7 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
                 input: request.prompt,
                 model_policy: (!request.model.is_empty()).then_some(request.model),
                 deadline: None,
+                requirements: Vec::new(),
             },
             &NoopTurnEventSink,
         )

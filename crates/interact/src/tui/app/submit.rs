@@ -549,9 +549,21 @@ pub async fn send_to_daemon(app: &mut App, text: &str) {
     let request_id = app.next_request_id;
     app.next_request_id = app.next_request_id.saturating_add(1);
     let request = app.app_state.session_id.clone().map_or_else(
-        || ClientRpcRequest::chat(text, &app.workspace),
+        || {
+            ClientRpcRequest::chat_with_requirements(
+                text,
+                None,
+                &app.workspace,
+                app.turn_requirements.clone(),
+            )
+        },
         |session_id| {
-            ClientRpcRequest::chat_for(text, fabric::SessionId(session_id), &app.workspace)
+            ClientRpcRequest::chat_with_requirements(
+                text,
+                Some(fabric::SessionId(session_id)),
+                &app.workspace,
+                app.turn_requirements.clone(),
+            )
         },
     );
     let msg = request

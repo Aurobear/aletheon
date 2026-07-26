@@ -190,13 +190,16 @@ mod tests {
             let store = Arc::new(SqlitePromptQueueStore::open(&path).unwrap());
             let coordinator = SessionInputCoordinator::new(store);
             let first = coordinator
-                .enqueue(
+                .enqueue_with_requirements(
                     principal.clone(),
                     ConnectionId(Uuid::nil()),
                     thread.clone(),
                     PromptKind::Prompt,
                     "first".into(),
                     "i1".into(),
+                    vec![fabric::TurnRequirement::InvokeAgentRuntime {
+                        runtime_id: "pi-rpc".into(),
+                    }],
                 )
                 .await
                 .unwrap();
@@ -246,6 +249,12 @@ mod tests {
         let coordinator = SessionInputCoordinator::new(store.clone());
         let snapshot = coordinator.snapshot(&principal, &thread).await.unwrap();
         assert_eq!(snapshot.running, Some(first_id));
+        assert_eq!(
+            store.get(first_id).await.unwrap().unwrap().requirements,
+            vec![fabric::TurnRequirement::InvokeAgentRuntime {
+                runtime_id: "pi-rpc".into()
+            }]
+        );
         assert_eq!(snapshot.pending.len(), 1);
         assert_eq!(snapshot.pending[0].content, "second");
         assert_eq!(

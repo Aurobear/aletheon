@@ -50,6 +50,11 @@ pub struct Args {
     #[arg(long = "agent-profile", value_name = "NAME", global = true)]
     pub agent_profile: Option<String>,
 
+    /// Require this Agent runtime to be spawned and reach an authoritative
+    /// terminal receipt during every submitted chat turn (repeatable).
+    #[arg(long = "require-agent-runtime", value_name = "RUNTIME", global = true)]
+    pub required_agent_runtimes: Vec<String>,
+
     /// Force TUI mode
     #[arg(long)]
     pub tui: bool,
@@ -233,16 +238,35 @@ pub async fn run() -> Result<()> {
     let workspace =
         fabric::WorkspaceSelection::new(args.working_directory.clone(), args.add_dirs.clone())
             .resolve(&process_cwd)?;
+    let requirements = args
+        .required_agent_runtimes
+        .iter()
+        .map(|runtime_id| fabric::TurnRequirement::InvokeAgentRuntime {
+            runtime_id: runtime_id.clone(),
+        })
+        .collect::<Vec<_>>();
 
     // Handle positional message args
     if !args.message_args.is_empty() {
         let msg = args.message_args.join(" ");
-        return single_message_with_workspace(&socket, &msg, &workspace).await;
+        return single_message_with_workspace_and_requirements(
+            &socket,
+            &msg,
+            &workspace,
+            requirements,
+        )
+        .await;
     }
 
     // Handle -m flag
     if let Some(msg) = args.message {
-        return single_message_with_workspace(&socket, &msg, &workspace).await;
+        return single_message_with_workspace_and_requirements(
+            &socket,
+            &msg,
+            &workspace,
+            requirements,
+        )
+        .await;
     }
 
     // Interactive mode: use the line-based TUI (IME-compatible)
@@ -253,8 +277,13 @@ pub async fn run() -> Result<()> {
         auto_submit: args.auto_submit,
         test_timeout: args.test_timeout,
     };
-    super::run_with_workspace_config(socket.to_string_lossy().as_ref(), test_config, workspace)
-        .await
+    super::run_with_workspace_requirements(
+        socket.to_string_lossy().as_ref(),
+        test_config,
+        workspace,
+        requirements,
+    )
+    .await
 }
 
 /// Handle subcommands.
@@ -460,6 +489,15 @@ pub async fn single_message_with_workspace(
     msg: &str,
     workspace: &fabric::WorkspacePolicy,
 ) -> Result<()> {
+    single_message_with_workspace_and_requirements(socket, msg, workspace, Vec::new()).await
+}
+
+pub async fn single_message_with_workspace_and_requirements(
+    socket: &PathBuf,
+    msg: &str,
+    workspace: &fabric::WorkspacePolicy,
+    requirements: Vec<fabric::TurnRequirement>,
+) -> Result<()> {
     let mut stream = UnixStream::connect(socket).await?;
     let (reader, mut writer) = stream.split();
     let mut reader = BufReader::new(reader);
@@ -481,10 +519,10 @@ pub async fn single_message_with_workspace(
                 println!("{}", workspace.cwd().display());
                 return Ok(());
             }
-            _ => benchmark_chat_request(msg, workspace),
+            _ => benchmark_chat_request(msg, workspace, requirements.clone()),
         }
     } else {
-        benchmark_chat_request(msg, workspace)
+        benchmark_chat_request(msg, workspace, requirements)
     };
     let request = typed_request.to_json_rpc(Some(1))?;
     let req_str = serde_json::to_string(&request)?;
@@ -635,12 +673,21 @@ pub async fn single_message_with_workspace(
     Ok(())
 }
 
-fn benchmark_chat_request(message: &str, workspace: &fabric::WorkspacePolicy) -> ClientRpcRequest {
+fn benchmark_chat_request(
+    message: &str,
+    workspace: &fabric::WorkspacePolicy,
+    requirements: Vec<fabric::TurnRequirement>,
+) -> ClientRpcRequest {
     match std::env::var("ALETHEON_BENCHMARK_SESSION_ID") {
         Ok(session_id) if !session_id.trim().is_empty() => {
-            ClientRpcRequest::chat_for(message, fabric::SessionId(session_id), workspace)
+            ClientRpcRequest::chat_with_requirements(
+                message,
+                Some(fabric::SessionId(session_id)),
+                workspace,
+                requirements,
+            )
         }
-        _ => ClientRpcRequest::chat(message, workspace),
+        _ => ClientRpcRequest::chat_with_requirements(message, None, workspace, requirements),
     }
 }
 
@@ -723,5 +770,22 @@ mod workflow_cli_tests {
                 action: workflow::WorkflowAction::List
             })
         ));
+    }
+
+    #[test]
+    fn parses_repeatable_required_agent_runtime() {
+        let args = Args::try_parse_from([
+            "aletheon",
+            "--require-agent-runtime",
+            "pi-rpc",
+            "--require-agent-runtime",
+            "native-cognit",
+            "--tui",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.required_agent_runtimes,
+            vec!["pi-rpc", "native-cognit"]
+        );
     }
 }

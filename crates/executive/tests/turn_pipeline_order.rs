@@ -28,6 +28,7 @@ fn request(process_id: ProcessId) -> TurnRequest {
         input: "use tool".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
     }
 }
 

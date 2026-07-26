@@ -112,6 +112,15 @@ pub async fn run_with_workspace_config(
     test_config: TestConfig,
     workspace: fabric::WorkspacePolicy,
 ) -> anyhow::Result<()> {
+    run_with_workspace_requirements(socket_path, test_config, workspace, Vec::new()).await
+}
+
+pub async fn run_with_workspace_requirements(
+    socket_path: &str,
+    test_config: TestConfig,
+    workspace: fabric::WorkspacePolicy,
+    turn_requirements: Vec<fabric::TurnRequirement>,
+) -> anyhow::Result<()> {
     let caps = TermCaps::detect();
     let clock: Arc<dyn Clock> = Arc::new(self::host_time::ClientClock::new());
 
@@ -135,7 +144,15 @@ pub async fn run_with_workspace_config(
     if (!atty::is(atty::Stream::Stdin) || !atty::is(atty::Stream::Stdout))
         && test_config.test_input.is_none()
     {
-        return simple_line_mode(stream, caps, model_name, clock, workspace).await;
+        return simple_line_mode(
+            stream,
+            caps,
+            model_name,
+            clock,
+            workspace,
+            turn_requirements,
+        )
+        .await;
     }
 
     // Check if we're in test mode (no TTY needed)
@@ -154,6 +171,7 @@ pub async fn run_with_workspace_config(
             true,
             clock,
             workspace.clone(),
+            turn_requirements.clone(),
         )
         .await
     } else {
@@ -231,6 +249,7 @@ pub async fn run_with_workspace_config(
             false,
             clock,
             workspace,
+            turn_requirements,
         )
         .await;
 
@@ -247,6 +266,7 @@ pub async fn run_with_workspace_config(
 /// Main TUI application state.
 struct App {
     workspace: fabric::WorkspacePolicy,
+    turn_requirements: Vec<fabric::TurnRequirement>,
     chat: ChatWidget,
     input_buf: String,
     /// Cursor position in input_buf (byte index).
@@ -315,6 +335,7 @@ impl App {
         model_name: String,
         clock: Arc<dyn Clock>,
         workspace: fabric::WorkspacePolicy,
+        turn_requirements: Vec<fabric::TurnRequirement>,
     ) -> Self {
         let mut status = StatusBar::new(caps.clone());
         status.connected = true;
@@ -322,6 +343,7 @@ impl App {
 
         Self {
             workspace,
+            turn_requirements,
             chat: ChatWidget::new(caps.clone()),
             input_buf: String::new(),
             cursor: 0,

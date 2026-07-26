@@ -53,7 +53,7 @@ pub struct CapabilityCall {
 /// Host-authored, typed requirements for a cognitive turn. Implementations
 /// derive these from explicit client metadata or workflow policy, never by
 /// matching prompt phrases in the execution loop.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum TurnRequirement {
     InvokeAgentRuntime { runtime_id: String },
     InvokeCapability { name: String },
@@ -256,8 +256,8 @@ pub trait TurnServices: Send + Sync {
     ) {
     }
 
-    fn turn_requirements(&self, _request: &TurnRequest) -> Vec<TurnRequirement> {
-        Vec::new()
+    fn turn_requirements(&self, request: &TurnRequest) -> Vec<TurnRequirement> {
+        request.requirements.clone()
     }
 
     async fn plan_capability_batch(

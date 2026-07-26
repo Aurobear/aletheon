@@ -27,6 +27,7 @@ fn request() -> TurnRequest {
         input: "test facade".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
     }
 }
 

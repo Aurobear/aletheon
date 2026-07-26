@@ -31,8 +31,16 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     is_test_mode: bool,
     clock: Arc<dyn Clock>,
     workspace: fabric::WorkspacePolicy,
+    turn_requirements: Vec<fabric::TurnRequirement>,
 ) -> anyhow::Result<()> {
-    let mut app = App::new(stream, caps, model_name.clone(), clock, workspace);
+    let mut app = App::new(
+        stream,
+        caps,
+        model_name.clone(),
+        clock,
+        workspace,
+        turn_requirements,
+    );
 
     // ── Test infrastructure setup ──
     let mut frame_recorder: Option<FrameRecorder> = test_config
@@ -203,6 +211,7 @@ pub async fn simple_line_mode(
     model_name: String,
     _clock: Arc<dyn Clock>,
     workspace: fabric::WorkspacePolicy,
+    turn_requirements: Vec<fabric::TurnRequirement>,
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
 
@@ -253,10 +262,20 @@ pub async fn simple_line_mode(
                     println!("{}", workspace.cwd().display());
                     continue;
                 }
-                _ => ClientRpcRequest::chat(trimmed, &workspace),
+                _ => ClientRpcRequest::chat_with_requirements(
+                    trimmed,
+                    None,
+                    &workspace,
+                    turn_requirements.clone(),
+                ),
             }
         } else {
-            ClientRpcRequest::chat(trimmed, &workspace)
+            ClientRpcRequest::chat_with_requirements(
+                trimmed,
+                None,
+                &workspace,
+                turn_requirements.clone(),
+            )
         };
         let msg = request.to_json_rpc(Some(1))?;
         let payload = serde_json::to_string(&msg)?;

@@ -39,6 +39,7 @@ fn request() -> TurnRequest {
         input: "current request".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
     }
 }
 

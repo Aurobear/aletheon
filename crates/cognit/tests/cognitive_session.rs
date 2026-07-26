@@ -42,6 +42,7 @@ fn request(input: &str) -> TurnRequest {
         input: input.into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
     }
 }
 
@@ -332,10 +333,14 @@ impl TurnServices for RequiredCapabilityServices {
         Some(&self.llm)
     }
 
-    fn turn_requirements(&self, _request: &TurnRequest) -> Vec<fabric::TurnRequirement> {
-        vec![fabric::TurnRequirement::InvokeCapability {
-            name: "file_read".into(),
-        }]
+    fn turn_requirements(&self, request: &TurnRequest) -> Vec<fabric::TurnRequirement> {
+        if request.requirements.is_empty() {
+            vec![fabric::TurnRequirement::InvokeCapability {
+                name: "file_read".into(),
+            }]
+        } else {
+            request.requirements.clone()
+        }
     }
 
     async fn record_model_context_projection(
@@ -402,6 +407,25 @@ async fn streaming_session_cannot_bypass_typed_completion_requirement() {
     }));
     assert_eq!(services.llm.call_log.lock().unwrap().len(), 3);
     assert_eq!(services.projections.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn explicit_request_agent_requirement_reaches_the_enforced_gate() {
+    let services = required_capability_services("request-agent-gate");
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+    let mut turn = request("inspect through the selected runtime");
+    turn.requirements = vec![fabric::TurnRequirement::InvokeAgentRuntime {
+        runtime_id: "pi-rpc".into(),
+    }];
+
+    let result = session
+        .run_turn(turn, &services, &NoopTurnEventSink)
+        .await
+        .expect("missing current-turn Agent receipt is a typed blocked outcome");
+
+    assert_eq!(result.stop, TurnStop::Blocked);
+    assert!(!result.metrics.completed_normally);
+    assert!(result.output.contains("pi-rpc"));
 }
 
 struct InterjectingServices {

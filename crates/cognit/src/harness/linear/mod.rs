@@ -64,7 +64,9 @@ use tool_budget::ToolBudget;
 
 use crate::adapters::inference::provider::{LlmProvider, LlmResponse, LlmStream};
 use crate::core::awareness_signal::AwarenessSignal;
-use crate::core::{CognitiveTurnState, CompletionGateMode, EvidenceLedger, ProgressDecision};
+use crate::core::{
+    AgentRuntimeId, CognitiveTurnState, CompletionGateMode, EvidenceLedger, ProgressDecision,
+};
 use crate::harness::config::HarnessConfig;
 use crate::harness::interrupt::InterruptFlag;
 use fabric::body::Action;
@@ -199,6 +201,10 @@ pub struct ReActLoop {
     cognitive_state: Option<CognitiveTurnState>,
     /// Authoritative adapter-produced evidence for the active task.
     evidence_ledger: EvidenceLedger,
+    /// Agent instances spawned during the active turn. A terminal wait may
+    /// satisfy a required-agent obligation only for one of these instances;
+    /// stale receipts from earlier turns are deliberately ineligible.
+    spawned_agents: std::collections::BTreeMap<String, AgentRuntimeId>,
     /// Latest deterministic completion audit. Initially observed in shadow mode.
     latest_completion_audit: Option<ProgressDecision>,
     completion_gate_mode: CompletionGateMode,
@@ -249,6 +255,7 @@ impl ReActLoop {
             clock,
             cognitive_state: None,
             evidence_ledger: EvidenceLedger::default(),
+            spawned_agents: std::collections::BTreeMap::new(),
             latest_completion_audit: None,
             completion_gate_mode: CompletionGateMode::Shadow,
             max_completion_retries: 2,
@@ -468,12 +475,14 @@ impl ReActLoop {
     pub fn set_cognitive_state(&mut self, state: CognitiveTurnState) {
         self.cognitive_state = Some(state);
         self.evidence_ledger = EvidenceLedger::default();
+        self.spawned_agents.clear();
         self.latest_completion_audit = None;
     }
 
     pub fn clear_cognitive_state(&mut self) {
         self.cognitive_state = None;
         self.evidence_ledger = EvidenceLedger::default();
+        self.spawned_agents.clear();
         self.latest_completion_audit = None;
         self.completion_gate_mode = CompletionGateMode::Shadow;
     }

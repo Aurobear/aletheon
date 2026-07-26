@@ -328,12 +328,17 @@ impl LinearCognitiveSession {
         }
     }
 
-    fn configure_turn_contract(&mut self, request: &TurnRequest, services: &dyn TurnServices) {
+    fn configure_turn_contract(
+        &mut self,
+        request: &TurnRequest,
+        services: &dyn TurnServices,
+    ) -> Option<Message> {
         let requirements = services.turn_requirements(request);
         if requirements.is_empty() {
             self.inner.clear_cognitive_state();
-            return;
+            return None;
         }
+        let model_contract = render_turn_requirements(&requirements);
         let required_actions = requirements
             .into_iter()
             .map(|requirement| match requirement {
@@ -368,7 +373,31 @@ impl LinearCognitiveSession {
             }));
         self.inner
             .set_completion_gate_mode(CompletionGateMode::Enforce);
+        Some(Message::system(model_contract))
     }
+}
+
+fn render_turn_requirements(requirements: &[fabric::TurnRequirement]) -> String {
+    let mut lines = vec![
+        "[cognitive_task_contract]".to_owned(),
+        "These host-authored obligations apply to this turn and are enforced at completion:"
+            .to_owned(),
+    ];
+    for requirement in requirements {
+        lines.push(match requirement {
+            fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => format!(
+                "- Spawn Agent runtime `{runtime_id}` during this turn and observe its authoritative terminal result with `agent_wait`; historical Agent receipts do not satisfy this obligation."
+            ),
+            fabric::TurnRequirement::InvokeCapability { name } => {
+                format!("- Invoke capability `{name}` during this turn.")
+            }
+            fabric::TurnRequirement::ObserveTerminal { operation_id } => format!(
+                "- Observe authoritative terminal evidence for operation `{}`.",
+                operation_id.0
+            ),
+        });
+    }
+    lines.join("\n")
 }
 
 async fn invoke_with_terminal_receipt(
@@ -479,8 +508,11 @@ impl CognitiveSession for LinearCognitiveSession {
 
         let result = if let Some(llm) = services.llm_provider() {
             self.inner.reset();
-            self.configure_turn_contract(&request, services);
-            let seed_messages = services.seed_messages(&request);
+            let contract_message = self.configure_turn_contract(&request, services);
+            let mut seed_messages = services.seed_messages(&request);
+            if let Some(contract_message) = contract_message {
+                seed_messages.push(contract_message);
+            }
             if !seed_messages.is_empty() {
                 self.inner.seed_messages(seed_messages);
             }
@@ -608,8 +640,11 @@ impl CognitiveSession for LinearCognitiveSession {
         };
 
         self.inner.reset();
-        self.configure_turn_contract(&request, services);
-        let seed_messages = services.seed_messages(&request);
+        let contract_message = self.configure_turn_contract(&request, services);
+        let mut seed_messages = services.seed_messages(&request);
+        if let Some(contract_message) = contract_message {
+            seed_messages.push(contract_message);
+        }
         if !seed_messages.is_empty() {
             self.inner.seed_messages(seed_messages);
         }

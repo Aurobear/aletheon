@@ -466,6 +466,7 @@ mod tests {
             "test".into(),
             Arc::new(ClientClock::new()),
             workspace,
+            Vec::new(),
         );
         app.streaming = true;
         app

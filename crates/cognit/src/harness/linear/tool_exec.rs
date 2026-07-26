@@ -506,8 +506,12 @@ impl ReActLoop {
                     },
                     digest: None,
                 });
+                if let Some((agent_id, runtime)) = agent_spawn_observation(name, &content, is_error)
+                {
+                    self.spawned_agents.insert(agent_id, runtime);
+                }
                 if let Some((runtime, terminal_status)) =
-                    agent_terminal_evidence(name, &content, is_error)
+                    agent_terminal_evidence(name, &content, is_error, &self.spawned_agents)
                 {
                     self.evidence_ledger.record(EvidenceRecord {
                         id: EvidenceId(format!("agent:{id}")),
@@ -1190,6 +1194,7 @@ fn agent_terminal_evidence(
     capability: &str,
     content: &str,
     is_error: bool,
+    spawned_agents: &std::collections::BTreeMap<String, AgentRuntimeId>,
 ) -> Option<(AgentRuntimeId, TerminalStatus)> {
     if capability != "agent_wait" || is_error {
         return None;
@@ -1208,7 +1213,35 @@ fn agent_terminal_evidence(
     let runtime = snapshot
         .pointer("/handle/runtime_id")
         .and_then(|value| value.as_str())?;
+    let agent_id = snapshot
+        .pointer("/handle/agent_id")
+        .and_then(|value| value.as_str())?;
+    if spawned_agents
+        .get(agent_id)
+        .map(|runtime| runtime.0.as_str())
+        != Some(runtime)
+    {
+        return None;
+    }
     Some((AgentRuntimeId(runtime.to_string()), status))
+}
+
+fn agent_spawn_observation(
+    capability: &str,
+    content: &str,
+    is_error: bool,
+) -> Option<(String, AgentRuntimeId)> {
+    if capability != "agent_spawn" || is_error {
+        return None;
+    }
+    let payload: serde_json::Value = serde_json::from_str(content).ok()?;
+    if payload.get("ok").and_then(|value| value.as_bool()) != Some(true) {
+        return None;
+    }
+    let handle = payload.get("result")?;
+    let agent_id = handle.get("agent_id")?.as_str()?.to_owned();
+    let runtime = handle.get("runtime_id")?.as_str()?.to_owned();
+    Some((agent_id, AgentRuntimeId(runtime)))
 }
 
 fn streaming_backoff_ms(attempt: u32) -> u64 {
@@ -1261,8 +1294,8 @@ fn exploration_budget_results(
 #[cfg(test)]
 mod streaming_backoff_tests {
     use super::{
-        agent_terminal_evidence, exploration_budget_results, streaming_backoff_ms,
-        streaming_retry_delay_ms,
+        agent_spawn_observation, agent_terminal_evidence, exploration_budget_results,
+        streaming_backoff_ms, streaming_retry_delay_ms,
     };
     use crate::core::{AgentRuntimeId, TerminalStatus};
     use crate::harness::event_sink::{Event, EventSink};
@@ -1344,25 +1377,38 @@ mod streaming_backoff_tests {
 
     #[test]
     fn only_terminal_agent_wait_snapshot_creates_runtime_evidence() {
+        let mut spawned = std::collections::BTreeMap::new();
         let running = serde_json::json!({
             "ok": true,
-            "result": {"handle": {"runtime_id": "runtime-a"}, "status": "running"}
+            "result": {"handle": {"agent_id": "agent-a", "runtime_id": "runtime-a"}, "status": "running"}
         })
         .to_string();
-        assert!(agent_terminal_evidence("agent_wait", &running, false).is_none());
+        assert!(agent_terminal_evidence("agent_wait", &running, false, &spawned).is_none());
 
         let succeeded = serde_json::json!({
             "ok": true,
-            "result": {"handle": {"runtime_id": "runtime-a"}, "status": "succeeded"}
+            "result": {"handle": {"agent_id": "agent-a", "runtime_id": "runtime-a"}, "status": "succeeded"}
         })
         .to_string();
+        assert!(agent_terminal_evidence("agent_wait", &succeeded, false, &spawned).is_none());
+        spawned.insert("agent-a".into(), AgentRuntimeId("runtime-a".into()));
         assert_eq!(
-            agent_terminal_evidence("agent_wait", &succeeded, false),
+            agent_terminal_evidence("agent_wait", &succeeded, false, &spawned),
             Some((
                 AgentRuntimeId("runtime-a".into()),
                 TerminalStatus::Succeeded
             ))
         );
-        assert!(agent_terminal_evidence("agent_spawn", &succeeded, false).is_none());
+        assert!(agent_terminal_evidence("agent_spawn", &succeeded, false, &spawned).is_none());
+
+        let spawn = serde_json::json!({
+            "ok": true,
+            "result": {"agent_id": "agent-a", "runtime_id": "runtime-a"}
+        })
+        .to_string();
+        assert_eq!(
+            agent_spawn_observation("agent_spawn", &spawn, false),
+            Some(("agent-a".into(), AgentRuntimeId("runtime-a".into())))
+        );
     }
 }

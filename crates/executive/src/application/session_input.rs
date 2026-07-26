@@ -189,6 +189,28 @@ impl SessionInputCoordinator {
         content: String,
         idempotency_key: String,
     ) -> Result<PromptEnvelope> {
+        self.enqueue_with_requirements(
+            principal,
+            connection,
+            thread,
+            kind,
+            content,
+            idempotency_key,
+            Vec::new(),
+        )
+        .await
+    }
+
+    pub async fn enqueue_with_requirements(
+        &self,
+        principal: PrincipalId,
+        connection: ConnectionId,
+        thread: ThreadId,
+        kind: PromptKind,
+        content: String,
+        idempotency_key: String,
+        requirements: Vec<fabric::TurnRequirement>,
+    ) -> Result<PromptEnvelope> {
         let _guard = self.operation_lock.lock().await;
         let existing = self.store.ordered(&principal, &thread).await?;
         if let Some(existing) = existing
@@ -220,6 +242,7 @@ impl SessionInputCoordinator {
                 thread_id: thread.clone(),
                 kind,
                 content,
+                requirements,
                 created_at_unix: now,
                 updated_at_unix: now,
                 state: PromptState::Queued,
