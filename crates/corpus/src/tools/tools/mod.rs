@@ -25,6 +25,7 @@ pub mod robot;
 mod scoped_filesystem;
 pub mod script_tool;
 pub mod search;
+pub mod skill_tools;
 pub mod structured_patch;
 pub mod system_status;
 pub mod task_tools;

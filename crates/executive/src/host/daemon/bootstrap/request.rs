@@ -568,6 +568,21 @@ impl RequestHandler {
         if loaded > 0 {
             info!(count = loaded, "Skills loaded at startup");
         }
+        // Dynamic skill access: only a compact catalog (name + description) is
+        // injected into the prefix; the model loads a skill's full instructions
+        // on demand via skill_get. Snapshot the loaded skills for the tools.
+        let skills_snapshot = std::sync::Arc::new(skill_loader.skills().to_vec());
+        let _ = tools.register(std::sync::Arc::new(
+            corpus::tools::tools::skill_tools::SkillListTool::new(skills_snapshot.clone()),
+        ));
+        let _ = tools.register(std::sync::Arc::new(
+            corpus::tools::tools::skill_tools::SkillGetTool::new(skills_snapshot),
+        ));
+        // Tools registered outside the built-in registry must carry the same
+        // conservative host-authored proposal confidence, or the runtime rejects
+        // them as "no trusted proposal confidence".
+        let _ = tools.set_proposal_confidence("skill_list", 0.5);
+        let _ = tools.set_proposal_confidence("skill_get", 0.5);
 
         // Hooks
         let mut hook_registry = HookRegistry::new(clock.clone()).with_event_bus(event_bus.clone());
