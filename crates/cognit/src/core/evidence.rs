@@ -61,11 +61,36 @@ pub enum EvidenceLocator {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvidenceSubject {
-    AgentInvocation { runtime: AgentRuntimeId },
-    ToolInvocation { tool_name: String },
-    OperationTerminal { operation_id: OperationId },
-    Deliverable { deliverable_id: String },
-    Validation { requirement_id: String },
+    AgentInvocation {
+        runtime: AgentRuntimeId,
+    },
+    ToolInvocation {
+        tool_name: String,
+    },
+    OperationTerminal {
+        operation_id: OperationId,
+    },
+    CommandSessionTerminal {
+        session_id: String,
+    },
+    Deliverable {
+        deliverable_id: String,
+    },
+    Validation {
+        requirement_id: String,
+    },
+    ChangeDiffReview {
+        transaction_id: String,
+        workspace_version: String,
+    },
+    ChangeValidation {
+        transaction_id: String,
+        workspace_version: String,
+    },
+    ChangeAcceptance {
+        transaction_id: String,
+        workspace_version: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

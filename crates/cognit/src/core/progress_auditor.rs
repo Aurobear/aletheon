@@ -50,6 +50,29 @@ impl ProgressDecision {
                     }) => {
                         format!("- observe a terminal result for operation `{operation_id:?}`")
                     }
+                    Obligation::RequiredAction(RequiredAction::ObserveCommandSession {
+                        session_id,
+                    }) => format!(
+                        "- poll managed command session `{session_id}` until its authoritative terminal snapshot is observed"
+                    ),
+                    Obligation::RequiredAction(RequiredAction::ReviewChange {
+                        transaction_id,
+                        workspace_version,
+                    }) => format!(
+                        "- review diff for change transaction `{transaction_id}` at workspace version `{workspace_version}`"
+                    ),
+                    Obligation::RequiredAction(RequiredAction::ValidateChange {
+                        transaction_id,
+                        workspace_version,
+                    }) => format!(
+                        "- run focused validation for change transaction `{transaction_id}` at workspace version `{workspace_version}`"
+                    ),
+                    Obligation::RequiredAction(RequiredAction::AcceptChange {
+                        transaction_id,
+                        workspace_version,
+                    }) => format!(
+                        "- accept change transaction `{transaction_id}` at workspace version `{workspace_version}` after validation"
+                    ),
                     Obligation::Deliverable(deliverable) => format!(
                         "- produce deliverable `{}`: {}",
                         deliverable.id, deliverable.description
@@ -137,6 +160,17 @@ impl ProgressAuditor {
 }
 
 fn is_satisfied(obligation: &Obligation, evidence: &EvidenceLedger) -> bool {
+    if let Obligation::RequiredAction(RequiredAction::ObserveCommandSession { session_id }) =
+        obligation
+    {
+        return evidence.records().any(|record| {
+            record.subject
+                == EvidenceSubject::CommandSessionTerminal {
+                    session_id: session_id.clone(),
+                }
+                && record.terminal_status.is_terminal()
+        });
+    }
     let subject = match obligation {
         Obligation::RequiredAction(RequiredAction::InvokeAgent { runtime }) => {
             EvidenceSubject::AgentInvocation {
@@ -153,6 +187,28 @@ fn is_satisfied(obligation: &Obligation, evidence: &EvidenceLedger) -> bool {
                 operation_id: *operation_id,
             }
         }
+        Obligation::RequiredAction(RequiredAction::ObserveCommandSession { .. }) => unreachable!(),
+        Obligation::RequiredAction(RequiredAction::ReviewChange {
+            transaction_id,
+            workspace_version,
+        }) => EvidenceSubject::ChangeDiffReview {
+            transaction_id: transaction_id.clone(),
+            workspace_version: workspace_version.clone(),
+        },
+        Obligation::RequiredAction(RequiredAction::ValidateChange {
+            transaction_id,
+            workspace_version,
+        }) => EvidenceSubject::ChangeValidation {
+            transaction_id: transaction_id.clone(),
+            workspace_version: workspace_version.clone(),
+        },
+        Obligation::RequiredAction(RequiredAction::AcceptChange {
+            transaction_id,
+            workspace_version,
+        }) => EvidenceSubject::ChangeAcceptance {
+            transaction_id: transaction_id.clone(),
+            workspace_version: workspace_version.clone(),
+        },
         Obligation::Deliverable(deliverable) => EvidenceSubject::Deliverable {
             deliverable_id: deliverable.id.clone(),
         },

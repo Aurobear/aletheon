@@ -427,9 +427,15 @@ fn terminal_receipt_details(
             .and_then(|value| i32::try_from(value).ok()),
         error_class,
         output_ref: payload
-            .get("session_id")
+            .get("output_artifact_ref")
             .and_then(|value| value.as_str())
-            .map(|id| format!("command-session:{id}")),
+            .map(str::to_string)
+            .or_else(|| {
+                payload
+                    .get("session_id")
+                    .and_then(|value| value.as_str())
+                    .map(|id| format!("command-session:{id}"))
+            }),
         truncated: payload
             .get("truncated")
             .and_then(|value| value.as_bool())
@@ -775,6 +781,7 @@ mod context_tests {
             output: serde_json::json!({
                 "session_id": "session",
                 "terminal": {"status": "exited", "exit_code": 0},
+                "output_artifact_ref": "artifact://sha256/validation",
                 "truncated": true
             })
             .to_string(),
@@ -788,7 +795,7 @@ mod context_tests {
         assert_eq!(details.exit_code, Some(0));
         assert_eq!(
             details.output_ref.as_deref(),
-            Some("command-session:session")
+            Some("artifact://sha256/validation")
         );
         assert!(details.truncated);
     }

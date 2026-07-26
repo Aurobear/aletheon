@@ -1,7 +1,7 @@
 ---
 name: fs-agent
 description: "File system agent with read/write and search capabilities"
-tools: [file_read, file_write, glob, grep, file_search]
+tools: [repo_inspect, file_read, artifact_read, file_write, exec_command, write_stdin, validation_run, change_accept, change_rollback, glob, grep, file_search]
 max_iterations: 10
 role: Leaf
 ---

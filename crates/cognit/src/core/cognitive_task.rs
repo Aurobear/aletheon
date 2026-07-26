@@ -25,9 +25,30 @@ pub struct AgentRuntimeId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RequiredAction {
-    InvokeAgent { runtime: AgentRuntimeId },
-    InvokeTool { tool_name: String },
-    ObserveTerminal { operation_id: OperationId },
+    InvokeAgent {
+        runtime: AgentRuntimeId,
+    },
+    InvokeTool {
+        tool_name: String,
+    },
+    ObserveTerminal {
+        operation_id: OperationId,
+    },
+    ObserveCommandSession {
+        session_id: String,
+    },
+    ReviewChange {
+        transaction_id: String,
+        workspace_version: String,
+    },
+    ValidateChange {
+        transaction_id: String,
+        workspace_version: String,
+    },
+    AcceptChange {
+        transaction_id: String,
+        workspace_version: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +145,17 @@ impl CognitiveTurnState {
             validations: Vec::new(),
             outstanding,
             completion_attempts: 0,
+        }
+    }
+
+    pub fn require_action(&mut self, action: RequiredAction) {
+        if !self
+            .outstanding
+            .iter()
+            .any(|obligation| obligation == &Obligation::RequiredAction(action.clone()))
+        {
+            self.contract.required_actions.push(action.clone());
+            self.outstanding.push(Obligation::RequiredAction(action));
         }
     }
 }

@@ -265,8 +265,8 @@ mod goal_runtime_tests {
             "git_status must be universally available regardless of profile"
         );
         assert!(
-            profile.allowed_tools.contains(&"git_reset".to_string()),
-            "git_reset must be universally available (destructive op is guarded by confirm_hard)"
+            !profile.allowed_tools.contains(&"git_reset".to_string()),
+            "mutating git tools must not bypass profile and transaction governance"
         );
         assert!(
             profile.allowed_tools.contains(&"task_create".to_string()),

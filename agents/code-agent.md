@@ -1,7 +1,7 @@
 ---
 name: code-agent
 description: "Full code agent with read, write, execute, search, and web capabilities"
-tools: [repo_inspect, file_read, artifact_read, file_write, apply_patch, bash_exec, exec_command, write_stdin, validation_run, code_graph, grep, glob, file_search, system_status, process_list, task_create, task_update, task_list, task_get, git_push]
+tools: [repo_inspect, file_read, artifact_read, file_write, apply_patch, exec_command, write_stdin, validation_run, change_accept, change_rollback, code_graph, grep, glob, file_search, system_status, process_list, task_create, task_update, task_list, task_get]
 max_iterations: 20
 role: Leaf
 ---

@@ -37,23 +37,18 @@ pub(super) struct ProfileLoadResult {
 
 /// Safe, always-available capabilities that are NOT gated by a profile's
 /// `allowed_tools` whitelist. These are read-only/local, non-exfiltrating
-/// bookkeeping and repo-inspection tools: git (no push/commit exists; the only
-/// destructive op, `git_reset --hard`, is separately guarded by `confirm_hard`)
-/// and task/todo management. Any registered universal tool is merged into every
-/// profile so the model can both see and execute it regardless of active
-/// profile. Genuinely dangerous capabilities (file_write, bash_exec, network,
+/// bookkeeping and repo-inspection tools: read-only git evidence and task/todo
+/// management. Mutating git operations are deliberately not universal because
+/// they must not bypass version-bound change transactions. Any registered
+/// universal tool is merged into every profile so the model can both see and
+/// execute it regardless of active profile. Genuinely dangerous capabilities
+/// (file_write, bash_exec, network,
 /// kernel) remain profile-gated and per-action (L0–L3) + sandbox-gated.
 pub(super) const UNIVERSAL_TOOLS: &[&str] = &[
     "git_status",
     "git_diff",
     "git_log",
     "git_show",
-    "git_restore",
-    "git_stash",
-    "git_reset",
-    "git_add",
-    "git_commit",
-    "git_branch",
     "task_create",
     "task_update",
     "task_list",

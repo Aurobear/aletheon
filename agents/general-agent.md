@@ -1,7 +1,7 @@
 ---
 name: general-agent
 description: "Capable general-purpose agent; tools grouped by capability, gated by per-tool permission levels and the sandbox (not by a narrow whitelist)"
-tools: [repo_inspect, file_read, artifact_read, file_write, apply_patch, bash_exec, exec_command, write_stdin, validation_run, glob, grep, file_search, code_graph, system_status, process_list, git_status, git_diff, git_log, git_show, git_restore, git_stash, git_reset, git_add, git_commit, git_branch, git_push, task_create, task_update, task_list, task_get, web_search, web_fetch, agent_spawn, agent_wait, agent_send, agent_cancel, agent_list]
+tools: [repo_inspect, file_read, artifact_read, file_write, apply_patch, exec_command, write_stdin, validation_run, change_accept, change_rollback, glob, grep, file_search, code_graph, system_status, process_list, git_status, git_diff, git_log, git_show, task_create, task_update, task_list, task_get, web_search, web_fetch, agent_spawn, agent_wait, agent_send, agent_cancel, agent_list]
 max_iterations: 50
 role: Leaf
 ---
@@ -18,7 +18,7 @@ sandbox.
 ## Capability groups
 - Inspect (read-only): repo_inspect, file_read, artifact_read, glob, grep, file_search, code_graph,
   system_status, process_list, git_status, git_diff, git_log, git_show
-- Edit: file_write, apply_patch, git_restore, git_stash, git_reset
+- Edit: file_write, apply_patch
 - Execute: bash_exec (sandboxed)
 - Plan / track: task_create, task_update, task_list, task_get — keep a running
   task list for any multi-step work; it persists across restarts

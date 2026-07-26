@@ -1772,6 +1772,123 @@ mod tests {
         assert!(metrics.completed_normally);
     }
 
+    struct ChangeClosureLlm {
+        calls: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for ChangeClosureLlm {
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            let response = match *calls {
+                1 => ContentBlock::ToolUse {
+                    id: "apply".into(),
+                    name: "apply_patch".into(),
+                    input: serde_json::json!({}),
+                },
+                2 => ContentBlock::Text {
+                    text: "premature after apply".into(),
+                },
+                3 => ContentBlock::ToolUse {
+                    id: "diff".into(),
+                    name: "git_diff".into(),
+                    input: serde_json::json!({}),
+                },
+                4 => ContentBlock::Text {
+                    text: "premature after diff".into(),
+                },
+                5 => ContentBlock::ToolUse {
+                    id: "validation".into(),
+                    name: "validation_run".into(),
+                    input: serde_json::json!({}),
+                },
+                6 => ContentBlock::ToolUse {
+                    id: "accept".into(),
+                    name: "change_accept".into(),
+                    input: serde_json::json!({}),
+                },
+                _ => ContentBlock::Text {
+                    text: "version-bound change completed".into(),
+                },
+            };
+            Ok(LlmResponse {
+                stop_reason: if matches!(&response, ContentBlock::ToolUse { .. }) {
+                    StopReason::ToolUse
+                } else {
+                    StopReason::EndTurn
+                },
+                content: vec![response],
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+
+        async fn complete_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            unimplemented!("collecting adapter test")
+        }
+
+        fn name(&self) -> &str {
+            "change-closure-script"
+        }
+
+        fn max_context_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    #[tokio::test]
+    async fn coding_loop_rejects_apply_and_diff_only_completion_then_accepts_exact_closure() {
+        let mut lp = ReActLoop::new(
+            HarnessConfig {
+                max_iterations: 10,
+                learning_enabled: false,
+                compaction_enabled: false,
+                ..HarnessConfig::default()
+            },
+            Box::new(NoopCompressor),
+        );
+        let llm = ChangeClosureLlm {
+            calls: Mutex::new(0),
+        };
+        let (output, metrics) = lp
+            .run(
+                "make a verified change",
+                &llm,
+                &[],
+                |_id: &str, name: &str, _input: &serde_json::Value| {
+                    let content = match name {
+                        "apply_patch" => r#"{"kind":"apply_patch_receipt","transaction_id":"tx","resulting_workspace_version":"v1"}"#,
+                        "git_diff" => r#"{"kind":"change_diff_receipt","transaction_id":"tx","workspace_version":"v1","diff_artifact_ref":"artifact://sha256/diff"}"#,
+                        "validation_run" => r#"{"session_id":"validation-session","terminal":{"status":"exited","exit_code":0},"output_artifact_ref":"artifact://sha256/test","change_transaction":{"transaction_id":"tx","phase":"validated","validation_receipts":[{"workspace_version":"v1","output_ref":"artifact://sha256/test"}]}}"#,
+                        "change_accept" => r#"{"kind":"change_acceptance_receipt","transaction_id":"tx","workspace_version":"v1","transaction_phase":"accepted"}"#,
+                        _ => unreachable!(),
+                    };
+                    async move { (content.to_string(), false) }
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output, "version-bound change completed");
+        assert_eq!(metrics.stop, fabric::TurnStop::Completed);
+        assert_eq!(*llm.calls.lock().unwrap(), 7);
+        assert_eq!(metrics.tool_calls_made, 4);
+        assert!(matches!(
+            lp.latest_completion_audit(),
+            Some(ProgressDecision::Complete)
+        ));
+    }
+
     #[tokio::test]
     async fn no_verifier_returns_first_answer_unchanged() {
         let cfg = HarnessConfig {
