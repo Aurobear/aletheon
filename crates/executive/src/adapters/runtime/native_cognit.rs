@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::application::admin_service::{AdminServiceError, AgentProfileCatalogPort};
@@ -19,6 +19,7 @@ use fabric::{
     ToolDefinition, TurnEvent, TurnEventSink, TurnRequest, TurnServices, TurnStop, WorkspacePolicy,
     SESSION_SCHEMA_VERSION,
 };
+use futures::StreamExt;
 use parking_lot::RwLock;
 use tokio::sync::Mutex;
 
@@ -304,6 +305,8 @@ impl NativeCognitRuntime {
         let started = tokio::time::Instant::now();
         let mut completed_turns = 0usize;
         let mut elapsed_ms = 0u64;
+        let mut inference_rounds = 0u64;
+        let mut tool_calls = 0u64;
         let final_output = loop {
             let remaining = timeout.saturating_sub(started.elapsed());
             if remaining.is_zero() {
@@ -331,6 +334,10 @@ impl NativeCognitRuntime {
             }
             completed_turns += 1;
             elapsed_ms = elapsed_ms.saturating_add(turn.metrics.elapsed_ms);
+            inference_rounds = inference_rounds
+                .saturating_add(turn.metrics.iterations.try_into().unwrap_or(u64::MAX));
+            tool_calls = tool_calls
+                .saturating_add(turn.metrics.tool_calls_made.try_into().unwrap_or(u64::MAX));
             let output = turn.output;
             let next = input.inbox.try_recv().await.filter(|payload| {
                 payload.kind == fabric::AgentMessageKind::Input && payload.start_turn
@@ -356,7 +363,9 @@ impl NativeCognitRuntime {
                 deadline: None,
             };
         };
-        let (input_tokens, output_tokens) = services.llm.usage();
+        let llm_usage = services.llm.usage();
+        let input_tokens = llm_usage.input_tokens;
+        let output_tokens = llm_usage.output_tokens;
         let input_limit = resolved
             .profile
             .max_input_tokens
@@ -389,6 +398,15 @@ impl NativeCognitRuntime {
                 output_tokens,
                 cost_usd: None,
                 elapsed_ms,
+                observability: fabric::attempt::RuntimeObservability {
+                    inference_rounds: Some(llm_usage.inference_rounds.max(inference_rounds)),
+                    provider_retries: None,
+                    tool_calls: Some(tool_calls),
+                    terminal_tool_results: Some(tool_calls),
+                    active_context_tokens: llm_usage.active_context_tokens,
+                    cache_read_tokens: llm_usage.cache_read_tokens,
+                    cache_write_tokens: llm_usage.cache_write_tokens,
+                },
             },
             evidence: evidence.lock().await.clone(),
             artifacts: vec![],
@@ -620,24 +638,52 @@ impl NativeTurnServices {
 
 struct MeteredLlm {
     inner: Arc<dyn LlmProvider>,
-    input_tokens: AtomicU64,
-    output_tokens: AtomicU64,
+    input_tokens: Arc<AtomicU64>,
+    output_tokens: Arc<AtomicU64>,
+    inference_rounds: Arc<AtomicU64>,
+    active_context_tokens: Arc<AtomicU64>,
+    cache_read_tokens: Arc<AtomicU64>,
+    cache_write_tokens: Arc<AtomicU64>,
+    cache_observable: Arc<AtomicBool>,
+}
+
+struct MeteredLlmUsage {
+    input_tokens: u64,
+    output_tokens: u64,
+    inference_rounds: u64,
+    active_context_tokens: Option<u64>,
+    cache_read_tokens: Option<u64>,
+    cache_write_tokens: Option<u64>,
 }
 
 impl MeteredLlm {
     fn new(inner: Arc<dyn LlmProvider>) -> Self {
         Self {
             inner,
-            input_tokens: AtomicU64::new(0),
-            output_tokens: AtomicU64::new(0),
+            input_tokens: Arc::new(AtomicU64::new(0)),
+            output_tokens: Arc::new(AtomicU64::new(0)),
+            inference_rounds: Arc::new(AtomicU64::new(0)),
+            active_context_tokens: Arc::new(AtomicU64::new(0)),
+            cache_read_tokens: Arc::new(AtomicU64::new(0)),
+            cache_write_tokens: Arc::new(AtomicU64::new(0)),
+            cache_observable: Arc::new(AtomicBool::new(true)),
         }
     }
 
-    fn usage(&self) -> (u64, u64) {
-        (
-            self.input_tokens.load(Ordering::Relaxed),
-            self.output_tokens.load(Ordering::Relaxed),
-        )
+    fn usage(&self) -> MeteredLlmUsage {
+        let rounds = self.inference_rounds.load(Ordering::Relaxed);
+        let cache_observable = self.cache_observable.load(Ordering::Relaxed);
+        MeteredLlmUsage {
+            input_tokens: self.input_tokens.load(Ordering::Relaxed),
+            output_tokens: self.output_tokens.load(Ordering::Relaxed),
+            inference_rounds: rounds,
+            active_context_tokens: (rounds > 0)
+                .then(|| self.active_context_tokens.load(Ordering::Relaxed)),
+            cache_read_tokens: cache_observable
+                .then(|| self.cache_read_tokens.load(Ordering::Relaxed)),
+            cache_write_tokens: cache_observable
+                .then(|| self.cache_write_tokens.load(Ordering::Relaxed)),
+        }
     }
 }
 
@@ -648,11 +694,18 @@ impl LlmProvider for MeteredLlm {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<fabric::LlmResponse> {
+        self.inference_rounds.fetch_add(1, Ordering::Relaxed);
         let response = self.inner.complete(messages, tools).await?;
         self.input_tokens
             .fetch_add(response.usage.input_tokens.into(), Ordering::Relaxed);
         self.output_tokens
             .fetch_add(response.usage.output_tokens.into(), Ordering::Relaxed);
+        self.active_context_tokens
+            .store(response.usage.input_tokens.into(), Ordering::Relaxed);
+        self.cache_read_tokens
+            .fetch_add(response.cache_hit_tokens.into(), Ordering::Relaxed);
+        self.cache_write_tokens
+            .fetch_add(response.cache_miss_tokens.into(), Ordering::Relaxed);
         Ok(response)
     }
 
@@ -661,7 +714,24 @@ impl LlmProvider for MeteredLlm {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<fabric::LlmStream> {
-        self.inner.complete_stream(messages, tools).await
+        self.inference_rounds.fetch_add(1, Ordering::Relaxed);
+        self.cache_observable.store(false, Ordering::Relaxed);
+        let stream = self.inner.complete_stream(messages, tools).await?;
+        let input_tokens = self.input_tokens.clone();
+        let output_tokens = self.output_tokens.clone();
+        let active_context_tokens = self.active_context_tokens.clone();
+        Ok(Box::pin(stream.map(move |chunk| {
+            if let Ok(fabric::StreamChunk::Usage {
+                input_tokens: input,
+                output_tokens: output,
+            }) = &chunk
+            {
+                input_tokens.fetch_add((*input).into(), Ordering::Relaxed);
+                output_tokens.fetch_add((*output).into(), Ordering::Relaxed);
+                active_context_tokens.store((*input).into(), Ordering::Relaxed);
+            }
+            chunk
+        })))
     }
 
     fn name(&self) -> &str {

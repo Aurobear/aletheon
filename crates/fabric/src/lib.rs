@@ -224,7 +224,7 @@ pub use types::approval::{
 };
 pub use types::attempt::{
     AttemptEvidence, AttemptId, AttemptStatus, AttemptUsage, CognitiveRole, FailureClass,
-    RuntimeFailure, RuntimeId, RuntimeResult,
+    RuntimeFailure, RuntimeId, RuntimeObservability, RuntimeResult,
 };
 pub use types::capability::{Capability, CapabilityLevel, CapabilitySet};
 pub use types::channel::{

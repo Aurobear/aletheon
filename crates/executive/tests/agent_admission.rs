@@ -345,6 +345,7 @@ async fn lease_transitions_settle_once_and_expose_content_free_metrics() {
             output_tokens: 5,
             cost_usd: None,
             elapsed_ms: 20,
+            observability: Default::default(),
         })
         .await
         .unwrap();

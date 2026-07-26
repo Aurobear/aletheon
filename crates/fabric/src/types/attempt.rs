@@ -61,6 +61,22 @@ pub struct AttemptUsage {
     pub output_tokens: u64,
     pub cost_usd: Option<f64>,
     pub elapsed_ms: u64,
+    /// Dimensionally separate runtime observations. `None` means the adapter
+    /// cannot authoritatively observe that dimension; it must not be inferred
+    /// from cumulative token usage or another counter.
+    #[serde(default)]
+    pub observability: RuntimeObservability,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeObservability {
+    pub inference_rounds: Option<u64>,
+    pub provider_retries: Option<u64>,
+    pub tool_calls: Option<u64>,
+    pub terminal_tool_results: Option<u64>,
+    pub active_context_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
 }
 
 /// Durable state of an attempt record.
@@ -165,6 +181,15 @@ mod tests {
                 output_tokens: 7,
                 cost_usd: Some(0.01),
                 elapsed_ms: 42,
+                observability: RuntimeObservability {
+                    inference_rounds: Some(2),
+                    provider_retries: Some(1),
+                    tool_calls: Some(3),
+                    terminal_tool_results: Some(3),
+                    active_context_tokens: Some(9),
+                    cache_read_tokens: Some(4),
+                    cache_write_tokens: Some(5),
+                },
             },
             evidence: vec![AttemptEvidence {
                 kind: "test".into(),

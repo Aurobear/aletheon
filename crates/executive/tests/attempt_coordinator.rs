@@ -160,6 +160,7 @@ fn request(store: &Arc<Mutex<ObjectiveStore>>, goal_id: GoalId, sequence: u32) -
             output_tokens: 10,
             cost_usd: Some(0.01),
             elapsed_ms: 0,
+            observability: Default::default(),
         },
     }
 }
@@ -172,6 +173,7 @@ fn success() -> RuntimeResult {
             output_tokens: 3,
             cost_usd: Some(0.002),
             elapsed_ms: 12,
+            observability: Default::default(),
         },
         evidence: vec![AttemptEvidence {
             kind: "test".into(),
@@ -191,6 +193,7 @@ fn failure(class: FailureClass, retryable: bool) -> RuntimeFailure {
             output_tokens: 2,
             cost_usd: Some(0.003),
             elapsed_ms: 20,
+            observability: Default::default(),
         },
         evidence: vec![AttemptEvidence {
             kind: "diagnostic".into(),

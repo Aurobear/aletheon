@@ -274,6 +274,7 @@ mod tests {
                 output_tokens: 2,
                 cost_usd: Some(0.1),
                 elapsed_ms: 1,
+                observability: Default::default(),
             },
             started_at: "now".into(),
             ended_at: Some("later".into()),
