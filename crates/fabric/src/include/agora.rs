@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::types::cognitive_workflow::{
+    AgoraProjectionRequest, AgoraTaskList, AgoraTaskProjection, CognitiveArtifactEnvelope,
+    CognitiveTaskNode, CognitiveTaskNodeId, StageDecision,
+};
 use crate::types::evidence::Evidence;
 use crate::types::operation::ProcessId;
 use crate::types::space::AgoraSpaceId;
@@ -51,6 +55,19 @@ pub enum AgoraOperation {
         priorities: Vec<String>,
         /// Durable selection/broadcast reference that caused this update.
         selection_ref: String,
+    },
+    /// Create or replace the metadata of one versioned cognitive task node.
+    UpsertCognitiveTask {
+        task: CognitiveTaskNode,
+    },
+    /// Commit a typed Agent output. Prose is not shared state until this operation commits.
+    CommitCognitiveArtifact {
+        artifact: CognitiveArtifactEnvelope,
+    },
+    /// Record the owning stage's gate decision for a task node.
+    RecordStageDecision {
+        task_node_id: CognitiveTaskNodeId,
+        decision: StageDecision,
     },
 }
 
@@ -295,6 +312,14 @@ pub trait AgoraService: Send + Sync {
     async fn commit(&self, id: Uuid, permit: WorkspaceCommitPermit) -> Result<CommitReceipt>;
     async fn reject(&self, id: Uuid, reason: RejectReason) -> Result<()>;
     async fn changes_since(&self, space: AgoraSpaceId, version: u64) -> Result<Vec<AgoraCommit>>;
+    async fn project_task(&self, request: AgoraProjectionRequest) -> Result<AgoraTaskProjection> {
+        let _ = request;
+        anyhow::bail!("AgoraService::project_task not implemented for this backend")
+    }
+    async fn list_tasks(&self, space: AgoraSpaceId) -> Result<AgoraTaskList> {
+        let _ = space;
+        anyhow::bail!("AgoraService::list_tasks not implemented for this backend")
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -114,6 +114,28 @@ impl ToolRegistry {
         self.proposal_confidences.clone()
     }
 
+    /// Replace the legacy standalone task store with the authoritative Agora
+    /// task graph. Existing tool names stay stable for model profiles.
+    pub fn bind_agora_task_tools(
+        &mut self,
+        service: Arc<dyn fabric::AgoraService>,
+        host_process: fabric::ProcessId,
+    ) -> Result<(), AgentError> {
+        for name in ["task_create", "task_update", "task_list", "task_get"] {
+            self.tools.remove(name);
+            self.proposal_confidences.remove(name);
+            self.id_map
+                .retain(|_, registered_name| registered_name != name);
+        }
+        for tool in super::agora_task_tools::AgoraTaskTools::new(service, host_process).tools() {
+            let name = tool.name().to_owned();
+            self.register(tool)?;
+            self.set_proposal_confidence(&name, 0.5)?;
+        }
+        self.refresh_search_catalog();
+        Ok(())
+    }
+
     pub fn register_google_read_tools(
         &mut self,
         gmail: Option<Arc<dyn crate::tools::google::GmailCapability>>,

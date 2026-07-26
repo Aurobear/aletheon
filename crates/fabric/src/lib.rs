@@ -60,6 +60,7 @@ pub use types::attempt;
 pub use types::capability;
 pub use types::change_transaction;
 pub use types::channel;
+pub use types::cognitive_workflow;
 pub use types::conscious_arbitration;
 pub use types::conscious_core;
 pub use types::context;

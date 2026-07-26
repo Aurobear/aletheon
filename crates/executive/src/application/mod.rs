@@ -6,6 +6,7 @@ pub mod approval_service;
 pub mod coding_metacog_adapter;
 pub mod coding_metacog_rubric;
 pub mod coding_runtime;
+pub mod cognitive_workspace;
 pub mod compaction_normalize;
 pub mod conscious;
 pub mod conscious_action;

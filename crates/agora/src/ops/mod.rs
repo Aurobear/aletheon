@@ -312,6 +312,36 @@ impl fabric::include::agora::AgoraService for AgoraRegistry {
     ) -> Result<Vec<AgoraCommit>> {
         Ok(<Self as AgoraOps>::changes_since(self, &space.0, version).await)
     }
+
+    async fn project_task(
+        &self,
+        request: fabric::cognitive_workflow::AgoraProjectionRequest,
+    ) -> Result<fabric::cognitive_workflow::AgoraTaskProjection> {
+        let Some(slot) = self.existing_space(&request.space.0).await else {
+            anyhow::bail!("projection workspace does not exist")
+        };
+        let projection = slot.workspace.lock().await.project_task(request)?;
+        Ok(projection)
+    }
+
+    async fn list_tasks(
+        &self,
+        space: fabric::AgoraSpaceId,
+    ) -> Result<fabric::cognitive_workflow::AgoraTaskList> {
+        let Some(slot) = self.existing_space(&space.0).await else {
+            return Ok(fabric::cognitive_workflow::AgoraTaskList {
+                space,
+                workspace_version: 0,
+                tasks: Vec::new(),
+            });
+        };
+        let workspace = slot.workspace.lock().await;
+        Ok(fabric::cognitive_workflow::AgoraTaskList {
+            space,
+            workspace_version: workspace.version,
+            tasks: workspace.task_graph.cognitive_nodes(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -346,6 +376,200 @@ mod tests {
         let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX).unwrap();
         let id = fabric::AgoraService::propose(reg, proposal).await.unwrap();
         fabric::AgoraService::commit(reg, id, permit).await.unwrap();
+    }
+
+    async fn commit_operation(
+        reg: &AgoraRegistry,
+        session: &str,
+        base_version: u64,
+        operation: AgoraOperation,
+        author: fabric::ProcessId,
+    ) -> fabric::AgoraCommit {
+        let proposal = AgoraProposal {
+            id: uuid::Uuid::new_v4(),
+            space: fabric::AgoraSpaceId(session.into()),
+            author,
+            base_version,
+            operation,
+            evidence: Vec::new(),
+            confidence: 1.0,
+            expires_at_ms: None,
+        };
+        let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX).unwrap();
+        let id = fabric::AgoraService::propose(reg, proposal).await.unwrap();
+        fabric::AgoraService::commit(reg, id, permit)
+            .await
+            .unwrap()
+            .commit
+    }
+
+    fn cognitive_task(
+        id: &str,
+        owner: fabric::ProcessId,
+    ) -> fabric::cognitive_workflow::CognitiveTaskNode {
+        use fabric::cognitive_workflow::*;
+        CognitiveTaskNode {
+            id: CognitiveTaskNodeId(id.into()),
+            parent_id: None,
+            objective: "produce a grounded change".into(),
+            role: CognitiveRole::Executor,
+            stage: CognitiveStage::Execution,
+            status: CognitiveTaskStatus::Running,
+            owner: Some(owner),
+            dependencies: Vec::new(),
+            acceptance_criteria: vec!["focused validation passes".into()],
+            workspace_scope: vec!["crates/agora".into()],
+            required_artifact_kinds: vec![
+                CognitiveArtifactKind::ChangeSet,
+                CognitiveArtifactKind::Validation,
+            ],
+            artifact_refs: Vec::new(),
+            unresolved_finding_ids: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn cognitive_artifact_is_shared_only_after_versioned_commit() {
+        use fabric::cognitive_workflow::*;
+        let reg = AgoraRegistry::new(Arc::new(kernel::chronos::TestClock::default()));
+        let author = test_author();
+        let child_author = fabric::ProcessId(uuid::Uuid::from_u128(44));
+        commit_operation(
+            &reg,
+            "work-a",
+            0,
+            AgoraOperation::UpsertCognitiveTask {
+                task: cognitive_task("execute", author),
+            },
+            author,
+        )
+        .await;
+        let artifact = CognitiveArtifactEnvelope::proposed(
+            fabric::AgoraSpaceId("work-a".into()),
+            CognitiveTaskNodeId("execute".into()),
+            child_author,
+            vec!["workspace:v1".into()],
+            vec!["artifact://diff/1".into()],
+            1.0,
+            CognitiveArtifact::ChangeSet(CognitiveChangeSetReceipt {
+                transaction_id: "tx-1".into(),
+                workspace_version: "workspace:v1".into(),
+                changed_paths: vec!["crates/agora/src/ops/mod.rs".into()],
+                diff_artifact_ref: "artifact://diff/1".into(),
+            }),
+        )
+        .unwrap();
+        let proposal = AgoraProposal {
+            id: uuid::Uuid::new_v4(),
+            space: fabric::AgoraSpaceId("work-a".into()),
+            author,
+            base_version: 1,
+            operation: AgoraOperation::CommitCognitiveArtifact {
+                artifact: artifact.clone(),
+            },
+            evidence: artifact.evidence_refs.clone(),
+            confidence: artifact.confidence,
+            expires_at_ms: None,
+        };
+        let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX).unwrap();
+        let id = fabric::AgoraService::propose(&reg, proposal).await.unwrap();
+
+        let before = fabric::AgoraService::project_task(
+            &reg,
+            AgoraProjectionRequest {
+                space: fabric::AgoraSpaceId("work-a".into()),
+                task_node_id: CognitiveTaskNodeId("execute".into()),
+                role: CognitiveRole::Reviewer,
+                max_artifacts: 8,
+                include_kinds: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            before.artifacts.is_empty(),
+            "proposal leaked as shared fact"
+        );
+
+        fabric::AgoraService::commit(&reg, id, permit)
+            .await
+            .unwrap();
+        let after = fabric::AgoraService::project_task(
+            &reg,
+            AgoraProjectionRequest {
+                space: fabric::AgoraSpaceId("work-a".into()),
+                task_node_id: CognitiveTaskNodeId("execute".into()),
+                role: CognitiveRole::Reviewer,
+                max_artifacts: 8,
+                include_kinds: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(after.workspace_version, 2);
+        assert_eq!(after.artifacts.len(), 1);
+        assert_eq!(after.artifacts[0].lifecycle, ArtifactLifecycle::Committed);
+        assert_eq!(after.artifacts[0].author, child_author);
+        assert_eq!(after.receipt.included_artifact_ids, vec![artifact.id]);
+    }
+
+    #[tokio::test]
+    async fn stale_cognitive_proposal_is_rejected_and_refresh_can_reapply() {
+        let reg = AgoraRegistry::new(Arc::new(kernel::chronos::TestClock::default()));
+        let author = test_author();
+        commit_operation(
+            &reg,
+            "work-b",
+            0,
+            AgoraOperation::UpsertCognitiveTask {
+                task: cognitive_task("root", author),
+            },
+            author,
+        )
+        .await;
+        let stale = AgoraProposal {
+            id: uuid::Uuid::new_v4(),
+            space: fabric::AgoraSpaceId("work-b".into()),
+            author,
+            base_version: 0,
+            operation: AgoraOperation::PublishFact {
+                key: "stale".into(),
+                value: json!(true),
+            },
+            evidence: Vec::new(),
+            confidence: 1.0,
+            expires_at_ms: None,
+        };
+        let error = fabric::AgoraService::propose(&reg, stale)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("version conflict"));
+
+        let refreshed = fabric::AgoraService::view(
+            &reg,
+            AgoraViewRequest {
+                space: fabric::AgoraSpaceId("work-b".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(refreshed.version, 1);
+        commit_operation(
+            &reg,
+            "work-b",
+            refreshed.version,
+            AgoraOperation::PublishFact {
+                key: "fresh".into(),
+                value: json!(true),
+            },
+            author,
+        )
+        .await;
+        assert_eq!(
+            reg.recall("work-b", "fresh").await.unwrap(),
+            Some(json!(true))
+        );
     }
 
     #[tokio::test]

@@ -800,6 +800,11 @@ impl RequestHandler {
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
         let agora_service: Arc<dyn fabric::AgoraService> =
             Arc::new(agora::AgoraRegistry::new(kernel.clock()));
+        tools
+            .lock()
+            .await
+            .bind_agora_task_tools(agora_service.clone(), fabric::ProcessId::new())
+            .context("binding cognitive task tools to Agora")?;
         let conscious_registry = Arc::new(
             crate::application::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_tools_and_agora(
                 data_dir.join("conscious_workspace.db"),

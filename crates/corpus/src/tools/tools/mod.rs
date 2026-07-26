@@ -2,6 +2,7 @@
 
 pub mod agent_control;
 pub mod agent_tool;
+pub mod agora_task_tools;
 pub mod apply_patch;
 pub mod artifact_read;
 pub mod bash_exec;

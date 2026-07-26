@@ -12,6 +12,10 @@ use crate::attention::Attention;
 use crate::blackboard::Blackboard;
 use crate::task_graph::TaskGraph;
 use crate::trace::Trace;
+use fabric::cognitive_workflow::{
+    AgoraProjectionReceipt, AgoraProjectionRequest, AgoraTaskProjection, ArtifactLifecycle,
+    CognitiveArtifactEnvelope, CognitiveArtifactId, CognitiveArtifactKind,
+};
 use fabric::types::operation::ProcessId;
 
 // Re-export versioned commit types from fabric (single source of truth for
@@ -41,6 +45,8 @@ pub struct Workspace {
     pub proposals: HashMap<Uuid, AgoraProposal>,
     /// Shared-object claims: oid → owning process.
     pub claims: HashMap<String, fabric::ProcessId>,
+    /// Only committed, digest-validated cognitive artifacts are visible here.
+    pub cognitive_artifacts: HashMap<CognitiveArtifactId, CognitiveArtifactEnvelope>,
     clock: Arc<dyn fabric::Clock>,
 }
 
@@ -73,6 +79,7 @@ impl Workspace {
             commits: Vec::new(),
             proposals: HashMap::new(),
             claims: HashMap::new(),
+            cognitive_artifacts: HashMap::new(),
             clock,
         }
     }
@@ -338,6 +345,89 @@ impl Workspace {
                     ),
                 }
             }
+            AgoraOperation::UpsertCognitiveTask { task } => {
+                anyhow::ensure!(!task.id.0.trim().is_empty(), "cognitive task id is empty");
+                anyhow::ensure!(
+                    !task.objective.trim().is_empty(),
+                    "cognitive task objective is empty"
+                );
+                anyhow::ensure!(
+                    task.dependencies
+                        .iter()
+                        .all(|dependency| dependency != &task.id),
+                    "cognitive task cannot depend on itself"
+                );
+                if let Some(existing) = self.task_graph.cognitive(&task.id) {
+                    anyhow::ensure!(
+                        existing.owner == Some(author),
+                        "only the current task owner may replace it"
+                    );
+                    anyhow::ensure!(
+                        task.owner == existing.owner,
+                        "task ownership requires an explicit handoff operation"
+                    );
+                    anyhow::ensure!(
+                        task.artifact_refs == existing.artifact_refs,
+                        "task updates cannot rewrite committed artifact references"
+                    );
+                    anyhow::ensure!(
+                        task.parent_id == existing.parent_id,
+                        "task parent cannot change after creation"
+                    );
+                    anyhow::ensure!(
+                        valid_cognitive_status_transition(existing.status, task.status),
+                        "invalid cognitive task status transition"
+                    );
+                } else {
+                    anyhow::ensure!(
+                        task.owner == Some(author),
+                        "new cognitive tasks require the creating owner"
+                    );
+                    anyhow::ensure!(
+                        task.artifact_refs.is_empty(),
+                        "new cognitive tasks cannot claim committed artifacts"
+                    );
+                }
+            }
+            AgoraOperation::CommitCognitiveArtifact { artifact } => {
+                artifact.validate()?;
+                anyhow::ensure!(
+                    artifact.space.0 == self.session_id,
+                    "artifact space mismatch"
+                );
+                anyhow::ensure!(
+                    artifact.lifecycle == ArtifactLifecycle::Proposed,
+                    "only proposed artifacts may be committed"
+                );
+                let task = self
+                    .task_graph
+                    .cognitive(&artifact.task_node_id)
+                    .ok_or_else(|| anyhow::anyhow!("artifact task node does not exist"))?;
+                anyhow::ensure!(
+                    task.owner == Some(author),
+                    "only the owning stage may commit a child artifact proposal"
+                );
+                anyhow::ensure!(
+                    !self.cognitive_artifacts.contains_key(&artifact.id),
+                    "cognitive artifact already committed"
+                );
+            }
+            AgoraOperation::RecordStageDecision {
+                task_node_id,
+                decision,
+            } => {
+                let task = self
+                    .task_graph
+                    .cognitive(task_node_id)
+                    .ok_or_else(|| anyhow::anyhow!("decision task node does not exist"))?;
+                if let Some(owner) = task.owner {
+                    anyhow::ensure!(owner == author, "only the task owner may decide its stage");
+                }
+                anyhow::ensure!(
+                    !decision.reason.trim().is_empty(),
+                    "stage decision reason is empty"
+                );
+            }
         }
         Ok(())
     }
@@ -387,6 +477,30 @@ impl Workspace {
                 self.attention.focus = focus.clone();
                 self.attention.priorities = priorities.clone();
             }
+            AgoraOperation::UpsertCognitiveTask { task } => {
+                self.task_graph.upsert_cognitive(task.clone());
+            }
+            AgoraOperation::CommitCognitiveArtifact { artifact } => {
+                let mut committed = artifact.clone();
+                committed.lifecycle = ArtifactLifecycle::Committed;
+                self.task_graph
+                    .attach_artifact(&committed.task_node_id, committed.id.clone());
+                self.cognitive_artifacts
+                    .insert(committed.id.clone(), committed);
+            }
+            AgoraOperation::RecordStageDecision {
+                task_node_id,
+                decision,
+            } => {
+                self.trace.push(
+                    "cognitive_stage_decision",
+                    serde_json::json!({
+                        "task_node_id": task_node_id,
+                        "author": author,
+                        "decision": decision,
+                    }),
+                );
+            }
         }
         Ok(())
     }
@@ -401,6 +515,63 @@ impl Workspace {
         self.commits[start..].to_vec()
     }
 
+    /// Select a bounded, role-specific projection rather than copying another
+    /// Agent's transcript. Selection is deterministic and receipt-backed.
+    pub fn project_task(
+        &self,
+        request: AgoraProjectionRequest,
+    ) -> anyhow::Result<AgoraTaskProjection> {
+        anyhow::ensure!(
+            request.space.0 == self.session_id,
+            "projection space mismatch"
+        );
+        let task = self
+            .task_graph
+            .cognitive(&request.task_node_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("projection task node does not exist"))?;
+        let allowed = if request.include_kinds.is_empty() {
+            role_default_artifact_kinds(request.role)
+        } else {
+            request.include_kinds.clone()
+        };
+        let mut candidates = task
+            .artifact_refs
+            .iter()
+            .filter_map(|id| self.cognitive_artifacts.get(id))
+            .filter(|artifact| allowed.contains(&artifact.kind()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let limit = request.max_artifacts.min(64);
+        let omitted_artifact_ids = candidates
+            .iter()
+            .skip(limit)
+            .map(|artifact| artifact.id.clone())
+            .collect::<Vec<_>>();
+        candidates.truncate(limit);
+        let included_artifact_ids = candidates
+            .iter()
+            .map(|artifact| artifact.id.clone())
+            .collect();
+        let receipt = AgoraProjectionReceipt {
+            projection_id: Uuid::new_v4(),
+            space: request.space.clone(),
+            workspace_version: self.version,
+            task_node_id: request.task_node_id,
+            role: request.role,
+            included_artifact_ids,
+            omitted_artifact_ids: omitted_artifact_ids.clone(),
+        };
+        Ok(AgoraTaskProjection {
+            space: request.space,
+            workspace_version: self.version,
+            task,
+            artifacts: candidates,
+            omitted_artifact_ids,
+            receipt,
+        })
+    }
+
     /// Snapshot the workspace to JSON (for debug / commit to Mnemosyne).
     pub fn snapshot(&self) -> Value {
         json!({
@@ -412,6 +583,8 @@ impl Workspace {
             },
             "task_count": self.task_graph.len(),
             "task_graph": self.task_graph,
+            "cognitive_artifact_count": self.cognitive_artifacts.len(),
+            "cognitive_artifacts": self.cognitive_artifacts,
             "trace_len": self.trace.len(),
             // Full trace entries (incl. typed RFC-017 objects like Evidence)
             // so the persisted snapshot carries the reasoning trace, not just
@@ -437,7 +610,56 @@ impl Workspace {
         self.commits.clear();
         self.proposals.clear();
         self.claims.clear();
+        self.cognitive_artifacts.clear();
     }
+}
+
+fn role_default_artifact_kinds(
+    role: fabric::cognitive_workflow::CognitiveRole,
+) -> Vec<CognitiveArtifactKind> {
+    use fabric::cognitive_workflow::CognitiveRole;
+    use CognitiveArtifactKind::*;
+    match role {
+        CognitiveRole::Planner => vec![TaskContract, Investigation, Evidence, Decision],
+        CognitiveRole::Explorer => vec![TaskContract, Plan, Evidence, Investigation],
+        CognitiveRole::Executor | CognitiveRole::Fixer => {
+            vec![
+                TaskContract,
+                Plan,
+                Investigation,
+                Evidence,
+                Review,
+                Decision,
+            ]
+        }
+        CognitiveRole::Reviewer => vec![TaskContract, ChangeSet, Validation, Evidence, Decision],
+        CognitiveRole::Tester => vec![TaskContract, ChangeSet, Evidence, Review],
+        CognitiveRole::Root => vec![
+            TaskContract,
+            Plan,
+            Investigation,
+            ChangeSet,
+            Validation,
+            Review,
+            Evidence,
+            Decision,
+            AgentResult,
+        ],
+    }
+}
+
+fn valid_cognitive_status_transition(
+    current: fabric::cognitive_workflow::CognitiveTaskStatus,
+    next: fabric::cognitive_workflow::CognitiveTaskStatus,
+) -> bool {
+    use fabric::cognitive_workflow::CognitiveTaskStatus::*;
+    current == next
+        || matches!(
+            (current, next),
+            (Pending, Running | Blocked | Cancelled)
+                | (Running, Blocked | Completed | Failed | Cancelled)
+                | (Blocked, Running | Failed | Cancelled)
+        )
 }
 
 fn parse_task_status(status: &str) -> anyhow::Result<crate::task_graph::TaskStatus> {

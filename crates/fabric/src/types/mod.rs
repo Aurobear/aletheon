@@ -11,6 +11,7 @@ pub mod capability;
 pub mod change_transaction;
 pub mod channel;
 pub mod coding_job;
+pub mod cognitive_workflow;
 pub mod conscious_arbitration;
 pub mod conscious_core;
 pub mod conscious_core_trace;
