@@ -15,6 +15,7 @@ pub mod git_tools;
 pub mod glob;
 pub mod grep;
 pub mod kernel_build;
+pub mod managed_command;
 pub mod module_build;
 pub mod module_load;
 pub(crate) mod mutation_path;

@@ -241,7 +241,8 @@ fn tool_permission_level(name: &str) -> i32 {
         // L2 — System-level changes
         "ebpf_compile" | "module_build" => 2,
         // L1 — Sandboxed write
-        "file_write" | "bash_exec" | "apply_patch" | "web_fetch" => 1,
+        "file_write" | "bash_exec" | "exec_command" | "write_stdin" | "validation_run"
+        | "apply_patch" | "web_fetch" => 1,
         // L0 — Read-only (default)
         _ => 0,
     }

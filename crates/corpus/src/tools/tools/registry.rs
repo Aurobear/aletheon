@@ -251,6 +251,22 @@ impl ToolRegistry {
         registry
             .register(Arc::new(super::bash_exec::BashExecTool))
             .expect("duplicate built-in tool");
+        let command_sessions = super::managed_command::ManagedCommandSessions::default();
+        registry
+            .register(Arc::new(super::managed_command::ExecCommandTool::new(
+                command_sessions.clone(),
+            )))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(super::managed_command::WriteStdinTool::new(
+                command_sessions.clone(),
+            )))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(super::managed_command::ValidationRunTool::new(
+                command_sessions,
+            )))
+            .expect("duplicate built-in tool");
         registry
             .register(Arc::new(super::file_read::FileReadTool))
             .expect("duplicate built-in tool");

@@ -1,7 +1,7 @@
 ---
 name: general-agent
 description: "Capable general-purpose agent; tools grouped by capability, gated by per-tool permission levels and the sandbox (not by a narrow whitelist)"
-tools: [file_read, file_write, apply_patch, bash_exec, glob, grep, file_search, code_graph, system_status, process_list, git_status, git_diff, git_log, git_show, git_restore, git_stash, git_reset, git_add, git_commit, git_branch, git_push, task_create, task_update, task_list, task_get, web_search, web_fetch, agent_spawn, agent_wait, agent_send, agent_cancel, agent_list]
+tools: [file_read, file_write, apply_patch, bash_exec, exec_command, write_stdin, validation_run, glob, grep, file_search, code_graph, system_status, process_list, git_status, git_diff, git_log, git_show, git_restore, git_stash, git_reset, git_add, git_commit, git_branch, git_push, task_create, task_update, task_list, task_get, web_search, web_fetch, agent_spawn, agent_wait, agent_send, agent_cancel, agent_list]
 max_iterations: 50
 role: Leaf
 ---
