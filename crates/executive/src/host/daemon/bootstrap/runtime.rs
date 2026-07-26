@@ -53,6 +53,7 @@ pub(super) const UNIVERSAL_TOOLS: &[&str] = &[
     "task_update",
     "task_list",
     "task_get",
+    "request_user_input",
     "skill_list",
     "skill_get",
 ];

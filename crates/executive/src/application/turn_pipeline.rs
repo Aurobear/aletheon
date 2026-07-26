@@ -116,6 +116,111 @@ impl TurnPipeline {
         }
     }
 
+    async fn resume_single_pending_clarification(
+        &self,
+        request: &TurnRequest,
+        response: &str,
+    ) -> anyhow::Result<()> {
+        let Some(agora) = &self.agora else {
+            return Ok(());
+        };
+        let space = AgoraSpaceId(request.context.thread_id.0.clone());
+        let tasks = agora.list_tasks(space.clone()).await?;
+        let mut pending = Vec::new();
+        for task in tasks
+            .tasks
+            .iter()
+            .filter(|task| task.status == fabric::cognitive_workflow::CognitiveTaskStatus::Blocked)
+        {
+            let projection = agora
+                .project_task(fabric::cognitive_workflow::AgoraProjectionRequest {
+                    space: space.clone(),
+                    task_node_id: task.id.clone(),
+                    role: fabric::cognitive_workflow::CognitiveRole::Root,
+                    max_artifacts: 0,
+                    include_kinds: Vec::new(),
+                })
+                .await?;
+            if let (Some(clarification), Some(owner)) = (projection.clarification, task.owner) {
+                pending.push((task.id.clone(), clarification.id, owner));
+            }
+        }
+        // Never guess which question a response addresses. A single pending
+        // question is the only unambiguous automatic resume case.
+        if pending.len() != 1 {
+            return Ok(());
+        }
+        let (task_node_id, clarification_id, owner) = pending.remove(0);
+        let turn_id = request
+            .context
+            .turn_id
+            .ok_or_else(|| anyhow::anyhow!("clarification response lacks canonical turn id"))?;
+        let response_event_id = format!(
+            "session:{}:turn:{}:user_message",
+            request.context.thread_id.0, turn_id.0
+        );
+        crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(agora.clone())
+            .resume_from_user_response(
+                space,
+                task_node_id,
+                clarification_id,
+                response.to_owned(),
+                response_event_id,
+                tasks.workspace_version,
+                owner,
+            )
+            .await
+            .map_err(anyhow::Error::new)?;
+        Ok(())
+    }
+
+    async fn ensure_root_cognitive_task(
+        &self,
+        request: &TurnRequest,
+        objective: &str,
+        owner: ProcessId,
+    ) -> anyhow::Result<()> {
+        let Some(agora) = &self.agora else {
+            return Ok(());
+        };
+        use fabric::cognitive_workflow::{
+            CognitiveRole, CognitiveStage, CognitiveTaskNode, CognitiveTaskNodeId,
+            CognitiveTaskStatus,
+        };
+        let space = AgoraSpaceId(request.context.thread_id.0.clone());
+        let tasks = agora.list_tasks(space.clone()).await?;
+        if !tasks.tasks.is_empty() {
+            return Ok(());
+        }
+        let bounded_objective = objective.chars().take(4096).collect::<String>();
+        let task = CognitiveTaskNode {
+            id: CognitiveTaskNodeId("root".into()),
+            parent_id: None,
+            objective: bounded_objective,
+            role: CognitiveRole::Root,
+            stage: CognitiveStage::Contract,
+            status: CognitiveTaskStatus::Running,
+            owner: Some(owner),
+            dependencies: Vec::new(),
+            acceptance_criteria: Vec::new(),
+            workspace_scope: request
+                .context
+                .workspace
+                .writable_roots()
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            required_artifact_kinds: Vec::new(),
+            artifact_refs: Vec::new(),
+            unresolved_finding_ids: Vec::new(),
+        };
+        crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(agora.clone())
+            .commit_task_at(space, tasks.workspace_version, task, owner)
+            .await
+            .map_err(anyhow::Error::new)?;
+        Ok(())
+    }
+
     async fn dispatch_lifecycle(
         &self,
         input: crate::application::lifecycle_contributors::LifecycleInput,
@@ -238,6 +343,14 @@ impl TurnPipeline {
             .runtime_ports
             .sessions
             .current(&requested_session_id)
+            .await?;
+
+        // TurnCoordinator durably appends the user message before invoking this
+        // pipeline, so it is now safe to bind that canonical response to the
+        // one pending clarification in this scoped Agora space.
+        self.resume_single_pending_clarification(&turn_request, &message)
+            .await?;
+        self.ensure_root_cognitive_task(&turn_request, &message, main_pid)
             .await?;
 
         let checkpoint_id = self

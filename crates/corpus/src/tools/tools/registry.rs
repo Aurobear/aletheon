@@ -121,7 +121,13 @@ impl ToolRegistry {
         service: Arc<dyn fabric::AgoraService>,
         host_process: fabric::ProcessId,
     ) -> Result<(), AgentError> {
-        for name in ["task_create", "task_update", "task_list", "task_get"] {
+        for name in [
+            "task_create",
+            "task_update",
+            "task_list",
+            "task_get",
+            "request_user_input",
+        ] {
             self.tools.remove(name);
             self.proposal_confidences.remove(name);
             self.id_map

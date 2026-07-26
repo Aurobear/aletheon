@@ -1772,6 +1772,92 @@ mod tests {
         assert!(metrics.completed_normally);
     }
 
+    struct ClarificationLlm {
+        calls: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for ClarificationLlm {
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            *self.calls.lock().unwrap() += 1;
+            Ok(LlmResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "clarify-1".into(),
+                    name: "request_user_input".into(),
+                    input: serde_json::json!({"question": "Which behavior?"}),
+                }],
+                stop_reason: StopReason::ToolUse,
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+
+        async fn complete_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            unimplemented!("collecting adapter test")
+        }
+
+        fn name(&self) -> &str {
+            "clarification"
+        }
+
+        fn max_context_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_clarification_tool_blocks_without_another_inference() {
+        let mut loop_state = ReActLoop::new(
+            HarnessConfig {
+                max_iterations: 5,
+                learning_enabled: false,
+                compaction_enabled: false,
+                ..HarnessConfig::default()
+            },
+            Box::new(NoopCompressor),
+        );
+        let llm = ClarificationLlm {
+            calls: Mutex::new(0),
+        };
+        let definitions = vec![ToolDefinition {
+            name: "request_user_input".into(),
+            description: "block for clarification".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        let (output, metrics) = loop_state
+            .run(
+                "resolve ambiguity",
+                &llm,
+                &definitions,
+                |_id: &str, _name: &str, _input: &serde_json::Value| async {
+                    (
+                        serde_json::json!({
+                            "status": "blocked",
+                            "clarification_id": "00000000-0000-0000-0000-000000000001",
+                            "question": "Which behavior?"
+                        })
+                        .to_string(),
+                        false,
+                    )
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(metrics.stop, fabric::TurnStop::Blocked);
+        assert!(!metrics.completed_normally);
+        assert_eq!(*llm.calls.lock().unwrap(), 1);
+        assert_eq!(output, "Waiting for user clarification: Which behavior?");
+    }
+
     struct ChangeClosureLlm {
         calls: Mutex<usize>,
     }

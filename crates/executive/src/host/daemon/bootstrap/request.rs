@@ -292,6 +292,17 @@ impl RequestHandler {
         let session_created_at = sessions_composition.created_at;
         let active_connections = Arc::new(AtomicUsize::new(0));
 
+        // The authoritative Agora service exists before tool/profile assembly so
+        // task and clarification tools share the same durable workspace from
+        // their first model-visible definition.
+        let agora_persistence = Arc::new(
+            agora::SqliteAgoraPersistence::open(data_dir.join("agora.db"))
+                .context("opening durable Agora commit log")?,
+        );
+        let agora_service: Arc<dyn fabric::AgoraService> = Arc::new(
+            agora::AgoraRegistry::new_with_persistence(agora_persistence, clock.clone()),
+        );
+
         // Register tools
         let search_config = config.integrations.search.as_ref().map(|search| {
             corpus::tools::tools::web_search::WebSearchConfig::new(
@@ -305,6 +316,7 @@ impl RequestHandler {
             stores: memory,
             clock: clock.clone(),
             tasks_db: Some(data_dir.join("tasks.db")),
+            agora: agora_service.clone(),
         });
         let mut tools = tool_composition.registry;
         let core_memory = tool_composition.stores.core;
@@ -798,13 +810,6 @@ impl RequestHandler {
             .await
             .dasein_handle()
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
-        let agora_service: Arc<dyn fabric::AgoraService> =
-            Arc::new(agora::AgoraRegistry::new(kernel.clock()));
-        tools
-            .lock()
-            .await
-            .bind_agora_task_tools(agora_service.clone(), fabric::ProcessId::new())
-            .context("binding cognitive task tools to Agora")?;
         let conscious_registry = Arc::new(
             crate::application::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_tools_and_agora(
                 data_dir.join("conscious_workspace.db"),

@@ -14,7 +14,9 @@ use crate::task_graph::TaskGraph;
 use crate::trace::Trace;
 use fabric::cognitive_workflow::{
     AgoraProjectionReceipt, AgoraProjectionRequest, AgoraTaskProjection, ArtifactLifecycle,
-    CognitiveArtifactEnvelope, CognitiveArtifactId, CognitiveArtifactKind,
+    ClarificationId, ClarificationRecord, ClarificationState, CognitiveArtifactEnvelope,
+    CognitiveArtifactId, CognitiveArtifactKind, CognitiveInterruptionId,
+    CognitiveInterruptionRecord, CognitiveTaskStatus,
 };
 use fabric::types::operation::ProcessId;
 
@@ -47,6 +49,8 @@ pub struct Workspace {
     pub claims: HashMap<String, fabric::ProcessId>,
     /// Only committed, digest-validated cognitive artifacts are visible here.
     pub cognitive_artifacts: HashMap<CognitiveArtifactId, CognitiveArtifactEnvelope>,
+    pub clarifications: HashMap<ClarificationId, ClarificationRecord>,
+    pub interruptions: HashMap<CognitiveInterruptionId, CognitiveInterruptionRecord>,
     clock: Arc<dyn fabric::Clock>,
 }
 
@@ -80,6 +84,8 @@ impl Workspace {
             proposals: HashMap::new(),
             claims: HashMap::new(),
             cognitive_artifacts: HashMap::new(),
+            clarifications: HashMap::new(),
+            interruptions: HashMap::new(),
             clock,
         }
     }
@@ -428,6 +434,144 @@ impl Workspace {
                     "stage decision reason is empty"
                 );
             }
+            AgoraOperation::BlockForClarification { clarification } => {
+                anyhow::ensure!(
+                    clarification.requested_by == author,
+                    "clarification requester mismatch"
+                );
+                anyhow::ensure!(
+                    clarification.state == ClarificationState::Pending
+                        && clarification.response.is_none()
+                        && clarification.response_event_id.is_none(),
+                    "new clarification must be pending and unanswered"
+                );
+                anyhow::ensure!(
+                    !clarification.question.trim().is_empty(),
+                    "clarification question is empty"
+                );
+                anyhow::ensure!(
+                    clarification.checkpoint.workspace_version == self.version,
+                    "clarification checkpoint does not match workspace version"
+                );
+                let task = self
+                    .task_graph
+                    .cognitive(&clarification.task_node_id)
+                    .ok_or_else(|| anyhow::anyhow!("clarification task node does not exist"))?;
+                anyhow::ensure!(
+                    task.owner == Some(author),
+                    "only the task owner may block it"
+                );
+                anyhow::ensure!(
+                    matches!(
+                        task.status,
+                        CognitiveTaskStatus::Pending | CognitiveTaskStatus::Running
+                    ),
+                    "only an active task may request clarification"
+                );
+                anyhow::ensure!(
+                    !self.clarifications.values().any(|existing| {
+                        existing.task_node_id == clarification.task_node_id
+                            && existing.state == ClarificationState::Pending
+                    }),
+                    "task already has a pending clarification"
+                );
+            }
+            AgoraOperation::ResolveClarification {
+                clarification_id,
+                response,
+                response_event_id,
+            } => {
+                anyhow::ensure!(
+                    !response.trim().is_empty(),
+                    "clarification response is empty"
+                );
+                anyhow::ensure!(
+                    !response_event_id.trim().is_empty(),
+                    "canonical response event id is empty"
+                );
+                let clarification = self
+                    .clarifications
+                    .get(clarification_id)
+                    .ok_or_else(|| anyhow::anyhow!("clarification does not exist"))?;
+                anyhow::ensure!(
+                    clarification.state == ClarificationState::Pending,
+                    "clarification is not pending"
+                );
+                let task = self
+                    .task_graph
+                    .cognitive(&clarification.task_node_id)
+                    .ok_or_else(|| anyhow::anyhow!("clarification task node does not exist"))?;
+                anyhow::ensure!(
+                    task.owner == Some(author),
+                    "only the task owner may apply a canonical clarification response"
+                );
+                anyhow::ensure!(
+                    task.status == CognitiveTaskStatus::Blocked,
+                    "clarification task is not blocked"
+                );
+            }
+            AgoraOperation::CheckpointInterruption { interruption } => {
+                anyhow::ensure!(interruption.owner == author, "interruption owner mismatch");
+                anyhow::ensure!(
+                    interruption.resume_event_id.is_none(),
+                    "new interruption cannot already be resumed"
+                );
+                anyhow::ensure!(
+                    interruption.checkpoint.workspace_version == self.version,
+                    "interruption checkpoint does not match workspace version"
+                );
+                let task = self
+                    .task_graph
+                    .cognitive(&interruption.task_node_id)
+                    .ok_or_else(|| anyhow::anyhow!("interruption task node does not exist"))?;
+                anyhow::ensure!(
+                    task.owner == Some(author),
+                    "only the task owner may suspend it"
+                );
+                anyhow::ensure!(
+                    matches!(
+                        task.status,
+                        CognitiveTaskStatus::Pending | CognitiveTaskStatus::Running
+                    ),
+                    "only an active task may be interrupted"
+                );
+                anyhow::ensure!(
+                    !self.interruptions.values().any(|existing| {
+                        existing.task_node_id == interruption.task_node_id
+                            && existing.resume_event_id.is_none()
+                    }),
+                    "task already has an active interruption"
+                );
+            }
+            AgoraOperation::ResumeInterruption {
+                interruption_id,
+                resume_event_id,
+            } => {
+                anyhow::ensure!(
+                    !resume_event_id.trim().is_empty(),
+                    "resume event id is empty"
+                );
+                let interruption = self
+                    .interruptions
+                    .get(interruption_id)
+                    .ok_or_else(|| anyhow::anyhow!("interruption does not exist"))?;
+                anyhow::ensure!(
+                    interruption.resume_event_id.is_none(),
+                    "interruption is already resumed"
+                );
+                let task = self
+                    .task_graph
+                    .cognitive(&interruption.task_node_id)
+                    .ok_or_else(|| anyhow::anyhow!("interruption task node does not exist"))?;
+                anyhow::ensure!(
+                    task.owner == Some(author),
+                    "only the task owner may resume it"
+                );
+                anyhow::ensure!(
+                    task.status == CognitiveTaskStatus::Suspended,
+                    "interrupted task is not suspended"
+                );
+            }
         }
         Ok(())
     }
@@ -501,6 +645,57 @@ impl Workspace {
                     }),
                 );
             }
+            AgoraOperation::BlockForClarification { clarification } => {
+                let task = self
+                    .task_graph
+                    .cognitive_mut(&clarification.task_node_id)
+                    .expect("clarification task validated");
+                task.status = CognitiveTaskStatus::Blocked;
+                self.clarifications
+                    .insert(clarification.id.clone(), clarification.clone());
+            }
+            AgoraOperation::ResolveClarification {
+                clarification_id,
+                response,
+                response_event_id,
+            } => {
+                let clarification = self
+                    .clarifications
+                    .get_mut(clarification_id)
+                    .expect("clarification existence validated");
+                clarification.state = ClarificationState::Answered;
+                clarification.response = Some(response.clone());
+                clarification.response_event_id = Some(response_event_id.clone());
+                let task = self
+                    .task_graph
+                    .cognitive_mut(&clarification.task_node_id)
+                    .expect("clarification task validated");
+                task.status = CognitiveTaskStatus::Running;
+            }
+            AgoraOperation::CheckpointInterruption { interruption } => {
+                let task = self
+                    .task_graph
+                    .cognitive_mut(&interruption.task_node_id)
+                    .expect("interruption task validated");
+                task.status = CognitiveTaskStatus::Suspended;
+                self.interruptions
+                    .insert(interruption.id.clone(), interruption.clone());
+            }
+            AgoraOperation::ResumeInterruption {
+                interruption_id,
+                resume_event_id,
+            } => {
+                let interruption = self
+                    .interruptions
+                    .get_mut(interruption_id)
+                    .expect("interruption existence validated");
+                interruption.resume_event_id = Some(resume_event_id.clone());
+                let task = self
+                    .task_graph
+                    .cognitive_mut(&interruption.task_node_id)
+                    .expect("interruption task validated");
+                task.status = CognitiveTaskStatus::Running;
+            }
         }
         Ok(())
     }
@@ -562,12 +757,29 @@ impl Workspace {
             included_artifact_ids,
             omitted_artifact_ids: omitted_artifact_ids.clone(),
         };
+        let clarification = self
+            .clarifications
+            .values()
+            .find(|clarification| {
+                clarification.task_node_id == task.id
+                    && clarification.state == ClarificationState::Pending
+            })
+            .cloned();
+        let interruption = self
+            .interruptions
+            .values()
+            .find(|interruption| {
+                interruption.task_node_id == task.id && interruption.resume_event_id.is_none()
+            })
+            .cloned();
         Ok(AgoraTaskProjection {
             space: request.space,
             workspace_version: self.version,
             task,
             artifacts: candidates,
             omitted_artifact_ids,
+            clarification,
+            interruption,
             receipt,
         })
     }
@@ -585,6 +797,8 @@ impl Workspace {
             "task_graph": self.task_graph,
             "cognitive_artifact_count": self.cognitive_artifacts.len(),
             "cognitive_artifacts": self.cognitive_artifacts,
+            "clarifications": self.clarifications,
+            "interruptions": self.interruptions,
             "trace_len": self.trace.len(),
             // Full trace entries (incl. typed RFC-017 objects like Evidence)
             // so the persisted snapshot carries the reasoning trace, not just
@@ -611,6 +825,8 @@ impl Workspace {
         self.proposals.clear();
         self.claims.clear();
         self.cognitive_artifacts.clear();
+        self.clarifications.clear();
+        self.interruptions.clear();
     }
 }
 
@@ -656,9 +872,12 @@ fn valid_cognitive_status_transition(
     current == next
         || matches!(
             (current, next),
-            (Pending, Running | Blocked | Cancelled)
-                | (Running, Blocked | Completed | Failed | Cancelled)
-                | (Blocked, Running | Failed | Cancelled)
+            (Pending, Running | Blocked | Suspended | Cancelled)
+                | (
+                    Running,
+                    Blocked | Suspended | Completed | Failed | Cancelled
+                )
+                | (Blocked | Suspended, Running | Failed | Cancelled)
         )
 }
 

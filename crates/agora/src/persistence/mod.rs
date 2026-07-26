@@ -23,6 +23,12 @@ pub trait AgoraPersistence: Send + Sync {
 
     /// Recover all commits for a session, in commit order.
     async fn recover(&self, session: &str) -> Result<Vec<AgoraCommit>>;
+
+    /// Remove one session's durable working-state history.
+    async fn clear_session(&self, session: &str) -> Result<()> {
+        let _ = session;
+        anyhow::bail!("Agora persistence backend does not support durable clear")
+    }
 }
 
 /// Process-lifetime, in-memory commit log.
@@ -33,6 +39,102 @@ pub trait AgoraPersistence: Send + Sync {
 #[derive(Debug, Default)]
 pub struct InMemoryCommitLog {
     entries: Mutex<Vec<(String, AgoraCommit)>>,
+}
+
+/// Durable append-only SQLite commit log used by the installed daemon.
+pub struct SqliteAgoraPersistence {
+    connection: Mutex<rusqlite::Connection>,
+}
+
+impl SqliteAgoraPersistence {
+    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        if let Some(parent) = path.as_ref().parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let connection = rusqlite::Connection::open(path)?;
+        connection.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=FULL;
+             CREATE TABLE IF NOT EXISTS agora_commits (
+                session_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                commit_id TEXT NOT NULL,
+                checksum TEXT NOT NULL,
+                commit_json TEXT NOT NULL,
+                PRIMARY KEY(session_id, version),
+                UNIQUE(session_id, commit_id)
+             );",
+        )?;
+        Ok(Self {
+            connection: Mutex::new(connection),
+        })
+    }
+}
+
+#[async_trait]
+impl AgoraPersistence for SqliteAgoraPersistence {
+    async fn append_commit(&self, session: &str, commit: &AgoraCommit) -> Result<()> {
+        commit.validate_integrity()?;
+        anyhow::ensure!(
+            commit.space.0 == session,
+            "commit persistence space mismatch"
+        );
+        let encoded = serde_json::to_string(commit)?;
+        let connection = self.connection.lock().await;
+        let existing = connection.query_row(
+            "SELECT commit_json FROM agora_commits WHERE session_id=?1 AND commit_id=?2",
+            rusqlite::params![session, commit.id.to_string()],
+            |row| row.get::<_, String>(0),
+        );
+        match existing {
+            Ok(existing) => {
+                anyhow::ensure!(existing == encoded, "workspace commit id collision");
+                return Ok(());
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(error) => return Err(error.into()),
+        }
+        connection.execute(
+            "INSERT INTO agora_commits(session_id, version, commit_id, checksum, commit_json)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                session,
+                commit.version,
+                commit.id.to_string(),
+                commit.checksum,
+                encoded
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn recover(&self, session: &str) -> Result<Vec<AgoraCommit>> {
+        let connection = self.connection.lock().await;
+        let mut statement = connection.prepare(
+            "SELECT commit_json FROM agora_commits WHERE session_id=?1 ORDER BY version ASC",
+        )?;
+        let rows = statement.query_map([session], |row| row.get::<_, String>(0))?;
+        let mut commits = Vec::new();
+        for row in rows {
+            let commit: AgoraCommit = serde_json::from_str(&row?)?;
+            commit.validate_integrity()?;
+            anyhow::ensure!(commit.space.0 == session, "recovered commit space mismatch");
+            anyhow::ensure!(
+                commit.version == commits.len() as u64 + 1,
+                "recovered Agora history is not contiguous"
+            );
+            commits.push(commit);
+        }
+        Ok(commits)
+    }
+
+    async fn clear_session(&self, session: &str) -> Result<()> {
+        self.connection
+            .lock()
+            .await
+            .execute("DELETE FROM agora_commits WHERE session_id=?1", [session])?;
+        Ok(())
+    }
 }
 
 impl InMemoryCommitLog {
@@ -68,6 +170,14 @@ impl AgoraPersistence for InMemoryCommitLog {
             .filter(|(s, _)| s == session)
             .map(|(_, c)| c.clone())
             .collect())
+    }
+
+    async fn clear_session(&self, session: &str) -> Result<()> {
+        self.entries
+            .lock()
+            .await
+            .retain(|(candidate, _)| candidate != session);
+        Ok(())
     }
 }
 
@@ -161,5 +271,33 @@ mod tests {
             serde_json::to_value(&recovered[0]).unwrap(),
             serde_json::to_value(commit).unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn sqlite_commit_log_survives_reopen_and_rejects_tampering() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("agora.db");
+        let c1 = commit(Uuid::new_v4(), 1, "durable", json!(true), 1000);
+        let store = SqliteAgoraPersistence::open(&path).unwrap();
+        store.append_commit("s", &c1).await.unwrap();
+        drop(store);
+
+        let reopened = SqliteAgoraPersistence::open(&path).unwrap();
+        let recovered = reopened.recover("s").await.unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&recovered[0]).unwrap(),
+            serde_json::to_value(&c1).unwrap()
+        );
+        reopened
+            .connection
+            .lock()
+            .await
+            .execute(
+                "UPDATE agora_commits SET commit_json=?1 WHERE session_id='s' AND version=1",
+                ["{}"],
+            )
+            .unwrap();
+        assert!(reopened.recover("s").await.is_err());
     }
 }

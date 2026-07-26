@@ -40,6 +40,7 @@ pub enum CognitiveTaskStatus {
     Pending,
     Running,
     Blocked,
+    Suspended,
     Completed,
     Failed,
     Cancelled,
@@ -317,6 +318,8 @@ pub struct AgoraTaskProjection {
     pub task: CognitiveTaskNode,
     pub artifacts: Vec<CognitiveArtifactEnvelope>,
     pub omitted_artifact_ids: Vec<CognitiveArtifactId>,
+    pub clarification: Option<ClarificationRecord>,
+    pub interruption: Option<CognitiveInterruptionRecord>,
     pub receipt: AgoraProjectionReceipt,
 }
 
@@ -336,6 +339,89 @@ pub struct AgoraProjectionReceipt {
     pub role: CognitiveRole,
     pub included_artifact_ids: Vec<CognitiveArtifactId>,
     pub omitted_artifact_ids: Vec<CognitiveArtifactId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ClarificationId(pub Uuid);
+
+impl ClarificationId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for ClarificationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClarificationState {
+    Pending,
+    Answered,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CognitiveCheckpoint {
+    pub workspace_version: u64,
+    pub task_contract_artifact_ref: Option<CognitiveArtifactId>,
+    pub outstanding_obligations: Vec<String>,
+    pub validation_artifact_refs: Vec<CognitiveArtifactId>,
+    pub runtime_receipt_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClarificationRecord {
+    pub id: ClarificationId,
+    pub task_node_id: CognitiveTaskNodeId,
+    pub requested_by: ProcessId,
+    pub question: String,
+    pub choices: Vec<String>,
+    pub checkpoint: CognitiveCheckpoint,
+    pub state: ClarificationState,
+    pub response: Option<String>,
+    /// Identity of the canonical user-input event that resumed the task.
+    pub response_event_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CognitiveInterruptionId(pub Uuid);
+
+impl CognitiveInterruptionId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for CognitiveInterruptionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CognitiveInterruptionReason {
+    User,
+    DaemonShutdown,
+    ProviderUnavailable,
+    AuthorityRequired,
+    ExternalStateChanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CognitiveInterruptionRecord {
+    pub id: CognitiveInterruptionId,
+    pub task_node_id: CognitiveTaskNodeId,
+    pub owner: ProcessId,
+    pub reason: CognitiveInterruptionReason,
+    pub checkpoint: CognitiveCheckpoint,
+    pub resume_event_id: Option<String>,
 }
 
 #[cfg(test)]

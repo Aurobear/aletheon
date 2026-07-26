@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use fabric::cognitive_workflow::{
-    AgoraProjectionRequest, AgoraTaskProjection, CognitiveArtifactKind, CognitiveRole,
+    AgoraProjectionRequest, AgoraTaskProjection, ClarificationId, ClarificationRecord,
+    CognitiveArtifactKind, CognitiveInterruptionId, CognitiveInterruptionRecord, CognitiveRole,
     CognitiveTaskNode, CognitiveTaskNodeId,
 };
 use fabric::{
@@ -51,6 +52,108 @@ impl CognitiveWorkspaceCoordinator {
         author: ProcessId,
     ) -> Result<u64, CognitiveWorkspaceError> {
         let task_node_id = task.id.clone();
+        self.commit_operation_at(
+            space,
+            expected_version,
+            task_node_id,
+            AgoraOperation::UpsertCognitiveTask { task },
+            author,
+        )
+        .await
+    }
+
+    pub async fn block_for_clarification(
+        &self,
+        space: AgoraSpaceId,
+        expected_version: u64,
+        clarification: ClarificationRecord,
+        owner: ProcessId,
+    ) -> Result<u64, CognitiveWorkspaceError> {
+        let task_node_id = clarification.task_node_id.clone();
+        self.commit_operation_at(
+            space,
+            expected_version,
+            task_node_id,
+            AgoraOperation::BlockForClarification { clarification },
+            owner,
+        )
+        .await
+    }
+
+    /// Apply a response only after Executive has appended the canonical user
+    /// input event and can supply its stable identity.
+    pub async fn resume_from_user_response(
+        &self,
+        space: AgoraSpaceId,
+        task_node_id: CognitiveTaskNodeId,
+        clarification_id: ClarificationId,
+        response: String,
+        response_event_id: String,
+        expected_version: u64,
+        owner: ProcessId,
+    ) -> Result<u64, CognitiveWorkspaceError> {
+        self.commit_operation_at(
+            space,
+            expected_version,
+            task_node_id,
+            AgoraOperation::ResolveClarification {
+                clarification_id,
+                response,
+                response_event_id,
+            },
+            owner,
+        )
+        .await
+    }
+
+    pub async fn checkpoint_interruption(
+        &self,
+        space: AgoraSpaceId,
+        expected_version: u64,
+        interruption: CognitiveInterruptionRecord,
+        owner: ProcessId,
+    ) -> Result<u64, CognitiveWorkspaceError> {
+        let task_node_id = interruption.task_node_id.clone();
+        self.commit_operation_at(
+            space,
+            expected_version,
+            task_node_id,
+            AgoraOperation::CheckpointInterruption { interruption },
+            owner,
+        )
+        .await
+    }
+
+    pub async fn resume_interruption(
+        &self,
+        space: AgoraSpaceId,
+        task_node_id: CognitiveTaskNodeId,
+        interruption_id: CognitiveInterruptionId,
+        resume_event_id: String,
+        expected_version: u64,
+        owner: ProcessId,
+    ) -> Result<u64, CognitiveWorkspaceError> {
+        self.commit_operation_at(
+            space,
+            expected_version,
+            task_node_id,
+            AgoraOperation::ResumeInterruption {
+                interruption_id,
+                resume_event_id,
+            },
+            owner,
+        )
+        .await
+    }
+
+    async fn commit_operation_at(
+        &self,
+        space: AgoraSpaceId,
+        expected_version: u64,
+        task_node_id: CognitiveTaskNodeId,
+        operation: AgoraOperation,
+        author: ProcessId,
+    ) -> Result<u64, CognitiveWorkspaceError> {
         let view = self
             .agora
             .view(fabric::AgoraViewRequest {
@@ -72,7 +175,7 @@ impl CognitiveWorkspaceCoordinator {
             space: space.clone(),
             author,
             base_version: expected_version,
-            operation: AgoraOperation::UpsertCognitiveTask { task },
+            operation,
             evidence: Vec::new(),
             confidence: 1.0,
             expires_at_ms: None,
@@ -222,5 +325,183 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn blocked_checkpoint_survives_restart_and_resumes_same_task() {
+        use fabric::cognitive_workflow::{ClarificationState, CognitiveCheckpoint};
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("agora.db");
+        let owner = ProcessId::new();
+        let clarification_id = ClarificationId::new();
+        {
+            let persistence = Arc::new(agora::SqliteAgoraPersistence::open(&path).unwrap());
+            let agora: Arc<dyn AgoraService> =
+                Arc::new(agora::AgoraRegistry::new_with_persistence(
+                    persistence,
+                    Arc::new(kernel::chronos::TestClock::new(10, 0)),
+                ));
+            let coordinator = CognitiveWorkspaceCoordinator::new(agora);
+            coordinator
+                .commit_task_at(
+                    AgoraSpaceId("durable-session".into()),
+                    0,
+                    task("plan", owner),
+                    owner,
+                )
+                .await
+                .unwrap();
+            coordinator
+                .block_for_clarification(
+                    AgoraSpaceId("durable-session".into()),
+                    1,
+                    ClarificationRecord {
+                        id: clarification_id.clone(),
+                        task_node_id: CognitiveTaskNodeId("plan".into()),
+                        requested_by: owner,
+                        question: "Which contract is authoritative?".into(),
+                        choices: vec!["A".into(), "B".into()],
+                        checkpoint: CognitiveCheckpoint {
+                            workspace_version: 1,
+                            task_contract_artifact_ref: None,
+                            outstanding_obligations: vec!["resolve ambiguity".into()],
+                            validation_artifact_refs: Vec::new(),
+                            runtime_receipt_refs: vec!["receipt://tool/1".into()],
+                        },
+                        state: ClarificationState::Pending,
+                        response: None,
+                        response_event_id: None,
+                    },
+                    owner,
+                )
+                .await
+                .unwrap();
+        }
+
+        let persistence = Arc::new(agora::SqliteAgoraPersistence::open(&path).unwrap());
+        let agora: Arc<dyn AgoraService> = Arc::new(agora::AgoraRegistry::new_with_persistence(
+            persistence,
+            Arc::new(kernel::chronos::TestClock::new(20, 0)),
+        ));
+        let coordinator = CognitiveWorkspaceCoordinator::new(agora);
+        let recovered = coordinator
+            .project_role(
+                AgoraSpaceId("durable-session".into()),
+                CognitiveTaskNodeId("plan".into()),
+                CognitiveRole::Planner,
+                8,
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(recovered.workspace_version, 2);
+        assert_eq!(recovered.task.status, CognitiveTaskStatus::Blocked);
+        let pending = recovered.clarification.unwrap();
+        assert_eq!(pending.id, clarification_id);
+        assert_eq!(
+            pending.checkpoint.runtime_receipt_refs,
+            vec!["receipt://tool/1"]
+        );
+
+        coordinator
+            .resume_from_user_response(
+                AgoraSpaceId("durable-session".into()),
+                CognitiveTaskNodeId("plan".into()),
+                clarification_id,
+                "A is authoritative".into(),
+                "session-item:42".into(),
+                2,
+                owner,
+            )
+            .await
+            .unwrap();
+        let resumed = coordinator
+            .project_role(
+                AgoraSpaceId("durable-session".into()),
+                CognitiveTaskNodeId("plan".into()),
+                CognitiveRole::Planner,
+                8,
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resumed.workspace_version, 3);
+        assert_eq!(resumed.task.status, CognitiveTaskStatus::Running);
+        assert!(resumed.clarification.is_none());
+
+        use fabric::cognitive_workflow::{
+            CognitiveInterruptionId, CognitiveInterruptionReason, CognitiveInterruptionRecord,
+        };
+        let interruption_id = CognitiveInterruptionId::new();
+        coordinator
+            .checkpoint_interruption(
+                AgoraSpaceId("durable-session".into()),
+                3,
+                CognitiveInterruptionRecord {
+                    id: interruption_id.clone(),
+                    task_node_id: CognitiveTaskNodeId("plan".into()),
+                    owner,
+                    reason: CognitiveInterruptionReason::DaemonShutdown,
+                    checkpoint: CognitiveCheckpoint {
+                        workspace_version: 3,
+                        task_contract_artifact_ref: None,
+                        outstanding_obligations: vec!["finish accepted plan".into()],
+                        validation_artifact_refs: Vec::new(),
+                        runtime_receipt_refs: vec!["receipt://runtime/terminal".into()],
+                    },
+                    resume_event_id: None,
+                },
+                owner,
+            )
+            .await
+            .unwrap();
+        drop(coordinator);
+
+        let persistence = Arc::new(agora::SqliteAgoraPersistence::open(&path).unwrap());
+        let agora: Arc<dyn AgoraService> = Arc::new(agora::AgoraRegistry::new_with_persistence(
+            persistence,
+            Arc::new(kernel::chronos::TestClock::new(30, 0)),
+        ));
+        let coordinator = CognitiveWorkspaceCoordinator::new(agora);
+        let interrupted = coordinator
+            .project_role(
+                AgoraSpaceId("durable-session".into()),
+                CognitiveTaskNodeId("plan".into()),
+                CognitiveRole::Planner,
+                8,
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(interrupted.workspace_version, 4);
+        assert_eq!(interrupted.task.status, CognitiveTaskStatus::Suspended);
+        assert_eq!(
+            interrupted.interruption.as_ref().unwrap().id,
+            interruption_id
+        );
+        coordinator
+            .resume_interruption(
+                AgoraSpaceId("durable-session".into()),
+                CognitiveTaskNodeId("plan".into()),
+                interruption_id,
+                "daemon-start:2".into(),
+                4,
+                owner,
+            )
+            .await
+            .unwrap();
+        let resumed_again = coordinator
+            .project_role(
+                AgoraSpaceId("durable-session".into()),
+                CognitiveTaskNodeId("plan".into()),
+                CognitiveRole::Planner,
+                8,
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resumed_again.workspace_version, 5);
+        assert_eq!(resumed_again.task.status, CognitiveTaskStatus::Running);
+        assert!(resumed_again.interruption.is_none());
     }
 }

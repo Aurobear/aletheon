@@ -13,8 +13,9 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::types::cognitive_workflow::{
-    AgoraProjectionRequest, AgoraTaskList, AgoraTaskProjection, CognitiveArtifactEnvelope,
-    CognitiveTaskNode, CognitiveTaskNodeId, StageDecision,
+    AgoraProjectionRequest, AgoraTaskList, AgoraTaskProjection, ClarificationId,
+    ClarificationRecord, CognitiveArtifactEnvelope, CognitiveInterruptionId,
+    CognitiveInterruptionRecord, CognitiveTaskNode, CognitiveTaskNodeId, StageDecision,
 };
 use crate::types::evidence::Evidence;
 use crate::types::operation::ProcessId;
@@ -68,6 +69,25 @@ pub enum AgoraOperation {
     RecordStageDecision {
         task_node_id: CognitiveTaskNodeId,
         decision: StageDecision,
+    },
+    /// Durably suspend one task at an exact cognitive checkpoint.
+    BlockForClarification {
+        clarification: ClarificationRecord,
+    },
+    /// Resume the same task from an identified canonical user response.
+    ResolveClarification {
+        clarification_id: ClarificationId,
+        response: String,
+        response_event_id: String,
+    },
+    /// Persist an interruption checkpoint before releasing runtime resources.
+    CheckpointInterruption {
+        interruption: CognitiveInterruptionRecord,
+    },
+    /// Resume the exact interrupted task from a canonical host event.
+    ResumeInterruption {
+        interruption_id: CognitiveInterruptionId,
+        resume_event_id: String,
     },
 }
 

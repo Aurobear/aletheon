@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabric::cognitive_workflow::{
-    AgoraProjectionRequest, CognitiveArtifactKind, CognitiveRole, CognitiveStage,
+    AgoraProjectionRequest, ClarificationId, ClarificationRecord, ClarificationState,
+    CognitiveArtifactId, CognitiveArtifactKind, CognitiveCheckpoint, CognitiveRole, CognitiveStage,
     CognitiveTaskNode, CognitiveTaskNodeId, CognitiveTaskStatus,
 };
 use fabric::{AgoraOperation, AgoraProposal, AgoraService, AgoraSpaceId, ProcessId};
@@ -34,6 +35,10 @@ impl AgoraTaskTools {
             Arc::new(AgoraTaskTool::new(self.clone(), TaskOperation::Update)),
             Arc::new(AgoraTaskTool::new(self.clone(), TaskOperation::List)),
             Arc::new(AgoraTaskTool::new(self.clone(), TaskOperation::Get)),
+            Arc::new(AgoraTaskTool::new(
+                self.clone(),
+                TaskOperation::RequestUserInput,
+            )),
         ]
     }
 
@@ -50,13 +55,29 @@ impl AgoraTaskTools {
         expected_version: u64,
         task: CognitiveTaskNode,
     ) -> anyhow::Result<Value> {
+        self.commit_operation(
+            context,
+            expected_version,
+            AgoraOperation::UpsertCognitiveTask { task: task.clone() },
+            Some(task),
+        )
+        .await
+    }
+
+    async fn commit_operation(
+        &self,
+        context: &ToolContext,
+        expected_version: u64,
+        operation: AgoraOperation,
+        task: Option<CognitiveTaskNode>,
+    ) -> anyhow::Result<Value> {
         let author = self.author(context);
         let proposal = AgoraProposal {
             id: Uuid::new_v4(),
             space: AgoraSpaceId(context.session_id.clone()),
             author,
             base_version: expected_version,
-            operation: AgoraOperation::UpsertCognitiveTask { task: task.clone() },
+            operation,
             evidence: Vec::new(),
             confidence: 1.0,
             expires_at_ms: None,
@@ -79,6 +100,7 @@ enum TaskOperation {
     Update,
     List,
     Get,
+    RequestUserInput,
 }
 
 struct AgoraTaskTool {
@@ -127,6 +149,7 @@ impl Tool for AgoraTaskTool {
             TaskOperation::Update => "task_update",
             TaskOperation::List => "task_list",
             TaskOperation::Get => "task_get",
+            TaskOperation::RequestUserInput => "request_user_input",
         }
     }
 
@@ -136,6 +159,9 @@ impl Tool for AgoraTaskTool {
             TaskOperation::Update => "Update an Agora task at an exact workspace version",
             TaskOperation::List => "List versioned tasks in the current Agora workspace",
             TaskOperation::Get => "Get one task and its bounded committed Agora artifacts",
+            TaskOperation::RequestUserInput => {
+                "Durably block an Agora task on one explicit user clarification"
+            }
         }
     }
 
@@ -158,7 +184,7 @@ impl Tool for AgoraTaskTool {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
-                    "status": {"type": "string", "enum": ["pending", "in_progress", "blocked", "completed", "failed", "cancelled"]},
+                    "status": {"type": "string", "enum": ["pending", "in_progress", "blocked", "suspended", "completed", "failed", "cancelled"]},
                     "expected_version": {"type": "integer", "minimum": 0}
                 },
                 "required": ["id", "status", "expected_version"]
@@ -173,6 +199,19 @@ impl Tool for AgoraTaskTool {
                 "required": ["id"]
             }),
             TaskOperation::List => json!({"type": "object", "properties": {}}),
+            TaskOperation::RequestUserInput => json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "question": {"type": "string"},
+                    "choices": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
+                    "expected_version": {"type": "integer", "minimum": 0},
+                    "outstanding_obligations": {"type": "array", "items": {"type": "string"}},
+                    "validation_artifact_refs": {"type": "array", "items": {"type": "string", "format": "uuid"}},
+                    "runtime_receipt_refs": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["task_id", "question", "expected_version"]
+            }),
         }
     }
 
@@ -183,7 +222,9 @@ impl Tool for AgoraTaskTool {
     fn concurrency_class(&self) -> ConcurrencyClass {
         match self.operation {
             TaskOperation::List | TaskOperation::Get => ConcurrencyClass::ReadOnly,
-            TaskOperation::Create | TaskOperation::Update => ConcurrencyClass::SideEffect,
+            TaskOperation::Create | TaskOperation::Update | TaskOperation::RequestUserInput => {
+                ConcurrencyClass::SideEffect
+            }
         }
     }
 
@@ -198,6 +239,7 @@ impl Tool for AgoraTaskTool {
             TaskOperation::Update => self.update(input, context).await,
             TaskOperation::List => self.list(context).await,
             TaskOperation::Get => self.get(input, context).await,
+            TaskOperation::RequestUserInput => self.request_user_input(input, context).await,
         };
         Self::result(context, start, result)
     }
@@ -304,6 +346,83 @@ impl AgoraTaskTool {
             .await?;
         Ok(serde_json::to_value(projection)?)
     }
+
+    async fn request_user_input(
+        &self,
+        input: Value,
+        context: &ToolContext,
+    ) -> anyhow::Result<Value> {
+        let task_node_id = CognitiveTaskNodeId(required_string(&input, "task_id")?);
+        let question = required_string(&input, "question")?;
+        let question_for_receipt = question.clone();
+        let expected_version = input
+            .get("expected_version")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| anyhow::anyhow!("expected_version is required"))?;
+        let projection = self
+            .backend
+            .service
+            .project_task(AgoraProjectionRequest {
+                space: AgoraSpaceId(context.session_id.clone()),
+                task_node_id: task_node_id.clone(),
+                role: CognitiveRole::Root,
+                max_artifacts: 64,
+                include_kinds: Vec::new(),
+            })
+            .await?;
+        anyhow::ensure!(
+            projection.workspace_version == expected_version,
+            "version conflict: expected {}, actual {}",
+            expected_version,
+            projection.workspace_version
+        );
+        let contract_ref = projection
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind() == CognitiveArtifactKind::TaskContract)
+            .map(|artifact| artifact.id.clone());
+        let clarification = ClarificationRecord {
+            id: ClarificationId::new(),
+            task_node_id,
+            requested_by: self.backend.author(context),
+            question,
+            choices: string_array(&input, "choices")
+                .into_iter()
+                .take(3)
+                .collect(),
+            checkpoint: CognitiveCheckpoint {
+                workspace_version: expected_version,
+                task_contract_artifact_ref: contract_ref,
+                outstanding_obligations: string_array(&input, "outstanding_obligations"),
+                validation_artifact_refs: string_array(&input, "validation_artifact_refs")
+                    .into_iter()
+                    .map(|value| {
+                        Uuid::parse_str(&value)
+                            .map(CognitiveArtifactId)
+                            .map_err(anyhow::Error::new)
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+                runtime_receipt_refs: string_array(&input, "runtime_receipt_refs"),
+            },
+            state: ClarificationState::Pending,
+            response: None,
+            response_event_id: None,
+        };
+        let clarification_id = clarification.id.clone();
+        let mut receipt = self
+            .backend
+            .commit_operation(
+                context,
+                expected_version,
+                AgoraOperation::BlockForClarification { clarification },
+                None,
+            )
+            .await?;
+        receipt["status"] = json!("blocked");
+        receipt["clarification_id"] = json!(clarification_id);
+        receipt["question"] = json!(question_for_receipt);
+        Ok(receipt)
+    }
 }
 
 fn required_string(input: &Value, key: &str) -> anyhow::Result<String> {
@@ -344,6 +463,7 @@ fn parse_status(value: &str) -> anyhow::Result<CognitiveTaskStatus> {
         "pending" => Ok(CognitiveTaskStatus::Pending),
         "in_progress" => Ok(CognitiveTaskStatus::Running),
         "blocked" => Ok(CognitiveTaskStatus::Blocked),
+        "suspended" => Ok(CognitiveTaskStatus::Suspended),
         "completed" => Ok(CognitiveTaskStatus::Completed),
         "failed" => Ok(CognitiveTaskStatus::Failed),
         "cancelled" => Ok(CognitiveTaskStatus::Cancelled),
@@ -456,5 +576,55 @@ mod tests {
             .await;
         assert!(stale.is_error);
         assert!(stale.content.contains("version conflict"));
+    }
+
+    #[tokio::test]
+    async fn request_user_input_blocks_exact_task_with_checkpoint() {
+        let service: Arc<dyn AgoraService> = Arc::new(agora::AgoraRegistry::new(Arc::new(
+            kernel::chronos::TestClock::default(),
+        )));
+        let tools = AgoraTaskTools::new(service.clone(), ProcessId::new()).tools();
+        tools
+            .iter()
+            .find(|tool| tool.name() == "task_create")
+            .unwrap()
+            .execute(
+                json!({"id": "ambiguous", "subject": "Choose", "description": "material behavior"}),
+                &context("root-turn-c"),
+            )
+            .await;
+        let result = tools
+            .iter()
+            .find(|tool| tool.name() == "request_user_input")
+            .unwrap()
+            .execute(
+                json!({
+                    "task_id": "ambiguous",
+                    "question": "Which behavior is authoritative?",
+                    "choices": ["spec", "code"],
+                    "expected_version": 1,
+                    "outstanding_obligations": ["resolve conflict"]
+                }),
+                &context("root-turn-c"),
+            )
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+        let projection = service
+            .project_task(AgoraProjectionRequest {
+                space: AgoraSpaceId("root-turn-c".into()),
+                task_node_id: CognitiveTaskNodeId("ambiguous".into()),
+                role: CognitiveRole::Root,
+                max_artifacts: 8,
+                include_kinds: Vec::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(projection.task.status, CognitiveTaskStatus::Blocked);
+        let clarification = projection.clarification.unwrap();
+        assert_eq!(clarification.checkpoint.workspace_version, 1);
+        assert_eq!(
+            clarification.checkpoint.outstanding_obligations,
+            vec!["resolve conflict"]
+        );
     }
 }

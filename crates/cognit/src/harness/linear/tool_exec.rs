@@ -342,6 +342,7 @@ impl ReActLoop {
             // Anthropic API requires ALL tool_result blocks for a given
             // assistant(tool_use) message to be in ONE subsequent user message.
             let mut tool_result_blocks: Vec<ContentBlock> = Vec::new();
+            let mut clarification_requested: Option<String> = None;
 
             let result_budget = per_result_budget(ordered_calls.len());
             for (tool_index, (id, name, input)) in ordered_calls.iter().enumerate() {
@@ -524,6 +525,9 @@ impl ReActLoop {
                 }
                 self.observe_change_transaction(name, id, &content, is_error);
                 self.observe_managed_command(name, id, &content, is_error);
+                if name == "request_user_input" && !is_error {
+                    clarification_requested = clarification_question(&content);
+                }
 
                 event_sink.emit(Event::ToolResult {
                     name: name.clone(),
@@ -639,6 +643,24 @@ impl ReActLoop {
             // as an independent synthetic user message in FIFO order.
             self.messages
                 .extend(drain_interjections().await?.into_iter().map(Message::user));
+
+            if let Some(question) = clarification_requested {
+                let outcome = format!("Waiting for user clarification: {question}");
+                event_sink.emit(Event::TurnDone {
+                    result: Ok(outcome.clone()),
+                });
+                return Ok((
+                    outcome,
+                    TurnMetrics {
+                        tool_calls_made,
+                        tool_errors,
+                        elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
+                        iterations: self.iteration,
+                        completed_normally: false,
+                        stop: fabric::TurnStop::Blocked,
+                    },
+                ));
+            }
 
             // Check if reflection recommended stopping.
             if self.reflection_engine.should_stop() {
@@ -1014,6 +1036,12 @@ fn change_transaction_observation(
             .and_then(|value| value.as_str())
             .map(str::to_string),
     })
+}
+
+fn clarification_question(content: &str) -> Option<String> {
+    let payload: serde_json::Value = serde_json::from_str(content).ok()?;
+    (payload.get("status")?.as_str()? == "blocked")
+        .then(|| payload.get("question")?.as_str().map(str::to_owned))?
 }
 
 #[cfg(test)]
