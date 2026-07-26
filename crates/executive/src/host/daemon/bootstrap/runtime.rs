@@ -55,6 +55,8 @@ pub(super) const UNIVERSAL_TOOLS: &[&str] = &[
     "task_update",
     "task_list",
     "task_get",
+    "skill_list",
+    "skill_get",
 ];
 
 pub(super) async fn load_agent_profiles(
