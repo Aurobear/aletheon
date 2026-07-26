@@ -216,8 +216,15 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         "rendered_frame": cap.get("frame", ""),
         "stable": cap.get("stable"),
         "prompt_visible": cap.get("prompt_visible"),
-        "completion": f"heuristic (settled {settle_secs}s beyond input echo; "
-                      "may be mid-turn if an inter-step gap exceeds that)",
+        "turn_done_count": cap.get("turn_done_count"),
+        "completion_source": cap.get("completion_source"),
+        "event_path": cap.get("event_path"),
+        "event_evidence": cap.get("event_evidence"),
+        "completion": (
+            "authoritative client_event:turn_done with durable event evidence"
+            if cap.get("turn_done") is True
+            else f"heuristic (settled {settle_secs}s beyond input echo; may be mid-turn)"
+        ),
         "tui_checks": cap.get("checks", []),
         "daemon": {"analyze": daemon_analyze, "logs": daemon_logs},
         "audit_tail": audit_tail,

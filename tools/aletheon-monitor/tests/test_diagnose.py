@@ -44,6 +44,10 @@ def test_diagnose_creates_fresh_session_before_task(monkeypatch):
             "frame": "answer\n❯",
             "stable": True,
             "turn_done": True,
+            "turn_done_count": 1,
+            "completion_source": "client_event:turn_done",
+            "event_path": "/tmp/events.jsonl",
+            "event_evidence": {"sha256": "abc"},
             "prompt_visible": True,
             "checks": [],
         }
@@ -66,9 +70,12 @@ def test_diagnose_creates_fresh_session_before_task(monkeypatch):
     monkeypatch.setattr(diag.logs_mod, "logs", logs)
     monkeypatch.setattr(diag, "_audit_tail", lambda: [])
 
-    asyncio.run(diag.diagnose(client=None, task="inspect"))
+    result = asyncio.run(diag.diagnose(client=None, task="inspect"))
 
     assert sent == ["/new", "inspect"]
+    assert result["completion_source"] == "client_event:turn_done"
+    assert result["event_path"] == "/tmp/events.jsonl"
+    assert result["event_evidence"] == {"sha256": "abc"}
 
 
 def test_expected_cwd_uses_authoritative_tmux_launch_state(monkeypatch, tmp_path):
