@@ -433,6 +433,20 @@ impl Workspace {
                         "task ownership requires an explicit handoff operation"
                     );
                     anyhow::ensure!(
+                        task.role == existing.role
+                            && task.role_profile == existing.role_profile
+                            && task.budget == existing.budget
+                            && task.workspace_scope == existing.workspace_scope,
+                        "task role authority requires an explicit handoff operation"
+                    );
+                    anyhow::ensure!(
+                        task.objective == existing.objective
+                            && task.dependencies == existing.dependencies
+                            && task.acceptance_criteria == existing.acceptance_criteria
+                            && task.required_artifact_kinds == existing.required_artifact_kinds,
+                        "task contract metadata is immutable after creation"
+                    );
+                    anyhow::ensure!(
                         task.artifact_refs == existing.artifact_refs,
                         "task updates cannot rewrite committed artifact references"
                     );
@@ -906,12 +920,15 @@ impl Workspace {
             .max_artifacts
             .min(role_profile.context_projection.max_artifacts)
             .min(64);
+        let omit_count = candidates.len().saturating_sub(limit);
         let omitted_artifact_ids = candidates
             .iter()
-            .skip(limit)
+            .take(omit_count)
             .map(|artifact| artifact.id.clone())
             .collect::<Vec<_>>();
-        candidates.truncate(limit);
+        if omit_count > 0 {
+            candidates.drain(..omit_count);
+        }
         let included_artifact_ids = candidates
             .iter()
             .map(|artifact| artifact.id.clone())

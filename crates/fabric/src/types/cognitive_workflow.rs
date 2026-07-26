@@ -180,6 +180,8 @@ impl CognitiveRoleProfile {
                 vec![
                     CognitiveArtifactKind::TaskContract,
                     CognitiveArtifactKind::ChangeSet,
+                    CognitiveArtifactKind::Review,
+                    CognitiveArtifactKind::Evidence,
                 ],
                 vec![CognitiveArtifactKind::Validation],
                 false,

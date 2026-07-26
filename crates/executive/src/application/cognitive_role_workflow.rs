@@ -177,6 +177,41 @@ pub struct CodingWorkflowReceipt {
     pub operation_ids: Vec<OperationId>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AcceptanceWorkflowRequest {
+    pub space: AgoraSpaceId,
+    pub task_node_id: CognitiveTaskNodeId,
+    pub expected_workspace_version: u64,
+    pub current_owner: ProcessId,
+    pub workspace_scope: Vec<String>,
+    pub project_instructions: Vec<String>,
+    pub allowed_capabilities: Vec<fabric::AgentRuntimeCapability>,
+    pub expected_evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AcceptanceWorkflowReceipt {
+    pub workspace_version: u64,
+    pub current_owner: ProcessId,
+    pub validation_artifact_ids: Vec<fabric::cognitive_workflow::CognitiveArtifactId>,
+    pub review_artifact_ids: Vec<fabric::cognitive_workflow::CognitiveArtifactId>,
+    pub repair_artifact_ids: Vec<fabric::cognitive_workflow::CognitiveArtifactId>,
+    pub resolved_finding_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FullCodingWorkflowReceipt {
+    pub coding: CodingWorkflowReceipt,
+    pub acceptance: AcceptanceWorkflowReceipt,
+}
+
+struct PreparedRole {
+    packet: AgentTaskPacket,
+    terminal: RoleInvocationTerminal,
+    envelope: CognitiveArtifactEnvelope,
+    bound_version: u64,
+}
+
 pub struct CognitiveRoleWorkflow {
     workspace: Arc<CognitiveWorkspaceCoordinator>,
     invoker: Arc<dyn CognitiveRoleInvoker>,
@@ -257,6 +292,7 @@ impl CognitiveRoleWorkflow {
                 },
             };
             let terminal = self.invoker.invoke(packet.clone(), binding).await?;
+            terminal.output.validate_for(&packet)?;
             version = version.saturating_add(1); // bind-before-launch commit
             let envelope = CognitiveArtifactEnvelope::proposed(
                 request.space.clone(),
@@ -322,6 +358,463 @@ impl CognitiveRoleWorkflow {
             artifact_ids,
             operation_ids,
         })
+    }
+
+    pub async fn run_full_coding_workflow(
+        &self,
+        coding: CodingWorkflowRequest,
+    ) -> anyhow::Result<FullCodingWorkflowReceipt> {
+        let acceptance_template = AcceptanceWorkflowRequest {
+            space: coding.space.clone(),
+            task_node_id: coding.task_node_id.clone(),
+            expected_workspace_version: 0,
+            current_owner: coding.current_owner,
+            workspace_scope: coding.workspace_scope.clone(),
+            project_instructions: coding.project_instructions.clone(),
+            allowed_capabilities: coding.allowed_capabilities.clone(),
+            expected_evidence: coding.expected_evidence.clone(),
+        };
+        let coding = self.run_planner_explorer_executor(coding).await?;
+        let acceptance = self
+            .run_reviewer_tester_fixer(AcceptanceWorkflowRequest {
+                expected_workspace_version: coding.workspace_version,
+                current_owner: coding.current_owner,
+                ..acceptance_template
+            })
+            .await?;
+        Ok(FullCodingWorkflowReceipt { coding, acceptance })
+    }
+
+    pub async fn run_reviewer_tester_fixer(
+        &self,
+        request: AcceptanceWorkflowRequest,
+    ) -> anyhow::Result<AcceptanceWorkflowReceipt> {
+        let mut version = request.expected_workspace_version;
+        let mut owner = request.current_owner;
+        let mut validation_artifact_ids = Vec::new();
+        let mut review_artifact_ids = Vec::new();
+        let mut repair_artifact_ids = Vec::new();
+        let mut resolved_finding_ids = Vec::new();
+
+        let mut validation = self
+            .invoke_acceptance_role(&request, version, owner, CognitiveRole::Tester)
+            .await?;
+        version = validation.bound_version;
+        let validation_record =
+            validate_validation_artifact(&validation.packet, &validation.envelope)?;
+        let validation_passed = validation_record.passed;
+        let validation_id = validation.envelope.id.clone();
+        version = self
+            .workspace
+            .commit_artifact_at(
+                request.space.clone(),
+                version,
+                validation.envelope,
+                validation.terminal.process_id,
+            )
+            .await
+            .map_err(workspace_error)?;
+        owner = validation.terminal.process_id;
+        validation_artifact_ids.push(validation_id.clone());
+
+        if !validation_passed {
+            let finding = format!("validation:{}", validation_id.0);
+            version = self
+                .set_unresolved_findings(&request, version, owner, vec![finding.clone()])
+                .await?;
+            version = self
+                .record_decision(
+                    &request,
+                    version,
+                    owner,
+                    StageDecisionKind::Repair,
+                    "terminal validation failed",
+                    vec![finding.clone()],
+                    vec![validation_id.0.to_string()],
+                )
+                .await?;
+            let repair = self
+                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Fixer)
+                .await?;
+            version = repair.bound_version;
+            validate_fixer_artifact(&repair.packet, &repair.envelope, &[finding.clone()])?;
+            let repair_id = repair.envelope.id.clone();
+            version = self
+                .workspace
+                .commit_artifact_at(
+                    request.space.clone(),
+                    version,
+                    repair.envelope,
+                    repair.terminal.process_id,
+                )
+                .await
+                .map_err(workspace_error)?;
+            owner = repair.terminal.process_id;
+            repair_artifact_ids.push(repair_id.clone());
+            version = self
+                .record_decision(
+                    &request,
+                    version,
+                    owner,
+                    StageDecisionKind::Accept,
+                    "bounded validation repair committed",
+                    vec![finding.clone()],
+                    vec![repair_id.0.to_string()],
+                )
+                .await?;
+            validation = self
+                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Tester)
+                .await?;
+            version = validation.bound_version;
+            let record = validate_validation_artifact(&validation.packet, &validation.envelope)?;
+            anyhow::ensure!(
+                record.passed,
+                "validation still fails after the bounded repair"
+            );
+            let id = validation.envelope.id.clone();
+            version = self
+                .workspace
+                .commit_artifact_at(
+                    request.space.clone(),
+                    version,
+                    validation.envelope,
+                    validation.terminal.process_id,
+                )
+                .await
+                .map_err(workspace_error)?;
+            owner = validation.terminal.process_id;
+            validation_artifact_ids.push(id.clone());
+            version = self
+                .record_decision(
+                    &request,
+                    version,
+                    owner,
+                    StageDecisionKind::Accept,
+                    "terminal validation passed after repair",
+                    vec![finding.clone()],
+                    vec![id.0.to_string()],
+                )
+                .await?;
+            resolved_finding_ids.push(finding);
+        } else {
+            version = self
+                .record_decision(
+                    &request,
+                    version,
+                    owner,
+                    StageDecisionKind::Accept,
+                    "terminal validation passed",
+                    Vec::new(),
+                    vec![validation_id.0.to_string()],
+                )
+                .await?;
+        }
+
+        let review = self
+            .invoke_acceptance_role(&request, version, owner, CognitiveRole::Reviewer)
+            .await?;
+        version = review.bound_version;
+        let findings = validate_review_artifact(&review.packet, &review.envelope, None)?;
+        let unresolved = findings
+            .iter()
+            .filter(|finding| !finding.resolved)
+            .map(|finding| finding.id.clone())
+            .collect::<Vec<_>>();
+        let review_id = review.envelope.id.clone();
+        version = self
+            .workspace
+            .commit_artifact_at(
+                request.space.clone(),
+                version,
+                review.envelope,
+                review.terminal.process_id,
+            )
+            .await
+            .map_err(workspace_error)?;
+        owner = review.terminal.process_id;
+        review_artifact_ids.push(review_id.clone());
+        if unresolved.is_empty() {
+            version = self
+                .set_unresolved_findings(&request, version, owner, Vec::new())
+                .await?;
+            version = self
+                .record_decision(
+                    &request,
+                    version,
+                    owner,
+                    StageDecisionKind::Accept,
+                    "independent review accepted the exact validated change",
+                    Vec::new(),
+                    vec![review_id.0.to_string()],
+                )
+                .await?;
+        } else {
+            version = self
+                .set_unresolved_findings(&request, version, owner, unresolved.clone())
+                .await?;
+            version = self
+                .record_decision(
+                    &request,
+                    version,
+                    owner,
+                    StageDecisionKind::Repair,
+                    "independent review rejected the change",
+                    unresolved.clone(),
+                    vec![review_id.0.to_string()],
+                )
+                .await?;
+            let repair = self
+                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Fixer)
+                .await?;
+            version = repair.bound_version;
+            validate_fixer_artifact(&repair.packet, &repair.envelope, &unresolved)?;
+            let repair_id = repair.envelope.id.clone();
+            version = self
+                .workspace
+                .commit_artifact_at(
+                    request.space.clone(),
+                    version,
+                    repair.envelope,
+                    repair.terminal.process_id,
+                )
+                .await
+                .map_err(workspace_error)?;
+            owner = repair.terminal.process_id;
+            repair_artifact_ids.push(repair_id.clone());
+            version = self
+                .record_decision(
+                    &request,
+                    version,
+                    owner,
+                    StageDecisionKind::Accept,
+                    "bounded review repair committed with preserved finding identities",
+                    unresolved.clone(),
+                    vec![repair_id.0.to_string()],
+                )
+                .await?;
+
+            let validation = self
+                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Tester)
+                .await?;
+            version = validation.bound_version;
+            let validation_record =
+                validate_validation_artifact(&validation.packet, &validation.envelope)?;
+            anyhow::ensure!(
+                validation_record.passed,
+                "repaired change failed terminal validation"
+            );
+            let validation_id = validation.envelope.id.clone();
+            version = self
+                .workspace
+                .commit_artifact_at(
+                    request.space.clone(),
+                    version,
+                    validation.envelope,
+                    validation.terminal.process_id,
+                )
+                .await
+                .map_err(workspace_error)?;
+            owner = validation.terminal.process_id;
+            validation_artifact_ids.push(validation_id.clone());
+            version = self
+                .record_decision(
+                    &request,
+                    version,
+                    owner,
+                    StageDecisionKind::Accept,
+                    "repaired change passed terminal validation",
+                    unresolved.clone(),
+                    vec![validation_id.0.to_string()],
+                )
+                .await?;
+
+            let rereview = self
+                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Reviewer)
+                .await?;
+            version = rereview.bound_version;
+            let rereview_findings =
+                validate_review_artifact(&rereview.packet, &rereview.envelope, Some(&unresolved))?;
+            anyhow::ensure!(
+                rereview_findings.iter().all(|finding| finding.resolved),
+                "re-review did not resolve every preserved finding"
+            );
+            let rereview_id = rereview.envelope.id.clone();
+            version = self
+                .workspace
+                .commit_artifact_at(
+                    request.space.clone(),
+                    version,
+                    rereview.envelope,
+                    rereview.terminal.process_id,
+                )
+                .await
+                .map_err(workspace_error)?;
+            owner = rereview.terminal.process_id;
+            review_artifact_ids.push(rereview_id.clone());
+            version = self
+                .set_unresolved_findings(&request, version, owner, Vec::new())
+                .await?;
+            version = self
+                .record_decision(
+                    &request,
+                    version,
+                    owner,
+                    StageDecisionKind::Accept,
+                    "independent re-review resolved every preserved finding",
+                    unresolved.clone(),
+                    vec![rereview_id.0.to_string()],
+                )
+                .await?;
+            resolved_finding_ids.extend(unresolved);
+        }
+
+        Ok(AcceptanceWorkflowReceipt {
+            workspace_version: version,
+            current_owner: owner,
+            validation_artifact_ids,
+            review_artifact_ids,
+            repair_artifact_ids,
+            resolved_finding_ids,
+        })
+    }
+
+    async fn invoke_acceptance_role(
+        &self,
+        request: &AcceptanceWorkflowRequest,
+        version: u64,
+        owner: ProcessId,
+        role: CognitiveRole,
+    ) -> anyhow::Result<PreparedRole> {
+        let profile = CognitiveRoleProfile::canonical(role);
+        let projection = self
+            .workspace
+            .project_role(
+                request.space.clone(),
+                request.task_node_id.clone(),
+                role,
+                profile.context_projection.max_artifacts,
+                Vec::new(),
+            )
+            .await?;
+        anyhow::ensure!(
+            projection.workspace_version == version,
+            "acceptance projection became stale before role launch"
+        );
+        let mut task = projection.task.clone();
+        task.role = role;
+        task.role_profile = profile.reference.clone();
+        task.budget = profile.budget.clone();
+        task.workspace_scope = if role.can_write_workspace() {
+            request.workspace_scope.clone()
+        } else {
+            Vec::new()
+        };
+        let packet = AgentTaskPacket {
+            schema_version: 1,
+            task,
+            role_profile: profile.clone(),
+            project_instructions: request.project_instructions.clone(),
+            workspace_roots: request.workspace_scope.clone(),
+            allowed_capabilities: request.allowed_capabilities.clone(),
+            expected_evidence: request.expected_evidence.clone(),
+            acceptance_criteria: projection.task.acceptance_criteria.clone(),
+            selected_artifacts: projection.artifacts,
+            projection_receipt: projection.receipt,
+        };
+        packet.validate()?;
+        let terminal = self
+            .invoker
+            .invoke(
+                packet.clone(),
+                CognitiveTaskRuntimeBinding {
+                    space: request.space.clone(),
+                    task_node_id: request.task_node_id.clone(),
+                    expected_workspace_version: version,
+                    expected_owner: owner,
+                    role,
+                    role_profile: profile.reference,
+                    budget: profile.budget,
+                    workspace_scope: if role.can_write_workspace() {
+                        request.workspace_scope.clone()
+                    } else {
+                        Vec::new()
+                    },
+                },
+            )
+            .await?;
+        terminal.output.validate_for(&packet)?;
+        let envelope = CognitiveArtifactEnvelope::proposed(
+            request.space.clone(),
+            request.task_node_id.clone(),
+            terminal.process_id,
+            terminal.output.source_versions.clone(),
+            terminal.output.evidence_refs.clone(),
+            terminal.output.confidence,
+            terminal.output.artifact.clone(),
+        )?;
+        Ok(PreparedRole {
+            packet,
+            terminal,
+            envelope,
+            bound_version: version.saturating_add(1),
+        })
+    }
+
+    async fn set_unresolved_findings(
+        &self,
+        request: &AcceptanceWorkflowRequest,
+        version: u64,
+        owner: ProcessId,
+        finding_ids: Vec<String>,
+    ) -> anyhow::Result<u64> {
+        let projection = self
+            .workspace
+            .project_role(
+                request.space.clone(),
+                request.task_node_id.clone(),
+                CognitiveRole::Root,
+                0,
+                Vec::new(),
+            )
+            .await?;
+        anyhow::ensure!(
+            projection.workspace_version == version,
+            "finding update projection is stale"
+        );
+        let mut task = projection.task;
+        task.unresolved_finding_ids = finding_ids;
+        self.workspace
+            .commit_task_at(request.space.clone(), version, task, owner)
+            .await
+            .map_err(workspace_error)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn record_decision(
+        &self,
+        request: &AcceptanceWorkflowRequest,
+        version: u64,
+        owner: ProcessId,
+        decision: StageDecisionKind,
+        reason: &str,
+        finding_ids: Vec<String>,
+        evidence_refs: Vec<String>,
+    ) -> anyhow::Result<u64> {
+        self.workspace
+            .record_stage_decision_at(
+                request.space.clone(),
+                version,
+                request.task_node_id.clone(),
+                StageDecision {
+                    decision,
+                    reason: reason.into(),
+                    finding_ids,
+                    evidence_refs,
+                },
+                owner,
+            )
+            .await
+            .map_err(workspace_error)
     }
 }
 
@@ -412,6 +905,113 @@ fn validate_stage_artifact(
     Ok(())
 }
 
+fn latest_change_set(
+    packet: &AgentTaskPacket,
+) -> anyhow::Result<&fabric::cognitive_workflow::CognitiveChangeSetReceipt> {
+    packet
+        .selected_artifacts
+        .iter()
+        .rev()
+        .find_map(|artifact| match &artifact.artifact {
+            CognitiveArtifact::ChangeSet(change) => Some(change),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::anyhow!("acceptance role requires an exact committed change set"))
+}
+
+fn validate_validation_artifact<'a>(
+    packet: &AgentTaskPacket,
+    envelope: &'a CognitiveArtifactEnvelope,
+) -> anyhow::Result<&'a fabric::cognitive_workflow::CognitiveValidationRecord> {
+    let change = latest_change_set(packet)?;
+    let CognitiveArtifact::Validation(validation) = &envelope.artifact else {
+        anyhow::bail!("tester returned the wrong typed artifact")
+    };
+    anyhow::ensure!(
+        validation.transaction_id == change.transaction_id
+            && validation.workspace_version == change.workspace_version,
+        "validation targets a stale change-set version"
+    );
+    anyhow::ensure!(
+        !validation.validation_receipt_refs.is_empty(),
+        "validation has no authoritative terminal receipts"
+    );
+    Ok(validation)
+}
+
+fn validate_review_artifact<'a>(
+    packet: &AgentTaskPacket,
+    envelope: &'a CognitiveArtifactEnvelope,
+    expected_finding_ids: Option<&[String]>,
+) -> anyhow::Result<&'a [fabric::cognitive_workflow::ReviewFinding]> {
+    let change = latest_change_set(packet)?;
+    let CognitiveArtifact::Review(review) = &envelope.artifact else {
+        anyhow::bail!("reviewer returned the wrong typed artifact")
+    };
+    anyhow::ensure!(
+        review.transaction_id == change.transaction_id
+            && review.workspace_version == change.workspace_version,
+        "review targets a stale change-set version"
+    );
+    let mut ids = std::collections::HashSet::new();
+    anyhow::ensure!(
+        review.findings.iter().all(|finding| {
+            !finding.id.trim().is_empty()
+                && !finding.summary.trim().is_empty()
+                && !finding.evidence_refs.is_empty()
+                && ids.insert(finding.id.clone())
+        }),
+        "review contains invalid or duplicate typed findings"
+    );
+    if let Some(expected) = expected_finding_ids {
+        let actual = review
+            .findings
+            .iter()
+            .map(|finding| finding.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let expected = expected
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        anyhow::ensure!(
+            actual == expected,
+            "re-review lost or duplicated preserved finding identities"
+        );
+    }
+    Ok(&review.findings)
+}
+
+fn validate_fixer_artifact(
+    packet: &AgentTaskPacket,
+    envelope: &CognitiveArtifactEnvelope,
+    finding_ids: &[String],
+) -> anyhow::Result<()> {
+    let previous = latest_change_set(packet)?;
+    let CognitiveArtifact::ChangeSet(repair) = &envelope.artifact else {
+        anyhow::bail!("fixer returned the wrong typed artifact")
+    };
+    anyhow::ensure!(
+        repair.transaction_id != previous.transaction_id
+            && !repair.workspace_version.trim().is_empty()
+            && !repair.diff_artifact_ref.trim().is_empty(),
+        "fixer did not produce a new exact change transaction"
+    );
+    anyhow::ensure!(
+        finding_ids.iter().all(|finding| envelope
+            .evidence_refs
+            .contains(&format!("finding:{finding}"))),
+        "fixer output is not bound to every rejected finding"
+    );
+    anyhow::ensure!(
+        repair
+            .changed_paths
+            .iter()
+            .all(|path| path_is_within_roots(path, &packet.workspace_roots)),
+        "fixer changed a path outside the owned scope"
+    );
+    Ok(())
+}
+
 fn path_is_within_roots(path: &str, roots: &[String]) -> bool {
     use std::path::Component;
     let path = std::path::Path::new(path);
@@ -438,6 +1038,131 @@ mod tests {
         workspace: Arc<CognitiveWorkspaceCoordinator>,
         roles: Mutex<Vec<CognitiveRole>>,
         incomplete_plan: bool,
+    }
+
+    struct AcceptanceInvoker {
+        workspace: Arc<CognitiveWorkspaceCoordinator>,
+        roles: Mutex<Vec<CognitiveRole>>,
+        reject_first_review: bool,
+        fail_first_validation: bool,
+        review_calls: Mutex<usize>,
+        validation_calls: Mutex<usize>,
+        repair_calls: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl CognitiveRoleInvoker for AcceptanceInvoker {
+        async fn invoke(
+            &self,
+            packet: AgentTaskPacket,
+            binding: CognitiveTaskRuntimeBinding,
+        ) -> anyhow::Result<RoleInvocationTerminal> {
+            let process_id = ProcessId::new();
+            crate::application::agent_control::CognitiveTaskAdmissionPort::bind_before_launch(
+                self.workspace.as_ref(),
+                binding,
+                process_id,
+            )
+            .await
+            .map_err(anyhow::Error::new)?;
+            let role = packet.role_profile.role;
+            self.roles.lock().await.push(role);
+            let change = packet
+                .selected_artifacts
+                .iter()
+                .rev()
+                .find_map(|artifact| match &artifact.artifact {
+                    CognitiveArtifact::ChangeSet(change) => Some(change.clone()),
+                    _ => None,
+                })
+                .ok_or_else(|| anyhow::anyhow!("scripted acceptance role has no change"))?;
+            let (artifact, evidence_refs) = match role {
+                CognitiveRole::Tester => {
+                    let mut calls = self.validation_calls.lock().await;
+                    *calls += 1;
+                    let passed = !(self.fail_first_validation && *calls == 1);
+                    (
+                        CognitiveArtifact::Validation(CognitiveValidationRecord {
+                            transaction_id: change.transaction_id,
+                            workspace_version: change.workspace_version,
+                            validation_receipt_refs: vec![format!("receipt://validation/{calls}")],
+                            passed,
+                        }),
+                        vec![format!("receipt://validation/{calls}")],
+                    )
+                }
+                CognitiveRole::Reviewer => {
+                    let mut calls = self.review_calls.lock().await;
+                    *calls += 1;
+                    let findings = if self.reject_first_review && *calls == 1 {
+                        vec![ReviewFinding {
+                            id: "review-1".into(),
+                            severity: "high".into(),
+                            summary: "missing boundary validation".into(),
+                            evidence_refs: vec!["artifact://diff/line-1".into()],
+                            resolved: false,
+                        }]
+                    } else {
+                        packet
+                            .task
+                            .unresolved_finding_ids
+                            .iter()
+                            .map(|id| ReviewFinding {
+                                id: id.clone(),
+                                severity: "high".into(),
+                                summary: "verified repaired boundary".into(),
+                                evidence_refs: vec!["receipt://rereview".into()],
+                                resolved: true,
+                            })
+                            .collect()
+                    };
+                    (
+                        CognitiveArtifact::Review(ReviewFindingSet {
+                            transaction_id: change.transaction_id,
+                            workspace_version: change.workspace_version,
+                            findings,
+                        }),
+                        vec!["receipt://review".into()],
+                    )
+                }
+                CognitiveRole::Fixer => {
+                    let mut calls = self.repair_calls.lock().await;
+                    *calls += 1;
+                    let evidence_refs = packet
+                        .task
+                        .unresolved_finding_ids
+                        .iter()
+                        .map(|id| format!("finding:{id}"))
+                        .collect();
+                    (
+                        CognitiveArtifact::ChangeSet(CognitiveChangeSetReceipt {
+                            transaction_id: format!("repair-{calls}"),
+                            workspace_version: format!("tree-repair-{calls}"),
+                            changed_paths: vec!["crates/a/src/lib.rs".into()],
+                            diff_artifact_ref: format!("artifact://repair/{calls}"),
+                        }),
+                        evidence_refs,
+                    )
+                }
+                role => anyhow::bail!("unexpected acceptance role {role:?}"),
+            };
+            Ok(RoleInvocationTerminal {
+                process_id,
+                operation_id: OperationId::new(),
+                output: CognitiveRoleOutput {
+                    schema_version: 1,
+                    projection_id: packet.projection_receipt.projection_id,
+                    workspace_version: packet.projection_receipt.workspace_version,
+                    source_versions: vec![format!(
+                        "agora:{}",
+                        packet.projection_receipt.workspace_version
+                    )],
+                    evidence_refs,
+                    confidence: 1.0,
+                    artifact,
+                },
+            })
+        }
     }
 
     #[async_trait]
@@ -596,6 +1321,19 @@ mod tests {
         }
     }
 
+    fn acceptance_request(receipt: &CodingWorkflowReceipt) -> AcceptanceWorkflowRequest {
+        AcceptanceWorkflowRequest {
+            space: AgoraSpaceId("workflow".into()),
+            task_node_id: CognitiveTaskNodeId("coding".into()),
+            expected_workspace_version: receipt.workspace_version,
+            current_owner: receipt.current_owner,
+            workspace_scope: vec!["crates/a".into()],
+            project_instructions: vec!["AGENTS.md".into()],
+            allowed_capabilities: vec![fabric::AgentRuntimeCapability::Test],
+            expected_evidence: vec!["terminal validation receipt".into()],
+        }
+    }
+
     #[tokio::test]
     async fn typed_planner_explorer_executor_handoffs_pass_each_gate() {
         let (workflow, workspace, invoker, owner) = fixture(false).await;
@@ -653,5 +1391,90 @@ mod tests {
         assert_eq!(projection.workspace_version, 4);
         assert_eq!(projection.artifacts.len(), 1);
         assert_eq!(projection.task.role, CognitiveRole::Planner);
+    }
+
+    #[tokio::test]
+    async fn reviewer_rejection_repairs_retests_and_preserves_finding_identity() {
+        let (coding, workspace, _, owner) = fixture(false).await;
+        let coding_receipt = coding
+            .run_planner_explorer_executor(request(owner))
+            .await
+            .unwrap();
+        let invoker = Arc::new(AcceptanceInvoker {
+            workspace: workspace.clone(),
+            roles: Mutex::new(Vec::new()),
+            reject_first_review: true,
+            fail_first_validation: false,
+            review_calls: Mutex::new(0),
+            validation_calls: Mutex::new(0),
+            repair_calls: Mutex::new(0),
+        });
+        let acceptance = CognitiveRoleWorkflow::new(workspace.clone(), invoker.clone());
+        let receipt = acceptance
+            .run_reviewer_tester_fixer(acceptance_request(&coding_receipt))
+            .await
+            .unwrap();
+        assert_eq!(receipt.workspace_version, 28);
+        assert_eq!(receipt.resolved_finding_ids, vec!["review-1"]);
+        assert_eq!(receipt.validation_artifact_ids.len(), 2);
+        assert_eq!(receipt.review_artifact_ids.len(), 2);
+        assert_eq!(receipt.repair_artifact_ids.len(), 1);
+        assert_eq!(
+            *invoker.roles.lock().await,
+            vec![
+                CognitiveRole::Tester,
+                CognitiveRole::Reviewer,
+                CognitiveRole::Fixer,
+                CognitiveRole::Tester,
+                CognitiveRole::Reviewer,
+            ]
+        );
+        let projection = workspace
+            .project_role(
+                AgoraSpaceId("workflow".into()),
+                CognitiveTaskNodeId("coding".into()),
+                CognitiveRole::Root,
+                32,
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert!(projection.task.unresolved_finding_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_validation_schedules_one_bounded_fix_and_authoritative_retest() {
+        let (coding, workspace, _, owner) = fixture(false).await;
+        let coding_receipt = coding
+            .run_planner_explorer_executor(request(owner))
+            .await
+            .unwrap();
+        let invoker = Arc::new(AcceptanceInvoker {
+            workspace: workspace.clone(),
+            roles: Mutex::new(Vec::new()),
+            reject_first_review: false,
+            fail_first_validation: true,
+            review_calls: Mutex::new(0),
+            validation_calls: Mutex::new(0),
+            repair_calls: Mutex::new(0),
+        });
+        let acceptance = CognitiveRoleWorkflow::new(workspace, invoker.clone());
+        let receipt = acceptance
+            .run_reviewer_tester_fixer(acceptance_request(&coding_receipt))
+            .await
+            .unwrap();
+        assert_eq!(receipt.validation_artifact_ids.len(), 2);
+        assert_eq!(receipt.repair_artifact_ids.len(), 1);
+        assert_eq!(receipt.review_artifact_ids.len(), 1);
+        assert_eq!(receipt.resolved_finding_ids.len(), 1);
+        assert_eq!(
+            *invoker.roles.lock().await,
+            vec![
+                CognitiveRole::Tester,
+                CognitiveRole::Fixer,
+                CognitiveRole::Tester,
+                CognitiveRole::Reviewer,
+            ]
+        );
     }
 }
