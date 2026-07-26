@@ -336,12 +336,19 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        app.pending_approval = Some(super::approval_dialog::ApprovalDialog::new(
-            approval_id,
-            tool,
-            action_summary,
-            risk_level,
-        ));
+        let detail = params
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        app.pending_approval = Some(
+            super::approval_dialog::ApprovalDialog::new(
+                approval_id,
+                tool,
+                action_summary,
+                risk_level,
+            )
+            .with_detail(detail),
+        );
     }
 }
 

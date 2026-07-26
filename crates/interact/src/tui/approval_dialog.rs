@@ -20,6 +20,8 @@ pub struct ApprovalDialog {
     pub tool: String,
     pub action_summary: String,
     pub risk_level: String,
+    /// Full command / diff context for the user to inspect.
+    pub detail: Option<String>,
 }
 
 impl ApprovalDialog {
@@ -34,7 +36,13 @@ impl ApprovalDialog {
             tool: tool.into(),
             action_summary: action_summary.into(),
             risk_level: risk_level.into(),
+            detail: None,
         }
+    }
+
+    pub fn with_detail(mut self, detail: Option<String>) -> Self {
+        self.detail = detail;
+        self
     }
 
     /// Map a key press to a dialog decision.
@@ -54,9 +62,17 @@ impl ApprovalDialog {
 
     /// Render the approval dialog as a centered modal over the given area.
     pub fn render(&self, f: &mut Frame, area: Rect) {
-        // Compute a centered popup area (min 50 wide, 10 tall; max 80% of screen)
-        let popup_w = 50.min((area.width * 80) / 100).max(40);
-        let popup_h = 10.min((area.height * 80) / 100).max(7);
+        let detail_lines: Vec<&str> = self
+            .detail
+            .as_deref()
+            .map(|d| d.lines().collect())
+            .unwrap_or_default();
+        let has_detail = !detail_lines.is_empty();
+
+        let popup_w = 72.min((area.width * 80) / 100).max(40);
+        let detail_h = (detail_lines.len() as u16).min(14);
+        let base_h: u16 = if has_detail { 6 + detail_h } else { 10 };
+        let popup_h = base_h.min((area.height * 80) / 100).max(7);
         let x = area.x + (area.width.saturating_sub(popup_w)) / 2;
         let y = area.y + (area.height.saturating_sub(popup_h)) / 2;
         let popup = Rect {
@@ -77,61 +93,119 @@ impl ApprovalDialog {
 
         let inner = block.inner(popup);
 
-        // Split inner into content + key hints
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
-            .split(inner);
-
-        // Content lines
         let risk_color = match self.risk_level.as_str() {
             "high" | "critical" => Color::Red,
             "medium" => Color::Yellow,
             _ => Color::Green,
         };
 
-        let lines = vec![
-            Line::from(vec![
-                Span::styled("Tool: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(&self.tool, Style::default().fg(Color::Cyan)),
-            ]),
-            Line::from(vec![
-                Span::styled("Risk: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(&self.risk_level, Style::default().fg(risk_color)),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                &self.action_summary,
-                Style::default().fg(Color::White),
-            )),
-        ];
+        if has_detail {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(4),
+                    Constraint::Min(1),
+                    Constraint::Length(1),
+                ])
+                .split(inner);
 
-        let content = Paragraph::new(lines);
-        f.render_widget(content, chunks[0]);
+            let header = vec![
+                Line::from(vec![
+                    Span::styled("Tool: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(&self.tool, Style::default().fg(Color::Cyan)),
+                ]),
+                Line::from(vec![
+                    Span::styled("Risk: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(&self.risk_level, Style::default().fg(risk_color)),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    &self.action_summary,
+                    Style::default().fg(Color::White),
+                )),
+            ];
+            f.render_widget(Paragraph::new(header), chunks[0]);
 
-        // Key hints
-        let hints = Line::from(vec![
-            Span::styled(
-                "[y]",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("es  "),
-            Span::styled(
-                "[a]",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("lways  "),
-            Span::styled(
-                "[N]",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("o"),
-        ]);
-        f.render_widget(Paragraph::new(hints), chunks[1]);
+            let detail_spans: Vec<Line> = detail_lines
+                .iter()
+                .take(14)
+                .map(|line| {
+                    Line::from(Span::styled(
+                        line.to_string(),
+                        Style::default().fg(Color::DarkGray),
+                    ))
+                })
+                .collect();
+            f.render_widget(Paragraph::new(detail_spans), chunks[1]);
+
+            let hints = Line::from(vec![
+                Span::styled(
+                    "[y]",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("es  "),
+                Span::styled(
+                    "[a]",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("lways  "),
+                Span::styled(
+                    "[N]",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("o"),
+            ]);
+            f.render_widget(Paragraph::new(hints), chunks[2]);
+        } else {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(inner);
+
+            let lines = vec![
+                Line::from(vec![
+                    Span::styled("Tool: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(&self.tool, Style::default().fg(Color::Cyan)),
+                ]),
+                Line::from(vec![
+                    Span::styled("Risk: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(&self.risk_level, Style::default().fg(risk_color)),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    &self.action_summary,
+                    Style::default().fg(Color::White),
+                )),
+            ];
+            f.render_widget(Paragraph::new(lines), chunks[0]);
+
+            let hints = Line::from(vec![
+                Span::styled(
+                    "[y]",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("es  "),
+                Span::styled(
+                    "[a]",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("lways  "),
+                Span::styled(
+                    "[N]",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("o"),
+            ]);
+            f.render_widget(Paragraph::new(hints), chunks[1]);
+        }
 
         // Render border (must be last to draw on top)
         f.render_widget(block, popup);
