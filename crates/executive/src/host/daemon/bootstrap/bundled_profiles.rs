@@ -26,20 +26,40 @@ const PROFILES: &[(&str, &str)] = &[
         include_str!("../../../../../../agents/safe-agent.md"),
     ),
     (
+        "safe-agent.toml",
+        include_str!("../../../../../../agents/safe-agent.toml"),
+    ),
+    (
         "code-agent.md",
         include_str!("../../../../../../agents/code-agent.md"),
+    ),
+    (
+        "code-agent.toml",
+        include_str!("../../../../../../agents/code-agent.toml"),
     ),
     (
         "fs-agent.md",
         include_str!("../../../../../../agents/fs-agent.md"),
     ),
     (
+        "fs-agent.toml",
+        include_str!("../../../../../../agents/fs-agent.toml"),
+    ),
+    (
         "net-agent.md",
         include_str!("../../../../../../agents/net-agent.md"),
     ),
     (
+        "net-agent.toml",
+        include_str!("../../../../../../agents/net-agent.toml"),
+    ),
+    (
         "admin-agent.md",
         include_str!("../../../../../../agents/admin-agent.md"),
+    ),
+    (
+        "admin-agent.toml",
+        include_str!("../../../../../../agents/admin-agent.toml"),
     ),
     (
         "robot-agent.md",
@@ -78,5 +98,30 @@ pub(super) fn seed(agents_dir: &Path) {
     }
     if written > 0 {
         tracing::info!(count = written, "seeded shipped agent profiles");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seed_refreshes_shipped_legacy_mirrors_without_touching_user_profiles() {
+        let temporary = tempfile::tempdir().unwrap();
+        let agents_dir = temporary.path().join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(agents_dir.join("fs-agent.toml"), "stale").unwrap();
+        std::fs::write(agents_dir.join("custom-agent.md"), "custom").unwrap();
+
+        seed(&agents_dir);
+
+        assert_eq!(
+            std::fs::read_to_string(agents_dir.join("fs-agent.toml")).unwrap(),
+            include_str!("../../../../../../agents/fs-agent.toml")
+        );
+        assert_eq!(
+            std::fs::read_to_string(agents_dir.join("custom-agent.md")).unwrap(),
+            "custom"
+        );
     }
 }
