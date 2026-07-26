@@ -639,6 +639,163 @@ Tool quality acceptance is behavioral, not based on registration count:
 6. Profiles and toolsets must be validated against the actual registry; stale
    names cannot silently produce a weaker Agent.
 
+### Supporting capabilities required for reliable work
+
+The cognitive loop and tool surface are necessary but not sufficient. The
+following capabilities close the remaining gaps between “the model used tools”
+and “the Agent completed verified work.”
+
+#### Repository context and instruction resolution
+
+`repo_inspect` produces a typed `RepositoryContext` rather than only prose:
+
+```rust
+pub struct RepositoryContext {
+    pub root: PathBuf,
+    pub instructions: Vec<InstructionSource>,
+    pub manifests: Vec<ManifestRef>,
+    pub vcs_state: VcsSnapshot,
+    pub validation_commands: Vec<ValidationSpec>,
+    pub protected_paths: Vec<PathPolicy>,
+    pub deployment_policy: Option<DeploymentPolicy>,
+}
+```
+
+Instruction sources include applicable repository policy files, README and
+architecture entry points, workspace manifests, current Git state, permitted
+write roots, build/test commands, and installed-runtime acceptance rules. Each
+source records scope, precedence, digest, and provenance. The resolved context
+is attached to the task contract so compaction cannot silently remove it.
+
+#### Versioned change transaction
+
+Every mutation runs inside a version-bound transaction:
+
+```text
+BaselineSnapshot -> ChangeTransaction -> Apply -> Diff -> Validate
+                                                    |
+                                             Accept / Repair / Rollback
+```
+
+The transaction records baseline and resulting digests, changed paths/ranges,
+Agent ownership, worktree/scope, concurrent modifications, diff artifact,
+validation artifact versions, and final disposition. Validation and review are
+accepted only when they target the exact resulting version. Stale diffs, stale
+tests, and overlapping writers cause reconciliation rather than silent success.
+
+#### Validation planning
+
+`ValidationPlanner` derives the narrowest sufficient validation from changed
+files, language/workspace manifests, repository instructions, dependency impact,
+risk, and deployment policy:
+
+```text
+format -> target check -> focused unit tests -> relevant integration tests
+       -> installed-runtime acceptance when required
+```
+
+The generated plan explains why each command is required or omitted. It must not
+default to a workspace-wide build, skip repository-mandated validation, or treat
+an isolated diagnostic runtime as installed acceptance.
+
+#### Failure attribution and recovery
+
+Execution failures use a typed classification:
+
+```rust
+pub enum WorkFailureClass {
+    Implementation,
+    TestExpectation,
+    Environment,
+    Dependency,
+    Permission,
+    Provider,
+    Timeout,
+    ConcurrentModification,
+    InvalidToolRequest,
+    Unknown,
+}
+```
+
+Recovery follows the classification: repair implementation errors, correct
+invalid arguments, collect environment evidence, honor provider backpressure,
+request authority when needed, re-read on concurrent modification, and broaden
+diagnosis for unknown failures. Repeating the same failing call without new
+evidence is not recovery.
+
+#### Context projection receipts and health
+
+Every inference persists a projection receipt containing fragment ID, source and
+source version, selection reason, instruction/untrusted classification,
+truncation, token/byte cost, omitted items, role, stage, and task-node ID. This
+distinguishes model reasoning failure from missing context.
+
+Summaries never replace raw evidence. Full code, logs, diffs, diagnostics,
+validation output, and child results remain in an artifact store; model context
+contains bounded summaries and content-addressed references that tools can fetch.
+
+The runtime reports these metrics independently:
+
+- active context occupancy;
+- cumulative provider usage;
+- cache input/read/write usage;
+- inference rounds and provider retries;
+- tool calls and terminal tool results;
+- tool-schema context cost;
+- compaction count and omitted artifacts.
+
+#### Complete role profiles
+
+A role profile contains more than a prompt and tool allowlist. It declares
+responsibilities, prohibited actions, accepted input artifacts, required output
+artifacts, write scope, validation authority, context projection policy, budget,
+maximum concurrency, escalation behavior, and completion conditions. A reviewer
+is read-only by default, cannot certify its own changes, and must emit typed
+findings against the exact requirement/diff/validation versions it inspected.
+
+#### Parallel ownership and reconciliation
+
+Parallel execution requires task/file ownership, independent work or disjoint
+write scopes, worktree strategy, optimistic conflict checks, stale-artifact
+detection, bounded merge/reconciliation, parent/child budgets, and
+machine/provider-wide backpressure. Parallelism is rejected when those conditions
+cannot be established.
+
+#### Durable blocking and resume
+
+`request_user_input` transitions the affected node to a durable blocked state,
+persists the question and checkpoint, releases unnecessary resources, and resumes
+from a canonical user response. Daemon restart must preserve the task contract,
+Agora version, obligations, validation state, pending question, and runtime
+receipts rather than starting an unrelated new task.
+
+#### Evaluation and installed acceptance
+
+A behavioral suite covers unfamiliar-repository analysis, bug localization,
+edit plus focused validation, repair after test failure, long-running command
+control, multiple turns in one session, compaction continuity, provider
+unavailability, truncated output, concurrent file changes, missing child terminal
+receipts, and false model completion claims.
+
+Evaluation reconciles the answer with actual paths/symbols, tool results, diff,
+validation output, session evidence, audit records, rendered frame, and daemon
+logs. Installed acceptance additionally requires system deployment, binary digest
+equality, stable service restart counters, the official socket, `/usr/bin/aletheon`,
+a real LLM request, and persisted-session evidence.
+
+These supporting capabilities are sequenced after the minimum completion/tool
+contracts but before general autonomous multi-agent execution:
+
+```text
+P0  task contract + completion gate + terminal receipts + artifact store
+P0  structured read/search/patch + managed command + validation_run
+P0  versioned change transaction
+P1  repository context + validation planner + failure classifier
+P1  projection receipt/health + Agora-backed tasks
+P2  complete role profiles + ownership/reconciliation + durable resume
+P3  grounded Mnemosyne retention + Dasein experience + Metacog improvement
+```
+
 ### Included in the first implementation increment
 
 - Typed task contract for explicit required actions and deliverables.
@@ -1006,6 +1163,20 @@ as a typed validation artifact rather than summarized success prose.
     re-plan rather than last-writer-wins corruption.
 24. Data from another session is absent unless an explicit authorized
     cross-space projection selected it with provenance.
+25. Repository instructions resolve by scope and precedence and remain attached
+    to the task contract after compaction.
+26. Review or validation against a stale change-set digest cannot satisfy the
+    current transaction.
+27. Validation planning selects repository-approved focused commands and
+    escalates to installed acceptance only when the change contract requires it.
+28. Failure classes select different recovery paths; deterministic failures do
+    not consume provider retry policy as if they were transient inference errors.
+29. A projection receipt can reconstruct the exact bounded fragments supplied to
+    an inference while raw evidence remains retrievable by digest.
+30. A blocked clarification survives daemon restart and resumes the same task
+    node and workspace version after a canonical user response.
+31. Overlapping parallel write scopes are rejected or reconciled before either
+    child result can pass its gate.
 
 ### Installed-runtime acceptance
 
@@ -1021,30 +1192,43 @@ acceptance.
 
 ## Delivery slices
 
-1. **Contract, work-phase, plan, and evidence types** — no behavior change.
-2. **Agora cognitive artifacts and role-specific context projection** — task
-   graph handoffs, projection receipts, and version-conflict behavior.
-3. **Pi-derived loop-driver semantics** — steering, follow-up draining,
+1. **Contract, work-phase, obligation, receipt, and evidence types** — no
+   behavior change.
+2. **Artifact store, repository context, and projection receipts** — preserve
+   raw evidence and make every model-visible fragment reconstructable.
+3. **Structured core tool receipts** — file read/search and patch results carry
+   versions, ranges, completeness, change-set identity, and terminal status.
+4. **Managed command and validation tools** — `exec_command`, `write_stdin`,
+   `validation_run`, cancellation/reaping, and exact terminal evidence.
+5. **Pi-derived loop-driver semantics** — steering, follow-up draining,
    turn-boundary adaptation, truncated-call rejection, execution ordering, and
    complete lifecycle events behind generic Cognit/runtime ports.
-4. **Runtime receipt adapters, agent task packets, and persistence** —
+6. **Runtime receipt adapters, task state, and persistence** —
    observation only.
-5. **Planner/explorer/executor workflow and plan/execution gates** — prove typed
-   multi-agent handoff on a bounded repository task.
-6. **Reviewer/tester/fixer workflow and acceptance gates** — prove rejection,
-   repair, re-review, and terminal validation.
 7. **Repository-analysis workflow and maturity evidence** — prove grounded
    investigation without changing completion behavior.
 8. **Completion gate in shadow mode** — record would-reject decisions.
 9. **Enforce required-action, plan-step, and terminal-evidence checks** — bounded
    recovery with concrete missing obligations.
-10. **Bounded coding inspect/edit/verify workflow** — focused validation and
-   failure attribution.
-11. **Claim audit and grounded Dasein events** — deterministic claims only.
-12. **Comparative capability benchmark harness** — run identical bounded tasks
+10. **Versioned single-Agent coding transaction** — inspect, edit, diff,
+    validation planning, failure attribution, repair, and completion audit against
+    one exact workspace version.
+11. **Agora cognitive artifacts and task projection** — replace the separate
+    cognitive task store and prove version-conflict reconciliation.
+12. **Durable clarification, interruption, and recovery** — persist blocked
+    questions and resume the same task across turns and daemon restart.
+13. **Complete role profiles and ownership controls** — role input/output
+    contracts, write scopes, budgets, and safe parallelism.
+14. **Planner/explorer/executor workflow and plan/execution gates** — prove typed
+    multi-agent handoff on a bounded repository task only after the leaf loop
+    passes.
+15. **Reviewer/tester/fixer workflow and acceptance gates** — prove rejection,
+    repair, re-review, and terminal validation.
+16. **Claim audit and grounded Dasein events** — deterministic claims only.
+17. **Comparative capability benchmark harness** — run identical bounded tasks
    through native Cognit and configured external agents; do not encode product
    names into production policy.
-13. **Installed-runtime acceptance and regression documentation.**
+18. **Installed-runtime acceptance and regression documentation.**
 
 Each slice must have focused tests and a separate reviewable commit. No slice
 may introduce prompt-, language-, repository-, or checkout-specific production
@@ -1075,3 +1259,12 @@ The first implementation increment is complete only when:
     artifacts through enforced stage gates rather than full transcript copying.
 14. Model requests are bounded role-specific projections; persistent Agent state
     remains outside the model context and is reconstructable from receipts.
+15. Repository instructions, validation policy, and protected paths are resolved
+    into a versioned `RepositoryContext` used by the task contract.
+16. Every accepted edit, review, and validation record refers to the same
+    versioned change transaction.
+17. Long-running built-in commands remain observable, steerable, cancellable,
+    and reapable across model turns and process recovery boundaries.
+18. Active context occupancy, cumulative provider usage, cache usage, inference
+    rounds, retries, tool calls, and terminal tool results are independently
+    observable.
