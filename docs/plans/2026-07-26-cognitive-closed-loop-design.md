@@ -55,6 +55,13 @@ keying behavior to that prompt, language, repository, or fixed path.
 8. **Adopt proven mechanisms, not product-shaped copies.** Pi, Codex, and Grok
    Build inform distinct parts of the design while Aletheon retains unified
    runtime truth, persistence, security, Dasein, and conscious arbitration.
+9. **Agent state is larger than model context.** Persistent task, evidence,
+   Agora, memory, Dasein, and runtime state remain host-owned; each inference
+   receives only a bounded, purpose-built projection.
+10. **Multi-agent work communicates through typed artifacts.** Planner,
+    executor, reviewer, and tester roles exchange contracts, plans, diffs,
+    evidence, findings, and receipts through Agora rather than forwarding entire
+    private transcripts.
 
 ## Reference-agent absorption map
 
@@ -177,6 +184,203 @@ phases.
 - Report success, partial completion, blocked state, and residual risk as
   distinct outcomes.
 
+## Agent state, model context, and information flow
+
+An Aletheon Agent is not identical to one LLM request and its context window.
+The Agent is the persistent host-side process formed from task state, workspace,
+memory, identity, policy, runtime receipts, and an inference loop. The model is
+a replaceable reasoning component that receives a projection of that state.
+
+```text
+Persistent Agent state
+  - CognitiveTaskContract / plan / obligations
+  - Agora workspace and task graph
+  - evidence and terminal receipts
+  - canonical session history
+  - Mnemosyne recall
+  - Dasein self projection
+  - policy, budgets, capabilities
+                 |
+                 v
+          ContextProjector
+                 |
+        bounded role-specific view
+                 |
+                 v
+            LLM inference
+                 |
+       text / tool calls / proposals
+                 |
+                 v
+ authoritative execution + Agora commit
+                 |
+                 +----> next projection
+```
+
+The runtime must never serialize all persistent Agent state into every model
+request. Instead, `ContextProjector` assembles these layers under separate
+budgets:
+
+1. Stable system and project instructions.
+2. Current user request and task contract.
+3. Current role, workflow stage, assigned task node, and acceptance criteria.
+4. The newest complete conversation/tool units required for local coherence.
+5. Selected Agora items relevant to the task node.
+6. Bounded recalled memory with provenance and untrusted-data marking.
+7. Bounded Dasein self projection.
+8. Explicit references to larger durable artifacts that tools may fetch on
+   demand instead of embedding their full contents.
+
+Every projected fragment records provenance, source version, selection reason,
+token/byte cost, and whether it is instruction-bearing or untrusted data. The
+projection receipt is persisted so a later reviewer can reconstruct what the
+model actually saw.
+
+Large code, logs, diffs, and child transcripts stay in durable storage. The
+model receives summaries plus artifact references and retrieves exact content
+when it is relevant. Compaction may replace old conversational text, but it may
+not remove task obligations, acceptance state, evidence identity, or unresolved
+review findings.
+
+## Agora as the shared cognitive workspace
+
+Agora is part of the core design, not an optional context decoration. It is the
+shared workspace through which cognitive roles coordinate. The initial scope is
+one `AgoraSpaceId` per root task/session, with explicit bridges for approved
+cross-session knowledge. A single unrestricted machine-global mutable space
+would mix users, tasks, permissions, and stale hypotheses, so global awareness
+is built from scoped spaces and selected broadcasts rather than one shared dump.
+
+Agora owns the live collaborative projection:
+
+```text
+Workspace
+  |- TaskGraph       role tasks, dependencies, stage state
+  |- Blackboard      accepted facts, requirements, decisions
+  |- Scratchpad      provisional notes and hypotheses
+  |- Evidence        artifact and runtime-evidence references
+  |- CandidatePool   competing plans, claims, and next actions
+  |- Attention       selection priorities
+  |- Broadcast       bounded globally available selection for the space
+  `- Trace           proposals, commits, rejections, and attribution
+```
+
+Mnemosyne remains the long-term retention system. Agora contains mutable working
+state and durable commit/broadcast history for replay; it does not replace
+long-term memory. Dasein consumes selected grounded workspace outcomes to update
+the lived-self projection. Cognit reads and proposes workspace changes but may
+only treat committed Agora content as shared fact.
+
+### Agora artifact contract
+
+Agents communicate by committing typed artifacts:
+
+```rust
+pub enum CognitiveArtifact {
+    TaskContract(CognitiveTaskContract),
+    Plan(CognitivePlan),
+    Investigation(InvestigationReport),
+    ChangeSet(ChangeSetReceipt),
+    Validation(ValidationRecord),
+    Review(ReviewFindingSet),
+    Evidence(EvidenceRecord),
+    Decision(StageDecision),
+    AgentResult(AgentResultReceipt),
+}
+```
+
+An artifact contains author/process identity, task-node ID, source versions,
+evidence references, confidence, lifecycle status, and content digest. A child
+Agent's prose is not automatically a shared fact; its result is a proposal until
+the owning stage validates and commits it.
+
+## Multi-agent cognitive workflow
+
+Complex work uses a workflow graph rather than asking one model context to plan,
+implement, review, and certify itself. Roles are logical capabilities and may
+run on Pi, a native runtime, or another configured provider.
+
+```text
+                 +----------------+
+User requirement | Intent/Contract|
+                 +-------+--------+
+                         |
+                         v
+                 +-------+--------+
+                 | Planner        |
+                 | plan + criteria|
+                 +-------+--------+
+                         |
+                Plan acceptance gate
+                         |
+              +----------+----------+
+              |                     |
+              v                     v
+       +------+-------+      +------+-------+
+       | Explorer     |      | Executor     |
+       | evidence map |      | diff/receipt |
+       +------+-------+      +------+-------+
+              |                     |
+              +----------+----------+
+                         |
+                 Execution gate
+                         |
+              +----------+----------+
+              |                     |
+              v                     v
+       +------+-------+      +------+-------+
+       | Reviewer     |      | Tester       |
+       | findings     |      | validation   |
+       +------+-------+      +------+-------+
+              |                     |
+              +----------+----------+
+                         |
+                  Acceptance gate
+                    |           |
+                  reject      accept
+                    |           |
+                  Fixer      Synthesizer
+                    |           |
+                    +-----------+
+```
+
+### Role responsibilities
+
+- **Planner:** decomposes requirements into Agora task nodes, dependencies,
+  expected artifacts, and acceptance criteria. It does not certify its own plan.
+- **Explorer:** performs read-only investigation and commits evidence-linked
+  findings. It cannot mutate the workspace.
+- **Executor:** owns assigned files/worktree scope and produces a change-set
+  receipt and implementation evidence.
+- **Reviewer:** checks requirements, design boundaries, diff correctness,
+  unsupported claims, and regression risks. It emits actionable findings.
+- **Tester:** runs authoritative focused validation, separates implementation
+  failures from environment/provider failures, and emits terminal evidence.
+- **Fixer:** addresses named reviewer/tester failures only and returns a new
+  change-set receipt for re-review.
+- **Synthesizer:** produces the user-facing result from accepted artifacts; it
+  cannot promote rejected or unverified artifacts into success claims.
+
+### Stage gates
+
+Each edge is an acceptance boundary with deterministic minimum conditions:
+
+| Gate | Required inputs | Accept condition |
+|---|---|---|
+| Plan | Task contract, plan artifact | Every explicit requirement maps to a task node and acceptance criterion |
+| Execution | Accepted plan, investigation/change artifacts | Assigned nodes have terminal receipts and no missing dependencies |
+| Review | Change set, evidence, requirement map | No blocking finding; claims do not exceed evidence |
+| Test | Validation plan, authoritative output | Required commands reached terminal success; skipped checks are explicit |
+| Final | Accepted review and test decisions | All required nodes done, no blocking finding, completion audit passes |
+
+Gate rejection creates typed feedback on the affected task node and schedules a
+specific re-plan or fixer edge. It does not paste a vague review paragraph into
+every Agent context.
+
+Simple tasks bypass unnecessary roles. The workflow policy may run one native
+Agent through inspect/edit/verify when risk and scope are small, but the same
+artifact and gate contracts still apply.
+
 ## Scope
 
 ### Included in the first implementation increment
@@ -200,6 +404,12 @@ phases.
   session/context/skill discovery remains disabled for isolation.
 - Validation selection and failure classification sufficient to drive a
   concrete next action rather than only record an error count.
+- Agora-backed task nodes and cognitive artifacts for planner, executor,
+  reviewer, and tester handoffs.
+- Role-specific context projection receipts proving what each model invocation
+  received and why it was selected.
+- Deterministic stage gates for plan, execution, review, test, and final
+  acceptance, with simple-task bypass policy.
 
 ### Explicitly deferred
 
@@ -213,6 +423,9 @@ phases.
 - Broad autonomous coding optimization. The first increment establishes the
   shared workflow and proves it on bounded analysis and edit/validate scenarios;
   later increments tune tool ergonomics and model policies from benchmark data.
+- Machine-global mutable Agora state shared indiscriminately across sessions.
+  Cross-session awareness requires explicit projection, provenance, policy, and
+  retention boundaries.
 
 ## Architecture
 
@@ -458,6 +671,20 @@ Repository instructions determine the authoritative commands. The workflow
 must retain unrelated worktree changes and must not report diagnostic binaries
 or isolated daemons as deployment acceptance.
 
+### 11. Workflow and context projection
+
+`executive` binds role runtimes to Agora task nodes and invokes Cognit with a
+role-specific projection. Cognit produces proposals and tool actions;
+`executive` records authoritative receipts and applies gate decisions; Agora
+stores the shared working artifacts. No role receives another role's entire
+message history by default.
+
+The planner-to-worker handoff contains the accepted plan node, relevant project
+instructions, selected evidence, workspace scope, and acceptance criteria. The
+worker-to-reviewer handoff contains the requirement map, change receipt, diff
+artifact, validation evidence, and unresolved risks. Tester output is consumed
+as a typed validation artifact rather than summarized success prose.
+
 ## Data ownership and boundaries
 
 - `cognit` owns task cognition, progress evaluation, and completion proposals.
@@ -511,6 +738,18 @@ or isolated daemons as deployment acceptance.
 17. Sequential tools preserve provider order while an independent batch may run
     in parallel.
 18. Provider error and user abort remain terminal non-success outcomes.
+19. Each role receives only its selected Agora/task projection and a persisted
+    receipt identifies every included fragment.
+20. Planner output cannot advance to execution until the plan gate accepts all
+    explicit requirement mappings.
+21. Executor output cannot advance to final synthesis without independent
+    review and required validation for workflows whose policy requires them.
+22. Reviewer rejection schedules a bounded fixer/re-review edge with the same
+    finding IDs; it does not lose or duplicate findings during compaction.
+23. Agora version conflicts reject stale Agent proposals and cause refresh or
+    re-plan rather than last-writer-wins corruption.
+24. Data from another session is absent unless an explicit authorized
+    cross-space projection selected it with provenance.
 
 ### Installed-runtime acceptance
 
@@ -527,23 +766,29 @@ acceptance.
 ## Delivery slices
 
 1. **Contract, work-phase, plan, and evidence types** — no behavior change.
-2. **Pi-derived loop-driver semantics** — steering, follow-up draining,
+2. **Agora cognitive artifacts and role-specific context projection** — task
+   graph handoffs, projection receipts, and version-conflict behavior.
+3. **Pi-derived loop-driver semantics** — steering, follow-up draining,
    turn-boundary adaptation, truncated-call rejection, execution ordering, and
    complete lifecycle events behind generic Cognit/runtime ports.
-3. **Runtime receipt adapters, agent task packets, and persistence** —
+4. **Runtime receipt adapters, agent task packets, and persistence** —
    observation only.
-4. **Repository-analysis workflow and maturity evidence** — prove grounded
+5. **Planner/explorer/executor workflow and plan/execution gates** — prove typed
+   multi-agent handoff on a bounded repository task.
+6. **Reviewer/tester/fixer workflow and acceptance gates** — prove rejection,
+   repair, re-review, and terminal validation.
+7. **Repository-analysis workflow and maturity evidence** — prove grounded
    investigation without changing completion behavior.
-5. **Completion gate in shadow mode** — record would-reject decisions.
-6. **Enforce required-action, plan-step, and terminal-evidence checks** — bounded
+8. **Completion gate in shadow mode** — record would-reject decisions.
+9. **Enforce required-action, plan-step, and terminal-evidence checks** — bounded
    recovery with concrete missing obligations.
-7. **Bounded coding inspect/edit/verify workflow** — focused validation and
+10. **Bounded coding inspect/edit/verify workflow** — focused validation and
    failure attribution.
-8. **Claim audit and grounded Dasein events** — deterministic claims only.
-9. **Comparative capability benchmark harness** — run identical bounded tasks
+11. **Claim audit and grounded Dasein events** — deterministic claims only.
+12. **Comparative capability benchmark harness** — run identical bounded tasks
    through native Cognit and configured external agents; do not encode product
    names into production policy.
-10. **Installed-runtime acceptance and regression documentation.**
+13. **Installed-runtime acceptance and regression documentation.**
 
 Each slice must have focused tests and a separate reviewable commit. No slice
 may introduce prompt-, language-, repository-, or checkout-specific production
@@ -570,3 +815,7 @@ The first implementation increment is complete only when:
     remain separately observable.
 12. The native loop safely handles steering, queued follow-ups, truncated tool
     calls, sequential/parallel execution, and provider error/abort outcomes.
+13. Planner, executor, reviewer, tester, and fixer exchange typed Agora
+    artifacts through enforced stage gates rather than full transcript copying.
+14. Model requests are bounded role-specific projections; persistent Agent state
+    remains outside the model context and is reconstructable from receipts.
