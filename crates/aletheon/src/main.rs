@@ -38,6 +38,11 @@ struct Cli {
     #[arg(short, long)]
     socket: Option<PathBuf>,
 
+    /// Require this Agent runtime to be spawned and reach an authoritative
+    /// terminal receipt during every submitted chat turn (repeatable).
+    #[arg(long = "require-agent-runtime", value_name = "RUNTIME")]
+    required_agent_runtimes: Vec<String>,
+
     #[command(flatten)]
     workspace: WorkspaceArgs,
 
@@ -447,6 +452,7 @@ async fn main() -> Result<()> {
                 socket: cli.socket.clone(),
                 workspace: cli.workspace.interact_launch(),
                 message: msg.clone(),
+                required_agent_runtimes: cli.required_agent_runtimes.clone(),
             })
             .await
         }
@@ -464,6 +470,7 @@ async fn main() -> Result<()> {
                 interact::host::TuiLaunch {
                     socket: cli.socket.clone(),
                     workspace: cli.workspace.interact_launch(),
+                    required_agent_runtimes: cli.required_agent_runtimes.clone(),
                 },
                 config,
             )
@@ -637,5 +644,18 @@ mod daemon_cli_tests {
             enabled_cli.command,
             Some(Commands::Daemon { execd: true, .. })
         ));
+    }
+
+    #[test]
+    fn required_agent_runtime_is_repeatable_on_the_installed_entrypoint() {
+        let cli = Cli::try_parse_from([
+            "aletheon",
+            "--require-agent-runtime",
+            "pi-rpc",
+            "--require-agent-runtime",
+            "native-cognit",
+        ])
+        .unwrap();
+        assert_eq!(cli.required_agent_runtimes, vec!["pi-rpc", "native-cognit"]);
     }
 }
