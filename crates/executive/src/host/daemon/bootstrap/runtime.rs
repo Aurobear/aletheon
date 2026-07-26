@@ -35,6 +35,28 @@ pub(super) struct ProfileLoadResult {
     pub quarantined: Vec<QuarantinedProfile>,
 }
 
+/// Safe, always-available capabilities that are NOT gated by a profile's
+/// `allowed_tools` whitelist. These are read-only/local, non-exfiltrating
+/// bookkeeping and repo-inspection tools: git (no push/commit exists; the only
+/// destructive op, `git_reset --hard`, is separately guarded by `confirm_hard`)
+/// and task/todo management. Any registered universal tool is merged into every
+/// profile so the model can both see and execute it regardless of active
+/// profile. Genuinely dangerous capabilities (file_write, bash_exec, network,
+/// kernel) remain profile-gated and per-action (L0–L3) + sandbox-gated.
+pub(super) const UNIVERSAL_TOOLS: &[&str] = &[
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_show",
+    "git_restore",
+    "git_stash",
+    "git_reset",
+    "task_create",
+    "task_update",
+    "task_list",
+    "task_get",
+];
+
 pub(super) async fn load_agent_profiles(
     agents_dir: &std::path::Path,
     inference: Arc<dyn InferencePort>,
@@ -69,9 +91,19 @@ pub(super) async fn load_agent_profiles(
     let mut profiles = HashMap::new();
     let mut quarantined = Vec::new();
     for role in loader.list() {
-        let mut tools = Vec::with_capacity(role.tools.len());
+        // Merge in universal tools (git + task) that are registered, so every
+        // profile can see and execute them regardless of its allowed_tools
+        // whitelist. Only tools present in the catalog are added, so this never
+        // introduces an unknown-tool quarantine.
+        let mut effective_tools = role.tools.clone();
+        for name in UNIVERSAL_TOOLS {
+            if catalog.contains_key(*name) && !effective_tools.iter().any(|t| t == name) {
+                effective_tools.push((*name).to_string());
+            }
+        }
+        let mut tools = Vec::with_capacity(effective_tools.len());
         let mut failed = false;
-        for name in &role.tools {
+        for name in &effective_tools {
             match catalog.get(name).cloned() {
                 Some(definition) => tools.push(definition),
                 None => {
@@ -133,13 +165,13 @@ pub(super) async fn load_agent_profiles(
 
         // Derive risk tier from tool permission levels — delegated to the
         // registry construction; here we use a simple heuristic.
-        let risk_tier = derive_risk_tier(&role.tools, &catalog);
+        let risk_tier = derive_risk_tier(&effective_tools, &catalog);
 
         let profile = fabric::AgentProfile {
             id: fabric::AgentProfileId(role.name.clone()),
             system_prompt: role.body.clone(),
             model: llm.name().to_string(),
-            allowed_tools: role.tools.clone(),
+            allowed_tools: effective_tools.clone(),
             max_iterations,
             max_input_tokens,
             max_output_tokens,
