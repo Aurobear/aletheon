@@ -127,9 +127,11 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             call_id,
             output,
             is_error,
+            patch_delta,
             ..
         } => {
-            app.chat.update_exec(&call_id, &output, is_error);
+            app.chat
+                .update_exec_with_delta(&call_id, &output, is_error, patch_delta);
         }
         ClientEvent::ToolProgress {
             call_id, payload, ..
@@ -1236,6 +1238,7 @@ mod tests {
                 content: terminal.content,
                 is_error: terminal.is_error,
                 execution_time_ms: terminal.metadata.execution_time_ms,
+                patch_delta: None,
             })
             .unwrap();
 

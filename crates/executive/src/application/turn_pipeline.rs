@@ -1192,12 +1192,14 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
             content,
             is_error,
             execution_time_ms,
+            patch_delta,
         } => Some(ClientEvent::ToolCallResult {
             call_id: call_id.clone(),
             tool: name.clone(),
             output: content.clone(),
             is_error: *is_error,
             elapsed_ms: *execution_time_ms,
+            patch_delta: patch_delta.clone(),
         }),
         TurnEventV1::ToolProgress {
             name,

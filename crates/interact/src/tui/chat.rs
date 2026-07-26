@@ -146,6 +146,8 @@ pub struct ExecEntry {
     pub is_error: bool,
     pub finished: bool,
     pub expanded: bool,
+    /// Structured filesystem delta from apply_patch (None for other tools).
+    pub patch_delta: Option<fabric::PatchDelta>,
 }
 
 impl ExecEntry {
@@ -158,6 +160,7 @@ impl ExecEntry {
             is_error: false,
             finished: false,
             expanded: false,
+            patch_delta: None,
         }
     }
 
@@ -165,6 +168,22 @@ impl ExecEntry {
         self.output = output.to_string();
         self.is_error = is_error;
         self.finished = true;
+    }
+
+    pub fn finish_with_delta(
+        &mut self,
+        output: &str,
+        is_error: bool,
+        patch_delta: Option<fabric::PatchDelta>,
+    ) {
+        self.output = output.to_string();
+        self.is_error = is_error;
+        self.finished = true;
+        self.patch_delta = patch_delta;
+    }
+
+    pub fn set_delta(&mut self, delta: fabric::PatchDelta) {
+        self.patch_delta = Some(delta);
     }
 
     pub fn push_progress(&mut self, progress: &str) {
@@ -229,6 +248,52 @@ impl ExecEntry {
                         Style::default().fg(Color::DarkGray),
                     ),
                 ]));
+            }
+            // Render structured patch delta file list when present.
+            if let Some(ref delta) = self.patch_delta {
+                let changed = &delta.files_changed;
+                if !changed.is_empty() {
+                    lines.push(Line::from(vec![Span::styled(
+                        "  ├─ Files changed:",
+                        Style::default().fg(Color::DarkGray),
+                    )]));
+                    for fc in changed.iter().take(20) {
+                        let icon = match fc.change_type.as_str() {
+                            "created" => "+",
+                            "deleted" => "-",
+                            _ => "~",
+                        };
+                        let summary = format!(
+                            "    {icon} {} ({} hunks, {} → {} bytes)",
+                            fc.path, fc.hunks_applied, fc.bytes_before, fc.bytes_after,
+                        );
+                        lines.push(Line::from(vec![
+                            Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(summary, Style::default().fg(Color::Green)),
+                        ]));
+                    }
+                    if changed.len() > 20 {
+                        lines.push(Line::from(vec![
+                            Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(
+                                format!("    ... and {} more files", changed.len() - 20),
+                                Style::default().fg(Color::DarkGray),
+                            ),
+                        ]));
+                    }
+                }
+                let failed = &delta.failed;
+                if !failed.is_empty() {
+                    for f in failed {
+                        lines.push(Line::from(vec![
+                            Span::styled("  │ ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(
+                                format!("    ✗ {}: {}", f.path, f.error),
+                                Style::default().fg(Color::Red),
+                            ),
+                        ]));
+                    }
+                }
             }
         } else if self.finished && self.is_error && !self.output.is_empty() {
             for line in self.output.lines().take(3) {
@@ -427,6 +492,29 @@ impl ChatWidget {
             if let ChatEntry::Exec(ref mut ee) = entry {
                 if ee.call_id == call_id {
                     ee.finish(output, is_error);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if changed {
+            self.invalidate_layout();
+        }
+    }
+
+    /// Update execution result with optional structured patch delta.
+    pub fn update_exec_with_delta(
+        &mut self,
+        call_id: &str,
+        output: &str,
+        is_error: bool,
+        patch_delta: Option<fabric::PatchDelta>,
+    ) {
+        let mut changed = false;
+        for entry in self.entries.iter_mut() {
+            if let ChatEntry::Exec(ref mut ee) = entry {
+                if ee.call_id == call_id {
+                    ee.finish_with_delta(output, is_error, patch_delta);
                     changed = true;
                     break;
                 }

@@ -67,11 +67,13 @@ directories = []
 backend = "sqlite"
 data_dir = "~/.aletheon/memory"
 
-# Optional supplemental memory. Authentication and transport are configured in
-# the matching [[mcp_servers]] entry; no credential is stored here.
+# Optional supplemental memory. Fail-open: a missing or unreachable gbrain
+# MCP server degrades gracefully (empty pre-turn recall, logged at WARN).
+# Authentication and transport are configured in the matching [[mcp_servers]]
+# entry. See deploy/gbrain/README.md for setup instructions.
 [memory.gbrain]
-enabled = false
-server_name = "supplemental"
+enabled = true
+server_name = "gbrain"
 read_sources = ["aletheon", "general"]
 write_source = "aletheon"
 request_timeout_ms = 1200
@@ -89,12 +91,17 @@ retry_max_age_secs = 86400
 schema_fixture = ""
 schema_version = "v0.42.59.0"
 legacy_outbox_dir = "~/.aletheon/memory-outbox"
-# Register the transport only in a local secret-bearing override. See
-# deploy/gbrain/README.md. Keep bearer_token_env out of checked-in values:
+# ── gbrain MCP transport ─────────────────────────────────────────────────
+# Uncomment and fill in your gbrain endpoint + auth to activate semantic
+# recall.  The bearer_token_env value must name an env var that holds a
+# valid gbrain API token (export GBRAIN_TOKEN=<token> before starting the
+# daemon).  If gbrain is unreachable, pre-turn recall degrades silently.
+#
 # [[mcp_servers]]
 # name = "gbrain"
 # transport = "http"
 # url = "http://127.0.0.1:9020/mcp"
+# trust = "RemoteTrusted"
 # bearer_token_env = "GBRAIN_TOKEN"
 
 # Synchronous pre-turn memory recall.  Runs before each turn with a bounded

@@ -47,6 +47,7 @@ pub fn event_to_client_event(event: &Event) -> Option<ClientEvent> {
             output: result.content.clone(),
             is_error: result.is_error,
             elapsed_ms: result.execution_time_ms,
+            patch_delta: result.patch_delta.clone(),
         }),
         Event::Usage {
             tokens_in,

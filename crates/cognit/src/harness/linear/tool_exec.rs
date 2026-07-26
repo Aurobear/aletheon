@@ -368,6 +368,7 @@ impl ReActLoop {
                                     .to_string(),
                                 is_error: true,
                                 execution_time_ms: 0,
+                                patch_delta: None,
                             },
                         });
                     }
@@ -419,6 +420,7 @@ impl ReActLoop {
                                     content,
                                     is_error: true,
                                     execution_time_ms: 0,
+                                    patch_delta: None,
                                 },
                             });
                         }
@@ -459,6 +461,7 @@ impl ReActLoop {
                         content: content.clone(),
                         is_error,
                         execution_time_ms: 0,
+                        patch_delta: None,
                     },
                 });
 
@@ -694,6 +697,7 @@ fn exploration_budget_results(
                     content: content.to_owned(),
                     is_error: false,
                     execution_time_ms: 0,
+                    patch_delta: None,
                 },
             });
             ContentBlock::ToolResult {
