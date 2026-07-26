@@ -154,7 +154,12 @@ impl StorageReservation {
 
     fn release(&mut self) {
         if let (Some(owner), Some(id)) = (self.owner.upgrade(), self.id.take()) {
-            owner.state.lock().unwrap_or_else(|e| e.into_inner()).reservations.remove(&id);
+            owner
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .reservations
+                .remove(&id);
         }
     }
 }

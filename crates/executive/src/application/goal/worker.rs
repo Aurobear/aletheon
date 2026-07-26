@@ -129,13 +129,17 @@ impl GoalWorker {
                         .map(|id| (RuntimeId(id.to_owned()), CognitiveRole::Reviewer)),
                     _ => return Ok(false),
                 };
-                goal = self.store.lock().unwrap_or_else(|e| e.into_inner()).transition_goal(
-                    goal.id,
-                    goal.version,
-                    GoalState::Ready,
-                    None,
-                    &serde_json::json!({"action": "scheduler_wake"}),
-                )?;
+                goal = self
+                    .store
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .transition_goal(
+                        goal.id,
+                        goal.version,
+                        GoalState::Ready,
+                        None,
+                        &serde_json::json!({"action": "scheduler_wake"}),
+                    )?;
                 self.coordinator.tick(goal.id, self.clock.wall_now().0)?;
                 goal = self
                     .store

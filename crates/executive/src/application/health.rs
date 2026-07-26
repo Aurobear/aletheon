@@ -109,7 +109,10 @@ impl HealthRegistry {
     }
 
     pub fn set(&self, component: &'static str, health: ComponentHealth) {
-        self.components.lock().unwrap_or_else(|e| e.into_inner()).insert(component, health);
+        self.components
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(component, health);
     }
 
     pub fn begin_shutdown(&self) {
@@ -163,7 +166,11 @@ impl HealthRegistry {
     }
 
     pub fn snapshot(&self) -> ProductionHealth {
-        let mut components = self.components.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let mut components = self
+            .components
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if self.shutting_down.load(Ordering::Acquire) {
             components.insert("daemon", ComponentHealth::unready("shutting_down"));
         }

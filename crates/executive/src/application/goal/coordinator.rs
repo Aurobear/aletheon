@@ -109,7 +109,10 @@ impl GoalCoordinator {
         let Some((quota, expected_bytes)) = &self.storage_quota else {
             return Ok(());
         };
-        let mut reservations = self.storage_reservations.lock().unwrap_or_else(|e| e.into_inner());
+        let mut reservations = self
+            .storage_reservations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let std::collections::hash_map::Entry::Vacant(entry) = reservations.entry(goal_id) {
             let reservation = quota
                 .reserve(StorageClass::Total, *expected_bytes, 1)
@@ -120,7 +123,10 @@ impl GoalCoordinator {
     }
 
     pub fn release_attempt_storage(&self, goal_id: GoalId) {
-        self.storage_reservations.lock().unwrap_or_else(|e| e.into_inner()).remove(&goal_id);
+        self.storage_reservations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&goal_id);
     }
 
     /// Project only an immutable summary that can be read back from durable
@@ -260,7 +266,10 @@ impl GoalCoordinator {
 
         match current.state {
             GoalState::Completed | GoalState::Failed | GoalState::Cancelled => {
-                self.storage_reservations.lock().unwrap_or_else(|e| e.into_inner()).remove(&goal_id);
+                self.storage_reservations
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&goal_id);
                 Ok(GoalTickOutcome::Noop {
                     state: current.state,
                 })
