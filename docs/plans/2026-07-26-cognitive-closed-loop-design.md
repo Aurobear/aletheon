@@ -534,12 +534,45 @@ The implementation must extend rather than duplicate existing mechanisms:
   currently too small for real work because a node contains only ID,
   description, dependencies, and four statuses.
 - Cognit's linear harness already owns the inference/tool loop, budgets,
-  compaction, circuit breaking, reflection, and an optional prose verifier. Its
-  current no-tool branch treats the model's final text as completion unless that
-  optional verifier rejects it. This is the primary practical-work gap.
+  compaction, circuit breaking, reflection, and an optional prose verifier. The
+  no-tool completion logic is duplicated across two paths — `run`
+  (`harness/linear/step.rs:92`) and `run_streaming`
+  (`harness/linear/tool_exec.rs:169`) — and they have already diverged: only
+  `run` carries the verifier seam (`step.rs:96`), while `run_streaming` has none.
+  Both treat the model's final text as completion. This is the primary
+  practical-work gap; see Component 5 for the required convergence.
+- Cognit also already contains a disconnected cognitive layer under `core/`
+  (`Planner`, `Reasoner`, `Critic`, `Reflector`, `WorldModel`, `Learner`) that is
+  exported from `lib.rs:30-35` but not wired into the ReAct loop — the harness
+  imports only `core::awareness_signal`. The new task-cognition components must
+  explicitly reuse, adapt, migrate, or retire each overlapping contract rather
+  than mint an unexplained third parallel set; see the compatibility map below.
 - Corpus already owns governed tool execution. The first increment should
   consume and normalize its receipts, not move tool implementations into Cognit
   or Executive.
+
+#### Compatibility map for the existing `core/` cognitive layer
+
+The existing layer must be assessed and reconciled rather than ignored or reused
+by name alone. Its types are real implementations, but several encode legacy
+semantics that are not authoritative enough for the new completion path: `Plan`
+is action/rollback oriented, `Reflector` infers some outcomes from prose
+substrings, and `ReasoningStrategy` describes inference style rather than work
+lifecycle.
+
+| Design element | Existing code to reuse | Nature of the work |
+|---|---|---|
+| `CognitivePlan` | `fabric::cognit::Plan` / `core::planner::Planner` | Preserve IDs, dependency, expected-outcome, rollback, risk, and cost concepts where compatible; use a versioned evolution or explicit adapter rather than silently equating an action plan with the workflow task graph |
+| Progress auditor | `core::reflector::Reflector` / `Reflection` | Reflection may consume an accepted audit result for learning, but its prose heuristics cannot be the deterministic completion foundation |
+| `CognitiveWorkPhase` | `core::reasoner::ReasoningStrategy` | Keep separate typed concepts: lifecycle phase and inference strategy are orthogonal |
+| Claim critique | `core::critic::Critic` | Reuse compatible structural checks or optional semantic critique after removing phrase-keyed policy; keep deterministic evidence auditing separate |
+
+The existing `Intent` / `Plan` / `Reflection` / `Stimmung` vocabulary must be
+reconciled with the design's `CognitiveTaskContract` / `CognitiveWorkPhase` /
+`Obligation` vocabulary in the type-definitions slice. That slice must produce a
+compatibility decision and migration tests for every reused type. Because these
+helpers are not loop-integrated today, authoritative phase transitions and
+completion decisions remain net-new work.
 
 ### First practical-work vertical slice
 
@@ -906,6 +939,32 @@ agent-runtime requests using the installed runtime registry and otherwise
 returns no required action. Ambiguous requests remain unresolved rather than
 being guessed.
 
+#### Method-requirement resolution
+
+The interpreter must recognize an explicit method requirement without production
+behavior keyed to a prompt phrase, natural language, repository, or hard-coded
+runtime literal. Installed runtime names and aliases may validate a proposed
+runtime identity, but alias presence plus a hand-maintained list of nearby
+language cues is not a general intent parser.
+
+Resolution is typed and tiered:
+
+```text
+explicit client/tool/runtime selection metadata
+  -> validate against installed registry -> typed required action
+otherwise semantic requirement extraction
+  -> constrained proposal using installed runtime IDs/aliases
+  -> host validates identity and records extraction evidence
+  |- confident, unambiguous -> RequiredAction::InvokeAgent { runtime }
+  `- ambiguous -> UnresolvedRequirement / request clarification
+```
+
+The completion gate fails closed only after a typed requirement exists. An
+ambiguous mention cannot silently become either required or not required; it is
+preserved as unresolved and, when material to completion, triggers bounded
+clarification. Shadow-mode evaluation measures missed and spurious extractions
+across languages and phrasings without adding phrase-specific production rules.
+
 ### 2. Cognitive turn state
 
 The state is owned at the turn boundary and survives individual inference
@@ -998,6 +1057,37 @@ Continue the task. Do not claim completion until these obligations are met.
 
 Retries are bounded by policy. Exhaustion produces an explicit incomplete or
 blocked outcome; it must not be converted to a successful assistant message.
+
+#### One streaming-first loop and one completion decision point
+
+The no-tool completion logic currently exists as two independent copies: the
+non-streaming `ReActLoop::run` (`harness/linear/step.rs:92`) and the streaming
+`ReActLoop::run_streaming` (`harness/linear/tool_exec.rs:169`). They have already
+diverged — `run` carries the optional verifier seam (`step.rs:96`) but no
+steering drain, while `run_streaming` drains steering interjections
+(`tool_exec.rs:171`) but has no verifier at all. A gate added to only one path
+would leave the other on legacy behavior.
+
+The authoritative implementation is one streaming, event-driven loop. It emits
+typed lifecycle, inference, tool, context, completion, and terminal events. TUI
+and daemon callers forward the stream; non-streaming exec, native sub-Agent, and
+test callers use a collecting sink that waits for the same terminal outcome.
+`run` therefore becomes a thin adapter over the streaming engine rather than a
+second loop.
+
+The engine owns one `finalize_turn(final_text, &CognitiveTurnState) ->
+CompletionDecision` point. The completion gate, verifier seam, steering and
+follow-up drain, metrics, and terminal emission are implemented once. This
+satisfies design principle 5 because no completion policy remains duplicated in
+`step.rs` and `tool_exec.rs`.
+
+Both current paths are production-relevant and must remain compatible during
+migration. Native sub-Agent execution calls
+`CognitiveSession::run_turn` (`native_cognit.rs:319`), which dispatches to
+`ReActLoop::run` (`harness/session.rs:245-269`). The interactive daemon calls
+`run_streaming_turn` (`application/daemon_react.rs:86`), which dispatches to
+`ReActLoop::run_streaming` (`harness/session.rs:382-405`). The converged decision
+point therefore requires parity tests through both host call chains.
 
 ### 6. Claim-evidence audit
 
@@ -1177,6 +1267,16 @@ as a typed validation artifact rather than summarized success prose.
     node and workspace version after a canonical user response.
 31. Overlapping parallel write scopes are rejected or reconciled before either
     child result can pass its gate.
+32. Explicit client/runtime-selection metadata produces a typed
+    `InvokeAgent { runtime }` obligation only after installed-registry validation,
+    with no hard-coded runtime literal.
+33. Semantic extraction distinguishes a required runtime method from an
+    incidental same-token data mention across varied languages and phrasings;
+    ambiguous material cases become unresolved clarification rather than a
+    phrase-keyed guess.
+34. The streaming engine and its non-streaming collecting adapter produce the
+    same terminal outcome and completion decision; neither host path can accept
+    no-tool output that fails the shared `finalize_turn` gate.
 
 ### Installed-runtime acceptance
 
@@ -1207,7 +1307,9 @@ acceptance.
    observation only.
 7. **Repository-analysis workflow and maturity evidence** — prove grounded
    investigation without changing completion behavior.
-8. **Completion gate in shadow mode** — record would-reject decisions.
+8. **Streaming-loop convergence + gate in shadow mode** — make the event-driven
+   loop authoritative, replace `run` with a collecting adapter, extract one
+   `finalize_turn` decision point, and record would-reject decisions there.
 9. **Enforce required-action, plan-step, and terminal-evidence checks** — bounded
    recovery with concrete missing obligations.
 10. **Versioned single-Agent coding transaction** — inspect, edit, diff,
@@ -1268,3 +1370,5 @@ The first implementation increment is complete only when:
 18. Active context occupancy, cumulative provider usage, cache usage, inference
     rounds, retries, tool calls, and terminal tool results are independently
     observable.
+19. Streaming daemon/TUI calls and collecting exec/sub-Agent calls execute the
+    same loop and differ only in event-sink adaptation.
