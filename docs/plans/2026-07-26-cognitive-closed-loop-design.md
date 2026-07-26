@@ -74,6 +74,64 @@ demonstrates that important completion claims can be checked against runtime
 evidence and outstanding work. Aletheon combines these with persistent typed
 state and later feeds grounded experience into Dasein.
 
+### Pi agent-loop mechanics to absorb
+
+The Pi reference is more than a general recommendation to keep the loop small.
+Its concrete loop mechanics form the baseline behavior that Cognit must retain
+or improve:
+
+1. **Nested continuation loops.** An inner loop continues while tools or steering
+   messages remain; an outer loop checks queued follow-up messages before the
+   agent becomes idle.
+2. **Steering at safe boundaries.** User input submitted during work is injected
+   before the next model response without corrupting the assistant/tool-result
+   ordering.
+3. **Turn-boundary adaptation.** `prepareNextTurn` may replace context, model, or
+   reasoning configuration after observing the assistant response and complete
+   tool-result batch.
+4. **Explicit stop hook.** `shouldStopAfterTurn` allows the host to terminate a
+   turn from authoritative state rather than relying only on model output.
+5. **Follow-up draining.** A model that would otherwise stop must first consume
+   queued follow-up work.
+6. **Context transformation at the model boundary.** Internal Agent messages are
+   transformed and converted only immediately before inference, keeping runtime
+   state richer than provider message schemas.
+7. **Complete event lifecycle.** Agent, turn, message, tool-start, tool-update,
+   tool-end, and agent-end events expose what actually happened.
+8. **Truncated-call safety.** If model output ends because of its token limit,
+   potentially truncated tool arguments are rejected and returned as errors for
+   re-issuance rather than executed.
+9. **Declared execution ordering.** Tool batches may execute in parallel, while
+   tools marked sequential force ordered execution.
+10. **Error and abort terminality.** Provider error or abort ends the loop with
+    that status; it is never reinterpreted as normal completion.
+
+Aletheon should not embed these as Pi-specific branches. They become generic
+`CognitiveLoopDriver` semantics used by native Cognit turns and represented at
+the external-agent boundary:
+
+```rust
+pub trait CognitiveLoopPolicy: Send + Sync {
+    fn prepare_next_turn(
+        &self,
+        snapshot: &CompletedTurnSnapshot,
+        state: &CognitiveTurnState,
+    ) -> NextTurnDecision;
+
+    fn evaluate_stop(
+        &self,
+        proposal: &CompletionProposal,
+        state: &CognitiveTurnState,
+    ) -> CompletionDecision;
+}
+```
+
+The proposed Cognit completion gate supplies `evaluate_stop`; steering,
+follow-up draining, context transformation, and event emission remain runtime
+responsibilities. This separation keeps Pi's useful loop discipline while
+allowing Aletheon's evidence, persistence, security, Dasein, and conscious-field
+layers to operate on typed state.
+
 ## Practical work capability model
 
 Completion is meaningful only if Cognit can make progress across four work
@@ -446,6 +504,13 @@ or isolated daemons as deployment acceptance.
    a transient provider retry.
 13. A bounded edit workflow records diff evidence and focused validation before
    reporting the change complete.
+14. Steering submitted during tool execution is injected before the next model
+    response and after the complete tool-result batch.
+15. Queued follow-up input prevents the loop from becoming idle prematurely.
+16. A token-truncated tool-call batch is not executed and can be safely reissued.
+17. Sequential tools preserve provider order while an independent batch may run
+    in parallel.
+18. Provider error and user abort remain terminal non-success outcomes.
 
 ### Installed-runtime acceptance
 
@@ -462,20 +527,23 @@ acceptance.
 ## Delivery slices
 
 1. **Contract, work-phase, plan, and evidence types** — no behavior change.
-2. **Runtime receipt adapters, agent task packets, and persistence** —
+2. **Pi-derived loop-driver semantics** — steering, follow-up draining,
+   turn-boundary adaptation, truncated-call rejection, execution ordering, and
+   complete lifecycle events behind generic Cognit/runtime ports.
+3. **Runtime receipt adapters, agent task packets, and persistence** —
    observation only.
-3. **Repository-analysis workflow and maturity evidence** — prove grounded
+4. **Repository-analysis workflow and maturity evidence** — prove grounded
    investigation without changing completion behavior.
-4. **Completion gate in shadow mode** — record would-reject decisions.
-5. **Enforce required-action, plan-step, and terminal-evidence checks** — bounded
+5. **Completion gate in shadow mode** — record would-reject decisions.
+6. **Enforce required-action, plan-step, and terminal-evidence checks** — bounded
    recovery with concrete missing obligations.
-6. **Bounded coding inspect/edit/verify workflow** — focused validation and
+7. **Bounded coding inspect/edit/verify workflow** — focused validation and
    failure attribution.
-7. **Claim audit and grounded Dasein events** — deterministic claims only.
-8. **Comparative capability benchmark harness** — run identical bounded tasks
+8. **Claim audit and grounded Dasein events** — deterministic claims only.
+9. **Comparative capability benchmark harness** — run identical bounded tasks
    through native Cognit and configured external agents; do not encode product
    names into production policy.
-9. **Installed-runtime acceptance and regression documentation.**
+10. **Installed-runtime acceptance and regression documentation.**
 
 Each slice must have focused tests and a separate reviewable commit. No slice
 may introduce prompt-, language-, repository-, or checkout-specific production
@@ -500,3 +568,5 @@ The first implementation increment is complete only when:
 11. Native and external agents receive an equivalent typed task definition and
     their inference rounds, provider retries, tool calls, and validation results
     remain separately observable.
+12. The native loop safely handles steering, queued follow-ups, truncated tool
+    calls, sequential/parallel execution, and provider error/abort outcomes.
