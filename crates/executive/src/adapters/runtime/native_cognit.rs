@@ -555,6 +555,15 @@ impl TurnServices for NativeTurnServices {
         result
     }
 
+    async fn record_capability_receipt(&self, receipt: fabric::CapabilityTerminalReceipt) {
+        self.evidence.lock().await.push(AttemptEvidence {
+            kind: "capability_terminal_receipt".into(),
+            summary: format!("{}: {:?}", receipt.capability, receipt.status),
+            content: serde_json::to_string(&receipt)
+                .unwrap_or_else(|error| format!("receipt serialization failed: {error}")),
+        });
+    }
+
     fn llm_provider(&self) -> Option<&dyn LlmProvider> {
         Some(&self.llm)
     }

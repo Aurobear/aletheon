@@ -365,6 +365,10 @@ impl ReActLoop {
         self.iteration
     }
 
+    pub fn clock_handle(&self) -> Arc<dyn Clock> {
+        self.clock.clone()
+    }
+
     /// Reset iteration counter for a new turn.
     /// Clears mutable state (messages, pending_memory) but preserves
     /// plan_mode and system_prompt (user choice / immutable).

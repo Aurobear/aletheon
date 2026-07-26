@@ -61,6 +61,7 @@ impl SessionGateway {
                             fabric::ItemPayload::ToolResult { .. } => "tool_result",
                             fabric::ItemPayload::ContextProjection { .. } => "context_projection",
                             fabric::ItemPayload::SystemNotice { .. } => "system_notice",
+                            fabric::ItemPayload::CapabilityReceipt { .. } => "capability_receipt",
                         };
                         if event_type.is_some_and(|expected| expected != event_type_str) {
                             return None;

@@ -180,9 +180,10 @@ pub use include::self_field::{
 pub use include::space::SpaceManager;
 pub use include::subsystem::{InitPhase, Subsystem, SubsystemContext, SubsystemHealth, Version};
 pub use include::turn::{
-    AgoraView, CapabilityAuthority, CapabilityCall, CapabilityRequest, CapabilityResult,
-    DaseinView, InvocationControl, NoopTurnEventSink, RecallRequest, RecallSet, StubTurnServices,
-    TurnEventSink, TurnServices,
+    AgoraView, CapabilityAuthority, CapabilityCall, CapabilityErrorClass, CapabilityReceiptDetails,
+    CapabilityRequest, CapabilityResult, CapabilityRetryDisposition, CapabilityTerminalReceipt,
+    CapabilityTerminalStatus, DaseinView, InvocationControl, NoopTurnEventSink, RecallRequest,
+    RecallSet, StubTurnServices, TurnEventSink, TurnServices,
 };
 
 // Shared types (from types/)
@@ -289,7 +290,7 @@ pub use types::sandbox::{
 pub use types::sandbox_glob::expand_deny_globs;
 pub use types::session::{
     AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
-    SessionForkedEvent, SessionNotification, SessionProtocolV1, SessionRecord, SessionStatus,
+    SessionForkedEvent, SessionNotification, SessionProtocolV2, SessionRecord, SessionStatus,
     TurnId, TurnRecord, SESSION_SCHEMA_VERSION,
 };
 pub use types::space::{

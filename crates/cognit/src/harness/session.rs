@@ -5,8 +5,9 @@ use crate::harness::linear::DynLlmRef;
 use crate::harness::linear::{BatchPlanner, CompactorTrait, ReActLoop};
 use async_trait::async_trait;
 use fabric::{
-    CapabilityCall, Message, TurnEvent, TurnEventSink, TurnMetrics as FabricTurnMetrics,
-    TurnRequest, TurnResult, TurnServices, TurnStop,
+    CapabilityCall, CapabilityErrorClass, CapabilityReceiptDetails, CapabilityRetryDisposition,
+    CapabilityTerminalReceipt, CapabilityTerminalStatus, Message, TurnEvent, TurnEventSink,
+    TurnMetrics as FabricTurnMetrics, TurnRequest, TurnResult, TurnServices, TurnStop,
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -183,6 +184,7 @@ pub trait CognitiveSession: Send {
 pub struct LinearCognitiveSession {
     inner: ReActLoop,
     cancellation: CancellationToken,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl LinearCognitiveSession {
@@ -190,7 +192,8 @@ impl LinearCognitiveSession {
         let compactor = dependencies
             .compactor
             .unwrap_or_else(|| Box::new(NoopCompressor));
-        let mut inner = ReActLoop::new_with_clock(config, compactor, dependencies.clock);
+        let clock = dependencies.clock;
+        let mut inner = ReActLoop::new_with_clock(config, compactor, clock.clone());
         if let Some(planner) = dependencies.batch_planner.as_ref() {
             inner.set_batch_planner(Arc::clone(planner));
         }
@@ -203,6 +206,7 @@ impl LinearCognitiveSession {
         Self {
             inner,
             cancellation: dependencies.cancellation,
+            clock,
         }
     }
 
@@ -211,11 +215,89 @@ impl LinearCognitiveSession {
     /// Useful when the loop is constructed by a shared factory, e.g.
     /// `harness_factory::build_configured_react_loop()` in the daemon path.
     pub fn from_react_loop(inner: ReActLoop, cancellation: CancellationToken) -> Self {
+        let clock = inner.clock_handle();
         Self {
             inner,
             cancellation,
+            clock,
         }
     }
+}
+
+async fn invoke_with_terminal_receipt(
+    services: &dyn TurnServices,
+    call: CapabilityCall,
+    clock: &dyn fabric::Clock,
+) -> fabric::CapabilityResult {
+    let started_at = clock.mono_now();
+    let result = services.invoke(call.clone()).await;
+    let finished_at = clock.mono_now();
+    if let Some(details) = terminal_receipt_details(&call.name, &result) {
+        services
+            .record_capability_receipt(CapabilityTerminalReceipt::from_terminal_result(
+                &call,
+                &result,
+                started_at,
+                finished_at,
+                details,
+            ))
+            .await;
+    }
+    result
+}
+
+fn terminal_receipt_details(
+    capability: &str,
+    result: &fabric::CapabilityResult,
+) -> Option<CapabilityReceiptDetails> {
+    if !matches!(
+        capability,
+        "exec_command" | "write_stdin" | "validation_run"
+    ) {
+        return Some(CapabilityReceiptDetails::default());
+    }
+
+    let payload: serde_json::Value = serde_json::from_str(&result.output).ok()?;
+    let terminal = payload.get("terminal")?;
+    if terminal.is_null() {
+        return None;
+    }
+    let status = match terminal.get("status").and_then(|value| value.as_str()) {
+        Some("exited") if terminal.get("exit_code").and_then(|value| value.as_i64()) == Some(0) => {
+            CapabilityTerminalStatus::Succeeded
+        }
+        Some("exited") | Some("failed") => CapabilityTerminalStatus::Failed,
+        Some("timed_out") => CapabilityTerminalStatus::TimedOut,
+        Some("cancelled") => CapabilityTerminalStatus::Cancelled,
+        _ => return None,
+    };
+    let error_class = match status {
+        CapabilityTerminalStatus::TimedOut => Some(CapabilityErrorClass::Timeout),
+        CapabilityTerminalStatus::Failed => Some(CapabilityErrorClass::Unknown),
+        CapabilityTerminalStatus::Succeeded | CapabilityTerminalStatus::Cancelled => None,
+    };
+    Some(CapabilityReceiptDetails {
+        status: Some(status),
+        exit_code: terminal
+            .get("exit_code")
+            .and_then(|value| value.as_i64())
+            .and_then(|value| i32::try_from(value).ok()),
+        error_class,
+        output_ref: payload
+            .get("session_id")
+            .and_then(|value| value.as_str())
+            .map(|id| format!("command-session:{id}")),
+        truncated: payload
+            .get("truncated")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
+        retry_disposition: if status == CapabilityTerminalStatus::Succeeded {
+            CapabilityRetryDisposition::Never
+        } else {
+            CapabilityRetryDisposition::AfterCorrection
+        },
+        ..CapabilityReceiptDetails::default()
+    })
 }
 
 #[async_trait]
@@ -250,10 +332,12 @@ impl CognitiveSession for LinearCognitiveSession {
             }
             let tool_defs = services.tool_definitions();
             let process_id = request.process_id;
+            let clock = self.clock.clone();
             let llm = DynLlmRef(llm);
             let run = self
                 .inner
                 .run(&request.input, &llm, &tool_defs, |call_id, name, input| {
+                    let clock = clock.clone();
                     let req = CapabilityCall {
                         operation_id: request.operation_id,
                         process_id,
@@ -263,7 +347,8 @@ impl CognitiveSession for LinearCognitiveSession {
                         deadline: None,
                     };
                     async move {
-                        let result = services.invoke(req).await;
+                        let result =
+                            invoke_with_terminal_receipt(services, req, clock.as_ref()).await;
                         (result.output, result.is_error)
                     }
                 });
@@ -381,12 +466,14 @@ impl CognitiveSession for LinearCognitiveSession {
 
         let tool_defs = services.tool_definitions();
         let process_id = request.process_id;
+        let clock = self.clock.clone();
         let llm = DynLlmRef(llm);
         let sink = CognitiveStreamAdapter(stream);
         let run = self.inner.run_streaming(
             &llm,
             &tool_defs,
             |call_id, name, input| {
+                let clock = clock.clone();
                 let call = CapabilityCall {
                     operation_id: request.operation_id,
                     process_id,
@@ -396,7 +483,7 @@ impl CognitiveSession for LinearCognitiveSession {
                     deadline: None,
                 };
                 async move {
-                    let result = services.invoke(call).await;
+                    let result = invoke_with_terminal_receipt(services, call, clock.as_ref()).await;
                     (result.output, result.is_error)
                 }
             },
@@ -469,6 +556,35 @@ fn bounded_dasein_context(content: &str) -> String {
 #[cfg(test)]
 mod context_tests {
     use super::*;
+    use fabric::{RecallRequest, RecallSet};
+    use std::sync::Mutex as StdMutex;
+
+    struct ReceiptServices {
+        result: fabric::CapabilityResult,
+        receipts: StdMutex<Vec<CapabilityTerminalReceipt>>,
+    }
+
+    #[async_trait]
+    impl TurnServices for ReceiptServices {
+        async fn recall(&self, _request: RecallRequest) -> anyhow::Result<RecallSet> {
+            Ok(RecallSet::default())
+        }
+        async fn dasein_view(
+            &self,
+            _process: fabric::ProcessId,
+        ) -> anyhow::Result<fabric::DaseinView> {
+            Ok(fabric::DaseinView::default())
+        }
+        async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+            Ok(fabric::AgoraView::default())
+        }
+        async fn invoke(&self, _call: CapabilityCall) -> fabric::CapabilityResult {
+            self.result.clone()
+        }
+        async fn record_capability_receipt(&self, receipt: CapabilityTerminalReceipt) {
+            self.receipts.lock().unwrap().push(receipt);
+        }
+    }
 
     #[test]
     fn dasein_context_is_bounded_before_repeated_injection() {
@@ -477,5 +593,79 @@ mod context_tests {
 
         assert!(bounded.len() <= MAX_DASEIN_CONTEXT_BYTES + 80);
         assert!(bounded.contains("existential context truncated"));
+    }
+
+    #[test]
+    fn running_managed_command_does_not_create_terminal_receipt() {
+        let result = fabric::CapabilityResult {
+            call_id: "call".into(),
+            output: serde_json::json!({
+                "session_id": "session",
+                "terminal": null,
+                "truncated": false
+            })
+            .to_string(),
+            is_error: false,
+            usage: fabric::UsageReport::default(),
+            audit_id: None,
+            patch_delta: None,
+        };
+        assert!(terminal_receipt_details("exec_command", &result).is_none());
+    }
+
+    #[test]
+    fn terminal_validation_projects_exact_status_and_output_reference() {
+        let result = fabric::CapabilityResult {
+            call_id: "call".into(),
+            output: serde_json::json!({
+                "session_id": "session",
+                "terminal": {"status": "exited", "exit_code": 0},
+                "truncated": true
+            })
+            .to_string(),
+            is_error: false,
+            usage: fabric::UsageReport::default(),
+            audit_id: None,
+            patch_delta: None,
+        };
+        let details = terminal_receipt_details("validation_run", &result).unwrap();
+        assert_eq!(details.status, Some(CapabilityTerminalStatus::Succeeded));
+        assert_eq!(details.exit_code, Some(0));
+        assert_eq!(
+            details.output_ref.as_deref(),
+            Some("command-session:session")
+        );
+        assert!(details.truncated);
+    }
+
+    #[tokio::test]
+    async fn terminal_invocation_is_forwarded_to_receipt_port_once() {
+        let services = ReceiptServices {
+            result: fabric::CapabilityResult {
+                call_id: "call".into(),
+                output: "observed".into(),
+                is_error: false,
+                usage: fabric::UsageReport::default(),
+                audit_id: None,
+                patch_delta: None,
+            },
+            receipts: StdMutex::new(Vec::new()),
+        };
+        let call = CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            name: "file_read".into(),
+            input: serde_json::Value::Null,
+            call_id: "call".into(),
+            deadline: None,
+        };
+        let clock = kernel::chronos::TestClock::default();
+
+        let _ = invoke_with_terminal_receipt(&services, call, &clock).await;
+
+        let receipts = services.receipts.lock().unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert!(receipts[0].proves_success());
+        assert_eq!(receipts[0].capability, "file_read");
     }
 }

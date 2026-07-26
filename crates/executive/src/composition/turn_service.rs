@@ -194,6 +194,15 @@ impl TurnServices for RecordingTurnServices {
         });
         result
     }
+    async fn record_capability_receipt(&self, receipt: fabric::CapabilityTerminalReceipt) {
+        self.items
+            .lock()
+            .await
+            .push(ItemPayload::CapabilityReceipt {
+                receipt: receipt.clone(),
+            });
+        self.inner.record_capability_receipt(receipt).await;
+    }
     fn llm_provider(&self) -> Option<&dyn fabric::LlmProvider> {
         self.inner.llm_provider()
     }
@@ -211,5 +220,41 @@ impl TurnServices for RecordingTurnServices {
         calls: Vec<CapabilityCall>,
     ) -> anyhow::Result<fabric::CapabilityBatchPlan> {
         self.inner.plan_capability_batch(calls).await
+    }
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn recording_services_persist_terminal_receipt_as_distinct_item() {
+        let services = RecordingTurnServices::new(Arc::new(fabric::StubTurnServices), Vec::new());
+        let receipt = fabric::CapabilityTerminalReceipt {
+            invocation_id: "call".into(),
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            capability: "validation_run".into(),
+            status: fabric::CapabilityTerminalStatus::Succeeded,
+            started_at: fabric::MonoTime(1),
+            finished_at: fabric::MonoTime(2),
+            exit_code: Some(0),
+            error_class: None,
+            artifact_ids: Vec::new(),
+            evidence_ids: vec!["evidence".into()],
+            output_ref: Some("command-session:id".into()),
+            truncated: false,
+            retry_disposition: fabric::CapabilityRetryDisposition::Never,
+            audit_id: None,
+        };
+
+        services.record_capability_receipt(receipt.clone()).await;
+
+        let items = services.take_items().await;
+        assert_eq!(items.len(), 1);
+        assert!(matches!(
+            &items[0],
+            ItemPayload::CapabilityReceipt { receipt: stored } if stored == &receipt
+        ));
     }
 }
