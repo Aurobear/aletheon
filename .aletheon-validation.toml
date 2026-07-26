@@ -1,0 +1,17 @@
+schema_version = 1
+
+[installed_runtime]
+required = true
+command = "sudo bash scripts/aletheon.sh deploy"
+affected_path_prefixes = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "agents",
+  "config",
+  "crates/cognit",
+  "crates/corpus",
+  "crates/executive",
+  "crates/fabric",
+  "crates/gateway",
+  "scripts",
+]

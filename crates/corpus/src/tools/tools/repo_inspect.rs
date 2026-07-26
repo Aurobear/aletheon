@@ -26,6 +26,7 @@ const ENTRY_CANDIDATES: &[&str] = &[
     "pyproject.toml",
     "go.mod",
     "Makefile",
+    ".aletheon-validation.toml",
 ];
 
 pub struct RepoInspectTool;
@@ -155,6 +156,13 @@ fn inspect(input: serde_json::Value, ctx: &ToolContext) -> anyhow::Result<Reposi
         .iter()
         .flat_map(extract_validation_specs)
         .collect::<Vec<_>>();
+    let deployment_policy = match found
+        .iter()
+        .find(|(path, _)| path == ".aletheon-validation.toml")
+    {
+        Some((_, file)) => Some(parse_deployment_policy(file)?),
+        None => None,
+    };
     let vcs_state = vcs_snapshot(&root, &store);
     let entry_files = found.into_iter().map(|(_, file)| file).collect();
     let protected_paths = workspace
@@ -173,12 +181,57 @@ fn inspect(input: serde_json::Value, ctx: &ToolContext) -> anyhow::Result<Reposi
         vcs_state,
         validation_commands,
         protected_paths,
-        // Deployment acceptance must come from typed repository metadata. Do
-        // not infer it from natural-language instruction phrases.
-        deployment_policy: None,
+        // Deployment acceptance comes only from typed repository metadata.
+        // Natural-language instruction phrases are never promoted implicitly.
+        deployment_policy,
     };
     context.version = digest_json(&context)?;
     Ok(context)
+}
+
+#[derive(serde::Deserialize)]
+struct ValidationPolicyFile {
+    schema_version: u32,
+    installed_runtime: Option<InstalledRuntimePolicy>,
+}
+
+#[derive(serde::Deserialize)]
+struct InstalledRuntimePolicy {
+    required: bool,
+    command: String,
+    #[serde(default)]
+    affected_path_prefixes: Vec<String>,
+}
+
+fn parse_deployment_policy(
+    file: &RepositoryFileEvidence,
+) -> anyhow::Result<fabric::repository::DeploymentPolicy> {
+    if file.preview_truncated {
+        anyhow::bail!("validation policy exceeds bounded typed-metadata preview");
+    }
+    let policy: ValidationPolicyFile = toml::from_str(&file.preview)?;
+    if policy.schema_version != 1 {
+        anyhow::bail!("unsupported validation policy schema version");
+    }
+    let installed = policy
+        .installed_runtime
+        .ok_or_else(|| anyhow::anyhow!("installed_runtime policy is missing"))?;
+    if installed.required && installed.command.trim().is_empty() {
+        anyhow::bail!("installed-runtime command cannot be empty when required");
+    }
+    if installed
+        .affected_path_prefixes
+        .iter()
+        .any(|prefix| prefix.is_empty() || Path::new(prefix).is_absolute() || prefix.contains(".."))
+    {
+        anyhow::bail!("installed-runtime path prefixes must be safe relative prefixes");
+    }
+    Ok(fabric::repository::DeploymentPolicy {
+        source_path: file.path.clone(),
+        requires_installed_runtime: installed.required,
+        command: Some(installed.command),
+        affected_path_prefixes: installed.affected_path_prefixes,
+    })
 }
 
 fn evidence(
@@ -325,5 +378,47 @@ mod tests {
             .iter()
             .all(|file| file.artifact_ref.starts_with("artifact://sha256/")));
         assert!(result.missing_candidates.contains(&"README.md".into()));
+    }
+
+    #[test]
+    fn inspection_loads_typed_installed_runtime_policy() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join(".aletheon-validation.toml"),
+            "schema_version=1\n[installed_runtime]\nrequired=true\ncommand='sudo deploy'\naffected_path_prefixes=['crates/runtime']\n",
+        )
+        .unwrap();
+        let context = ToolContext {
+            agent: None,
+            approval_authority: None,
+            working_dir: temp.path().to_path_buf(),
+            session_id: "repo-policy-test".into(),
+            clock: Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+        let result = inspect(json!({}), &context).unwrap();
+        let policy = result.deployment_policy.unwrap();
+        assert!(policy.requires_installed_runtime);
+        assert_eq!(policy.command.as_deref(), Some("sudo deploy"));
+        assert_eq!(policy.affected_path_prefixes, vec!["crates/runtime"]);
+    }
+
+    #[test]
+    fn malformed_typed_validation_policy_fails_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join(".aletheon-validation.toml"),
+            "schema_version=1\n[installed_runtime]\nrequired=true\ncommand=''\n",
+        )
+        .unwrap();
+        let context = ToolContext {
+            agent: None,
+            approval_authority: None,
+            working_dir: temp.path().to_path_buf(),
+            session_id: "repo-policy-test".into(),
+            clock: Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+        assert!(inspect(json!({}), &context).is_err());
     }
 }

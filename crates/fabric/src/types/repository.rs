@@ -59,4 +59,8 @@ pub struct ValidationSpec {
 pub struct DeploymentPolicy {
     pub source_path: String,
     pub requires_installed_runtime: bool,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub affected_path_prefixes: Vec<String>,
 }

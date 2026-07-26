@@ -69,6 +69,9 @@ pub struct ChangeTransactionSnapshot {
     pub changed_ranges: Vec<ChangedRange>,
     pub diff_artifact_ref: Option<String>,
     pub validation_plan: Vec<ValidationPlanStep>,
+    pub validation_omissions: Vec<ValidationPlanOmission>,
+    pub validation_impact: ValidationImpact,
+    pub validation_risk: ValidationRisk,
     pub validation_receipts: Vec<VersionedValidationReceipt>,
     pub accepted_workspace_version: Option<String>,
     pub active_command: Option<ActiveCommandLease>,
@@ -90,6 +93,29 @@ pub struct ValidationPlanStep {
     pub reason: String,
     pub source: String,
     pub required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidationPlanOmission {
+    pub validation_kind: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationImpact {
+    NonCode,
+    PackageLocal,
+    WorkspaceDependency,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationRisk {
+    Low,
+    Moderate,
+    High,
+    DeploymentCritical,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

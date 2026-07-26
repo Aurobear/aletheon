@@ -7,8 +7,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use fabric::change_transaction::{
     ActiveCommandLease, ChangeTransactionId, ChangeTransactionPhase, ChangeTransactionSnapshot,
-    ChangedRange, ValidationPlanStep, VersionedValidationReceipt, WorkFailure, WorkFailureClass,
-    WorkspaceVersion,
+    ChangedRange, ValidationImpact, ValidationPlanOmission, ValidationPlanStep, ValidationRisk,
+    VersionedValidationReceipt, WorkFailure, WorkFailureClass, WorkspaceVersion,
 };
 use fabric::repository::RepositoryContext;
 use serde_json::json;
@@ -71,6 +71,9 @@ impl ChangeTransactionRegistry {
             changed_ranges: Vec::new(),
             diff_artifact_ref: None,
             validation_plan: Vec::new(),
+            validation_omissions: Vec::new(),
+            validation_impact: ValidationImpact::NonCode,
+            validation_risk: ValidationRisk::Low,
             validation_receipts: Vec::new(),
             accepted_workspace_version: None,
             active_command: None,
@@ -253,13 +256,17 @@ impl ChangeTransactionRegistry {
             .ok_or_else(|| anyhow::anyhow!("unknown change transaction"))?;
         snapshot.changed_paths = current.changed_paths.clone();
         snapshot.current = current;
-        snapshot.validation_plan = self
+        let validation = self
             .repository_contexts
             .lock()
             .await
             .get(&transaction_id)
             .map(|context| derive_validation_plan(context, &snapshot.changed_paths))
             .unwrap_or_default();
+        snapshot.validation_plan = validation.steps;
+        snapshot.validation_omissions = validation.omissions;
+        snapshot.validation_impact = validation.impact;
+        snapshot.validation_risk = validation.risk;
         snapshot.phase = ChangeTransactionPhase::Applied;
         snapshot.diff_artifact_ref = None;
         snapshot.changed_ranges.clear();
@@ -445,6 +452,9 @@ impl ChangeTransactionRegistry {
         snapshot.phase = ChangeTransactionPhase::RolledBack;
         snapshot.diff_artifact_ref = None;
         snapshot.validation_plan.clear();
+        snapshot.validation_omissions.clear();
+        snapshot.validation_impact = ValidationImpact::NonCode;
+        snapshot.validation_risk = ValidationRisk::Low;
         snapshot.validation_receipts.clear();
         snapshot.accepted_workspace_version = None;
         snapshot.active_command = None;
@@ -775,18 +785,41 @@ fn restore_node(path: &Path, node: RestoreNode) -> anyhow::Result<()> {
     Ok(())
 }
 
+struct ValidationProjection {
+    steps: Vec<ValidationPlanStep>,
+    omissions: Vec<ValidationPlanOmission>,
+    impact: ValidationImpact,
+    risk: ValidationRisk,
+}
+
+impl Default for ValidationProjection {
+    fn default() -> Self {
+        Self {
+            steps: Vec::new(),
+            omissions: Vec::new(),
+            impact: ValidationImpact::NonCode,
+            risk: ValidationRisk::Low,
+        }
+    }
+}
+
 fn derive_validation_plan(
     context: &RepositoryContext,
     changed_paths: &[String],
-) -> Vec<ValidationPlanStep> {
+) -> ValidationProjection {
     let mut plan = Vec::new();
+    let deployment_required = context.deployment_policy.as_ref().is_some_and(|policy| {
+        policy.requires_installed_runtime
+            && (policy.affected_path_prefixes.is_empty()
+                || changed_paths.iter().any(|path| {
+                    policy
+                        .affected_path_prefixes
+                        .iter()
+                        .any(|prefix| path == prefix || path.starts_with(&format!("{prefix}/")))
+                }))
+    });
     for spec in &context.validation_commands {
-        if spec.kind == "deploy"
-            && !context
-                .deployment_policy
-                .as_ref()
-                .is_some_and(|policy| policy.requires_installed_runtime)
-        {
+        if spec.kind == "deploy" && !deployment_required {
             continue;
         }
         if spec.command.is_empty()
@@ -810,7 +843,28 @@ fn derive_validation_plan(
             required: true,
         });
     }
-    let rust_crates = changed_paths
+    if deployment_required {
+        if let Some(policy) = &context.deployment_policy {
+            if let Some(command) = policy
+                .command
+                .as_ref()
+                .filter(|command| !command.is_empty())
+            {
+                if !plan.iter().any(|step| step.command == *command) {
+                    plan.push(ValidationPlanStep {
+                        id: "installed-runtime-acceptance".into(),
+                        validation_kind: "deploy".into(),
+                        command: command.clone(),
+                        reason: "typed repository deployment policy applies to the changed paths"
+                            .into(),
+                        source: policy.source_path.clone(),
+                        required: true,
+                    });
+                }
+            }
+        }
+    }
+    let rust_crate_dirs = changed_paths
         .iter()
         .filter_map(|path| {
             let mut parts = path.split('/');
@@ -818,7 +872,17 @@ fn derive_validation_plan(
                 .then(|| parts.next())
                 .flatten()
         })
+        .map(str::to_string)
         .collect::<std::collections::BTreeSet<_>>();
+    let mut impact = if rust_crate_dirs.is_empty() {
+        ValidationImpact::NonCode
+    } else {
+        ValidationImpact::PackageLocal
+    };
+    let manifest_changed = changed_paths
+        .iter()
+        .any(|path| path == "Cargo.toml" || path.ends_with("/Cargo.toml"));
+    let mut dependency_checks = std::collections::BTreeSet::new();
     if context
         .manifests
         .iter()
@@ -832,7 +896,10 @@ fn derive_validation_plan(
         } else {
             "cargo"
         };
-        for crate_name in rust_crates {
+        let packages = cargo_workspace_packages(Path::new(&context.root));
+        for crate_dir in rust_crate_dirs {
+            let crate_name = cargo_package_name(Path::new(&context.root), &crate_dir)
+                .unwrap_or_else(|| crate_dir.clone());
             for (kind, suffix, reason) in [
                 (
                     "check",
@@ -860,6 +927,45 @@ fn derive_validation_plan(
                     });
                 }
             }
+            let integration_dir = Path::new(&context.root)
+                .join("crates")
+                .join(&crate_dir)
+                .join("tests");
+            if integration_dir.is_dir()
+                || changed_paths
+                    .iter()
+                    .any(|path| path.starts_with(&format!("crates/{crate_dir}/tests/")))
+            {
+                let command = format!("{prefix} test -p {crate_name} --tests");
+                plan.push(ValidationPlanStep {
+                    id: format!("cargo-integration-{crate_name}"),
+                    validation_kind: "test".into(),
+                    command,
+                    reason: format!(
+                        "changed Rust package `{crate_name}` has relevant integration-test targets"
+                    ),
+                    source: format!("manifest:crates/{crate_dir}/Cargo.toml"),
+                    required: true,
+                });
+            }
+            for (dependent, dependencies) in &packages {
+                if dependent != &crate_name && dependencies.contains(&crate_name) {
+                    dependency_checks.insert(dependent.clone());
+                }
+            }
+        }
+        for dependent in dependency_checks {
+            impact = ValidationImpact::WorkspaceDependency;
+            plan.push(ValidationPlanStep {
+                id: format!("cargo-dependent-check-{dependent}"),
+                validation_kind: "check".into(),
+                command: format!("{prefix} check -p {dependent}"),
+                reason: format!(
+                    "direct workspace dependent `{dependent}` must compile against the changed package"
+                ),
+                source: "workspace dependency graph".into(),
+                required: true,
+            });
         }
     }
     plan.sort_by_key(|step| match step.validation_kind.as_str() {
@@ -871,7 +977,90 @@ fn derive_validation_plan(
         "deploy" => 5,
         _ => 6,
     });
-    plan
+    let mut omissions = Vec::new();
+    if !plan.iter().any(|step| step.validation_kind == "format") {
+        omissions.push(ValidationPlanOmission {
+            validation_kind: "format".into(),
+            reason: "no applicable repository format command was found".into(),
+        });
+    }
+    if !plan
+        .iter()
+        .any(|step| step.validation_kind == "test" && step.command.contains("--tests"))
+    {
+        omissions.push(ValidationPlanOmission {
+            validation_kind: "integration_test".into(),
+            reason: "no changed package exposed a relevant integration-test target".into(),
+        });
+    }
+    if !deployment_required {
+        omissions.push(ValidationPlanOmission {
+            validation_kind: "installed_runtime".into(),
+            reason: "typed repository metadata does not require installed-runtime acceptance"
+                .into(),
+        });
+    }
+    if !plan.iter().any(|step| step.validation_kind == "build") {
+        omissions.push(ValidationPlanOmission {
+            validation_kind: "workspace_build".into(),
+            reason: "targeted package checks cover the derived dependency impact; no workspace-wide build was selected".into(),
+        });
+    }
+    let risk = if deployment_required {
+        ValidationRisk::DeploymentCritical
+    } else if manifest_changed || impact == ValidationImpact::WorkspaceDependency {
+        ValidationRisk::High
+    } else if impact == ValidationImpact::PackageLocal {
+        ValidationRisk::Moderate
+    } else {
+        ValidationRisk::Low
+    };
+    ValidationProjection {
+        steps: plan,
+        omissions,
+        impact,
+        risk,
+    }
+}
+
+fn cargo_package_name(root: &Path, crate_dir: &str) -> Option<String> {
+    let content =
+        std::fs::read_to_string(root.join("crates").join(crate_dir).join("Cargo.toml")).ok()?;
+    content
+        .parse::<toml::Value>()
+        .ok()?
+        .get("package")?
+        .get("name")?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn cargo_workspace_packages(root: &Path) -> Vec<(String, std::collections::BTreeSet<String>)> {
+    let Ok(entries) = std::fs::read_dir(root.join("crates")) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let manifest = std::fs::read_to_string(entry.path().join("Cargo.toml")).ok()?;
+            let value = manifest.parse::<toml::Value>().ok()?;
+            let package = value.get("package")?.get("name")?.as_str()?.to_string();
+            let mut dependencies = std::collections::BTreeSet::new();
+            for table_name in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                if let Some(table) = value.get(table_name).and_then(toml::Value::as_table) {
+                    dependencies.extend(table.keys().cloned());
+                    dependencies.extend(table.values().filter_map(|dependency| {
+                        dependency
+                            .as_table()
+                            .and_then(|table| table.get("package"))
+                            .and_then(toml::Value::as_str)
+                            .map(str::to_string)
+                    }));
+                }
+            }
+            Some((package, dependencies))
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -954,6 +1143,9 @@ impl Tool for TransactionalFileWriteTool {
             "resulting_workspace_version": snapshot.current.digest,
             "transaction_phase": snapshot.phase,
             "validation_plan": snapshot.validation_plan,
+            "validation_omissions": snapshot.validation_omissions,
+            "validation_impact": snapshot.validation_impact,
+            "validation_risk": snapshot.validation_risk,
             "write_receipt": result.content,
         })
         .to_string();
@@ -1306,6 +1498,9 @@ impl Tool for TransactionalApplyPatchTool {
             payload["resulting_workspace_version"] = json!(snapshot.current.digest);
             payload["transaction_phase"] = json!(snapshot.phase);
             payload["validation_plan"] = json!(snapshot.validation_plan);
+            payload["validation_omissions"] = json!(snapshot.validation_omissions);
+            payload["validation_impact"] = json!(snapshot.validation_impact);
+            payload["validation_risk"] = json!(snapshot.validation_risk);
             result.content = serde_json::to_string_pretty(&payload).unwrap_or_default();
         }
         result
@@ -1553,6 +1748,9 @@ impl Tool for TransactionalGitDiffTool {
                 "transaction_phase": updated.phase,
                 "changed_ranges": updated.changed_ranges,
                 "validation_plan": updated.validation_plan,
+                "validation_omissions": updated.validation_omissions,
+                "validation_impact": updated.validation_impact,
+                "validation_risk": updated.validation_risk,
                 "preview": String::from_utf8_lossy(&output[..output.len().min(24 * 1024)]),
                 "truncated": output.len() > 24 * 1024,
             })
@@ -1997,7 +2195,8 @@ mod tests {
             deployment_policy: None,
         };
 
-        let plan = derive_validation_plan(&context, &["crates/corpus/src/lib.rs".into()]);
+        let projection = derive_validation_plan(&context, &["crates/corpus/src/lib.rs".into()]);
+        let plan = projection.steps;
         assert_eq!(
             plan.iter()
                 .map(|step| step.validation_kind.as_str())
@@ -2009,17 +2208,89 @@ mod tests {
             "bash scripts/cargo-agent.sh check -p corpus"
         );
         assert!(!plan.iter().any(|step| step.validation_kind == "deploy"));
+        assert_eq!(projection.impact, ValidationImpact::PackageLocal);
+        assert_eq!(projection.risk, ValidationRisk::Moderate);
+        assert!(projection
+            .omissions
+            .iter()
+            .any(|omission| omission.validation_kind == "installed_runtime"));
 
         let mut installed = context;
         installed.deployment_policy = Some(DeploymentPolicy {
             source_path: "typed-policy".into(),
             requires_installed_runtime: true,
+            command: Some("sudo bash scripts/deploy.sh".into()),
+            affected_path_prefixes: Vec::new(),
         });
-        assert!(
-            derive_validation_plan(&installed, &["crates/corpus/src/lib.rs".into()])
-                .iter()
-                .any(|step| step.validation_kind == "deploy")
+        let installed_projection =
+            derive_validation_plan(&installed, &["crates/corpus/src/lib.rs".into()]);
+        assert!(installed_projection
+            .steps
+            .iter()
+            .any(|step| step.validation_kind == "deploy"));
+        assert_eq!(
+            installed_projection.risk,
+            ValidationRisk::DeploymentCritical
         );
+    }
+
+    #[test]
+    fn validation_planner_expands_only_direct_workspace_dependency_impact() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("scripts")).unwrap();
+        std::fs::write(temp.path().join("scripts/cargo-agent.sh"), "#!/bin/sh\n").unwrap();
+        for (name, manifest) in [
+            (
+                "core_pkg",
+                "[package]\nname='core-package'\nversion='0.1.0'\n",
+            ),
+            (
+                "dependent",
+                "[package]\nname='dependent'\nversion='0.1.0'\n[dependencies]\ncore_alias={package='core-package',path='../core_pkg'}\n",
+            ),
+            (
+                "unrelated",
+                "[package]\nname='unrelated'\nversion='0.1.0'\n",
+            ),
+        ] {
+            let directory = temp.path().join("crates").join(name);
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("Cargo.toml"), manifest).unwrap();
+        }
+        let context = RepositoryContext {
+            root: temp.path().display().to_string(),
+            version: "context".into(),
+            instructions: Vec::new(),
+            manifests: vec![ManifestRef {
+                file: RepositoryFileEvidence {
+                    path: "Cargo.toml".into(),
+                    sha256: "manifest".into(),
+                    size_bytes: 0,
+                    artifact_ref: "artifact://sha256/manifest".into(),
+                    preview: String::new(),
+                    preview_truncated: false,
+                },
+                kind: "cargo".into(),
+            }],
+            entry_files: Vec::new(),
+            missing_candidates: Vec::new(),
+            vcs_state: VcsSnapshot::default(),
+            validation_commands: Vec::new(),
+            protected_paths: Vec::new(),
+            deployment_policy: None,
+        };
+        let projection = derive_validation_plan(&context, &["crates/core_pkg/src/lib.rs".into()]);
+        assert_eq!(projection.impact, ValidationImpact::WorkspaceDependency);
+        assert_eq!(projection.risk, ValidationRisk::High);
+        let commands = projection
+            .steps
+            .iter()
+            .map(|step| step.command.as_str())
+            .collect::<Vec<_>>();
+        assert!(commands.contains(&"bash scripts/cargo-agent.sh check -p core-package"));
+        assert!(commands.contains(&"bash scripts/cargo-agent.sh test -p core-package --lib"));
+        assert!(commands.contains(&"bash scripts/cargo-agent.sh check -p dependent"));
+        assert!(!commands.iter().any(|command| command.contains("unrelated")));
     }
 
     #[tokio::test]
