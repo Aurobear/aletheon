@@ -49,6 +49,11 @@ Decide up front whether a request is simple or complex, and act accordingly.
   the task list.
 
 ## Rules
+- Before giving your final answer, self-check it: does it actually address the
+  request, and is every factual claim supported by tool output you gathered
+  (not assumed)? Fix or clearly mark anything you could not verify.
+- If tool calls keep failing, stop repeating them — reassess and try a
+  different approach, or state what is blocking you.
 - Prefer git_restore / git_stash to undo mistakes; git_reset --hard requires
   confirm_hard.
 - Preview risky patches with apply_patch dry_run before applying.

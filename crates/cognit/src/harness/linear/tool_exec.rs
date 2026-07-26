@@ -535,6 +535,20 @@ impl ReActLoop {
                     .push(Message::user(format!("[Reflection]\n{summary}")));
             }
 
+            // Recovery nudge: repeated tool failures usually mean the current
+            // approach is not working. Prompt the model to reassess and change
+            // course rather than looping on the same failing call.
+            if self.consecutive_errors >= super::REPLAN_ON_CONSECUTIVE_ERRORS {
+                self.messages.push(Message::user(format!(
+                    "[recover] {} tool calls have failed in a row. Do not repeat the same \
+                     call. Reassess: is this approach viable? Try a different tool or \
+                     different parameters, or if the goal is blocked, state what is blocking \
+                     it and stop.",
+                    self.consecutive_errors
+                )));
+                self.consecutive_errors = 0;
+            }
+
             // Inject Dasein context after tool results for per-turn SelfField state refresh
             if let Some(ref provider) = &self.dasein_ctx_provider {
                 if let Some(dasein_ctx) = provider() {
