@@ -22,6 +22,11 @@ const MAX_EXPLORATION_INPUT_TOKENS: u64 = 24_000;
 /// answer, so reflection can halt tool use without discarding the turn.
 pub(super) const MIN_SUBSTANTIVE_ANSWER_CHARS: usize = 40;
 
+/// After this many consecutive tool failures, inject a one-shot "reassess and
+/// try a different approach" nudge so the loop re-plans instead of repeating a
+/// failing call. The counter resets on any tool success or after the nudge.
+pub(super) const REPLAN_ON_CONSECUTIVE_ERRORS: usize = 3;
+
 fn exploration_input_token_budget(context_window_tokens: usize) -> u64 {
     (context_window_tokens as u64 / 100)
         .clamp(MIN_EXPLORATION_INPUT_TOKENS, MAX_EXPLORATION_INPUT_TOKENS)
