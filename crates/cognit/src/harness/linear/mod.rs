@@ -1,6 +1,7 @@
 pub mod awareness;
 pub mod batching;
 pub mod circuit_breaker;
+mod completion;
 pub mod goal_tracker;
 pub mod message_compose;
 pub mod metrics;
@@ -541,7 +542,7 @@ fn is_context_overflow(err: &anyhow::Error) -> bool {
 mod tests {
     use super::*;
     use crate::adapters::inference::provider::{
-        LlmProvider, LlmResponse, LlmStream, StopReason, Usage,
+        LlmProvider, LlmResponse, LlmStream, StopReason, StreamChunk, Usage,
     };
     use async_trait::async_trait;
     use fabric::message::{ContentBlock, Message};
@@ -1512,7 +1513,16 @@ mod tests {
             _m: &[Message],
             _t: &[ToolDefinition],
         ) -> anyhow::Result<LlmStream> {
-            unimplemented!("not used in test")
+            let mut n = self.calls.lock().unwrap();
+            *n += 1;
+            Ok(Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::TextDelta {
+                    text: format!("answer {n}"),
+                }),
+                Ok(StreamChunk::Done {
+                    stop_reason: StopReason::EndTurn,
+                }),
+            ])))
         }
         fn name(&self) -> &str {
             "text"
@@ -1555,6 +1565,45 @@ mod tests {
             out, "answer 2",
             "rejected answer should be revised, got: {out}"
         );
+    }
+
+    #[tokio::test]
+    async fn streaming_verifier_rejection_matches_collecting_adapter() {
+        let cfg = HarnessConfig {
+            max_iterations: 5,
+            learning_enabled: false,
+            compaction_enabled: false,
+            ..HarnessConfig::default()
+        };
+        let mut lp = ReActLoop::new(cfg, Box::new(NoopCompressor));
+        lp.set_verifier(std::sync::Arc::new(RejectOnce {
+            seen: AtomicUsize::new(0),
+        }));
+        lp.messages.push(Message::user("go"));
+        let llm = TextLlm {
+            calls: Mutex::new(0),
+        };
+        let sink = CollectingEventSink(Mutex::new(Vec::new()));
+        let (out, _metrics) = lp
+            .run_streaming(
+                &llm,
+                &[],
+                |_id: &str, name: &str, _input: &serde_json::Value| {
+                    let name = name.to_string();
+                    async move { (format!("ran {name}"), false) }
+                },
+                || async { Ok(Vec::new()) },
+                &sink,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(out, "answer 2");
+        assert!(sink.0.lock().unwrap().iter().any(|event| matches!(
+            event,
+            crate::harness::event_sink::Event::TurnDone { result: Ok(text) }
+                if text == "answer 2"
+        )));
     }
 
     #[tokio::test]

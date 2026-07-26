@@ -1,19 +1,101 @@
-use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
-use super::tool_budget;
-use super::tool_output::{bounded_tool_result, MAX_TOOL_RESULT_BYTES};
-use super::{is_context_overflow, ReActLoop, TurnMetrics};
+use super::{ReActLoop, TurnMetrics};
 
-use crate::adapters::inference::provider::LlmProvider;
-use fabric::message::{ContentBlock, Message, Role};
-use fabric::policy::verifier::Verdict;
-use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
+use crate::adapters::inference::provider::{LlmProvider, LlmResponse, LlmStream, StreamChunk};
+use crate::harness::event_sink::{Event, EventSink};
+use async_trait::async_trait;
+use fabric::message::{ContentBlock, Message};
+use fabric::ToolDefinition;
 use std::future::Future;
-use tracing::{debug, warn};
+use std::sync::Mutex;
+
+/// Event adapter used by callers that need a terminal return value rather than
+/// incremental UI events. It deliberately observes the same streaming engine as
+/// interactive callers; it is not a second cognitive loop.
+#[derive(Default)]
+struct CollectingEventSink {
+    terminal: Mutex<Option<Result<String, String>>>,
+}
+
+struct CompleteAsStream<'a, L>(&'a L);
+
+#[async_trait]
+impl<L: LlmProvider> LlmProvider for CompleteAsStream<'_, L> {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmResponse> {
+        self.0.complete(messages, tools).await
+    }
+
+    async fn complete_stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> anyhow::Result<LlmStream> {
+        let response = self.0.complete(messages, tools).await?;
+        let mut chunks = Vec::new();
+        for block in response.content {
+            match block {
+                ContentBlock::Text { text } => chunks.push(Ok(StreamChunk::TextDelta { text })),
+                ContentBlock::Thinking { text, .. } => {
+                    chunks.push(Ok(StreamChunk::ThinkingDelta { text }));
+                }
+                ContentBlock::ToolUse { id, name, input } => {
+                    chunks.push(Ok(StreamChunk::ToolUseStart {
+                        id: id.clone(),
+                        name,
+                    }));
+                    chunks.push(Ok(StreamChunk::ToolUseComplete { id, input }));
+                }
+                ContentBlock::ToolResult { .. }
+                | ContentBlock::Image { .. }
+                | ContentBlock::System { .. } => {}
+            }
+        }
+        chunks.push(Ok(StreamChunk::Usage {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+        }));
+        chunks.push(Ok(StreamChunk::Done {
+            stop_reason: response.stop_reason,
+        }));
+        Ok(Box::pin(futures::stream::iter(chunks)))
+    }
+
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    fn max_context_length(&self) -> usize {
+        self.0.max_context_length()
+    }
+}
+
+impl EventSink for CollectingEventSink {
+    fn emit(&self, event: Event) {
+        if let Event::TurnDone { result } = event {
+            *self
+                .terminal
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result);
+        }
+    }
+}
+
+impl CollectingEventSink {
+    fn terminal(&self) -> Option<Result<String, String>> {
+        self.terminal
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
 
 impl ReActLoop {
-    /// Run the interleaved ReAct loop: call the LLM with tools, execute any
-    /// requested tools via `execute_tool`, feed results back, and repeat until
-    /// the LLM stops requesting tools or `max_iterations` is reached.
+    /// Non-streaming compatibility adapter over the authoritative event-driven
+    /// loop. The provider may still stream internally; this caller simply
+    /// collects the terminal event and returns the same outcome.
     pub async fn run<L, F, Fut>(
         &mut self,
         user_input: &str,
@@ -26,11 +108,6 @@ impl ReActLoop {
         F: Fn(&str, &str, &serde_json::Value) -> Fut,
         Fut: Future<Output = (String, bool)>,
     {
-        let start = self.clock.mono_now();
-        let mut tool_calls_made: usize = 0;
-        let mut tool_errors: usize = 0;
-        self.verify_attempts = 0;
-
         let dasein_context = self
             .dasein_ctx_provider
             .as_ref()
@@ -43,451 +120,25 @@ impl ReActLoop {
         self.pending_memory.clear();
         self.messages.push(Message::user(user_message));
 
-        while self.should_continue() {
-            self.advance();
-            self.emit_loop_start(&format!("iter_{}", self.iteration));
-            let response = match llm.complete(&self.messages, tool_defs).await {
-                Ok(r) => r,
-                Err(e) if is_context_overflow(&e) => {
-                    // A3: reactive compaction on context overflow
-                    warn!("Context overflow detected, forcing compaction: {e}");
-                    self.run_reactive_compaction(llm, None).await?;
-                    llm.complete(&self.messages, tool_defs).await?
-                }
-                Err(e) => return Err(e),
-            };
-            self.turn_input_tokens = self
-                .turn_input_tokens
-                .saturating_add(response.usage.input_tokens as u64);
+        let sink = CollectingEventSink::default();
+        let streaming_provider = CompleteAsStream(llm);
+        let outcome = self
+            .run_streaming(
+                &streaming_provider,
+                tool_defs,
+                execute_tool,
+                || async { Ok(Vec::new()) },
+                &sink,
+            )
+            .await?;
 
-            let mut text_parts = Vec::new();
-            let mut thinking_parts = Vec::new();
-            let mut tool_calls = Vec::new();
-            for block in &response.content {
-                match block {
-                    ContentBlock::Text { text } => text_parts.push(text.clone()),
-                    ContentBlock::Thinking { text, .. } => {
-                        thinking_parts.push(text.clone());
-                    }
-                    ContentBlock::ToolUse { id, name, input } => {
-                        // Defensive: skip tool calls with empty names — some
-                        // OpenAI-compatible providers emit malformed tool-use
-                        // blocks that would poison the conversation.
-                        if name.is_empty() {
-                            warn!(
-                                tool_id = %id,
-                                "ReActLoop: skipping tool call with empty name"
-                            );
-                            continue;
-                        }
-                        tool_calls.push((id.clone(), name.clone(), input.clone()));
-                    }
-                    _ => {}
-                }
+        match sink.terminal() {
+            Some(Ok(terminal)) if terminal == outcome.0 => Ok(outcome),
+            Some(Ok(_)) => {
+                anyhow::bail!("collecting adapter observed inconsistent terminal output")
             }
-
-            // No tool calls -> turn complete.
-            // Note: some models return EndTurn even when tool calls are present.
-            // We must check tool_calls first — only exit if there are no tools to run.
-            if tool_calls.is_empty() {
-                let final_text = text_parts.join("\n");
-
-                // M-C: optional verification seam. Default (None) = unchanged behavior.
-                if let Some(verifier) = self.verifier.clone() {
-                    if self.verify_attempts < self.max_verify_attempts {
-                        if let Verdict::Reject { reason } =
-                            verifier.verify(&final_text, &self.messages).await
-                        {
-                            self.verify_attempts += 1;
-                            // Record the rejected answer, then request a revision and re-loop.
-                            self.messages.push(Message::assistant(&final_text));
-                            self.messages.push(Message::user(format!(
-                                "[verification] Your previous answer was rejected: {reason}\n\
-                                 Please correct it and provide a better final answer."
-                            )));
-                            warn!(
-                                reason = reason.as_str(),
-                                "verifier rejected final answer; retrying"
-                            );
-                            continue;
-                        }
-                    }
-                }
-
-                // Emit awareness: uncertainty from response + final response signal
-                self.emit_thinking_complete("thinking", &final_text);
-                self.emit_final_response("final_response");
-                self.messages.push(Message::assistant(&final_text));
-                let metrics = TurnMetrics {
-                    tool_calls_made,
-                    tool_errors,
-                    elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
-                    iterations: self.iteration,
-                    completed_normally: true,
-                };
-                return Ok((final_text, metrics));
-            }
-
-            // Record the assistant turn (text + tool_use blocks) verbatim.
-            self.messages.push(Message {
-                role: Role::Assistant,
-                content: response.content.clone(),
-            });
-
-            // Deferred reflection — injected after all tool results to preserve
-            // OpenAI API message format (assistant(tool_use) → tool results only)
-            let mut pending_reflection: Option<String> = None;
-
-            // Collect tool results into a single combined user message.
-            // Anthropic API requires ALL tool_result blocks for one assistant
-            // message to be in a SINGLE subsequent user message.
-            let mut tool_result_blocks: Vec<ContentBlock> = Vec::new();
-
-            // Execute each requested tool and feed results back.
-            // Plan the batch order first.
-            let calls: Vec<CapabilityCall> = tool_calls
-                .iter()
-                .map(|(id, name, input)| CapabilityCall {
-                    operation_id: fabric::OperationId::new(),
-                    process_id: fabric::ProcessId::new(),
-                    name: name.clone(),
-                    input: input.clone(),
-                    call_id: id.clone(),
-                    deadline: None,
-                })
-                .collect();
-
-            let ordered_calls: Vec<&(String, String, serde_json::Value)> = if let Some(
-                ref planner,
-            ) = self.batch_planner
-            {
-                // Fail closed when an installed planner cannot establish a
-                // trusted projection for every call in this batch.
-                let plan = planner.plan(calls.clone()).await?;
-                match plan.mode {
-                    ConsciousArbitrationMode::Enforce => match plan.validate_against(&calls) {
-                        Ok(()) => {
-                            let mut ordered = Vec::new();
-                            for id in &plan.ordered_call_ids {
-                                if let Some(tc) = tool_calls.iter().find(|(tid, _, _)| tid == id) {
-                                    ordered.push(tc);
-                                }
-                            }
-                            if ordered.len() == tool_calls.len() {
-                                ordered
-                            } else {
-                                warn!(
-                                            "batch plan applied but call count mismatch; fallback to provider order"
-                                        );
-                                tool_calls.iter().collect()
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                error = %e,
-                                mode = ?plan.mode,
-                                "batch plan invalid; keeping provider order"
-                            );
-                            tool_calls.iter().collect()
-                        }
-                    },
-                    ConsciousArbitrationMode::Observe => tool_calls.iter().collect(),
-                }
-            } else {
-                tool_calls.iter().collect()
-            };
-
-            if super::should_close_exploration(
-                self.iteration,
-                self.turn_input_tokens,
-                self.config.context_window_tokens,
-                ordered_calls.iter().map(|(_, name, _)| name.as_str()),
-            ) {
-                let budget =
-                    super::exploration_input_token_budget(self.config.context_window_tokens);
-                let results = ordered_calls
-                    .iter()
-                    .map(|(id, _, _)| ContentBlock::ToolResult {
-                        tool_use_id: id.clone(),
-                        content: format!(
-                            "Broad-scanning budget reached ({} / {} input tokens). \
-                             Stop broad scanning (glob/grep/search). You MAY still read a \
-                             specific file if it is essential to answer, but do not keep \
-                             scanning. Answer now from the evidence you have ACTUALLY \
-                             gathered from tool output. Do not present unverified inferences \
-                             as fact: mark any claim you could not confirm as \"(unverified)\" \
-                             and say what you would need to check to confirm it.",
-                            self.turn_input_tokens, budget
-                        ),
-                        is_error: false,
-                    })
-                    .collect();
-                self.messages.push(Message {
-                    role: Role::User,
-                    content: results,
-                });
-                continue;
-            }
-
-            for (tool_index, (id, name, input)) in ordered_calls.iter().enumerate() {
-                // Defensive: skip tool calls with empty names — some
-                // OpenAI-compatible providers emit malformed tool-use blocks
-                // that would trip the circuit breaker.
-                if name.is_empty() {
-                    warn!(
-                        tool_id = %id,
-                        "ReActLoop: skipping tool call with empty name"
-                    );
-                    tool_result_blocks.push(ContentBlock::ToolResult {
-                        tool_use_id: id.clone(),
-                        content: "Error: tool call has empty name — skipping".to_string(),
-                        is_error: true,
-                    });
-                    tool_errors += 1;
-                    self.consecutive_errors += 1;
-                    continue;
-                }
-
-                // Check tool budget before executing
-                if !self.tool_budget.can_call() {
-                    warn!("Tool budget exhausted, stopping loop");
-                    let msg = format!(
-                        "Tool budget exhausted after {} calls. Partial result: {}",
-                        self.tool_budget.total_calls(),
-                        text_parts.join(" ")
-                    );
-                    let metrics = TurnMetrics {
-                        tool_calls_made,
-                        tool_errors,
-                        elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
-                        iterations: self.iteration,
-                        completed_normally: false,
-                    };
-                    // Push any already-collected results first, then error results.
-                    if !tool_result_blocks.is_empty() {
-                        self.messages.push(Message {
-                            role: Role::User,
-                            content: std::mem::take(&mut tool_result_blocks),
-                        });
-                    }
-                    for (pending_id, _, _) in ordered_calls.iter().skip(tool_index) {
-                        tool_result_blocks.push(ContentBlock::ToolResult {
-                            tool_use_id: pending_id.clone(),
-                            content: "Tool call skipped: per-turn tool budget exhausted"
-                                .to_string(),
-                            is_error: true,
-                        });
-                    }
-                    self.messages.push(Message {
-                        role: Role::User,
-                        content: tool_result_blocks,
-                    });
-                    return Ok((msg, metrics));
-                }
-
-                // Check circuit breaker before executing
-                let signature = ToolCallSignature::new(name, input);
-                match self.circuit_breaker.check(&signature) {
-                    CircuitBreakerStatus::Tripped(reason) => {
-                        warn!("Circuit breaker tripped: {}", reason);
-                        let msg = format!("Loop detected: {reason}. Stopping.");
-                        let metrics = TurnMetrics {
-                            tool_calls_made,
-                            tool_errors,
-                            elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
-                            iterations: self.iteration,
-                            completed_normally: false,
-                        };
-                        // Push any already-collected results first, then error results.
-                        if !tool_result_blocks.is_empty() {
-                            self.messages.push(Message {
-                                role: Role::User,
-                                content: std::mem::take(&mut tool_result_blocks),
-                            });
-                        }
-                        for (pending_id, _, _) in ordered_calls.iter().skip(tool_index) {
-                            tool_result_blocks.push(ContentBlock::ToolResult {
-                                tool_use_id: pending_id.clone(),
-                                content: format!(
-                                    "Tool call skipped: circuit breaker tripped: {reason}"
-                                ),
-                                is_error: true,
-                            });
-                        }
-                        self.messages.push(Message {
-                            role: Role::User,
-                            content: tool_result_blocks,
-                        });
-                        return Ok((msg, metrics));
-                    }
-                    CircuitBreakerStatus::Warning(reason) => {
-                        warn!("Circuit breaker warning: {}", reason);
-                    }
-                    CircuitBreakerStatus::Ok => {}
-                }
-
-                debug!(tool = name.as_str(), "ReActLoop executing tool");
-                let (content, is_error) = execute_tool(id, name, input).await;
-                tool_calls_made += 1;
-                if is_error {
-                    tool_errors += 1;
-                    self.consecutive_errors += 1;
-                    warn!(tool = name.as_str(), "tool returned error");
-                } else {
-                    self.consecutive_errors = 0;
-                }
-                // Record call in budget tracker (for analytics/history only;
-                // the can_call() guard above already enforces the budget limit)
-                self.tool_budget.record_call(tool_budget::ToolCallRecord {
-                    tool_name: name.clone(),
-                    timestamp: self.clock.mono_now(),
-                    success: !is_error,
-                });
-                // Emit awareness signal for tool completion
-                self.emit_tool_call_end(name);
-                // Record call in reflection engine (defer injection until after
-                // all tool results to preserve OpenAI API message format)
-                let mut should_reflect = false;
-                let is_timeout = is_error && content.to_lowercase().contains("timed out");
-                if self.reflection_engine.record_call(is_timeout) {
-                    should_reflect = true;
-                }
-                // Keep only a transient bounded copy in the active model context.
-                let bounded_content = bounded_tool_result(&content, MAX_TOOL_RESULT_BYTES);
-                // Accumulate tool result block for combined push after loop.
-                // Anthropic API requires all tool_result blocks for one assistant
-                // message to be in a SINGLE subsequent user message.
-                tool_result_blocks.push(ContentBlock::ToolResult {
-                    tool_use_id: id.clone(),
-                    content: bounded_content,
-                    is_error,
-                });
-                // Defer reflection until after all tool results
-                if should_reflect {
-                    let ctx = crate::harness::linear::reflection::ReflectionContext {
-                        goal: self.goal_tracker.current_goal_description(),
-                        recent_actions: self.recent_tools.clone(),
-                        current_state: if is_error { "error" } else { "ok" }.to_string(),
-                        tool_calls_made,
-                        errors: tool_errors,
-                        constraints: Vec::new(),
-                        test_failures: Vec::new(),
-                        unexpected_outputs: Vec::new(),
-                    };
-                    let result = self.reflection_engine.reflect(&ctx);
-                    // Store for injection after all tool results
-                    pending_reflection = Some(result.summary);
-                }
-            }
-
-            // Push combined tool result message — ALL tool_results for the
-            // preceding assistant(tool_use) message MUST be in ONE user message
-            // for the Anthropic API (tool_result blocks immediately after tool_use).
-            if !tool_result_blocks.is_empty() {
-                self.messages.push(Message {
-                    role: Role::User,
-                    content: tool_result_blocks,
-                });
-            }
-            // Inject reflection AFTER all tool results to preserve API message format
-            if let Some(summary) = pending_reflection.take() {
-                self.messages
-                    .push(Message::user(format!("[Reflection]\n{summary}")));
-            }
-
-            // Recovery nudge: repeated tool failures usually mean the current
-            // approach is not working. Prompt the model to reassess and change
-            // course rather than looping on the same failing call.
-            if self.consecutive_errors >= super::REPLAN_ON_CONSECUTIVE_ERRORS {
-                self.messages.push(Message::user(format!(
-                    "[recover] {} tool calls have failed in a row. Do not repeat the same \
-                     call. Reassess: is this approach viable? Try a different tool or \
-                     different parameters, or if the goal is blocked, state what is blocking \
-                     it and stop.",
-                    self.consecutive_errors
-                )));
-                self.consecutive_errors = 0;
-            }
-
-            // Check if reflection recommended stopping.
-            if self.reflection_engine.should_stop() {
-                let mut final_text = text_parts.join("\n");
-                // Reflection halts the tool loop, but it must not surface an
-                // empty or stub answer. When the model has not yet produced a
-                // substantive answer, force ONE final tool-free synthesis pass
-                // over the evidence already gathered (bounded: no tools, so it
-                // cannot re-enter exploration).
-                if final_text.trim().chars().count() < super::MIN_SUBSTANTIVE_ANSWER_CHARS {
-                    self.messages.push(Message::user(
-                        "[synthesis] You must stop calling tools now. Provide your best \
-                         final answer based only on the evidence you have actually gathered. \
-                         Mark any claim you could not verify from tool output as \"(unverified)\"."
-                            .to_string(),
-                    ));
-                    let no_tools: &[ToolDefinition] = &[];
-                    match llm.complete(&self.messages, no_tools).await {
-                        Ok(resp) => {
-                            let synth: String = resp
-                                .content
-                                .iter()
-                                .filter_map(|block| match block {
-                                    ContentBlock::Text { text } => Some(text.clone()),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            if !synth.trim().is_empty() {
-                                final_text = synth;
-                            }
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "forced synthesis after reflection-stop failed");
-                        }
-                    }
-                }
-                if final_text.trim().is_empty() {
-                    final_text = "Reflection recommended stopping; no answer could be synthesized."
-                        .to_string();
-                }
-                self.messages.push(Message::assistant(&final_text));
-                let metrics = TurnMetrics {
-                    tool_calls_made,
-                    tool_errors,
-                    elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
-                    iterations: self.iteration,
-                    completed_normally: false,
-                };
-                return Ok((final_text, metrics));
-            }
-
-            // A2: proactive compaction after pushing tool results
-            if self.config.compaction_enabled {
-                self.run_proactive_compaction(llm, None).await;
-            }
+            Some(Err(error)) => anyhow::bail!(error),
+            None => anyhow::bail!("streaming cognitive loop ended without a terminal event"),
         }
-
-        warn!(
-            max = self.config.max_iterations,
-            "ReActLoop hit max_iterations"
-        );
-        let final_text = self
-            .messages
-            .iter()
-            .rev()
-            .find_map(|m| {
-                m.content.iter().find_map(|b| match b {
-                    ContentBlock::Text { text } => Some(text.clone()),
-                    _ => None,
-                })
-            })
-            .unwrap_or_else(|| format!("Max iterations ({}) reached", self.config.max_iterations));
-        let metrics = TurnMetrics {
-            tool_calls_made,
-            tool_errors,
-            elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
-            iterations: self.iteration,
-            completed_normally: false,
-        };
-        Ok((final_text, metrics))
     }
 }

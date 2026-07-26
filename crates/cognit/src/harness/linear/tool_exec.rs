@@ -1,4 +1,5 @@
 use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
+use super::completion::FinalizationDecision;
 use super::tool_budget;
 use super::tool_output::{bounded_tool_result, per_result_budget};
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
@@ -34,6 +35,7 @@ impl ReActLoop {
         let start = self.clock.mono_now();
         let mut tool_calls_made: usize = 0;
         let mut tool_errors: usize = 0;
+        self.verify_attempts = 0;
 
         event_sink.emit(Event::TurnStarted { iteration: 0 });
 
@@ -168,15 +170,24 @@ impl ReActLoop {
             // We must check tool_calls first — only exit if there are no tools to run.
             if tool_calls.is_empty() {
                 let final_text = text_parts.join("\n");
-                let interjections = drain_interjections().await?;
-                if !interjections.is_empty() {
-                    if !final_text.is_empty() {
-                        self.messages.push(Message::assistant(&final_text));
+                let final_text = match self
+                    .finalize_candidate(final_text, &drain_interjections)
+                    .await?
+                {
+                    FinalizationDecision::ContinueWithInterjections {
+                        assistant_text,
+                        interjections,
+                    } => {
+                        if let Some(text) = assistant_text {
+                            self.messages.push(Message::assistant(&text));
+                        }
+                        self.messages
+                            .extend(interjections.into_iter().map(Message::user));
+                        continue;
                     }
-                    self.messages
-                        .extend(interjections.into_iter().map(Message::user));
-                    continue;
-                }
+                    FinalizationDecision::ContinueAfterRejection => continue,
+                    FinalizationDecision::Accept { final_text } => final_text,
+                };
                 // Emit awareness: uncertainty from response + final response signal
                 self.emit_thinking_complete("thinking", &final_text);
                 self.emit_final_response("final_response");
