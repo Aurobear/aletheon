@@ -137,6 +137,10 @@ impl RequestHandler {
         // directory. Never rediscover HOME or a machine deployment path here.
         let aletheon_dir = data_dir.clone();
         std::fs::create_dir_all(&aletheon_dir)?;
+        // Provision the current shipped agent profiles into this data dir so a
+        // deploy never leaves the runtime without them (deploy does not sync
+        // the agents/ directory). User-authored profiles are preserved.
+        super::bundled_profiles::seed(&aletheon_dir.join("agents"));
         let production = config.deployment.mode == cognit::config::DeploymentMode::Production;
         let objective_root = data_dir.join("goals");
         std::fs::create_dir_all(&objective_root)?;
