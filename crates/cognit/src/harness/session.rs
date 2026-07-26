@@ -386,7 +386,7 @@ fn render_turn_requirements(requirements: &[fabric::TurnRequirement]) -> String 
     for requirement in requirements {
         lines.push(match requirement {
             fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => format!(
-                "- Spawn Agent runtime `{runtime_id}` during this turn and observe its authoritative terminal result with `agent_wait`; historical Agent receipts do not satisfy this obligation."
+                "- During this turn call `agent_spawn` with its `runtime` field set exactly to `{runtime_id}` (the runtime ID is not a profile name), then call `agent_wait` for the returned `agent_id` and observe an authoritative terminal result whose `runtime_id` is `{runtime_id}`; historical Agent receipts do not satisfy this obligation."
             ),
             fabric::TurnRequirement::InvokeCapability { name } => {
                 format!("- Invoke capability `{name}` during this turn.")
@@ -811,6 +811,17 @@ mod context_tests {
             patch_delta: None,
         };
         assert!(terminal_receipt_details("exec_command", &result).is_none());
+    }
+
+    #[test]
+    fn agent_requirement_names_the_runtime_override_field() {
+        let contract = render_turn_requirements(&[fabric::TurnRequirement::InvokeAgentRuntime {
+            runtime_id: "pi-rpc".into(),
+        }]);
+        assert!(contract.contains("`agent_spawn`"));
+        assert!(contract.contains("`runtime` field set exactly to `pi-rpc`"));
+        assert!(contract.contains("runtime ID is not a profile name"));
+        assert!(contract.contains("`agent_wait`"));
     }
 
     #[test]
