@@ -249,6 +249,13 @@ pub trait TurnServices: Send + Sync {
     /// compatibility no-op; callers invoke it only after terminal observation.
     async fn record_capability_receipt(&self, _receipt: CapabilityTerminalReceipt) {}
 
+    /// Persist the exact bounded fragments selected for one provider request.
+    async fn record_model_context_projection(
+        &self,
+        _receipt: crate::model_projection::ModelContextProjectionReceipt,
+    ) {
+    }
+
     fn turn_requirements(&self, _request: &TurnRequest) -> Vec<TurnRequirement> {
         Vec::new()
     }

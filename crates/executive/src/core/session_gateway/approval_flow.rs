@@ -62,6 +62,9 @@ impl SessionGateway {
                             fabric::ItemPayload::ContextProjection { .. } => "context_projection",
                             fabric::ItemPayload::SystemNotice { .. } => "system_notice",
                             fabric::ItemPayload::CapabilityReceipt { .. } => "capability_receipt",
+                            fabric::ItemPayload::ModelContextProjection { .. } => {
+                                "model_context_projection"
+                            }
                         };
                         if event_type.is_some_and(|expected| expected != event_type_str) {
                             return None;

@@ -74,6 +74,7 @@ pub use types::hook;
 pub use types::hook_ext;
 pub use types::llm_types;
 pub use types::message;
+pub use types::model_projection;
 pub use types::network_policy;
 pub use types::objective;
 pub use types::paths;
@@ -291,8 +292,8 @@ pub use types::sandbox::{
 pub use types::sandbox_glob::expand_deny_globs;
 pub use types::session::{
     AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
-    SessionForkedEvent, SessionNotification, SessionProtocolV2, SessionRecord, SessionStatus,
-    TurnId, TurnRecord, SESSION_SCHEMA_VERSION,
+    SessionForkedEvent, SessionNotification, SessionProtocolV2, SessionProtocolV3, SessionRecord,
+    SessionStatus, TurnId, TurnRecord, SESSION_SCHEMA_VERSION,
 };
 pub use types::space::{
     AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, ContextBinding, ContextSpace, MemoryViewId,

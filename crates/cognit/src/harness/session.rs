@@ -13,12 +13,109 @@ use fabric::{
     CapabilityTerminalReceipt, CapabilityTerminalStatus, Message, TurnEvent, TurnEventSink,
     TurnMetrics as FabricTurnMetrics, TurnRequest, TurnResult, TurnServices, TurnStop,
 };
+use sha2::{Digest, Sha256};
 use std::pin::Pin;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 const MAX_DASEIN_CONTEXT_BYTES: usize = 8_000;
+
+struct ProjectionRecordingLlm<'a> {
+    inner: &'a dyn fabric::LlmProvider,
+    services: &'a dyn TurnServices,
+    operation_id: fabric::OperationId,
+}
+
+impl ProjectionRecordingLlm<'_> {
+    async fn record(&self, messages: &[Message], tools: &[fabric::ToolDefinition]) {
+        use fabric::model_projection::{
+            ModelContextClassification, ModelContextFragmentReceipt, ModelContextProjectionReceipt,
+        };
+        let fragments = messages
+            .iter()
+            .enumerate()
+            .map(|(index, message)| {
+                let bytes = serde_json::to_vec(message).unwrap_or_default();
+                let digest = format!("{:x}", Sha256::digest(&bytes));
+                let classification = if message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, fabric::ContentBlock::ToolResult { .. }))
+                {
+                    ModelContextClassification::ToolEvidence
+                } else {
+                    match message.role {
+                        fabric::Role::System => ModelContextClassification::Instruction,
+                        fabric::Role::User => ModelContextClassification::UntrustedInput,
+                        fabric::Role::Assistant => ModelContextClassification::ModelHistory,
+                    }
+                };
+                ModelContextFragmentReceipt {
+                    fragment_id: digest.clone(),
+                    source: format!("message:{index}:{:?}", message.role),
+                    source_version: digest,
+                    artifact_ref: None,
+                    inline_content: Some(String::from_utf8_lossy(&bytes).into_owned()),
+                    selection_reason: "active_turn_context".into(),
+                    classification,
+                    truncated: false,
+                    bytes: bytes.len() as u64,
+                }
+            })
+            .collect::<Vec<_>>();
+        let message_bytes = fragments.iter().map(|fragment| fragment.bytes).sum();
+        let tool_schema_bytes = serde_json::to_vec(tools)
+            .map(|bytes| bytes.len() as u64)
+            .unwrap_or_default();
+        self.services
+            .record_model_context_projection(ModelContextProjectionReceipt {
+                inference_id: uuid::Uuid::new_v4().to_string(),
+                operation_id: format!("{:?}", self.operation_id),
+                role: "active_agent".into(),
+                stage: "cognitive_loop".into(),
+                task_node_id: Some(format!("{:?}", self.operation_id)),
+                fragments,
+                omitted_fragment_ids: Vec::new(),
+                message_bytes,
+                tool_schema_bytes,
+            })
+            .await;
+    }
+}
+
+#[async_trait]
+impl fabric::LlmProvider for ProjectionRecordingLlm<'_> {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[fabric::ToolDefinition],
+    ) -> anyhow::Result<fabric::LlmResponse> {
+        self.record(messages, tools).await;
+        self.inner.complete(messages, tools).await
+    }
+
+    async fn complete_stream(
+        &self,
+        messages: &[Message],
+        tools: &[fabric::ToolDefinition],
+    ) -> anyhow::Result<fabric::LlmStream> {
+        self.record(messages, tools).await;
+        self.inner.complete_stream(messages, tools).await
+    }
+
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn runtime_facts(&self) -> fabric::ModelRuntimeFacts {
+        self.inner.runtime_facts()
+    }
+
+    fn max_context_length(&self) -> usize {
+        self.inner.max_context_length()
+    }
+}
 
 pub type CognitiveStreamEvent = crate::harness::event_sink::Event;
 
@@ -380,7 +477,12 @@ impl CognitiveSession for LinearCognitiveSession {
             let tool_defs = services.tool_definitions();
             let process_id = request.process_id;
             let clock = self.clock.clone();
-            let llm = DynLlmRef(llm);
+            let recording_llm = ProjectionRecordingLlm {
+                inner: llm,
+                services,
+                operation_id: request.operation_id,
+            };
+            let llm = DynLlmRef(&recording_llm);
             let run = self
                 .inner
                 .run(&request.input, &llm, &tool_defs, |call_id, name, input| {
@@ -515,7 +617,12 @@ impl CognitiveSession for LinearCognitiveSession {
         let tool_defs = services.tool_definitions();
         let process_id = request.process_id;
         let clock = self.clock.clone();
-        let llm = DynLlmRef(llm);
+        let recording_llm = ProjectionRecordingLlm {
+            inner: llm,
+            services,
+            operation_id: request.operation_id,
+        };
+        let llm = DynLlmRef(&recording_llm);
         let sink = CognitiveStreamAdapter(stream);
         let run = self.inner.run_streaming(
             &llm,

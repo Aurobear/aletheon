@@ -36,6 +36,7 @@ pub mod message;
 pub mod metacognition_evaluation;
 pub mod metacognition_evidence;
 pub mod metacognition_experience;
+pub mod model_projection;
 pub mod network_policy;
 pub mod objective;
 pub mod paths;

@@ -299,6 +299,7 @@ async fn streaming_session_keeps_thinking_out_of_visible_and_final_text() {
 
 struct RequiredCapabilityServices {
     llm: cognit::testing::mock_llm::MockLlmProvider,
+    projections: Mutex<Vec<fabric::model_projection::ModelContextProjectionReceipt>>,
 }
 
 #[async_trait]
@@ -335,6 +336,13 @@ impl TurnServices for RequiredCapabilityServices {
             name: "file_read".into(),
         }]
     }
+
+    async fn record_model_context_projection(
+        &self,
+        receipt: fabric::model_projection::ModelContextProjectionReceipt,
+    ) {
+        self.projections.lock().unwrap().push(receipt);
+    }
 }
 
 fn required_capability_services(name: &str) -> RequiredCapabilityServices {
@@ -342,7 +350,10 @@ fn required_capability_services(name: &str) -> RequiredCapabilityServices {
     for _ in 0..3 {
         llm.push_text_response("claimed complete", StopReason::EndTurn);
     }
-    RequiredCapabilityServices { llm }
+    RequiredCapabilityServices {
+        llm,
+        projections: Mutex::new(Vec::new()),
+    }
 }
 
 #[tokio::test]
@@ -359,6 +370,11 @@ async fn collecting_session_cannot_bypass_typed_completion_requirement() {
     assert!(!result.metrics.completed_normally);
     assert!(result.output.contains("file_read"));
     assert_eq!(services.llm.call_log.lock().unwrap().len(), 3);
+    let projections = services.projections.lock().unwrap();
+    assert_eq!(projections.len(), 3);
+    assert!(projections
+        .iter()
+        .all(|receipt| !receipt.fragments.is_empty() && receipt.message_bytes > 0));
 }
 
 #[tokio::test]
@@ -384,6 +400,7 @@ async fn streaming_session_cannot_bypass_typed_completion_requirement() {
         matches!(event, CognitiveStreamEvent::TurnDone { result: Err(message) } if message.contains("file_read"))
     }));
     assert_eq!(services.llm.call_log.lock().unwrap().len(), 3);
+    assert_eq!(services.projections.lock().unwrap().len(), 3);
 }
 
 struct InterjectingServices {

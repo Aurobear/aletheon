@@ -203,6 +203,19 @@ impl TurnServices for RecordingTurnServices {
             });
         self.inner.record_capability_receipt(receipt).await;
     }
+    async fn record_model_context_projection(
+        &self,
+        mut receipt: fabric::model_projection::ModelContextProjectionReceipt,
+    ) {
+        materialize_projection_artifacts(&mut receipt);
+        self.items
+            .lock()
+            .await
+            .push(ItemPayload::ModelContextProjection {
+                receipt: receipt.clone(),
+            });
+        self.inner.record_model_context_projection(receipt).await;
+    }
     fn llm_provider(&self) -> Option<&dyn fabric::LlmProvider> {
         self.inner.llm_provider()
     }
@@ -214,12 +227,37 @@ impl TurnServices for RecordingTurnServices {
         seed.extend(self.canonical_seed.clone());
         seed
     }
+    fn turn_requirements(&self, request: &TurnRequest) -> Vec<fabric::TurnRequirement> {
+        self.inner.turn_requirements(request)
+    }
 
     async fn plan_capability_batch(
         &self,
         calls: Vec<CapabilityCall>,
     ) -> anyhow::Result<fabric::CapabilityBatchPlan> {
         self.inner.plan_capability_batch(calls).await
+    }
+}
+
+pub(crate) fn materialize_projection_artifacts(
+    receipt: &mut fabric::model_projection::ModelContextProjectionReceipt,
+) {
+    let store = corpus::tools::artifact::ArtifactStore::new(
+        corpus::tools::tools::output::OutputConfig::default()
+            .overflow_dir
+            .join("artifacts"),
+    );
+    for fragment in &mut receipt.fragments {
+        let Some(content) = fragment.inline_content.take() else {
+            continue;
+        };
+        match store.store(content.as_bytes(), "application/json") {
+            Ok(artifact) => fragment.artifact_ref = Some(artifact.uri()),
+            Err(error) => {
+                tracing::warn!(%error, fragment = %fragment.fragment_id, "context projection artifact persistence failed");
+                fragment.inline_content = Some(content);
+            }
+        }
     }
 }
 
@@ -256,5 +294,45 @@ mod receipt_tests {
             &items[0],
             ItemPayload::CapabilityReceipt { receipt: stored } if stored == &receipt
         ));
+    }
+
+    #[tokio::test]
+    async fn recording_services_persist_model_projection_as_control_item() {
+        let services = RecordingTurnServices::new(Arc::new(fabric::StubTurnServices), Vec::new());
+        let receipt = fabric::model_projection::ModelContextProjectionReceipt {
+            inference_id: "inference-1".into(),
+            operation_id: "operation-1".into(),
+            role: "worker".into(),
+            stage: "execute".into(),
+            task_node_id: Some("task-1".into()),
+            fragments: vec![fabric::model_projection::ModelContextFragmentReceipt {
+                fragment_id: "fragment-1".into(),
+                source: "system_prompt".into(),
+                source_version: "version-1".into(),
+                artifact_ref: None,
+                inline_content: Some("{\"role\":\"system\"}".into()),
+                selection_reason: "role_instruction".into(),
+                classification: fabric::model_projection::ModelContextClassification::Instruction,
+                truncated: false,
+                bytes: 17,
+            }],
+            omitted_fragment_ids: Vec::new(),
+            message_bytes: 10,
+            tool_schema_bytes: 20,
+        };
+
+        services
+            .record_model_context_projection(receipt.clone())
+            .await;
+
+        let items = services.take_items().await;
+        let [ItemPayload::ModelContextProjection { receipt: stored }] = items.as_slice() else {
+            panic!("projection receipt was not persisted as a distinct item")
+        };
+        assert!(stored.fragments[0].inline_content.is_none());
+        assert!(stored.fragments[0]
+            .artifact_ref
+            .as_deref()
+            .is_some_and(|reference| reference.starts_with("artifact://sha256/")));
     }
 }

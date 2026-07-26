@@ -137,7 +137,8 @@ impl EventSourcedSessionStore {
             | ItemPayload::ToolResult { .. } => EventVisibility::ModelVisible,
             ItemPayload::ContextProjection { .. }
             | ItemPayload::SystemNotice { .. }
-            | ItemPayload::CapabilityReceipt { .. } => EventVisibility::Control,
+            | ItemPayload::CapabilityReceipt { .. }
+            | ItemPayload::ModelContextProjection { .. } => EventVisibility::Control,
         }
     }
 }

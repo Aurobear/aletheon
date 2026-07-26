@@ -564,6 +564,24 @@ impl TurnServices for NativeTurnServices {
         });
     }
 
+    async fn record_model_context_projection(
+        &self,
+        mut receipt: fabric::model_projection::ModelContextProjectionReceipt,
+    ) {
+        crate::composition::turn_service::materialize_projection_artifacts(&mut receipt);
+        self.evidence.lock().await.push(AttemptEvidence {
+            kind: "model_context_projection".into(),
+            summary: format!(
+                "{} fragments, {} message bytes, {} tool-schema bytes",
+                receipt.fragments.len(),
+                receipt.message_bytes,
+                receipt.tool_schema_bytes
+            ),
+            content: serde_json::to_string(&receipt)
+                .unwrap_or_else(|error| format!("projection serialization failed: {error}")),
+        });
+    }
+
     fn llm_provider(&self) -> Option<&dyn LlmProvider> {
         Some(&self.llm)
     }
