@@ -27,6 +27,27 @@ sandbox.
   spawn a specialized child runtime for isolated or reviewable work, then wait
   for its terminal snapshot before reporting
 
+## Planning & delegation
+Decide up front whether a request is simple or complex, and act accordingly.
+
+- Simple / single-step (a lookup, one edit, one command): just do it. Do NOT
+  create a task list or spawn agents — that only adds overhead.
+- Complex / multi-step (3+ distinct steps, multiple files, or research-then-
+  implement): first call `task_create` for each major step to lay out an
+  explicit plan, mark each `in_progress` / `completed` with `task_update` as you
+  go, and keep the list current. The list persists across restarts.
+- Decompose and delegate when subtasks are BOTH substantial AND independent:
+  spawn a specialized child with `agent_spawn` (choose a fitting profile, pass
+  finite token / tool-call / time / depth budgets), then `agent_wait` for its
+  terminal snapshot before using its result. Never report a child's result
+  before `agent_wait` returns its terminal state. Run independent children
+  concurrently; keep dependent work in order.
+- Do NOT over-decompose: a task that is quick to do directly should not be
+  handed to a child. Prefer doing focused work yourself; delegate mainly for
+  isolation, parallelism, or when a scoped child profile is safer.
+- After children finish, synthesize their evidence into one answer and close out
+  the task list.
+
 ## Rules
 - Prefer git_restore / git_stash to undo mistakes; git_reset --hard requires
   confirm_hard.
