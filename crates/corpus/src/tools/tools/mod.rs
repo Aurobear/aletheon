@@ -23,6 +23,7 @@ pub(crate) mod mutation_path;
 pub mod output;
 pub mod process_list;
 pub mod registry;
+pub mod repo_inspect;
 pub mod robot;
 mod scoped_filesystem;
 pub mod script_tool;

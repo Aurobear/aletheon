@@ -78,6 +78,7 @@ pub use types::network_policy;
 pub use types::objective;
 pub use types::paths;
 pub use types::permission;
+pub use types::repository;
 pub use types::resource;
 pub use types::sandbox;
 pub use types::session;

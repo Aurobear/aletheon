@@ -41,6 +41,7 @@ pub mod objective;
 pub mod paths;
 pub mod permission;
 pub mod prompt_queue;
+pub mod repository;
 pub mod resource;
 pub mod sandbox;
 pub mod sandbox_glob;
