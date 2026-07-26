@@ -1,28 +1,43 @@
 //! Handler initialization, construction, and setup-related methods.
-
 use super::super::model_router::{ModelRouter, TaskType};
 use super::super::DaemonConfig;
+use super::approval_gate::{bootstrap_workspace_trust_resolver, DurableSocketApprovalGate};
+use crate::adapters::channel::gmail::GmailGoalDraftCoordinator;
+use crate::adapters::runtime::worktree_recovery::{
+    WorktreeRecoveryConfig, WorktreeRecoveryService,
+};
+use crate::adapters::runtime::{
+    pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime,
+};
 use crate::adapters::session::store::SessionStore;
+use crate::application::goal::ObjectiveStore;
+use crate::application::harness_factory::production_cognitive_session_factory;
+use crate::application::inference_port::InferencePort;
+use crate::application::CapabilityService;
 use crate::composition::config::ExecutiveConfig;
 use crate::composition::prefix_builder::PrefixBuilder;
 use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonExecutive;
 use crate::host::daemon::handler::RequestHandler;
 use anyhow::Context;
-use kernel::chronos::SystemClock;
-
-use super::approval_gate::{bootstrap_workspace_trust_resolver, DurableSocketApprovalGate};
 use cognit::core::reflector::Reflector;
+use corpus::hook::builtin::audit_hook;
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::sandbox::executor::{create_executor_with_front_backend, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
+use corpus::security::storm_breaker::StormBreaker;
+use corpus::skill::plugin::register_skill;
+use corpus::HookRegistry;
+use corpus::SkillLoader;
+use corpus::SkillRouter;
 use dasein::{SelfField, SelfFieldConfig};
 use fabric::CanonicalEventBus;
 use fabric::Clock;
 use fabric::Registry;
 use fabric::Version;
 use fabric::{Subsystem, SubsystemContext};
+use kernel::chronos::SystemClock;
 use metacog::DefaultMetaRuntime;
 use mnemosyne::runtime::EpisodicMemory;
 use std::collections::HashMap;
@@ -32,24 +47,6 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
-
-use crate::adapters::channel::gmail::GmailGoalDraftCoordinator;
-use crate::adapters::runtime::worktree_recovery::{
-    WorktreeRecoveryConfig, WorktreeRecoveryService,
-};
-use crate::adapters::runtime::{
-    pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime,
-};
-use crate::application::goal::ObjectiveStore;
-use crate::application::harness_factory::production_cognitive_session_factory;
-use crate::application::inference_port::InferencePort;
-use crate::application::CapabilityService;
-use corpus::hook::builtin::audit_hook;
-use corpus::security::storm_breaker::StormBreaker;
-use corpus::skill::plugin::register_skill;
-use corpus::HookRegistry;
-use corpus::SkillLoader;
-use corpus::SkillRouter;
 
 use super::super::debug_handler::DebugHandler;
 use crate::core::session_gateway::gateway::SessionStateRef;
