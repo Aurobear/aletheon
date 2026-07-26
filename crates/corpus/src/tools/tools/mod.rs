@@ -3,6 +3,7 @@
 pub mod agent_control;
 pub mod agent_tool;
 pub mod apply_patch;
+pub mod artifact_read;
 pub mod bash_exec;
 pub mod code_graph;
 pub mod ebpf_compile;

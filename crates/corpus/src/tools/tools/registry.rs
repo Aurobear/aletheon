@@ -271,6 +271,9 @@ impl ToolRegistry {
             .register(Arc::new(super::file_read::FileReadTool))
             .expect("duplicate built-in tool");
         registry
+            .register(Arc::new(super::artifact_read::ArtifactReadTool::default()))
+            .expect("duplicate built-in tool");
+        registry
             .register(Arc::new(super::file_write::FileWriteTool))
             .expect("duplicate built-in tool");
         registry
