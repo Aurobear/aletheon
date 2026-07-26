@@ -24,7 +24,7 @@ struct EmptyMemory {
 }
 
 #[tokio::test]
-async fn production_planner_reorders_same_turn_from_host_confidence() {
+async fn production_planner_reorders_trusted_calls_and_preserves_unknown_calls() {
     let directory = tempdir().unwrap();
     let clock = Arc::new(TestClock::new(10_000, 20));
     let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
@@ -110,6 +110,33 @@ async fn production_planner_reorders_same_turn_from_host_confidence() {
         vec!["provider-second", "provider-first"]
     );
     assert!(plan.decisions[1].priority > plan.decisions[0].priority);
+
+    // A provider may emit a familiar alias which is not a registered host
+    // capability. That is an execution-level, recoverable tool error rather
+    // than a trusted proposal, so conscious planning must not terminate the
+    // cognitive session while trying to rank it.
+    let unknown = CapabilityCall {
+        operation_id: fabric::OperationId::new(),
+        process_id: owner,
+        name: "read".into(),
+        input: serde_json::json!({"path": "README.md"}),
+        call_id: "unknown-read-alias".into(),
+        deadline: None,
+    };
+    let plan = registry
+        .batch_planner(AgoraSpaceId("session:production-reorder".into()))
+        .await
+        .unwrap()
+        .plan(vec![unknown.clone()])
+        .await
+        .expect("unknown tools must remain recoverable by the capability executor");
+
+    assert_eq!(plan.mode, ConsciousArbitrationMode::Enforce);
+    assert_eq!(plan.ordered_call_ids, vec![unknown.call_id]);
+    assert_eq!(
+        plan.decisions[0].decision,
+        fabric::FieldDecisionKind::Proceed
+    );
 }
 
 #[async_trait]
