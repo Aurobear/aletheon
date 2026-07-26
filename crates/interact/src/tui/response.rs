@@ -130,7 +130,8 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             patch_delta,
             ..
         } => {
-            app.chat.update_exec_with_delta(&call_id, &output, is_error, patch_delta);
+            app.chat
+                .update_exec_with_delta(&call_id, &output, is_error, patch_delta);
         }
         ClientEvent::ToolProgress {
             call_id, payload, ..

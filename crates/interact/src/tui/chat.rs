@@ -253,9 +253,10 @@ impl ExecEntry {
             if let Some(ref delta) = self.patch_delta {
                 let changed = &delta.files_changed;
                 if !changed.is_empty() {
-                    lines.push(Line::from(vec![
-                        Span::styled("  ├─ Files changed:", Style::default().fg(Color::DarkGray)),
-                    ]));
+                    lines.push(Line::from(vec![Span::styled(
+                        "  ├─ Files changed:",
+                        Style::default().fg(Color::DarkGray),
+                    )]));
                     for fc in changed.iter().take(20) {
                         let icon = match fc.change_type.as_str() {
                             "created" => "+",
