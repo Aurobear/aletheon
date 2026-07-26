@@ -451,6 +451,254 @@ fn git_command_result(
 
 // ── registration helper ────────────────────────────────────────────────────
 
+// ── git_add ──────────────────────────────────────────────────────────────
+
+pub struct GitAddTool;
+
+#[async_trait]
+impl Tool for GitAddTool {
+    fn name(&self) -> &str {
+        "git_add"
+    }
+    fn description(&self) -> &str {
+        "Stage changes for commit. Provide `paths` (array) or `all:true` to stage everything."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"Repo path (default: working dir)"},
+            "paths":{"type":"array","items":{"type":"string"},"description":"Pathspecs to stage"},
+            "all":{"type":"boolean","description":"Stage all changes (git add -A)"}
+        },"required":[]})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L1
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(GitAddTool)
+    }
+
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let all = input.get("all").and_then(|v| v.as_bool()).unwrap_or(false);
+        let paths: Vec<String> = input
+            .get("paths")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !all && paths.is_empty() {
+            return refused(ctx, start, "git_add refused: provide `paths` or all:true");
+        }
+        let mut args: Vec<String> = vec!["-C".into(), path.into(), "add".into()];
+        if all {
+            args.push("-A".into());
+        } else {
+            args.push("--".into());
+            args.extend(paths);
+        }
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&ctx.working_dir)
+            .output()
+            .await;
+        git_command_result(ctx, start, "git_add", output)
+    }
+}
+
+// ── git_commit ─────────────────────────────────────────────────────────────
+
+pub struct GitCommitTool;
+
+#[async_trait]
+impl Tool for GitCommitTool {
+    fn name(&self) -> &str {
+        "git_commit"
+    }
+    fn description(&self) -> &str {
+        "Create a commit with a message. `all:true` also stages tracked changes first (-a). \
+         Uses the configured git author; does not amend."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"Repo path (default: working dir)"},
+            "message":{"type":"string","description":"Commit message"},
+            "all":{"type":"boolean","description":"Stage all tracked changes before committing (-a)"}
+        },"required":["message"]})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L1
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(GitCommitTool)
+    }
+
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let message = input
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if message.is_empty() {
+            return refused(ctx, start, "git_commit refused: `message` is required");
+        }
+        let all = input.get("all").and_then(|v| v.as_bool()).unwrap_or(false);
+        let mut args: Vec<&str> = vec!["-C", path, "commit"];
+        if all {
+            args.push("-a");
+        }
+        args.push("-m");
+        args.push(message);
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&ctx.working_dir)
+            .output()
+            .await;
+        git_command_result(ctx, start, "git_commit", output)
+    }
+}
+
+// ── git_branch ─────────────────────────────────────────────────────────────
+
+pub struct GitBranchTool;
+
+#[async_trait]
+impl Tool for GitBranchTool {
+    fn name(&self) -> &str {
+        "git_branch"
+    }
+    fn description(&self) -> &str {
+        "List, create, checkout, or delete branches. `delete` uses -d; force-delete (-D) \
+         requires force:true."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"Repo path (default: working dir)"},
+            "action":{"type":"string","enum":["list","create","checkout","delete"],"description":"Branch operation"},
+            "name":{"type":"string","description":"Branch name (required for create/checkout/delete)"},
+            "force":{"type":"boolean","description":"Force-delete (-D) for `delete`"}
+        },"required":["action"]})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L1
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(GitBranchTool)
+    }
+
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let action = input.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        let name = input.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let force = input
+            .get("force")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let needs_name = matches!(action, "create" | "checkout" | "delete");
+        if needs_name && name.is_empty() {
+            return refused(
+                ctx,
+                start,
+                &format!("git_branch refused: `{action}` requires `name`"),
+            );
+        }
+        let args: Vec<&str> = match action {
+            "list" => vec!["-C", path, "branch", "--all"],
+            "create" => vec!["-C", path, "checkout", "-b", name],
+            "checkout" => vec!["-C", path, "checkout", name],
+            "delete" => vec!["-C", path, "branch", if force { "-D" } else { "-d" }, name],
+            other => {
+                return refused(
+                    ctx,
+                    start,
+                    &format!("git_branch refused: unknown action `{other}` (list|create|checkout|delete)"),
+                );
+            }
+        };
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&ctx.working_dir)
+            .output()
+            .await;
+        git_command_result(ctx, start, "git_branch", output)
+    }
+}
+
+// ── git_push ───────────────────────────────────────────────────────────────
+
+/// Pushes commits to a remote. This is network egress (a potential data-
+/// exfiltration path), so it is NOT a universal tool — only profiles that
+/// explicitly grant it can push. Force pushes require `force:true` and use
+/// `--force-with-lease` to avoid clobbering others' work.
+pub struct GitPushTool;
+
+#[async_trait]
+impl Tool for GitPushTool {
+    fn name(&self) -> &str {
+        "git_push"
+    }
+    fn description(&self) -> &str {
+        "Push commits to a remote (network egress). Defaults to the current branch on `origin`. \
+         Force push requires force:true (uses --force-with-lease)."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        json!({"type":"object","properties":{
+            "path":{"type":"string","description":"Repo path (default: working dir)"},
+            "remote":{"type":"string","description":"Remote name (default: origin)"},
+            "branch":{"type":"string","description":"Branch to push (default: current)"},
+            "set_upstream":{"type":"boolean","description":"Set upstream tracking (-u)"},
+            "force":{"type":"boolean","description":"Force push with lease"}
+        },"required":[]})
+    }
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::L1
+    }
+    fn boxed_clone(&self) -> Box<dyn Tool> {
+        Box::new(GitPushTool)
+    }
+
+    async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let start = ctx.clock.mono_now();
+        let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let remote = input
+            .get("remote")
+            .and_then(|v| v.as_str())
+            .unwrap_or("origin");
+        let branch = input.get("branch").and_then(|v| v.as_str());
+        let set_upstream = input
+            .get("set_upstream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let force = input
+            .get("force")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let mut args: Vec<&str> = vec!["-C", path, "push"];
+        if set_upstream {
+            args.push("-u");
+        }
+        if force {
+            args.push("--force-with-lease");
+        }
+        args.push(remote);
+        if let Some(b) = branch {
+            args.push(b);
+        }
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&ctx.working_dir)
+            .output()
+            .await;
+        git_command_result(ctx, start, "git_push", output)
+    }
+}
+
 pub fn git_tools() -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(GitStatusTool),
@@ -460,6 +708,10 @@ pub fn git_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(GitRestoreTool),
         Arc::new(GitStashTool),
         Arc::new(GitResetTool),
+        Arc::new(GitAddTool),
+        Arc::new(GitCommitTool),
+        Arc::new(GitBranchTool),
+        Arc::new(GitPushTool),
     ]
 }
 
