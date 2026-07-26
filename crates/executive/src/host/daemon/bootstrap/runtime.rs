@@ -63,6 +63,7 @@ pub(super) async fn load_agent_profiles(
     inference: Arc<dyn InferencePort>,
     default_llm: Arc<dyn LlmProvider>,
     definitions: &[fabric::ToolDefinition],
+    profile_definitions: &[fabric::ToolDefinition],
     config: &crate::composition::config::ExecutiveConfig,
     profiles_config: &crate::composition::config::AgentProfilesConfig,
 ) -> anyhow::Result<ProfileLoadResult> {
@@ -84,7 +85,7 @@ pub(super) async fn load_agent_profiles(
             profiles_config.default
         );
     }
-    let catalog = definitions
+    let catalog = profile_definitions
         .iter()
         .map(|definition| (definition.name.clone(), definition.clone()))
         .collect::<HashMap<_, _>>();
@@ -106,7 +107,14 @@ pub(super) async fn load_agent_profiles(
         let mut failed = false;
         for name in &effective_tools {
             match catalog.get(name).cloned() {
-                Some(definition) => tools.push(definition),
+                Some(definition) => {
+                    if definitions
+                        .iter()
+                        .any(|visible| visible.name == definition.name)
+                    {
+                        tools.push(definition);
+                    }
+                }
                 None => {
                     tracing::warn!(
                         profile = %role.name,

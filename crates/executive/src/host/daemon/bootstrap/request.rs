@@ -937,13 +937,17 @@ impl RequestHandler {
             // load_agent_profiles so profiles can list them in `allowed_tools`
             // before the AgentControlService runtime is constructed.
             let mut definitions = corpus_group.tools.lock().await.definitions();
+            let mut profile_definitions = corpus_group.tools.lock().await.profile_definitions();
             definitions
+                .extend(corpus::tools::tools::agent_control::AgentControlTools::definitions());
+            profile_definitions
                 .extend(corpus::tools::tools::agent_control::AgentControlTools::definitions());
             let composition = super::agents::compose(super::agents::AgentCompositionInput {
                 agents_dir: &aletheon_dir.join("agents"),
                 inference: inference.clone(),
                 default_llm: llm.clone(),
                 definitions: &definitions,
+                profile_definitions: &profile_definitions,
                 runtime_config: &runtime_config_snapshot,
                 profiles_config: &agent_profiles,
             })

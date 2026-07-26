@@ -53,6 +53,21 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Snapshot every executable tool for host-side authorization and profile
+    /// validation. Unlike [`Self::definitions`], this includes deferred tools;
+    /// callers must not pass this catalog wholesale to a model request.
+    pub fn profile_definitions(&self) -> Vec<fabric::ToolDefinition> {
+        self.tools
+            .values()
+            .filter(|tool| tool.exposure() != ToolExposure::Hidden)
+            .map(|tool| fabric::ToolDefinition {
+                name: tool.name().to_string(),
+                description: tool.description().to_string(),
+                input_schema: tool.input_schema(),
+            })
+            .collect()
+    }
+
     /// Bind the existing BM25 catalog to this registry and expose its single
     /// bridge tool. Later registrations refresh the same shared catalog.
     pub fn enable_tool_search(&mut self) -> Result<RegistrationId, AgentError> {
@@ -544,6 +559,14 @@ mod tests {
             .definitions()
             .iter()
             .any(|definition| definition.name == "tool_search"));
+        assert!(!reg
+            .definitions()
+            .iter()
+            .any(|definition| definition.name == "artifact_read"));
+        assert!(reg
+            .profile_definitions()
+            .iter()
+            .any(|definition| definition.name == "artifact_read"));
     }
 
     #[test]

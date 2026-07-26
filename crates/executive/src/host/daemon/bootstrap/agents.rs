@@ -14,6 +14,7 @@ pub(super) struct AgentCompositionInput<'a> {
     pub(super) inference: Arc<dyn InferencePort>,
     pub(super) default_llm: Arc<dyn LlmProvider>,
     pub(super) definitions: &'a [ToolDefinition],
+    pub(super) profile_definitions: &'a [ToolDefinition],
     pub(super) runtime_config: &'a crate::composition::config::ExecutiveConfig,
     pub(super) profiles_config: &'a crate::composition::config::AgentProfilesConfig,
 }
@@ -61,6 +62,7 @@ pub(super) async fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<
         input.inference.clone(),
         input.default_llm.clone(),
         input.definitions,
+        input.profile_definitions,
         input.runtime_config,
         &candidate_profiles_config,
     )
@@ -83,6 +85,7 @@ pub(super) async fn compose(input: AgentCompositionInput<'_>) -> anyhow::Result<
             input.inference.clone(),
             input.default_llm.clone(),
             input.definitions,
+            input.profile_definitions,
             input.runtime_config,
             &candidate_profiles_config,
         )
@@ -304,6 +307,7 @@ mod tests {
             inference,
             default_llm: llm,
             definitions: &definitions,
+            profile_definitions: &definitions,
             runtime_config: &crate::composition::config::ExecutiveConfig::default(),
             profiles_config: &profiles_config,
         })
