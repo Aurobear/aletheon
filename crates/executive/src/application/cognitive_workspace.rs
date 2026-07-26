@@ -6,7 +6,7 @@ use std::sync::Arc;
 use fabric::cognitive_workflow::{
     AgoraProjectionRequest, AgoraTaskProjection, ClarificationId, ClarificationRecord,
     CognitiveArtifactKind, CognitiveInterruptionId, CognitiveInterruptionRecord, CognitiveRole,
-    CognitiveTaskNode, CognitiveTaskNodeId,
+    CognitiveRoleBudget, CognitiveRoleProfileRef, CognitiveTaskNode, CognitiveTaskNodeId,
 };
 use fabric::{
     AgoraOperation, AgoraProposal, AgoraService, AgoraSpaceId, ProcessId, WorkspaceCommitPermit,
@@ -58,6 +58,37 @@ impl CognitiveWorkspaceCoordinator {
             task_node_id,
             AgoraOperation::UpsertCognitiveTask { task },
             author,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn handoff_task_at(
+        &self,
+        space: AgoraSpaceId,
+        expected_version: u64,
+        task_node_id: CognitiveTaskNodeId,
+        expected_owner: ProcessId,
+        new_owner: ProcessId,
+        new_role: CognitiveRole,
+        role_profile: CognitiveRoleProfileRef,
+        budget: CognitiveRoleBudget,
+        workspace_scope: Vec<String>,
+    ) -> Result<u64, CognitiveWorkspaceError> {
+        self.commit_operation_at(
+            space,
+            expected_version,
+            task_node_id.clone(),
+            AgoraOperation::HandoffCognitiveTask {
+                task_node_id,
+                expected_owner,
+                new_owner,
+                new_role,
+                role_profile,
+                budget,
+                workspace_scope,
+            },
+            expected_owner,
         )
         .await
     }
@@ -242,6 +273,14 @@ mod tests {
             stage: CognitiveStage::Planning,
             status: CognitiveTaskStatus::Running,
             owner: Some(owner),
+            role_profile: fabric::cognitive_workflow::CognitiveRoleProfile::canonical(
+                CognitiveRole::Planner,
+            )
+            .reference,
+            budget: fabric::cognitive_workflow::CognitiveRoleProfile::canonical(
+                CognitiveRole::Planner,
+            )
+            .budget,
             dependencies: Vec::new(),
             acceptance_criteria: vec!["mapped requirements".into()],
             workspace_scope: vec!["crates/agora".into()],
@@ -325,6 +364,55 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn role_handoff_changes_authority_without_copying_peer_history() {
+        use fabric::cognitive_workflow::CognitiveRoleProfile;
+        let agora: Arc<dyn AgoraService> = Arc::new(agora::AgoraRegistry::new(Arc::new(
+            kernel::chronos::TestClock::default(),
+        )));
+        let coordinator = CognitiveWorkspaceCoordinator::new(agora);
+        let planner = ProcessId::new();
+        let explorer = ProcessId::new();
+        coordinator
+            .commit_task_at(
+                AgoraSpaceId("handoff".into()),
+                0,
+                task("plan", planner),
+                planner,
+            )
+            .await
+            .unwrap();
+        let profile = CognitiveRoleProfile::canonical(CognitiveRole::Explorer);
+        coordinator
+            .handoff_task_at(
+                AgoraSpaceId("handoff".into()),
+                1,
+                CognitiveTaskNodeId("plan".into()),
+                planner,
+                explorer,
+                CognitiveRole::Explorer,
+                profile.reference.clone(),
+                profile.budget.clone(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        let projection = coordinator
+            .project_role(
+                AgoraSpaceId("handoff".into()),
+                CognitiveTaskNodeId("plan".into()),
+                CognitiveRole::Explorer,
+                usize::MAX,
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(projection.task.owner, Some(explorer));
+        assert_eq!(projection.task.role_profile, profile.reference);
+        assert!(projection.artifacts.is_empty());
+        assert_eq!(projection.workspace_version, 2);
     }
 
     #[tokio::test]

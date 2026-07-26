@@ -457,6 +457,8 @@ mod tests {
             stage: CognitiveStage::Execution,
             status: CognitiveTaskStatus::Running,
             owner: Some(owner),
+            role_profile: CognitiveRoleProfile::canonical(CognitiveRole::Executor).reference,
+            budget: CognitiveRoleProfile::canonical(CognitiveRole::Executor).budget,
             dependencies: Vec::new(),
             acceptance_criteria: vec!["focused validation passes".into()],
             workspace_scope: vec!["crates/agora".into()],

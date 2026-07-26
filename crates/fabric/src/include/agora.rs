@@ -15,7 +15,8 @@ use uuid::Uuid;
 use crate::types::cognitive_workflow::{
     AgoraProjectionRequest, AgoraTaskList, AgoraTaskProjection, ClarificationId,
     ClarificationRecord, CognitiveArtifactEnvelope, CognitiveInterruptionId,
-    CognitiveInterruptionRecord, CognitiveTaskNode, CognitiveTaskNodeId, StageDecision,
+    CognitiveInterruptionRecord, CognitiveRole, CognitiveRoleBudget, CognitiveRoleProfileRef,
+    CognitiveTaskNode, CognitiveTaskNodeId, StageDecision,
 };
 use crate::types::evidence::Evidence;
 use crate::types::operation::ProcessId;
@@ -60,6 +61,17 @@ pub enum AgoraOperation {
     /// Create or replace the metadata of one versioned cognitive task node.
     UpsertCognitiveTask {
         task: CognitiveTaskNode,
+    },
+    /// Transfer one task to a role runtime under an exact owner/profile/scope
+    /// contract. Generic task updates cannot change these authority fields.
+    HandoffCognitiveTask {
+        task_node_id: CognitiveTaskNodeId,
+        expected_owner: ProcessId,
+        new_owner: ProcessId,
+        new_role: CognitiveRole,
+        role_profile: CognitiveRoleProfileRef,
+        budget: CognitiveRoleBudget,
+        workspace_scope: Vec<String>,
     },
     /// Commit a typed Agent output. Prose is not shared state until this operation commits.
     CommitCognitiveArtifact {

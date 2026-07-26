@@ -16,7 +16,7 @@ use fabric::cognitive_workflow::{
     AgoraProjectionReceipt, AgoraProjectionRequest, AgoraTaskProjection, ArtifactLifecycle,
     ClarificationId, ClarificationRecord, ClarificationState, CognitiveArtifactEnvelope,
     CognitiveArtifactId, CognitiveArtifactKind, CognitiveInterruptionId,
-    CognitiveInterruptionRecord, CognitiveTaskStatus,
+    CognitiveInterruptionRecord, CognitiveRoleProfile, CognitiveTaskStatus,
 };
 use fabric::types::operation::ProcessId;
 
@@ -88,6 +88,38 @@ impl Workspace {
             interruptions: HashMap::new(),
             clock,
         }
+    }
+
+    fn ensure_disjoint_active_write_scope(
+        &self,
+        candidate: &fabric::cognitive_workflow::CognitiveTaskNode,
+        excluding: Option<&fabric::cognitive_workflow::CognitiveTaskNodeId>,
+    ) -> anyhow::Result<()> {
+        if !candidate.role.can_write_workspace()
+            || !matches!(
+                candidate.status,
+                CognitiveTaskStatus::Pending | CognitiveTaskStatus::Running
+            )
+        {
+            return Ok(());
+        }
+        for active in self.task_graph.cognitive_nodes() {
+            if excluding == Some(&active.id)
+                || !active.role.can_write_workspace()
+                || !matches!(
+                    active.status,
+                    CognitiveTaskStatus::Pending | CognitiveTaskStatus::Running
+                )
+            {
+                continue;
+            }
+            anyhow::ensure!(
+                !scopes_overlap(&candidate.workspace_scope, &active.workspace_scope),
+                "parallel write scope overlaps active task {}",
+                active.id.0
+            );
+        }
+        Ok(())
     }
 
     /// Propose an operation to be applied. Succeeds only if `base_version`
@@ -363,6 +395,34 @@ impl Workspace {
                         .all(|dependency| dependency != &task.id),
                     "cognitive task cannot depend on itself"
                 );
+                let profile = CognitiveRoleProfile::canonical(task.role);
+                profile.validate()?;
+                anyhow::ensure!(
+                    task.role_profile == profile.reference,
+                    "task role profile does not match the host role contract"
+                );
+                task.budget.validate()?;
+                anyhow::ensure!(
+                    task.budget.fits_within(&profile.budget),
+                    "task budget exceeds its role profile"
+                );
+                if task.role.can_write_workspace() {
+                    anyhow::ensure!(
+                        !task.workspace_scope.is_empty()
+                            && task.workspace_scope.iter().all(|scope| valid_scope(scope)),
+                        "write-capable task requires a valid bounded workspace scope"
+                    );
+                }
+                if let Some(parent_id) = &task.parent_id {
+                    let parent = self
+                        .task_graph
+                        .cognitive(parent_id)
+                        .ok_or_else(|| anyhow::anyhow!("cognitive task parent does not exist"))?;
+                    anyhow::ensure!(
+                        task.budget.fits_within(&parent.budget),
+                        "child task budget exceeds its parent budget"
+                    );
+                }
                 if let Some(existing) = self.task_graph.cognitive(&task.id) {
                     anyhow::ensure!(
                         existing.owner == Some(author),
@@ -393,6 +453,61 @@ impl Workspace {
                         task.artifact_refs.is_empty(),
                         "new cognitive tasks cannot claim committed artifacts"
                     );
+                    self.ensure_disjoint_active_write_scope(task, None)?;
+                }
+            }
+            AgoraOperation::HandoffCognitiveTask {
+                task_node_id,
+                expected_owner,
+                new_owner,
+                new_role,
+                role_profile,
+                budget,
+                workspace_scope,
+            } => {
+                let task = self
+                    .task_graph
+                    .cognitive(task_node_id)
+                    .ok_or_else(|| anyhow::anyhow!("handoff task node does not exist"))?;
+                anyhow::ensure!(
+                    task.owner == Some(*expected_owner),
+                    "handoff expected owner mismatch"
+                );
+                anyhow::ensure!(
+                    author == *expected_owner,
+                    "only the current owner may hand off a task"
+                );
+                anyhow::ensure!(
+                    expected_owner != new_owner,
+                    "handoff requires a distinct new owner"
+                );
+                let profile = CognitiveRoleProfile::canonical(*new_role);
+                profile.validate()?;
+                anyhow::ensure!(
+                    *role_profile == profile.reference,
+                    "handoff role profile does not match host policy"
+                );
+                budget.validate()?;
+                anyhow::ensure!(
+                    budget.fits_within(&profile.budget) && budget.fits_within(&task.budget),
+                    "handoff budget exceeds role or parent allocation"
+                );
+                if new_role.can_write_workspace() {
+                    anyhow::ensure!(
+                        !workspace_scope.is_empty()
+                            && workspace_scope.iter().all(|scope| valid_scope(scope)),
+                        "write handoff requires valid bounded scope"
+                    );
+                    let mut candidate = task.clone();
+                    candidate.owner = Some(*new_owner);
+                    candidate.role = *new_role;
+                    candidate.workspace_scope = workspace_scope.clone();
+                    self.ensure_disjoint_active_write_scope(&candidate, Some(task_node_id))?;
+                } else {
+                    anyhow::ensure!(
+                        workspace_scope.is_empty(),
+                        "read-only role cannot own a write scope"
+                    );
                 }
             }
             AgoraOperation::CommitCognitiveArtifact { artifact } => {
@@ -413,6 +528,29 @@ impl Workspace {
                     task.owner == Some(author),
                     "only the owning stage may commit a child artifact proposal"
                 );
+                let profile = CognitiveRoleProfile::canonical(task.role);
+                anyhow::ensure!(
+                    profile.required_output_artifacts.contains(&artifact.kind()),
+                    "artifact kind is not an authorized output of the owning role"
+                );
+                if matches!(
+                    artifact.kind(),
+                    CognitiveArtifactKind::Review | CognitiveArtifactKind::Validation
+                ) {
+                    anyhow::ensure!(
+                        task.role.can_validate(),
+                        "artifact requires independent validation authority"
+                    );
+                    let authored_change = self.cognitive_artifacts.values().any(|existing| {
+                        existing.task_node_id == artifact.task_node_id
+                            && existing.kind() == CognitiveArtifactKind::ChangeSet
+                            && existing.author == artifact.author
+                    });
+                    anyhow::ensure!(
+                        !authored_change,
+                        "a process cannot independently certify its own change"
+                    );
+                }
                 anyhow::ensure!(
                     !self.cognitive_artifacts.contains_key(&artifact.id),
                     "cognitive artifact already committed"
@@ -624,6 +762,25 @@ impl Workspace {
             AgoraOperation::UpsertCognitiveTask { task } => {
                 self.task_graph.upsert_cognitive(task.clone());
             }
+            AgoraOperation::HandoffCognitiveTask {
+                task_node_id,
+                new_owner,
+                new_role,
+                role_profile,
+                budget,
+                workspace_scope,
+                ..
+            } => {
+                let task = self
+                    .task_graph
+                    .cognitive_mut(task_node_id)
+                    .expect("handoff task validated");
+                task.owner = Some(*new_owner);
+                task.role = *new_role;
+                task.role_profile = role_profile.clone();
+                task.budget = budget.clone();
+                task.workspace_scope = workspace_scope.clone();
+            }
             AgoraOperation::CommitCognitiveArtifact { artifact } => {
                 let mut committed = artifact.clone();
                 committed.lifecycle = ArtifactLifecycle::Committed;
@@ -725,9 +882,17 @@ impl Workspace {
             .cognitive(&request.task_node_id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("projection task node does not exist"))?;
+        let role_profile = CognitiveRoleProfile::canonical(request.role);
         let allowed = if request.include_kinds.is_empty() {
-            role_default_artifact_kinds(request.role)
+            role_profile.context_projection.accepted_kinds.clone()
         } else {
+            anyhow::ensure!(
+                request.include_kinds.iter().all(|kind| role_profile
+                    .context_projection
+                    .accepted_kinds
+                    .contains(kind)),
+                "projection requested an artifact kind outside the role contract"
+            );
             request.include_kinds.clone()
         };
         let mut candidates = task
@@ -737,7 +902,10 @@ impl Workspace {
             .filter(|artifact| allowed.contains(&artifact.kind()))
             .cloned()
             .collect::<Vec<_>>();
-        let limit = request.max_artifacts.min(64);
+        let limit = request
+            .max_artifacts
+            .min(role_profile.context_projection.max_artifacts)
+            .min(64);
         let omitted_artifact_ids = candidates
             .iter()
             .skip(limit)
@@ -830,38 +998,23 @@ impl Workspace {
     }
 }
 
-fn role_default_artifact_kinds(
-    role: fabric::cognitive_workflow::CognitiveRole,
-) -> Vec<CognitiveArtifactKind> {
-    use fabric::cognitive_workflow::CognitiveRole;
-    use CognitiveArtifactKind::*;
-    match role {
-        CognitiveRole::Planner => vec![TaskContract, Investigation, Evidence, Decision],
-        CognitiveRole::Explorer => vec![TaskContract, Plan, Evidence, Investigation],
-        CognitiveRole::Executor | CognitiveRole::Fixer => {
-            vec![
-                TaskContract,
-                Plan,
-                Investigation,
-                Evidence,
-                Review,
-                Decision,
-            ]
-        }
-        CognitiveRole::Reviewer => vec![TaskContract, ChangeSet, Validation, Evidence, Decision],
-        CognitiveRole::Tester => vec![TaskContract, ChangeSet, Evidence, Review],
-        CognitiveRole::Root => vec![
-            TaskContract,
-            Plan,
-            Investigation,
-            ChangeSet,
-            Validation,
-            Review,
-            Evidence,
-            Decision,
-            AgentResult,
-        ],
-    }
+fn valid_scope(scope: &str) -> bool {
+    use std::path::Component;
+    !scope.trim().is_empty()
+        && scope.len() <= 4096
+        && !std::path::Path::new(scope)
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+}
+
+fn scopes_overlap(left: &[String], right: &[String]) -> bool {
+    left.iter().any(|left| {
+        let left = std::path::Path::new(left);
+        right.iter().any(|right| {
+            let right = std::path::Path::new(right);
+            left.starts_with(right) || right.starts_with(left)
+        })
+    })
 }
 
 fn valid_cognitive_status_transition(
@@ -899,6 +1052,125 @@ mod tests {
 
     fn test_author() -> ProcessId {
         ProcessId(uuid::Uuid::from_u128(1))
+    }
+
+    fn cognitive_task(
+        id: &str,
+        owner: ProcessId,
+        role: fabric::cognitive_workflow::CognitiveRole,
+        scope: &[&str],
+    ) -> fabric::cognitive_workflow::CognitiveTaskNode {
+        use fabric::cognitive_workflow::*;
+        let profile = CognitiveRoleProfile::canonical(role);
+        CognitiveTaskNode {
+            id: CognitiveTaskNodeId(id.into()),
+            parent_id: None,
+            objective: "bounded work".into(),
+            role,
+            stage: CognitiveStage::Contract,
+            status: CognitiveTaskStatus::Running,
+            owner: Some(owner),
+            role_profile: profile.reference,
+            budget: profile.budget,
+            dependencies: Vec::new(),
+            acceptance_criteria: vec!["typed result committed".into()],
+            workspace_scope: scope.iter().map(|value| (*value).into()).collect(),
+            required_artifact_kinds: Vec::new(),
+            artifact_refs: Vec::new(),
+            unresolved_finding_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn overlapping_active_write_scopes_are_rejected() {
+        use fabric::cognitive_workflow::CognitiveRole;
+        let mut ws = Workspace::new("s1", Arc::new(kernel::chronos::TestClock::default()));
+        let first_owner = ProcessId::new();
+        let first = ws
+            .propose(
+                0,
+                AgoraOperation::UpsertCognitiveTask {
+                    task: cognitive_task(
+                        "first",
+                        first_owner,
+                        CognitiveRole::Executor,
+                        &["crates/a"],
+                    ),
+                },
+                first_owner,
+            )
+            .unwrap();
+        ws.commit(first.id).unwrap();
+
+        let second_owner = ProcessId::new();
+        let second = ws
+            .propose(
+                1,
+                AgoraOperation::UpsertCognitiveTask {
+                    task: cognitive_task(
+                        "second",
+                        second_owner,
+                        CognitiveRole::Fixer,
+                        &["crates/a/src"],
+                    ),
+                },
+                second_owner,
+            )
+            .unwrap();
+        assert!(ws
+            .prepare_commit(second.id, None)
+            .unwrap_err()
+            .to_string()
+            .contains("overlaps"));
+        assert_eq!(ws.version, 1);
+    }
+
+    #[test]
+    fn ownership_handoff_binds_role_profile_budget_and_write_scope() {
+        use fabric::cognitive_workflow::*;
+        let mut ws = Workspace::new("s1", Arc::new(kernel::chronos::TestClock::default()));
+        let executor = ProcessId::new();
+        let reviewer = ProcessId::new();
+        let create = ws
+            .propose(
+                0,
+                AgoraOperation::UpsertCognitiveTask {
+                    task: cognitive_task(
+                        "change",
+                        executor,
+                        CognitiveRole::Executor,
+                        &["crates/a"],
+                    ),
+                },
+                executor,
+            )
+            .unwrap();
+        ws.commit(create.id).unwrap();
+        let profile = CognitiveRoleProfile::canonical(CognitiveRole::Reviewer);
+        let handoff = ws
+            .propose(
+                1,
+                AgoraOperation::HandoffCognitiveTask {
+                    task_node_id: CognitiveTaskNodeId("change".into()),
+                    expected_owner: executor,
+                    new_owner: reviewer,
+                    new_role: CognitiveRole::Reviewer,
+                    role_profile: profile.reference.clone(),
+                    budget: profile.budget.clone(),
+                    workspace_scope: Vec::new(),
+                },
+                executor,
+            )
+            .unwrap();
+        ws.commit(handoff.id).unwrap();
+        let task = ws
+            .task_graph
+            .cognitive(&CognitiveTaskNodeId("change".into()))
+            .unwrap();
+        assert_eq!(task.owner, Some(reviewer));
+        assert_eq!(task.role, CognitiveRole::Reviewer);
+        assert_eq!(task.role_profile, profile.reference);
+        assert!(task.workspace_scope.is_empty());
     }
 
     #[test]

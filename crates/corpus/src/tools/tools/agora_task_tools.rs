@@ -6,8 +6,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use fabric::cognitive_workflow::{
     AgoraProjectionRequest, ClarificationId, ClarificationRecord, ClarificationState,
-    CognitiveArtifactId, CognitiveArtifactKind, CognitiveCheckpoint, CognitiveRole, CognitiveStage,
-    CognitiveTaskNode, CognitiveTaskNodeId, CognitiveTaskStatus,
+    CognitiveArtifactId, CognitiveArtifactKind, CognitiveCheckpoint, CognitiveRole,
+    CognitiveRoleProfile, CognitiveStage, CognitiveTaskNode, CognitiveTaskNodeId,
+    CognitiveTaskStatus,
 };
 use fabric::{AgoraOperation, AgoraProposal, AgoraService, AgoraSpaceId, ProcessId};
 use serde_json::{json, Value};
@@ -268,6 +269,14 @@ impl AgoraTaskTool {
                 .and_then(Value::as_str)
                 .unwrap_or("executor"),
         )?;
+        let role_profile = CognitiveRoleProfile::canonical(role);
+        let mut workspace_scope = string_array(&input, "workspace_scope");
+        if role.can_write_workspace() && workspace_scope.is_empty() {
+            // An omitted scope cannot mean unbounded authority. Bind the task
+            // to the host-admitted working root; this also serializes any
+            // other writer whose scope is not demonstrably disjoint.
+            workspace_scope.push(context.working_dir.display().to_string());
+        }
         let task = CognitiveTaskNode {
             id: CognitiveTaskNodeId(id),
             parent_id: None,
@@ -276,12 +285,14 @@ impl AgoraTaskTool {
             stage: CognitiveStage::Contract,
             status: CognitiveTaskStatus::Pending,
             owner: Some(self.backend.author(context)),
+            role_profile: role_profile.reference,
+            budget: role_profile.budget,
             dependencies: string_array(&input, "dependencies")
                 .into_iter()
                 .map(CognitiveTaskNodeId)
                 .collect(),
             acceptance_criteria: string_array(&input, "acceptance_criteria"),
-            workspace_scope: string_array(&input, "workspace_scope"),
+            workspace_scope,
             required_artifact_kinds: Vec::new(),
             artifact_refs: Vec::new(),
             unresolved_finding_ids: Vec::new(),

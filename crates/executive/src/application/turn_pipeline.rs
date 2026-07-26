@@ -201,6 +201,14 @@ impl TurnPipeline {
             stage: CognitiveStage::Contract,
             status: CognitiveTaskStatus::Running,
             owner: Some(owner),
+            role_profile: fabric::cognitive_workflow::CognitiveRoleProfile::canonical(
+                CognitiveRole::Root,
+            )
+            .reference,
+            budget: fabric::cognitive_workflow::CognitiveRoleProfile::canonical(
+                CognitiveRole::Root,
+            )
+            .budget,
             dependencies: Vec::new(),
             acceptance_criteria: Vec::new(),
             workspace_scope: request

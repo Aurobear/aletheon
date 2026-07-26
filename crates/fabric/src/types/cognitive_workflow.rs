@@ -21,6 +21,244 @@ pub enum CognitiveRole {
     Fixer,
 }
 
+impl CognitiveRole {
+    pub const fn can_write_workspace(self) -> bool {
+        matches!(self, Self::Executor | Self::Fixer)
+    }
+
+    pub const fn can_validate(self) -> bool {
+        matches!(self, Self::Reviewer | Self::Tester)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CognitiveRoleProfileRef {
+    pub id: String,
+    pub version: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CognitiveRoleBudget {
+    pub max_input_tokens: u64,
+    pub max_output_tokens: u64,
+    pub max_tool_calls: u32,
+    pub max_elapsed_ms: u64,
+}
+
+impl CognitiveRoleBudget {
+    pub fn fits_within(&self, parent: &Self) -> bool {
+        self.max_input_tokens <= parent.max_input_tokens
+            && self.max_output_tokens <= parent.max_output_tokens
+            && self.max_tool_calls <= parent.max_tool_calls
+            && self.max_elapsed_ms <= parent.max_elapsed_ms
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.max_input_tokens > 0
+                && self.max_output_tokens > 0
+                && self.max_tool_calls > 0
+                && self.max_elapsed_ms > 0,
+            "cognitive role budget limits must be nonzero"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationAuthority {
+    None,
+    Recommend,
+    IndependentGate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextProjectionPolicy {
+    pub accepted_kinds: Vec<CognitiveArtifactKind>,
+    pub max_artifacts: usize,
+    pub include_peer_history: bool,
+}
+
+/// Host-enforced role behavior. The prompt may explain this contract but is
+/// never its source of authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CognitiveRoleProfile {
+    pub reference: CognitiveRoleProfileRef,
+    pub role: CognitiveRole,
+    pub responsibilities: Vec<String>,
+    pub prohibited_actions: Vec<String>,
+    pub accepted_input_artifacts: Vec<CognitiveArtifactKind>,
+    pub required_output_artifacts: Vec<CognitiveArtifactKind>,
+    pub workspace_write_allowed: bool,
+    pub validation_authority: ValidationAuthority,
+    pub context_projection: ContextProjectionPolicy,
+    pub budget: CognitiveRoleBudget,
+    pub maximum_concurrency: u32,
+    pub escalation_behavior: String,
+    pub completion_conditions: Vec<String>,
+}
+
+impl CognitiveRoleProfile {
+    pub fn canonical(role: CognitiveRole) -> Self {
+        let (inputs, outputs, write, validation, responsibilities, prohibited) = match role {
+            CognitiveRole::Root => (
+                vec![
+                    CognitiveArtifactKind::TaskContract,
+                    CognitiveArtifactKind::Plan,
+                    CognitiveArtifactKind::Investigation,
+                    CognitiveArtifactKind::ChangeSet,
+                    CognitiveArtifactKind::Validation,
+                    CognitiveArtifactKind::Review,
+                    CognitiveArtifactKind::Evidence,
+                    CognitiveArtifactKind::Decision,
+                    CognitiveArtifactKind::AgentResult,
+                ],
+                vec![CognitiveArtifactKind::Decision],
+                false,
+                ValidationAuthority::IndependentGate,
+                vec!["own the root contract and stage gates"],
+                vec!["infer success from prose"],
+            ),
+            CognitiveRole::Planner => (
+                vec![
+                    CognitiveArtifactKind::TaskContract,
+                    CognitiveArtifactKind::Evidence,
+                ],
+                vec![CognitiveArtifactKind::Plan],
+                false,
+                ValidationAuthority::None,
+                vec!["map every requirement to an executable plan step"],
+                vec![
+                    "modify the workspace",
+                    "accept an incomplete requirement map",
+                ],
+            ),
+            CognitiveRole::Explorer => (
+                vec![
+                    CognitiveArtifactKind::TaskContract,
+                    CognitiveArtifactKind::Plan,
+                ],
+                vec![
+                    CognitiveArtifactKind::Investigation,
+                    CognitiveArtifactKind::Evidence,
+                ],
+                false,
+                ValidationAuthority::None,
+                vec!["collect grounded repository evidence"],
+                vec!["modify the workspace", "report uninspected claims as facts"],
+            ),
+            CognitiveRole::Executor => (
+                vec![
+                    CognitiveArtifactKind::TaskContract,
+                    CognitiveArtifactKind::Plan,
+                    CognitiveArtifactKind::Investigation,
+                ],
+                vec![CognitiveArtifactKind::ChangeSet],
+                true,
+                ValidationAuthority::None,
+                vec!["apply the accepted change within the owned scope"],
+                vec!["write outside the owned scope", "certify its own changes"],
+            ),
+            CognitiveRole::Reviewer => (
+                vec![
+                    CognitiveArtifactKind::TaskContract,
+                    CognitiveArtifactKind::Plan,
+                    CognitiveArtifactKind::ChangeSet,
+                    CognitiveArtifactKind::Validation,
+                ],
+                vec![CognitiveArtifactKind::Review],
+                false,
+                ValidationAuthority::IndependentGate,
+                vec!["review exact requirement, diff, and validation versions"],
+                vec!["modify the workspace", "certify its own changes"],
+            ),
+            CognitiveRole::Tester => (
+                vec![
+                    CognitiveArtifactKind::TaskContract,
+                    CognitiveArtifactKind::ChangeSet,
+                ],
+                vec![CognitiveArtifactKind::Validation],
+                false,
+                ValidationAuthority::IndependentGate,
+                vec!["produce authoritative terminal validation evidence"],
+                vec![
+                    "modify production sources",
+                    "summarize success without a terminal receipt",
+                ],
+            ),
+            CognitiveRole::Fixer => (
+                vec![
+                    CognitiveArtifactKind::TaskContract,
+                    CognitiveArtifactKind::ChangeSet,
+                    CognitiveArtifactKind::Review,
+                    CognitiveArtifactKind::Validation,
+                ],
+                vec![CognitiveArtifactKind::ChangeSet],
+                true,
+                ValidationAuthority::None,
+                vec!["repair the identified findings within the owned scope"],
+                vec![
+                    "write outside the owned scope",
+                    "discard finding identities",
+                ],
+            ),
+        };
+        let name = format!("{:?}", role).to_ascii_lowercase();
+        Self {
+            reference: CognitiveRoleProfileRef {
+                id: format!("aletheon.cognitive.{name}"),
+                version: 1,
+            },
+            role,
+            responsibilities: responsibilities.into_iter().map(str::to_owned).collect(),
+            prohibited_actions: prohibited.into_iter().map(str::to_owned).collect(),
+            accepted_input_artifacts: inputs.clone(),
+            required_output_artifacts: outputs,
+            workspace_write_allowed: write,
+            validation_authority: validation,
+            context_projection: ContextProjectionPolicy {
+                accepted_kinds: inputs,
+                max_artifacts: 32,
+                include_peer_history: false,
+            },
+            budget: CognitiveRoleBudget {
+                max_input_tokens: 131_072,
+                max_output_tokens: 32_768,
+                max_tool_calls: 256,
+                max_elapsed_ms: 3_600_000,
+            },
+            maximum_concurrency: 1,
+            escalation_behavior: "return a typed blocked or rejected decision to the owning parent"
+                .into(),
+            completion_conditions: vec![
+                "all required output artifacts are committed at the current workspace version"
+                    .into(),
+            ],
+        }
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.reference.version > 0 && !self.reference.id.trim().is_empty(),
+            "cognitive role profile reference is invalid"
+        );
+        anyhow::ensure!(
+            self.maximum_concurrency > 0,
+            "role maximum concurrency must be nonzero"
+        );
+        anyhow::ensure!(
+            self.workspace_write_allowed == self.role.can_write_workspace(),
+            "role write authority does not match its host policy"
+        );
+        anyhow::ensure!(
+            !self.context_projection.include_peer_history,
+            "peer history cannot be projected by default"
+        );
+        self.budget.validate()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CognitiveStage {
@@ -55,6 +293,8 @@ pub struct CognitiveTaskNode {
     pub stage: CognitiveStage,
     pub status: CognitiveTaskStatus,
     pub owner: Option<ProcessId>,
+    pub role_profile: CognitiveRoleProfileRef,
+    pub budget: CognitiveRoleBudget,
     pub dependencies: Vec<CognitiveTaskNodeId>,
     pub acceptance_criteria: Vec<String>,
     pub workspace_scope: Vec<String>,
@@ -453,5 +693,30 @@ mod tests {
         };
         plan.steps[0].description = "unsupported guess".into();
         assert!(envelope.validate().is_err());
+    }
+
+    #[test]
+    fn canonical_profiles_are_host_enforced_and_reviewer_is_independent() {
+        for role in [
+            CognitiveRole::Root,
+            CognitiveRole::Planner,
+            CognitiveRole::Explorer,
+            CognitiveRole::Executor,
+            CognitiveRole::Reviewer,
+            CognitiveRole::Tester,
+            CognitiveRole::Fixer,
+        ] {
+            CognitiveRoleProfile::canonical(role).validate().unwrap();
+        }
+        let reviewer = CognitiveRoleProfile::canonical(CognitiveRole::Reviewer);
+        assert!(!reviewer.workspace_write_allowed);
+        assert_eq!(
+            reviewer.validation_authority,
+            ValidationAuthority::IndependentGate
+        );
+        assert!(reviewer
+            .required_output_artifacts
+            .contains(&CognitiveArtifactKind::Review));
+        assert!(!reviewer.context_projection.include_peer_history);
     }
 }
