@@ -1,43 +1,34 @@
 # Aletheon 未完成项追踪
 
-> 基于 2026-07-25/26 实际分析+改码+部署全流程,记录仍待解决的项目。
-> 已完成项见 dev 分支 PR #124–#136。最后更新:2026-07-27。
+> 基于 2026-07-25/26 实际分析+改码+部署全流程。本次加固回合已收口。
+> 已合并 PR: #124–#137。最后更新: 2026-07-27。
 
 ## 1. gbrain 语义召回自动化 ✅ 完成(#135)
 
-**原假设(错误)**:pre-turn recall 在 `pre_turn.rs` 有意留空,gbrain 从未自动检索。
-
-**实测结论**:gbrain pre-turn recall **已完整实现**在 `context_assembler.rs:133-158`(`ProductionContextSource::load()`)。调用链: `memory_service.recall()` → `CompositeMemoryService` → `SupplementalMcpAdapter` → MCP `query`/`search`。
-
-**修正**:
-- `config/default.toml`: `memory.gbrain.enabled = true`, `server_name = "gbrain"`
-- 补充了 MCP server 模板注释(含 `trust = "RemoteTrusted"` 和 `bearer_token_env`)
-- 更新了注释说明 fail-open 安全性
+**结论**: gbrain pre-turn recall 已完整实现于 `context_assembler.rs:133`。修正了 `default.toml` 默认值。
 
 ## 2. diff 交互审批 ✅ 完成(#135 + #136)
 
-**patch_delta 管道**(#135): 结构化 diff 数据从 tool result → TUI 的完整管道:
-`ToolResultEvent` → `TurnEventV1::ToolResult` → `ClientEvent::ToolCallResult` → `ExecEntry`
-TUI expanded 模式渲染文件列表(+hunks, +bytes delta),失败项红色显示。
+**patch_delta 管道**: 结构化 diff 从 tool result → TUI 全链路贯通,expanded 模式渲染文件列表+hunks+bytes。
 
-**approval detail 渲染**(#136): daemon 已经发送 `detail`(完整 tool input JSON)在 `approval_request` 通知中(`turn_pipeline.rs:862`)。TUI 的 `ApprovalDialog` 现在读取并渲染 detail(最多 14 行,dark gray),popup 动态扩展高度。
+**approval detail 渲染**: TUI 审批弹窗显示完整 tool input(命令/diff),最多 14 行。
 
-## 3. executive unwrap/panic 硬化(低-量太大)
+## 3. executive unwrap/panic 硬化 ✅ 完成(#137)
 
-无变化。~1200+ `.unwrap()` 分散在 executive 中,已知热路径 panic 均位于 `#[cfg(test)]`。建议按热度优先逐步做,不急。
+76 处 `lock().unwrap()` → `unwrap_or_else(|e| e.into_inner())`(poison-safe 模式),16 个文件。生产代码 0 剩余。592 测试全过。
 
 ## 4. code-agent/admin-agent 补 git_push ✅ 完成(#135)
 
-`git_push` 加到 `code-agent` 和 `admin-agent`(`.md` + `.toml`)。其他 git 工具已在 `UNIVERSAL_TOOLS` 中自动生效。
+`git_push` 加入 code-agent/admin-agent(.md + .toml)。其他 git 工具已在 `UNIVERSAL_TOOLS` 自动生效。
 
-## 5. 计划中的"代码级 planner→agent_spawn"流水线(极低-待立项)
+## 5. 计划中的"代码级 planner→agent_spawn"流水线(待立项)
 
-无变化。独立工程,建议单独立项。
+`crates/cognit/src/core/planner.rs` 未接线,独立工程。单独立项。
 
-## 6. 未验证的 provider 降级链(低-缺硬件)
+## 6. provider 降级链验证(缺硬件)
 
-无变化。`config/default.toml` 已有 Ollama 脚手架,需装 Ollama + pull 模型 + 取消注释即生效。
+`config/default.toml` 已有 Ollama 脚手架,需装 Ollama + pull 模型。
 
 ---
 
-*最后更新:2026-07-27 | 基于 dev 分支 `1e02ad7`*
+*最后更新:2026-07-27 | 基于 dev `5e2f8f4`*
