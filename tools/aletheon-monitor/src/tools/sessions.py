@@ -36,7 +36,12 @@ async def sessions(
         return {"error": resp["error"], "sessions": []}
 
     result = resp.get("result", resp)
-    session_list = result.get("sessions", result.get("list", []))
+    if isinstance(result, list):
+        session_list = result
+    elif isinstance(result, dict):
+        session_list = result.get("sessions", result.get("list", []))
+    else:
+        session_list = []
 
     return {
         "action": "list",
