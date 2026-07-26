@@ -551,28 +551,39 @@ The implementation must extend rather than duplicate existing mechanisms:
   consume and normalize its receipts, not move tool implementations into Cognit
   or Executive.
 
-#### Compatibility map for the existing `core/` cognitive layer
+#### Compatibility map for existing cognitive types (`core/` and `fabric::cognit`)
 
-The existing layer must be assessed and reconciled rather than ignored or reused
-by name alone. Its types are real implementations, but several encode legacy
-semantics that are not authoritative enough for the new completion path: `Plan`
-is action/rollback oriented, `Reflector` infers some outcomes from prose
-substrings, and `ReasoningStrategy` describes inference style rather than work
-lifecycle.
+The overlap is not limited to the `core/` helpers. `fabric::cognit`
+(`crates/fabric/src/include/cognit.rs`) already defines a large cognitive type
+surface — `Plan`, `PlanStep`, `ExecutionResult`, `Reflection`, `ReflectionEntry`,
+`ReflectionOutcome`, `Critique`, `Observation`, and `Experience` — that the
+design silently reuses by name or parallels. Every overlapping type must be
+assessed and reconciled rather than ignored or reused by name alone. The types
+are real implementations, but several encode legacy semantics that are not
+authoritative enough for the new completion path: `Plan` is action/rollback
+oriented, `Reflector` infers some outcomes from prose substrings, and
+`ReasoningStrategy` describes inference style rather than work lifecycle.
 
 | Design element | Existing code to reuse | Nature of the work |
 |---|---|---|
 | `CognitivePlan` | `fabric::cognit::Plan` / `core::planner::Planner` | Preserve IDs, dependency, expected-outcome, rollback, risk, and cost concepts where compatible; use a versioned evolution or explicit adapter rather than silently equating an action plan with the workflow task graph |
 | Progress auditor | `core::reflector::Reflector` / `Reflection` | Reflection may consume an accepted audit result for learning, but its prose heuristics cannot be the deterministic completion foundation |
 | `CognitiveWorkPhase` | `core::reasoner::ReasoningStrategy` | Keep separate typed concepts: lifecycle phase and inference strategy are orthogonal |
-| Claim critique | `core::critic::Critic` | Reuse compatible structural checks or optional semantic critique after removing phrase-keyed policy; keep deterministic evidence auditing separate |
+| Claim critique | `core::critic::Critic` / `fabric::cognit::Critique` | Reuse compatible structural checks or optional semantic critique after removing phrase-keyed policy; keep deterministic evidence auditing separate |
+| Turn observations | `fabric::cognit::Observation` (`cognit.rs:257`) | Keep the legacy world-model input unchanged; `CognitiveTurnState` stores `observation_evidence: Vec<EvidenceId>` instead of introducing or ambiguously reusing another `Observation` |
+| Grounded outcome event (Component 7) | `fabric::cognit::Experience` (`cognit.rs:265`) | Keep the legacy completed-action learning input and name the new evidence-bearing event `GroundedCognitiveOutcome`; an explicit adapter may derive a legacy `Experience` only after acceptance |
+| Reflection audit records | `fabric::cognit::Reflection` / `ReflectionEntry` / `ReflectionOutcome` (`cognit.rs:58/105/85`) | The deterministic progress audit is new, but its persisted records should reuse these where shape-compatible instead of adding parallel structs |
 
-The existing `Intent` / `Plan` / `Reflection` / `Stimmung` vocabulary must be
-reconciled with the design's `CognitiveTaskContract` / `CognitiveWorkPhase` /
-`Obligation` vocabulary in the type-definitions slice. That slice must produce a
-compatibility decision and migration tests for every reused type. Because these
-helpers are not loop-integrated today, authoritative phase transitions and
-completion decisions remain net-new work.
+The existing `Intent` / `Plan` / `Reflection` / `Observation` / `Experience` /
+`Stimmung` vocabulary must be reconciled with the design's
+`CognitiveTaskContract` / `CognitiveWorkPhase` / `Obligation` /
+`GroundedCognitiveOutcome` vocabulary in the type-definitions slice. The two
+highest-risk name collisions are resolved here: turn observations are evidence
+references, and the new grounded outcome does not replace the legacy
+`Experience`. The slice must still produce a compatibility decision and
+migration tests for every other overlapping type. Because these helpers are not
+loop-integrated today, authoritative phase transitions and completion decisions
+remain net-new work.
 
 ### First practical-work vertical slice
 
@@ -975,7 +986,7 @@ pub struct CognitiveTurnState {
     pub contract: CognitiveTaskContract,
     pub phase: CognitiveWorkPhase,
     pub plan: Option<CognitivePlan>,
-    pub observations: Vec<Observation>,
+    pub observation_evidence: Vec<EvidenceId>,
     pub validations: Vec<ValidationRecord>,
     pub outstanding: Vec<Obligation>,
     pub completion_attempts: u32,
@@ -1109,7 +1120,7 @@ deterministic contradiction.
 After the completion decision, Cognit publishes a grounded outcome:
 
 ```rust
-pub enum CognitiveExperience {
+pub enum GroundedCognitiveOutcome {
     RequirementSatisfied { requirement_id: String, evidence: Vec<EvidenceId> },
     CompletionRejected { missing: Vec<String> },
     ValidationFailed { name: String, evidence: EvidenceId },
@@ -1277,6 +1288,10 @@ as a typed validation artifact rather than summarized success prose.
 34. The streaming engine and its non-streaming collecting adapter produce the
     same terminal outcome and completion decision; neither host path can accept
     no-tool output that fails the shared `finalize_turn` gate.
+35. The type-definitions slice records an explicit reconcile decision
+    (reuse / adapt / retire) for every overlapping `fabric::cognit` and `core::`
+    cognitive type; turn observations remain evidence references and
+    `GroundedCognitiveOutcome` cannot collide with legacy `Experience`.
 
 ### Installed-runtime acceptance
 
