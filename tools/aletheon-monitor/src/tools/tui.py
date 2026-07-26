@@ -16,6 +16,7 @@ from .. import tui_session as ts
 from ..client import default_socket_path
 
 _ACTIVE_EVENT_PATH: Path | None = None
+_BUSY_STATUS_RE = re.compile(r"(?m)^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*│\s*[0-9.]+s")
 
 
 def _tui_cmd(event_path: Path) -> str:
@@ -230,7 +231,13 @@ async def tui_capture(scrollback: bool = True, wait_stable: bool = True,
 
 
 async def tui_wait_turn_done(baseline: int = 0, timeout: float = 120.0) -> dict:
-    """Wait for an authoritative daemon TurnDone event recorded by the TUI."""
+    """Wait for TurnDone *and* the TUI's corresponding idle input state.
+
+    The recorder can observe the daemon event a scheduler tick before the TUI
+    reducer clears its busy state. Returning in that gap lets automation type a
+    follow-up that the still-busy client can lose. Completion therefore needs
+    both the durable event and a settled prompt frame without a busy spinner.
+    """
     event_path = _ACTIVE_EVENT_PATH
     if event_path is None:
         return {"turn_done": False, "ok": False,
@@ -246,7 +253,12 @@ async def tui_wait_turn_done(baseline: int = 0, timeout: float = 120.0) -> dict:
                         "error": f"TUI event validation failed: {error}",
                         "event_path": str(event_path)}
             captured = await tui_capture(wait_stable=True, require_change=False,
-                                         require_prompt=False, timeout=10.0)
+                                         require_prompt=True, timeout=10.0)
+            if (captured.get("stable") is not True
+                    or captured.get("prompt_visible") is not True
+                    or _BUSY_STATUS_RE.search(captured.get("frame", ""))):
+                await asyncio.sleep(0.25)
+                continue
             return {**captured, "turn_done": True, "turn_done_count": count,
                     "completion_source": "client_event:turn_done",
                     "event_path": str(event_path), "event_evidence": evidence}
