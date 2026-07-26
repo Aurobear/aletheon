@@ -50,6 +50,7 @@ pub(super) async fn build_agent_services(
     >,
     granted_capabilities: Arc<tokio::sync::RwLock<Vec<fabric::CapabilityId>>>,
     durable_memory: Arc<dyn mnemosyne::MemoryService>,
+    agora: Arc<dyn fabric::AgoraService>,
 ) -> anyhow::Result<AgentServices> {
     let agent_state_root = data_dir.join("agents");
     std::fs::create_dir_all(&agent_state_root)?;
@@ -97,6 +98,9 @@ pub(super) async fn build_agent_services(
             canonical_event_spine.clone(),
         )
         .with_runtime_profile_requirements(runtime_profile_requirements)
+        .with_cognitive_task_admission(Arc::new(
+            crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(agora),
+        ))
         .with_budget_controller(kernel.budget_controller())
         .with_event_spine(canonical_event_spine.clone())
         .with_event_projections(event_projections.clone())

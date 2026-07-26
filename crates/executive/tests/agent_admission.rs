@@ -63,6 +63,7 @@ fn spawn(root: AgentId, parent: Option<AgentId>, profile: &str) -> AgentSpawnReq
         profile_id: AgentProfileId(profile.into()),
         runtime_id: RuntimeId("native-cognit".into()),
         trusted_workspace: None,
+        cognitive_binding: None,
         task: "bounded work".into(),
         context: AgentContextFork::None,
         broadcast_refs: vec![],

@@ -1,6 +1,6 @@
 //! Stable cross-crate contracts for versioned cognitive work in Agora.
 
-use crate::{AgoraSpaceId, ProcessId};
+use crate::{AgentRuntimeCapability, AgoraSpaceId, ProcessId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -9,7 +9,7 @@ use uuid::Uuid;
 #[serde(transparent)]
 pub struct CognitiveTaskNodeId(pub String);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CognitiveRole {
     Root,
@@ -114,7 +114,10 @@ impl CognitiveRoleProfile {
                     CognitiveArtifactKind::Decision,
                     CognitiveArtifactKind::AgentResult,
                 ],
-                vec![CognitiveArtifactKind::Decision],
+                vec![
+                    CognitiveArtifactKind::TaskContract,
+                    CognitiveArtifactKind::Decision,
+                ],
                 false,
                 ValidationAuthority::IndependentGate,
                 vec!["own the root contract and stage gates"],
@@ -540,6 +543,132 @@ pub struct AgentResultReceipt {
     pub terminal_status: String,
     pub output_ref: Option<String>,
     pub produced_artifact_refs: Vec<CognitiveArtifactId>,
+    pub task_packet_digest: String,
+    pub projection_receipt: AgoraProjectionReceipt,
+}
+
+/// Versioned, bounded work definition supplied to any native or external role
+/// runtime. It carries selected artifacts, never another role's transcript.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentTaskPacket {
+    pub schema_version: u32,
+    pub task: CognitiveTaskNode,
+    pub role_profile: CognitiveRoleProfile,
+    pub project_instructions: Vec<String>,
+    pub workspace_roots: Vec<String>,
+    pub allowed_capabilities: Vec<AgentRuntimeCapability>,
+    pub expected_evidence: Vec<String>,
+    pub acceptance_criteria: Vec<String>,
+    pub selected_artifacts: Vec<CognitiveArtifactEnvelope>,
+    pub projection_receipt: AgoraProjectionReceipt,
+}
+
+impl AgentTaskPacket {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.schema_version == 1,
+            "unsupported Agent task packet version"
+        );
+        self.role_profile.validate()?;
+        anyhow::ensure!(
+            self.task.role == self.role_profile.role,
+            "task packet role mismatch"
+        );
+        anyhow::ensure!(
+            self.task.role_profile == self.role_profile.reference,
+            "task packet profile mismatch"
+        );
+        anyhow::ensure!(
+            self.projection_receipt.task_node_id == self.task.id,
+            "task packet projection mismatch"
+        );
+        anyhow::ensure!(
+            self.projection_receipt.role == self.role_profile.role,
+            "task packet projection role mismatch"
+        );
+        anyhow::ensure!(
+            self.selected_artifacts.len() <= self.role_profile.context_projection.max_artifacts,
+            "task packet artifact bound exceeded"
+        );
+        anyhow::ensure!(
+            self.selected_artifacts.iter().all(|artifact| self
+                .projection_receipt
+                .included_artifact_ids
+                .contains(&artifact.id)),
+            "task packet contains an unreceipted artifact"
+        );
+        Ok(())
+    }
+
+    pub fn digest(&self) -> anyhow::Result<String> {
+        self.validate()?;
+        let bytes = serde_json::to_vec(self)?;
+        Ok(Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect())
+    }
+}
+
+/// Strict response envelope parsed at the host boundary. Free-form prose can
+/// accompany work inside typed fields, but cannot itself advance a stage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CognitiveRoleOutput {
+    pub schema_version: u32,
+    pub projection_id: Uuid,
+    pub workspace_version: u64,
+    pub source_versions: Vec<String>,
+    pub evidence_refs: Vec<String>,
+    pub confidence: f32,
+    pub artifact: CognitiveArtifact,
+}
+
+/// Host-only two-phase admission attached to an Agent spawn. AgentControl
+/// binds the allocated process to this Agora task before launching the runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CognitiveTaskRuntimeBinding {
+    pub space: AgoraSpaceId,
+    pub task_node_id: CognitiveTaskNodeId,
+    pub expected_workspace_version: u64,
+    pub expected_owner: ProcessId,
+    pub role: CognitiveRole,
+    pub role_profile: CognitiveRoleProfileRef,
+    pub budget: CognitiveRoleBudget,
+    pub workspace_scope: Vec<String>,
+}
+
+impl CognitiveRoleOutput {
+    pub fn validate_for(&self, packet: &AgentTaskPacket) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.schema_version == 1,
+            "unsupported cognitive role output version"
+        );
+        anyhow::ensure!(
+            self.projection_id == packet.projection_receipt.projection_id,
+            "role output projection identity mismatch"
+        );
+        anyhow::ensure!(
+            self.workspace_version == packet.projection_receipt.workspace_version,
+            "role output workspace version mismatch"
+        );
+        anyhow::ensure!(
+            self.source_versions
+                .contains(&format!("agora:{}", self.workspace_version)),
+            "role output is not bound to the projected Agora version"
+        );
+        anyhow::ensure!(
+            packet
+                .role_profile
+                .required_output_artifacts
+                .contains(&self.artifact.kind()),
+            "role output kind is not authorized"
+        );
+        anyhow::ensure!(
+            self.confidence.is_finite() && (0.0..=1.0).contains(&self.confidence),
+            "role output confidence is invalid"
+        );
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -891,7 +891,7 @@ impl RequestHandler {
                 .collect(),
         ));
         let domains = crate::core::DomainPorts::new(
-            agora_service,
+            agora_service.clone(),
             metacog,
             corpus.clone(),
             cognitive_sessions,
@@ -1103,6 +1103,7 @@ impl RequestHandler {
             runtime_profile_requirements,
             granted_capabilities.clone(),
             memory_group.memory_service.clone(),
+            agora_service.clone(),
         )
         .await?;
         let canonical_event_spine = agent_svc.canonical_event_spine;

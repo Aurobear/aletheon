@@ -21,6 +21,15 @@ use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
 use tracing::info;
 
+#[async_trait]
+pub trait CognitiveTaskAdmissionPort: Send + Sync {
+    async fn bind_before_launch(
+        &self,
+        binding: fabric::cognitive_workflow::CognitiveTaskRuntimeBinding,
+        allocated_process: ProcessId,
+    ) -> Result<(), AgentControlError>;
+}
+
 pub mod admission;
 pub mod candidate_projection;
 pub mod cleanup;
@@ -38,8 +47,11 @@ pub(crate) fn agent_spawn_request_hash(
     request: &AgentSpawnRequest,
 ) -> Result<String, AgentControlError> {
     request.validate()?;
-    let encoded = serde_json::to_vec(request)
-        .map_err(|error| control_error(AgentControlErrorKind::Persistence, error.to_string()))?;
+    let encoded = serde_json::to_vec(&serde_json::json!({
+        "request": request,
+        "cognitive_binding": &request.cognitive_binding,
+    }))
+    .map_err(|error| control_error(AgentControlErrorKind::Persistence, error.to_string()))?;
     Ok(format!("{:x}", Sha256::digest(encoded)))
 }
 
@@ -161,6 +173,7 @@ pub struct AgentControlService {
     budget_controller: Option<Arc<dyn fabric::BudgetController>>,
     lifecycle_hooks: Arc<dyn AgentLifecycleHookSink>,
     runtime_profile_requirements: HashMap<fabric::AgentProfileId, Vec<AgentRuntimeCapability>>,
+    cognitive_task_admission: Option<Arc<dyn CognitiveTaskAdmissionPort>>,
 }
 
 #[async_trait]
@@ -227,6 +240,7 @@ impl AgentControlService {
             budget_controller: None,
             lifecycle_hooks: Arc::new(NoopAgentLifecycleHookSink),
             runtime_profile_requirements: HashMap::new(),
+            cognitive_task_admission: None,
         }
     }
 
@@ -235,6 +249,14 @@ impl AgentControlService {
         requirements: HashMap<fabric::AgentProfileId, Vec<AgentRuntimeCapability>>,
     ) -> Self {
         self.runtime_profile_requirements = requirements;
+        self
+    }
+
+    pub fn with_cognitive_task_admission(
+        mut self,
+        admission: Arc<dyn CognitiveTaskAdmissionPort>,
+    ) -> Self {
+        self.cognitive_task_admission = Some(admission);
         self
     }
 
@@ -859,6 +881,7 @@ impl AgentControlPort for AgentControlService {
             profile_id: intent.profile_id,
             runtime_id,
             trusted_workspace: intent.trusted_workspace,
+            cognitive_binding: None,
             task: intent.task,
             context: intent.context,
             broadcast_refs: vec![],
@@ -1146,6 +1169,24 @@ impl AgentControlPort for AgentControlService {
                 AgentControlErrorKind::Conflict,
                 "Agent already has a live runtime",
             ));
+        }
+
+        // This is the two-phase launch boundary: the process identity exists
+        // and all cancellation/recovery state is durable, but the runtime has
+        // not been scheduled. A cognitive worker receives workspace authority
+        // only after its exact Agora task handoff commits here.
+        if let Some(binding) = request.cognitive_binding.clone() {
+            let binding_result = match &self.cognitive_task_admission {
+                Some(port) => port.bind_before_launch(binding, process.id).await,
+                None => Err(control_error(
+                    AgentControlErrorKind::Forbidden,
+                    "cognitive task binding requested without an admission port",
+                )),
+            };
+            if let Err(error) = binding_result {
+                let _ = self.cancel(request.root_agent_id, handle.agent_id).await;
+                return Err(error);
+            }
         }
 
         let kernel = self.kernel.clone();

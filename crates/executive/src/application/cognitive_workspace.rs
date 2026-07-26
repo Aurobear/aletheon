@@ -33,6 +33,40 @@ pub struct CognitiveWorkspaceCoordinator {
     agora: Arc<dyn AgoraService>,
 }
 
+#[async_trait::async_trait]
+impl crate::application::agent_control::CognitiveTaskAdmissionPort
+    for CognitiveWorkspaceCoordinator
+{
+    async fn bind_before_launch(
+        &self,
+        binding: fabric::cognitive_workflow::CognitiveTaskRuntimeBinding,
+        allocated_process: ProcessId,
+    ) -> Result<(), fabric::AgentControlError> {
+        self.handoff_task_at(
+            binding.space,
+            binding.expected_workspace_version,
+            binding.task_node_id,
+            binding.expected_owner,
+            allocated_process,
+            binding.role,
+            binding.role_profile,
+            binding.budget,
+            binding.workspace_scope,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| fabric::AgentControlError {
+            kind: match &error {
+                CognitiveWorkspaceError::Reconciliation(_) => {
+                    fabric::AgentControlErrorKind::Conflict
+                }
+                CognitiveWorkspaceError::Service(_) => fabric::AgentControlErrorKind::Runtime,
+            },
+            message: error.to_string(),
+        })
+    }
+}
+
 impl CognitiveWorkspaceCoordinator {
     pub fn new(agora: Arc<dyn AgoraService>) -> Self {
         Self { agora }
@@ -106,6 +140,45 @@ impl CognitiveWorkspaceCoordinator {
             expected_version,
             task_node_id,
             AgoraOperation::BlockForClarification { clarification },
+            owner,
+        )
+        .await
+    }
+
+    pub async fn commit_artifact_at(
+        &self,
+        space: AgoraSpaceId,
+        expected_version: u64,
+        artifact: fabric::cognitive_workflow::CognitiveArtifactEnvelope,
+        owner: ProcessId,
+    ) -> Result<u64, CognitiveWorkspaceError> {
+        let task_node_id = artifact.task_node_id.clone();
+        self.commit_operation_at(
+            space,
+            expected_version,
+            task_node_id,
+            AgoraOperation::CommitCognitiveArtifact { artifact },
+            owner,
+        )
+        .await
+    }
+
+    pub async fn record_stage_decision_at(
+        &self,
+        space: AgoraSpaceId,
+        expected_version: u64,
+        task_node_id: CognitiveTaskNodeId,
+        decision: fabric::cognitive_workflow::StageDecision,
+        owner: ProcessId,
+    ) -> Result<u64, CognitiveWorkspaceError> {
+        self.commit_operation_at(
+            space,
+            expected_version,
+            task_node_id.clone(),
+            AgoraOperation::RecordStageDecision {
+                task_node_id,
+                decision,
+            },
             owner,
         )
         .await
