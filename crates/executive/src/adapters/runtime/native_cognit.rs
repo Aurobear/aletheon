@@ -39,6 +39,9 @@ const MAX_MAILBOX_TURNS: usize = 16;
 pub struct ResolvedAgentProfile {
     pub profile: AgentProfile,
     pub llm: Arc<dyn LlmProvider>,
+    /// Complete host-authorized catalog, including deferred definitions.
+    pub authorized_tools: Vec<ToolDefinition>,
+    /// Initial model-visible projection; deferred definitions are absent.
     pub tools: Vec<ToolDefinition>,
 }
 
@@ -64,7 +67,7 @@ impl AgentProfileRegistry {
             .cloned()
             .collect::<HashSet<_>>();
         let supplied = resolved
-            .tools
+            .authorized_tools
             .iter()
             .map(|tool| tool.name.clone())
             .collect::<HashSet<_>>();

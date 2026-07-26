@@ -103,11 +103,13 @@ pub(super) async fn load_agent_profiles(
                 effective_tools.push((*name).to_string());
             }
         }
+        let mut authorized_tools = Vec::with_capacity(effective_tools.len());
         let mut tools = Vec::with_capacity(effective_tools.len());
         let mut failed = false;
         for name in &effective_tools {
             match catalog.get(name).cloned() {
                 Some(definition) => {
+                    authorized_tools.push(definition.clone());
                     if definitions
                         .iter()
                         .any(|visible| visible.name == definition.name)
@@ -202,6 +204,7 @@ pub(super) async fn load_agent_profiles(
         registry.register(crate::adapters::runtime::ResolvedAgentProfile {
             profile: profile.clone(),
             llm,
+            authorized_tools,
             tools,
         })?;
         profiles.insert(role.name.clone(), profile);

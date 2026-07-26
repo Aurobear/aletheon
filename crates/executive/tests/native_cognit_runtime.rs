@@ -221,6 +221,11 @@ fn runtime(llm: Arc<ScriptedLlm>, capability: Arc<RecordingCapability>) -> Nativ
         .register(ResolvedAgentProfile {
             profile: profile(),
             llm,
+            authorized_tools: vec![ToolDefinition {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            }],
             tools: vec![ToolDefinition {
                 name: "echo".into(),
                 description: "echo".into(),
@@ -386,6 +391,11 @@ fn profile_registration_rejects_model_mismatch_before_session_creation() {
         .register(ResolvedAgentProfile {
             profile: mismatched,
             llm: ScriptedLlm::new(vec![]),
+            authorized_tools: vec![ToolDefinition {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            }],
             tools: vec![ToolDefinition {
                 name: "echo".into(),
                 description: "echo".into(),
@@ -533,6 +543,11 @@ async fn provider_failure_and_iteration_exhaustion_are_bounded_runtime_errors() 
         .register(ResolvedAgentProfile {
             profile: limited,
             llm,
+            authorized_tools: vec![ToolDefinition {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            }],
             tools: vec![ToolDefinition {
                 name: "echo".into(),
                 description: "echo".into(),
