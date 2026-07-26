@@ -231,7 +231,7 @@ impl MemoryProjection {
         }
 
         let source_event_id = event.position.event_id.to_string();
-        let mut health = self.health.lock().unwrap();
+        let mut health = self.health.lock().unwrap_or_else(|e| e.into_inner());
         health.last_record_id = Some(record_id.clone());
         health.last_source_event_id = Some(source_event_id.clone());
         ProjectionStatus::Queued {
@@ -241,7 +241,7 @@ impl MemoryProjection {
     }
 
     fn degraded(&self, category: &'static str) -> ProjectionStatus {
-        let mut health = self.health.lock().unwrap();
+        let mut health = self.health.lock().unwrap_or_else(|e| e.into_inner());
         health.degraded = true;
         health.last_error_category = Some(category);
         ProjectionStatus::Degraded

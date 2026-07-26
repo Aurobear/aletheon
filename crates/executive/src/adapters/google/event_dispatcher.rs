@@ -64,7 +64,7 @@ impl GoogleEventDispatcher {
         limit: usize,
         cancel: &CancellationToken,
     ) -> Result<DispatchOutcome, SyncStoreError> {
-        let claims = self.store.lock().unwrap().claim_outbox(
+        let claims = self.store.lock().unwrap_or_else(|e| e.into_inner()).claim_outbox(
             &self.owner,
             now_ms,
             self.claim_duration_ms,
@@ -85,7 +85,7 @@ impl GoogleEventDispatcher {
                 .await
             {
                 Ok(()) => {
-                    if self.store.lock().unwrap().acknowledge_outbox(
+                    if self.store.lock().unwrap_or_else(|e| e.into_inner()).acknowledge_outbox(
                         &claim.outbox_id,
                         &self.owner,
                         now_ms,
@@ -95,7 +95,7 @@ impl GoogleEventDispatcher {
                 }
                 Err(code) => {
                     let code = bounded_error_code(&code);
-                    self.store.lock().unwrap().fail_outbox(
+                    self.store.lock().unwrap_or_else(|e| e.into_inner()).fail_outbox(
                         &claim.outbox_id,
                         &self.owner,
                         &code,
@@ -167,7 +167,7 @@ impl GoogleNotificationSink for DurableGoogleNotificationSink {
         };
         self.store
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .enqueue_outbound(
                 "telegram",
                 &OutboundMessage {
@@ -244,7 +244,7 @@ impl GoogleEventSink for GoogleEventRouter {
         }
         let stream = stream_for(event);
         let subscriptions = {
-            let store = self.store.lock().unwrap();
+            let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
             if !store
                 .account_is_active(event.account_id)
                 .map_err(|error| error.to_string())?

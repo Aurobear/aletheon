@@ -279,7 +279,7 @@ impl ApplyCoordinator {
             .as_ref()
             .and_then(|value| value.reason.as_deref())
             == Some("owner requested revision");
-        let store = self.store.lock().unwrap();
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         let goal = store
             .get_goal(approval.subject.goal_id)
             .map_err(|error| ApplyCoordinationError::Goal(error.to_string()))?
@@ -307,7 +307,7 @@ impl ApplyCoordinator {
     }
 
     fn ensure_goal_running(&self, goal_id: GoalId) -> Result<(), ApplyCoordinationError> {
-        let store = self.store.lock().unwrap();
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         let mut goal = store
             .get_goal(goal_id)
             .map_err(|error| ApplyCoordinationError::Goal(error.to_string()))?
@@ -363,7 +363,7 @@ impl ApplyCoordinator {
             ));
         }
         let (coding, verification, artifact_dir) = {
-            let store = self.store.lock().unwrap();
+            let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
             let coding = store
                 .load_coding_job(job_id)
                 .map_err(|error| ApplyError::Artifact(error.to_string()))?
@@ -438,7 +438,7 @@ impl ApplyCoordinator {
         target: GoalState,
         receipt: &ApprovalApplyReceipt,
     ) -> Result<(), ApplyCoordinationError> {
-        let store = self.store.lock().unwrap();
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         let goal = store
             .get_goal(goal_id)
             .map_err(|error| ApplyCoordinationError::Goal(error.to_string()))?
@@ -501,7 +501,7 @@ impl ApplyCoordinator {
             .subject
             .job_id
             .ok_or_else(|| ApplyCoordinationError::Evidence("approval has no coding job".into()))?;
-        let store = self.store.lock().unwrap();
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         let coding = store
             .load_coding_job(job_id)
             .map_err(|error| ApplyCoordinationError::Evidence(error.to_string()))?
@@ -531,7 +531,7 @@ impl ApplyCoordinator {
 
     async fn record_summary(&self, approval_id: ApprovalId) -> Result<(), ApplyCoordinationError> {
         let (approval, receipt) = {
-            let approvals = self.approvals.lock().unwrap();
+            let approvals = self.approvals.lock().unwrap_or_else(|e| e.into_inner());
             let approval = approvals
                 .get(approval_id)
                 .map_err(approval_error)?
@@ -542,7 +542,7 @@ impl ApplyCoordinator {
             (approval, receipt)
         };
         let (persisted, evidence) = {
-            let store = self.store.lock().unwrap();
+            let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
             let summary = crate::application::goal::GoalCompletionSummary::build(
                 &store,
                 &approval,

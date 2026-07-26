@@ -131,7 +131,7 @@ impl ArtifactStore {
         } else {
             std::fs::rename(&writer.temp, &final_path)?;
         }
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         db.execute(
             "INSERT OR IGNORE INTO external_artifacts(
                 artifact_id,sha256,size_bytes,mime_type,provider,account_id,
@@ -179,7 +179,7 @@ impl ArtifactStore {
     pub fn get(&self, artifact_id: &str) -> Result<Option<ArtifactRecord>> {
         self.db
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .query_row(
                 "SELECT sha256,size_bytes,mime_type,relative_path,scan_status
                  FROM external_artifacts WHERE artifact_id=?1",
@@ -223,7 +223,7 @@ impl ArtifactStore {
             ),
             "invalid scan transition"
         );
-        Ok(self.db.lock().unwrap().execute(
+        Ok(self.db.lock().unwrap_or_else(|e| e.into_inner()).execute(
             "UPDATE external_artifacts SET scan_status=?1
              WHERE artifact_id=?2 AND scan_status='unscanned'",
             params![next.as_str(), artifact_id],

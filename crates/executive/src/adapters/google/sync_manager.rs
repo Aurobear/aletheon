@@ -239,7 +239,7 @@ impl GoogleSyncManager {
         }) {
             return Err(SyncStoreError::InvalidInput);
         }
-        self.store.lock().unwrap().initialize_cursor(
+        self.store.lock().unwrap_or_else(|e| e.into_inner()).initialize_cursor(
             registration.account_id,
             registration.stream,
             registration.initial_cursor.as_deref(),
@@ -311,7 +311,7 @@ impl SyncWorker {
             let cursor = match self
                 .store
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .cursor(self.registration.account_id, self.registration.stream)
             {
                 Ok(Some(cursor)) => cursor,
@@ -330,7 +330,7 @@ impl SyncWorker {
             let acquired = self
                 .store
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .acquire_lease(
                     self.registration.account_id,
                     self.registration.stream,
@@ -348,7 +348,7 @@ impl SyncWorker {
             let current = self
                 .store
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .cursor(self.registration.account_id, self.registration.stream)
                 .ok()
                 .flatten();
@@ -367,7 +367,7 @@ impl SyncWorker {
                     let committed = self
                         .store
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(|e| e.into_inner())
                         .commit(SyncCommit {
                             account_id: self.registration.account_id,
                             stream: self.registration.stream,
@@ -400,7 +400,7 @@ impl SyncWorker {
                     } else {
                         "retrying"
                     };
-                    let _ = self.store.lock().unwrap().record_sync_failure(
+                    let _ = self.store.lock().unwrap_or_else(|e| e.into_inner()).record_sync_failure(
                         self.registration.account_id,
                         self.registration.stream,
                         completed_at,
@@ -410,7 +410,7 @@ impl SyncWorker {
                     self.release();
                 }
                 Err(GooglePollFailure::AuthRequired) => {
-                    let _ = self.store.lock().unwrap().record_sync_failure(
+                    let _ = self.store.lock().unwrap_or_else(|e| e.into_inner()).record_sync_failure(
                         self.registration.account_id,
                         self.registration.stream,
                         completed_at,
@@ -421,7 +421,7 @@ impl SyncWorker {
                     break;
                 }
                 Err(GooglePollFailure::Revoked) => {
-                    let _ = self.store.lock().unwrap().record_sync_failure(
+                    let _ = self.store.lock().unwrap_or_else(|e| e.into_inner()).record_sync_failure(
                         self.registration.account_id,
                         self.registration.stream,
                         completed_at,
@@ -441,7 +441,7 @@ impl SyncWorker {
     }
 
     fn release(&self) {
-        let _ = self.store.lock().unwrap().release_lease(
+        let _ = self.store.lock().unwrap_or_else(|e| e.into_inner()).release_lease(
             self.registration.account_id,
             self.registration.stream,
             &self.owner,

@@ -93,7 +93,7 @@ impl StorageQuota {
     ) -> Result<StorageReservation, QuotaError> {
         let root = self.0.roots.get(&class).ok_or(QuotaError::NotConfigured)?;
         let usage = scan_managed_root(&root.path)?;
-        let mut state = self.0.state.lock().unwrap();
+        let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
         let reserved = state
             .reservations
             .values()
@@ -154,7 +154,7 @@ impl StorageReservation {
 
     fn release(&mut self) {
         if let (Some(owner), Some(id)) = (self.owner.upgrade(), self.id.take()) {
-            owner.state.lock().unwrap().reservations.remove(&id);
+            owner.state.lock().unwrap_or_else(|e| e.into_inner()).reservations.remove(&id);
         }
     }
 }

@@ -46,7 +46,7 @@ impl SessionService {
         dedupe_key: Option<String>,
     ) -> Result<fabric::protocol::client::ClientEvent> {
         let phase_name = format!("{phase:?}").to_ascii_lowercase();
-        let mut connection = self.protocol.lock().unwrap();
+        let mut connection = self.protocol.lock().unwrap_or_else(|e| e.into_inner());
         let tx = connection.transaction()?;
         if let Some(key) = dedupe_key.as_deref() {
             if let Some((sequence, json)) = tx
@@ -268,7 +268,7 @@ impl SessionService {
             let anchor_event_id: Option<String> = self
                 .protocol
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .query_row(
                     "SELECT event_id FROM protocol_events WHERE session_id=?1 AND sequence=?2",
                     params![session_id.0, after.sequence],
@@ -279,7 +279,7 @@ impl SessionService {
                 bail!("cursor event_id does not match durable item");
             }
         }
-        let connection = self.protocol.lock().unwrap();
+        let connection = self.protocol.lock().unwrap_or_else(|e| e.into_inner());
         let mut statement = connection.prepare(
             "SELECT event_json FROM protocol_events WHERE session_id=?1 AND sequence>?2 ORDER BY sequence",
         )?;
@@ -296,7 +296,7 @@ impl SessionService {
         &self,
         session_id: &SessionId,
     ) -> Result<fabric::protocol::client::EventCursor> {
-        let row: Option<(u64, String)> = self.protocol.lock().unwrap().query_row(
+        let row: Option<(u64, String)> = self.protocol.lock().unwrap_or_else(|e| e.into_inner()).query_row(
             "SELECT sequence,event_id FROM protocol_events WHERE session_id=?1 ORDER BY sequence DESC LIMIT 1",
             params![session_id.0],
             |row| Ok((row.get(0)?, row.get(1)?)),
