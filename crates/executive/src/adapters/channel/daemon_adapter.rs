@@ -55,7 +55,7 @@ impl ApprovalResolver for DaemonExternalDraftApprovalExecutor {
         action: &str,
         now_ms: i64,
     ) -> anyhow::Result<()> {
-        let coordinator = self.coordinator.lock().unwrap();
+        let coordinator = self.coordinator.lock().unwrap_or_else(|e| e.into_inner());
         match action {
             "confirm" => {
                 coordinator.confirm(approval, now_ms)?;
@@ -80,7 +80,7 @@ impl ApprovalResolver for DaemonExternalDraftApprovalExecutor {
     ) -> anyhow::Result<fabric::ApprovalSnapshot> {
         self.coordinator
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .revise(
                 goal_id,
                 &PrincipalId(owner.to_owned()),
@@ -302,7 +302,11 @@ impl ApprovalRepositoryPort {
 
 impl ChannelApprovalPort for ApprovalRepositoryPort {
     fn get(&self, id: ApprovalId) -> anyhow::Result<Option<ApprovalSnapshot>> {
-        Ok(self.repository.lock().unwrap().get(id)?)
+        Ok(self
+            .repository
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)?)
     }
 
     fn resolve(
@@ -322,13 +326,11 @@ impl ChannelApprovalPort for ApprovalRepositoryPort {
             ChannelApprovalDecision::Approve => ApprovalDecision::Approve,
             ChannelApprovalDecision::Reject { reason } => ApprovalDecision::Reject { reason },
         };
-        Ok(self.repository.lock().unwrap().resolve(
-            id,
-            expected_version,
-            &context,
-            decision,
-            now_ms,
-        )?)
+        Ok(self
+            .repository
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .resolve(id, expected_version, &context, decision, now_ms)?)
     }
 
     fn record_delivery_pending(
@@ -339,13 +341,16 @@ impl ChannelApprovalPort for ApprovalRepositoryPort {
         correlation_id: &str,
         now_ms: i64,
     ) -> anyhow::Result<()> {
-        self.repository.lock().unwrap().record_delivery_pending(
-            approval_id,
-            channel,
-            conversation_id,
-            correlation_id,
-            now_ms,
-        )?;
+        self.repository
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record_delivery_pending(
+                approval_id,
+                channel,
+                conversation_id,
+                correlation_id,
+                now_ms,
+            )?;
         Ok(())
     }
 
@@ -355,11 +360,11 @@ impl ChannelApprovalPort for ApprovalRepositoryPort {
         provider_message_id: &str,
         now_ms: i64,
     ) -> anyhow::Result<()> {
-        Ok(self.repository.lock().unwrap().record_delivery_sent(
-            correlation_id,
-            provider_message_id,
-            now_ms,
-        )?)
+        Ok(self
+            .repository
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record_delivery_sent(correlation_id, provider_message_id, now_ms)?)
     }
 
     fn record_delivery_failed(
@@ -371,7 +376,7 @@ impl ChannelApprovalPort for ApprovalRepositoryPort {
         Ok(self
             .repository
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .record_delivery_failed(correlation_id, error, now_ms)?)
     }
 
@@ -383,7 +388,7 @@ impl ChannelApprovalPort for ApprovalRepositoryPort {
         Ok(self
             .repository
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .list_pending(principal, now_ms)?)
     }
 }

@@ -139,7 +139,7 @@ fn migrate_with_step_hook(
 #[async_trait]
 impl TurnRecoveryStore for CanonicalSessionStore {
     async fn list_session_ids(&self) -> Result<Vec<SessionId>> {
-        let connection = self.connection.lock().unwrap();
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let mut statement =
             connection.prepare("SELECT session_id FROM sessions ORDER BY session_id")?;
         let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
@@ -153,7 +153,7 @@ impl TurnRecoveryStore for CanonicalSessionStore {
         turn_id: fabric::TurnId,
         classification: RecoveryClassification,
     ) -> Result<()> {
-        let mut connection = self.connection.lock().unwrap();
+        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let json: String = tx
             .query_row(
@@ -195,7 +195,7 @@ impl SessionAppendStore for CanonicalSessionStore {
     async fn create(&self, session: SessionRecord) -> Result<()> {
         Self::validate_session(&session)?;
         let json = serde_json::to_string(&session)?;
-        let connection = self.connection.lock().unwrap();
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let existing = connection
             .query_row(
                 "SELECT record_json FROM sessions WHERE session_id=?1",
@@ -226,7 +226,7 @@ impl SessionAppendStore for CanonicalSessionStore {
     ) -> Result<AppendOutcome> {
         Self::validate_item(session, expected_sequence, &item)?;
         let item_json = serde_json::to_string(&item)?;
-        let mut connection = self.connection.lock().unwrap();
+        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(existing) = tx
             .query_row(
@@ -280,7 +280,7 @@ impl SessionAppendStore for CanonicalSessionStore {
         {
             bail!("fork metadata does not match request");
         }
-        let mut connection = self.connection.lock().unwrap();
+        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let parent_next: u64 = tx.query_row(
             "SELECT next_sequence FROM sessions WHERE session_id=?1",
@@ -316,7 +316,7 @@ impl SessionAppendStore for CanonicalSessionStore {
         let json = self
             .connection
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .query_row(
                 "SELECT record_json FROM sessions WHERE session_id=?1",
                 params![session.0],
@@ -328,7 +328,7 @@ impl SessionAppendStore for CanonicalSessionStore {
     }
 
     async fn load_items(&self, session: &SessionId, after: Option<u64>) -> Result<Vec<ItemRecord>> {
-        let connection = self.connection.lock().unwrap();
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = connection.prepare(
             "SELECT item_json FROM session_items WHERE session_id=?1 AND sequence>?2 ORDER BY sequence"
         )?;

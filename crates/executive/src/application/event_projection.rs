@@ -141,7 +141,7 @@ impl SqliteProjectionStore {
     ) -> Result<(P::State, ProjectionCheckpoint), ProjectionError> {
         let descriptor = validate_descriptor(projection.descriptor())?;
         let tree_id = event_tree(events)?;
-        let mut connection = self.connection.lock().unwrap();
+        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(anyhow::Error::from)
@@ -270,7 +270,7 @@ impl SqliteProjectionStore {
         let descriptor = validate_descriptor(projection.descriptor())?;
         let tree_id = event_tree(events)?;
         {
-            let connection = self.connection.lock().unwrap();
+            let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
             connection
                 .execute(
                     "DELETE FROM event_projection_state WHERE projection=?1 AND tree_id=?2",
@@ -285,7 +285,7 @@ impl SqliteProjectionStore {
     pub fn poison(&self, projection: &str) -> Result<Option<ProjectionPoison>, ProjectionError> {
         self.connection
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .query_row(
                 "SELECT projection,event_id,sequence,error FROM event_projection_poison
                  WHERE projection=?1 ORDER BY sequence DESC LIMIT 1",
@@ -311,7 +311,7 @@ impl SqliteProjectionStore {
     ) -> Result<Option<ProjectionCheckpoint>, ProjectionError> {
         self.connection
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .query_row(
                 "SELECT version,through_sequence,checksum FROM event_projection_state
                  WHERE projection=?1 AND tree_id=?2",
@@ -337,7 +337,7 @@ impl SqliteProjectionStore {
     ) -> Result<Option<ProjectionPoison>, ProjectionError> {
         self.connection
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .query_row(
                 "SELECT projection,event_id,sequence,error FROM event_projection_poison
                  WHERE projection=?1 AND tree_id=?2",

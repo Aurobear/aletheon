@@ -343,7 +343,7 @@ impl RetentionAdminPort for RetentionAdminAdapter {
 
 impl SupplementalMemoryStatusPort for SupplementalMemoryStatusAdapter {
     fn status(&self) -> SupplementalMemoryStatus {
-        let health = self.health.lock().unwrap();
+        let health = self.health.lock().unwrap_or_else(|e| e.into_inner());
         SupplementalMemoryStatus {
             enabled: health.supplemental_enabled,
             degraded: health.degraded,
