@@ -2,6 +2,9 @@ use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 use crate::tools::tools::scoped_filesystem;
 use async_trait::async_trait;
 use serde_json::json;
+use sha2::{Digest, Sha256};
+
+use crate::tools::artifact::ArtifactStore;
 
 pub struct FileReadTool;
 const MAX_BATCH_FILES: usize = 16;
@@ -65,8 +68,7 @@ impl Tool for FileReadTool {
         let limit = input["limit"].as_u64().unwrap_or(2000) as usize;
 
         let start = ctx.clock.mono_now();
-        let batched = paths.len() > 1;
-        let mut sections = Vec::with_capacity(paths.len());
+        let mut records = Vec::with_capacity(paths.len());
         let mut successful_reads = 0usize;
         let mut any_truncated = false;
         for path in paths {
@@ -75,14 +77,19 @@ impl Tool for FileReadTool {
                 successful_reads += 1;
             }
             any_truncated |= result.metadata.truncated;
-            if batched {
-                sections.push(format!("== {path} ==\n{}", result.content));
-            } else {
-                sections.push(result.content);
-            }
+            records.push(
+                serde_json::from_str::<serde_json::Value>(&result.content).unwrap_or_else(
+                    |_| json!({"path": path, "status": "error", "error": result.content}),
+                ),
+            );
         }
         ToolResult {
-            content: sections.join("\n\n"),
+            content: json!({
+                "kind": "file_read_receipt",
+                "complete": successful_reads == records.len() && !any_truncated,
+                "files": records,
+            })
+            .to_string(),
             // A speculative batch is useful when at least one requested file
             // exists. Preserve individual failures in labeled content without
             // turning the whole batch into a failed tool round.
@@ -142,9 +149,11 @@ async fn read_path(path: &str, offset: usize, limit: usize, ctx: &ToolContext) -
     match std::fs::metadata(filesystem.path.native()) {
         Ok(metadata) if metadata.is_dir() => {
             return ToolResult {
-                content: format!(
-                    "path is a directory; use glob/grep/file_search to enumerate contents: {path}"
-                ),
+                content: json!({
+                    "path": path,
+                    "status": "error",
+                    "error": format!("path is a directory; use glob/grep/file_search to enumerate contents: {path}")
+                }).to_string(),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -157,7 +166,7 @@ async fn read_path(path: &str, offset: usize, limit: usize, ctx: &ToolContext) -
     }
 
     match filesystem.host.read(&filesystem.path).await {
-        Ok(bytes) => match String::from_utf8(bytes) {
+        Ok(bytes) => match String::from_utf8(bytes.clone()) {
             Ok(content) => {
                 let lines: Vec<&str> = content.lines().collect();
                 let selected: Vec<String> = lines
@@ -169,10 +178,38 @@ async fn read_path(path: &str, offset: usize, limit: usize, ctx: &ToolContext) -
                     .collect();
 
                 let truncated = lines.len() > offset + limit;
-                let result = selected.join("\n");
+                let selected_content = selected.join("\n");
+                let store = ArtifactStore::new(
+                    super::output::OutputConfig::default()
+                        .overflow_dir
+                        .join("artifacts"),
+                );
+                let artifact = match store.store(&bytes, "text/plain; charset=utf-8") {
+                    Ok(artifact) => artifact,
+                    Err(error) => {
+                        return error_result(
+                            ctx,
+                            start,
+                            format!("Failed to preserve evidence for {path}: {error}"),
+                        )
+                    }
+                };
+                let end_line = offset.saturating_add(selected.len()).min(lines.len());
 
                 ToolResult {
-                    content: result,
+                    content: json!({
+                        "path": path,
+                        "status": "ok",
+                        "encoding": "utf-8",
+                        "sha256": format!("{:x}", Sha256::digest(&bytes)),
+                        "size_bytes": bytes.len(),
+                        "artifact_ref": artifact.uri(),
+                        "line_range": {"start": offset.saturating_add(1), "end": end_line},
+                        "total_lines": lines.len(),
+                        "truncated": truncated,
+                        "content": selected_content,
+                    })
+                    .to_string(),
                     is_error: false,
                     metadata: ToolResultMeta {
                         execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -184,7 +221,12 @@ async fn read_path(path: &str, offset: usize, limit: usize, ctx: &ToolContext) -
             Err(error) => error_result(ctx, start, format!("File is not UTF-8: {error}")),
         },
         Err(error) => ToolResult {
-            content: format!("Failed to read {path}: {error}"),
+            content: json!({
+                "path": path,
+                "status": "error",
+                "error": format!("Failed to read {path}: {error}")
+            })
+            .to_string(),
             is_error: true,
             metadata: ToolResultMeta {
                 execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -197,7 +239,7 @@ async fn read_path(path: &str, offset: usize, limit: usize, ctx: &ToolContext) -
 
 fn error_result(ctx: &ToolContext, start: fabric::MonoTime, content: String) -> ToolResult {
     ToolResult {
-        content,
+        content: json!({"status": "error", "error": content}).to_string(),
         is_error: true,
         metadata: ToolResultMeta {
             execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),

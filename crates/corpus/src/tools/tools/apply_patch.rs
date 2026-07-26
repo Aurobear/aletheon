@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 use super::mutation_path::validate_mutation_path;
 use super::scoped_filesystem;
@@ -9,6 +10,7 @@ use super::structured_patch::{
     FailedOperation, FileChangeSummary, PatchOperation, StructuredPatchResult,
 };
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use crate::tools::artifact::ArtifactStore;
 
 pub struct ApplyPatchTool;
 
@@ -139,11 +141,12 @@ impl Tool for ApplyPatchTool {
                 return preview_result(&structured.operations, &base_path, ctx, start).await;
             }
 
+            let before = snapshot_operation_digests(&structured.operations, &base_path);
             let result = apply_structured_scoped(&structured.operations, &base_path, ctx).await;
+            let after = snapshot_operation_digests(&structured.operations, &base_path);
             let is_error = !result.failed.is_empty();
             return ToolResult {
-                content: serde_json::to_string_pretty(&result)
-                    .unwrap_or_else(|error| format!("failed to serialize patch result: {error}")),
+                content: patch_receipt(&result, before, after),
                 is_error,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -176,11 +179,12 @@ impl Tool for ApplyPatchTool {
             return preview_result(&structured.operations, &base_path, ctx, start).await;
         }
 
+        let before = snapshot_operation_digests(&structured.operations, &base_path);
         let result = apply_structured_scoped(&structured.operations, &base_path, ctx).await;
+        let after = snapshot_operation_digests(&structured.operations, &base_path);
         let is_error = !result.failed.is_empty();
         ToolResult {
-            content: serde_json::to_string_pretty(&result)
-                .unwrap_or_else(|error| format!("failed to serialize patch result: {error}")),
+            content: patch_receipt(&result, before, after),
             is_error,
             metadata: ToolResultMeta {
                 execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -189,6 +193,64 @@ impl Tool for ApplyPatchTool {
             },
         }
     }
+}
+
+fn snapshot_operation_digests(
+    operations: &[PatchOperation],
+    base_dir: &std::path::Path,
+) -> BTreeMap<String, Option<String>> {
+    let mut snapshots = BTreeMap::new();
+    for operation in operations {
+        for path in operation_paths(operation) {
+            snapshots.entry(path.to_string()).or_insert_with(|| {
+                std::fs::read(base_dir.join(path))
+                    .ok()
+                    .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+            });
+        }
+    }
+    snapshots
+}
+
+fn patch_receipt(
+    result: &StructuredPatchResult,
+    before: BTreeMap<String, Option<String>>,
+    after: BTreeMap<String, Option<String>>,
+) -> String {
+    let change_scope_version_before = digest_serializable(&before);
+    let change_scope_version_after = digest_serializable(&after);
+    let payload = json!({
+        "kind": "apply_patch_receipt",
+        "terminal_status": if result.failed.is_empty() { "succeeded" } else { "failed" },
+        "change_scope_version_before": change_scope_version_before,
+        "change_scope_version_after": change_scope_version_after,
+        "before_sha256": before,
+        "after_sha256": after,
+        "applied": result.applied,
+        "failed": result.failed,
+        "files_changed": result.files_changed,
+    });
+    let bytes = serde_json::to_vec(&payload).unwrap_or_default();
+    let store = ArtifactStore::new(
+        super::output::OutputConfig::default()
+            .overflow_dir
+            .join("artifacts"),
+    );
+    let change_set_artifact = store
+        .store(&bytes, "application/json")
+        .ok()
+        .map(|artifact| artifact.uri());
+    let mut receipt = payload;
+    receipt["change_set_artifact_ref"] = json!(change_set_artifact);
+    serde_json::to_string_pretty(&receipt)
+        .unwrap_or_else(|error| format!("failed to serialize patch receipt: {error}"))
+}
+
+fn digest_serializable(value: &impl serde::Serialize) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(value).unwrap_or_default())
+    )
 }
 
 fn operation_paths(operation: &PatchOperation) -> Vec<&str> {
@@ -910,6 +972,30 @@ mod tests {
             .await;
 
         assert!(!allowed.is_error, "{}", allowed.content);
+        let receipt: serde_json::Value = serde_json::from_str(&allowed.content).unwrap();
+        assert_eq!(receipt["kind"], "apply_patch_receipt");
+        assert_eq!(receipt["terminal_status"], "succeeded");
+        assert!(
+            receipt["change_scope_version_before"]
+                .as_str()
+                .unwrap()
+                .len()
+                == 64
+        );
+        assert!(
+            receipt["change_scope_version_after"]
+                .as_str()
+                .unwrap()
+                .len()
+                == 64
+        );
+        assert_ne!(
+            receipt["change_scope_version_before"],
+            receipt["change_scope_version_after"]
+        );
+        assert!(receipt["change_set_artifact_ref"]
+            .as_str()
+            .is_some_and(|reference| reference.starts_with("artifact://sha256/")));
         assert_eq!(
             std::fs::read_to_string(root.join("admitted.txt")).unwrap(),
             "yes"

@@ -239,7 +239,11 @@ mod tests {
             .execute(json!({"path": path, "offset": 1, "limit": 1}), &context)
             .await;
         assert!(!read.is_error, "{}", read.content);
-        assert_eq!(read.content, "    2\tworld");
+        let receipt: serde_json::Value = serde_json::from_str(&read.content).unwrap();
+        assert_eq!(receipt["files"][0]["content"], "    2\tworld");
+        assert_eq!(receipt["files"][0]["line_range"]["start"], 2);
+        assert_eq!(receipt["files"][0]["line_range"]["end"], 2);
+        assert_eq!(receipt["files"][0]["sha256"].as_str().unwrap().len(), 64);
     }
 
     #[tokio::test]
@@ -258,10 +262,24 @@ mod tests {
             .await;
 
         assert!(!read.is_error, "{}", read.content);
-        assert!(read.content.contains("== Cargo.toml =="));
-        assert!(read.content.contains("name = \"demo\""));
-        assert!(read.content.contains("== README.md =="));
-        assert!(read.content.contains("# Demo"));
+        let receipt: serde_json::Value = serde_json::from_str(&read.content).unwrap();
+        assert_eq!(receipt["files"][0]["path"], "Cargo.toml");
+        assert!(receipt["files"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("name = \"demo\""));
+        assert_eq!(receipt["files"][1]["path"], "README.md");
+        assert!(receipt["files"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("# Demo"));
+        assert!(receipt["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|file| file["artifact_ref"]
+                .as_str()
+                .is_some_and(|reference| reference.starts_with("artifact://sha256/"))));
     }
 
     #[tokio::test]
@@ -279,9 +297,9 @@ mod tests {
             .await;
 
         assert!(!read.is_error, "{}", read.content);
-        assert!(read.content.contains("== README.md =="));
+        assert!(read.content.contains("README.md"));
         assert!(read.content.contains("# Demo"));
-        assert!(read.content.contains("== package.json =="));
+        assert!(read.content.contains("package.json"));
         assert!(read.content.contains("Failed to read package.json"));
     }
 
