@@ -464,6 +464,107 @@ been reconciled against the versions used to produce them.
 
 ## Scope
 
+### Crate participation for the practical-work core
+
+The first implementation increment must stay narrow. Five crates form the
+minimum closed loop; two additional crates expose the result without owning its
+semantics:
+
+```text
+fabric contracts
+      |
+      v
+cognit decide/continue/complete <----> agora task/artifact state
+      |                                      ^
+      v                                      |
+executive orchestrate/project/settle --------+
+      |
+      v
+corpus execute tools and return receipts
+      |
+      +----> interact renders truthful progress (thin projection)
+      `----> mnemosyne retains selected grounded outcomes (thin adapter)
+```
+
+| Crate | First-increment responsibility | Required change |
+|---|---|---|
+| `cognit` | Own the practical-work state machine, obligations, evidence ledger, progress audit, next-action decision, and completion proposal | Add task/turn/work-phase modules and make the linear harness stop through the completion policy rather than “no tool calls means success” |
+| `executive` | Bind a root turn or Goal to an Agora space; assemble role/task projections; drive Cognit; execute/spawn/wait; persist terminal receipts; apply stage decisions | Add the application coordinator and adapters that connect existing AgentControl, context projection, runtime events, Agora, Corpus, and session persistence |
+| `agora` | Hold the live task graph and versioned cognitive artifacts used by one root task | Extend the minimal four-state task graph and generic JSON operations with typed task-node metadata, artifact references, findings, gate decisions, ownership, and optimistic reconciliation |
+| `fabric` | Carry only stable cross-crate IDs, enums, ports, events, and receipts | Add versioned cognitive-workflow contracts where a type crosses crate boundaries; do not place Cognit algorithms here |
+| `corpus` | Perform governed tool work and return authoritative terminal execution evidence | Preserve tool/service ownership; enrich receipts only where Cognit cannot distinguish started, successful, failed, timed-out, or cancelled execution from current contracts |
+| `interact` | Show phase, outstanding obligations, child status, verification, rejection, and incomplete/blocked outcomes | Add reducers/rendering after the canonical events exist; it must never infer success locally |
+| `mnemosyne` | Store selected accepted outcomes and retrieve bounded, provenance-bearing context | Initially add only the promotion/projection adapter required by the loop; do not make memory a prerequisite for basic coding work |
+
+The following crates are intentionally outside the first practical-work critical
+path:
+
+- `dasein`: consume accepted grounded experience only after the work loop is
+  reliable; no autonomous self-mutation in this increment.
+- `metacog`: evaluate repeated outcomes and propose later improvements; it does
+  not decide whether the current task completed.
+- `kernel`: keep existing process, capability, operation-tree, clock, and
+  supervision authority. Extend it only if a required lifecycle invariant cannot
+  be expressed through its present ports.
+- `runtime`: keep runtime discovery and manifest selection. Role semantics belong
+  to profiles/workflow contracts, not provider-specific branches.
+- `platform` and `execd`: remain host execution backends below Corpus. No workflow
+  policy belongs in either crate.
+- `gateway`, `aletheon`, and `interact` host surfaces: expose the canonical state
+  after the core works; they must not become alternate orchestration paths.
+- `hardware`: no first-increment change; embodied action is a later specialized
+  execution domain using the same receipt and gate contracts.
+
+### Current foundations and actual gaps
+
+The implementation must extend rather than duplicate existing mechanisms:
+
+- Fabric already defines runtime capabilities, role profiles, parent
+  restrictions, bounded budgets, selected/last-turn context forks, spawn/send/
+  wait/list contracts, terminal statuses, evidence, artifacts, and Agent
+  snapshots. The missing layer is a typed cognitive task contract and stage
+  decision that connects these primitives.
+- Executive already has AgentControl lifecycle, a bounded mailbox bridge,
+  context-projection filtering, native Cognit and Pi runtimes, canonical Agent
+  runtime events, and Goal worker/reviewer support. The missing layer is one
+  coordinator that makes those pieces serve an accepted plan and waits for
+  authoritative terminal artifacts before advancing.
+- Agora already provides session-scoped Workspace state, proposals, versioned
+  commits, evidence validation, task transitions, and replay. Its TaskGraph is
+  currently too small for real work because a node contains only ID,
+  description, dependencies, and four statuses.
+- Cognit's linear harness already owns the inference/tool loop, budgets,
+  compaction, circuit breaking, reflection, and an optional prose verifier. Its
+  current no-tool branch treats the model's final text as completion unless that
+  optional verifier rejects it. This is the primary practical-work gap.
+- Corpus already owns governed tool execution. The first increment should
+  consume and normalize its receipts, not move tool implementations into Cognit
+  or Executive.
+
+### First practical-work vertical slice
+
+The first slice proves one Agent can investigate and complete a repository task
+reliably before enabling a general multi-agent planner graph:
+
+1. Create a `CognitiveTaskContract` from the user request and repository policy.
+2. Track explicit obligations: inspect targets, claimed evidence, requested
+   mutations, validation requirements, and final reporting requirements.
+3. Make Cognit's loop return a typed `Continue`, `Complete`, `Blocked`, or
+   `Failed` decision. A tool-free model response is only a completion proposal.
+4. Record every inference round, provider retry, tool call, tool terminal result,
+   changed artifact, and validation result separately.
+5. Require content evidence before repository-analysis claims and authoritative
+   terminal validation before implementation-success claims.
+6. Persist the contract, evidence ledger, phase, decision, and projection receipt
+   through Executive; mirror the live task and accepted artifacts into Agora.
+7. Render the authoritative state in the existing TUI/session event path.
+8. Validate the unchanged-session multi-turn behavior and installed runtime.
+
+Only after this single-Agent slice passes should the same contracts be used to
+activate Planner/Explorer/Executor/Reviewer/Tester roles. This avoids building a
+multi-agent scheduler around a leaf Agent that still guesses, stops early, or
+cannot prove its own work.
+
 ### Included in the first implementation increment
 
 - Typed task contract for explicit required actions and deliverables.
