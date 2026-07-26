@@ -59,6 +59,11 @@ def test_raw_markdown_detects_table_pipes():
     assert check_raw_markdown("normal text") == []
 
 
+def test_raw_markdown_ignores_numbered_verbatim_agent_artifacts():
+    frame = "   │  55 │ | claim | evidence |\n   │  56 │ |------|----------|"
+    assert check_raw_markdown(frame) == []
+
+
 def test_double_reflection_prefix():
     assert check_double_reflection("Reflection: Reflection: 20 calls")[0]["kind"] == "double_reflection"
     assert check_double_reflection("Reflection: 20 calls") == []

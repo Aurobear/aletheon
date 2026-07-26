@@ -44,6 +44,11 @@ _UNKNOWN_SKILL_RE = re.compile(r"未知技能:\s*/\S+")
 def check_raw_markdown(frame: str) -> list[dict]:
     """Unrendered markdown table pipes leaking into the TUI."""
     for ln in frame.splitlines():
+        if re.match(r"^\s*│\s*\d+\s*│", ln):
+            # Expanded tool/Agent artifacts are deliberately rendered as a
+            # numbered verbatim source view. Markdown inside that evidence is
+            # content, not an assistant-response rendering defect.
+            continue
         if _MD_SEP_RE.search(ln) or "||" in ln:
             return [{
                 "kind": "raw_markdown",
