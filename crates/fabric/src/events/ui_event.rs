@@ -246,6 +246,8 @@ pub enum ClientEvent {
         output: String,
         is_error: bool,
         elapsed_ms: u64,
+        /// Structured filesystem delta from apply_patch (None for other tools).
+        patch_delta: Option<crate::PatchDelta>,
     },
     ToolProgress {
         call_id: String,

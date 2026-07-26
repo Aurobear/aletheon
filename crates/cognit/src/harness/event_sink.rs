@@ -159,6 +159,7 @@ impl From<Event> for TurnEventV1 {
                 content: result.content,
                 is_error: result.is_error,
                 execution_time_ms: result.execution_time_ms,
+                patch_delta: result.patch_delta,
             },
             Event::Usage {
                 tokens_in,
@@ -275,6 +276,7 @@ pub struct ToolResultEvent {
     pub content: String,
     pub is_error: bool,
     pub execution_time_ms: u64,
+    pub patch_delta: Option<fabric::PatchDelta>,
 }
 
 impl From<&ToolResult> for ToolResultEvent {
@@ -283,6 +285,7 @@ impl From<&ToolResult> for ToolResultEvent {
             content: tr.content.clone(),
             is_error: tr.is_error,
             execution_time_ms: tr.metadata.execution_time_ms,
+            patch_delta: tr.metadata.patch_delta.clone(),
         }
     }
 }
@@ -473,6 +476,7 @@ mod tests {
                 content: "out".into(),
                 is_error: false,
                 execution_time_ms: 100,
+                patch_delta: None,
             },
         };
         let _ = Event::Usage {
@@ -582,6 +586,7 @@ mod tests {
                 content: "done".into(),
                 is_error: false,
                 execution_time_ms: 17,
+                patch_delta: None,
             },
         };
 
@@ -593,6 +598,7 @@ mod tests {
                 content,
                 is_error: false,
                 execution_time_ms: 17,
+                patch_delta: None,
             } if name == "shell" && call_id == "call-7" && content == "done"
         ));
     }
