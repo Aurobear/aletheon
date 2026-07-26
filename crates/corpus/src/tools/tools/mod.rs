@@ -5,6 +5,7 @@ pub mod agent_tool;
 pub mod apply_patch;
 pub mod artifact_read;
 pub mod bash_exec;
+pub mod change_transaction;
 pub mod code_graph;
 pub mod ebpf_compile;
 pub mod executor;
@@ -35,6 +36,7 @@ pub mod task_tools;
 pub mod toolset;
 pub mod web_fetch;
 pub mod web_search;
+pub(crate) mod workspace_version;
 
 // Re-export types from fabric (the canonical definitions)
 pub use fabric::tool::{ConcurrencyClass, ToolExposure};

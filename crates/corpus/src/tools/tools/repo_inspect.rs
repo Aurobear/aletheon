@@ -220,7 +220,9 @@ fn extract_validation_specs(source: &InstructionSource) -> Vec<ValidationSpec> {
                 .split('`')
                 .enumerate()
                 .find_map(|(part, value)| (part % 2 == 1).then_some(value.trim()))?;
-            let kind = if command.contains(" test") || command.starts_with("test ") {
+            let kind = if command.contains("fmt") || command.contains("format") {
+                "format"
+            } else if command.contains(" test") || command.starts_with("test ") {
                 "test"
             } else if command.contains("check") {
                 "check"

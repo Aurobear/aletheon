@@ -58,6 +58,7 @@ pub use types::agent;
 pub use types::agent_control;
 pub use types::attempt;
 pub use types::capability;
+pub use types::change_transaction;
 pub use types::channel;
 pub use types::conscious_arbitration;
 pub use types::conscious_core;

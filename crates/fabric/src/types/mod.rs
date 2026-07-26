@@ -8,6 +8,7 @@ pub mod agent_settlement;
 pub mod approval;
 pub mod attempt;
 pub mod capability;
+pub mod change_transaction;
 pub mod channel;
 pub mod coding_job;
 pub mod conscious_arbitration;

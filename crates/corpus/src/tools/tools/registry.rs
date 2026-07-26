@@ -247,11 +247,15 @@ impl ToolRegistry {
         tasks_db: Option<std::path::PathBuf>,
     ) -> Self {
         let mut registry = Self::new();
+        let change_transactions = super::change_transaction::ChangeTransactionRegistry::default();
         // Register built-in tools — panics on duplicate names (should never happen)
         registry
             .register(Arc::new(super::bash_exec::BashExecTool))
             .expect("duplicate built-in tool");
-        let command_sessions = super::managed_command::ManagedCommandSessions::default();
+        let command_sessions =
+            super::managed_command::ManagedCommandSessions::with_change_transactions(
+                change_transactions.clone(),
+            );
         registry
             .register(Arc::new(super::managed_command::ExecCommandTool::new(
                 command_sessions.clone(),
@@ -271,13 +275,21 @@ impl ToolRegistry {
             .register(Arc::new(super::file_read::FileReadTool))
             .expect("duplicate built-in tool");
         registry
-            .register(Arc::new(super::repo_inspect::RepoInspectTool))
+            .register(Arc::new(
+                super::change_transaction::TransactionalRepoInspectTool::new(
+                    change_transactions.clone(),
+                ),
+            ))
             .expect("duplicate built-in tool");
         registry
             .register(Arc::new(super::artifact_read::ArtifactReadTool::default()))
             .expect("duplicate built-in tool");
         registry
-            .register(Arc::new(super::file_write::FileWriteTool))
+            .register(Arc::new(
+                super::change_transaction::TransactionalFileWriteTool::new(
+                    change_transactions.clone(),
+                ),
+            ))
             .expect("duplicate built-in tool");
         registry
             .register(Arc::new(super::system_status::SystemStatusTool))
@@ -304,7 +316,11 @@ impl ToolRegistry {
             .register(Arc::new(super::file_search::FileSearchTool))
             .expect("duplicate built-in tool");
         registry
-            .register(Arc::new(super::apply_patch::ApplyPatchTool))
+            .register(Arc::new(
+                super::change_transaction::TransactionalApplyPatchTool::new(
+                    change_transactions.clone(),
+                ),
+            ))
             .expect("duplicate built-in tool");
         registry
             .register(Arc::new(super::glob::GlobTool))
@@ -315,11 +331,31 @@ impl ToolRegistry {
         // Git tools: read-only (status/diff/log/show) plus safe write/undo
         // (restore/stash/reset). These were defined but never registered, so
         // the agent previously had no git capability at all.
-        for tool in super::git_tools::git_tools() {
+        for tool in super::git_tools::git_tools()
+            .into_iter()
+            .filter(|tool| tool.name() != "git_diff")
+        {
             registry
                 .register(tool)
                 .expect("duplicate built-in git tool");
         }
+        registry
+            .register(Arc::new(
+                super::change_transaction::TransactionalGitDiffTool::new(
+                    change_transactions.clone(),
+                ),
+            ))
+            .expect("duplicate built-in git tool");
+        registry
+            .register(Arc::new(super::change_transaction::ChangeAcceptTool::new(
+                change_transactions.clone(),
+            )))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(
+                super::change_transaction::ChangeRollbackTool::new(change_transactions),
+            ))
+            .expect("duplicate built-in tool");
         registry
             .register(Arc::new(
                 super::web_fetch::WebFetchTool::new().with_network_policy(policy.clone()),
