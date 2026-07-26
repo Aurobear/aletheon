@@ -225,6 +225,56 @@ mod goal_runtime_tests {
     }
 
     #[tokio::test]
+    async fn universal_tools_are_merged_into_every_profile() {
+        let directory = tempfile::tempdir().unwrap();
+        // A narrow profile that does NOT list git or task tools.
+        std::fs::write(
+            directory.path().join("narrow.md"),
+            "---\nname: narrow\ndescription: narrow\ntools: [file_read]\n---\nNarrow.",
+        )
+        .unwrap();
+        let inference: Arc<dyn InferencePort> = Arc::new(NoopInference);
+        let llm: Arc<dyn LlmProvider> = Arc::new(
+            PortLlmProvider::resolve(inference.clone(), "shared/model")
+                .await
+                .unwrap(),
+        );
+        // Catalog includes universal tools the profile did not declare.
+        let definitions = ["file_read", "git_status", "git_reset", "task_create"]
+            .into_iter()
+            .map(|name| fabric::ToolDefinition {
+                name: name.into(),
+                description: name.into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            })
+            .collect::<Vec<_>>();
+        let result = super::load_agent_profiles(
+            directory.path(),
+            inference,
+            llm,
+            &definitions,
+            &crate::composition::config::ExecutiveConfig::default(),
+            &crate::composition::config::AgentProfilesConfig::default(),
+        )
+        .await
+        .unwrap();
+        let profile = result.profiles.get("narrow").unwrap();
+        assert!(profile.allowed_tools.contains(&"file_read".to_string()));
+        assert!(
+            profile.allowed_tools.contains(&"git_status".to_string()),
+            "git_status must be universally available regardless of profile"
+        );
+        assert!(
+            profile.allowed_tools.contains(&"git_reset".to_string()),
+            "git_reset must be universally available (destructive op is guarded by confirm_hard)"
+        );
+        assert!(
+            profile.allowed_tools.contains(&"task_create".to_string()),
+            "task_create must be universally available"
+        );
+    }
+
+    #[tokio::test]
     async fn agent_profile_token_overrides_feed_adaptive_context_limits() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
