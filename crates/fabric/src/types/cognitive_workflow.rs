@@ -639,6 +639,30 @@ pub struct CognitiveTaskRuntimeBinding {
     pub workspace_scope: Vec<String>,
 }
 
+/// Grounded post-decision experience. These events are observations for the
+/// lived-self system; they never carry authority to override the decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GroundedCognitiveOutcome {
+    RequirementSatisfied {
+        requirement_id: String,
+        evidence: Vec<String>,
+    },
+    CompletionRejected {
+        missing: Vec<String>,
+    },
+    ValidationFailed {
+        name: String,
+        evidence: String,
+    },
+    FalseCompletionPrevented {
+        unsupported: Vec<String>,
+    },
+    TaskCompleted {
+        evidence: Vec<String>,
+    },
+}
+
 impl CognitiveRoleOutput {
     pub fn validate_for(&self, packet: &AgentTaskPacket) -> anyhow::Result<()> {
         anyhow::ensure!(
@@ -849,5 +873,21 @@ mod tests {
             .required_output_artifacts
             .contains(&CognitiveArtifactKind::Review));
         assert!(!reviewer.context_projection.include_peer_history);
+    }
+
+    #[test]
+    fn grounded_outcome_has_a_distinct_tagged_wire_contract() {
+        let outcome = GroundedCognitiveOutcome::TaskCompleted {
+            evidence: vec!["receipt-1".into()],
+        };
+
+        let encoded = serde_json::to_value(&outcome).unwrap();
+
+        assert_eq!(encoded["kind"], "task_completed");
+        assert!(encoded.get("experience_kind").is_none());
+        assert_eq!(
+            serde_json::from_value::<GroundedCognitiveOutcome>(encoded).unwrap(),
+            outcome
+        );
     }
 }

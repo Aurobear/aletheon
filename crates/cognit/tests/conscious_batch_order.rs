@@ -255,6 +255,7 @@ async fn run_with_plan(
             batch_planner: Some(planner),
             evicted_callback: None,
             verifier: None,
+            grounded_outcome_sink: None,
         },
     );
 

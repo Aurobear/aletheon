@@ -203,6 +203,7 @@ pub struct ReActLoop {
     latest_completion_audit: Option<ProgressDecision>,
     completion_gate_mode: CompletionGateMode,
     max_completion_retries: u32,
+    grounded_outcome_sink: Option<Arc<dyn crate::core::GroundedOutcomeSink>>,
 }
 
 impl ReActLoop {
@@ -251,6 +252,7 @@ impl ReActLoop {
             latest_completion_audit: None,
             completion_gate_mode: CompletionGateMode::Shadow,
             max_completion_retries: 2,
+            grounded_outcome_sink: None,
         }
     }
 
@@ -478,6 +480,10 @@ impl ReActLoop {
 
     pub fn set_completion_gate_mode(&mut self, mode: CompletionGateMode) {
         self.completion_gate_mode = mode;
+    }
+
+    pub fn set_grounded_outcome_sink(&mut self, sink: Arc<dyn crate::core::GroundedOutcomeSink>) {
+        self.grounded_outcome_sink = Some(sink);
     }
 
     pub fn evidence_ledger_mut(&mut self) -> &mut EvidenceLedger {
@@ -720,6 +726,25 @@ mod tests {
     impl crate::harness::event_sink::EventSink for CollectingEventSink {
         fn emit(&self, event: crate::harness::event_sink::Event) {
             self.0.lock().unwrap().push(event);
+        }
+    }
+
+    struct CollectingGroundedSink {
+        outcomes: Mutex<Vec<fabric::cognitive_workflow::GroundedCognitiveOutcome>>,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl crate::core::GroundedOutcomeSink for CollectingGroundedSink {
+        async fn publish(
+            &self,
+            outcome: fabric::cognitive_workflow::GroundedCognitiveOutcome,
+        ) -> anyhow::Result<()> {
+            if self.fail {
+                anyhow::bail!("observational sink unavailable");
+            }
+            self.outcomes.lock().unwrap().push(outcome);
+            Ok(())
         }
     }
 
@@ -1682,6 +1707,83 @@ mod tests {
         assert!(matches!(
             lp.latest_completion_audit(),
             Some(ProgressDecision::Continue { missing }) if missing.len() == 1
+        ));
+    }
+
+    #[tokio::test]
+    async fn grounded_outcomes_follow_deterministic_completion_decision() {
+        use crate::core::{
+            CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState, CompletionGateMode,
+            RequiredAction,
+        };
+        use fabric::cognitive_workflow::GroundedCognitiveOutcome;
+
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "inspect through a configured tool".into(),
+            task_kind: CognitiveTaskKind::RepositoryAnalysis,
+            required_actions: vec![RequiredAction::InvokeTool {
+                tool_name: "file_read".into(),
+            }],
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+        lp.set_completion_gate_mode(CompletionGateMode::Enforce);
+        let sink = Arc::new(CollectingGroundedSink {
+            outcomes: Mutex::new(Vec::new()),
+            fail: false,
+        });
+        lp.set_grounded_outcome_sink(sink.clone());
+
+        let decision = lp
+            .finalize_candidate("unsupported answer".into(), &|| async { Ok(Vec::new()) })
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            decision,
+            completion::FinalizationDecision::ContinueAfterRejection
+        ));
+        let outcomes = sink.outcomes.lock().unwrap();
+        assert!(matches!(
+            outcomes.as_slice(),
+            [
+                GroundedCognitiveOutcome::CompletionRejected { .. },
+                GroundedCognitiveOutcome::FalseCompletionPrevented { .. }
+            ]
+        ));
+        assert!(!outcomes
+            .iter()
+            .any(|outcome| matches!(outcome, GroundedCognitiveOutcome::TaskCompleted { .. })));
+    }
+
+    #[tokio::test]
+    async fn observational_sink_failure_cannot_override_acceptance() {
+        use crate::core::{CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState};
+
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "answer without required actions".into(),
+            task_kind: CognitiveTaskKind::General,
+            required_actions: Vec::new(),
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+        lp.set_completion_gate_mode(crate::core::CompletionGateMode::Enforce);
+        lp.set_grounded_outcome_sink(Arc::new(CollectingGroundedSink {
+            outcomes: Mutex::new(Vec::new()),
+            fail: true,
+        }));
+
+        let decision = lp
+            .finalize_candidate("accepted answer".into(), &|| async { Ok(Vec::new()) })
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            decision,
+            completion::FinalizationDecision::Accept { final_text }
+                if final_text == "accepted answer"
         ));
     }
 

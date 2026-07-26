@@ -21,6 +21,7 @@ fn dependencies() -> CognitiveSessionDependencies {
         batch_planner: None,
         evicted_callback: None,
         verifier: None,
+        grounded_outcome_sink: None,
     }
 }
 

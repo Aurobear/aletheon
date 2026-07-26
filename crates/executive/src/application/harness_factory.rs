@@ -52,6 +52,7 @@ pub struct LinearCognitiveSessionFactory {
     clock: std::sync::Arc<dyn fabric::Clock>,
     evicted_memory: Option<std::sync::Arc<tokio::sync::Mutex<mnemosyne::runtime::RecallMemory>>>,
     verifier: Option<std::sync::Arc<dyn fabric::policy::verifier::Verifier>>,
+    dasein: Option<std::sync::Arc<dyn fabric::dasein::DaseinOps>>,
 }
 
 impl LinearCognitiveSessionFactory {
@@ -61,6 +62,7 @@ impl LinearCognitiveSessionFactory {
             clock,
             evicted_memory: None,
             verifier: None,
+            dasein: None,
         }
     }
 
@@ -78,6 +80,29 @@ impl LinearCognitiveSessionFactory {
     ) -> Self {
         self.evicted_memory = Some(memory);
         self
+    }
+
+    pub fn with_grounded_dasein_outcomes(
+        mut self,
+        dasein: std::sync::Arc<dyn fabric::dasein::DaseinOps>,
+    ) -> Self {
+        self.dasein = Some(dasein);
+        self
+    }
+
+    fn grounded_outcome_sink(
+        &self,
+        session: &SessionRecord,
+    ) -> Option<std::sync::Arc<dyn cognit::core::GroundedOutcomeSink>> {
+        self.dasein.as_ref().map(|dasein| {
+            std::sync::Arc::new(
+                crate::application::dasein_workspace_adapter::GroundedDaseinOutcomeSink::new(
+                    dasein.clone(),
+                    self.clock.clone(),
+                    session.id.0.clone(),
+                ),
+            ) as std::sync::Arc<dyn cognit::core::GroundedOutcomeSink>
+        })
     }
 }
 
@@ -98,6 +123,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 batch_planner: None,
                 evicted_callback: evicted_callback(self.evicted_memory.clone(), session),
                 verifier: self.verifier.clone(),
+                grounded_outcome_sink: self.grounded_outcome_sink(session),
             },
         )))
     }
@@ -119,6 +145,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 batch_planner: None,
                 evicted_callback: evicted_callback(self.evicted_memory.clone(), session),
                 verifier: self.verifier.clone(),
+                grounded_outcome_sink: self.grounded_outcome_sink(session),
             },
         )))
     }
@@ -141,6 +168,7 @@ impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
                 batch_planner,
                 evicted_callback: evicted_callback(self.evicted_memory.clone(), session),
                 verifier: self.verifier.clone(),
+                grounded_outcome_sink: self.grounded_outcome_sink(session),
             },
         )))
     }

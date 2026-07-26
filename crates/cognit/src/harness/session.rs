@@ -233,6 +233,7 @@ pub struct CognitiveSessionDependencies {
     /// Optional coding verifier (Wave 3). When set, ReActLoop validates the
     /// model's final answer before accepting it as complete.
     pub verifier: Option<Arc<dyn fabric::policy::verifier::Verifier>>,
+    pub grounded_outcome_sink: Option<Arc<dyn crate::core::GroundedOutcomeSink>>,
 }
 
 struct NoopCompressor;
@@ -297,6 +298,9 @@ impl LinearCognitiveSession {
         let mut inner = ReActLoop::new_with_clock(config, compactor, clock.clone());
         if let Some(planner) = dependencies.batch_planner.as_ref() {
             inner.set_batch_planner(Arc::clone(planner));
+        }
+        if let Some(sink) = dependencies.grounded_outcome_sink {
+            inner.set_grounded_outcome_sink(sink);
         }
         if let Some(callback) = dependencies.evicted_callback {
             inner.set_evicted_callback(callback);

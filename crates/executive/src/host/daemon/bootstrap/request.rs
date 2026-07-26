@@ -526,18 +526,6 @@ impl RequestHandler {
             ),
             "cognitive harness selected from config"
         );
-        let cognitive_sessions: Arc<
-            dyn crate::application::harness_factory::CognitiveSessionFactory,
-        > = Arc::new(
-            crate::application::harness_factory::LinearCognitiveSessionFactory::new(
-                crate::application::harness_factory::harness_config_from_executive(
-                    &runtime_config_snapshot,
-                ),
-                clock.clone(),
-            )
-            .with_evicted_memory(recall_memory.clone()),
-        );
-
         let mut runtime = AletheonExecutive::new(runtime_config);
         let evo_config = EvolutionConfig {
             enabled: evolution_enabled,
@@ -810,6 +798,18 @@ impl RequestHandler {
             .await
             .dasein_handle()
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
+        let cognitive_sessions: Arc<
+            dyn crate::application::harness_factory::CognitiveSessionFactory,
+        > = Arc::new(
+            crate::application::harness_factory::LinearCognitiveSessionFactory::new(
+                crate::application::harness_factory::harness_config_from_executive(
+                    &runtime_config_snapshot,
+                ),
+                clock.clone(),
+            )
+            .with_evicted_memory(recall_memory.clone())
+            .with_grounded_dasein_outcomes(dasein_handle.clone()),
+        );
         let conscious_registry = Arc::new(
             crate::application::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_tools_and_agora(
                 data_dir.join("conscious_workspace.db"),

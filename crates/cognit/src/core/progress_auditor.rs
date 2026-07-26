@@ -160,10 +160,17 @@ impl ProgressAuditor {
 }
 
 fn is_satisfied(obligation: &Obligation, evidence: &EvidenceLedger) -> bool {
+    evidence_for_obligation(obligation, evidence).is_some()
+}
+
+pub(crate) fn evidence_for_obligation<'a>(
+    obligation: &Obligation,
+    evidence: &'a EvidenceLedger,
+) -> Option<&'a super::evidence::EvidenceRecord> {
     if let Obligation::RequiredAction(RequiredAction::ObserveCommandSession { session_id }) =
         obligation
     {
-        return evidence.records().any(|record| {
+        return evidence.records().find(|record| {
             record.subject
                 == EvidenceSubject::CommandSessionTerminal {
                     session_id: session_id.clone(),
@@ -215,9 +222,9 @@ fn is_satisfied(obligation: &Obligation, evidence: &EvidenceLedger) -> bool {
         Obligation::Validation(requirement) => EvidenceSubject::Validation {
             requirement_id: requirement.id.clone(),
         },
-        Obligation::UnresolvedRequirement { .. } => return false,
+        Obligation::UnresolvedRequirement { .. } => return None,
     };
-    evidence.successful_for(&subject).is_some()
+    evidence.successful_for(&subject)
 }
 
 #[cfg(test)]

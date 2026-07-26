@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabric::dasein::{
-    DaseinOps, ExperienceProvenance, ExperienceSource, InterpretedExperience, SelfEventId,
-    SelfTransitionRequest, Stimmung,
+    DaseinOps, ExperienceProvenance, ExperienceSource, InterpretedExperience, OutcomeStatus,
+    SelfEventId, SelfTransitionRequest, Stimmung,
 };
 use fabric::{
     CareConcernFrame, Clock, SalienceVector, StructuredSelfView, WorkspaceBroadcast,
@@ -15,6 +15,91 @@ use fabric::{
 use super::conscious_core_ports::{DaseinIntegration, DaseinWorkspacePort};
 
 const MAX_LIVED_SEMANTIC_BYTES: usize = 24 * 1024;
+const MAX_GROUNDED_OUTCOME_BYTES: usize = 24 * 1024;
+const MAX_GROUNDED_OUTCOME_VERSION_RETRIES: usize = 3;
+
+/// Post-decision adapter from Cognit's grounded evidence events into Dasein's
+/// canonical lived-experience ledger. Publication is observational: callers
+/// retain sole authority over the completion decision.
+pub struct GroundedDaseinOutcomeSink {
+    dasein: Arc<dyn DaseinOps>,
+    clock: Arc<dyn Clock>,
+    session_ref: String,
+}
+
+impl GroundedDaseinOutcomeSink {
+    pub fn new(
+        dasein: Arc<dyn DaseinOps>,
+        clock: Arc<dyn Clock>,
+        session_ref: impl Into<String>,
+    ) -> Self {
+        Self {
+            dasein,
+            clock,
+            session_ref: session_ref.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl cognit::core::GroundedOutcomeSink for GroundedDaseinOutcomeSink {
+    async fn publish(
+        &self,
+        outcome: fabric::cognitive_workflow::GroundedCognitiveOutcome,
+    ) -> anyhow::Result<()> {
+        let status = match &outcome {
+            fabric::cognitive_workflow::GroundedCognitiveOutcome::RequirementSatisfied {
+                ..
+            }
+            | fabric::cognitive_workflow::GroundedCognitiveOutcome::TaskCompleted { .. } => {
+                OutcomeStatus::Succeeded
+            }
+            fabric::cognitive_workflow::GroundedCognitiveOutcome::CompletionRejected { .. }
+            | fabric::cognitive_workflow::GroundedCognitiveOutcome::ValidationFailed { .. }
+            | fabric::cognitive_workflow::GroundedCognitiveOutcome::FalseCompletionPrevented {
+                ..
+            } => OutcomeStatus::Failed,
+        };
+        let serialized = serde_json::to_string(&outcome)?;
+        let summary = truncate_utf8(&serialized, MAX_GROUNDED_OUTCOME_BYTES);
+        let event_id = SelfEventId::new();
+        let source_ref = format!("session:{}:grounded-outcome", self.session_ref);
+
+        for attempt in 0..MAX_GROUNDED_OUTCOME_VERSION_RETRIES {
+            let expected_version = self.dasein.self_version().await;
+            let result = self
+                .dasein
+                .transition(SelfTransitionRequest {
+                    event_id,
+                    source: ExperienceSource::Runtime,
+                    observed_at: self.clock.wall_now(),
+                    content: InterpretedExperience::Outcome {
+                        summary: summary.clone(),
+                        status,
+                    },
+                    provenance: ExperienceProvenance {
+                        producer: "cognit-grounded-outcome".into(),
+                        session_id: uuid::Uuid::parse_str(&self.session_ref).ok(),
+                        turn_id: None,
+                        source_ref: Some(source_ref.clone()),
+                    },
+                    expected_version,
+                })
+                .await;
+            match result {
+                Ok(_) => return Ok(()),
+                Err(error)
+                    if attempt + 1 < MAX_GROUNDED_OUTCOME_VERSION_RETRIES
+                        && error.to_string().contains("version conflict") =>
+                {
+                    tokio::task::yield_now().await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("bounded grounded outcome retry loop always returns")
+    }
+}
 
 pub struct DaseinWorkspaceAdapter {
     dasein: Arc<dyn DaseinOps>,
@@ -183,4 +268,26 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
         end -= 1;
     }
     value[..end].to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cognit::core::GroundedOutcomeSink;
+    use fabric::cognitive_workflow::GroundedCognitiveOutcome;
+
+    #[tokio::test]
+    async fn grounded_outcome_advances_the_canonical_dasein_ledger() {
+        let clock = Arc::new(kernel::chronos::TestClock::default());
+        let dasein = Arc::new(dasein::dasein::DaseinModule::new(clock.clone()).0);
+        let sink = GroundedDaseinOutcomeSink::new(dasein.clone(), clock, "session-test");
+
+        sink.publish(GroundedCognitiveOutcome::TaskCompleted {
+            evidence: vec!["terminal-receipt".into()],
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(dasein.self_version().await.0, 1);
+    }
 }
