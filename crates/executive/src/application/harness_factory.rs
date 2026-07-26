@@ -106,6 +106,23 @@ impl LinearCognitiveSessionFactory {
     }
 }
 
+pub fn production_cognitive_session_factory(
+    config: &ExecutiveConfig,
+    clock: std::sync::Arc<dyn fabric::Clock>,
+    memory: std::sync::Arc<tokio::sync::Mutex<mnemosyne::runtime::RecallMemory>>,
+    dasein: std::sync::Arc<dyn fabric::dasein::DaseinOps>,
+) -> std::sync::Arc<dyn CognitiveSessionFactory> {
+    tracing::info!(
+        harness = selected_harness_kind(config.harness_kind),
+        "cognitive harness selected from config"
+    );
+    std::sync::Arc::new(
+        LinearCognitiveSessionFactory::new(harness_config_from_executive(config), clock)
+            .with_evicted_memory(memory)
+            .with_grounded_dasein_outcomes(dasein),
+    )
+}
+
 #[async_trait]
 impl CognitiveSessionFactory for LinearCognitiveSessionFactory {
     async fn create(

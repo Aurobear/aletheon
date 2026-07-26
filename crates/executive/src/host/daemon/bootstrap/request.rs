@@ -41,6 +41,7 @@ use crate::adapters::runtime::{
     pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime,
 };
 use crate::application::goal::ObjectiveStore;
+use crate::application::harness_factory::production_cognitive_session_factory;
 use crate::application::inference_port::InferencePort;
 use crate::application::CapabilityService;
 use corpus::hook::builtin::audit_hook;
@@ -520,12 +521,6 @@ impl RequestHandler {
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
-        tracing::info!(
-            harness = crate::application::harness_factory::selected_harness_kind(
-                runtime_config_snapshot.harness_kind
-            ),
-            "cognitive harness selected from config"
-        );
         let mut runtime = AletheonExecutive::new(runtime_config);
         let evo_config = EvolutionConfig {
             enabled: evolution_enabled,
@@ -798,17 +793,11 @@ impl RequestHandler {
             .await
             .dasein_handle()
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
-        let cognitive_sessions: Arc<
-            dyn crate::application::harness_factory::CognitiveSessionFactory,
-        > = Arc::new(
-            crate::application::harness_factory::LinearCognitiveSessionFactory::new(
-                crate::application::harness_factory::harness_config_from_executive(
-                    &runtime_config_snapshot,
-                ),
-                clock.clone(),
-            )
-            .with_evicted_memory(recall_memory.clone())
-            .with_grounded_dasein_outcomes(dasein_handle.clone()),
+        let cognitive_sessions = production_cognitive_session_factory(
+            &runtime_config_snapshot,
+            clock.clone(),
+            recall_memory.clone(),
+            dasein_handle.clone(),
         );
         let conscious_registry = Arc::new(
             crate::application::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_tools_and_agora(
