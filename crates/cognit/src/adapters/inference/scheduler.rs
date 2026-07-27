@@ -102,6 +102,23 @@ impl Default for RetryPolicy {
     }
 }
 
+/// Pseudo-random jitter in `[0, window_ms]`, used to desynchronize retry backoff
+/// across concurrent callers so multiple agents do not re-trip the same rate
+/// limit in lockstep (thundering-herd avoidance). Wall-clock nanoseconds are an
+/// adequate entropy source for backoff jitter and avoid a dedicated RNG
+/// dependency. Returns 0 when `window_ms` is 0 (keeps zero-backoff test policies
+/// deterministic).
+fn jitter_ms(window_ms: u64) -> u64 {
+    if window_ms == 0 {
+        return 0;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64)
+        .unwrap_or(0);
+    nanos % (window_ms + 1)
+}
+
 impl LlmScheduler {
     /// Create a scheduler directly from pre-built providers and routing rules.
     ///
@@ -290,21 +307,32 @@ impl LlmScheduler {
                         }
                         // Transient + retries remaining -- backoff and retry same provider.
                         ErrorClass::Transient if attempt < self.retry_policy.max_retries => {
-                            let shift = attempt as u32;
+                            let shift = (attempt as u32).min(63);
                             let computed_backoff = self
                                 .retry_policy
                                 .base_backoff_ms
                                 .saturating_mul(1u64 << shift)
                                 .min(self.retry_policy.max_backoff_ms);
-                            // Honor a server-advised Retry-After delay (e.g. 429), taking
-                            // whichever is longer, capped at max_backoff_ms.
                             let retry_after_ms = e
                                 .downcast_ref::<InferenceFailure>()
                                 .and_then(|f| f.retry_after_ms);
-                            let backoff = retry_after_ms
-                                .map(|r| r.max(computed_backoff))
-                                .unwrap_or(computed_backoff)
-                                .min(self.retry_policy.max_backoff_ms);
+                            let backoff = match retry_after_ms {
+                                // A server-advised Retry-After (e.g. 429) is authoritative:
+                                // honor it exactly as a floor. It is already bounded upstream,
+                                // so it is NOT re-capped at max_backoff_ms -- re-capping caused
+                                // premature retries that re-tripped the limit. A small jitter
+                                // is added on top so concurrent agents handed the same
+                                // Retry-After do not retry in lockstep.
+                                Some(ra) => ra.saturating_add(jitter_ms(ra / 4)),
+                                // No Retry-After: equal-jitter exponential backoff. Sleeping a
+                                // randomized [half, full] window breaks the thundering-herd
+                                // synchronization that makes multiple agents re-trip the same
+                                // rate limit in step.
+                                None => {
+                                    let half = computed_backoff / 2;
+                                    half + jitter_ms(computed_backoff - half)
+                                }
+                            };
                             if backoff > 0 {
                                 tokio::time::sleep(Duration::from_millis(backoff)).await;
                             }
