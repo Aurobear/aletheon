@@ -126,6 +126,27 @@ impl TurnPipeline {
         }
     }
 
+    async fn main_delegation_authority(
+        &self,
+        workspace: fabric::WorkspacePolicy,
+    ) -> anyhow::Result<fabric::AgentDelegationAuthority> {
+        let profile = self.active_profile.snapshot().await?;
+        let mut allowed_tools = profile.allowed_tools.iter().cloned().collect::<Vec<_>>();
+        allowed_tools.sort();
+        Ok(fabric::AgentDelegationAuthority::new(
+            Some(workspace),
+            allowed_tools,
+            fabric::AgentBudget {
+                max_input_tokens: profile.max_input_tokens,
+                max_output_tokens: profile.max_output_tokens,
+                max_tool_calls: profile.max_tool_calls,
+                max_elapsed_ms: profile.max_elapsed_ms,
+                max_cost_usd: None,
+                max_depth: 1,
+            },
+        ))
+    }
+
     async fn resume_single_pending_clarification(
         &self,
         request: &TurnRequest,
@@ -857,6 +878,14 @@ impl TurnPipeline {
         }) {
             anyhow::bail!("lifecycle contributor rejected tool batch: {reason}");
         }
+        let main_delegator_authority = if main_agent_id.is_some() {
+            Some(
+                self.main_delegation_authority(turn_request.context.workspace.clone())
+                    .await?,
+            )
+        } else {
+            None
+        };
         let prepared =
             self.runtime_ports
                 .capabilities
@@ -865,7 +894,7 @@ impl TurnPipeline {
                         caller_root_agent_id: agent_id,
                         parent_agent_id: agent_id,
                         parent_process_id: main_pid,
-                        delegator_authority: None,
+                        delegator_authority: main_delegator_authority.clone(),
                     }),
                     process_id: main_pid,
                     operation_id,
