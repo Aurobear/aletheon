@@ -525,8 +525,8 @@ impl RequestHandler {
         let mut runtime = AletheonExecutive::new(runtime_config);
         let evo_config = EvolutionConfig {
             enabled: evolution_enabled,
-            evolution_permitted: false,
-            trigger_every_n_turns: 10,
+            evolution_permitted: config.evolution_permitted,
+            trigger_every_n_turns: config.evolution_trigger_every_n_turns,
             trigger_on_failure: true,
             window_size: 20,
             lineage_dir: data_dir.join("lineage"),
@@ -537,10 +537,12 @@ impl RequestHandler {
         }
 
         // Pipeline, reflector, episodic memory
-        let meta_runtime = Arc::new(DefaultMetaRuntime::new(
-            Version::new(0, 1, 0),
-            clock.clone(),
-        ));
+        let meta_runtime = Arc::new(
+            DefaultMetaRuntime::new(Version::new(0, 1, 0), clock.clone())
+                .with_genome_path(data_dir.join("genome.yaml"))
+                .with_work_dir(data_dir.join("metacog-sandbox"), clock.clone())
+                .with_lineage_path(data_dir.join("lineage").join("genome.jsonl"), clock.clone())?,
+        );
         let metacog: Arc<dyn metacog::MetacogService> =
             Arc::new(metacog::DefaultMetacogService::with_state_path(
                 meta_runtime,
@@ -1275,13 +1277,20 @@ impl RequestHandler {
             supplemental_memory_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
         let self_field_shutdown = Arc::new(Mutex::new(Some(self_field.clone())));
 
-        let approval_use_cases: Arc<dyn crate::application::ApprovalUseCases> =
-            Arc::new(crate::application::ApprovalService::new(
+        let approval_use_cases: Arc<dyn crate::application::ApprovalUseCases> = Arc::new(
+            crate::application::ApprovalService::new(
                 memory_group.approval_repository.clone(),
                 approved_apply.clone(),
                 clock.clone(),
                 main_agent_process_id.clone(),
-            ));
+            )
+            .with_dasein_coordinator(Arc::new(
+                crate::application::metacog_approval::GovernedMetacogApplyCoordinator::new(
+                    kernel.admission(),
+                    domains.metacog(),
+                ),
+            )),
+        );
         let admin_use_cases: Arc<dyn crate::application::AdminUseCases> =
             Arc::new(crate::application::AdminService::new(
                 crate::application::admin_service::AdminResources {

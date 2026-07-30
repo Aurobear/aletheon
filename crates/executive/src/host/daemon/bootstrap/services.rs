@@ -405,7 +405,7 @@ pub(super) async fn build_turn_services(
         data_dir,
         evaluation,
         evaluation_projection,
-        capability_rollups,
+        capability_rollups.clone(),
     )?;
     let coordinator = Arc::new(
         crate::composition::turn_coordinator::compose_turn_coordinator(
@@ -474,6 +474,15 @@ pub(super) async fn build_turn_services(
                         domains.metacog(),
                         self_field.clone(),
                         clock.clone(),
+                        Arc::new(
+                            crate::application::evolution_proposer::GovernedEvolutionProposer::new(
+                                apply_objective_store.clone(),
+                                memory_group.approval_repository.clone(),
+                                capability_rollups.clone(),
+                                clock.clone(),
+                                data_dir.join("evolution-proposals.db"),
+                            )?,
+                        ),
                     ),
                 },
             ),

@@ -18,6 +18,7 @@ const EVALUATION_PROJECTION_EVENT_NAMESPACE: Uuid =
 #[derive(Clone, Debug)]
 pub struct PostTurnOutcome {
     pub session_id: String,
+    pub principal_id: fabric::PrincipalId,
     pub input: String,
     pub output: String,
     pub turn: usize,

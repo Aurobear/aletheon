@@ -140,6 +140,32 @@ impl CapabilityRollupProjectionSink {
         values
     }
 
+    /// Durable evidence references for a single session and rubric. These are
+    /// read from the append-only projection input table rather than rollups so
+    /// governance can bind proposals to exact receipts.
+    pub fn evidence_for_session(
+        &self,
+        session_id: &str,
+        rubric_id: &str,
+    ) -> anyhow::Result<Vec<EvaluationProjectionRecord>> {
+        let Some(connection) = &self.durable else {
+            return Ok(Vec::new());
+        };
+        let connection = connection.lock().unwrap_or_else(|p| p.into_inner());
+        let mut statement = connection.prepare(
+            "SELECT record_json FROM evaluation_rollup_inputs ORDER BY created_at_ms, receipt_id",
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut records = Vec::new();
+        for encoded in rows {
+            let record: EvaluationProjectionRecord = serde_json::from_str(&encoded?)?;
+            if record.context.session_id == session_id && record.context.rubric_id == rubric_id {
+                records.push(record);
+            }
+        }
+        Ok(records)
+    }
+
     pub fn preferred_runtime<'a>(
         &self,
         profile_id: &str,

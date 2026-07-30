@@ -86,6 +86,8 @@ impl UserRuntimeConfig {
                 app.bootstrap.conscious_arbitration_mode.as_deref(),
             )?,
             enable_evolution,
+            evolution_permitted: app.evolution.evolution_permitted,
+            evolution_trigger_every_n_turns: app.evolution.trigger_every_n_turns,
             mcp_servers: crate::core::mcp_config::convert_mcp_servers(&app.mcp_servers),
             hooks: app.hooks.clone(),
             telegram: app.telegram.clone(),

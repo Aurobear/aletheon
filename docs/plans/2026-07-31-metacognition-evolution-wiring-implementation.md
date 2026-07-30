@@ -1,7 +1,7 @@
 # Metacognition Evolution Wiring — Implementation Record
 
 **Date:** 2026-07-31
-**Status:** In progress; verify prerequisites implemented, governed proposal/apply remains default-off
+**Status:** Implemented; operator-configurable and default-off pending installed-runtime acceptance
 
 ## Requirement anchors
 
@@ -25,13 +25,24 @@
   rename, parse/read-back, and exact serialized-value comparison before success.
 - Snapshot creation moved from candidate generation to migration, so verification
   cannot pollute rollback history.
+- Production bootstrap now supplies explicit genome, lineage, sandbox-receipt,
+  mutation-state, and rollback-store paths below the injected state root.
+- `GovernedEvolutionProposer` requires two durable `coding-v2` receipts from
+  distinct profiles in the same session, binds their digest and the exact
+  verification hash into one pending `DaseinModification` approval, and owns no
+  admission/apply authority.
+- Human approval resolution uses Kernel admission for `metacog.apply`, verifies
+  the approval against durable mutation status, calls the governed Metacog
+  service, and settles the permit. Repeating an approved request resumes the
+  idempotent apply path after a post-decision failure.
+- Configuration exposes an independent `evolution_permitted` operator gate;
+  both evolution switches remain false by default.
 
-## Remaining fail-closed boundary
+## Fail-closed boundary
 
-`evolution_permitted` remains false by default. The runtime must not be described
-as production evolution until the single approval repository creates an evidence-
-bound `DaseinModification` proposal and the human resolve path mints the kernel
-permit and invokes apply. No model-controlled auto-apply was added.
+`evolution_permitted` remains false by default. Insufficient or single-profile
+evidence parks the verified candidate and creates no approval. No
+model-controlled auto-apply was added.
 
 ## Validation
 
@@ -40,3 +51,13 @@ bash scripts/cargo-agent.sh test -p metacog --lib
 ```
 
 Result: 112 passed, 0 failed.
+
+Additional focused checks:
+
+```bash
+bash scripts/cargo-agent.sh test -p metacog --test service_contract
+bash scripts/cargo-agent.sh test -p executive --test evolution_integration
+bash scripts/cargo-agent.sh test -p executive evolution_proposer --lib
+bash scripts/cargo-agent.sh test -p executive --test turn_use_case_ports
+bash scripts/cargo-agent.sh test -p cognit config --lib
+```

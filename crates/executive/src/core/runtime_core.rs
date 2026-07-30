@@ -109,6 +109,8 @@ impl RuntimeCore {
                 app_config.bootstrap.conscious_arbitration_mode.as_deref(),
             )?,
             enable_evolution,
+            evolution_permitted: app_config.evolution.evolution_permitted,
+            evolution_trigger_every_n_turns: app_config.evolution.trigger_every_n_turns,
             mcp_servers: super::mcp_config::convert_mcp_servers(&app_config.mcp_servers),
             hooks: {
                 // Honor --config: hooks must come from the same file(s) as the

@@ -42,6 +42,10 @@ pub struct DaemonConfig {
     pub conscious_arbitration_mode: fabric::ConsciousArbitrationMode,
     /// Enable self-evolution loop (HIGH-risk autonomy — OFF by default).
     pub enable_evolution: bool,
+    /// Independent operator gate for governed evolution proposals.
+    pub evolution_permitted: bool,
+    /// Bounded verification cadence.
+    pub evolution_trigger_every_n_turns: usize,
     /// MCP server definitions loaded from config (passed through to McpManager at handler init).
     pub mcp_servers: Vec<corpus::tools::mcp::config::McpServerConfig>,
     /// Hook script configuration from the `hooks` config section.

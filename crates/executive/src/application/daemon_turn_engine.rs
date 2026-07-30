@@ -135,6 +135,7 @@ impl TurnEngine for DaemonTurnEngine {
                     .as_str()
                     .unwrap_or(&turn_request.context.thread_id.0)
                     .to_owned(),
+                principal_id: turn_request.context.principal_id.clone(),
                 input: turn_request.input.clone(),
                 output: output.clone(),
                 turn: raw["turn"].as_u64().unwrap_or(0) as usize,

@@ -723,6 +723,10 @@ pub struct EvolutionSettings {
     /// When false (default), the loop is inert regardless of other settings.
     #[serde(default)] // bool default = false
     pub enabled: bool,
+    /// Operator gate for creating governed mutation proposals. This never
+    /// bypasses human approval and defaults to false independently of enabled.
+    #[serde(default)]
+    pub evolution_permitted: bool,
     /// Trigger evolution every N turns.
     #[serde(default = "default_evolution_trigger_every_n_turns")]
     pub trigger_every_n_turns: usize,
@@ -736,6 +740,7 @@ impl Default for EvolutionSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            evolution_permitted: false,
             trigger_every_n_turns: default_evolution_trigger_every_n_turns(),
         }
     }
