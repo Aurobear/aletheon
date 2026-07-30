@@ -1,83 +1,186 @@
-# 生产就绪缺口与路线图覆盖分析（E′/A/B/C/D 的伴随文档）
+# 生产就绪缺口与路线图协调分析（E′/A/B/C/D 伴随文档）
 
 **Date:** 2026-07-30
-**Status:** 覆盖/缺口分析（非实现规格）——用于交代五份 workstream 之外**没有覆盖**的生产能力，以及并行落地的排序风险。
-**Scope:** 本文件不新增实现细节；它命名 E′（能力委派）、A（语义记忆）、B（多智能体）、C（元认知）、D（TUI）**共同没触及**的横向生产能力，并给出跨文档协调结论。所有主张锚定 `path:line`。
+**Last reviewed:** 2026-07-31
+**Status:** 基于当前代码的缺口分析与跨 workstream 协调记录；不是实现计划
+**Scope:** 区分已经实现、已设计但未实现、部分覆盖和完全未覆盖的生产能力；
+给出启用门槛、依赖顺序和文件所有权约束。F1/F2 是建议新增的 workstream，
+落地前仍需各自的设计与实现计划。本文件不定义具体接口或实现步骤。
 
-> 验收状态口径（贯穿全文）：目前只有**评分内核基础部分**有历史生产验收记录；本文件列出的能力与五份 workstream 一样，均属**待实施设计**，未接入生产前不得标称 production-wired。
+> **验收口径。** 当前只有评分内核基础部分有 2026-07-30 的历史安装态生产
+> 验收；Goal retry/replan 与 AgentControl capability selection 仍是未完成的 L2
+> 闭环（`docs/plans/2026-07-30-coding-capability-evaluation-kernel-implementation.md:11-14,1109-1146`）。
+> E′/A/B/C/D、F1/F2 以及本文列出的横向加固，在通过各自安装态验收前都不得
+> 标称 `production-wired`。
 
-## 一、五份 workstream 的覆盖边界
+## 1. 证据规则
 
-它们是五个**纵向能力**，不是横向的运营/安全面：
+- 正面事实使用当前分支的 `path:line` 锚点。
+- “未找到实现”只表示在 2026-07-31 对当前工作树进行的仓库级符号/调用点检索
+  未找到，不等价于未来版本的永久性断言。
+- 行数属于易变快照，必须附生成命令和日期，不能当架构契约。
+- 设计文档描述的是待实现目标；只有代码、持久化记录、安装态运行证据才能证明
+  已接入生产。
 
-| Workstream | 覆盖 |
-|---|---|
-| E′ | 能力委派安全（且仅 tools/workspace/budget 的 per-child 收窄） |
-| A | 召回质量（真 embedding + 向量库 + RRF 融合） |
-| B | 多智能体编排（Planner/Executor/Reviewer 角色图接线） |
-| C | 受治理自演化（genome-only，operator 批准） |
-| D | TUI 体验（diff/多窗格/scoped 审批） |
+## 2. 五份 workstream 的真实覆盖边界
 
-**它们整体没触及"让常驻 Agent OS 真正可运营"的横向面**（下节）。
+这五块以纵向能力为主，但不是彼此完全独立，也并非完全没有触及横向能力。
 
-## 二、真生产还实际缺的能力（按承重程度排序）
+| Workstream | 已锁定覆盖 | 仍在边界外或仅部分覆盖 |
+|---|---|---|
+| **E′** | 在唯一 spawn choke point 上收窄 tools、writable roots、protected paths 和全部预算维度（`docs/plans/2026-07-30-per-child-capability-attenuation-design.md:55-64`） | 明确不处理兄弟间聚合预留和 per-agent MCP registry（同文档 `:66-72`） |
+| **A** | 真 embedding、持久向量索引、RRF、异步 backfill；并要求 remote embedding 获取 machine/provider-scoped permit（`docs/plans/2026-07-30-semantic-memory-embeddings-design.md:185-191`） | A 是 provider backpressure 的消费者，不应独占机器级协调器；大规模 backfill 尚未压测 |
+| **B** | Planner → Explorer → Executor → Tester → Reviewer，以及有界 Fixer 修复环（`docs/plans/2026-07-30-multi-agent-planning-loop-design.md:6-12`） | Wave 1 只选择串行图（同文档 `:270-278`）；工作流级重启恢复尚未定义 |
+| **C** | genome-only、候选感知 sandbox、人工 `DaseinModification` 审批和重启安全 genome store（`docs/plans/2026-07-30-metacognition-evolution-wiring-design.md:254-270,481-507`） | Apply 仍被 A/B evidence、sandbox 和 durable store 阻塞；验证语料的所有权/版本流程尚未指定 |
+| **D** | 不只是 TUI：还包含 Fabric 协议、Corpus 执行约束、Executive 持久授权/RPC，并通过 capability bits 对旧 peer fail closed（`docs/plans/2026-07-30-tui-diff-multipane-approval-design.md:431-441,598-607,653-660`） | 多客户端协同、远程 TUI、无障碍和完整协议版本生命周期不在本稿范围 |
 
-| # | 能力 | 现状（已证实） | 严重度 |
+因此，本文讨论的是这些设计的**剩余横向缺口和交叉接线风险**，而不是声称五块
+“完全没有触及”运营、安全或 backpressure。
+
+## 3. 生产能力缺口（按承重程度排序）
+
+| # | 能力 | 当前事实与准确缺口 | 严重度 |
 |---|---|---|---|
-| 1 | **机器级 provider 并发/限流/冷却协调** | ❌ 已证实缺口。找到的 semaphore 只是 agora 广播 + corpus 按路径写锁（`corpus/src/tools/tools/executor.rs:52-71`），**没有全局 LLM 许可池**。架构 §7 自己也点了这条。 | 🔴 极高 |
-| 2 | **L2/L3 破坏性动作审批闭环** | 🟡 原语已在（`SocketApprovalGate`/`PendingApproval`、tool `permission_level()` `corpus/src/core/mod.rs:70`、critic 强制"破坏性动作须有 rollback" `cognit/src/core/critic.rs:75-84`），闭环接线 + 验收未完成。**注：D 已吸收其中一大块**——把 `RequireApproval` 从仅 L2+（`corpus/src/security/runner.rs:328-330`）改为每级以 host policy 为权威 + 重启安全路径级 grant；C 补上 genome 修改（`DaseinModification`）的审批 resolve。**仍缺**：`DeleteFile`/`GitPush` 等其余破坏性 `ApprovalCategory` 的带-resume 闭环。 | 🔴 高（安全） |
-| 3 | **密钥/PII 在记忆与审计流的脱敏** | 🟡 静态密钥有加密（`corpus/src/security/credential_vault.rs`），但审计明确"内容默认敏感、需另做投影脱敏"（`agora/src/trace/mod.rs:13`），**没有系统性 scrub**；召回内容/工具输出/事件日志未统一脱敏。 | 🟠 高 |
-| 4 | **运营可观测性** | 🟡 有 provider/MCP health probe（`cognit/src/adapters/inference/scheduler.rs:407`）、tracing-json，但**没有 metrics 导出端点（prometheus/otel）、没有 daemon health/readiness 端点、无 turn 级 watchdog**。 | 🟠 高 |
-| 5 | **统一存储生命周期** | ❌ 迁移是各 crate 各自 ad-hoc（`dasein/src/core/continuity.rs:184` 内联 ALTER TABLE、agora `WORKSPACE_SCHEMA_V1`、`credential_vault` `migrate_to`），无跨库统一 schema 版本/迁移框架、无增长/vacuum/保留策略执行。 | 🟠 中高 |
-| 6 | **注入防御扩展到工具输出/外部通道** | 🟡 召回已包成"untrusted reference block"（好），但工具输出、外部 channel 摄入的内容未同等处理；无工具 egress 策略。 | 🟠 中高 |
-| 7 | **provider/runtime 完整性** | 🟡 架构 §7 未完成：跨 provider 的流式 tool-schema 转换对齐、Pi RPC diff/artifact receipt、Runtime selector 统一、降级链验证（缺 Ollama）。 | 🟡 中 |
-| 8 | **行为回归/评测 harness（真 fixture）** | 🟡 eval-kernel 基座已生产验收，但架构 §7"coding benchmark 尚未以真实 fixture/harness/receipt 落地"，缺 agent 行为回归门。 | 🟡 中 |
-| 9 | **可维护性/总线因子** | ❌ 超大文件仍在（`corpus/src/security/runner.rs`~1998、`executive/.../agent_control/mod.rs`~1795、`.../settlement.rs`~1524、`cognit/.../harness/linear/mod.rs`~1582、`mnemosyne/src/service.rs`~1469）；单人项目、SECURITY 联系人。 | 🟡 中 |
+| 1 | **F1：机器级 provider 并发、限流与冷却协调** | 已有跨连接 turn 数限制，但默认无限且粒度是 turn，不是 provider（`crates/executive/src/composition/config/backpressure.rs:9-29`）。`LlmScheduler` 有路由、failover、health 和逐请求 retry（`crates/cognit/src/adapters/inference/scheduler.rs:68-80,308-339`），没有共享的 provider-keyed permit/cooldown 状态。A 已正确提出一个消费者需求，但机器级所有权、所有 LLM/embedding caller 的接入、共享 `Retry-After`、公平性和可观测性仍未设计/验收。架构账本也明确列为未完成（`docs/design/architecture-overview.md:128-134`）。 | 🔴 极高 |
+| 2 | **F2：审批平面清单与破坏性动作闭环** | 系统存在三条不同审批平面，不能合并描述：transient tool gate、durable `ApprovalCategory`、Metacog governance，详见 §4。`SendMail` 已有高风险 approval、执行前 binding 校验，以及幂等 outbox/reconciliation（`crates/executive/src/adapters/channel/gmail/report.rs:144-327,421-445`），不是“完全未接线”的类别；2026-07-31 的仓库级检索未找到 `DeleteFile`/`GitPush` 的生产 producer。缺口是逐类别证明 producer → human resolve → resume → terminal receipt/replay，而不是再造一个审批枚举。 | 🔴 高（安全） |
+| 3 | **统一密钥/PII scrub 与最小化投影** | Memory consolidation 已对 API key/token/password/private key 做局部 redaction（`crates/mnemosyne/src/consolidation/extractor.rs:37-94`）；Agora trace 明确将内容视为敏感，除非另有脱敏投影（`crates/agora/src/trace/mod.rs:8-14`）。缺的是记忆、工具输出、事件、审计/API 投影共用的分类与 scrub 契约，以及防止原始敏感载荷进入非必要持久层的验证。 | 🟠 高 |
+| 4 | **运营遥测、SLO 与卡死检测** | daemon 已有 `status`/`health` RPC（`crates/executive/src/host/daemon/handler/rpc.rs:46-49`），health 返回 liveness/readiness/components（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:125-155`）；Turn 和 native child 也已有可选 deadline/budget timeout（`crates/executive/src/composition/turn_service.rs:121-138`、`crates/executive/src/adapters/runtime/native_cognit.rs:305-333`）。剩余缺口是经验证的 metrics 导出、队列/permit/cooldown 指标、默认 operator SLO/告警，以及区分“有 deadline”与“能发现并诊断卡死 Turn”的 watchdog 策略。 | 🟠 高 |
+| 5 | **跨存储统一生命周期** | 不能再表述为“没有保留策略”：Mnemosyne 已有带 backup、lease、age 和 batch 的 retention compactor（`crates/mnemosyne/src/retention/compactor.rs:5-12,29-44,57-103`），MemoryService 执行 forget（`crates/mnemosyne/src/service.rs:1013-1037`），Corpus 也清理过期 overflow（`crates/corpus/src/tools/tools/output/persistence.rs:102-125`）。真实缺口是跨库 inventory、schema/version 规则、备份/恢复次序、容量水位、vacuum/compaction 调度和统一 retention 证明。 | 🟠 中高 |
+| 6 | **工具输出与外部通道的注入/egress 治理** | Recall 已渲染为 `untrusted="true"` 并明确禁止把历史内容当指令（`crates/mnemosyne/src/projection.rs:234-250`）；child context 也标为 untrusted reference data（`crates/executive/src/adapters/runtime/native_cognit.rs:769-785`）。尚未证明所有工具结果、邮件/MCP/外部 channel 摄入都采用同等 typed trust 标记，也未形成跨工具 egress/data-classification 策略。 | 🟠 中高 |
+| 7 | **provider/runtime 完整性** | 架构仍明确列出 Runtime selector 未统一、Pi RPC diff/artifact receipt 未完成、Hardware 无生产 caller，以及 machine-wide provider coordination 未完成（`docs/design/architecture-overview.md:123-134`）。需要按实际 provider/runtime 路由逐条验证，而不是用单个 mock 或 fallback 代表完整支持。 | 🟡 中 |
+| 8 | **真实行为回归 fixture/harness/receipt 门禁** | 评分内核基础已生产验收，且存在通用 `CapabilityBenchmarkRuntime`（`crates/executive/src/application/capability_benchmark.rs:373-425`）；但架构仍将“真实 coding fixture/harness/receipt”列为未完成（`docs/design/architecture-overview.md:134`）。缺的是版本化真实仓库 fixture、相同 task packet/contract、权威终态 receipt、可复现失败分类以及进入 CI/发布门禁的策略。 | 🟡 中 |
+| 9 | **可维护性与所有权集中度** | 2026-07-31 使用 `wc -l` 的快照为：`crates/corpus/src/security/runner.rs` 1998、`crates/executive/src/application/agent_control/mod.rs` 1779、`crates/executive/src/application/agent_control/settlement.rs` 1556、`crates/cognit/src/harness/linear/mod.rs` 2177、`crates/mnemosyne/src/service.rs` 1469。它们是变更冲突和评审负担信号，不单独证明质量差或 bus factor=1。`SECURITY.md:13-30` 已提供私密报告流程；人员风险必须由维护者/所有权数据单独评估，本文不再作“单人项目”断言。 | 🟡 中 |
 
-> 正面修正（已证实）：结算级 crash-recovery **是**实现且测试过的——`agent_settlement_receipts` 表 + `idempotency_key` + `SettlementEvidence::IdempotentReplay` + `INSERT OR IGNORE` + `recover_settlement_resources`（`executive/.../agent_control/settlement.rs:128-243`、`mod.rs:402`）。"重启不重复已结算副作用"在 agent 结算层落地，不是缺口。（C 指出的 rollback 仅内存是另一处，见 §三。）
+> **已确认不是缺口：AgentControl 结算级 crash recovery。** settlement store 有
+> `agent_settlement_receipts`、`idempotency_key`、`IdempotentReplay` 和
+> `INSERT OR IGNORE`（`crates/executive/src/application/agent_control/settlement.rs:65,128-243`），
+> Executive 也会调用 `recover_settlement_resources`
+>（`crates/executive/src/application/agent_control/mod.rs:338-402`）。这不等于 B 的
+> 整个角色图可从中途恢复，也不等于 C 的 genome rollback 已重启安全。
 
-## 三、五份文档"内部"的覆盖漏洞
+## 4. F2 必须区分的三条审批平面
 
-- **E′**：显式排除了**跨兄弟聚合预留**（正好是 #1）和 **per-agent MCP 注册**——MCP 工具目前全局注册，B 一放开多 agent，per-agent 工具作用域就是个洞。
-- **B**：角色**只支持串行执行**（无并行角色）；取消只在 `wait` 边界（无 child 级 cancel handle，O5）；**工作流中途崩溃的恢复未定义**。
-- **C**：候选沙箱（旧实现）**工作区级、忽略候选本身**；rollback **仅内存**（非重启安全）；`migrate` 是 cosmetic。（C 的修订稿已把这三点列为"必须一并解决"，不是遗留——见 C 稿 §3.3.1/§3.5。）
-- **A**：大规模 backfill 未压测；rerank/查询扩展是（可接受的）非目标。
-- **D**：多客户端/远程、无障碍、协议版本化未覆盖。
+| 审批平面 | 当前 authority / 状态 | 本轮准确边界 |
+|---|---|---|
+| **Transient tool approval** | `PolicyVerdict::RequireApproval` 进入 Corpus runner；当前只有静态 L2+ 才进入后续 gate（`crates/corpus/src/security/runner.rs:328-340`） | D 负责修复 typed decision、host-policy-at-every-level、per-tool/per-path session grant 和重启安全 enforcement；D 不改变 durable `ApprovalCategory`（`docs/plans/2026-07-30-tui-diff-multipane-approval-design.md:649-651`） |
+| **Durable action approval** | `ApprovalCategory` 定义九类动作（`crates/fabric/src/types/approval.rs:31-43`）；`SendMail` 已有生产创建和消费校验 | F2 对每个类别建立 producer/resolver/resume/receipt/replay 矩阵。没有 producer 的类别保持不可达或 deny-by-default，不能因 enum 存在就宣称闭环 |
+| **Metacog governance** | `DefaultMetacogService` 已校验有效 `DaseinModification` snapshot 与 subject binding（`crates/metacog/src/governance/service.rs:328-354`） | C 负责 pending proposal、human resolve、permit mint、durable apply/read-back/rollback；在 C Wave 3 验收前保持 `evolution_permitted=false` |
 
-## 四、跨文档实现排序风险（落地前必须协调）
+`cognit::Critic::check_risk` 只是按 action 名称发现 delete/rm/destroy 且要求
+`rollback_action` 的计划检查（`crates/cognit/src/core/critic.rs:69-88`）；它既不签发
+approval，也不执行或恢复动作，不能作为审批闭环原语。
 
-**B、D、C 都改 executive 的审批 / turn / daemon-bootstrap 这一片，高度重叠。并行实现会撞车。** 具体重叠：
+## 5. 各文档内部仍需守住的边界
 
-| 共享面 | B | C | D |
-|---|---|---|---|
-| `executive/.../turn_pipeline.rs` | `drive_role_graph`，从 `run`(:337) 调用 | — | 在 `approval_request` 上发 scope/artifact 字段（:976-999） |
-| 审批子系统 | — | `approval_service.rs` resolve 路径处理 `DaseinModification` | `admin_service.rs` transient + 新 `approval/session_grant.rs` |
-| daemon bootstrap | `bootstrap/services.rs`（RoleWorkflowFactory） | `bootstrap/request.rs`（genome path） | `bootstrap/{turn_runtime,approval_gate,protocol,server}.rs` |
-| daemon handler/rpc | — | — | `handler/rpc.rs`、`rpc_admin.rs` |
+- **E′：** 兄弟间聚合预留和 per-agent MCP registry 仍是明确非目标；但 E′ 并非
+  只改 `agent_control`。它还触及 Fabric tool contract、Corpus agent-control tool、
+  `turn_pipeline.rs` 和 `native_cognit.rs`
+  （`docs/plans/2026-07-30-per-child-capability-attenuation-design.md:278-297`）。
+- **B：** Wave 1 串行执行是锁定取舍，不是缺陷误报；取消必须调用 child-level
+  `AgentControlPort::cancel` 并观察权威终态，不能再写成“只在 wait 边界”
+  （`docs/plans/2026-07-30-multi-agent-planning-loop-design.md:345-349,463-464`）。
+  真正未定义的是角色图中途崩溃后的重放/恢复策略。
+- **C：** 旧 sandbox 忽略 candidate、rollback snapshot 仅内存、migration 不足以
+  证明 durable apply；修订稿已把 candidate-aware sandbox 与 restart-safe store
+  纳入 Wave 3 必需项，而不是后续优化。
+- **A：** remote embedding 已要求共享 backpressure contract；A 不负责证明所有
+  LLM caller 都接入 F1。大规模 backfill 性能和容量边界仍需真实数据验收。
+- **D：** 已覆盖 capability negotiation 和旧 peer fail-closed；尚未覆盖的是完整
+  protocol version lifecycle，而不是“完全没有协议兼容设计”。
 
-**结论/建议（交代）：**
-1. **E′ 先行、独立落地**（Wave 0），它只改 `agent_control/{mod,live_runs,execution}.rs` + fabric 类型，与 B/C/D 的审批/turn 面基本不撞。
-2. **B、C、D 触及 executive 审批/turn 的部分，必须在动手前做一次显式的文件级归属/顺序切分**——按"谁先落、谁改哪段"分配，或先做一次 `turn_pipeline.rs` 的职责拆分（它已是 ~大文件，B/D 都往里加）。不切分就并行 = 合并冲突 + 语义打架。
-3. 推荐顺序：**E′ →（把 B/C/D 对审批-turn 的改动合成一个"executive 审批/turn 收敛波"，内部按上表分段）→ 其余（A 独立、可任意穿插）**。
+## 6. 跨文档文件所有权与排序风险
 
-**另一处依赖（交代）：C 的评测语料来源。** C 的 `GenomeCandidateSandbox` 需要一个"versioned evaluation corpus"（`C 稿 §3.3.1`），但该语料本身**未被指定/编写**。最可能的来源是已有的**评分内核 fixtures**；必须先明确语料的归属与作者，否则候选感知沙箱"再安全也只与它的语料一样可信"。建议写进 C 的 open decisions。
+E′/A/B/C/D 不是五条可以无条件并行的独立支线。动手前必须按文件和责任切分：
 
-## 五、建议纳入路线图的新增 workstream
+| 共享面 | 相关 workstream | 协调要求 |
+|---|---|---|
+| `crates/fabric/src/types/tool.rs` | E′、D | E′ 只增加 host-only delegation authority；D 增加 diff/scoped-approval neutral DTO。先锁定字段和 serde compatibility，避免双方各自改同一构造器 |
+| `crates/executive/src/application/turn_pipeline.rs` | E′、B、D | E′ mint authority，B 驱动 role graph，D 发布 approval scope/artifact。必须指定段落所有者并串行合入 |
+| `crates/executive/src/adapters/runtime/native_cognit.rs` | E′、B | E′ 提供唯一 authority mint/forward 路径；B 只能消费，不能复制 attenuation |
+| Executive approval/service/bootstrap | C、D、F2 | D 管 transient session grant；C 管 `DaseinModification` durable resolve；F2 维护类别矩阵，不能引入第三套 repository |
+| provider/bootstrap/backpressure | A、B、F1 | F1 拥有 machine/provider coordinator；A 的 embedding 和 B 的 role children 都是消费者 |
 
-现有五块之外，下面两项是**让 B 能安全落地的真正前提**，比 C 更该先做：
+**文件级顺序：**
 
-- **F1 — 机器级 provider 并发/冷却（= #1）**：B 的硬前提。多智能体扇出而没有共享 LLM 许可池 + 冷却，主 agent 与子 agent 会一起撞 429、互相拖垮；E′ 又明确把"跨兄弟聚合预留"排除在外。**建议提到 Wave 0/1，与 E′ 并列**。
-- **F2 — 破坏性动作审批闭环补全（= #2 剩余部分）**：D + C 已覆盖工具审批 + genome 审批；补上 `DeleteFile`/`GitPush`/`SendMail` 等其余 `ApprovalCategory` 的带-resume 闭环 + 验收。安全底线。
+1. E′ 的 authority contract 先于 B 的 child spawn 接线；但 E′ 与 D 在 Fabric/
+   Turn composition 上仍需显式所有权切分，不能称为“完全无冲突”。
+2. F1 在 B **生产启用**前必须可用。若只先合入 B 的 disabled/default-off plumbing，
+   不得将其描述为 production-wired，也不得启用多 Agent 扇出。
+3. D 与 C plumbing 可以在 Wave 1 落地，但审批文件必须串行修改；C apply 继续保持
+   Wave 3 和 default-off。
+4. C 的 versioned evaluation corpus 由评分/评测域维护 canonical fixture contract，
+   Metacog 只消费版本化 corpus 与 digest，并在 `CandidateSandboxReceipt` 中记录版本；
+   C 不得私建一套不可比较的 fixture 语义。
 
-其余 #3–#9（脱敏 / 可观测性 / 存储生命周期 / 注入防御 / provider-runtime 完整性 / 评测门 / 可维护性）属横向加固，可作为独立 wave 依次排。
+## 7. 新增 workstream 的准确定位
 
-## 六、排序汇总（含新增项）
+### F1 — Machine Provider Backpressure
 
+- **所有者：** machine/provider core，而不是 Mnemosyne 或某个 session。
+- **消费者：** 主 Agent、B role children、A embedding worker，以及其他 provider caller。
+- **B 的关系：** B 的代码 plumbing 可 default-off 先落；B 的生产启用以 F1 安装态
+  验收为硬门槛。
+- **不归 E′：** E′ 只证明单个 child authority 是 parent subset，不协调兄弟请求或
+  provider quota（`docs/plans/2026-07-30-per-child-capability-attenuation-design.md:66-72`）。
+
+### F2 — Approval Closure Matrix
+
+- **所有者：** 现有 Executive durable approval authority + Corpus transient gate；不
+  新建审批系统。
+- **已有生产路径：** `SendMail` 不作为“零实现”缺口，但仍进入 F2 验收矩阵，证明
+  human resolve、幂等 outbox、ambiguous reconciliation 和终态记录一致。
+- **待证类别：** 至少审计 `DeleteFile`、`GitPush` 以及其余 enum variant 的生产
+  producer/consumer；未证明的类别保持 deny-by-default。
+- **与 B 的关系：** B role profile 在 F2 未闭环前不得获得相应破坏性工具；这允许
+  非破坏性、受 E′ 收窄的 B plumbing 先落，而不会把 F2 错写成所有 B 代码的前置。
+
+## 8. 一致的 Wave 与启用门槛
+
+```text
+Wave 0  基础安全/承载
+        E′ implementation + installed acceptance
+        F1 design/implementation + machine/provider acceptance
+        F2 category inventory + deny-by-default matrix
+
+Wave 1  生产接线（共享文件按 §6 串行）
+        B plumbing/default-off; production enablement requires E′ + F1
+        D end-to-end diff/scoped transient approval
+        C verify/parking/governance plumbing only; evolution_permitted=false
+        F2 closes the destructive categories actually exposed in this wave
+
+Wave 2  证据与召回
+        A semantic memory/backfill
+        evaluation-kernel Goal + AgentControl L2 closure
+        real coding fixture/harness/receipt regression gate
+
+Wave 3  受治理演化
+        C apply only after A/B evidence + candidate-aware sandbox
+        + durable genome store + DaseinModification approval closure
 ```
-Wave 0:  E′  ∥  F1(provider 并发)          ← F1 是 B 的硬前提，与 E′ 并列
-Wave 1:  [executive 审批/turn 收敛波: B + C(plumbing) + D，按 §四 上表分段]  ∥  A
-Wave 2:  A 完成 → C 的 apply 解锁（依赖 A/B + 候选沙箱 + durable genome store）
-Wave 3+: F2(审批闭环补全) 及 #3–#9 横向加固依次排
-```
 
-（此为覆盖分析建议序；与各 workstream 稿内的 Wave 标注一致：E′=Wave0，B=Wave1，A=Wave2，C=Wave3。）
+这与主稿中的标记保持一致：E′=Wave 0、B=Wave 1、A=Wave 2、C apply=Wave 3。
+#3–#7（scrub、运营遥测、跨存储生命周期、外部内容治理、runtime 完整性）可以与
+上述 workstream 并行，但在项目整体宣称“适合日常生产开发”前必须分别关闭；#9
+属于持续性治理，不能用一次拆文件替代长期 owner/变更热点度量。
+
+## 9. 整体生产就绪判定
+
+以下条件同时满足前，只能报告单项 capability 的实现/测试状态，不能报告整个
+Agent OS 已适合日常生产开发：
+
+1. 评分内核剩余 Goal/AgentControl L2 闭环完成，并重新执行安装态验收；
+2. E′、F1 和 B 的实际 child fan-out 在官方 socket 上被观测，且 provider retries、
+   inference rounds、tool calls 和 active context 分开计量；
+3. 暴露的每个破坏性 capability 都有 F2 矩阵中的 producer、human resolve、resume、
+   terminal receipt 和 restart/replay 证据；
+4. A/B/C/D 各自的 default-off、降级和 fail-closed 语义在真实 TUI 中与持久化记录、
+   daemon 日志一致；
+5. scrub、health/readiness、metrics/SLO、存储恢复/retention、外部内容 trust/egress
+   均有可运行的验收，而不只是设计文本；
+6. 最终执行 `sudo bash scripts/aletheon.sh deploy`，证明
+   `target/release/aletheon`、`/usr/bin/aletheon`、machine daemon 与 user daemon
+   执行文件 SHA-256 相同，systemd restart counters 稳定，并通过 `/usr/bin/aletheon`
+   + official user socket 完成真实 LLM 多轮开发请求。
+
+任何 monitor PASS 与 rendered frame、Session/evaluation/approval receipt 或 daemon
+日志不一致，都按失败处理。
