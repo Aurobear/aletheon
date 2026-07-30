@@ -33,6 +33,32 @@ pub struct CognitiveWorkspaceCoordinator {
     agora: Arc<dyn AgoraService>,
 }
 
+pub struct AgoraEvaluationProjectionSink {
+    workspace: CognitiveWorkspaceCoordinator,
+}
+
+impl AgoraEvaluationProjectionSink {
+    pub fn new(agora: Arc<dyn AgoraService>) -> Self {
+        Self {
+            workspace: CognitiveWorkspaceCoordinator::new(agora),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::application::evaluation::EvaluationProjectionSink for AgoraEvaluationProjectionSink {
+    fn name(&self) -> &'static str {
+        "agora"
+    }
+
+    async fn project(
+        &self,
+        record: &crate::application::evaluation::EvaluationProjectionRecord,
+    ) -> anyhow::Result<()> {
+        self.workspace.observe_evaluation(record).await
+    }
+}
+
 #[async_trait::async_trait]
 impl crate::application::agent_control::CognitiveTaskAdmissionPort
     for CognitiveWorkspaceCoordinator
@@ -76,6 +102,47 @@ impl CognitiveWorkspaceCoordinator {
     /// machine-global mutable cognitive space is synthesized here.
     pub fn root_space(root_session_or_goal_id: impl Into<String>) -> AgoraSpaceId {
         AgoraSpaceId(root_session_or_goal_id.into())
+    }
+
+    /// Commit a non-authoritative evaluation observation to the scoped Agora
+    /// history. The operation carries the receipt ID as evidence and cannot
+    /// advance or reject a cognitive task.
+    pub async fn observe_evaluation(
+        &self,
+        record: &crate::application::evaluation::EvaluationProjectionRecord,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !record.context.session_id.trim().is_empty(),
+            "evaluation projection lacks Agora session scope"
+        );
+        let space = AgoraSpaceId(record.context.session_id.clone());
+        let view = self
+            .agora
+            .view(fabric::AgoraViewRequest {
+                space: space.clone(),
+            })
+            .await?;
+        let receipt_ref = format!("evaluation-receipt:{}", record.receipt.receipt_id.0);
+        let proposal = AgoraProposal {
+            id: Uuid::new_v4(),
+            space,
+            author: record.context.process_id,
+            base_version: view.version,
+            operation: AgoraOperation::EmitObservation {
+                obs: serde_json::json!({
+                    "kind": "evaluation_receipt",
+                    "receipt": record.receipt,
+                    "failed_gates": record.receipt.failed_gates,
+                }),
+            },
+            evidence: vec![receipt_ref],
+            confidence: f32::from(record.receipt.confidence_millis) / 1000.0,
+            expires_at_ms: None,
+        };
+        let permit = WorkspaceCommitPermit::issue_for(&proposal, i64::MAX)?;
+        let proposal_id = self.agora.propose(proposal).await?;
+        self.agora.commit(proposal_id, permit).await?;
+        Ok(())
     }
 
     pub async fn commit_task_at(

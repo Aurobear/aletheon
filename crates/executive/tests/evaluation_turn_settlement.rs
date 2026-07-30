@@ -115,6 +115,8 @@ impl Fixture {
                         projection: None,
                         context_projection: None,
                         evaluation_artifacts: TurnEvaluationArtifacts {
+                            session_id: request.context.thread_id.0.clone(),
+                            runtime_id: "test-runtime".into(),
                             workspace: Some(request.context.workspace.clone()),
                             profile_name: "code-agent".into(),
                             capability_receipts: vec![receipt],
@@ -127,6 +129,7 @@ impl Fixture {
                             }],
                             runtime_faults: vec![],
                             supplemental_evidence: vec![],
+                            projection_metrics: Default::default(),
                         },
                     })
                 },

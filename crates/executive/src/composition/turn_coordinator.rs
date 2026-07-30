@@ -16,12 +16,18 @@ pub fn compose_evaluation_service(
     kernel: Arc<KernelRuntime>,
     data_dir: &Path,
     settings: crate::composition::config::EvaluationSettings,
+    projection: Arc<crate::application::evaluation::EvaluationProjection>,
+    capability_rollups: Arc<
+        crate::application::capability_benchmark::CapabilityRollupProjectionSink,
+    >,
 ) -> anyhow::Result<Arc<crate::application::evaluation::EvaluationService>> {
     let store: Arc<dyn crate::application::evaluation::EvaluationReceiptStore> = Arc::new(
         crate::adapters::evaluation::SqliteEvaluationStore::open(data_dir.join("evaluations.db"))?,
     );
     Ok(Arc::new(
-        crate::application::evaluation::EvaluationService::new(kernel, settings, store)?,
+        crate::application::evaluation::EvaluationService::new(kernel, settings, store)?
+            .with_projection(projection)
+            .with_capability_rollups(capability_rollups),
     ))
 }
 

@@ -2,6 +2,7 @@ mod coding_scorer;
 mod contract_issuer;
 mod evidence_collector;
 mod policy;
+mod projection;
 mod service;
 
 use async_trait::async_trait;
@@ -12,18 +13,30 @@ pub use coding_scorer::{
 pub use contract_issuer::{DefaultTaskEvaluationContractIssuer, TaskEvaluationContractIssuer};
 pub use evidence_collector::{CodingEvidenceCollector, DefaultCodingEvidenceCollector};
 pub use policy::EvaluationSettlementPolicy;
+pub use projection::{
+    EvaluationProjection, EvaluationProjectionContext, EvaluationProjectionMetrics,
+    EvaluationProjectionRecord, EvaluationProjectionReport, EvaluationProjectionSink,
+};
 pub use service::EvaluationService;
 
 use crate::application::turn_diff_tracker::TurnFileDeltaSnapshot;
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct TurnEvaluationArtifacts {
+    /// Canonical thread/session scope used by downstream domain projections.
+    #[serde(default)]
+    pub session_id: String,
+    /// Typed host runtime identity. This is never inferred from model output.
+    #[serde(default)]
+    pub runtime_id: String,
     pub workspace: Option<fabric::WorkspacePolicy>,
     pub profile_name: String,
     pub capability_receipts: Vec<fabric::CapabilityTerminalReceipt>,
     pub file_deltas: Vec<TurnFileDeltaSnapshot>,
     pub runtime_faults: Vec<String>,
     pub supplemental_evidence: Vec<fabric::types::metacognition_evidence::EvidenceItem>,
+    #[serde(default)]
+    pub projection_metrics: EvaluationProjectionMetrics,
 }
 
 #[async_trait]

@@ -172,6 +172,37 @@ pub struct AttemptCoordinator {
     coding_verification: Option<CodingVerification>,
 }
 
+/// Durable Goal observation of a settled evaluation. Failed gates are written
+/// by the shared sink as retry/replan evidence; this adapter cannot change the
+/// already-settled Turn or Goal state by itself.
+pub struct GoalEvaluationProjectionSink {
+    inner: crate::application::post_turn_projection::DurableDomainEvaluationSink,
+}
+
+impl GoalEvaluationProjectionSink {
+    pub fn new(spine: Arc<dyn fabric::EventSpine>) -> Self {
+        Self {
+            inner: crate::application::post_turn_projection::DurableDomainEvaluationSink::new(
+                "goal", spine,
+            ),
+        }
+    }
+}
+
+#[async_trait]
+impl crate::application::evaluation::EvaluationProjectionSink for GoalEvaluationProjectionSink {
+    fn name(&self) -> &'static str {
+        "goal"
+    }
+
+    async fn project(
+        &self,
+        record: &crate::application::evaluation::EvaluationProjectionRecord,
+    ) -> anyhow::Result<()> {
+        crate::application::evaluation::EvaluationProjectionSink::project(&self.inner, record).await
+    }
+}
+
 impl AttemptCoordinator {
     pub fn new(
         store: Arc<Mutex<ObjectiveStore>>,

@@ -1171,12 +1171,23 @@ impl TurnPipeline {
         });
         let evaluation_artifacts =
             crate::application::evaluation::TurnEvaluationArtifacts {
+                session_id: session_id_for_agora.clone(),
+                runtime_id: "native-turn".into(),
                 workspace: Some(evaluation_workspace),
                 profile_name: evaluation_profile_name,
                 capability_receipts: retained_receipts,
                 file_deltas: evaluation_diff_tracker.lock().await.snapshot(),
                 runtime_faults,
                 supplemental_evidence: Vec::new(),
+                projection_metrics:
+                    crate::application::evaluation::EvaluationProjectionMetrics {
+                        elapsed_ms: Some(metrics.elapsed_ms),
+                        inference_rounds: None,
+                        provider_retries: None,
+                        tool_calls: Some(metrics.tool_calls_made as u64),
+                        tool_errors: Some(metrics.tool_errors as u64),
+                        ..Default::default()
+                    },
             };
 
         Ok(json!({"jsonrpc": "2.0", "id": id, "result": {

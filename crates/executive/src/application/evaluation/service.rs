@@ -10,7 +10,8 @@ use kernel::KernelRuntime;
 
 use super::{
     coding_v2_rubric, CodingDimensionScorer, CodingEvidenceCollector,
-    DefaultTaskEvaluationContractIssuer, EvaluationReceiptStore, EvaluationSettlementPolicy,
+    DefaultTaskEvaluationContractIssuer, EvaluationProjection, EvaluationProjectionContext,
+    EvaluationProjectionRecord, EvaluationReceiptStore, EvaluationSettlementPolicy,
     TaskEvaluationContractIssuer, TurnEvaluationArtifacts,
 };
 
@@ -21,6 +22,9 @@ pub struct EvaluationService {
     scorer: Arc<dyn CodingDimensionScorer>,
     store: Arc<dyn EvaluationReceiptStore>,
     max_evaluation_ms: u64,
+    projection: Option<Arc<EvaluationProjection>>,
+    capability_rollups:
+        Option<Arc<crate::application::capability_benchmark::CapabilityRollupProjectionSink>>,
 }
 
 impl EvaluationService {
@@ -37,7 +41,34 @@ impl EvaluationService {
             scorer: Arc::new(super::CodingV2Scorer),
             store,
             max_evaluation_ms,
+            projection: None,
+            capability_rollups: None,
         })
+    }
+
+    pub fn with_projection(mut self, projection: Arc<EvaluationProjection>) -> Self {
+        self.projection = Some(projection);
+        self
+    }
+
+    pub fn with_capability_rollups(
+        mut self,
+        rollups: Arc<crate::application::capability_benchmark::CapabilityRollupProjectionSink>,
+    ) -> Self {
+        self.capability_rollups = Some(rollups);
+        self
+    }
+
+    pub fn capability_rollup_snapshot(
+        &self,
+    ) -> std::collections::HashMap<
+        crate::application::capability_benchmark::CapabilityRollupKey,
+        crate::application::capability_benchmark::CapabilityReceiptRollup,
+    > {
+        self.capability_rollups
+            .as_ref()
+            .map(|rollups| rollups.snapshot())
+            .unwrap_or_default()
     }
 
     pub async fn issue_contract(
@@ -129,6 +160,25 @@ impl EvaluationService {
         match tokio::time::timeout(Duration::from_millis(self.max_evaluation_ms), settle).await {
             Ok(Ok(receipt)) => {
                 self.kernel.succeed_operation(operation.id).await?;
+                if let Some(projection) = self.projection.clone() {
+                    let record = EvaluationProjectionRecord {
+                        receipt: receipt.reference(),
+                        context: EvaluationProjectionContext {
+                            session_id: artifacts.session_id.clone(),
+                            runtime_id: artifacts.runtime_id.clone(),
+                            profile_id: artifacts.profile_name.clone(),
+                            rubric_id: contract.rubric.0.clone(),
+                            rubric_version: contract.rubric_version,
+                            process_id: owner,
+                            metrics: artifacts.projection_metrics.clone(),
+                        },
+                    };
+                    // Receipt durability and Evaluation operation settlement are
+                    // already authoritative. Projection is observational only.
+                    tokio::spawn(async move {
+                        let _ = projection.project(record).await;
+                    });
+                }
                 Ok(receipt)
             }
             Ok(Err(error)) => {

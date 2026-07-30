@@ -156,6 +156,11 @@ impl TurnEngine for DaemonTurnEngine {
         .unwrap_or_default();
         evaluation_artifacts.workspace = Some((*context.workspace).clone());
         evaluation_artifacts.profile_name = evaluation_profile_name;
+        evaluation_artifacts.session_id = turn_request.context.thread_id.0.clone();
+        evaluation_artifacts.runtime_id = "native-turn".into();
+        evaluation_artifacts.projection_metrics.elapsed_ms = Some(metrics.elapsed_ms);
+        evaluation_artifacts.projection_metrics.tool_calls = Some(metrics.tool_calls_made as u64);
+        evaluation_artifacts.projection_metrics.tool_errors = Some(metrics.tool_errors as u64);
         let status = if turn_cancel.is_cancelled() {
             TurnEngineStatus::Cancelled
         } else if succeeded {

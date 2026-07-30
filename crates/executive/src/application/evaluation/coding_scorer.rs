@@ -292,6 +292,8 @@ mod tests {
         deltas: Vec<TurnFileDeltaSnapshot>,
     ) -> TurnEvaluationArtifacts {
         TurnEvaluationArtifacts {
+            session_id: "test-session".into(),
+            runtime_id: "test-runtime".into(),
             workspace: Some(
                 fabric::WorkspacePolicy::from_resolved_roots("/tmp/project".into(), vec![])
                     .unwrap(),
@@ -301,6 +303,7 @@ mod tests {
             file_deltas: deltas,
             runtime_faults: vec![],
             supplemental_evidence: vec![],
+            projection_metrics: Default::default(),
         }
     }
 

@@ -4,6 +4,16 @@ use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
 use fabric::hook::{HookContext, HookPoint};
+use fabric::{
+    EnvelopeV2, EnvelopeV2Delivery, EnvelopeV2Target, EventId, EventIdentity, EventPayload,
+    EventSpine, EventTreeId, EventVisibility, MessageId, NamespaceId, SchemaId, UnsequencedEvent,
+};
+use uuid::Uuid;
+
+use super::evaluation::{EvaluationProjectionRecord, EvaluationProjectionSink};
+
+const EVALUATION_PROJECTION_EVENT_NAMESPACE: Uuid =
+    Uuid::from_u128(0x73c8ae38_0cd8_49cf_86cc_761237c1a8ee);
 
 #[derive(Clone, Debug)]
 pub struct PostTurnOutcome {
@@ -41,6 +51,68 @@ type HookProjectionFn =
 pub struct PostTurnProjectionResources {
     pub corpus: Arc<dyn corpus::CorpusService>,
     pub runtime: Arc<dyn PostTurnRuntimePort>,
+}
+
+/// Durable, idempotent observation boundary shared by Goal and AgentControl.
+/// Domain-specific wrappers select the target name and add no scoring logic.
+pub struct DurableDomainEvaluationSink {
+    domain: &'static str,
+    spine: Arc<dyn EventSpine>,
+}
+
+impl DurableDomainEvaluationSink {
+    pub fn new(domain: &'static str, spine: Arc<dyn EventSpine>) -> Self {
+        Self { domain, spine }
+    }
+}
+
+#[async_trait]
+impl EvaluationProjectionSink for DurableDomainEvaluationSink {
+    fn name(&self) -> &'static str {
+        self.domain
+    }
+
+    async fn project(&self, record: &EvaluationProjectionRecord) -> anyhow::Result<()> {
+        let session_id = if record.context.session_id.trim().is_empty() {
+            format!("evaluation:{}", record.receipt.subject_id)
+        } else {
+            record.context.session_id.clone()
+        };
+        let event_key = format!("{}:{}", self.domain, record.receipt.receipt_id.0);
+        let event_id = EventId(Uuid::new_v5(
+            &EVALUATION_PROJECTION_EVENT_NAMESPACE,
+            event_key.as_bytes(),
+        ));
+        let payload = serde_json::json!({
+            "kind": format!("evaluation.{}.observed", self.domain),
+            "receipt": record.receipt,
+            "correlation": record.context,
+            "retry_replan_evidence": record.receipt.failed_gates,
+        });
+        let mut envelope = EnvelopeV2::new(
+            SchemaId::from(SchemaId::TURN_EVENT_V1),
+            EnvelopeV2Target("evaluation-projection".into()),
+            EnvelopeV2Target(format!("{}:{}", self.domain, record.receipt.subject_id)),
+            EnvelopeV2Delivery::Direct,
+            NamespaceId(format!("evaluation:{}", self.domain)),
+            payload.clone(),
+        );
+        envelope.id = MessageId(event_id.0);
+        self.spine.append(UnsequencedEvent {
+            tree_id: EventTreeId::for_root_session(&session_id),
+            event_id,
+            parent: None,
+            identity: EventIdentity {
+                root_session_id: session_id.clone(),
+                session_id,
+                agent_id: None,
+            },
+            envelope,
+            visibility: EventVisibility::Control,
+            payload: EventPayload::Inline { value: payload },
+        })?;
+        Ok(())
+    }
 }
 
 #[async_trait]

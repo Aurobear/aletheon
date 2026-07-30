@@ -294,10 +294,55 @@ pub(super) async fn build_turn_services(
     } else {
         Arc::new(crate::application::session_input::SessionInputCoordinator::in_memory())
     };
+    let memory_evaluation_projection = crate::application::memory_projection::MemoryProjection::new(
+        canonical_event_spine.clone(),
+        event_projections.clone(),
+    );
+    let capability_rollups = Arc::new(
+        crate::application::capability_benchmark::CapabilityRollupProjectionSink::open(
+            data_dir.join("evaluation-rollups.db"),
+        )?,
+    );
+    let mut evaluation_sinks: Vec<
+        Arc<dyn crate::application::evaluation::EvaluationProjectionSink>,
+    > = vec![
+        Arc::new(crate::application::goal::GoalEvaluationProjectionSink::new(
+            canonical_event_spine.clone(),
+        )),
+        Arc::new(
+            crate::application::agent_control::settlement::AgentEvaluationProjectionSink::new(
+                canonical_event_spine.clone(),
+            ),
+        ),
+        Arc::new(
+            crate::application::memory_projection::MemoryEvaluationProjectionSink::new(
+                memory_evaluation_projection,
+            ),
+        ),
+        Arc::new(
+            crate::application::cognitive_workspace::AgoraEvaluationProjectionSink::new(
+                domains.agora(),
+            ),
+        ),
+        capability_rollups.clone(),
+    ];
+    if let Some(dasein) = self_field.lock().await.dasein_handle() {
+        evaluation_sinks.push(Arc::new(
+            crate::application::dasein_workspace_adapter::DaseinEvaluationProjectionSink::new(
+                dasein,
+                clock.clone(),
+            ),
+        ));
+    }
+    let evaluation_projection = Arc::new(
+        crate::application::evaluation::EvaluationProjection::new(evaluation_sinks),
+    );
     let evaluation_service = crate::composition::turn_coordinator::compose_evaluation_service(
         kernel.clone(),
         data_dir,
         evaluation,
+        evaluation_projection,
+        capability_rollups,
     )?;
     let coordinator = Arc::new(
         crate::composition::turn_coordinator::compose_turn_coordinator(
