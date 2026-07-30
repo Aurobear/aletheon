@@ -549,8 +549,8 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
 }
 
 fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> bool {
-    use super::reducer::{reduce, UiAction, UiError};
-    use fabric::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage};
+    use super::reducer::{format_evaluation_receipt_ref, reduce, UiAction, UiError};
+    use fabric::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage, ItemPhase};
 
     let candidate = message
         .get("params")
@@ -562,6 +562,15 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
     };
     let Ok(event) = message.into_v1() else {
         return false;
+    };
+    let evaluation = match &event {
+        ProtocolEvent::Item(item) if item.phase == ItemPhase::Completed => {
+            item.item.as_ref().and_then(|record| match &record.payload {
+                fabric::ItemPayload::EvaluationReceiptRef { receipt } => Some(receipt.clone()),
+                _ => None,
+            })
+        }
+        _ => None,
     };
     if matches!(
         &event,
@@ -584,7 +593,13 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
         ProtocolEvent::TurnStarted { .. } => return true,
         ProtocolEvent::TurnCompleted { .. } | ProtocolEvent::TurnStopped { .. } => unreachable!(),
     };
-    let _effects = reduce(&mut app.app_state, action);
+    let effects = reduce(&mut app.app_state, action);
+    if !effects.is_empty() {
+        if let Some(receipt) = evaluation {
+            app.chat
+                .add_text(ChatRole::System, format_evaluation_receipt_ref(&receipt));
+        }
+    }
     true
 }
 

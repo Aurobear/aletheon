@@ -121,6 +121,23 @@ pub async fn run_with_workspace_requirements(
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
 ) -> anyhow::Result<()> {
+    run_with_workspace_requirements_and_task_kind(
+        socket_path,
+        test_config,
+        workspace,
+        turn_requirements,
+        None,
+    )
+    .await
+}
+
+pub async fn run_with_workspace_requirements_and_task_kind(
+    socket_path: &str,
+    test_config: TestConfig,
+    workspace: fabric::WorkspacePolicy,
+    turn_requirements: Vec<fabric::TurnRequirement>,
+    task_kind: Option<fabric::TaskKind>,
+) -> anyhow::Result<()> {
     let caps = TermCaps::detect();
     let clock: Arc<dyn Clock> = Arc::new(self::host_time::ClientClock::new());
 
@@ -151,6 +168,7 @@ pub async fn run_with_workspace_requirements(
             clock,
             workspace,
             turn_requirements,
+            task_kind,
         )
         .await;
     }
@@ -172,6 +190,7 @@ pub async fn run_with_workspace_requirements(
             clock,
             workspace.clone(),
             turn_requirements.clone(),
+            task_kind,
         )
         .await
     } else {
@@ -250,6 +269,7 @@ pub async fn run_with_workspace_requirements(
             clock,
             workspace,
             turn_requirements,
+            task_kind,
         )
         .await;
 
@@ -267,6 +287,7 @@ pub async fn run_with_workspace_requirements(
 struct App {
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
+    requested_task_kind: Option<fabric::TaskKind>,
     chat: ChatWidget,
     input_buf: String,
     /// Cursor position in input_buf (byte index).
@@ -344,6 +365,7 @@ impl App {
         Self {
             workspace,
             turn_requirements,
+            requested_task_kind: None,
             chat: ChatWidget::new(caps.clone()),
             input_buf: String::new(),
             cursor: 0,
@@ -392,6 +414,11 @@ impl App {
                 || (0x3040..=0x309F).contains(&cp)  // Hiragana
                 || (0x30A0..=0x30FF).contains(&cp) // Katakana
         });
+    }
+
+    #[cfg(test)]
+    fn requested_task_kind(&self) -> Option<fabric::TaskKind> {
+        self.requested_task_kind
     }
 }
 

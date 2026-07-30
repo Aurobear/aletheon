@@ -3,7 +3,7 @@
 use fabric::protocol::client::{
     AgentEvent, ApprovalEvent, EventCursor, ItemEvent, ItemPhase, UiSnapshot,
 };
-use fabric::{ItemPayload, ItemRecord};
+use fabric::{EvaluationDecision, EvaluationReceiptRef, ItemPayload, ItemRecord};
 use serde::Serialize;
 
 use super::state::{AppState, UiItem, UiItemStatus};
@@ -39,6 +39,7 @@ pub fn reduce(state: &mut AppState, action: UiAction) -> Vec<UiEffect> {
             state.provider_name = snapshot.provider;
             state.model_name = snapshot.model.unwrap_or_else(|| "unknown".into());
             state.items.clear();
+            state.latest_evaluation = None;
             for item in snapshot.items {
                 upsert_completed(state, item);
             }
@@ -166,6 +167,9 @@ fn advance(state: &mut AppState, cursor: &EventCursor) -> bool {
 }
 
 fn upsert_completed(state: &mut AppState, record: ItemRecord) {
+    if let ItemPayload::EvaluationReceiptRef { receipt } = &record.payload {
+        state.latest_evaluation = Some(receipt.clone());
+    }
     let id = record.id.0.to_string();
     let (kind, content, collapsed) = item_content(&record.payload);
     let candidate = UiItem {
@@ -210,6 +214,11 @@ fn item_content(payload: &ItemPayload) -> (String, String, bool) {
             format!("{}: {:?}", receipt.capability, receipt.status),
             true,
         ),
+        ItemPayload::EvaluationReceiptRef { receipt } => (
+            "evaluation_receipt".into(),
+            format_evaluation_receipt_ref(receipt),
+            true,
+        ),
         ItemPayload::ModelContextProjection { receipt } => (
             "model_context_projection".into(),
             format!(
@@ -223,6 +232,32 @@ fn item_content(payload: &ItemPayload) -> (String, String, bool) {
         ItemPayload::ContextProjection { space, .. } => ("context".into(), space.clone(), true),
         ItemPayload::SystemNotice { content } => ("system".into(), content.clone(), false),
     }
+}
+
+/// Format the public, bounded receipt summary without querying full evidence.
+pub fn format_evaluation_receipt_ref(receipt: &EvaluationReceiptRef) -> String {
+    let decision = match receipt.decision {
+        EvaluationDecision::ObservedPass => "observed_pass",
+        EvaluationDecision::ObservedFail => "observed_fail",
+        EvaluationDecision::Accepted => "accepted",
+        EvaluationDecision::Rejected => "rejected",
+        EvaluationDecision::Indeterminate => "indeterminate",
+    };
+    let score = receipt
+        .weighted_total_millis
+        .map(|value| format!("{:.1}", f64::from(value) / 1_000.0))
+        .unwrap_or_else(|| "unknown".into());
+    let coverage = f64::from(receipt.evidence_coverage_millis) / 10.0;
+    let confidence = f64::from(receipt.confidence_millis) / 10.0;
+    let failed_gates = if receipt.failed_gates.is_empty() {
+        "none".into()
+    } else {
+        receipt.failed_gates.join(",")
+    };
+
+    format!(
+        "[evaluation] decision={decision} score={score} coverage={coverage:.1}% confidence={confidence:.1}% failed_gates={failed_gates}"
+    )
 }
 
 #[derive(Debug, Serialize)]

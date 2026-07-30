@@ -32,6 +32,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     clock: Arc<dyn Clock>,
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
+    task_kind: Option<fabric::TaskKind>,
 ) -> anyhow::Result<()> {
     let mut app = App::new(
         stream,
@@ -41,6 +42,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         workspace,
         turn_requirements,
     );
+    app.requested_task_kind = task_kind;
 
     // ── Test infrastructure setup ──
     let mut frame_recorder: Option<FrameRecorder> = test_config
@@ -212,6 +214,7 @@ pub async fn simple_line_mode(
     _clock: Arc<dyn Clock>,
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
+    mut task_kind: Option<fabric::TaskKind>,
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
 
@@ -220,6 +223,7 @@ pub async fn simple_line_mode(
 
     let stdin = io::stdin();
     let mut read_buf = vec![0u8; 8192];
+    let mut latest_evaluation: Option<fabric::EvaluationReceiptRef> = None;
 
     loop {
         print!("> ");
@@ -262,19 +266,45 @@ pub async fn simple_line_mode(
                     println!("{}", workspace.cwd().display());
                     continue;
                 }
-                _ => ClientRpcRequest::chat_with_requirements(
+                "task" => {
+                    match _args {
+                        "coding" => {
+                            task_kind = Some(fabric::TaskKind::Coding);
+                            println!("Task kind: coding");
+                        }
+                        "off" => {
+                            task_kind = None;
+                            println!("Task kind: off");
+                        }
+                        _ => println!("Usage: /task coding|off"),
+                    }
+                    continue;
+                }
+                "evaluation" | "eval" => {
+                    let message = latest_evaluation
+                        .as_ref()
+                        .map(super::super::reducer::format_evaluation_receipt_ref)
+                        .unwrap_or_else(|| {
+                            "No evaluation receipt is cached for this session.".to_string()
+                        });
+                    println!("{message}");
+                    continue;
+                }
+                _ => ClientRpcRequest::chat_with_task_kind(
                     trimmed,
                     None,
                     &workspace,
                     turn_requirements.clone(),
+                    task_kind,
                 ),
             }
         } else {
-            ClientRpcRequest::chat_with_requirements(
+            ClientRpcRequest::chat_with_task_kind(
                 trimmed,
                 None,
                 &workspace,
                 turn_requirements.clone(),
+                task_kind,
             )
         };
         let msg = request.to_json_rpc(Some(1))?;
@@ -351,6 +381,16 @@ pub async fn simple_line_mode(
                             let is_notification = msg.get("method").is_some()
                                 && msg.get("id").is_none_or(|v| v.is_null());
                             if is_notification {
+                                if let Some(receipt) = evaluation_receipt_from_protocol_message(&msg)
+                                {
+                                    println!(
+                                        "{}",
+                                        super::super::reducer::format_evaluation_receipt_ref(
+                                            &receipt
+                                        )
+                                    );
+                                    latest_evaluation = Some(receipt);
+                                }
                                 // Print streaming events that carry text content
                                 if let Some(event_type) = msg.pointer("/params/type").and_then(|v| v.as_str()) {
                                     match event_type {
@@ -418,4 +458,25 @@ pub async fn simple_line_mode(
     }
 
     Ok(())
+}
+
+fn evaluation_receipt_from_protocol_message(
+    message: &serde_json::Value,
+) -> Option<fabric::EvaluationReceiptRef> {
+    use fabric::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage, ItemPhase};
+
+    let candidate = message
+        .get("params")
+        .or_else(|| message.get("result"))
+        .unwrap_or(message);
+    let message = serde_json::from_value::<ClientMessage<ProtocolEvent>>(candidate.clone()).ok()?;
+    match message.into_v1().ok()? {
+        ProtocolEvent::Item(item) if item.phase == ItemPhase::Completed => {
+            item.item.and_then(|record| match record.payload {
+                fabric::ItemPayload::EvaluationReceiptRef { receipt } => Some(receipt),
+                _ => None,
+            })
+        }
+        _ => None,
+    }
 }

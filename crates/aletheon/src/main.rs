@@ -12,6 +12,7 @@
 use aletheon::workspace::WorkspaceArgs;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use interact::cli::TaskKindArg;
 use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
@@ -42,6 +43,10 @@ struct Cli {
     /// terminal receipt during every submitted chat turn (repeatable).
     #[arg(long = "require-agent-runtime", value_name = "RUNTIME")]
     required_agent_runtimes: Vec<String>,
+
+    /// Explicitly classify submitted chat turns for host-owned evaluation.
+    #[arg(long = "task-kind", value_enum)]
+    task_kind: Option<TaskKindArg>,
 
     #[command(flatten)]
     workspace: WorkspaceArgs,
@@ -453,6 +458,7 @@ async fn main() -> Result<()> {
                 workspace: cli.workspace.interact_launch(),
                 message: msg.clone(),
                 required_agent_runtimes: cli.required_agent_runtimes.clone(),
+                task_kind: cli.task_kind.map(Into::into),
             })
             .await
         }
@@ -471,6 +477,7 @@ async fn main() -> Result<()> {
                     socket: cli.socket.clone(),
                     workspace: cli.workspace.interact_launch(),
                     required_agent_runtimes: cli.required_agent_runtimes.clone(),
+                    task_kind: cli.task_kind.map(Into::into),
                 },
                 config,
             )
@@ -657,5 +664,16 @@ mod daemon_cli_tests {
         ])
         .unwrap();
         assert_eq!(cli.required_agent_runtimes, vec!["pi-rpc", "native-cognit"]);
+    }
+
+    #[test]
+    fn parses_coding_task_kind_for_message_and_tui() {
+        let message =
+            Cli::try_parse_from(["aletheon", "--task-kind", "coding", "--message", "hello"])
+                .unwrap();
+        assert_eq!(message.task_kind, Some(TaskKindArg::Coding));
+
+        let tui = Cli::try_parse_from(["aletheon", "--task-kind", "coding"]).unwrap();
+        assert_eq!(tui.task_kind, Some(TaskKindArg::Coding));
     }
 }

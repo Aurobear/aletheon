@@ -16,6 +16,7 @@ pub struct MessageLaunch {
     pub workspace: WorkspaceLaunch,
     pub message: String,
     pub required_agent_runtimes: Vec<String>,
+    pub task_kind: Option<fabric::TaskKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +24,7 @@ pub struct TuiLaunch {
     pub socket: Option<PathBuf>,
     pub workspace: WorkspaceLaunch,
     pub required_agent_runtimes: Vec<String>,
+    pub task_kind: Option<fabric::TaskKind>,
 }
 
 fn agent_runtime_requirements(runtime_ids: Vec<String>) -> Vec<fabric::TurnRequirement> {
@@ -70,11 +72,12 @@ pub async fn run_single_message(request: MessageLaunch) -> anyhow::Result<()> {
     let workspace = resolve_workspace(request.workspace)?;
     std::env::set_current_dir(workspace.cwd())?;
     let socket = resolve_user_socket(request.socket)?;
-    crate::cli::single_message_with_workspace_and_requirements(
+    crate::cli::single_message_with_workspace_requirements_and_task_kind(
         &socket,
         &request.message,
         &workspace,
         agent_runtime_requirements(request.required_agent_runtimes),
+        request.task_kind,
     )
     .await
 }
@@ -83,11 +86,12 @@ pub async fn run_tui(request: TuiLaunch, config: crate::tui::TestConfig) -> anyh
     let workspace = resolve_workspace(request.workspace)?;
     std::env::set_current_dir(workspace.cwd())?;
     let socket = resolve_user_socket(request.socket)?;
-    crate::tui::run_with_workspace_requirements(
+    crate::tui::run_with_workspace_requirements_and_task_kind(
         socket.to_string_lossy().as_ref(),
         config,
         workspace,
         agent_runtime_requirements(request.required_agent_runtimes),
+        request.task_kind,
     )
     .await
 }
