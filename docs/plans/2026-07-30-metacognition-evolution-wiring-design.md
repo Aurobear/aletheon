@@ -142,8 +142,8 @@ returning `ProgressDecision` (`:11`) under `CompletionGateMode::{Shadow,Enforce}
 must sit **downstream** of this gate — it consumes settled outcomes and holds no
 authority over them.
 
-> Note: `docs/plans/2026-07-26-cognitive-closed-loop-design.md` referenced in the
-> brief **does not exist**; the live metacog design material is
+> Note: the superseded cognitive closed-loop plan from 2026-07-26 has been
+> retired; the live metacog design material is
 > `docs/design/metacog/{README.md, meta-runtime.md, morphogenesis.md}`
 > (`meta-runtime.md:3` marks that layout "Historical design").
 
