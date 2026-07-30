@@ -3,7 +3,7 @@
 # 安全策略 (Security Policy)
 
 > 分级权限、策略引擎、审计日志、回滚引擎、多 Agent 权限继承。
-> 循环检测见 [self/loop-detector.md](../dasein/loop-detector.md)，路径隔离见 [self/writable-root.md](../dasein/writable-root.md)。
+> 循环检测见 [loop-detector.md](loop-detector.md)，路径隔离见 [writable-root.md](../dasein/writable-root.md)。
 
 ---
 
@@ -151,9 +151,9 @@
 
 **Code Locations:**
 - `crates/corpus/src/security/mod.rs` — PolicyEngine with hardcoded rules
-- `crates/corpus/src/security/audit.rs` — AuditLogger
-- `crates/dasein/src/impl/security/rollback/mod.rs` — RollbackEngine (3-tier: AuditOnly, FileBackup, BtrfsRollback)
-- `crates/corpus/src/security/risk_classifier.rs` — RiskClassifier
+- `crates/fabric/src/security/audit.rs` — AuditLogger
+- `crates/corpus/src/tools/tools/change_transaction/restore.rs` — RollbackEngine (3-tier: AuditOnly, FileBackup, BtrfsRollback)
+- `crates/fabric/src/security/risk_classifier.rs` — RiskClassifier
 
 **Key Types/Traits Implemented:**
 - `PolicyEngine` — rule-based permission checks (L0-L3), hardcoded rules

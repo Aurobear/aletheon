@@ -1,175 +1,70 @@
-> New document — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
-
 # SelfField Architecture
 
-> The self-awareness layer — 8 internal layers for identity, boundary, care, narrative, conflict, attention, continuity, and mutation.
+> Current conceptual architecture, verified against `crates/dasein/src/lib.rs`
+> and `crates/dasein/src/core/` on 2026-07-30.
 
-**Crate:** `dasein`
-**Source:** `crates/dasein/`
-**Last updated:** 2026-06-14
+## Ownership
 
----
+SelfField is Dasein's policy and read-model facade. Versioned lived-state
+mutation is owned by `DaseinModule::transition`; legacy policy layers are not a
+second evolution authority.
 
-## Implementation Status
-
-| Component | Status | Code Location | Notes |
-|-----------|--------|---------------|-------|
-| Hook system | ✅ Implemented | `impl/hook/` | 21 event types, 3-layer TOML config |
-| Resilience | ✅ Implemented | `impl/resilience/` | Guardian, watchdog, safe mode |
-| Security (self-protection) | ✅ Implemented | `impl/security/` | InputSanitizer, ResourceGovernor, EmergencyKillswitch, IntegrityMonitor |
-| Perception | ✅ Implemented | `impl/perception/` | PerceptionManager, EventAggregator, sources |
-| Core types | ✅ Implemented | `core/` | Shared types and traits |
-| Bridge | ✅ Implemented | `bridge/` | Cross-crate integration |
-
----
-
-## 1. Overview
-
-The `dasein` crate implements the agent's self-awareness and self-protection capabilities. It contains 8 conceptual internal layers organized around the agent's sense of self:
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    SelfField                             │
-│                                                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
-│  │ Identity │  │ Boundary │  │ Care     │             │
-│  │          │  │          │  │          │             │
-│  │ Who am I │  │ What can │  │ What     │             │
-│  │ What am  │  │ I touch  │  │ matters  │             │
-│  │ I        │  │ What     │  │ to me    │             │
-│  │          │  │ can't I  │  │          │             │
-│  └──────────┘  └──────────┘  └──────────┘             │
-│                                                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
-│  │ Narrative│  │ Conflict │  │ Attention│             │
-│  │          │  │          │  │          │             │
-│  │ My story │  │ Internal │  │ What I   │             │
-│  │ memory   │  │ tensions │  │ focus on │             │
-│  └──────────┘  └──────────┘  └──────────┘             │
-│                                                         │
-│  ┌──────────┐  ┌──────────┐                            │
-│  │Continuity│  │ Mutation │                            │
-│  │          │  │          │                            │
-│  │ Persistent│  │ How I    │                            │
-│  │ identity │  │ change   │                            │
-│  └──────────┘  └──────────┘                            │
-└─────────────────────────────────────────────────────────┘
+```text
+intent / lived event
+       |
+       v
+  Dasein policy facade
+  identity · boundary · care · narrative · conflict · attention
+       |
+       +----> verdict / read projection
+       |
+       v
+  versioned Dasein reducer
+  temporality · persistence · continuity · self model
 ```
 
-## 2. The 8 Internal Layers
+## Conceptual layers
 
-### 2.1 Identity Layer
+| Layer | Current role |
+|-------|--------------|
+| Identity | Maintains the agent's declared identity and mutation history |
+| Boundary | Evaluates constitutional and path/action boundaries |
+| Care | Scores concerns that influence policy decisions |
+| Narrative | Records continuity-oriented decision context |
+| Conflict | Resolves competing intents and safety/capability tension |
+| Attention | Tracks focus and priority decay |
+| Continuity | Preserves lineage through the lived-state reducer and persistence |
+| Mutation | Tracks governed mutation intent and approval |
 
-Defines "who the agent is" — its core identity, capabilities, and constraints. Implemented through configuration and the hook system's trust model.
+These layers do not replace the authoritative enforcement owners:
 
-### 2.2 Boundary Layer
+- Kernel owns admission, budgets, leases, operations, and supervision.
+- Corpus owns tool policy, approval, sandboxing, and guarded execution.
+- Fabric owns shared risk, audit, and loop-detection contracts/infrastructure.
+- Executive owns composition, turn/goal/agent orchestration, and settlement.
+- Metacog owns evidence-backed candidate evaluation and evolution governance.
 
-Defines what the agent can and cannot touch. Implemented through:
-- Security policy (see [body/security.md](../corpus/security.md))
-- WritableRoot path isolation (see [writable-root.md](writable-root.md))
-- Sandbox execution (see [body/sandbox.md](../corpus/sandbox.md))
+## Current modules
 
-### 2.3 Care Layer
-
-Defines what matters to the agent — priorities, values, and protection of critical resources. Implemented through:
-- ResourceGovernor (resource limits and throttling)
-- EmergencyKillswitch (multi-trigger emergency stop)
-- PolicyEngine (permission levels L0-L3)
-
-### 2.4 Narrative Layer
-
-The agent's story — memory of what happened, what was done, and what was learned. Implemented through:
-- Hook system event logging
-- Audit trail (AuditLogger)
-- Experience memory (see [body/acix.md](../corpus/acix.md))
-
-### 2.5 Conflict Layer
-
-Internal tensions — when goals conflict, when safety conflicts with capability. Implemented through:
-- LoopDetector (see [loop-detector.md](loop-detector.md))
-- CircuitBreaker (consecutive block detection)
-- RiskClassifier (risk-based threshold adjustment)
-
-### 2.6 Attention Layer
-
-What the agent focuses on — perception filtering, priority management, event routing. Implemented through:
-- PerceptionManager (event routing)
-- EventAggregator (deduplication, batching, priority boost)
-- BackpressureController (flow control)
-
-### 2.7 Continuity Layer
-
-Persistent identity across sessions and restarts. Implemented through:
-- Session persistence (checkpoint/recovery)
-- IntegrityMonitor (file hash baseline tracking)
-- DaemonGuardian (crash recovery)
-
-### 2.8 Mutation Layer
-
-How the agent changes over time — learning, adaptation, self-update. Currently limited to:
-- Experience memory accumulation
-- Skill loading and hot-reload
-- SelfUpdateManager (planned)
-
-## 3. The review() Pipeline
-
-The SelfField's core operation is the `review()` pipeline — a decision chain that evaluates every significant action before execution:
-
-```
-Action Request
-    │
-    ▼
-┌──────────────┐
-│ Hook         │  PreToolUse hooks can block or modify
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│ Policy       │  PolicyEngine checks permission level (L0-L3)
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│ Boundary     │  PathAccessGuard + WritableRoot checks
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│ Care         │  ResourceGovernor checks resource limits
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│ Permissions  │  RiskClassifier + LoopDetector pre-check
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│ Narrative    │  AuditLogger records the decision
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│ Verdict      │  Allow / Warn / Block / Escalate / InterruptTurn
-└──────────────┘
+```text
+crates/dasein/src/
+  core/       identity, boundary, care, narrative, conflict, attention,
+              continuity, mutation, store, and policy facade
+  dasein/     reducer, temporality, persistence, self model, and event bridge
+  bridge/     policy and loop-detector integration
+  impl/       perception and mutation adapters only
 ```
 
-## 4. Crate Structure
+The former standalone `ResourceGovernor`, `EmergencyKillswitch`,
+`IntegrityMonitor`, guardian, watchdog, and safe-mode implementations are not
+current Dasein capabilities. Installed integrity and resilience come from
+runtime provenance, health, admission, cancellation, supervision, and sandbox
+boundaries.
 
-```
-crates/dasein/
-├── core/           — Shared types and traits
-├── bridge/         — Cross-crate integration points
-├── impl/
-│   ├── hook/       — Hook system (21 event types, trust model, config layers)
-│   ├── resilience/ — DaemonGuardian, WatchdogTimer, SafeMode, crash recovery
-│   ├── security/   — InputSanitizer, ResourceGovernor, EmergencyKillswitch, IntegrityMonitor
-│   ├── perception/ — PerceptionManager, EventAggregator, perception sources, FUSE
-│   └── mod.rs
-└── testing/        — Test utilities
-```
+## Related documents
 
-## 5. Related Documents
-
-| Document | Scope |
-|----------|-------|
-| [hook-system.md](hook-system.md) | Hook event types, trust model, config layers, execution |
-| [loop-detector.md](loop-detector.md) | LoopDetector, RiskClassifier, CircuitBreaker, OutputGuardrail |
-| [writable-root.md](writable-root.md) | WritableRoot, FileSystemSandboxPolicy, PathAccessGuard |
-| [self-protection.md](self-protection.md) | InputSanitizer, ResourceGovernor, EmergencyKillswitch, IntegrityMonitor |
-| [resilience.md](resilience.md) | Error handling, panic recovery, rate limiting, backpressure |
-| [perception-sources.md](perception-sources.md) | System service management, perception source integration |
+- [Perception](perception.md)
+- [First principle](first-principle.md)
+- [Writable root](writable-root.md)
+- [Corpus security](../corpus/security.md)
+- [Metacog](../metacog/README.md)

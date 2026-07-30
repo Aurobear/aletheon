@@ -139,6 +139,16 @@ cmd_verify_official_client() {
     aletheon_die "official client real-request returned empty output"
     return
   fi
+  if grep -Eqi 'provider_unavailable|provider_rejected_request|inference[^[:alnum:]]+error|rendered inference error' "$output"; then
+    rm -f -- "$output"
+    aletheon_die "official client real-request rendered an inference failure"
+    return
+  fi
+  if [[ -n "$ALETHEON_SMOKE_EXPECTED" ]] && ! grep -Fq -- "$ALETHEON_SMOKE_EXPECTED" "$output"; then
+    rm -f -- "$output"
+    aletheon_die "official client real-request did not return the expected marker"
+    return
+  fi
   rm -f -- "$output"
   aletheon_ok "official client real-request smoke test passed"
 }

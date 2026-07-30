@@ -37,27 +37,23 @@ pub(super) struct ProfileLoadResult {
 
 /// Safe, always-available capabilities that are NOT gated by a profile's
 /// `allowed_tools` whitelist. These are read-only/local, non-exfiltrating
-/// bookkeeping and repo-inspection tools: git (no push/commit exists; the only
-/// destructive op, `git_reset --hard`, is separately guarded by `confirm_hard`)
-/// and task/todo management. Any registered universal tool is merged into every
-/// profile so the model can both see and execute it regardless of active
-/// profile. Genuinely dangerous capabilities (file_write, bash_exec, network,
+/// bookkeeping and repo-inspection tools: read-only git evidence and task/todo
+/// management. Mutating git operations are deliberately not universal because
+/// they must not bypass version-bound change transactions. Any registered
+/// universal tool is merged into every profile so the model can both see and
+/// execute it regardless of active profile. Genuinely dangerous capabilities
+/// (file_write, bash_exec, network,
 /// kernel) remain profile-gated and per-action (L0–L3) + sandbox-gated.
 pub(super) const UNIVERSAL_TOOLS: &[&str] = &[
     "git_status",
     "git_diff",
     "git_log",
     "git_show",
-    "git_restore",
-    "git_stash",
-    "git_reset",
-    "git_add",
-    "git_commit",
-    "git_branch",
     "task_create",
     "task_update",
     "task_list",
     "task_get",
+    "request_user_input",
     "skill_list",
     "skill_get",
 ];
@@ -67,6 +63,7 @@ pub(super) async fn load_agent_profiles(
     inference: Arc<dyn InferencePort>,
     default_llm: Arc<dyn LlmProvider>,
     definitions: &[fabric::ToolDefinition],
+    profile_definitions: &[fabric::ToolDefinition],
     config: &crate::composition::config::ExecutiveConfig,
     profiles_config: &crate::composition::config::AgentProfilesConfig,
 ) -> anyhow::Result<ProfileLoadResult> {
@@ -88,7 +85,7 @@ pub(super) async fn load_agent_profiles(
             profiles_config.default
         );
     }
-    let catalog = definitions
+    let catalog = profile_definitions
         .iter()
         .map(|definition| (definition.name.clone(), definition.clone()))
         .collect::<HashMap<_, _>>();
@@ -106,11 +103,20 @@ pub(super) async fn load_agent_profiles(
                 effective_tools.push((*name).to_string());
             }
         }
+        let mut authorized_tools = Vec::with_capacity(effective_tools.len());
         let mut tools = Vec::with_capacity(effective_tools.len());
         let mut failed = false;
         for name in &effective_tools {
             match catalog.get(name).cloned() {
-                Some(definition) => tools.push(definition),
+                Some(definition) => {
+                    authorized_tools.push(definition.clone());
+                    if definitions
+                        .iter()
+                        .any(|visible| visible.name == definition.name)
+                    {
+                        tools.push(definition);
+                    }
+                }
                 None => {
                     tracing::warn!(
                         profile = %role.name,
@@ -198,6 +204,7 @@ pub(super) async fn load_agent_profiles(
         registry.register(crate::adapters::runtime::ResolvedAgentProfile {
             profile: profile.clone(),
             llm,
+            authorized_tools,
             tools,
         })?;
         profiles.insert(role.name.clone(), profile);
@@ -241,7 +248,8 @@ fn tool_permission_level(name: &str) -> i32 {
         // L2 — System-level changes
         "ebpf_compile" | "module_build" => 2,
         // L1 — Sandboxed write
-        "file_write" | "bash_exec" | "apply_patch" | "web_fetch" => 1,
+        "file_write" | "bash_exec" | "exec_command" | "write_stdin" | "validation_run"
+        | "apply_patch" | "web_fetch" => 1,
         // L0 — Read-only (default)
         _ => 0,
     }

@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{AuditEventId, OperationId, PermitId, SessionId, TurnStop};
 
-pub const SESSION_SCHEMA_VERSION: u16 = 1;
+pub const SESSION_SCHEMA_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
@@ -127,6 +127,12 @@ pub enum ItemPayload {
         #[schemars(with = "Option<Uuid>")]
         audit_id: Option<AuditEventId>,
     },
+    CapabilityReceipt {
+        receipt: crate::CapabilityTerminalReceipt,
+    },
+    ModelContextProjection {
+        receipt: crate::model_projection::ModelContextProjectionReceipt,
+    },
     ContextProjection {
         space: String,
         broadcast_epoch: Option<u64>,
@@ -150,7 +156,16 @@ pub enum SessionNotification {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
-pub enum SessionProtocolV1 {
+pub enum SessionProtocolV2 {
+    Session(SessionRecord),
+    Turn(TurnRecord),
+    Item(ItemRecord),
+    Notification(SessionNotification),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum SessionProtocolV3 {
     Session(SessionRecord),
     Turn(TurnRecord),
     Item(ItemRecord),

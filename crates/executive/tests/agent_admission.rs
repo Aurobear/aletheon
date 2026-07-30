@@ -63,6 +63,7 @@ fn spawn(root: AgentId, parent: Option<AgentId>, profile: &str) -> AgentSpawnReq
         profile_id: AgentProfileId(profile.into()),
         runtime_id: RuntimeId("native-cognit".into()),
         trusted_workspace: None,
+        cognitive_binding: None,
         task: "bounded work".into(),
         context: AgentContextFork::None,
         broadcast_refs: vec![],
@@ -344,6 +345,7 @@ async fn lease_transitions_settle_once_and_expose_content_free_metrics() {
             output_tokens: 5,
             cost_usd: None,
             elapsed_ms: 20,
+            observability: Default::default(),
         })
         .await
         .unwrap();

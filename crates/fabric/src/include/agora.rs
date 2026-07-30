@@ -12,6 +12,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::types::cognitive_workflow::{
+    AgoraProjectionRequest, AgoraTaskList, AgoraTaskProjection, ClarificationId,
+    ClarificationRecord, CognitiveArtifactEnvelope, CognitiveInterruptionId,
+    CognitiveInterruptionRecord, CognitiveRole, CognitiveRoleBudget, CognitiveRoleProfileRef,
+    CognitiveTaskNode, CognitiveTaskNodeId, StageDecision,
+};
 use crate::types::evidence::Evidence;
 use crate::types::operation::ProcessId;
 use crate::types::space::AgoraSpaceId;
@@ -51,6 +57,49 @@ pub enum AgoraOperation {
         priorities: Vec<String>,
         /// Durable selection/broadcast reference that caused this update.
         selection_ref: String,
+    },
+    /// Create or replace the metadata of one versioned cognitive task node.
+    UpsertCognitiveTask {
+        task: CognitiveTaskNode,
+    },
+    /// Transfer one task to a role runtime under an exact owner/profile/scope
+    /// contract. Generic task updates cannot change these authority fields.
+    HandoffCognitiveTask {
+        task_node_id: CognitiveTaskNodeId,
+        expected_owner: ProcessId,
+        new_owner: ProcessId,
+        new_role: CognitiveRole,
+        role_profile: CognitiveRoleProfileRef,
+        budget: CognitiveRoleBudget,
+        workspace_scope: Vec<String>,
+    },
+    /// Commit a typed Agent output. Prose is not shared state until this operation commits.
+    CommitCognitiveArtifact {
+        artifact: CognitiveArtifactEnvelope,
+    },
+    /// Record the owning stage's gate decision for a task node.
+    RecordStageDecision {
+        task_node_id: CognitiveTaskNodeId,
+        decision: StageDecision,
+    },
+    /// Durably suspend one task at an exact cognitive checkpoint.
+    BlockForClarification {
+        clarification: ClarificationRecord,
+    },
+    /// Resume the same task from an identified canonical user response.
+    ResolveClarification {
+        clarification_id: ClarificationId,
+        response: String,
+        response_event_id: String,
+    },
+    /// Persist an interruption checkpoint before releasing runtime resources.
+    CheckpointInterruption {
+        interruption: CognitiveInterruptionRecord,
+    },
+    /// Resume the exact interrupted task from a canonical host event.
+    ResumeInterruption {
+        interruption_id: CognitiveInterruptionId,
+        resume_event_id: String,
     },
 }
 
@@ -295,6 +344,14 @@ pub trait AgoraService: Send + Sync {
     async fn commit(&self, id: Uuid, permit: WorkspaceCommitPermit) -> Result<CommitReceipt>;
     async fn reject(&self, id: Uuid, reason: RejectReason) -> Result<()>;
     async fn changes_since(&self, space: AgoraSpaceId, version: u64) -> Result<Vec<AgoraCommit>>;
+    async fn project_task(&self, request: AgoraProjectionRequest) -> Result<AgoraTaskProjection> {
+        let _ = request;
+        anyhow::bail!("AgoraService::project_task not implemented for this backend")
+    }
+    async fn list_tasks(&self, space: AgoraSpaceId) -> Result<AgoraTaskList> {
+        let _ = space;
+        anyhow::bail!("AgoraService::list_tasks not implemented for this backend")
+    }
 }
 
 // ---------------------------------------------------------------------------

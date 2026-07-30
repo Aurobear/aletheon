@@ -70,7 +70,7 @@ impl RequestHandler {
                 }
             }
         };
-        self.execute_explicit_chat(connection, id, message, thread_id, workspace)
+        self.execute_explicit_chat(connection, id, message, thread_id, workspace, Vec::new())
             .await
     }
 }

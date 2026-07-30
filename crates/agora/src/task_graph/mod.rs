@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use fabric::cognitive_workflow::{CognitiveArtifactId, CognitiveTaskNode, CognitiveTaskNodeId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,12 +63,14 @@ pub struct TaskNode {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskGraph {
     nodes: HashMap<String, TaskNode>,
+    cognitive_nodes: HashMap<CognitiveTaskNodeId, CognitiveTaskNode>,
 }
 
 impl TaskGraph {
     pub fn new() -> Self {
         Self {
             nodes: HashMap::new(),
+            cognitive_nodes: HashMap::new(),
         }
     }
 
@@ -183,7 +186,43 @@ impl TaskGraph {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+        self.nodes.is_empty() && self.cognitive_nodes.is_empty()
+    }
+
+    pub fn upsert_cognitive(&mut self, task: CognitiveTaskNode) {
+        self.cognitive_nodes.insert(task.id.clone(), task);
+    }
+
+    pub fn cognitive(&self, id: &CognitiveTaskNodeId) -> Option<&CognitiveTaskNode> {
+        self.cognitive_nodes.get(id)
+    }
+
+    pub fn cognitive_mut(&mut self, id: &CognitiveTaskNodeId) -> Option<&mut CognitiveTaskNode> {
+        self.cognitive_nodes.get_mut(id)
+    }
+
+    pub fn attach_artifact(
+        &mut self,
+        id: &CognitiveTaskNodeId,
+        artifact_id: CognitiveArtifactId,
+    ) -> bool {
+        let Some(task) = self.cognitive_nodes.get_mut(id) else {
+            return false;
+        };
+        if !task.artifact_refs.contains(&artifact_id) {
+            task.artifact_refs.push(artifact_id);
+        }
+        true
+    }
+
+    pub fn cognitive_len(&self) -> usize {
+        self.cognitive_nodes.len()
+    }
+
+    pub fn cognitive_nodes(&self) -> Vec<CognitiveTaskNode> {
+        let mut nodes = self.cognitive_nodes.values().cloned().collect::<Vec<_>>();
+        nodes.sort_by(|left, right| left.id.0.cmp(&right.id.0));
+        nodes
     }
 }
 

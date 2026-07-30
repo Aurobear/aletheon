@@ -1,6 +1,9 @@
 pub mod awareness;
 pub mod batching;
 pub mod circuit_breaker;
+mod compaction_observability;
+mod completion;
+mod exploration;
 pub mod goal_tracker;
 pub mod message_compose;
 pub mod metrics;
@@ -11,10 +14,11 @@ mod tool_exec;
 mod tool_output;
 
 pub use batching::{partition_tool_calls, ToolBatch};
+pub use compaction_observability::{compaction_metrics, CompactionMetrics};
 pub use metrics::TurnMetrics;
 
-const MIN_EXPLORATION_INPUT_TOKENS: u64 = 10_000;
-const MAX_EXPLORATION_INPUT_TOKENS: u64 = 24_000;
+use compaction_observability::{record_degenerate, record_evicted, record_sampler_error};
+use exploration::{exploration_input_token_budget, should_close_exploration};
 
 /// Minimum length (trimmed chars) an answer must have before a
 /// reflection-triggered stop is treated as terminal. Below this, both run loops
@@ -27,34 +31,6 @@ pub(super) const MIN_SUBSTANTIVE_ANSWER_CHARS: usize = 40;
 /// failing call. The counter resets on any tool success or after the nudge.
 pub(super) const REPLAN_ON_CONSECUTIVE_ERRORS: usize = 3;
 
-fn exploration_input_token_budget(context_window_tokens: usize) -> u64 {
-    (context_window_tokens as u64 / 100)
-        .clamp(MIN_EXPLORATION_INPUT_TOKENS, MAX_EXPLORATION_INPUT_TOKENS)
-}
-
-/// Breadth-scanning tools that count toward the exploration budget.
-///
-/// `file_read` is deliberately excluded: reading a specific file is the
-/// productive step the model must always be allowed to take before answering,
-/// so the exploration cutoff never blocks "read the key file, then answer".
-/// Only cheap, potentially-unbounded scanning (glob/grep/search) is clamped.
-fn is_inspection_tool(name: &str) -> bool {
-    matches!(name, "glob" | "grep" | "file_search")
-}
-
-fn should_close_exploration<'a>(
-    iteration: usize,
-    cumulative_input_tokens: u64,
-    context_window_tokens: usize,
-    tool_names: impl IntoIterator<Item = &'a str>,
-) -> bool {
-    let names = tool_names.into_iter().collect::<Vec<_>>();
-    iteration > 1
-        && !names.is_empty()
-        && names.iter().all(|name| is_inspection_tool(name))
-        && cumulative_input_tokens >= exploration_input_token_budget(context_window_tokens)
-}
-
 use async_trait::async_trait;
 use circuit_breaker::CircuitBreaker;
 use goal_tracker::GoalTracker;
@@ -63,6 +39,9 @@ use tool_budget::ToolBudget;
 
 use crate::adapters::inference::provider::{LlmProvider, LlmResponse, LlmStream};
 use crate::core::awareness_signal::AwarenessSignal;
+use crate::core::{
+    AgentRuntimeId, CognitiveTurnState, CompletionGateMode, EvidenceLedger, ProgressDecision,
+};
 use crate::harness::config::HarnessConfig;
 use crate::harness::interrupt::InterruptFlag;
 use fabric::body::Action;
@@ -70,7 +49,6 @@ use fabric::message::Message;
 use fabric::policy::verifier::Verifier;
 use fabric::self_field::{Intent, IntentSource};
 use fabric::{Clock, CompactionStrategy, ToolDefinition};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Thin wrapper to allow passing `&dyn LlmProvider` to generic functions
@@ -124,25 +102,6 @@ pub trait BatchPlanner: Send + Sync {
 /// Shared between `ReActLoop` and `Controller` to keep them in sync.
 pub const PLAN_MODE_MARKER: &str = "[PLAN MODE ACTIVE]";
 
-static COMPACTION_DEGENERATE_TOTAL: AtomicU64 = AtomicU64::new(0);
-static COMPACTION_SAMPLER_ERROR_TOTAL: AtomicU64 = AtomicU64::new(0);
-static COMPACTION_EVICTED_MESSAGES_TOTAL: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CompactionMetrics {
-    pub degenerate_total: u64,
-    pub sampler_error_total: u64,
-    pub evicted_messages_total: u64,
-}
-
-pub fn compaction_metrics() -> CompactionMetrics {
-    CompactionMetrics {
-        degenerate_total: COMPACTION_DEGENERATE_TOTAL.load(Ordering::Relaxed),
-        sampler_error_total: COMPACTION_SAMPLER_ERROR_TOTAL.load(Ordering::Relaxed),
-        evicted_messages_total: COMPACTION_EVICTED_MESSAGES_TOTAL.load(Ordering::Relaxed),
-    }
-}
-
 pub type EvictedCallback = Arc<dyn Fn(Vec<Message>) + Send + Sync>;
 
 /// The ReAct (Reason + Act) iteration loop
@@ -193,6 +152,19 @@ pub struct ReActLoop {
     evicted_callback: Option<EvictedCallback>,
     /// Clock for deterministic time (mono/wall).
     clock: Arc<dyn Clock>,
+    /// Typed task state is deliberately separate from compactable model messages.
+    cognitive_state: Option<CognitiveTurnState>,
+    /// Authoritative adapter-produced evidence for the active task.
+    evidence_ledger: EvidenceLedger,
+    /// Agent instances spawned during the active turn. A terminal wait may
+    /// satisfy a required-agent obligation only for one of these instances;
+    /// stale receipts from earlier turns are deliberately ineligible.
+    spawned_agents: std::collections::BTreeMap<String, AgentRuntimeId>,
+    /// Latest deterministic completion audit. Initially observed in shadow mode.
+    latest_completion_audit: Option<ProgressDecision>,
+    completion_gate_mode: CompletionGateMode,
+    max_completion_retries: u32,
+    grounded_outcome_sink: Option<Arc<dyn crate::core::GroundedOutcomeSink>>,
 }
 
 impl ReActLoop {
@@ -236,6 +208,13 @@ impl ReActLoop {
             batch_planner: None,
             evicted_callback: None,
             clock,
+            cognitive_state: None,
+            evidence_ledger: EvidenceLedger::default(),
+            spawned_agents: std::collections::BTreeMap::new(),
+            latest_completion_audit: None,
+            completion_gate_mode: CompletionGateMode::Shadow,
+            max_completion_retries: 2,
+            grounded_outcome_sink: None,
         }
     }
 
@@ -315,15 +294,14 @@ impl ReActLoop {
     ) {
         match outcome.failure.as_ref() {
             Some(fabric::CompactionFailure::DegenerateSummary { .. }) => {
-                COMPACTION_DEGENERATE_TOTAL.fetch_add(1, Ordering::Relaxed);
+                record_degenerate();
             }
             Some(fabric::CompactionFailure::SamplerError { .. }) => {
-                COMPACTION_SAMPLER_ERROR_TOTAL.fetch_add(1, Ordering::Relaxed);
+                record_sampler_error();
             }
             _ => {}
         }
-        COMPACTION_EVICTED_MESSAGES_TOTAL
-            .fetch_add(outcome.evicted.len() as u64, Ordering::Relaxed);
+        record_evicted(outcome.evicted.len());
         if let Some(event_sink) = event_sink {
             event_sink.emit(crate::harness::event_sink::Event::CompactionOutcome {
                 strategy: format!("{:?}", outcome.strategy).to_ascii_lowercase(),
@@ -354,6 +332,10 @@ impl ReActLoop {
         self.iteration
     }
 
+    pub fn clock_handle(&self) -> Arc<dyn Clock> {
+        self.clock.clone()
+    }
+
     /// Reset iteration counter for a new turn.
     /// Clears mutable state (messages, pending_memory) but preserves
     /// plan_mode and system_prompt (user choice / immutable).
@@ -369,6 +351,7 @@ impl ReActLoop {
         self.circuit_breaker.reset();
         self.goal_tracker.reset();
         self.reflection_engine.reset();
+        self.latest_completion_audit = None;
         // Note: plan_mode persists across resets (user choice)
         // Note: system_prompt never resets (immutable after construction)
     }
@@ -439,6 +422,39 @@ impl ReActLoop {
     /// Install a result verifier. Without this, verification is a no-op.
     pub fn set_verifier(&mut self, verifier: Arc<dyn Verifier>) {
         self.verifier = Some(verifier);
+    }
+
+    /// Install typed task state for completion auditing. Evidence is retained
+    /// across inference iterations and message compaction within the task.
+    pub fn set_cognitive_state(&mut self, state: CognitiveTurnState) {
+        self.cognitive_state = Some(state);
+        self.evidence_ledger = EvidenceLedger::default();
+        self.spawned_agents.clear();
+        self.latest_completion_audit = None;
+    }
+
+    pub fn clear_cognitive_state(&mut self) {
+        self.cognitive_state = None;
+        self.evidence_ledger = EvidenceLedger::default();
+        self.spawned_agents.clear();
+        self.latest_completion_audit = None;
+        self.completion_gate_mode = CompletionGateMode::Shadow;
+    }
+
+    pub fn set_completion_gate_mode(&mut self, mode: CompletionGateMode) {
+        self.completion_gate_mode = mode;
+    }
+
+    pub fn set_grounded_outcome_sink(&mut self, sink: Arc<dyn crate::core::GroundedOutcomeSink>) {
+        self.grounded_outcome_sink = Some(sink);
+    }
+
+    pub fn evidence_ledger_mut(&mut self) -> &mut EvidenceLedger {
+        &mut self.evidence_ledger
+    }
+
+    pub fn latest_completion_audit(&self) -> Option<&ProgressDecision> {
+        self.latest_completion_audit.as_ref()
     }
 
     /// Set the goal for this turn.
@@ -541,7 +557,7 @@ fn is_context_overflow(err: &anyhow::Error) -> bool {
 mod tests {
     use super::*;
     use crate::adapters::inference::provider::{
-        LlmProvider, LlmResponse, LlmStream, StopReason, Usage,
+        LlmProvider, LlmResponse, LlmStream, StopReason, StreamChunk, Usage,
     };
     use async_trait::async_trait;
     use fabric::message::{ContentBlock, Message};
@@ -673,6 +689,25 @@ mod tests {
     impl crate::harness::event_sink::EventSink for CollectingEventSink {
         fn emit(&self, event: crate::harness::event_sink::Event) {
             self.0.lock().unwrap().push(event);
+        }
+    }
+
+    struct CollectingGroundedSink {
+        outcomes: Mutex<Vec<fabric::cognitive_workflow::GroundedCognitiveOutcome>>,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl crate::core::GroundedOutcomeSink for CollectingGroundedSink {
+        async fn publish(
+            &self,
+            outcome: fabric::cognitive_workflow::GroundedCognitiveOutcome,
+        ) -> anyhow::Result<()> {
+            if self.fail {
+                anyhow::bail!("observational sink unavailable");
+            }
+            self.outcomes.lock().unwrap().push(outcome);
+            Ok(())
         }
     }
 
@@ -1512,7 +1547,16 @@ mod tests {
             _m: &[Message],
             _t: &[ToolDefinition],
         ) -> anyhow::Result<LlmStream> {
-            unimplemented!("not used in test")
+            let mut n = self.calls.lock().unwrap();
+            *n += 1;
+            Ok(Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::TextDelta {
+                    text: format!("answer {n}"),
+                }),
+                Ok(StreamChunk::Done {
+                    stop_reason: StopReason::EndTurn,
+                }),
+            ])))
         }
         fn name(&self) -> &str {
             "text"
@@ -1555,6 +1599,445 @@ mod tests {
             out, "answer 2",
             "rejected answer should be revised, got: {out}"
         );
+    }
+
+    #[tokio::test]
+    async fn streaming_verifier_rejection_matches_collecting_adapter() {
+        let cfg = HarnessConfig {
+            max_iterations: 5,
+            learning_enabled: false,
+            compaction_enabled: false,
+            ..HarnessConfig::default()
+        };
+        let mut lp = ReActLoop::new(cfg, Box::new(NoopCompressor));
+        lp.set_verifier(std::sync::Arc::new(RejectOnce {
+            seen: AtomicUsize::new(0),
+        }));
+        lp.messages.push(Message::user("go"));
+        let llm = TextLlm {
+            calls: Mutex::new(0),
+        };
+        let sink = CollectingEventSink(Mutex::new(Vec::new()));
+        let (out, _metrics) = lp
+            .run_streaming(
+                &llm,
+                &[],
+                |_id: &str, name: &str, _input: &serde_json::Value| {
+                    let name = name.to_string();
+                    async move { (format!("ran {name}"), false) }
+                },
+                || async { Ok(Vec::new()) },
+                &sink,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(out, "answer 2");
+        assert!(sink.0.lock().unwrap().iter().any(|event| matches!(
+            event,
+            crate::harness::event_sink::Event::TurnDone { result: Ok(text) }
+                if text == "answer 2"
+        )));
+    }
+
+    #[tokio::test]
+    async fn completion_gate_records_missing_obligation_in_shadow_mode() {
+        use crate::core::{
+            CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState, ProgressDecision,
+            RequiredAction,
+        };
+
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "inspect through a configured tool".into(),
+            task_kind: CognitiveTaskKind::RepositoryAnalysis,
+            required_actions: vec![RequiredAction::InvokeTool {
+                tool_name: "file_read".into(),
+            }],
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+
+        let decision = lp
+            .finalize_candidate("premature answer".into(), &|| async { Ok(Vec::new()) })
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            decision,
+            completion::FinalizationDecision::Accept { .. }
+        ));
+        assert!(matches!(
+            lp.latest_completion_audit(),
+            Some(ProgressDecision::Continue { missing }) if missing.len() == 1
+        ));
+    }
+
+    #[tokio::test]
+    async fn grounded_outcomes_follow_deterministic_completion_decision() {
+        use crate::core::{
+            CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState, CompletionGateMode,
+            RequiredAction,
+        };
+        use fabric::cognitive_workflow::GroundedCognitiveOutcome;
+
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "inspect through a configured tool".into(),
+            task_kind: CognitiveTaskKind::RepositoryAnalysis,
+            required_actions: vec![RequiredAction::InvokeTool {
+                tool_name: "file_read".into(),
+            }],
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+        lp.set_completion_gate_mode(CompletionGateMode::Enforce);
+        let sink = Arc::new(CollectingGroundedSink {
+            outcomes: Mutex::new(Vec::new()),
+            fail: false,
+        });
+        lp.set_grounded_outcome_sink(sink.clone());
+
+        let decision = lp
+            .finalize_candidate("unsupported answer".into(), &|| async { Ok(Vec::new()) })
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            decision,
+            completion::FinalizationDecision::ContinueAfterRejection
+        ));
+        let outcomes = sink.outcomes.lock().unwrap();
+        assert!(matches!(
+            outcomes.as_slice(),
+            [
+                GroundedCognitiveOutcome::CompletionRejected { .. },
+                GroundedCognitiveOutcome::FalseCompletionPrevented { .. }
+            ]
+        ));
+        assert!(!outcomes
+            .iter()
+            .any(|outcome| matches!(outcome, GroundedCognitiveOutcome::TaskCompleted { .. })));
+    }
+
+    #[tokio::test]
+    async fn observational_sink_failure_cannot_override_acceptance() {
+        use crate::core::{CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState};
+
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "answer without required actions".into(),
+            task_kind: CognitiveTaskKind::General,
+            required_actions: Vec::new(),
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+        lp.set_completion_gate_mode(crate::core::CompletionGateMode::Enforce);
+        lp.set_grounded_outcome_sink(Arc::new(CollectingGroundedSink {
+            outcomes: Mutex::new(Vec::new()),
+            fail: true,
+        }));
+
+        let decision = lp
+            .finalize_candidate("accepted answer".into(), &|| async { Ok(Vec::new()) })
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            decision,
+            completion::FinalizationDecision::Accept { final_text }
+                if final_text == "accepted answer"
+        ));
+    }
+
+    #[tokio::test]
+    async fn enforced_gate_blocks_bounded_false_completion() {
+        use crate::core::{
+            CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState, CompletionGateMode,
+            RequiredAction,
+        };
+
+        let mut lp = ReActLoop::new(
+            HarnessConfig {
+                max_iterations: 5,
+                learning_enabled: false,
+                compaction_enabled: false,
+                ..HarnessConfig::default()
+            },
+            Box::new(NoopCompressor),
+        );
+        lp.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "read before answering".into(),
+            task_kind: CognitiveTaskKind::RepositoryAnalysis,
+            required_actions: vec![RequiredAction::InvokeTool {
+                tool_name: "file_read".into(),
+            }],
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+        lp.set_completion_gate_mode(CompletionGateMode::Enforce);
+        let llm = TextLlm {
+            calls: Mutex::new(0),
+        };
+
+        let (output, metrics) = lp
+            .run(
+                "go",
+                &llm,
+                &[],
+                |_id: &str, _name: &str, _input: &serde_json::Value| async {
+                    unreachable!("model never requested a tool")
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(metrics.stop, fabric::TurnStop::Blocked);
+        assert!(!metrics.completed_normally);
+        assert!(output.contains("Task incomplete after 3 completion attempts"));
+        assert_eq!(*llm.calls.lock().unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn enforced_gate_accepts_matching_terminal_tool_evidence() {
+        use crate::core::{
+            CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState, CompletionGateMode,
+            RequiredAction,
+        };
+
+        let mut lp = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        lp.set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+            objective: "use echo".into(),
+            task_kind: CognitiveTaskKind::General,
+            required_actions: vec![RequiredAction::InvokeTool {
+                tool_name: "echo_tool".into(),
+            }],
+            deliverables: Vec::new(),
+            validation_requirements: Vec::new(),
+        }));
+        lp.set_completion_gate_mode(CompletionGateMode::Enforce);
+        let llm = ScriptedLlm {
+            calls: Mutex::new(0),
+        };
+
+        let (output, metrics) = lp
+            .run(
+                "go",
+                &llm,
+                &[],
+                |_id: &str, _name: &str, _input: &serde_json::Value| async {
+                    ("echoed".into(), false)
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output, "done: hi");
+        assert_eq!(metrics.stop, fabric::TurnStop::Completed);
+        assert!(metrics.completed_normally);
+    }
+
+    struct ClarificationLlm {
+        calls: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for ClarificationLlm {
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            *self.calls.lock().unwrap() += 1;
+            Ok(LlmResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "clarify-1".into(),
+                    name: "request_user_input".into(),
+                    input: serde_json::json!({"question": "Which behavior?"}),
+                }],
+                stop_reason: StopReason::ToolUse,
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+
+        async fn complete_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            unimplemented!("collecting adapter test")
+        }
+
+        fn name(&self) -> &str {
+            "clarification"
+        }
+
+        fn max_context_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_clarification_tool_blocks_without_another_inference() {
+        let mut loop_state = ReActLoop::new(
+            HarnessConfig {
+                max_iterations: 5,
+                learning_enabled: false,
+                compaction_enabled: false,
+                ..HarnessConfig::default()
+            },
+            Box::new(NoopCompressor),
+        );
+        let llm = ClarificationLlm {
+            calls: Mutex::new(0),
+        };
+        let definitions = vec![ToolDefinition {
+            name: "request_user_input".into(),
+            description: "block for clarification".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }];
+        let (output, metrics) = loop_state
+            .run(
+                "resolve ambiguity",
+                &llm,
+                &definitions,
+                |_id: &str, _name: &str, _input: &serde_json::Value| async {
+                    (
+                        serde_json::json!({
+                            "status": "blocked",
+                            "clarification_id": "00000000-0000-0000-0000-000000000001",
+                            "question": "Which behavior?"
+                        })
+                        .to_string(),
+                        false,
+                    )
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(metrics.stop, fabric::TurnStop::Blocked);
+        assert!(!metrics.completed_normally);
+        assert_eq!(*llm.calls.lock().unwrap(), 1);
+        assert_eq!(output, "Waiting for user clarification: Which behavior?");
+    }
+
+    struct ChangeClosureLlm {
+        calls: Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for ChangeClosureLlm {
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            let response = match *calls {
+                1 => ContentBlock::ToolUse {
+                    id: "apply".into(),
+                    name: "apply_patch".into(),
+                    input: serde_json::json!({}),
+                },
+                2 => ContentBlock::Text {
+                    text: "premature after apply".into(),
+                },
+                3 => ContentBlock::ToolUse {
+                    id: "diff".into(),
+                    name: "git_diff".into(),
+                    input: serde_json::json!({}),
+                },
+                4 => ContentBlock::Text {
+                    text: "premature after diff".into(),
+                },
+                5 => ContentBlock::ToolUse {
+                    id: "validation".into(),
+                    name: "validation_run".into(),
+                    input: serde_json::json!({}),
+                },
+                6 => ContentBlock::ToolUse {
+                    id: "accept".into(),
+                    name: "change_accept".into(),
+                    input: serde_json::json!({}),
+                },
+                _ => ContentBlock::Text {
+                    text: "version-bound change completed".into(),
+                },
+            };
+            Ok(LlmResponse {
+                stop_reason: if matches!(&response, ContentBlock::ToolUse { .. }) {
+                    StopReason::ToolUse
+                } else {
+                    StopReason::EndTurn
+                },
+                content: vec![response],
+                usage: Usage::default(),
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+            })
+        }
+
+        async fn complete_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            unimplemented!("collecting adapter test")
+        }
+
+        fn name(&self) -> &str {
+            "change-closure-script"
+        }
+
+        fn max_context_length(&self) -> usize {
+            100_000
+        }
+    }
+
+    #[tokio::test]
+    async fn coding_loop_rejects_apply_and_diff_only_completion_then_accepts_exact_closure() {
+        let mut lp = ReActLoop::new(
+            HarnessConfig {
+                max_iterations: 10,
+                learning_enabled: false,
+                compaction_enabled: false,
+                ..HarnessConfig::default()
+            },
+            Box::new(NoopCompressor),
+        );
+        let llm = ChangeClosureLlm {
+            calls: Mutex::new(0),
+        };
+        let (output, metrics) = lp
+            .run(
+                "make a verified change",
+                &llm,
+                &[],
+                |_id: &str, name: &str, _input: &serde_json::Value| {
+                    let content = match name {
+                        "apply_patch" => r#"{"kind":"apply_patch_receipt","transaction_id":"tx","resulting_workspace_version":"v1"}"#,
+                        "git_diff" => r#"{"kind":"change_diff_receipt","transaction_id":"tx","workspace_version":"v1","diff_artifact_ref":"artifact://sha256/diff"}"#,
+                        "validation_run" => r#"{"session_id":"validation-session","terminal":{"status":"exited","exit_code":0},"output_artifact_ref":"artifact://sha256/test","change_transaction":{"transaction_id":"tx","phase":"validated","validation_receipts":[{"workspace_version":"v1","output_ref":"artifact://sha256/test"}]}}"#,
+                        "change_accept" => r#"{"kind":"change_acceptance_receipt","transaction_id":"tx","workspace_version":"v1","transaction_phase":"accepted"}"#,
+                        _ => unreachable!(),
+                    };
+                    async move { (content.to_string(), false) }
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(output, "version-bound change completed");
+        assert_eq!(metrics.stop, fabric::TurnStop::Completed);
+        assert_eq!(*llm.calls.lock().unwrap(), 7);
+        assert_eq!(metrics.tool_calls_made, 4);
+        assert!(matches!(
+            lp.latest_completion_audit(),
+            Some(ProgressDecision::Complete)
+        ));
     }
 
     #[tokio::test]

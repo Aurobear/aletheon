@@ -110,6 +110,7 @@ impl Tool for AgentTool {
                 Ok(workspace) => Some(workspace),
                 Err(error) => return tool_error(&format!("Invalid Agent workspace: {error}")),
             },
+            cognitive_binding: None,
             task: prompt.to_string(),
             context: AgentContextFork::None,
             broadcast_refs: vec![],

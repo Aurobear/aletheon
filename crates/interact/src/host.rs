@@ -15,12 +15,21 @@ pub struct MessageLaunch {
     pub socket: Option<PathBuf>,
     pub workspace: WorkspaceLaunch,
     pub message: String,
+    pub required_agent_runtimes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TuiLaunch {
     pub socket: Option<PathBuf>,
     pub workspace: WorkspaceLaunch,
+    pub required_agent_runtimes: Vec<String>,
+}
+
+fn agent_runtime_requirements(runtime_ids: Vec<String>) -> Vec<fabric::TurnRequirement> {
+    runtime_ids
+        .into_iter()
+        .map(|runtime_id| fabric::TurnRequirement::InvokeAgentRuntime { runtime_id })
+        .collect()
 }
 
 fn resolve_socket_with(
@@ -61,15 +70,26 @@ pub async fn run_single_message(request: MessageLaunch) -> anyhow::Result<()> {
     let workspace = resolve_workspace(request.workspace)?;
     std::env::set_current_dir(workspace.cwd())?;
     let socket = resolve_user_socket(request.socket)?;
-    crate::cli::single_message(&socket, &request.message).await
+    crate::cli::single_message_with_workspace_and_requirements(
+        &socket,
+        &request.message,
+        &workspace,
+        agent_runtime_requirements(request.required_agent_runtimes),
+    )
+    .await
 }
 
 pub async fn run_tui(request: TuiLaunch, config: crate::tui::TestConfig) -> anyhow::Result<()> {
     let workspace = resolve_workspace(request.workspace)?;
     std::env::set_current_dir(workspace.cwd())?;
     let socket = resolve_user_socket(request.socket)?;
-    crate::tui::run_with_workspace_config(socket.to_string_lossy().as_ref(), config, workspace)
-        .await
+    crate::tui::run_with_workspace_requirements(
+        socket.to_string_lossy().as_ref(),
+        config,
+        workspace,
+        agent_runtime_requirements(request.required_agent_runtimes),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -115,6 +135,21 @@ mod tests {
         assert_eq!(
             resolve_socket_with(None, &xdg).unwrap(),
             Path::new("/run/user/1001/aletheon/aletheon.sock")
+        );
+    }
+
+    #[test]
+    fn runtime_ids_become_typed_turn_requirements() {
+        assert_eq!(
+            agent_runtime_requirements(vec!["pi-rpc".into(), "native-cognit".into()]),
+            vec![
+                fabric::TurnRequirement::InvokeAgentRuntime {
+                    runtime_id: "pi-rpc".into(),
+                },
+                fabric::TurnRequirement::InvokeAgentRuntime {
+                    runtime_id: "native-cognit".into(),
+                },
+            ]
         );
     }
 }

@@ -21,12 +21,23 @@ use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
 use tracing::info;
 
+#[async_trait]
+pub trait CognitiveTaskAdmissionPort: Send + Sync {
+    async fn bind_before_launch(
+        &self,
+        binding: fabric::cognitive_workflow::CognitiveTaskRuntimeBinding,
+        allocated_process: ProcessId,
+    ) -> Result<(), AgentControlError>;
+}
+
 pub mod admission;
 pub mod candidate_projection;
 pub mod cleanup;
 pub mod context_fork;
 pub mod execution;
+mod identity;
 pub mod lifecycle;
+mod lifecycle_hooks;
 pub mod live_runs;
 pub mod mailbox;
 pub mod memory;
@@ -38,8 +49,11 @@ pub(crate) fn agent_spawn_request_hash(
     request: &AgentSpawnRequest,
 ) -> Result<String, AgentControlError> {
     request.validate()?;
-    let encoded = serde_json::to_vec(request)
-        .map_err(|error| control_error(AgentControlErrorKind::Persistence, error.to_string()))?;
+    let encoded = serde_json::to_vec(&serde_json::json!({
+        "request": request,
+        "cognitive_binding": &request.cognitive_binding,
+    }))
+    .map_err(|error| control_error(AgentControlErrorKind::Persistence, error.to_string()))?;
     Ok(format!("{:x}", Sha256::digest(encoded)))
 }
 
@@ -61,10 +75,13 @@ pub use execution::{
     AgentRuntimeLauncher, AgentRuntimeRegistry, BackgroundResourceRegistration,
     CompatibilityRuntimeLauncher, NoopAgentEventSink, SpineAgentEventSink,
 };
+use identity::{runtime_capability, ValidatedAgentIdentity};
 pub use lifecycle::{
     reduce_agent_lifecycle, reduce_agent_status_transition, AgentLifecycleEffect,
     AgentLifecycleEvent, AgentLifecycleTransition, InvalidAgentLifecycleTransition,
 };
+use lifecycle_hooks::{agent_lifecycle_hook_context, NoopAgentLifecycleHookSink};
+pub use lifecycle_hooks::{AgentLifecycleHookSink, CorpusAgentLifecycleHookSink};
 pub use live_runs::{LiveAgentRun, LiveAgentRuns, ReparentAuthority};
 pub use mailbox::{AgentMailboxBridge, AgentRuntimeInbox};
 pub use memory::MemoryRecordingAgentEventSink;
@@ -86,32 +103,9 @@ pub use settlement::{
     SqliteSettlementReceiptStore,
 };
 
-fn runtime_capability(value: &AgentRuntimeCapability) -> runtime::RuntimeCapability {
-    match value {
-        AgentRuntimeCapability::CodeRead => runtime::RuntimeCapability::CodeRead,
-        AgentRuntimeCapability::CodeSearch => runtime::RuntimeCapability::CodeSearch,
-        AgentRuntimeCapability::CodeEdit => runtime::RuntimeCapability::CodeEdit,
-        AgentRuntimeCapability::Shell => runtime::RuntimeCapability::Shell,
-        AgentRuntimeCapability::Test => runtime::RuntimeCapability::Test,
-        AgentRuntimeCapability::Git => runtime::RuntimeCapability::Git,
-        AgentRuntimeCapability::Diagnostics => runtime::RuntimeCapability::Diagnostics,
-        AgentRuntimeCapability::Browser => runtime::RuntimeCapability::Browser,
-        AgentRuntimeCapability::DeviceObserve => runtime::RuntimeCapability::DeviceObserve,
-        AgentRuntimeCapability::DeviceCommand => runtime::RuntimeCapability::DeviceCommand,
-    }
-}
-
 const DEFAULT_RETENTION_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 const MAILBOX_CAPACITY: usize = 64;
 const CANCEL_WAIT: Duration = Duration::from_secs(30);
-
-struct ValidatedAgentIdentity {
-    agent_id: AgentId,
-    root_process_id: Option<ProcessId>,
-    root_workspace_id: Option<fabric::AgoraSpaceId>,
-    depth: u16,
-    parent_profile: Option<fabric::AgentProfileId>,
-}
 
 #[async_trait]
 pub trait AgentWaitTimer: Send + Sync {
@@ -161,27 +155,7 @@ pub struct AgentControlService {
     budget_controller: Option<Arc<dyn fabric::BudgetController>>,
     lifecycle_hooks: Arc<dyn AgentLifecycleHookSink>,
     runtime_profile_requirements: HashMap<fabric::AgentProfileId, Vec<AgentRuntimeCapability>>,
-}
-
-#[async_trait]
-pub trait AgentLifecycleHookSink: Send + Sync {
-    async fn emit(&self, context: fabric::hook::HookContext);
-}
-
-struct NoopAgentLifecycleHookSink;
-
-#[async_trait]
-impl AgentLifecycleHookSink for NoopAgentLifecycleHookSink {
-    async fn emit(&self, _context: fabric::hook::HookContext) {}
-}
-
-pub struct CorpusAgentLifecycleHookSink(pub Arc<dyn corpus::CorpusService>);
-
-#[async_trait]
-impl AgentLifecycleHookSink for CorpusAgentLifecycleHookSink {
-    async fn emit(&self, context: fabric::hook::HookContext) {
-        self.0.execute_hook(&context).await;
-    }
+    cognitive_task_admission: Option<Arc<dyn CognitiveTaskAdmissionPort>>,
 }
 
 impl std::fmt::Debug for AgentControlService {
@@ -227,6 +201,7 @@ impl AgentControlService {
             budget_controller: None,
             lifecycle_hooks: Arc::new(NoopAgentLifecycleHookSink),
             runtime_profile_requirements: HashMap::new(),
+            cognitive_task_admission: None,
         }
     }
 
@@ -235,6 +210,14 @@ impl AgentControlService {
         requirements: HashMap<fabric::AgentProfileId, Vec<AgentRuntimeCapability>>,
     ) -> Self {
         self.runtime_profile_requirements = requirements;
+        self
+    }
+
+    pub fn with_cognitive_task_admission(
+        mut self,
+        admission: Arc<dyn CognitiveTaskAdmissionPort>,
+    ) -> Self {
+        self.cognitive_task_admission = Some(admission);
         self
     }
 
@@ -859,6 +842,7 @@ impl AgentControlPort for AgentControlService {
             profile_id: intent.profile_id,
             runtime_id,
             trusted_workspace: intent.trusted_workspace,
+            cognitive_binding: None,
             task: intent.task,
             context: intent.context,
             broadcast_refs: vec![],
@@ -1146,6 +1130,24 @@ impl AgentControlPort for AgentControlService {
                 AgentControlErrorKind::Conflict,
                 "Agent already has a live runtime",
             ));
+        }
+
+        // This is the two-phase launch boundary: the process identity exists
+        // and all cancellation/recovery state is durable, but the runtime has
+        // not been scheduled. A cognitive worker receives workspace authority
+        // only after its exact Agora task handoff commits here.
+        if let Some(binding) = request.cognitive_binding.clone() {
+            let binding_result = match &self.cognitive_task_admission {
+                Some(port) => port.bind_before_launch(binding, process.id).await,
+                None => Err(control_error(
+                    AgentControlErrorKind::Forbidden,
+                    "cognitive task binding requested without an admission port",
+                )),
+            };
+            if let Err(error) = binding_result {
+                let _ = self.cancel(request.root_agent_id, handle.agent_id).await;
+                return Err(error);
+            }
         }
 
         let kernel = self.kernel.clone();
@@ -1763,46 +1765,6 @@ async fn run_agent(
         }
     }
     live.remove(agent).await;
-}
-
-fn agent_lifecycle_hook_context(
-    point: fabric::hook::HookPoint,
-    input: &AgentRuntimeInput,
-    status: &str,
-) -> fabric::hook::HookContext {
-    fabric::hook::HookContext {
-        point,
-        session_id: input.handle.root_agent_id.0.to_string(),
-        turn_count: 0,
-        tool_name: None,
-        tool_input: None,
-        tool_result: None,
-        message: Some(input.request.task.clone()),
-        metadata: std::collections::HashMap::from([
-            ("agent_id".into(), input.handle.agent_id.0.to_string()),
-            (
-                "parent_agent_id".into(),
-                input
-                    .handle
-                    .parent_agent_id
-                    .map(|id| id.0.to_string())
-                    .unwrap_or_default(),
-            ),
-            (
-                "operation_id".into(),
-                input.handle.operation_id.0.to_string(),
-            ),
-            ("status".into(), status.into()),
-            (
-                "workspace_root".into(),
-                input
-                    .workspace
-                    .as_ref()
-                    .map(|workspace| workspace.cwd().to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-            ),
-        ]),
-    }
 }
 
 fn control_error(kind: AgentControlErrorKind, message: impl Into<String>) -> AgentControlError {

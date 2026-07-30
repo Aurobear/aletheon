@@ -188,8 +188,12 @@ impl UserRuntime {
     ) -> anyhow::Result<Self> {
         config.paths.prepare()?;
         let cancel = CancellationToken::new();
+        // User runtime follows the same kernel-clock composition rule as the
+        // machine runtime: one monotonic epoch shared by handler and server.
+        let clock: Arc<dyn fabric::Clock> = Arc::new(SystemClock::new());
         let handler = RequestHandler::new(
             &config.request,
+            clock.clone(),
             inference,
             config.model_routing,
             config.model_aliases,
@@ -206,7 +210,6 @@ impl UserRuntime {
         .await?;
         let uid = nix::unistd::Uid::effective().as_raw();
         let gid = nix::unistd::Gid::effective().as_raw();
-        let clock = handler.clock();
         let server = match process_inherited_listener()? {
             Some(listener) => UnixServer::from_listener(
                 listener,
@@ -214,7 +217,7 @@ impl UserRuntime {
                 cancel.clone(),
                 uid,
                 gid,
-                clock,
+                clock.clone(),
             ),
             None => {
                 UnixServer::new_user_private(
@@ -223,7 +226,7 @@ impl UserRuntime {
                     cancel.clone(),
                     uid,
                     gid,
-                    Arc::new(SystemClock::new()),
+                    clock,
                 )
                 .await?
             }

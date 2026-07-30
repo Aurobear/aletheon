@@ -63,8 +63,8 @@ curl -fsS -X POST "$endpoint" -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}'
 curl -fsS -X POST "$endpoint" -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > /tmp/gbrain-tools.json
-cargo test -p mnemosyne -- backends::gbrain::schema
-cargo test -p executive --test gbrain_mcp_adapter
+bash scripts/cargo-agent.sh test -p mnemosyne -- backends::gbrain::schema
+bash scripts/cargo-agent.sh test -p executive --test gbrain_mcp_adapter
 ```
 
 `query` receives an explicit configured `source_id`. `search` is scoped by MCP

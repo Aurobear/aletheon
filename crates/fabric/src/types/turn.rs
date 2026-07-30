@@ -13,6 +13,10 @@ pub struct TurnRequest {
     pub input: String,
     pub model_policy: Option<String>,
     pub deadline: Option<MonoDeadlineMillis>,
+    /// Explicit host/client workflow obligations for this turn. These are
+    /// protocol data and must never be inferred by matching prompt text.
+    #[serde(default)]
+    pub requirements: Vec<crate::TurnRequirement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

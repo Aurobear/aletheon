@@ -67,6 +67,7 @@ async fn concurrent_principals_keep_distinct_thread_authority() {
                         input: "hello".into(),
                         model_policy: Some("test-policy".into()),
                         deadline: None,
+                        requirements: Vec::new(),
                     },
                     &TurnPolicy::daemon(),
                     move |request, _cancel| async move {
@@ -200,6 +201,7 @@ async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
             input: "capacity".into(),
             model_policy: None,
             deadline: None,
+            requirements: Vec::new(),
         };
         tasks.push(tokio::spawn(async move {
             barrier.wait().await;
@@ -252,6 +254,7 @@ async fn duplicate_principal_thread_is_rejected_and_kernel_operation_is_cancelle
             input: "first".into(),
             model_policy: None,
             deadline: None,
+            requirements: Vec::new(),
         };
         tokio::spawn(async move {
             coordinator
@@ -274,6 +277,7 @@ async fn duplicate_principal_thread_is_rejected_and_kernel_operation_is_cancelle
                 input: "duplicate".into(),
                 model_policy: None,
                 deadline: None,
+                requirements: Vec::new(),
             },
             &TurnPolicy::daemon(),
             |_, _| async { panic!("duplicate runner must not start") },

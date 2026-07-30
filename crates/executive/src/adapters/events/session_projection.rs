@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use fabric::{
     EventPayload, EventVisibility, ItemRecord, SessionAppendStore, SessionForkedEvent, SessionId,
-    SessionRecord, SpineEvent,
+    SessionRecord, SpineEvent, SESSION_SCHEMA_VERSION,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -38,11 +38,11 @@ impl SessionProjection {
         }
         match event.schema.0.as_str() {
             fabric::SchemaId::EVENT_SESSION_CREATED_V1 => {
-                let session: SessionRecord = decode_inline_anyhow(event)?;
+                let session = current_session(decode_inline_anyhow(event)?)?;
                 store.create(session).await
             }
             fabric::SchemaId::EVENT_SESSION_FORKED_V1 => {
-                let fork: SessionForkedEvent = decode_inline_anyhow(event)?;
+                let fork = current_fork(decode_inline_anyhow(event)?)?;
                 store.create(fork.child.clone()).await?;
                 for item in fork.inherited_items {
                     let sequence = item.sequence;
@@ -52,7 +52,7 @@ impl SessionProjection {
                 Ok(())
             }
             fabric::SchemaId::TURN_EVENT_V1 => {
-                let item: ItemRecord = decode_inline_anyhow(event)?;
+                let item = current_item(decode_inline_anyhow(event)?)?;
                 let sequence = item.sequence;
                 let session_id = item.session_id.clone();
                 store.append(&session_id, sequence, item).await?;
@@ -66,7 +66,7 @@ impl SessionProjection {
         state: &mut PublicSessionState,
         event: &SpineEvent,
     ) -> Result<(), ProjectionError> {
-        let record: SessionRecord = decode_inline(event)?;
+        let record = current_session(decode_inline(event)?).map_err(ProjectionError::Storage)?;
         if record.id != SessionId(event.identity.session_id.clone()) {
             return Err(invalid("Session identity differs from spine"));
         }
@@ -86,7 +86,7 @@ impl SessionProjection {
         state: &mut PublicSessionState,
         event: &SpineEvent,
     ) -> Result<(), ProjectionError> {
-        let fork: SessionForkedEvent = decode_inline(event)?;
+        let fork = current_fork(decode_inline(event)?).map_err(ProjectionError::Storage)?;
         if fork.child.id != SessionId(event.identity.session_id.clone()) {
             return Err(invalid("Fork child identity differs from spine"));
         }
@@ -134,7 +134,7 @@ impl SessionProjection {
         state: &mut PublicSessionState,
         event: &SpineEvent,
     ) -> Result<(), ProjectionError> {
-        let item: ItemRecord = decode_inline(event)?;
+        let item = current_item(decode_inline(event)?).map_err(ProjectionError::Storage)?;
         if item.session_id != SessionId(event.identity.session_id.clone()) {
             return Err(invalid("Session item identity differs from spine"));
         }
@@ -201,6 +201,36 @@ fn decode_inline_anyhow<T: DeserializeOwned>(event: &SpineEvent) -> anyhow::Resu
         anyhow::bail!("Session projection requires an inline payload");
     };
     Ok(serde_json::from_value(value.clone())?)
+}
+
+fn current_session(mut session: SessionRecord) -> anyhow::Result<SessionRecord> {
+    ensure_supported_record_version(session.schema_version, "session")?;
+    session.schema_version = SESSION_SCHEMA_VERSION;
+    Ok(session)
+}
+
+fn current_item(mut item: ItemRecord) -> anyhow::Result<ItemRecord> {
+    ensure_supported_record_version(item.schema_version, "item")?;
+    item.schema_version = SESSION_SCHEMA_VERSION;
+    Ok(item)
+}
+
+fn current_fork(mut fork: SessionForkedEvent) -> anyhow::Result<SessionForkedEvent> {
+    fork.child = current_session(fork.child)?;
+    fork.inherited_items = fork
+        .inherited_items
+        .into_iter()
+        .map(current_item)
+        .collect::<anyhow::Result<_>>()?;
+    Ok(fork)
+}
+
+fn ensure_supported_record_version(version: u16, kind: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        (1..=SESSION_SCHEMA_VERSION).contains(&version),
+        "unsupported {kind} schema version {version}"
+    );
+    Ok(())
 }
 
 fn validate_items(session: &SessionId, items: &[ItemRecord]) -> Result<(), ProjectionError> {

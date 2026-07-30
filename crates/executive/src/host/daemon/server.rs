@@ -381,6 +381,7 @@ async fn dispatch_versioned_request(
                             request.message,
                             request.thread_id,
                             workspace,
+                            Vec::new(),
                         )
                         .await
                 }

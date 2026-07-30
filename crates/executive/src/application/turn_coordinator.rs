@@ -252,6 +252,7 @@ impl TurnCoordinator {
             thread_id: thread_id.clone(),
             kind: PromptKind::Prompt,
             content: String::new(),
+            requirements: Vec::new(),
             created_at_unix: 0,
             updated_at_unix: 0,
             state: PromptState::Queued,

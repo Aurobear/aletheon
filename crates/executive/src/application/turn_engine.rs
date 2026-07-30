@@ -31,6 +31,7 @@ pub struct TurnEngineRequest {
     pub input: String,
     pub model_policy: Option<String>,
     pub deadline: Option<MonoDeadlineMillis>,
+    pub requirements: Vec<fabric::TurnRequirement>,
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +160,7 @@ impl TurnEngine for SessionTurnEngine {
             input: request.input.clone(),
             model_policy,
             deadline: request.deadline,
+            requirements: request.requirements,
         };
 
         let sink = FabricEventSink;

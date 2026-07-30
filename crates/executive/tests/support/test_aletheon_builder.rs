@@ -121,6 +121,7 @@ mod tests {
             input: "hello".into(),
             model_policy: None,
             deadline: None,
+            requirements: Vec::new(),
         }
     }
 

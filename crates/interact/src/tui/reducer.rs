@@ -205,6 +205,21 @@ fn item_content(payload: &ItemPayload) -> (String, String, bool) {
             content.clone(),
             true,
         ),
+        ItemPayload::CapabilityReceipt { receipt } => (
+            "capability_receipt".into(),
+            format!("{}: {:?}", receipt.capability, receipt.status),
+            true,
+        ),
+        ItemPayload::ModelContextProjection { receipt } => (
+            "model_context_projection".into(),
+            format!(
+                "{} fragments, {} message bytes, {} tool-schema bytes",
+                receipt.fragments.len(),
+                receipt.message_bytes,
+                receipt.tool_schema_bytes
+            ),
+            true,
+        ),
         ItemPayload::ContextProjection { space, .. } => ("context".into(), space.clone(), true),
         ItemPayload::SystemNotice { content } => ("system".into(), content.clone(), false),
     }

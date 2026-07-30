@@ -13,7 +13,7 @@ crate. This is the recommended starting point for new Aletheon integrations.
 ## Prerequisites
 
 - Rust toolchain (stable, edition 2021)
-- Aletheon workspace built (`cargo build` from workspace root)
+- Aletheon workspace built (`bash scripts/cargo-agent.sh build` from the workspace root)
 
 ## Run
 

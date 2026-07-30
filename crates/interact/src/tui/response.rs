@@ -1090,6 +1090,7 @@ mod tests {
             "test".into(),
             Arc::new(ClientClock::new()),
             workspace,
+            Vec::new(),
         );
         app.pending_commands
             .insert(7, PendingCommand::InitializeSkills);
@@ -1129,6 +1130,7 @@ mod tests {
             "test".into(),
             Arc::new(ClientClock::new()),
             workspace,
+            Vec::new(),
         );
         app.streaming = true;
         app.status.waiting = true;
@@ -1163,6 +1165,7 @@ mod tests {
             "test".into(),
             Arc::new(ClientClock::new()),
             workspace,
+            Vec::new(),
         );
         let event = fabric::ui_event::ClientEvent::PatchProgress {
             status: "file_changed".into(),
@@ -1199,6 +1202,7 @@ mod tests {
             "test".into(),
             Arc::new(ClientClock::new()),
             workspace,
+            Vec::new(),
         );
         handle_event(
             &mut app,

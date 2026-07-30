@@ -1,47 +1,31 @@
 # cognit
 
-CognitCore cognitive engine — the "brain" of the Aletheon agent.
+Focused cognitive algorithms and harnesses for reasoning, planning, critique,
+reflection, learning, and model inference.
 
-## Overview
+## Current layout
 
-The `cognit` crate implements the cognitive architecture that enables agents to think, reason, learn, and reflect. It contains the CognitCore and its six cognitive components.
-
-## Architecture
-
-```
-core/
-├── planner.rs       — Goal decomposition and action planning
-├── reasoner.rs      — Logical inference and chain-of-thought
-├── critic.rs        — Quality evaluation and error detection
-├── learner.rs       — Knowledge acquisition and adaptation
-├── reflector.rs     — Self-reflection and meta-cognition
-├── world_model.rs   — Environmental state representation
-├── awareness.rs     — Consciousness signals
-└── skill_extractor.rs — Skill extraction from experience
-
-impl/
-├── llm/             — LLM provider integrations (Anthropic, OpenAI, Ollama)
-├── inference/       — Inference pipeline
-├── learning/        — Learning mechanisms
-└── grounding/       — Context grounding
+```text
+src/
+  core/         focused cognitive algorithms; no production aggregate owner
+  harness/      production cognitive sessions, including the linear harness
+  application/  inference and learning use cases
+  adapters/     private provider and policy adapters
+  bridge/       narrow integration bridges
+  composition/  inference construction
+  ports/        stable input/output ports
 ```
 
-## Key Types
+Production composition belongs to the harness/session boundary. The former
+`CognitCore` aggregate is not a production entry point. Provider transports are
+private adapters; consumers use the inference contracts and scheduler facade.
 
-- `CognitCore` — Main cognitive orchestrator
-- `Planner` — Goal decomposition
-- `Reasoner` — Chain-of-thought reasoning
-- `Critic` — Quality evaluation
-- `Learner` — Knowledge acquisition
-- `Reflector` — Self-reflection
-- `WorldModel` — Environmental state
+The rule-based `IntentClassifier` and `InferenceRouter` exist as application
+components, but the installed runtime currently selects providers through the
+host-owned inference boundary rather than an offline-first local-model route.
 
-## Usage
+## Validation
 
-```rust
-use cognit::{CognitCore, Planner, Reasoner, Critic};
+```bash
+bash scripts/cargo-agent.sh test -p cognit
 ```
-
-## Dependencies
-
-- `base` — Core traits and types

@@ -1,5 +1,10 @@
 # Automation / Routines System
 
+> **Status:** Historical design. The former Executive automation module and
+> implementation paths below were removed; scheduled behavior in the installed
+> runtime must be verified through current goal/channel services and systemd
+> timers.
+
 > New document — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 > P3 automation system providing cron-triggered, webhook-triggered, and API-triggered automations with multi-channel delivery, script pre-processing, and daily-run limits.

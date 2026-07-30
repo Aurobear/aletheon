@@ -129,6 +129,7 @@ async fn stub_engine_emits_started_and_settled_on_success() {
                 input: "test".into(),
                 model_policy: None,
                 deadline: None,
+                requirements: Vec::new(),
             },
             test_context(),
             sink.clone(),
@@ -190,6 +191,7 @@ async fn stub_engine_rejects_on_error() {
                 input: "test".into(),
                 model_policy: None,
                 deadline: None,
+                requirements: Vec::new(),
             },
             test_context(),
             sink,
@@ -205,6 +207,7 @@ fn turn_engine_request_round_trips_model_policy() {
         input: "fix the bug".into(),
         model_policy: Some("claude-opus-review".into()),
         deadline: Some(MonoDeadlineMillis(30_000)),
+        requirements: Vec::new(),
     };
     assert_eq!(request.model_policy.as_deref(), Some("claude-opus-review"));
 }

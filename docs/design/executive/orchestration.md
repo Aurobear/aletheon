@@ -1,12 +1,12 @@
 # Multi-Agent Orchestration Engine
 
-> Migrated from `docs/design/orchestration/orchestration-engine.md` — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
+> Consolidated from earlier design drafts; current code paths and capability status must be verified against the repository.
 
 > Pluggable multi-agent collaboration orchestration system, supporting Selector/Handoff/DiGraph strategies, with delegation unified as Tool calls.
 
 **Module:** 06
 **Crate:** `executive`
-**Code location:** `executive/src/impl/orchestration/`
+**Code location:** `crates/executive/src/application/orchestration/`
 **Related modules:** [react-loop.md](react-loop.md), [session.md](session.md)
 **Last Updated:** 2026-06-14
 
@@ -16,16 +16,16 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| Agent trait | Implemented | `executive/src/impl/orchestration/agent.rs` | Core agent abstraction |
-| AgentRegistry | Implemented | `executive/src/impl/orchestration/registry.rs` | Agent registration and lookup |
-| DelegateTool | Implemented | `executive/src/impl/orchestration/delegate.rs` | Delegation as tool call |
-| SelectorStrategy | Implemented | `executive/src/impl/orchestration/selector.rs` | Agent selection strategy |
-| HandoffStrategy | Implemented | `executive/src/impl/orchestration/handoff.rs` | Agent handoff pattern |
-| TerminationConditions | Implemented | `executive/src/impl/orchestration/termination.rs` | Stop conditions for orchestration |
-| IterationBudget | Implemented | `executive/src/impl/orchestration/budget.rs` | Token/iteration budget control |
-| DiGraph | Implemented | `executive/src/impl/orchestration/digraph/` | DAG-based orchestration graph (edge, node, state) |
-| Built-in agents | Implemented | `executive/src/impl/orchestration/builtin/` | fs_agent, net_agent, code_agent |
-| ConfigAgent | Implemented | `executive/src/impl/orchestration/config_agent.rs` | Configuration-driven agent |
+| Agent trait | Implemented | `crates/executive/src/application/orchestration/agent.rs` | Core agent abstraction |
+| AgentRegistry | Implemented | `crates/executive/src/application/orchestration/registry.rs` | Agent registration and lookup |
+| DelegateTool | Implemented | `crates/executive/src/application/orchestration/delegate.rs` | Delegation as tool call |
+| SelectorStrategy | Implemented | `crates/executive/src/application/orchestration/selector.rs` | Agent selection strategy |
+| HandoffStrategy | Implemented | `crates/executive/src/application/orchestration/handoff.rs` | Agent handoff pattern |
+| TerminationConditions | Implemented | `crates/executive/src/application/orchestration/termination.rs` | Stop conditions for orchestration |
+| IterationBudget | Implemented | `crates/executive/src/application/orchestration/budget.rs` | Token/iteration budget control |
+| DiGraph | Implemented | `crates/executive/src/application/orchestration/digraph/` | DAG-based orchestration graph (edge, node, state) |
+| Built-in agents | Implemented | `crates/executive/src/application/orchestration/builtin/` | fs_agent, net_agent, code_agent |
+| ConfigAgent | Implemented | `crates/executive/src/application/orchestration/config_agent.rs` | Configuration-driven agent |
 
 ---
 
@@ -57,10 +57,10 @@ The orchestration engine delivers progressively by phase:
 ### 2.2 Agent Registry
 
 **Agent trait** — Core agent abstraction, containing id, capabilities, tools, on_messages.
-- Code location: `executive/src/impl/orchestration/agent.rs`
+- Code location: `crates/executive/src/application/orchestration/agent.rs`
 
 **AgentRegistry** — Agent registry, supports registration, lookup, lifecycle management.
-- Code location: `executive/src/impl/orchestration/registry.rs`
+- Code location: `crates/executive/src/application/orchestration/registry.rs`
 
 ```
 +--------------+----------------+------------------+
@@ -78,7 +78,7 @@ The orchestration engine delivers progressively by phase:
 ### 2.3 Delegation as Tool (DelegateTool)
 
 **DelegateTool** — Inspired by CrewAI's core innovation, agent delegation unified as Tool call.
-- Code location: `executive/src/impl/orchestration/delegate.rs`
+- Code location: `crates/executive/src/application/orchestration/delegate.rs`
 
 ```
 coordinator: "Help me check nginx config"
@@ -90,7 +90,7 @@ coordinator: "Help me check nginx config"
 ### 2.4 Termination Conditions
 
 **TerminationCondition** — Inspired by AutoGen's composable termination conditions, supports And/Or composition.
-- Code location: `executive/src/impl/orchestration/termination.rs`
+- Code location: `crates/executive/src/application/orchestration/termination.rs`
 - Types: MaxIterations, MaxTokens, Timeout, AndCondition, OrCondition
 
 ### 2.5 Safety Guardrails
@@ -145,7 +145,7 @@ New design (independent mode):
   -> one sub-agent exhaustion doesn't affect others or parent
 ```
 
-Code location: `executive/src/impl/orchestration/budget.rs`
+Code location: `crates/executive/src/application/orchestration/budget.rs`
 
 ### 4.2 Integration into DelegateTool
 
@@ -207,7 +207,7 @@ Default degradation rules:
 
 ## Implementation Summary
 
-**Code location:** `executive/src/impl/orchestration/`
+**Code location:** `crates/executive/src/application/orchestration/`
 
 **Key types/traits implemented:**
 - `Agent` trait (`agent.rs`) — core agent abstraction with id, capabilities, tools, on_messages

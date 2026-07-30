@@ -16,6 +16,7 @@ fn request(session: &str, process_id: fabric::ProcessId) -> TurnRequest {
         input: "hello".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
     }
 }
 

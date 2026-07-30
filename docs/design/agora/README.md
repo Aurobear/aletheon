@@ -6,7 +6,7 @@
 
 **Crate:** `agora`
 **Source:** `crates/agora/src/`
-**RFC:** [RFC-014 Agora Architecture](../../architecture/RFC-014-Agora-Architecture.md), [RFC-017 Aletheon Primitives](../../architecture/RFC-017-Aletheon-Primitives.md)
+**Current architecture:** [architecture-overview.md](../architecture-overview.md)
 
 ---
 
@@ -136,7 +136,6 @@ as of 2026-07-10):
 
 ## Related Docs
 
-- [RFC-014 Agora Architecture](../../architecture/RFC-014-Agora-Architecture.md)
-- [RFC-017 Aletheon Primitives](../../architecture/RFC-017-Aletheon-Primitives.md) — `AgoraOps` trait definition, cognitive/communication primitives
-- [RFC-018 Refactor-Debt Reconciliation](../../architecture/RFC-018-Refactor-Debt-Reconciliation.md) — Agora persistence gap and roadmap
+- Earlier RFC-014/017/018 documents were removed after their contracts were
+  consolidated into the current code and architecture documentation.
 - [mnemosyne/README.md](../mnemosyne/README.md) — where Agora snapshots are committed

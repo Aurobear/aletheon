@@ -166,6 +166,7 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
         profile_id: AgentProfileId("worker".into()),
         runtime_id: RuntimeId("native-cognit".into()),
         trusted_workspace: None,
+        cognitive_binding: None,
         task: "perform the task".into(),
         context: AgentContextFork::SelectedProjection {
             items: vec!["reference context".into()],
@@ -220,6 +221,11 @@ fn runtime(llm: Arc<ScriptedLlm>, capability: Arc<RecordingCapability>) -> Nativ
         .register(ResolvedAgentProfile {
             profile: profile(),
             llm,
+            authorized_tools: vec![ToolDefinition {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            }],
             tools: vec![ToolDefinition {
                 name: "echo".into(),
                 description: "echo".into(),
@@ -339,7 +345,14 @@ async fn tool_calls_use_persisted_lifecycle_context_and_evidence() {
     let context = calls[0].0.as_ref().unwrap();
     assert_eq!(context.process_id, expected.handle.process_id);
     assert_eq!(context.operation_id, expected.handle.operation_id);
-    assert_eq!(result.evidence.len(), 1);
+    assert_eq!(
+        result
+            .evidence
+            .iter()
+            .filter(|evidence| evidence.kind == "tool_result")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -378,6 +391,11 @@ fn profile_registration_rejects_model_mismatch_before_session_creation() {
         .register(ResolvedAgentProfile {
             profile: mismatched,
             llm: ScriptedLlm::new(vec![]),
+            authorized_tools: vec![ToolDefinition {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            }],
             tools: vec![ToolDefinition {
                 name: "echo".into(),
                 description: "echo".into(),
@@ -452,7 +470,18 @@ async fn multiple_tools_are_governed_and_unknown_tools_never_reach_capability() 
         .await
         .unwrap();
     assert_eq!(capability.calls.lock().unwrap().len(), 2);
-    assert_eq!(result.evidence.len(), 2);
+    assert_eq!(
+        result
+            .evidence
+            .iter()
+            .filter(|evidence| evidence.kind == "tool_result")
+            .count(),
+        2
+    );
+    assert_eq!(result.usage.observability.inference_rounds, Some(2));
+    assert_eq!(result.usage.observability.tool_calls, Some(2));
+    assert_eq!(result.usage.observability.terminal_tool_results, Some(2));
+    assert_eq!(result.usage.observability.active_context_tokens, Some(10));
 
     let llm = ScriptedLlm::new(vec![
         response(
@@ -479,7 +508,9 @@ async fn multiple_tools_are_governed_and_unknown_tools_never_reach_capability() 
         .await
         .unwrap();
     assert!(capability.calls.lock().unwrap().is_empty());
-    assert!(result.evidence[0].content.contains("not allowed"));
+    assert!(result.evidence.iter().any(|evidence| {
+        evidence.kind == "tool_result" && evidence.content.contains("not allowed")
+    }));
 }
 
 #[tokio::test]
@@ -512,6 +543,11 @@ async fn provider_failure_and_iteration_exhaustion_are_bounded_runtime_errors() 
         .register(ResolvedAgentProfile {
             profile: limited,
             llm,
+            authorized_tools: vec![ToolDefinition {
+                name: "echo".into(),
+                description: "echo".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            }],
             tools: vec![ToolDefinition {
                 name: "echo".into(),
                 description: "echo".into(),

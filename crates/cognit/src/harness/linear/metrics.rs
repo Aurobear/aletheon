@@ -6,4 +6,5 @@ pub struct TurnMetrics {
     pub elapsed_ms: u64,
     pub iterations: usize,
     pub completed_normally: bool,
+    pub stop: fabric::TurnStop,
 }

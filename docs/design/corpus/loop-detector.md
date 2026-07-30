@@ -6,7 +6,7 @@
 
 **模块编号:** 05-子模块
 **父模块:** [安全模型](../corpus/security.md)
-**关联模块:** [WritableRoot 路径隔离](writable-root.md)
+**关联模块:** [WritableRoot 路径隔离](../dasein/writable-root.md)
 **最后更新:** 2026-06-06
 
 ---

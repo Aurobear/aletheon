@@ -210,6 +210,7 @@ mod goal_runtime_tests {
             inference,
             llm,
             &definitions,
+            &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
         )
@@ -253,6 +254,7 @@ mod goal_runtime_tests {
             inference,
             llm,
             &definitions,
+            &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
         )
@@ -265,8 +267,8 @@ mod goal_runtime_tests {
             "git_status must be universally available regardless of profile"
         );
         assert!(
-            profile.allowed_tools.contains(&"git_reset".to_string()),
-            "git_reset must be universally available (destructive op is guarded by confirm_hard)"
+            !profile.allowed_tools.contains(&"git_reset".to_string()),
+            "mutating git tools must not bypass profile and transaction governance"
         );
         assert!(
             profile.allowed_tools.contains(&"task_create".to_string()),
@@ -308,6 +310,7 @@ mod goal_runtime_tests {
             inference,
             llm,
             &definitions,
+            &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &profiles,
         )
@@ -348,6 +351,7 @@ mod goal_runtime_tests {
             inference.clone(),
             llm.clone(),
             &definitions,
+            &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &unknown_default,
         )
@@ -363,6 +367,7 @@ mod goal_runtime_tests {
             directory.path(),
             inference,
             llm,
+            &definitions,
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &unknown_default,
@@ -397,6 +402,7 @@ mod goal_runtime_tests {
             directory.path(),
             inference,
             llm,
+            &definitions,
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
@@ -437,6 +443,7 @@ mod goal_runtime_tests {
             directory.path(),
             inference,
             llm,
+            &definitions,
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
@@ -483,6 +490,7 @@ mod goal_runtime_tests {
             inference,
             llm,
             &definitions,
+            &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),
         )
@@ -521,6 +529,7 @@ mod goal_runtime_tests {
             directory.path(),
             inference,
             llm,
+            &definitions,
             &definitions,
             &crate::composition::config::ExecutiveConfig::default(),
             &crate::composition::config::AgentProfilesConfig::default(),

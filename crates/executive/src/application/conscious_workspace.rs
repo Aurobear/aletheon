@@ -207,10 +207,24 @@ fn reorder_trace_event(
 #[async_trait]
 impl cognit::harness::BatchPlanner for ConsciousWorkspaceBatchPlanner {
     async fn plan(&self, calls: Vec<CapabilityCall>) -> anyhow::Result<CapabilityBatchPlan> {
+        // Unknown provider tool names are not executable action proposals. Keep
+        // their provider order so the capability executor can return its normal,
+        // recoverable "tool not found" result to the model. Treating them as
+        // trusted proposals would instead turn a model naming mistake (for
+        // example `read` instead of `file_read`) into a terminal session error.
+        let tools = self.tools.lock().await;
+        if let Some(call) = calls.iter().find(|call| tools.get(&call.name).is_none()) {
+            tracing::warn!(
+                tool = %call.name,
+                "conscious batch contains an unregistered capability; preserving provider order"
+            );
+            return Ok(self.identity(&calls));
+        }
         // Establish the trusted, read-only proposal set before consulting the
         // field. Missing/invalid registration metadata therefore cannot be
         // bypassed by an absent or degraded conscious projection.
-        let confidences = self.tools.lock().await.proposal_confidences();
+        let confidences = tools.proposal_confidences();
+        drop(tools);
         let candidates: Vec<ProjectedActionProposal> = calls
             .iter()
             .map(|call| Self::project_action(call, &confidences))

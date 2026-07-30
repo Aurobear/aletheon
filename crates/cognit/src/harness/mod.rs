@@ -48,6 +48,14 @@ pub enum HarnessKind {
     Robot,
 }
 
+/// Error returned when the generic harness factory cannot supply the
+/// dependencies required by a selected harness kind.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum HarnessBuildError {
+    #[error("{kind:?} harness requires Executive-owned ports")]
+    RequiresExecutivePorts { kind: HarnessKind },
+}
+
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod harness_kind_tests {
@@ -74,11 +82,9 @@ pub fn build_harness(
     config: HarnessConfig,
     compressor: Box<dyn CompactorTrait>,
     clock: std::sync::Arc<dyn fabric::Clock>,
-) -> ReActLoop {
+) -> Result<ReActLoop, HarnessBuildError> {
     match kind {
-        HarnessKind::Linear => ReActLoop::new_with_clock(config, compressor, clock),
-        HarnessKind::Robot => {
-            unimplemented!("RobotHarness is constructed by Executive with injected ports, not via build_harness")
-        }
+        HarnessKind::Linear => Ok(ReActLoop::new_with_clock(config, compressor, clock)),
+        HarnessKind::Robot => Err(HarnessBuildError::RequiresExecutivePorts { kind }),
     }
 }

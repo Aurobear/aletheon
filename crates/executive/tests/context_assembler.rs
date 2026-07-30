@@ -35,6 +35,7 @@ fn request(input: &str) -> TurnRequest {
         input: input.into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
     }
 }
 fn text(message: &Message) -> &str {

@@ -5,14 +5,22 @@
 
 pub mod awareness;
 pub mod awareness_signal;
+pub mod claim_auditor;
+pub mod cognitive_task;
 pub mod critic;
+pub mod evidence;
 pub mod evolution_trigger;
 pub mod experience_summarizer;
 pub mod learner;
 pub mod planner;
+pub mod progress_auditor;
 pub mod reasoner;
 pub mod reflector;
 pub mod skill_extractor;
 pub mod world_model;
 
 pub use self::experience_summarizer::ExperienceSummarizer;
+pub use claim_auditor::*;
+pub use cognitive_task::*;
+pub use evidence::*;
+pub use progress_auditor::*;

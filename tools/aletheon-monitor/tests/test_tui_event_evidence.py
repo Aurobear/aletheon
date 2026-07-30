@@ -148,7 +148,8 @@ def test_wait_turn_done_returns_validated_event_receipt(monkeypatch, tmp_path):
     path.write_text('{"type":"turn_done"}\n', encoding="utf-8")
 
     async def capture(**_kwargs):
-        return {"stable": True, "frame": "done", "checks": []}
+        return {"stable": True, "frame": "done\n❯", "prompt_visible": True,
+                "checks": []}
 
     monkeypatch.setattr(tui, "tui_capture", capture)
     result = asyncio.run(tui.tui_wait_turn_done(started["turn_done_count"], timeout=1))
@@ -156,3 +157,29 @@ def test_wait_turn_done_returns_validated_event_receipt(monkeypatch, tmp_path):
     assert result["turn_done"] is True
     assert result["event_evidence"]["event_count"] == 1
     assert result["event_evidence"]["path"] == str(path.resolve())
+
+
+def test_wait_turn_done_does_not_return_while_tui_still_shows_busy(monkeypatch, tmp_path):
+    _install_ready_tui(monkeypatch)
+    receipt = tmp_path / "receipt"
+    receipt.mkdir(mode=0o700)
+    path = receipt / "events.jsonl"
+    started = asyncio.run(tui.tui_start(
+        working_dir=str(tmp_path), event_path=str(path)
+    ))
+    path.write_text('{"type":"turn_done"}\n', encoding="utf-8")
+    frames = iter([
+        {"stable": True, "frame": "answer\n❯\n⠸ │ 1.0s", "prompt_visible": True,
+         "checks": []},
+        {"stable": True, "frame": "answer\n❯", "prompt_visible": True,
+         "checks": []},
+    ])
+
+    async def capture(**_kwargs):
+        return next(frames)
+
+    monkeypatch.setattr(tui, "tui_capture", capture)
+    result = asyncio.run(tui.tui_wait_turn_done(started["turn_done_count"], timeout=1))
+
+    assert result["turn_done"] is True
+    assert "⠸" not in result["frame"]

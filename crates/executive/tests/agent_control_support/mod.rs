@@ -105,6 +105,16 @@ pub struct Fixture {
 }
 
 pub fn fixture(max_concurrent: usize, launcher: Arc<dyn AgentRuntimeLauncher>) -> Fixture {
+    fixture_with_task_admission(max_concurrent, launcher, None)
+}
+
+pub fn fixture_with_task_admission(
+    max_concurrent: usize,
+    launcher: Arc<dyn AgentRuntimeLauncher>,
+    task_admission: Option<
+        Arc<dyn executive::application::agent_control::CognitiveTaskAdmissionPort>,
+    >,
+) -> Fixture {
     let clock = Arc::new(TestClock::new(1_700_000_000_000, 0));
     let kernel = Arc::new(KernelRuntime::with_clock(clock.clone()));
     let repository = Arc::new(SqliteAgentRunRepository::in_memory().unwrap());
@@ -113,14 +123,18 @@ pub fn fixture(max_concurrent: usize, launcher: Arc<dyn AgentRuntimeLauncher>) -
         .register(RuntimeId(TEST_RUNTIME.into()), launcher)
         .unwrap();
     let admission = Arc::new(BoundedAgentAdmission::new(max_concurrent).unwrap());
-    let service = Arc::new(AgentControlService::new(
+    let mut service = AgentControlService::new(
         kernel.clone(),
         clock,
         repository.clone(),
         admission.clone(),
         runtimes.clone(),
         Arc::new(executive::runtime::events::SqliteEventSpine::open(":memory:").unwrap()),
-    ));
+    );
+    if let Some(task_admission) = task_admission {
+        service = service.with_cognitive_task_admission(task_admission);
+    }
+    let service = Arc::new(service);
     Fixture {
         port: service.clone(),
         service,
@@ -139,6 +153,7 @@ pub fn spawn_request(root: AgentId, parent: Option<(AgentId, ProcessId)>) -> Age
         profile_id: AgentProfileId("worker".into()),
         runtime_id: RuntimeId(TEST_RUNTIME.into()),
         trusted_workspace: None,
+        cognitive_binding: None,
         task: "perform controlled work".into(),
         context: AgentContextFork::SelectedProjection {
             items: vec!["labelled context".into()],

@@ -1,6 +1,10 @@
 # Memory System
 
-> Migrated from `docs/design/core/memory-system.md` — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
+> **Status:** Historical design. The former `impl` memory layout below is not a
+> current implementation inventory. Current service/runtime ownership and
+> feature boundaries are summarized in `crates/mnemosyne/README.md`.
+
+> Consolidated from earlier design drafts; current code paths and capability status must be verified against the repository.
 
 > Inspired by Letta (MemGPT)'s three-tier self-editing memory architecture, enabling agents to manage their own memory like an OS manages virtual memory. Self-learning loop.
 

@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 use fabric::types::embodiment::DeviceId;
 use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
-use fabric::{MonoDeadline, MonoTime};
+use fabric::{Clock, MonoDeadline};
 use tokio::sync::Notify;
 
 /// Per-device cached state entry.
@@ -21,13 +21,16 @@ pub struct EmbodimentWorldState {
     devices: RwLock<HashMap<DeviceId, DeviceState>>,
     /// Maximum number of devices tracked (bounded).
     max_devices: usize,
+    clock: Arc<dyn Clock>,
 }
 
 impl EmbodimentWorldState {
-    pub fn new(max_devices: usize) -> Self {
+    /// Construct a world-state adapter from the runtime's shared clock.
+    pub fn new(max_devices: usize, clock: Arc<dyn Clock>) -> Self {
         Self {
             devices: RwLock::new(HashMap::new()),
             max_devices,
+            clock,
         }
     }
 
@@ -90,9 +93,8 @@ impl WorldStatePort for EmbodimentWorldState {
                 }
             }
 
-            // Check deadline
-            // TODO: inject a production monotonic clock instead of hardcoded MonoTime(0)
-            let now = MonoTime(0);
+            // Check the operation deadline against the injected monotonic clock.
+            let now = self.clock.mono_now();
             if deadline.is_expired_at(now) {
                 return None;
             }
@@ -109,6 +111,12 @@ impl WorldStatePort for EmbodimentWorldState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fabric::MonoTime;
+    use kernel::chronos::TestClock;
+
+    fn world_state(max_devices: usize) -> EmbodimentWorldState {
+        EmbodimentWorldState::new(max_devices, Arc::new(TestClock::default()))
+    }
 
     fn snapshot(device: &str, seq: u64, x: f64) -> WorldSnapshot {
         WorldSnapshot {
@@ -123,7 +131,7 @@ mod tests {
 
     #[tokio::test]
     async fn latest_returns_most_recent_ingested() {
-        let ws = EmbodimentWorldState::new(10);
+        let ws = world_state(10);
         let dev = DeviceId("bot".into());
         ws.ingest(dev.clone(), snapshot("bot", 1, 1.0)).unwrap();
         ws.ingest(dev.clone(), snapshot("bot", 2, 2.0)).unwrap();
@@ -134,7 +142,7 @@ mod tests {
 
     #[test]
     fn lower_sequence_rejected() {
-        let ws = EmbodimentWorldState::new(10);
+        let ws = world_state(10);
         let dev = DeviceId("bot".into());
         ws.ingest(dev.clone(), snapshot("bot", 10, 1.0)).unwrap();
         assert!(ws.ingest(dev.clone(), snapshot("bot", 5, 0.5)).is_err());
@@ -143,7 +151,7 @@ mod tests {
 
     #[test]
     fn duplicate_sequence_rejected() {
-        let ws = EmbodimentWorldState::new(10);
+        let ws = world_state(10);
         let dev = DeviceId("bot".into());
         ws.ingest(dev.clone(), snapshot("bot", 1, 1.0)).unwrap();
         assert!(ws.ingest(dev.clone(), snapshot("bot", 1, 2.0)).is_err());
@@ -151,13 +159,13 @@ mod tests {
 
     #[tokio::test]
     async fn missing_device_returns_none() {
-        let ws = EmbodimentWorldState::new(10);
+        let ws = world_state(10);
         assert!(ws.latest(&DeviceId("nonexistent".into())).await.is_none());
     }
 
     #[test]
     fn bounded_device_count_enforced() {
-        let ws = EmbodimentWorldState::new(2);
+        let ws = world_state(2);
         ws.ingest(DeviceId("a".into()), snapshot("a", 1, 0.0))
             .unwrap();
         ws.ingest(DeviceId("b".into()), snapshot("b", 1, 0.0))

@@ -1,6 +1,10 @@
 # ABI: Shared Types, Traits, and Interfaces
 
-> Migrated from `docs/design/shared/types.md`, `docs/design/shared/traits.md`, `docs/design/shared/interfaces.md` — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
+> **Status:** Historical design. The tables below preserve the pre-contraction
+> ABI map and include removed paths. Current contracts are defined by
+> `crates/fabric/src/lib.rs` and architecture acceptance.
+
+> Consolidated from earlier design drafts; current code paths and capability status must be verified against the repository.
 
 **Module:** fabric
 **Last Updated:** 2026-06-14

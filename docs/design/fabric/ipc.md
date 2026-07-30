@@ -1,6 +1,6 @@
 # User-Space IPC (User-Space IPC)
 
-> Migrated from `docs/design/execution/ipc.md` — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Consolidated from earlier design drafts; current code paths and capability status must be verified against the repository.
 
 > Agent-to-agent communication user-space layer design, including Unix socket message protocol, priority queue, and progressive degradation strategy.
 > Kernel-level IPC (agent_ring, io_uring, syscall extensions) see [platform/kernel-ipc.md](ipc.md).

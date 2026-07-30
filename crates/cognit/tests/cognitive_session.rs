@@ -21,6 +21,7 @@ fn dependencies() -> CognitiveSessionDependencies {
         batch_planner: None,
         evicted_callback: None,
         verifier: None,
+        grounded_outcome_sink: None,
     }
 }
 
@@ -41,6 +42,7 @@ fn request(input: &str) -> TurnRequest {
         input: input.into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
     }
 }
 
@@ -295,6 +297,135 @@ async fn streaming_session_keeps_thinking_out_of_visible_and_final_text() {
     assert!(!stream.0.lock().unwrap().iter().any(
         |event| matches!(event, CognitiveStreamEvent::TextDelta { delta } if delta.contains("internal reasoning"))
     ));
+}
+
+struct RequiredCapabilityServices {
+    llm: cognit::testing::mock_llm::MockLlmProvider,
+    projections: Mutex<Vec<fabric::model_projection::ModelContextProjectionReceipt>>,
+}
+
+#[async_trait]
+impl TurnServices for RequiredCapabilityServices {
+    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+        Ok(Default::default())
+    }
+
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
+        Ok(Default::default())
+    }
+
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+        Ok(Default::default())
+    }
+
+    async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
+        CapabilityResult {
+            call_id: call.call_id,
+            output: "unused".into(),
+            is_error: false,
+            usage: Default::default(),
+            audit_id: None,
+            patch_delta: None,
+        }
+    }
+
+    fn llm_provider(&self) -> Option<&dyn LlmProvider> {
+        Some(&self.llm)
+    }
+
+    fn turn_requirements(&self, request: &TurnRequest) -> Vec<fabric::TurnRequirement> {
+        if request.requirements.is_empty() {
+            vec![fabric::TurnRequirement::InvokeCapability {
+                name: "file_read".into(),
+            }]
+        } else {
+            request.requirements.clone()
+        }
+    }
+
+    async fn record_model_context_projection(
+        &self,
+        receipt: fabric::model_projection::ModelContextProjectionReceipt,
+    ) {
+        self.projections.lock().unwrap().push(receipt);
+    }
+}
+
+fn required_capability_services(name: &str) -> RequiredCapabilityServices {
+    let llm = cognit::testing::mock_llm::MockLlmProvider::new(name);
+    for _ in 0..3 {
+        llm.push_text_response("claimed complete", StopReason::EndTurn);
+    }
+    RequiredCapabilityServices {
+        llm,
+        projections: Mutex::new(Vec::new()),
+    }
+}
+
+#[tokio::test]
+async fn collecting_session_cannot_bypass_typed_completion_requirement() {
+    let services = required_capability_services("collecting-gate");
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+
+    let result = session
+        .run_turn(request("inspect the target"), &services, &NoopTurnEventSink)
+        .await
+        .expect("missing evidence is a typed blocked outcome");
+
+    assert_eq!(result.stop, TurnStop::Blocked);
+    assert!(!result.metrics.completed_normally);
+    assert!(result.output.contains("file_read"));
+    assert_eq!(services.llm.call_log.lock().unwrap().len(), 3);
+    let projections = services.projections.lock().unwrap();
+    assert_eq!(projections.len(), 3);
+    assert!(projections
+        .iter()
+        .all(|receipt| !receipt.fragments.is_empty() && receipt.message_bytes > 0));
+}
+
+#[tokio::test]
+async fn streaming_session_cannot_bypass_typed_completion_requirement() {
+    let services = required_capability_services("streaming-gate");
+    let stream = RecordingStream::default();
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+
+    let result = session
+        .run_streaming_turn(
+            request("inspect the target"),
+            &services,
+            &NoopTurnEventSink,
+            &stream,
+        )
+        .await
+        .expect("missing evidence is a typed blocked outcome");
+
+    assert_eq!(result.stop, TurnStop::Blocked);
+    assert!(!result.metrics.completed_normally);
+    assert!(result.output.contains("file_read"));
+    assert!(stream.0.lock().unwrap().iter().any(|event| {
+        matches!(event, CognitiveStreamEvent::TurnDone { result: Err(message) } if message.contains("file_read"))
+    }));
+    assert_eq!(services.llm.call_log.lock().unwrap().len(), 3);
+    assert_eq!(services.projections.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn explicit_request_agent_requirement_reaches_the_enforced_gate() {
+    let services = required_capability_services("request-agent-gate");
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+    let mut turn = request("inspect through the selected runtime");
+    turn.requirements = vec![fabric::TurnRequirement::InvokeAgentRuntime {
+        runtime_id: "pi-rpc".into(),
+    }];
+
+    let result = session
+        .run_turn(turn, &services, &NoopTurnEventSink)
+        .await
+        .expect("missing current-turn Agent receipt is a typed blocked outcome");
+
+    assert_eq!(result.stop, TurnStop::Blocked);
+    assert!(!result.metrics.completed_normally);
+    assert!(result.output.contains("pi-rpc"));
 }
 
 struct InterjectingServices {

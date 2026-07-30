@@ -67,7 +67,9 @@ crates/executive/src/application/agent_control/candidate_projection.rs	applicati
 crates/executive/src/application/agent_control/cleanup.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/context_fork.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/execution.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/agent_control/identity.rs	application	executive	identity and runtime capability projection
 crates/executive/src/application/agent_control/lifecycle.rs	application	executive	pure Agent lifecycle reducer
+crates/executive/src/application/agent_control/lifecycle_hooks.rs	application	executive	Agent lifecycle hook boundary and adapters
 crates/executive/src/application/agent_control/live_runs.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/mailbox.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/agent_control/memory.rs	application	executive	use-case orchestration and ports
@@ -79,7 +81,10 @@ crates/executive/src/application/approval/apply_coordinator.rs	application	execu
 crates/executive/src/application/approval/mod.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/approval/repository.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/approval_service.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/capability_benchmark.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/coding_runtime.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/cognitive_role_workflow.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/cognitive_workspace.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/compaction_normalize.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/conscious/agent_processor.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/conscious/corpus_processor.rs	application	executive	use-case orchestration and ports

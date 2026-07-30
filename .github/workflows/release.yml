@@ -10,10 +10,29 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 2
+  CARGO_INCREMENTAL: 0
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
 
 jobs:
+  validate:
+    name: Validate release source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
+      - name: Formatting
+        run: bash scripts/cargo-agent.sh +1.85.0 fmt --all -- --check
+      - name: Assembly package tests
+        run: bash scripts/cargo-agent.sh +1.85.0 test -p aletheon --locked
+      - name: Release metadata tests
+        run: python3 -m unittest scripts/tests/test_release_metadata.py
+
   build:
     name: Build (${{ matrix.target }})
+    needs: validate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -45,7 +64,7 @@ jobs:
 
       - name: Build binaries
         run: |
-          cargo +stable build --release \
+          bash scripts/cargo-agent.sh +stable build --release --locked \
             --target ${{ matrix.target }} \
             -p aletheon
 
@@ -60,14 +79,22 @@ jobs:
           cp "target/${ARCH}/release/aletheon" "${STAGING}/"
           cp LICENSE README.md "${STAGING}/" 2>/dev/null || true
 
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" \
+            python3 scripts/release_metadata.py \
+              --binary "${STAGING}/aletheon" \
+              --target "${ARCH}" \
+              --output "${STAGING}.spdx.json"
           tar czf "${STAGING}.tar.gz" "${STAGING}"
           echo "archive=${STAGING}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "metadata=${STAGING}.spdx.json" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.package.outputs.archive }}
-          path: ${{ steps.package.outputs.archive }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.metadata }}
 
   release:
     name: Create Release
@@ -82,6 +109,23 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+
+      - name: Verify release artifacts and generate checksums
+        shell: bash
+        run: |
+          shopt -s nullglob
+          archives=(aletheon-*.tar.gz)
+          metadata=(aletheon-*.spdx.json)
+          [[ ${#archives[@]} -eq 2 ]] || {
+            echo "expected two release archives, found ${#archives[@]}" >&2
+            exit 1
+          }
+          [[ ${#metadata[@]} -eq 2 ]] || {
+            echo "expected two SPDX metadata files, found ${#metadata[@]}" >&2
+            exit 1
+          }
+          sha256sum "${archives[@]}" "${metadata[@]}" > SHA256SUMS
+          sha256sum --check SHA256SUMS
 
       - name: Generate changelog
         id: changelog
@@ -120,6 +164,9 @@ jobs:
           name: ${{ github.ref_name }}
           body_path: changelog.md
           prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
-          files: "*.tar.gz"
+          files: |
+            *.tar.gz
+            *.spdx.json
+            SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

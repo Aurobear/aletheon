@@ -31,6 +31,15 @@ def test_dup_render_ignores_short_or_blank_repeats():
     assert check_dup_render(frame, min_block=3) == []
 
 
+def test_dup_render_ignores_repeated_section_templates_across_blank_lines():
+    frame = "\n".join([
+        "risk one", "", " • severity: high", " • evidence:",
+        "first fact", "risk two", "", " • severity: high", " • evidence:",
+        "second fact",
+    ])
+    assert check_dup_render(frame, min_block=3) == []
+
+
 import os
 from src.tui_checks import (
     check_raw_markdown,
@@ -48,6 +57,11 @@ _FIXTURE = os.path.join(
 def test_raw_markdown_detects_table_pipes():
     assert check_raw_markdown("| # | 问题 |\n|---|------|")[0]["kind"] == "raw_markdown"
     assert check_raw_markdown("normal text") == []
+
+
+def test_raw_markdown_ignores_numbered_verbatim_agent_artifacts():
+    frame = "   │  55 │ | claim | evidence |\n   │  56 │ |------|----------|"
+    assert check_raw_markdown(frame) == []
 
 
 def test_double_reflection_prefix():

@@ -318,6 +318,10 @@ pub struct AgentSpawnRequest {
     /// authenticated ToolContext at the capability boundary.
     #[serde(skip)]
     pub trusted_workspace: Option<crate::WorkspacePolicy>,
+    /// Optional host-only task authority admitted atomically after process
+    /// allocation and before the runtime is launched.
+    #[serde(skip)]
+    pub cognitive_binding: Option<crate::cognitive_workflow::CognitiveTaskRuntimeBinding>,
     pub task: String,
     pub context: AgentContextFork,
     #[serde(default)]
@@ -385,6 +389,20 @@ impl AgentSpawnRequest {
             ensure_text(tool, 512, "allowed tool")?;
         }
         self.context.validate()?;
+        if let Some(binding) = &self.cognitive_binding {
+            if binding.task_node_id.0.trim().is_empty()
+                || binding.role_profile.version == 0
+                || binding.role_profile.id.trim().is_empty()
+            {
+                return Err(AgentControlError::invalid(
+                    "cognitive task runtime binding is invalid",
+                ));
+            }
+            binding
+                .budget
+                .validate()
+                .map_err(|error| AgentControlError::invalid(error.to_string()))?;
+        }
         ensure_count(
             self.background_decls.len(),
             MAX_BACKGROUND_RESOURCES,

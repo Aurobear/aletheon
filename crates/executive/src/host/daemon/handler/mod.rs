@@ -297,6 +297,10 @@ impl RequestHandler {
         request: serde_json::Value,
     ) -> serde_json::Value {
         let message = request["params"]["message"].as_str().unwrap_or("");
+        let requirements = match parse_turn_requirements(&request["params"]["requirements"]) {
+            Ok(requirements) => requirements,
+            Err(error) => return rpc_error(&id, -32602, error),
+        };
         let workspace = match resolve_requested_workspace(&request["params"]) {
             Ok(workspace) => workspace,
             Err(error) => {
@@ -324,8 +328,15 @@ impl RequestHandler {
                 }
             }
         };
-        self.execute_explicit_chat(connection, id, message.to_owned(), thread_id, workspace)
-            .await
+        self.execute_explicit_chat(
+            connection,
+            id,
+            message.to_owned(),
+            thread_id,
+            workspace,
+            requirements,
+        )
+        .await
     }
 
     /// Versioned chat boundary. `thread_id` is protocol data in its own right;
@@ -337,6 +348,7 @@ impl RequestHandler {
         message: String,
         thread_id: fabric::ThreadId,
         workspace: fabric::WorkspacePolicy,
+        requirements: Vec<fabric::TurnRequirement>,
     ) -> serde_json::Value {
         if thread_id.0.trim().is_empty() || message.trim().is_empty() {
             return rpc_error(&id, -32602, "thread_id and message are required");
@@ -383,7 +395,10 @@ impl RequestHandler {
             "evaluated repository executable configuration trust"
         );
         tracing::info!(message = %message, thread_id = %context.thread_id.0, "Chat request received");
-        self.ports.turn.execute(id, message, context).await
+        self.ports
+            .turn
+            .execute(id, message, context, requirements)
+            .await
     }
 
     /// Keep local conversation history scoped to its canonical workspace.
@@ -414,6 +429,30 @@ impl RequestHandler {
         self.thread_authority
             .bind_or_verify(&key, &ThreadSettings::from_context(context, model_policy))
     }
+}
+
+fn parse_turn_requirements(
+    value: &serde_json::Value,
+) -> Result<Vec<fabric::TurnRequirement>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let requirements: Vec<fabric::TurnRequirement> = serde_json::from_value(value.clone())
+        .map_err(|error| format!("invalid turn requirements: {error}"))?;
+    if requirements.len() > 16 {
+        return Err("at most 16 turn requirements are allowed".into());
+    }
+    for requirement in &requirements {
+        let value = match requirement {
+            fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => runtime_id,
+            fabric::TurnRequirement::InvokeCapability { name } => name,
+            fabric::TurnRequirement::ObserveTerminal { .. } => continue,
+        };
+        if value.trim().is_empty() || value.len() > 512 {
+            return Err("turn requirement identifiers must contain 1..=512 bytes".into());
+        }
+    }
+    Ok(requirements)
 }
 
 fn unix_now() -> u64 {
@@ -490,5 +529,27 @@ mod working_dir_tests {
         .unwrap();
         assert_eq!(workspace.writable_roots().len(), 2);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn accepts_typed_agent_runtime_requirement() {
+        let requirements = super::parse_turn_requirements(&serde_json::json!([
+            {"InvokeAgentRuntime":{"runtime_id":"pi-rpc"}}
+        ]))
+        .unwrap();
+        assert_eq!(
+            requirements,
+            vec![fabric::TurnRequirement::InvokeAgentRuntime {
+                runtime_id: "pi-rpc".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_requirement_identifier() {
+        assert!(super::parse_turn_requirements(&serde_json::json!([
+            {"InvokeAgentRuntime":{"runtime_id":"  "}}
+        ]))
+        .is_err());
     }
 }

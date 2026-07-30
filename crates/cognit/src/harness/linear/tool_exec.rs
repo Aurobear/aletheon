@@ -1,10 +1,16 @@
 use super::circuit_breaker::{CircuitBreakerStatus, ToolCallSignature};
+use super::completion::FinalizationDecision;
 use super::tool_budget;
 use super::tool_output::{bounded_tool_result, per_result_budget};
 use super::{is_context_overflow, ReActLoop, TurnMetrics};
 use crate::harness::event_sink::{Event, EventSink, ToolResultEvent};
 
 use crate::adapters::inference::provider::{LlmProvider, StopReason, StreamChunk};
+use crate::core::{
+    AgentRuntimeId, CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState,
+    CognitiveWorkPhase, CompletionGateMode, EvidenceId, EvidenceLevel, EvidenceLocator,
+    EvidenceRecord, EvidenceSource, EvidenceSubject, RequiredAction, TerminalStatus,
+};
 use crate::inference::{classify_error, ErrorClass};
 use fabric::message::{ContentBlock, Message, Role};
 use fabric::{CapabilityCall, ConsciousArbitrationMode, ToolDefinition};
@@ -34,6 +40,7 @@ impl ReActLoop {
         let start = self.clock.mono_now();
         let mut tool_calls_made: usize = 0;
         let mut tool_errors: usize = 0;
+        self.verify_attempts = 0;
 
         event_sink.emit(Event::TurnStarted { iteration: 0 });
 
@@ -57,6 +64,7 @@ impl ReActLoop {
                         elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
+                        stop: fabric::TurnStop::Cancelled,
                     };
                     return Ok((msg, metrics));
                 }
@@ -168,15 +176,38 @@ impl ReActLoop {
             // We must check tool_calls first — only exit if there are no tools to run.
             if tool_calls.is_empty() {
                 let final_text = text_parts.join("\n");
-                let interjections = drain_interjections().await?;
-                if !interjections.is_empty() {
-                    if !final_text.is_empty() {
-                        self.messages.push(Message::assistant(&final_text));
+                let final_text = match self
+                    .finalize_candidate(final_text, &drain_interjections)
+                    .await?
+                {
+                    FinalizationDecision::ContinueWithInterjections {
+                        assistant_text,
+                        interjections,
+                    } => {
+                        if let Some(text) = assistant_text {
+                            self.messages.push(Message::assistant(&text));
+                        }
+                        self.messages
+                            .extend(interjections.into_iter().map(Message::user));
+                        continue;
                     }
-                    self.messages
-                        .extend(interjections.into_iter().map(Message::user));
-                    continue;
-                }
+                    FinalizationDecision::ContinueAfterRejection => continue,
+                    FinalizationDecision::Incomplete { message } => {
+                        event_sink.emit(Event::TurnDone {
+                            result: Err(message.clone()),
+                        });
+                        let metrics = TurnMetrics {
+                            tool_calls_made,
+                            tool_errors,
+                            elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
+                            iterations: self.iteration,
+                            completed_normally: false,
+                            stop: fabric::TurnStop::Blocked,
+                        };
+                        return Ok((message, metrics));
+                    }
+                    FinalizationDecision::Accept { final_text } => final_text,
+                };
                 // Emit awareness: uncertainty from response + final response signal
                 self.emit_thinking_complete("thinking", &final_text);
                 self.emit_final_response("final_response");
@@ -197,6 +228,7 @@ impl ReActLoop {
                     elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     iterations: self.iteration,
                     completed_normally: true,
+                    stop: fabric::TurnStop::Completed,
                 };
                 return Ok((final_text, metrics));
             }
@@ -310,6 +342,7 @@ impl ReActLoop {
             // Anthropic API requires ALL tool_result blocks for a given
             // assistant(tool_use) message to be in ONE subsequent user message.
             let mut tool_result_blocks: Vec<ContentBlock> = Vec::new();
+            let mut clarification_requested: Option<String> = None;
 
             let result_budget = per_result_budget(ordered_calls.len());
             for (tool_index, (id, name, input)) in ordered_calls.iter().enumerate() {
@@ -385,6 +418,7 @@ impl ReActLoop {
                         elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
+                        stop: fabric::TurnStop::Blocked,
                     };
                     return Ok((msg, metrics));
                 }
@@ -437,6 +471,7 @@ impl ReActLoop {
                             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                             iterations: self.iteration,
                             completed_normally: false,
+                            stop: fabric::TurnStop::Blocked,
                         };
                         return Ok((msg, metrics));
                     }
@@ -453,6 +488,50 @@ impl ReActLoop {
                 });
 
                 let (content, is_error) = execute_tool(id, name, input).await;
+
+                self.evidence_ledger.record(EvidenceRecord {
+                    id: EvidenceId(format!("tool:{id}")),
+                    subject: EvidenceSubject::ToolInvocation {
+                        tool_name: name.clone(),
+                    },
+                    source: EvidenceSource::Tool { name: name.clone() },
+                    level: EvidenceLevel::Observed,
+                    terminal_status: if is_error {
+                        TerminalStatus::Failed
+                    } else {
+                        TerminalStatus::Succeeded
+                    },
+                    locator: EvidenceLocator::DurableReceipt {
+                        receipt_id: id.clone(),
+                    },
+                    digest: None,
+                });
+                if let Some((agent_id, runtime)) = agent_spawn_observation(name, &content, is_error)
+                {
+                    self.spawned_agents.insert(agent_id, runtime);
+                }
+                if let Some((runtime, terminal_status)) =
+                    agent_terminal_evidence(name, &content, is_error, &self.spawned_agents)
+                {
+                    self.evidence_ledger.record(EvidenceRecord {
+                        id: EvidenceId(format!("agent:{id}")),
+                        subject: EvidenceSubject::AgentInvocation {
+                            runtime: runtime.clone(),
+                        },
+                        source: EvidenceSource::AgentRuntime { runtime },
+                        level: EvidenceLevel::RuntimeVerified,
+                        terminal_status,
+                        locator: EvidenceLocator::DurableReceipt {
+                            receipt_id: id.clone(),
+                        },
+                        digest: None,
+                    });
+                }
+                self.observe_change_transaction(name, id, &content, is_error);
+                self.observe_managed_command(name, id, &content, is_error);
+                if name == "request_user_input" && !is_error {
+                    clarification_requested = clarification_question(&content);
+                }
 
                 event_sink.emit(Event::ToolResult {
                     name: name.clone(),
@@ -569,6 +648,24 @@ impl ReActLoop {
             self.messages
                 .extend(drain_interjections().await?.into_iter().map(Message::user));
 
+            if let Some(question) = clarification_requested {
+                let outcome = format!("Waiting for user clarification: {question}");
+                event_sink.emit(Event::TurnDone {
+                    result: Ok(outcome.clone()),
+                });
+                return Ok((
+                    outcome,
+                    TurnMetrics {
+                        tool_calls_made,
+                        tool_errors,
+                        elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
+                        iterations: self.iteration,
+                        completed_normally: false,
+                        stop: fabric::TurnStop::Blocked,
+                    },
+                ));
+            }
+
             // Check if reflection recommended stopping.
             if self.reflection_engine.should_stop() {
                 let mut fallback = text_parts.join("\n");
@@ -616,6 +713,7 @@ impl ReActLoop {
                     elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     iterations: self.iteration,
                     completed_normally: false,
+                    stop: fabric::TurnStop::Blocked,
                 };
                 return Ok((fallback, metrics));
             }
@@ -657,9 +755,493 @@ impl ReActLoop {
             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
             iterations: self.iteration,
             completed_normally: false,
+            stop: fabric::TurnStop::Blocked,
         };
         Ok((fallback, metrics))
     }
+}
+
+enum ChangeTransactionObservation {
+    Applied {
+        transaction_id: String,
+        workspace_version: String,
+    },
+    DiffReviewed {
+        transaction_id: String,
+        workspace_version: String,
+        artifact_ref: String,
+    },
+    Validated {
+        transaction_id: String,
+        workspace_version: String,
+        artifact_ref: Option<String>,
+    },
+    Accepted {
+        transaction_id: String,
+        workspace_version: String,
+    },
+}
+
+impl ReActLoop {
+    fn observe_managed_command(
+        &mut self,
+        capability: &str,
+        call_id: &str,
+        content: &str,
+        is_error: bool,
+    ) {
+        if !matches!(
+            capability,
+            "exec_command" | "validation_run" | "write_stdin"
+        ) {
+            return;
+        }
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(content) else {
+            return;
+        };
+        let Some(session_id) = payload.get("session_id").and_then(|value| value.as_str()) else {
+            return;
+        };
+        let terminal = payload.get("terminal").filter(|value| !value.is_null());
+        if terminal.is_none() {
+            if is_error {
+                return;
+            }
+            if self.cognitive_state.is_none() {
+                self.cognitive_state =
+                    Some(CognitiveTurnState::from_contract(CognitiveTaskContract {
+                        objective: "observe the authoritative managed-command result".into(),
+                        task_kind: CognitiveTaskKind::General,
+                        required_actions: Vec::new(),
+                        deliverables: Vec::new(),
+                        validation_requirements: Vec::new(),
+                    }));
+            }
+            if let Some(state) = self.cognitive_state.as_mut() {
+                state.require_action(RequiredAction::ObserveCommandSession {
+                    session_id: session_id.into(),
+                });
+            }
+            self.completion_gate_mode = CompletionGateMode::Enforce;
+            return;
+        }
+        let terminal = terminal.expect("checked above");
+        let succeeded = terminal.get("status").and_then(|value| value.as_str()) == Some("exited")
+            && terminal.get("exit_code").and_then(|value| value.as_i64()) == Some(0)
+            && !is_error;
+        let locator = payload
+            .get("output_artifact_ref")
+            .and_then(|value| value.as_str())
+            .map(|artifact_id| EvidenceLocator::Artifact {
+                artifact_id: artifact_id.into(),
+            })
+            .unwrap_or_else(|| EvidenceLocator::DurableReceipt {
+                receipt_id: call_id.into(),
+            });
+        self.evidence_ledger.record(EvidenceRecord {
+            id: EvidenceId(format!("command-terminal:{call_id}")),
+            subject: EvidenceSubject::CommandSessionTerminal {
+                session_id: session_id.into(),
+            },
+            source: EvidenceSource::Tool {
+                name: capability.into(),
+            },
+            level: EvidenceLevel::DeterministicallyVerified,
+            terminal_status: if succeeded {
+                TerminalStatus::Succeeded
+            } else {
+                TerminalStatus::Failed
+            },
+            locator,
+            digest: payload
+                .get("output_artifact_ref")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+        });
+    }
+
+    fn observe_change_transaction(
+        &mut self,
+        capability: &str,
+        call_id: &str,
+        content: &str,
+        is_error: bool,
+    ) {
+        let Some(observation) = change_transaction_observation(capability, content, is_error)
+        else {
+            return;
+        };
+        match observation {
+            ChangeTransactionObservation::Applied {
+                transaction_id,
+                workspace_version,
+            } => {
+                if self.cognitive_state.is_none() {
+                    self.cognitive_state =
+                        Some(CognitiveTurnState::from_contract(CognitiveTaskContract {
+                            objective: "complete a version-bound code change".into(),
+                            task_kind: CognitiveTaskKind::CodeChange,
+                            required_actions: Vec::new(),
+                            deliverables: Vec::new(),
+                            validation_requirements: Vec::new(),
+                        }));
+                }
+                if let Some(state) = self.cognitive_state.as_mut() {
+                    state.phase = CognitiveWorkPhase::Execute;
+                    state.require_action(RequiredAction::ReviewChange {
+                        transaction_id: transaction_id.clone(),
+                        workspace_version: workspace_version.clone(),
+                    });
+                    state.require_action(RequiredAction::ValidateChange {
+                        transaction_id: transaction_id.clone(),
+                        workspace_version: workspace_version.clone(),
+                    });
+                    state.require_action(RequiredAction::AcceptChange {
+                        transaction_id,
+                        workspace_version,
+                    });
+                }
+                self.completion_gate_mode = CompletionGateMode::Enforce;
+            }
+            ChangeTransactionObservation::DiffReviewed {
+                transaction_id,
+                workspace_version,
+                artifact_ref,
+            } => {
+                self.evidence_ledger.record(EvidenceRecord {
+                    id: EvidenceId(format!("change-diff:{call_id}")),
+                    subject: EvidenceSubject::ChangeDiffReview {
+                        transaction_id,
+                        workspace_version: workspace_version.clone(),
+                    },
+                    source: EvidenceSource::Tool {
+                        name: capability.into(),
+                    },
+                    level: EvidenceLevel::DeterministicallyVerified,
+                    terminal_status: TerminalStatus::Succeeded,
+                    locator: EvidenceLocator::Artifact {
+                        artifact_id: artifact_ref,
+                    },
+                    digest: Some(workspace_version),
+                });
+                if let Some(state) = self.cognitive_state.as_mut() {
+                    state.phase = CognitiveWorkPhase::Verify;
+                }
+            }
+            ChangeTransactionObservation::Validated {
+                transaction_id,
+                workspace_version,
+                artifact_ref,
+            } => {
+                self.evidence_ledger.record(EvidenceRecord {
+                    id: EvidenceId(format!("change-validation:{call_id}")),
+                    subject: EvidenceSubject::ChangeValidation {
+                        transaction_id,
+                        workspace_version: workspace_version.clone(),
+                    },
+                    source: EvidenceSource::Validation {
+                        name: capability.into(),
+                    },
+                    level: EvidenceLevel::DeterministicallyVerified,
+                    terminal_status: TerminalStatus::Succeeded,
+                    locator: artifact_ref.map_or_else(
+                        || EvidenceLocator::DurableReceipt {
+                            receipt_id: call_id.into(),
+                        },
+                        |artifact_id| EvidenceLocator::Artifact { artifact_id },
+                    ),
+                    digest: Some(workspace_version),
+                });
+                if let Some(state) = self.cognitive_state.as_mut() {
+                    state.phase = CognitiveWorkPhase::Synthesize;
+                }
+            }
+            ChangeTransactionObservation::Accepted {
+                transaction_id,
+                workspace_version,
+            } => {
+                self.evidence_ledger.record(EvidenceRecord {
+                    id: EvidenceId(format!("change-acceptance:{call_id}")),
+                    subject: EvidenceSubject::ChangeAcceptance {
+                        transaction_id,
+                        workspace_version: workspace_version.clone(),
+                    },
+                    source: EvidenceSource::HostRuntime,
+                    level: EvidenceLevel::DeterministicallyVerified,
+                    terminal_status: TerminalStatus::Succeeded,
+                    locator: EvidenceLocator::DurableReceipt {
+                        receipt_id: call_id.into(),
+                    },
+                    digest: Some(workspace_version),
+                });
+            }
+        }
+    }
+}
+
+fn change_transaction_observation(
+    capability: &str,
+    content: &str,
+    is_error: bool,
+) -> Option<ChangeTransactionObservation> {
+    if is_error {
+        return None;
+    }
+    let payload: serde_json::Value = serde_json::from_str(content).ok()?;
+    if matches!(capability, "apply_patch" | "file_write")
+        && matches!(
+            payload.get("kind")?.as_str()?,
+            "apply_patch_receipt" | "file_write_receipt"
+        )
+    {
+        return Some(ChangeTransactionObservation::Applied {
+            transaction_id: payload.get("transaction_id")?.as_str()?.into(),
+            workspace_version: payload.get("resulting_workspace_version")?.as_str()?.into(),
+        });
+    }
+    if capability == "change_accept"
+        && payload.get("kind")?.as_str()? == "change_acceptance_receipt"
+    {
+        return Some(ChangeTransactionObservation::Accepted {
+            transaction_id: payload.get("transaction_id")?.as_str()?.into(),
+            workspace_version: payload.get("workspace_version")?.as_str()?.into(),
+        });
+    }
+    if capability == "git_diff" && payload.get("kind")?.as_str()? == "change_diff_receipt" {
+        return Some(ChangeTransactionObservation::DiffReviewed {
+            transaction_id: payload.get("transaction_id")?.as_str()?.into(),
+            workspace_version: payload.get("workspace_version")?.as_str()?.into(),
+            artifact_ref: payload.get("diff_artifact_ref")?.as_str()?.into(),
+        });
+    }
+    if matches!(capability, "exec_command" | "write_stdin") {
+        if let Some(transaction) = payload.get("change_transaction") {
+            if transaction.get("phase")?.as_str()? == "applied" {
+                return Some(ChangeTransactionObservation::Applied {
+                    transaction_id: transaction.get("transaction_id")?.as_str()?.into(),
+                    workspace_version: transaction.get("current")?.get("digest")?.as_str()?.into(),
+                });
+            }
+        }
+    }
+    if !matches!(capability, "validation_run" | "write_stdin") {
+        return None;
+    }
+    let transaction = payload.get("change_transaction")?;
+    if transaction.get("phase")?.as_str()? != "validated" {
+        return None;
+    }
+    let receipt = transaction.get("validation_receipts")?.as_array()?.last()?;
+    Some(ChangeTransactionObservation::Validated {
+        transaction_id: transaction.get("transaction_id")?.as_str()?.into(),
+        workspace_version: receipt.get("workspace_version")?.as_str()?.into(),
+        artifact_ref: receipt
+            .get("output_ref")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+    })
+}
+
+fn clarification_question(content: &str) -> Option<String> {
+    let payload: serde_json::Value = serde_json::from_str(content).ok()?;
+    (payload.get("status")?.as_str()? == "blocked")
+        .then(|| payload.get("question")?.as_str().map(str::to_owned))?
+}
+
+#[cfg(test)]
+mod change_transaction_tests {
+    use super::*;
+    use crate::adapters::inference::provider::LlmProvider;
+    use crate::core::{ProgressAuditor, ProgressDecision};
+    use crate::harness::linear::{CompactorTrait, HarnessConfig};
+    use fabric::message::Message;
+    use std::pin::Pin;
+
+    struct NoopCompressor;
+    impl CompactorTrait for NoopCompressor {
+        fn maybe_compact<'a>(
+            &'a mut self,
+            _messages: &'a mut Vec<Message>,
+            _llm: &'a dyn LlmProvider,
+        ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>> {
+            Box::pin(async { Ok(false) })
+        }
+
+        fn force_compact<'a>(
+            &'a mut self,
+            _messages: &'a mut Vec<Message>,
+            _llm: &'a dyn LlmProvider,
+        ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<bool>> + Send + 'a>> {
+            Box::pin(async { Ok(false) })
+        }
+    }
+
+    #[test]
+    fn version_bound_change_cannot_complete_before_diff_validation_and_acceptance() {
+        let mut loop_state = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        loop_state.observe_change_transaction(
+            "apply_patch",
+            "apply",
+            r#"{"kind":"apply_patch_receipt","transaction_id":"tx","resulting_workspace_version":"v1"}"#,
+            false,
+        );
+        assert!(matches!(
+            ProgressAuditor.audit(
+                loop_state.cognitive_state.as_ref().unwrap(),
+                &loop_state.evidence_ledger
+            ),
+            ProgressDecision::Continue { ref missing } if missing.len() == 3
+        ));
+
+        loop_state.observe_change_transaction(
+            "git_diff",
+            "diff",
+            r#"{"kind":"change_diff_receipt","transaction_id":"tx","workspace_version":"v1","diff_artifact_ref":"artifact://sha256/diff"}"#,
+            false,
+        );
+        loop_state.observe_change_transaction(
+            "validation_run",
+            "validation",
+            r#"{"change_transaction":{"transaction_id":"tx","phase":"validated","validation_receipts":[{"workspace_version":"v1","output_ref":"artifact://sha256/test"}]}}"#,
+            false,
+        );
+        assert!(matches!(
+            ProgressAuditor.audit(
+                loop_state.cognitive_state.as_ref().unwrap(),
+                &loop_state.evidence_ledger
+            ),
+            ProgressDecision::Continue { ref missing } if missing.len() == 1
+        ));
+
+        loop_state.observe_change_transaction(
+            "change_accept",
+            "accept",
+            r#"{"kind":"change_acceptance_receipt","transaction_id":"tx","workspace_version":"v1","transaction_phase":"accepted"}"#,
+            false,
+        );
+        assert_eq!(
+            ProgressAuditor.audit(
+                loop_state.cognitive_state.as_ref().unwrap(),
+                &loop_state.evidence_ledger
+            ),
+            ProgressDecision::Complete
+        );
+    }
+
+    #[test]
+    fn stale_or_failed_receipts_do_not_satisfy_change_obligations() {
+        let mut loop_state = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        loop_state.observe_change_transaction(
+            "file_write",
+            "write",
+            r#"{"kind":"file_write_receipt","transaction_id":"tx","resulting_workspace_version":"v2"}"#,
+            false,
+        );
+        loop_state.observe_change_transaction(
+            "git_diff",
+            "stale-diff",
+            r#"{"kind":"change_diff_receipt","transaction_id":"tx","workspace_version":"v1","diff_artifact_ref":"artifact://sha256/stale"}"#,
+            false,
+        );
+        loop_state.observe_change_transaction(
+            "validation_run",
+            "failed",
+            r#"{"change_transaction":{"transaction_id":"tx","phase":"validated","validation_receipts":[{"workspace_version":"v2"}]}}"#,
+            true,
+        );
+        assert!(matches!(
+            ProgressAuditor.audit(
+                loop_state.cognitive_state.as_ref().unwrap(),
+                &loop_state.evidence_ledger
+            ),
+            ProgressDecision::Continue { ref missing } if missing.len() == 3
+        ));
+    }
+
+    #[test]
+    fn running_managed_command_blocks_completion_until_terminal_snapshot() {
+        let mut loop_state = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        loop_state.observe_managed_command(
+            "exec_command",
+            "start",
+            r#"{"session_id":"command-1","terminal":null}"#,
+            false,
+        );
+        assert!(matches!(
+            ProgressAuditor.audit(
+                loop_state.cognitive_state.as_ref().unwrap(),
+                &loop_state.evidence_ledger
+            ),
+            ProgressDecision::Continue { ref missing } if missing.len() == 1
+        ));
+        loop_state.observe_managed_command(
+            "write_stdin",
+            "terminal",
+            r#"{"session_id":"command-1","terminal":{"status":"exited","exit_code":1},"output_artifact_ref":"artifact://sha256/output"}"#,
+            true,
+        );
+        assert_eq!(
+            ProgressAuditor.audit(
+                loop_state.cognitive_state.as_ref().unwrap(),
+                &loop_state.evidence_ledger
+            ),
+            ProgressDecision::Complete
+        );
+    }
+}
+
+fn agent_terminal_evidence(
+    capability: &str,
+    content: &str,
+    is_error: bool,
+    spawned_agents: &std::collections::BTreeMap<String, AgentRuntimeId>,
+) -> Option<(AgentRuntimeId, TerminalStatus)> {
+    if capability != "agent_wait" || is_error {
+        return None;
+    }
+    let payload: serde_json::Value = serde_json::from_str(content).ok()?;
+    if payload.get("ok").and_then(|value| value.as_bool()) != Some(true) {
+        return None;
+    }
+    let snapshot = payload.get("result")?;
+    let status = match snapshot.get("status").and_then(|value| value.as_str())? {
+        "succeeded" => TerminalStatus::Succeeded,
+        "failed" => TerminalStatus::Failed,
+        "cancelled" | "interrupted" => TerminalStatus::Cancelled,
+        _ => return None,
+    };
+    let runtime = snapshot
+        .pointer("/handle/runtime_id")
+        .and_then(|value| value.as_str())?;
+    let agent_id = snapshot
+        .pointer("/handle/agent_id")
+        .and_then(|value| value.as_str())?;
+    if spawned_agents
+        .get(agent_id)
+        .map(|runtime| runtime.0.as_str())
+        != Some(runtime)
+    {
+        return None;
+    }
+    Some((AgentRuntimeId(runtime.to_string()), status))
+}
+
+fn agent_spawn_observation(
+    capability: &str,
+    content: &str,
+    is_error: bool,
+) -> Option<(String, AgentRuntimeId)> {
+    if capability != "agent_spawn" || is_error {
+        return None;
+    }
+    let payload: serde_json::Value = serde_json::from_str(content).ok()?;
+    if payload.get("ok").and_then(|value| value.as_bool()) != Some(true) {
+        return None;
+    }
+    let handle = payload.get("result")?;
+    let agent_id = handle.get("agent_id")?.as_str()?.to_owned();
+    let runtime = handle.get("runtime_id")?.as_str()?.to_owned();
+    Some((agent_id, AgentRuntimeId(runtime)))
 }
 
 fn streaming_backoff_ms(attempt: u32) -> u64 {
@@ -711,7 +1293,11 @@ fn exploration_budget_results(
 
 #[cfg(test)]
 mod streaming_backoff_tests {
-    use super::{exploration_budget_results, streaming_backoff_ms, streaming_retry_delay_ms};
+    use super::{
+        agent_spawn_observation, agent_terminal_evidence, exploration_budget_results,
+        streaming_backoff_ms, streaming_retry_delay_ms,
+    };
+    use crate::core::{AgentRuntimeId, TerminalStatus};
     use crate::harness::event_sink::{Event, EventSink};
     use fabric::ContentBlock;
     use std::sync::Mutex;
@@ -787,5 +1373,42 @@ mod streaming_backoff_tests {
             Event::ToolResult { call_id, result, .. }
             if call_id == "call-2" && !result.is_error
         ));
+    }
+
+    #[test]
+    fn only_terminal_agent_wait_snapshot_creates_runtime_evidence() {
+        let mut spawned = std::collections::BTreeMap::new();
+        let running = serde_json::json!({
+            "ok": true,
+            "result": {"handle": {"agent_id": "agent-a", "runtime_id": "runtime-a"}, "status": "running"}
+        })
+        .to_string();
+        assert!(agent_terminal_evidence("agent_wait", &running, false, &spawned).is_none());
+
+        let succeeded = serde_json::json!({
+            "ok": true,
+            "result": {"handle": {"agent_id": "agent-a", "runtime_id": "runtime-a"}, "status": "succeeded"}
+        })
+        .to_string();
+        assert!(agent_terminal_evidence("agent_wait", &succeeded, false, &spawned).is_none());
+        spawned.insert("agent-a".into(), AgentRuntimeId("runtime-a".into()));
+        assert_eq!(
+            agent_terminal_evidence("agent_wait", &succeeded, false, &spawned),
+            Some((
+                AgentRuntimeId("runtime-a".into()),
+                TerminalStatus::Succeeded
+            ))
+        );
+        assert!(agent_terminal_evidence("agent_spawn", &succeeded, false, &spawned).is_none());
+
+        let spawn = serde_json::json!({
+            "ok": true,
+            "result": {"agent_id": "agent-a", "runtime_id": "runtime-a"}
+        })
+        .to_string();
+        assert_eq!(
+            agent_spawn_observation("agent_spawn", &spawn, false),
+            Some(("agent-a".into(), AgentRuntimeId("runtime-a".into())))
+        );
     }
 }

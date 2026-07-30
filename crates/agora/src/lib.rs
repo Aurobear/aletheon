@@ -26,8 +26,14 @@ pub use competition::{
     AdmissionMetrics, AdmissionOutcome, CandidatePool, CandidatePoolConfig, SelectionMetrics,
     SelectionPolicy,
 };
+pub use fabric::cognitive_workflow::{
+    AgentResultReceipt, AgoraProjectionReceipt, AgoraProjectionRequest, AgoraTaskList,
+    AgoraTaskProjection, ArtifactLifecycle, CognitiveArtifact, CognitiveArtifactEnvelope,
+    CognitiveArtifactId, CognitiveArtifactKind, CognitiveRole, CognitiveStage, CognitiveTaskNode,
+    CognitiveTaskNodeId, CognitiveTaskStatus, StageDecision, StageDecisionKind,
+};
 pub use ops::AgoraRegistry;
-pub use persistence::{AgoraPersistence, InMemoryCommitLog};
+pub use persistence::{AgoraPersistence, InMemoryCommitLog, SqliteAgoraPersistence};
 pub use scratchpad::{RetentionPolicy, Scratchpad, ScratchpadEntry};
 pub use task_graph::{TaskGraph, TaskNode, TaskStatus};
 pub use trace::{Trace, TraceEntry};

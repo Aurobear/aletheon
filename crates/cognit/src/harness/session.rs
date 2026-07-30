@@ -1,19 +1,121 @@
 //! Object-safe cognitive session adapter used by the executive turn service.
 
+use crate::core::{
+    AgentRuntimeId, CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState,
+    CompletionGateMode, RequiredAction,
+};
 use crate::harness::config::HarnessConfig;
 use crate::harness::linear::DynLlmRef;
 use crate::harness::linear::{BatchPlanner, CompactorTrait, ReActLoop};
 use async_trait::async_trait;
 use fabric::{
-    CapabilityCall, Message, TurnEvent, TurnEventSink, TurnMetrics as FabricTurnMetrics,
-    TurnRequest, TurnResult, TurnServices, TurnStop,
+    CapabilityCall, CapabilityErrorClass, CapabilityReceiptDetails, CapabilityRetryDisposition,
+    CapabilityTerminalReceipt, CapabilityTerminalStatus, Message, TurnEvent, TurnEventSink,
+    TurnMetrics as FabricTurnMetrics, TurnRequest, TurnResult, TurnServices, TurnStop,
 };
+use sha2::{Digest, Sha256};
 use std::pin::Pin;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 const MAX_DASEIN_CONTEXT_BYTES: usize = 8_000;
+
+struct ProjectionRecordingLlm<'a> {
+    inner: &'a dyn fabric::LlmProvider,
+    services: &'a dyn TurnServices,
+    operation_id: fabric::OperationId,
+}
+
+impl ProjectionRecordingLlm<'_> {
+    async fn record(&self, messages: &[Message], tools: &[fabric::ToolDefinition]) {
+        use fabric::model_projection::{
+            ModelContextClassification, ModelContextFragmentReceipt, ModelContextProjectionReceipt,
+        };
+        let fragments = messages
+            .iter()
+            .enumerate()
+            .map(|(index, message)| {
+                let bytes = serde_json::to_vec(message).unwrap_or_default();
+                let digest = format!("{:x}", Sha256::digest(&bytes));
+                let classification = if message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, fabric::ContentBlock::ToolResult { .. }))
+                {
+                    ModelContextClassification::ToolEvidence
+                } else {
+                    match message.role {
+                        fabric::Role::System => ModelContextClassification::Instruction,
+                        fabric::Role::User => ModelContextClassification::UntrustedInput,
+                        fabric::Role::Assistant => ModelContextClassification::ModelHistory,
+                    }
+                };
+                ModelContextFragmentReceipt {
+                    fragment_id: digest.clone(),
+                    source: format!("message:{index}:{:?}", message.role),
+                    source_version: digest,
+                    artifact_ref: None,
+                    inline_content: Some(String::from_utf8_lossy(&bytes).into_owned()),
+                    selection_reason: "active_turn_context".into(),
+                    classification,
+                    truncated: false,
+                    bytes: bytes.len() as u64,
+                }
+            })
+            .collect::<Vec<_>>();
+        let message_bytes = fragments.iter().map(|fragment| fragment.bytes).sum();
+        let tool_schema_bytes = serde_json::to_vec(tools)
+            .map(|bytes| bytes.len() as u64)
+            .unwrap_or_default();
+        self.services
+            .record_model_context_projection(ModelContextProjectionReceipt {
+                inference_id: uuid::Uuid::new_v4().to_string(),
+                operation_id: format!("{:?}", self.operation_id),
+                role: "active_agent".into(),
+                stage: "cognitive_loop".into(),
+                task_node_id: Some(format!("{:?}", self.operation_id)),
+                fragments,
+                omitted_fragment_ids: Vec::new(),
+                message_bytes,
+                tool_schema_bytes,
+            })
+            .await;
+    }
+}
+
+#[async_trait]
+impl fabric::LlmProvider for ProjectionRecordingLlm<'_> {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[fabric::ToolDefinition],
+    ) -> anyhow::Result<fabric::LlmResponse> {
+        self.record(messages, tools).await;
+        self.inner.complete(messages, tools).await
+    }
+
+    async fn complete_stream(
+        &self,
+        messages: &[Message],
+        tools: &[fabric::ToolDefinition],
+    ) -> anyhow::Result<fabric::LlmStream> {
+        self.record(messages, tools).await;
+        self.inner.complete_stream(messages, tools).await
+    }
+
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn runtime_facts(&self) -> fabric::ModelRuntimeFacts {
+        self.inner.runtime_facts()
+    }
+
+    fn max_context_length(&self) -> usize {
+        self.inner.max_context_length()
+    }
+}
 
 pub type CognitiveStreamEvent = crate::harness::event_sink::Event;
 
@@ -131,6 +233,7 @@ pub struct CognitiveSessionDependencies {
     /// Optional coding verifier (Wave 3). When set, ReActLoop validates the
     /// model's final answer before accepting it as complete.
     pub verifier: Option<Arc<dyn fabric::policy::verifier::Verifier>>,
+    pub grounded_outcome_sink: Option<Arc<dyn crate::core::GroundedOutcomeSink>>,
 }
 
 struct NoopCompressor;
@@ -183,6 +286,7 @@ pub trait CognitiveSession: Send {
 pub struct LinearCognitiveSession {
     inner: ReActLoop,
     cancellation: CancellationToken,
+    clock: Arc<dyn fabric::Clock>,
 }
 
 impl LinearCognitiveSession {
@@ -190,9 +294,13 @@ impl LinearCognitiveSession {
         let compactor = dependencies
             .compactor
             .unwrap_or_else(|| Box::new(NoopCompressor));
-        let mut inner = ReActLoop::new_with_clock(config, compactor, dependencies.clock);
+        let clock = dependencies.clock;
+        let mut inner = ReActLoop::new_with_clock(config, compactor, clock.clone());
         if let Some(planner) = dependencies.batch_planner.as_ref() {
             inner.set_batch_planner(Arc::clone(planner));
+        }
+        if let Some(sink) = dependencies.grounded_outcome_sink {
+            inner.set_grounded_outcome_sink(sink);
         }
         if let Some(callback) = dependencies.evicted_callback {
             inner.set_evicted_callback(callback);
@@ -203,6 +311,7 @@ impl LinearCognitiveSession {
         Self {
             inner,
             cancellation: dependencies.cancellation,
+            clock,
         }
     }
 
@@ -211,11 +320,166 @@ impl LinearCognitiveSession {
     /// Useful when the loop is constructed by a shared factory, e.g.
     /// `harness_factory::build_configured_react_loop()` in the daemon path.
     pub fn from_react_loop(inner: ReActLoop, cancellation: CancellationToken) -> Self {
+        let clock = inner.clock_handle();
         Self {
             inner,
             cancellation,
+            clock,
         }
     }
+
+    fn configure_turn_contract(
+        &mut self,
+        request: &TurnRequest,
+        services: &dyn TurnServices,
+    ) -> Option<Message> {
+        let requirements = services.turn_requirements(request);
+        if requirements.is_empty() {
+            self.inner.clear_cognitive_state();
+            return None;
+        }
+        let model_contract = render_turn_requirements(&requirements);
+        let required_actions = requirements
+            .into_iter()
+            .map(|requirement| match requirement {
+                fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => {
+                    RequiredAction::InvokeAgent {
+                        runtime: AgentRuntimeId(runtime_id),
+                    }
+                }
+                fabric::TurnRequirement::InvokeCapability { name } => {
+                    RequiredAction::InvokeTool { tool_name: name }
+                }
+                fabric::TurnRequirement::ObserveTerminal { operation_id } => {
+                    RequiredAction::ObserveTerminal { operation_id }
+                }
+            })
+            .collect::<Vec<_>>();
+        let task_kind = if required_actions
+            .iter()
+            .any(|action| matches!(action, RequiredAction::InvokeAgent { .. }))
+        {
+            CognitiveTaskKind::RequiredAgentExecution
+        } else {
+            CognitiveTaskKind::General
+        };
+        self.inner
+            .set_cognitive_state(CognitiveTurnState::from_contract(CognitiveTaskContract {
+                objective: request.input.clone(),
+                task_kind,
+                required_actions,
+                deliverables: Vec::new(),
+                validation_requirements: Vec::new(),
+            }));
+        self.inner
+            .set_completion_gate_mode(CompletionGateMode::Enforce);
+        Some(Message::system(model_contract))
+    }
+}
+
+fn render_turn_requirements(requirements: &[fabric::TurnRequirement]) -> String {
+    let mut lines = vec![
+        "[cognitive_task_contract]".to_owned(),
+        "These host-authored obligations apply to this turn and are enforced at completion:"
+            .to_owned(),
+    ];
+    for requirement in requirements {
+        lines.push(match requirement {
+            fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => format!(
+                "- During this turn call `agent_spawn` with its `runtime` field set exactly to `{runtime_id}` (the runtime ID is not a profile name), then call `agent_wait` for the returned `agent_id` and observe an authoritative terminal result whose `runtime_id` is `{runtime_id}`; historical Agent receipts do not satisfy this obligation."
+            ),
+            fabric::TurnRequirement::InvokeCapability { name } => {
+                format!("- Invoke capability `{name}` during this turn.")
+            }
+            fabric::TurnRequirement::ObserveTerminal { operation_id } => format!(
+                "- Observe authoritative terminal evidence for operation `{}`.",
+                operation_id.0
+            ),
+        });
+    }
+    lines.join("\n")
+}
+
+async fn invoke_with_terminal_receipt(
+    services: &dyn TurnServices,
+    call: CapabilityCall,
+    clock: &dyn fabric::Clock,
+) -> fabric::CapabilityResult {
+    let started_at = clock.mono_now();
+    let result = services.invoke(call.clone()).await;
+    let finished_at = clock.mono_now();
+    if let Some(details) = terminal_receipt_details(&call.name, &result) {
+        services
+            .record_capability_receipt(CapabilityTerminalReceipt::from_terminal_result(
+                &call,
+                &result,
+                started_at,
+                finished_at,
+                details,
+            ))
+            .await;
+    }
+    result
+}
+
+fn terminal_receipt_details(
+    capability: &str,
+    result: &fabric::CapabilityResult,
+) -> Option<CapabilityReceiptDetails> {
+    if !matches!(
+        capability,
+        "exec_command" | "write_stdin" | "validation_run"
+    ) {
+        return Some(CapabilityReceiptDetails::default());
+    }
+
+    let payload: serde_json::Value = serde_json::from_str(&result.output).ok()?;
+    let terminal = payload.get("terminal")?;
+    if terminal.is_null() {
+        return None;
+    }
+    let status = match terminal.get("status").and_then(|value| value.as_str()) {
+        Some("exited") if terminal.get("exit_code").and_then(|value| value.as_i64()) == Some(0) => {
+            CapabilityTerminalStatus::Succeeded
+        }
+        Some("exited") | Some("failed") => CapabilityTerminalStatus::Failed,
+        Some("timed_out") => CapabilityTerminalStatus::TimedOut,
+        Some("cancelled") => CapabilityTerminalStatus::Cancelled,
+        _ => return None,
+    };
+    let error_class = match status {
+        CapabilityTerminalStatus::TimedOut => Some(CapabilityErrorClass::Timeout),
+        CapabilityTerminalStatus::Failed => Some(CapabilityErrorClass::Unknown),
+        CapabilityTerminalStatus::Succeeded | CapabilityTerminalStatus::Cancelled => None,
+    };
+    Some(CapabilityReceiptDetails {
+        status: Some(status),
+        exit_code: terminal
+            .get("exit_code")
+            .and_then(|value| value.as_i64())
+            .and_then(|value| i32::try_from(value).ok()),
+        error_class,
+        output_ref: payload
+            .get("output_artifact_ref")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+            .or_else(|| {
+                payload
+                    .get("session_id")
+                    .and_then(|value| value.as_str())
+                    .map(|id| format!("command-session:{id}"))
+            }),
+        truncated: payload
+            .get("truncated")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
+        retry_disposition: if status == CapabilityTerminalStatus::Succeeded {
+            CapabilityRetryDisposition::Never
+        } else {
+            CapabilityRetryDisposition::AfterCorrection
+        },
+        ..CapabilityReceiptDetails::default()
+    })
 }
 
 #[async_trait]
@@ -244,16 +508,27 @@ impl CognitiveSession for LinearCognitiveSession {
 
         let result = if let Some(llm) = services.llm_provider() {
             self.inner.reset();
-            let seed_messages = services.seed_messages(&request);
+            let contract_message = self.configure_turn_contract(&request, services);
+            let mut seed_messages = services.seed_messages(&request);
+            if let Some(contract_message) = contract_message {
+                seed_messages.push(contract_message);
+            }
             if !seed_messages.is_empty() {
                 self.inner.seed_messages(seed_messages);
             }
             let tool_defs = services.tool_definitions();
             let process_id = request.process_id;
-            let llm = DynLlmRef(llm);
+            let clock = self.clock.clone();
+            let recording_llm = ProjectionRecordingLlm {
+                inner: llm,
+                services,
+                operation_id: request.operation_id,
+            };
+            let llm = DynLlmRef(&recording_llm);
             let run = self
                 .inner
                 .run(&request.input, &llm, &tool_defs, |call_id, name, input| {
+                    let clock = clock.clone();
                     let req = CapabilityCall {
                         operation_id: request.operation_id,
                         process_id,
@@ -263,7 +538,8 @@ impl CognitiveSession for LinearCognitiveSession {
                         deadline: None,
                     };
                     async move {
-                        let result = services.invoke(req).await;
+                        let result =
+                            invoke_with_terminal_receipt(services, req, clock.as_ref()).await;
                         (result.output, result.is_error)
                     }
                 });
@@ -288,7 +564,7 @@ impl CognitiveSession for LinearCognitiveSession {
             };
             TurnResult {
                 output,
-                stop: TurnStop::Completed,
+                stop: metrics.stop.clone(),
                 metrics: FabricTurnMetrics {
                     tool_calls_made: metrics.tool_calls_made,
                     tool_errors: metrics.tool_errors,
@@ -364,7 +640,11 @@ impl CognitiveSession for LinearCognitiveSession {
         };
 
         self.inner.reset();
-        let seed_messages = services.seed_messages(&request);
+        let contract_message = self.configure_turn_contract(&request, services);
+        let mut seed_messages = services.seed_messages(&request);
+        if let Some(contract_message) = contract_message {
+            seed_messages.push(contract_message);
+        }
         if !seed_messages.is_empty() {
             self.inner.seed_messages(seed_messages);
         }
@@ -381,12 +661,19 @@ impl CognitiveSession for LinearCognitiveSession {
 
         let tool_defs = services.tool_definitions();
         let process_id = request.process_id;
-        let llm = DynLlmRef(llm);
+        let clock = self.clock.clone();
+        let recording_llm = ProjectionRecordingLlm {
+            inner: llm,
+            services,
+            operation_id: request.operation_id,
+        };
+        let llm = DynLlmRef(&recording_llm);
         let sink = CognitiveStreamAdapter(stream);
         let run = self.inner.run_streaming(
             &llm,
             &tool_defs,
             |call_id, name, input| {
+                let clock = clock.clone();
                 let call = CapabilityCall {
                     operation_id: request.operation_id,
                     process_id,
@@ -396,7 +683,7 @@ impl CognitiveSession for LinearCognitiveSession {
                     deadline: None,
                 };
                 async move {
-                    let result = services.invoke(call).await;
+                    let result = invoke_with_terminal_receipt(services, call, clock.as_ref()).await;
                     (result.output, result.is_error)
                 }
             },
@@ -424,7 +711,7 @@ impl CognitiveSession for LinearCognitiveSession {
         };
         let result = TurnResult {
             output,
-            stop: TurnStop::Completed,
+            stop: metrics.stop.clone(),
             metrics: FabricTurnMetrics {
                 tool_calls_made: metrics.tool_calls_made,
                 tool_errors: metrics.tool_errors,
@@ -469,6 +756,35 @@ fn bounded_dasein_context(content: &str) -> String {
 #[cfg(test)]
 mod context_tests {
     use super::*;
+    use fabric::{RecallRequest, RecallSet};
+    use std::sync::Mutex as StdMutex;
+
+    struct ReceiptServices {
+        result: fabric::CapabilityResult,
+        receipts: StdMutex<Vec<CapabilityTerminalReceipt>>,
+    }
+
+    #[async_trait]
+    impl TurnServices for ReceiptServices {
+        async fn recall(&self, _request: RecallRequest) -> anyhow::Result<RecallSet> {
+            Ok(RecallSet::default())
+        }
+        async fn dasein_view(
+            &self,
+            _process: fabric::ProcessId,
+        ) -> anyhow::Result<fabric::DaseinView> {
+            Ok(fabric::DaseinView::default())
+        }
+        async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+            Ok(fabric::AgoraView::default())
+        }
+        async fn invoke(&self, _call: CapabilityCall) -> fabric::CapabilityResult {
+            self.result.clone()
+        }
+        async fn record_capability_receipt(&self, receipt: CapabilityTerminalReceipt) {
+            self.receipts.lock().unwrap().push(receipt);
+        }
+    }
 
     #[test]
     fn dasein_context_is_bounded_before_repeated_injection() {
@@ -477,5 +793,91 @@ mod context_tests {
 
         assert!(bounded.len() <= MAX_DASEIN_CONTEXT_BYTES + 80);
         assert!(bounded.contains("existential context truncated"));
+    }
+
+    #[test]
+    fn running_managed_command_does_not_create_terminal_receipt() {
+        let result = fabric::CapabilityResult {
+            call_id: "call".into(),
+            output: serde_json::json!({
+                "session_id": "session",
+                "terminal": null,
+                "truncated": false
+            })
+            .to_string(),
+            is_error: false,
+            usage: fabric::UsageReport::default(),
+            audit_id: None,
+            patch_delta: None,
+        };
+        assert!(terminal_receipt_details("exec_command", &result).is_none());
+    }
+
+    #[test]
+    fn agent_requirement_names_the_runtime_override_field() {
+        let contract = render_turn_requirements(&[fabric::TurnRequirement::InvokeAgentRuntime {
+            runtime_id: "pi-rpc".into(),
+        }]);
+        assert!(contract.contains("`agent_spawn`"));
+        assert!(contract.contains("`runtime` field set exactly to `pi-rpc`"));
+        assert!(contract.contains("runtime ID is not a profile name"));
+        assert!(contract.contains("`agent_wait`"));
+    }
+
+    #[test]
+    fn terminal_validation_projects_exact_status_and_output_reference() {
+        let result = fabric::CapabilityResult {
+            call_id: "call".into(),
+            output: serde_json::json!({
+                "session_id": "session",
+                "terminal": {"status": "exited", "exit_code": 0},
+                "output_artifact_ref": "artifact://sha256/validation",
+                "truncated": true
+            })
+            .to_string(),
+            is_error: false,
+            usage: fabric::UsageReport::default(),
+            audit_id: None,
+            patch_delta: None,
+        };
+        let details = terminal_receipt_details("validation_run", &result).unwrap();
+        assert_eq!(details.status, Some(CapabilityTerminalStatus::Succeeded));
+        assert_eq!(details.exit_code, Some(0));
+        assert_eq!(
+            details.output_ref.as_deref(),
+            Some("artifact://sha256/validation")
+        );
+        assert!(details.truncated);
+    }
+
+    #[tokio::test]
+    async fn terminal_invocation_is_forwarded_to_receipt_port_once() {
+        let services = ReceiptServices {
+            result: fabric::CapabilityResult {
+                call_id: "call".into(),
+                output: "observed".into(),
+                is_error: false,
+                usage: fabric::UsageReport::default(),
+                audit_id: None,
+                patch_delta: None,
+            },
+            receipts: StdMutex::new(Vec::new()),
+        };
+        let call = CapabilityCall {
+            operation_id: fabric::OperationId::new(),
+            process_id: fabric::ProcessId::new(),
+            name: "file_read".into(),
+            input: serde_json::Value::Null,
+            call_id: "call".into(),
+            deadline: None,
+        };
+        let clock = kernel::chronos::TestClock::default();
+
+        let _ = invoke_with_terminal_receipt(&services, call, &clock).await;
+
+        let receipts = services.receipts.lock().unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert!(receipts[0].proves_success());
+        assert_eq!(receipts[0].capability, "file_read");
     }
 }

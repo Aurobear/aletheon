@@ -7,7 +7,7 @@
 **模块编号:** 03
 **关联模块:** [cognitive-engine](../cognit/cognitive-engine.md), [memory-system](../mnemosyne/memory-system.md)
 **最后更新:** 2026-06-06
-**注:** 本文档为 `03-tool-system.md` 的副本，已更新跨文件引用路径。
+**注:** 本文档由早期工具系统设计合并而来。
 沙箱相关内容已拆分至 [sandbox.md](sandbox.md)。
 MCP 集成相关内容已拆分至 [mcp-integration.md](mcp.md)。
 
@@ -265,7 +265,7 @@ cgroups:
 - 安全性：Bearer Token 长期有效，泄露后无自动轮换机制
 - 工具能力：截图工具、图表工具等无法将结果以图片形式返回给 LLM
 
-**来源文档：** `gap-analysis/phase-2/tool-system/mcp-oauth-and-multimodal-output.md`
+**历史来源：** 已移除的 MCP OAuth/multimodal gap analysis。
 
 ### 3.6 P1: 沙箱后端可移植性
 
@@ -277,7 +277,7 @@ cgroups:
 - Android 端完全不可用（无 bubblewrap）
 - 开发者被迫使用 `--privileged` 破坏容器安全隔离
 
-**来源文档：** `gap-analysis/phase-3/tool-system/sandbox-backend-portability.md`
+**历史来源：** 已移除的 sandbox portability gap analysis。
 
 ### 3.7 P2: MCP 工具名 64 字节限制
 
@@ -287,7 +287,7 @@ cgroups:
 - LLM 工具选择准确率下降（截断和哈希后的工具名降低语义密度）
 - 调试效率降低（需要额外映射步骤还原原始名称）
 
-**来源文档：** `gap-analysis/phase-5/tool-system/mcp-tool-64byte-limit.md`
+**历史来源：** 已移除的 MCP tool-name limit gap analysis。
 
 ---
 
@@ -575,14 +575,14 @@ Phase 2 保持 Bearer Token 作为唯一认证方式，但定义 OAuth 认证的
 | **溢出清理** | `corpus/src/tools/tools/output/persistence.rs` — `cleanup_overflow_dir()` 7 天保留 |
 | **MCP 客户端** | `corpus/src/tools/mcp/client.rs` — McpClient + 三种 Transport |
 | **MCP 连接管理器** | `corpus/src/tools/mcp/manager.rs` — McpConnectionManager |
-| **MCP 工具适配** | `corpus/src/tools/mcp/tool_adapter.rs` — McpToolWrapper + normalize_tool_name |
+| **MCP 工具适配** | `crates/corpus/src/tools/mcp/wrapper.rs` — McpToolWrapper + normalize_tool_name |
 | **MCP 配置** | `corpus/src/tools/mcp/config.rs` — McpServerConfig |
-| **MCP 错误** | `corpus/src/tools/mcp/error.rs` — McpError enum |
-| **MCP 资源/提示词** | `corpus/src/tools/mcp/resources.rs` — list_all_resources + read_resource |
+| **MCP 错误** | `crates/corpus/src/tools/mcp/client.rs` — McpError enum |
+| **MCP 资源/提示词** | `crates/corpus/src/tools/mcp/client.rs` — list_all_resources + read_resource |
 | **沙箱执行器** | `corpus/src/security/sandbox/executor.rs` — SandboxExecutor + `CaptureConfig` + `SandboxResult` |
 | **MCP OAuth** | `corpus/src/tools/mcp/auth.rs` — `McpAuthProvider` trait + BearerTokenAuth + OAuthAuth 骨架 |
 | **沙箱后端** | `corpus/src/security/sandbox/backend.rs` — `SandboxBackend` trait + 三后端 |
-| **工具名配置** | `corpus/src/tools/mcp/tool_name.rs` — `ToolNameConfig` + `CollisionStrategy` |
+| **工具名配置** | `crates/corpus/src/tools/mcp/transport.rs` — `ToolNameConfig` + `CollisionStrategy` |
 | **内置工具** | `agent-tools/src/` — bash, file_ops, system, memory_tools, delegate, file_search |
 
 ---
@@ -625,6 +625,6 @@ Phase 2 保持 Bearer Token 作为唯一认证方式，但定义 OAuth 认证的
 - `ToolOutput` trait — output lifecycle: `log_preview()`, `to_model_content()`, `to_audit_json()`
 - Output defense pipeline — `capture_output()`, `process_result()`, `enforce_turn_budget()` in `tool/output/`
 
-**Test Coverage:** 120 unit tests + 6 integration tests in `tests/output_defense.rs`. Covers capture, truncation, persistence, turn budget, pruner, and compressor.
+**Test coverage:** Output capture, truncation, persistence, turn budgets, pruning, and compaction are covered by package-local unit and integration targets; counts are intentionally not frozen in this document.
 
 **Not Yet Implemented:** ToolExposure 4-level system, BM25 tool search, Toolset composition, ToolGuardrails, ToolCallExecutor parallel execution, MCP integration, sandbox backend multi-backend support.

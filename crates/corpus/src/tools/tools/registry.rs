@@ -53,6 +53,21 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Snapshot every executable tool for host-side authorization and profile
+    /// validation. Unlike [`Self::definitions`], this includes deferred tools;
+    /// callers must not pass this catalog wholesale to a model request.
+    pub fn profile_definitions(&self) -> Vec<fabric::ToolDefinition> {
+        self.tools
+            .values()
+            .filter(|tool| tool.exposure() != ToolExposure::Hidden)
+            .map(|tool| fabric::ToolDefinition {
+                name: tool.name().to_string(),
+                description: tool.description().to_string(),
+                input_schema: tool.input_schema(),
+            })
+            .collect()
+    }
+
     /// Bind the existing BM25 catalog to this registry and expose its single
     /// bridge tool. Later registrations refresh the same shared catalog.
     pub fn enable_tool_search(&mut self) -> Result<RegistrationId, AgentError> {
@@ -112,6 +127,34 @@ impl ToolRegistry {
     /// Snapshot host-only proposal confidence metadata for planning.
     pub fn proposal_confidences(&self) -> HashMap<String, f32> {
         self.proposal_confidences.clone()
+    }
+
+    /// Replace the legacy standalone task store with the authoritative Agora
+    /// task graph. Existing tool names stay stable for model profiles.
+    pub fn bind_agora_task_tools(
+        &mut self,
+        service: Arc<dyn fabric::AgoraService>,
+        host_process: fabric::ProcessId,
+    ) -> Result<(), AgentError> {
+        for name in [
+            "task_create",
+            "task_update",
+            "task_list",
+            "task_get",
+            "request_user_input",
+        ] {
+            self.tools.remove(name);
+            self.proposal_confidences.remove(name);
+            self.id_map
+                .retain(|_, registered_name| registered_name != name);
+        }
+        for tool in super::agora_task_tools::AgoraTaskTools::new(service, host_process).tools() {
+            let name = tool.name().to_owned();
+            self.register(tool)?;
+            self.set_proposal_confidence(&name, 0.5)?;
+        }
+        self.refresh_search_catalog();
+        Ok(())
     }
 
     pub fn register_google_read_tools(
@@ -247,15 +290,49 @@ impl ToolRegistry {
         tasks_db: Option<std::path::PathBuf>,
     ) -> Self {
         let mut registry = Self::new();
+        let change_transactions = super::change_transaction::ChangeTransactionRegistry::default();
         // Register built-in tools — panics on duplicate names (should never happen)
         registry
             .register(Arc::new(super::bash_exec::BashExecTool))
+            .expect("duplicate built-in tool");
+        let command_sessions =
+            super::managed_command::ManagedCommandSessions::with_change_transactions(
+                change_transactions.clone(),
+            );
+        registry
+            .register(Arc::new(super::managed_command::ExecCommandTool::new(
+                command_sessions.clone(),
+            )))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(super::managed_command::WriteStdinTool::new(
+                command_sessions.clone(),
+            )))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(super::managed_command::ValidationRunTool::new(
+                command_sessions,
+            )))
             .expect("duplicate built-in tool");
         registry
             .register(Arc::new(super::file_read::FileReadTool))
             .expect("duplicate built-in tool");
         registry
-            .register(Arc::new(super::file_write::FileWriteTool))
+            .register(Arc::new(
+                super::change_transaction::TransactionalRepoInspectTool::new(
+                    change_transactions.clone(),
+                ),
+            ))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(super::artifact_read::ArtifactReadTool::default()))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(
+                super::change_transaction::TransactionalFileWriteTool::new(
+                    change_transactions.clone(),
+                ),
+            ))
             .expect("duplicate built-in tool");
         registry
             .register(Arc::new(super::system_status::SystemStatusTool))
@@ -282,7 +359,11 @@ impl ToolRegistry {
             .register(Arc::new(super::file_search::FileSearchTool))
             .expect("duplicate built-in tool");
         registry
-            .register(Arc::new(super::apply_patch::ApplyPatchTool))
+            .register(Arc::new(
+                super::change_transaction::TransactionalApplyPatchTool::new(
+                    change_transactions.clone(),
+                ),
+            ))
             .expect("duplicate built-in tool");
         registry
             .register(Arc::new(super::glob::GlobTool))
@@ -293,11 +374,31 @@ impl ToolRegistry {
         // Git tools: read-only (status/diff/log/show) plus safe write/undo
         // (restore/stash/reset). These were defined but never registered, so
         // the agent previously had no git capability at all.
-        for tool in super::git_tools::git_tools() {
+        for tool in super::git_tools::git_tools()
+            .into_iter()
+            .filter(|tool| tool.name() != "git_diff")
+        {
             registry
                 .register(tool)
                 .expect("duplicate built-in git tool");
         }
+        registry
+            .register(Arc::new(
+                super::change_transaction::TransactionalGitDiffTool::new(
+                    change_transactions.clone(),
+                ),
+            ))
+            .expect("duplicate built-in git tool");
+        registry
+            .register(Arc::new(super::change_transaction::ChangeAcceptTool::new(
+                change_transactions.clone(),
+            )))
+            .expect("duplicate built-in tool");
+        registry
+            .register(Arc::new(
+                super::change_transaction::ChangeRollbackTool::new(change_transactions),
+            ))
+            .expect("duplicate built-in tool");
         registry
             .register(Arc::new(
                 super::web_fetch::WebFetchTool::new().with_network_policy(policy.clone()),
@@ -458,6 +559,14 @@ mod tests {
             .definitions()
             .iter()
             .any(|definition| definition.name == "tool_search"));
+        assert!(!reg
+            .definitions()
+            .iter()
+            .any(|definition| definition.name == "artifact_read"));
+        assert!(reg
+            .profile_definitions()
+            .iter()
+            .any(|definition| definition.name == "artifact_read"));
     }
 
     #[test]

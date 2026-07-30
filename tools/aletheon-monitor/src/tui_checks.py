@@ -14,8 +14,12 @@ def check_dup_render(frame: str, min_block: int = 3) -> list[dict]:
     seen: dict[tuple, int] = {}
     for i in range(n - min_block + 1):
         window = tuple(lines[i:i + min_block])
-        if all(w.strip() == "" for w in window):
-            continue  # ignore all-blank windows (padding, not real content)
+        if any(w.strip() == "" for w in window):
+            # Section templates commonly repeat around blank separators (for
+            # example "severity / evidence" headings). A duplicated renderer
+            # repeats contiguous painted content, so blank-spanning windows
+            # are structural noise rather than render evidence.
+            continue
         if window in seen:
             prev = seen[window]
             if i - prev >= min_block:  # non-overlapping duplicate
@@ -40,6 +44,11 @@ _UNKNOWN_SKILL_RE = re.compile(r"未知技能:\s*/\S+")
 def check_raw_markdown(frame: str) -> list[dict]:
     """Unrendered markdown table pipes leaking into the TUI."""
     for ln in frame.splitlines():
+        if re.match(r"^\s*│\s*\d+\s*│", ln):
+            # Expanded tool/Agent artifacts are deliberately rendered as a
+            # numbered verbatim source view. Markdown inside that evidence is
+            # content, not an assistant-response rendering defect.
+            continue
         if _MD_SEP_RE.search(ln) or "||" in ln:
             return [{
                 "kind": "raw_markdown",

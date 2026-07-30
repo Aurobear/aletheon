@@ -42,6 +42,7 @@ fn request() -> TurnRequest {
         input: "run tools".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
     }
 }
 
@@ -255,6 +256,7 @@ async fn run_with_plan(
             batch_planner: Some(planner),
             evicted_callback: None,
             verifier: None,
+            grounded_outcome_sink: None,
         },
     );
 

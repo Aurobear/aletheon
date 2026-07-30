@@ -2,7 +2,7 @@
 
 # 混合推理架构
 
-> 本地优先、云端兜底的推理路由系统，根据任务复杂度自动选择推理后端。
+> 本地优先、云端兜底的目标设计；不是当前安装态的默认推理链路。
 
 **模块编号:** 09
 **关联模块:** [认知引擎 (01)](cognitive-engine.md), [工具系统 (03)](../corpus/tools.md)
@@ -14,9 +14,10 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| IntentClassifier | ✅ Implemented | `inference/classifier.rs` | Rule-based intent classification (keyword + token count) |
-| InferenceRouter | ✅ Implemented | `inference/router.rs` | Local/cloud routing with complexity-based selection, runtime upgrade |
-| ProviderConfig | ✅ Implemented | `inference/provider_config.rs` | Provider type enum + config struct |
+| IntentClassifier | 🔶 Standalone | `crates/cognit/src/application/inference/classifier.rs` | Rule-based classifier exists but is not the installed route authority |
+| InferenceRouter | 🔶 Standalone | `crates/cognit/src/application/inference/router.rs` | Selection component exists but is not wired into production sessions |
+| ProviderConfig | ✅ Implemented | `crates/cognit/src/application/inference/provider_config.rs` | Configuration types for the standalone router |
+| Installed inference route | ✅ Implemented | `crates/executive/src/host/daemon/bootstrap/inference.rs` | Host-owned provider/model resolution through the machine core |
 
 **NOTE:** This module is standalone -- NOT integrated with the engine. Engine uses `ProviderRegistry` directly.
 
@@ -35,7 +36,10 @@
 
 ## 1. 概述
 
-Aletheon 作为永远在线的系统级服务，推理延迟直接影响用户体验。混合推理架构的核心原则是**离线优先**：日常任务用本地模型（llama.cpp + Q4 量化）在 <1s 内完成，复杂推理任务自动升级到云端（DeepSeek/Claude/GPT）。路由决策由轻量意图分类器驱动，整个过程对用户透明。
+Aletheon 作为长期运行的系统级服务，推理延迟直接影响用户体验。本节描述的目标是
+**离线优先**：日常任务使用本地模型，复杂推理升级到云端。当前安装态仍通过
+machine core 的有效配置选择 provider/model；llama.cpp 本地推理和基于
+`IntentClassifier` 的透明升级尚未接入该生产链路。
 
 ---
 
@@ -43,7 +47,7 @@ Aletheon 作为永远在线的系统级服务，推理延迟直接影响用户�
 
 ### 2.1 推理决策树
 
-原始设计（`design.md` §12.1）定义了两级路由：
+早期目标设计定义了两级路由：
 
 ```
 用户请求 / 系统事件
@@ -78,7 +82,7 @@ Aletheon 作为永远在线的系统级服务，推理延迟直接影响用户�
 
 ### 2.2 Provider 配置
 
-原始设计（`design.md` §12.2）定义了 YAML 配置格式，支持 local (llama-cpp), cloud (deepseek/openai/anthropic) 和 routing (default/fallback/escalation_rules) 三个配置段。路由规则包括 token_count、task_type、confidence 条件。
+早期目标设计定义了 YAML 配置格式，支持 local、cloud 和 routing 三个配置段；该格式不是当前安装态配置契约。
 
 ---
 
@@ -149,7 +153,7 @@ fn classify_intent(task: &str, context: &AgentContext) -> IntentCategory {
 
 **运行时复杂度重评估:** 当 iteration > 5 或 tool_calls > 8 时，自动将后续推理升级到云端模型。
 
-### 4.4 用户路由覆盖
+### 4.4 用户路由覆盖（目标设计，当前 CLI 不支持）
 
 用户可通过 CLI 参数强制覆盖分类器决策：
 
@@ -163,7 +167,7 @@ agent "自动判断的任务"                  # 使用分类器
 
 ---
 
-## 5. 实现要点
+## 5. 目标实现要点
 
 - 本地推理引擎（llama.cpp）通过 Rust FFI 绑定集成，注意 GPU 层分配和内存映射
 - 意图分类器使用独立的 1B 小模型，推理延迟必须 <10ms，否则成为瓶颈
@@ -175,7 +179,7 @@ agent "自动判断的任务"                  # 使用分类器
 
 ## 6. 参考来源
 
-- **原始设计文档:** `docs/plans/2026-06-14-cleanup-design.md` §12 (historical reference, file has been removed)
+- **路线图上下文:** [phases.md](../roadmap/phases.md)
 - **llama.cpp:** 本地推理引擎，GGUF 格式模型加载，GPU offload 支持
 - **Anthropic SDK:** content-block 协议、工具循环、上下文压缩（`lib/tools/_beta_runner.py`）
 - **OpenCode:** run coordinator 的 demand coalescing 模式（参考其多 provider 调度逻辑）
@@ -184,7 +188,7 @@ agent "自动判断的任务"                  # 使用分类器
 
 ## Implementation Summary
 
-**Code location:** `crates/cognit/src/impl/inference/`
+**Code location:** `crates/cognit/src/application/inference/`
 
 **Key types/traits implemented:**
 - `Complexity` enum (`classifier.rs`) — Simple/Medium/Complex intent categories
@@ -193,4 +197,4 @@ agent "自动判断的任务"                  # 使用分类器
 - `ProviderType` enum (`provider_config.rs`) — Local/Cloud provider types
 - `ProviderConfig` struct (`provider_config.rs`) — provider configuration with base_url, model, api_key, priority
 
-**Test coverage:** No unit tests found in the inference module.
+**Test coverage:** Classifier, router selection, upgrade, and configuration have unit tests; production host routing is covered separately in Executive tests.

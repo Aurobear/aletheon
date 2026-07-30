@@ -57,6 +57,10 @@ pub struct PromptEnvelope {
     pub kind: PromptKind,
     /// Bounded; over-limit content is truncated (UTF-8 safe) before storage.
     pub content: String,
+    /// Typed obligations travel with the durable prompt so a queued turn cannot
+    /// lose client/workflow requirements when another connection owns processing.
+    #[serde(default)]
+    pub requirements: Vec<crate::TurnRequirement>,
     pub created_at_unix: u64,
     pub updated_at_unix: u64,
     pub state: PromptState,
@@ -182,6 +186,7 @@ mod tests {
             thread_id: ThreadId("t1".to_string()),
             kind: PromptKind::Prompt,
             content: "hello".to_string(),
+            requirements: Vec::new(),
             created_at_unix: 1,
             updated_at_unix: 1,
             state: PromptState::Queued,

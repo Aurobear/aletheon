@@ -1,6 +1,11 @@
 # Session Persistence and Lifecycle
 
-> Migrated from `docs/design/core/session-lifecycle.md` (session persistence and crash recovery sections only) — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
+> **Status:** Historical design. The old SessionStore/EventJournal map below
+> predates the canonical and event-sourced session adapters. Current ownership
+> is under `crates/executive/src/adapters/session/` and
+> `crates/executive/src/core/session_gateway/`.
+
+> Consolidated from earlier design drafts; current code paths and capability status must be verified against the repository.
 
 > Session persistence, EventJournal, crash recovery. Observability sections extracted to [observability.md](observability.md).
 

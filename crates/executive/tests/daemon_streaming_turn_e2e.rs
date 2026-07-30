@@ -27,6 +27,7 @@ fn request(process_id: fabric::ProcessId, thread: &str) -> TurnRequest {
         input: "hello daemon".into(),
         model_policy: None,
         deadline: None,
+        requirements: Vec::new(),
     }
 }
 

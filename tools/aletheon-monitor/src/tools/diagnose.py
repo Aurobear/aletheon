@@ -179,7 +179,9 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
     frame = cap.get("frame", "")
     expected = os.path.realpath(expected_cwd) if expected_cwd else None
     if expected:
-        assertions.append({"name": "expected_cwd", "passed": expected in frame,
+        actual_cwd = os.path.realpath(started.get("working_dir", ""))
+        assertions.append({"name": "expected_cwd", "passed": actual_cwd == expected,
+                           "actual": actual_cwd,
                            "expected": expected})
     assertions.extend(frame_assertions(
         frame,
@@ -214,8 +216,15 @@ async def diagnose(client, task: str, settle_secs: float = 6.0,
         "rendered_frame": cap.get("frame", ""),
         "stable": cap.get("stable"),
         "prompt_visible": cap.get("prompt_visible"),
-        "completion": f"heuristic (settled {settle_secs}s beyond input echo; "
-                      "may be mid-turn if an inter-step gap exceeds that)",
+        "turn_done_count": cap.get("turn_done_count"),
+        "completion_source": cap.get("completion_source"),
+        "event_path": cap.get("event_path"),
+        "event_evidence": cap.get("event_evidence"),
+        "completion": (
+            "authoritative client_event:turn_done with durable event evidence"
+            if cap.get("turn_done") is True
+            else f"heuristic (settled {settle_secs}s beyond input echo; may be mid-turn)"
+        ),
         "tui_checks": cap.get("checks", []),
         "daemon": {"analyze": daemon_analyze, "logs": daemon_logs},
         "audit_tail": audit_tail,

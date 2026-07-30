@@ -101,6 +101,8 @@ pub struct ChatParams {
     pub session_id: Option<SessionId>,
     pub working_dir: PathBuf,
     pub workspace_roots: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requirements: Vec<crate::TurnRequirement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -313,6 +315,7 @@ impl ClientRpcRequest {
             session_id: None,
             working_dir: workspace.cwd().to_path_buf(),
             workspace_roots: workspace.writable_roots().to_vec(),
+            requirements: Vec::new(),
         })
     }
 
@@ -327,6 +330,21 @@ impl ClientRpcRequest {
         };
         request.session_id = Some(session_id);
         Self::Chat(request)
+    }
+
+    pub fn chat_with_requirements(
+        message: impl Into<String>,
+        session_id: Option<SessionId>,
+        workspace: &WorkspacePolicy,
+        requirements: Vec<crate::TurnRequirement>,
+    ) -> Self {
+        let mut params = match Self::chat(message, workspace) {
+            Self::Chat(params) => params,
+            _ => unreachable!("chat constructor always returns chat"),
+        };
+        params.session_id = session_id;
+        params.requirements = requirements;
+        Self::Chat(params)
     }
 
     pub fn skill_invoke(
@@ -963,4 +981,31 @@ pub struct ClientProtocolSchema {
 pub fn client_schema() -> serde_json::Value {
     serde_json::to_value(schemars::schema_for!(ClientProtocolSchema))
         .expect("client protocol schema serializes")
+}
+
+#[cfg(test)]
+mod request_tests {
+    use super::*;
+
+    #[test]
+    fn chat_serializes_explicit_typed_agent_requirement() {
+        let workspace =
+            WorkspacePolicy::from_resolved_roots("/tmp/project".into(), Vec::new()).unwrap();
+        let request = ClientRpcRequest::chat_with_requirements(
+            "inspect",
+            Some(SessionId("session-a".into())),
+            &workspace,
+            vec![crate::TurnRequirement::InvokeAgentRuntime {
+                runtime_id: "pi-rpc".into(),
+            }],
+        )
+        .to_json_rpc(Some(9))
+        .unwrap();
+
+        assert_eq!(request["method"], "chat");
+        assert_eq!(
+            request["params"]["requirements"][0]["InvokeAgentRuntime"]["runtime_id"],
+            "pi-rpc"
+        );
+    }
 }

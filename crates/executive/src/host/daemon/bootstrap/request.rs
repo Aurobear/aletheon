@@ -1,22 +1,36 @@
 //! Handler initialization, construction, and setup-related methods.
-
 use super::super::model_router::{ModelRouter, TaskType};
 use super::super::DaemonConfig;
+use super::approval_gate::{bootstrap_workspace_trust_resolver, DurableSocketApprovalGate};
+use crate::adapters::channel::gmail::GmailGoalDraftCoordinator;
+use crate::adapters::runtime::worktree_recovery::{
+    WorktreeRecoveryConfig, WorktreeRecoveryService,
+};
+use crate::adapters::runtime::{
+    pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime,
+};
 use crate::adapters::session::store::SessionStore;
+use crate::application::goal::ObjectiveStore;
+use crate::application::harness_factory::production_cognitive_session_factory;
+use crate::application::inference_port::InferencePort;
+use crate::application::CapabilityService;
 use crate::composition::config::ExecutiveConfig;
 use crate::composition::prefix_builder::PrefixBuilder;
 use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonExecutive;
 use crate::host::daemon::handler::RequestHandler;
 use anyhow::Context;
-use kernel::chronos::SystemClock;
-
-use super::approval_gate::{bootstrap_workspace_trust_resolver, DurableSocketApprovalGate};
 use cognit::core::reflector::Reflector;
+use corpus::hook::builtin::audit_hook;
 use corpus::security::audit::AuditLogger;
 use corpus::security::runner::ToolRunnerWithGuard;
 use corpus::security::sandbox::executor::{create_executor_with_front_backend, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
+use corpus::security::storm_breaker::StormBreaker;
+use corpus::skill::plugin::register_skill;
+use corpus::HookRegistry;
+use corpus::SkillLoader;
+use corpus::SkillRouter;
 use dasein::{SelfField, SelfFieldConfig};
 use fabric::CanonicalEventBus;
 use fabric::Clock;
@@ -33,23 +47,6 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::adapters::channel::gmail::GmailGoalDraftCoordinator;
-use crate::adapters::runtime::worktree_recovery::{
-    WorktreeRecoveryConfig, WorktreeRecoveryService,
-};
-use crate::adapters::runtime::{
-    pi_rpc_environment_from_process, register_pi_runtime, PiRpcRuntime,
-};
-use crate::application::goal::ObjectiveStore;
-use crate::application::inference_port::InferencePort;
-use crate::application::CapabilityService;
-use corpus::hook::builtin::audit_hook;
-use corpus::security::storm_breaker::StormBreaker;
-use corpus::skill::plugin::register_skill;
-use corpus::HookRegistry;
-use corpus::SkillLoader;
-use corpus::SkillRouter;
-
 use super::super::debug_handler::DebugHandler;
 use crate::core::session_gateway::gateway::SessionStateRef;
 use crate::core::session_gateway::ParamRegistry;
@@ -62,6 +59,7 @@ use super::request_ports::{
 impl RequestHandler {
     pub async fn new(
         config: &DaemonConfig,
+        clock: Arc<dyn Clock>,
         inference: Arc<dyn InferencePort>,
         model_routing: crate::composition::config::ModelRoutingConfig,
         model_aliases: HashMap<String, String>,
@@ -85,8 +83,6 @@ impl RequestHandler {
         .await?
         .provider;
         info!(provider = llm.name(), "LLM provider initialized");
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
-
         let session_id = uuid::Uuid::new_v4().to_string();
         let data_dir = PathBuf::from(&config.data_dir);
         let data_dir_for_telegram = data_dir.clone();
@@ -292,6 +288,17 @@ impl RequestHandler {
         let session_created_at = sessions_composition.created_at;
         let active_connections = Arc::new(AtomicUsize::new(0));
 
+        // The authoritative Agora service exists before tool/profile assembly so
+        // task and clarification tools share the same durable workspace from
+        // their first model-visible definition.
+        let agora_persistence = Arc::new(
+            agora::SqliteAgoraPersistence::open(data_dir.join("agora.db"))
+                .context("opening durable Agora commit log")?,
+        );
+        let agora_service: Arc<dyn fabric::AgoraService> = Arc::new(
+            agora::AgoraRegistry::new_with_persistence(agora_persistence, clock.clone()),
+        );
+
         // Register tools
         let search_config = config.integrations.search.as_ref().map(|search| {
             corpus::tools::tools::web_search::WebSearchConfig::new(
@@ -305,6 +312,7 @@ impl RequestHandler {
             stores: memory,
             clock: clock.clone(),
             tasks_db: Some(data_dir.join("tasks.db")),
+            agora: agora_service.clone(),
         });
         let mut tools = tool_composition.registry;
         let core_memory = tool_composition.stores.core;
@@ -508,24 +516,6 @@ impl RequestHandler {
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
-        tracing::info!(
-            harness = crate::application::harness_factory::selected_harness_kind(
-                runtime_config_snapshot.harness_kind
-            ),
-            "cognitive harness selected from config"
-        );
-        let cognitive_sessions: Arc<
-            dyn crate::application::harness_factory::CognitiveSessionFactory,
-        > = Arc::new(
-            crate::application::harness_factory::LinearCognitiveSessionFactory::new(
-                crate::application::harness_factory::harness_config_from_executive(
-                    &runtime_config_snapshot,
-                ),
-                clock.clone(),
-            )
-            .with_evicted_memory(recall_memory.clone()),
-        );
-
         let mut runtime = AletheonExecutive::new(runtime_config);
         let evo_config = EvolutionConfig {
             enabled: evolution_enabled,
@@ -798,8 +788,12 @@ impl RequestHandler {
             .await
             .dasein_handle()
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
-        let agora_service: Arc<dyn fabric::AgoraService> =
-            Arc::new(agora::AgoraRegistry::new(kernel.clock()));
+        let cognitive_sessions = production_cognitive_session_factory(
+            &runtime_config_snapshot,
+            clock.clone(),
+            recall_memory.clone(),
+            dasein_handle.clone(),
+        );
         let conscious_registry = Arc::new(
             crate::application::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_tools_and_agora(
                 data_dir.join("conscious_workspace.db"),
@@ -881,7 +875,7 @@ impl RequestHandler {
                 .collect(),
         ));
         let domains = crate::core::DomainPorts::new(
-            agora_service,
+            agora_service.clone(),
             metacog,
             corpus.clone(),
             cognitive_sessions,
@@ -938,13 +932,17 @@ impl RequestHandler {
             // load_agent_profiles so profiles can list them in `allowed_tools`
             // before the AgentControlService runtime is constructed.
             let mut definitions = corpus_group.tools.lock().await.definitions();
+            let mut profile_definitions = corpus_group.tools.lock().await.profile_definitions();
             definitions
+                .extend(corpus::tools::tools::agent_control::AgentControlTools::definitions());
+            profile_definitions
                 .extend(corpus::tools::tools::agent_control::AgentControlTools::definitions());
             let composition = super::agents::compose(super::agents::AgentCompositionInput {
                 agents_dir: &aletheon_dir.join("agents"),
                 inference: inference.clone(),
                 default_llm: llm.clone(),
                 definitions: &definitions,
+                profile_definitions: &profile_definitions,
                 runtime_config: &runtime_config_snapshot,
                 profiles_config: &agent_profiles,
             })
@@ -1093,6 +1091,7 @@ impl RequestHandler {
             runtime_profile_requirements,
             granted_capabilities.clone(),
             memory_group.memory_service.clone(),
+            agora_service.clone(),
         )
         .await?;
         let canonical_event_spine = agent_svc.canonical_event_spine;

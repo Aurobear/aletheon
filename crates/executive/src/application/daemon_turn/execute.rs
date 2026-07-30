@@ -36,8 +36,10 @@ impl DaemonTurnOrchestrator {
         id: serde_json::Value,
         message: &str,
         context: PrincipalContext,
+        requirements: Vec<fabric::TurnRequirement>,
     ) -> serde_json::Value {
-        self.execute_turn_with_context(id, message, context).await
+        self.execute_turn_with_context(id, message, context, requirements)
+            .await
     }
 
     /// Execute a channel turn under an identity established by the channel
@@ -48,7 +50,8 @@ impl DaemonTurnOrchestrator {
         message: &str,
         context: PrincipalContext,
     ) -> serde_json::Value {
-        self.execute_turn_with_context(id, message, context).await
+        self.execute_turn_with_context(id, message, context, Vec::new())
+            .await
     }
 
     async fn execute_turn_with_context(
@@ -56,9 +59,12 @@ impl DaemonTurnOrchestrator {
         id: serde_json::Value,
         message: &str,
         context: PrincipalContext,
+        requirements: Vec<fabric::TurnRequirement>,
     ) -> serde_json::Value {
         if prompt_admission_mode(self.grok_hardening.prompt_queue) == PromptAdmissionMode::Direct {
-            return self.execute_one_turn(id, message, context).await;
+            return self
+                .execute_one_turn(id, message, context, requirements)
+                .await;
         }
 
         let principal = context.principal_id.clone();
@@ -71,13 +77,14 @@ impl DaemonTurnOrchestrator {
             serde_json::to_string(&id).unwrap_or_default()
         );
         let queued = match session_input
-            .enqueue(
+            .enqueue_with_requirements(
                 principal.clone(),
                 context.connection_id.clone(),
                 thread.clone(),
                 PromptKind::Prompt,
                 message.to_owned(),
                 idempotency_key,
+                requirements,
             )
             .await
         {
@@ -149,7 +156,8 @@ impl DaemonTurnOrchestrator {
     ) -> serde_json::Value {
         context.connection_id = prompt.connection_id;
         context.thread_id = prompt.thread_id;
-        self.execute_one_turn(id, &prompt.content, context).await
+        self.execute_one_turn(id, &prompt.content, context, prompt.requirements)
+            .await
     }
 
     async fn execute_one_turn(
@@ -157,6 +165,7 @@ impl DaemonTurnOrchestrator {
         id: serde_json::Value,
         message: &str,
         context: PrincipalContext,
+        requirements: Vec<fabric::TurnRequirement>,
     ) -> serde_json::Value {
         // -- Kernel: register main agent --
         let main_pid = match self.ensure_main_agent().await {
@@ -186,6 +195,7 @@ impl DaemonTurnOrchestrator {
             input: message.to_string(),
             model_policy,
             deadline: None,
+            requirements,
         };
 
         let _turn_token = self.begin_turn_token().await;
@@ -208,6 +218,7 @@ impl DaemonTurnOrchestrator {
                             input: request.input.clone(),
                             model_policy: request.model_policy.clone(),
                             deadline: request.deadline,
+                            requirements: request.requirements.clone(),
                         },
                         crate::application::turn_engine::TurnEngineContext {
                             principal_id: request.context.principal_id.clone(),
@@ -271,7 +282,7 @@ mod tests {
             .await;
         let response = harness
             .orchestrator
-            .execute_turn(json!(7), "hello", context("daemon-success"))
+            .execute_turn(json!(7), "hello", context("daemon-success"), Vec::new())
             .await;
 
         assert_eq!(response["result"]["response"], "mock answer");
@@ -301,7 +312,7 @@ mod tests {
             .await;
         let response = harness
             .orchestrator
-            .execute_turn(json!(8), "hello", context("daemon-error"))
+            .execute_turn(json!(8), "hello", context("daemon-error"), Vec::new())
             .await;
 
         assert_eq!(response["error"]["code"], -32603);

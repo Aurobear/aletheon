@@ -1,5 +1,6 @@
 //! Tool implementations and connector clients.
 
+pub mod artifact;
 pub mod capability_executor;
 pub mod google;
 pub mod mcp;
