@@ -2,26 +2,50 @@
 
 **Date:** 2026-07-30
 **Last reviewed:** 2026-07-31
-**Status:** 实现后复核记录；安装态验收前仍不得标称整体 production-ready
+**Status:** 实现、部署与部分安装态复核记录；真实 TUI provider 验收仍未通过，
+因此不得标称整体 production-ready
 **Scope:** 区分已经实现、已设计但未实现、部分覆盖和完全未覆盖的生产能力；
-给出启用门槛、依赖顺序和文件所有权约束。F1/F2 是建议新增的 workstream，
-落地前仍需各自的设计与实现计划。本文件不定义具体接口或实现步骤。
+给出启用门槛、依赖顺序和文件所有权约束。F1/F2 是本分析最初识别的新增
+workstream；当前分支已实现其代码闭环，但仍按下述安装态证据独立判定。
+本文件不定义具体接口或实现步骤。
 
 ## 0. 2026-07-31 实现后复核
 
 以下结论取代 §3 中实现前的“当前事实”描述，但保留原表作为缺口来源：
 
-| 项 | 当前实现证据 | 安装态前状态 |
+| 项 | 当前实现证据 | 当前验收状态 |
 |---|---|---|
-| F1 | provider-keyed permit、共享 cooldown 及独立计数位于 `crates/cognit/src/adapters/inference/backpressure.rs:13-181`；health RPC 导出全部 snapshot（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:137-171`） | 代码闭环，待安装态压力验收 |
+| F1 | provider-keyed permit、共享 cooldown 及独立计数位于 `crates/cognit/src/adapters/inference/backpressure.rs:13-181`；health RPC 导出全部 snapshot（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:137-171`） | 代码闭环；安装态真实请求观察到 provider 重试，尚未通过零错误压力验收 |
 | F2 | closure matrix 将已暴露操作绑定到 producer/resolver/receipt/replay，并将其余操作显式 deny（`config/approval-closure.toml:1-78`）；架构门禁执行 verifier（`tests/suites/architecture/architecture_check.sh` 末尾） | 代码闭环，待真实人工 resolve/restart 验收 |
-| #3 | Fabric 提供统一 trust/classification/scrub 契约（`crates/fabric/src/types/data_governance.rs:1-121`）；Memory 与 Turn 持久投影消费该契约（`crates/mnemosyne/src/consolidation/extractor.rs`、`crates/executive/src/application/turn_pipeline.rs`） | 代码闭环，待泄漏 fixture 验收 |
+| #3 | Fabric 提供统一 trust/classification/scrub 契约（`crates/fabric/src/types/data_governance.rs:1-140`）；Memory 与 Turn 持久投影消费该契约（`crates/mnemosyne/src/consolidation/extractor.rs`、`crates/executive/src/application/turn_pipeline.rs`） | 代码闭环，focused 泄漏 fixture 已通过；待真实外部通道验收 |
 | #4 | health 导出 provider 与 Turn watchdog 指标和默认 SLO alerts（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:137-171`）；Turn 诊断来自 active index 与 monotonic age（`crates/executive/src/application/turn_coordinator.rs:45-62,151-170`） | 代码闭环，待运行态故障注入 |
 | #5 | backup 使用 SQLite online backup 并逐库检查（`scripts/libexec/aletheon/backup.sh:20-43`），restore 在复制前后校验（`scripts/libexec/aletheon/restore.sh:38-72`）；migration inventory 覆盖 12 个持久组件（`config/release/migration-matrix.toml`、`scripts/libexec/aletheon/verify/migration-matrix.sh:16-65`） | 代码闭环，待安装态 backup/restore drill |
 | #6 | 非本地 MCP 对 restricted-data egress fail closed，并将返回内容标为 untrusted 后 scrub（`crates/corpus/src/tools/mcp/wrapper.rs:91-127`） | 主要外部工具路径闭环，待真实 channel/MCP 验收 |
 | #7 | F1 关闭 machine provider 协调；Hardware 已由 production embodiment composition 调用（`crates/executive/src/host/daemon/bootstrap/request.rs:823-850`）；role runtime 先 prepare 后注册（`crates/executive/src/host/daemon/bootstrap/runtime.rs:322-364`） | 路由代码闭环，待逐 runtime 安装态矩阵 |
 | #8 | 版本化 coding harness 已存在（`tests/coding/README.md:1-31`），CI 验证 replay/契约（`.github/workflows/ci.yml:81-85`），release gate 执行 acceptance 与 installed-host drill（`scripts/libexec/aletheon/release-acceptance.sh:296-339`） | 确定性门禁闭环，真实模型 workflow 待本次运行 |
-| #9 | responsibility 位于 `config/architecture/module-boundaries.txt:21-25`；hotspot owner/line budget 位于 `config/architecture/hotspot-budgets.tsv:1-6` 并由 architecture fitness test 执行 | 持续治理项，不作一次性“完成”声明 |
+| #9 | responsibility 位于 `config/architecture/module-boundaries.txt:21-25`；hotspot owner/line budget 位于 `config/architecture/hotspot-budgets.tsv:1-7` 并由 architecture fitness test 执行 | 持续治理项，不作一次性“完成”声明 |
+
+### 0.1 2026-07-31 安装态复核结果
+
+- `sudo bash scripts/aletheon.sh deploy` 已通过；release、`/usr/bin` 及两个运行中
+  daemon 的统一摘要为
+  `4b0720172a090bfd81d092d3974fcddf4fa4702e89c876501fc989bf25c38440`，
+  deploy gate 同时证明 restart counter 在两个 7 秒窗口保持稳定，并通过 official
+  user socket 的真实请求。
+- 首次真实 TUI 多轮复核暴露了一个终态顺序缺陷：Cognit 的 pipeline-local
+  `TurnDone` 曾先于 coordinator active-index 清理到达客户端，紧接的同 thread
+  follow-up 因此被拒绝。现在 pipeline 只缓冲该事件
+  （`crates/executive/src/application/turn_pipeline.rs:1279-1290`），daemon 在
+  `submit_with` 返回后才发送权威终态
+  （`crates/executive/src/application/daemon_turn/execute.rs:255-293`）。对应 focused
+  lifecycle test 与最终 workspace suite 均通过。
+- 修复后，一个未重启 TUI session 的三轮请求全部获得权威 `turn_done`、返回输入框，
+  且 rendered frame 没有 provider error；但同一轮 daemon journal 出现
+  `provider_unavailable` retry。因此按本仓库验收口径仍判定失败。
+- 随后的另外两次 fresh-session 相同 repository-analysis 任务也都产生实质答案、
+  返回输入框且 frame 无错误，但 journal 再次记录 `provider_unavailable` retry。
+  三次均失败，不能用 monitor/frame 表面 PASS 覆盖 provider 证据；需要 provider
+  稳定后重新取得三次连续零错误结果，才可关闭安装态门槛。
 
 > **验收口径。** 评分内核基础部分已有 2026-07-30 的历史安装态生产验收；
 > Goal retry/replan 与 AgentControl capability selection 的 L2 闭环已于
