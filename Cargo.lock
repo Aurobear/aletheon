@@ -792,7 +792,6 @@ name = "corpus"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
- "agora",
  "anyhow",
  "async-trait",
  "atspi",

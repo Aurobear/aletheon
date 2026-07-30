@@ -136,6 +136,10 @@ impl RuntimeCore {
         let bus = Arc::new(CanonicalEventBus::default());
 
         let cancel_token = CancellationToken::new();
+        // Kernel owns the concrete time source. The composition root creates
+        // exactly one instance so every daemon component shares a monotonic
+        // epoch and deadlines remain comparable across subsystem boundaries.
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
 
         // ── LlmPulse ────────────────────────────────────────────────
         let pulse_handle = if !app_config.providers.is_empty() {
@@ -163,15 +167,14 @@ impl RuntimeCore {
                 provider_timeouts: app_config.agent.provider_timeouts,
             };
 
-            let scheduler_clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
-            match LlmScheduler::new(&scheduler_config, scheduler_clock.clone()) {
+            match LlmScheduler::new(&scheduler_config, clock.clone()) {
                 Ok(scheduler) => {
                     let scheduler = Arc::new(scheduler);
                     let pulse = LlmPulse::new(
                         scheduler,
                         bus.clone(),
                         PulseConfig::default(),
-                        scheduler_clock,
+                        clock.clone(),
                     );
                     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -208,13 +211,13 @@ impl RuntimeCore {
                 .map(PathBuf::from)
                 .collect();
             let enable_journald = perception_config.enable_journald;
-            let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
+            let perception_clock = clock.clone();
             tokio::spawn(async move {
                 let mut manager = dasein::perception::manager::PerceptionManager::new(
                     event_tx,
                     watch_paths,
                     enable_journald,
-                    clock,
+                    perception_clock,
                 );
                 if let Err(e) = manager.start().await {
                     tracing::error!(error = %e, "Perception manager failed");
@@ -229,6 +232,7 @@ impl RuntimeCore {
         info!("Creating request handler...");
         let request_handler = RequestHandler::new(
             &config,
+            clock,
             Arc::new(crate::core::RegistryInferencePort::new(Arc::new(
                 registry.clone(),
             ))),

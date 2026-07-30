@@ -85,12 +85,12 @@ pub trait CapabilityBenchmarkRuntime: Send + Sync {
 }
 
 pub struct CapabilityBenchmarkHarness {
-    runtime: Arc<dyn CapabilityBenchmarkRuntime>,
+    executor: Arc<dyn CapabilityBenchmarkRuntime>,
 }
 
 impl CapabilityBenchmarkHarness {
-    pub fn new(runtime: Arc<dyn CapabilityBenchmarkRuntime>) -> Self {
-        Self { runtime }
+    pub fn new(executor: Arc<dyn CapabilityBenchmarkRuntime>) -> Self {
+        Self { executor }
     }
 
     pub async fn run(
@@ -115,7 +115,7 @@ impl CapabilityBenchmarkHarness {
         // Sequential execution avoids turning the benchmark itself into a
         // provider-concurrency/backpressure confounder.
         for target in &targets {
-            let observation = self.runtime.run(target, packet.clone()).await?;
+            let observation = self.executor.run(target, packet.clone()).await?;
             anyhow::ensure!(
                 observation.task_packet_digest == digest,
                 "benchmark runtime observed a different task packet"

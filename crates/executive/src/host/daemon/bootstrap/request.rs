@@ -37,7 +37,6 @@ use fabric::Clock;
 use fabric::Registry;
 use fabric::Version;
 use fabric::{Subsystem, SubsystemContext};
-use kernel::chronos::SystemClock;
 use metacog::DefaultMetaRuntime;
 use mnemosyne::runtime::EpisodicMemory;
 use std::collections::HashMap;
@@ -60,6 +59,7 @@ use super::request_ports::{
 impl RequestHandler {
     pub async fn new(
         config: &DaemonConfig,
+        clock: Arc<dyn Clock>,
         inference: Arc<dyn InferencePort>,
         model_routing: crate::composition::config::ModelRoutingConfig,
         model_aliases: HashMap<String, String>,
@@ -83,8 +83,6 @@ impl RequestHandler {
         .await?
         .provider;
         info!(provider = llm.name(), "LLM provider initialized");
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
-
         let session_id = uuid::Uuid::new_v4().to_string();
         let data_dir = PathBuf::from(&config.data_dir);
         let data_dir_for_telegram = data_dir.clone();

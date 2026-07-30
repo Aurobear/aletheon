@@ -342,14 +342,8 @@ pub use ipc::ipc_types::{
     AgentId as IpcAgentId, AgentMessage, IpcBackend, IpcPreference, IpcPriority, IpcProbeError,
     MessageType,
 };
-pub use ipc::protocol::Protocol;
-pub use ipc::transport::{
-    HealthStatus, Transport as EnvelopeTransport, TransportHealth, TransportKind,
-};
 
 // Kernel foundations (from kernel/)
-pub use kernel::debug::{DebugEvent, DebugLevel, DebugSink, Tracepoint};
-pub use kernel::debug_bus::{DebugBusHook, EventFilter, PerfCounter};
 pub use kernel::error::{
     handle_tool_error, llm_backoff, llm_degradation_chain, tool_backoff, tool_degradation_chain,
     AgentError, BackoffStrategy, DegradationChain, DegradationStrategy, ErrorCategory,
