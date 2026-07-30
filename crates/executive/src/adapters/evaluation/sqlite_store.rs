@@ -299,6 +299,43 @@ impl EvaluationReceiptStore for SqliteEvaluationStore {
             .transpose()
     }
 
+    async fn get_snapshot_for_receipt(
+        &self,
+        id: &EvaluationReceiptId,
+    ) -> Result<Option<EvaluationEvidenceSnapshot>> {
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let receipt_body: Option<String> = connection
+            .query_row(
+                "SELECT body_json FROM evaluation_receipts WHERE receipt_id = ?1",
+                params![id.0.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(receipt_body) = receipt_body else {
+            return Ok(None);
+        };
+        let receipt: EvaluationReceipt = serde_json::from_str(&receipt_body)?;
+        let snapshot_body: Option<String> = connection
+            .query_row(
+                "SELECT body_json FROM evaluation_snapshots
+                 WHERE contract_id = ?1 AND snapshot_sha256 = ?2
+                 ORDER BY created_at_ms DESC, snapshot_id DESC
+                 LIMIT 1",
+                params![
+                    receipt.contract_id.0.to_string(),
+                    receipt.evidence_snapshot_sha256
+                ],
+                |row| row.get(0),
+            )
+            .optional()?;
+        snapshot_body
+            .map(|body| serde_json::from_str(&body).map_err(Into::into))
+            .transpose()
+    }
+
     async fn latest_for_subject(
         &self,
         subject: &EvaluationSubject,
@@ -424,6 +461,14 @@ mod tests {
         assert_eq!(
             reopened.get_receipt(&receipt.receipt_id).await.unwrap(),
             Some(receipt.clone())
+        );
+        assert_eq!(
+            reopened
+                .get_snapshot_for_receipt(&receipt.receipt_id)
+                .await
+                .unwrap()
+                .map(|value| value.sha256),
+            Some(snapshot.sha256)
         );
         assert_eq!(
             reopened

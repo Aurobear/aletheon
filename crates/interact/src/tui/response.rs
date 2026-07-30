@@ -413,6 +413,27 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
         } else if let Some(memory) = result.get("memory") {
             // /memory status response
             app.chat.set_assistant_stream(format_memory_status(memory));
+        } else if let Some(receipt) = result.get("receipt") {
+            if receipt.is_null() {
+                app.chat.add_text(
+                    ChatRole::System,
+                    "No evaluation receipt is available for this session.".to_string(),
+                );
+            } else {
+                match serde_json::from_value::<fabric::EvaluationReceiptRef>(receipt.clone()) {
+                    Ok(receipt) => {
+                        app.app_state.latest_evaluation = Some(receipt.clone());
+                        app.chat.add_text(
+                            ChatRole::System,
+                            super::reducer::format_evaluation_receipt_ref(&receipt),
+                        );
+                    }
+                    Err(error) => app.chat.add_text(
+                        ChatRole::System,
+                        format!("Invalid evaluation receipt response: {error}"),
+                    ),
+                }
+            }
         } else if let Some(content) = result.get("content").and_then(|value| value.as_str()) {
             // session.memory returns bounded markdown owned by the daemon.
             app.chat.set_assistant_stream(content.to_string());

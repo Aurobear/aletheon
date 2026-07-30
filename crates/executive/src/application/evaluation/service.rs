@@ -51,6 +51,24 @@ impl EvaluationService {
         Ok(contract)
     }
 
+    /// Read the persisted authoritative receipt. Authorization is deliberately
+    /// enforced by the host-facing query use case before this store lookup.
+    pub async fn receipt(
+        &self,
+        id: &EvaluationReceiptId,
+    ) -> anyhow::Result<Option<EvaluationReceipt>> {
+        self.store.get_receipt(id).await
+    }
+
+    /// Read the evidence snapshot correlated to a persisted receipt. Callers
+    /// must establish principal/session/workspace authority before requesting it.
+    pub async fn evidence_snapshot_for_receipt(
+        &self,
+        id: &EvaluationReceiptId,
+    ) -> anyhow::Result<Option<fabric::EvaluationEvidenceSnapshot>> {
+        self.store.get_snapshot_for_receipt(id).await
+    }
+
     pub async fn evaluate(
         &self,
         contract: &TaskEvaluationContract,

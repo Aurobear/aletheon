@@ -5,6 +5,7 @@
 
 mod rpc_admin;
 mod rpc_approval;
+mod rpc_evaluation;
 mod rpc_goal;
 mod rpc_google;
 mod rpc_health;
@@ -45,6 +46,12 @@ impl RequestHandler {
             // ── Health / status ───────────────────────────────────────
             "status" => self.handle_status(&id, &request).await,
             "health" => self.handle_health(&id, &request).await,
+            "evaluation.get" => self.handle_evaluation_get(connection, &id, &request).await,
+            "evaluation.latest" => {
+                self.handle_evaluation_latest(connection, &id, &request)
+                    .await
+            }
+            "evaluation.list" => self.handle_evaluation_list(connection, &id, &request).await,
             "conscious.diagnostics" => {
                 self.handle_conscious_diagnostics(connection, &id, &request)
                     .await

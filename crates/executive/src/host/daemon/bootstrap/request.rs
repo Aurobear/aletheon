@@ -1147,6 +1147,7 @@ impl RequestHandler {
         let turn_orchestrator = turn_svc.turn_orchestrator;
         let approved_apply = turn_svc.approved_apply;
         let lifecycle_registry = turn_svc.lifecycle_registry;
+        let evaluation_service = turn_svc.evaluation_service;
 
         let _turn_orch_for_telegram = turn_orchestrator.clone();
         let _cancel_for_telegram = cancel_token.clone();
@@ -1429,6 +1430,7 @@ impl RequestHandler {
             google_use_cases,
             workflow_use_cases,
             turn_use_cases,
+            evaluation_service,
             session_input,
             conscious_registry,
             debug_handler,

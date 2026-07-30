@@ -25,6 +25,9 @@ pub enum ClientRpcRequest {
     Clear,
     Status,
     StatusFor(SessionParams),
+    EvaluationGet(EvaluationGetParams),
+    EvaluationLatest(EvaluationLatestParams),
+    EvaluationList(EvaluationListParams),
     Reflect,
     ReflectNow,
     ReflectNowFor(SessionParams),
@@ -127,6 +130,27 @@ pub struct ResumeParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct SessionParams {
     pub session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationGetParams {
+    pub session_id: String,
+    pub receipt_id: String,
+    #[serde(default)]
+    pub include_evidence: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationLatestParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub include_evidence: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationListParams {
+    pub session_id: String,
+    pub limit: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -406,6 +430,32 @@ impl ClientRpcRequest {
         })
     }
 
+    pub fn evaluation_get(
+        session_id: impl Into<String>,
+        receipt_id: crate::EvaluationReceiptId,
+        include_evidence: bool,
+    ) -> Self {
+        Self::EvaluationGet(EvaluationGetParams {
+            session_id: session_id.into(),
+            receipt_id: receipt_id.0.to_string(),
+            include_evidence,
+        })
+    }
+
+    pub fn evaluation_latest(session_id: impl Into<String>, include_evidence: bool) -> Self {
+        Self::EvaluationLatest(EvaluationLatestParams {
+            session_id: session_id.into(),
+            include_evidence,
+        })
+    }
+
+    pub fn evaluation_list(session_id: impl Into<String>, limit: u16) -> Self {
+        Self::EvaluationList(EvaluationListParams {
+            session_id: session_id.into(),
+            limit,
+        })
+    }
+
     pub fn mode_switch(mode: CollaborationMode) -> Self {
         Self::ModeSwitch(ModeSwitchParams {
             mode: mode.display_name().to_owned(),
@@ -571,6 +621,13 @@ impl ClientRpcRequest {
             Self::Clear => ("clear", None),
             Self::Status => ("status", None),
             Self::StatusFor(params) => ("status", Some(serde_json::to_value(params)?)),
+            Self::EvaluationGet(params) => ("evaluation.get", Some(serde_json::to_value(params)?)),
+            Self::EvaluationLatest(params) => {
+                ("evaluation.latest", Some(serde_json::to_value(params)?))
+            }
+            Self::EvaluationList(params) => {
+                ("evaluation.list", Some(serde_json::to_value(params)?))
+            }
             Self::Reflect => ("reflect", None),
             Self::ReflectNow => ("reflect_now", None),
             Self::ReflectNowFor(params) => ("reflect_now", Some(serde_json::to_value(params)?)),
@@ -1052,5 +1109,21 @@ mod request_tests {
             .to_json_rpc(Some(8))
             .unwrap();
         assert!(request["params"].get("task_kind").is_none());
+    }
+
+    #[test]
+    fn evaluation_queries_serialize_session_scope_and_bounds() {
+        let latest = ClientRpcRequest::evaluation_latest("session-a", false)
+            .to_json_rpc(Some(10))
+            .unwrap();
+        assert_eq!(latest["method"], "evaluation.latest");
+        assert_eq!(latest["params"]["session_id"], "session-a");
+        assert_eq!(latest["params"]["include_evidence"], false);
+
+        let list = ClientRpcRequest::evaluation_list("session-a", 100)
+            .to_json_rpc(Some(11))
+            .unwrap();
+        assert_eq!(list["method"], "evaluation.list");
+        assert_eq!(list["params"]["limit"], 100);
     }
 }

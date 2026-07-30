@@ -450,15 +450,23 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Evaluation)) => {
-                let message = app
-                    .app_state
-                    .latest_evaluation
-                    .as_ref()
-                    .map(super::super::reducer::format_evaluation_receipt_ref)
-                    .unwrap_or_else(|| {
-                        "No evaluation receipt is cached for this session.".to_string()
-                    });
-                app.chat.add_text(ChatRole::System, message);
+                if let Some(receipt) = app.app_state.latest_evaluation.as_ref() {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        super::super::reducer::format_evaluation_receipt_ref(receipt),
+                    );
+                } else if let Some(session_id) = app.app_state.session_id.clone() {
+                    send_request(app, ClientRpcRequest::evaluation_latest(session_id, false)).await;
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "Querying latest evaluation receipt...".to_string(),
+                    );
+                } else {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "No evaluation receipt is cached for this session.".to_string(),
+                    );
+                }
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Profile)) => {
@@ -721,5 +729,22 @@ mod task_kind_tests {
         assert_eq!(message.role, ChatRole::System);
         assert!(message.content.contains("decision=accepted"));
         assert!(message.content.contains("score=90.0"));
+    }
+
+    #[tokio::test]
+    async fn evaluation_command_queries_latest_receipt_when_cache_is_empty() {
+        let (mut app, peer) = fixture_app();
+        app.app_state.session_id = Some("session-a".into());
+
+        submit_message(&mut app, "/evaluation".into()).await;
+
+        let mut reader = BufReader::new(peer);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(request["method"], "evaluation.latest");
+        assert_eq!(request["params"]["session_id"], "session-a");
+        assert_eq!(app.next_request_id, 2);
+        assert!(app.pending_non_turn.contains(&1));
     }
 }

@@ -45,6 +45,10 @@ pub trait EvaluationReceiptStore: Send + Sync {
         &self,
         id: &fabric::EvaluationSnapshotId,
     ) -> anyhow::Result<Option<fabric::EvaluationEvidenceSnapshot>>;
+    async fn get_snapshot_for_receipt(
+        &self,
+        id: &fabric::EvaluationReceiptId,
+    ) -> anyhow::Result<Option<fabric::EvaluationEvidenceSnapshot>>;
     async fn latest_for_subject(
         &self,
         subject: &fabric::EvaluationSubject,

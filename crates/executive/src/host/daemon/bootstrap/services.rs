@@ -186,6 +186,7 @@ pub(super) struct TurnServices {
     pub turn_orchestrator: Arc<crate::application::DaemonTurnOrchestrator>,
     pub approved_apply: Option<Arc<crate::application::approval::ApplyCoordinator>>,
     pub lifecycle_registry: Arc<crate::application::lifecycle_contributors::LifecycleRegistry>,
+    pub evaluation_service: Arc<crate::application::evaluation::EvaluationService>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -308,7 +309,7 @@ pub(super) async fn build_turn_services(
         )
         .with_backpressure(config.backpressure.clone())
         .with_session_input(session_input.clone())
-        .with_evaluation_service(evaluation_service),
+        .with_evaluation_service(evaluation_service.clone()),
     );
     let workspace_checkpoint = Arc::new(
         crate::application::workspace_checkpoint::WorkspaceCheckpointService::new(
@@ -472,5 +473,6 @@ pub(super) async fn build_turn_services(
         turn_orchestrator,
         approved_apply,
         lifecycle_registry,
+        evaluation_service,
     })
 }
