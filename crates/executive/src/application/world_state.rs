@@ -111,6 +111,7 @@ impl WorldStatePort for EmbodimentWorldState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fabric::MonoTime;
     use kernel::chronos::TestClock;
 
     fn world_state(max_devices: usize) -> EmbodimentWorldState {
