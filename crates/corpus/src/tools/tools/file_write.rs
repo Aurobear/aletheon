@@ -144,7 +144,9 @@ impl Tool for FileWriteTool {
                             hunks_applied: 1,
                             bytes_before,
                             bytes_after: receipt.bytes_written,
+                            is_binary: false,
                         }],
+                        ..Default::default()
                     }),
                 },
             },

@@ -130,6 +130,12 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             patch_delta,
             ..
         } => {
+            if let Some(preview) = patch_delta
+                .as_ref()
+                .and_then(|delta| delta.diff_preview.clone())
+            {
+                app.latest_diff = Some(preview);
+            }
             app.chat
                 .update_exec_with_delta(&call_id, &output, is_error, patch_delta);
         }
@@ -340,6 +346,11 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
             .get("detail")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let scope_subject = params
+            .get("scope_subject")
+            .cloned()
+            .filter(|value| !value.is_null())
+            .and_then(|value| serde_json::from_value(value).ok());
         app.pending_approval = Some(
             super::approval_dialog::ApprovalDialog::new(
                 approval_id,
@@ -347,7 +358,8 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
                 action_summary,
                 risk_level,
             )
-            .with_detail(detail),
+            .with_detail(detail)
+            .with_scope_subject(scope_subject),
         );
     }
 }

@@ -21,6 +21,17 @@ pub struct PagerOverlay {
 }
 
 impl PagerOverlay {
+    pub fn new(title: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            lines: text
+                .into()
+                .lines()
+                .map(|line| Line::from(line.to_string()))
+                .collect(),
+            scroll_offset: 0,
+            title: title.into(),
+        }
+    }
     /// Create a pager overlay from the current chat widget state.
     pub fn from_chat(chat: &ChatWidget, title: &str) -> Self {
         let lines = chat.all_lines_wrapped(0, 200); // wide enough to avoid wrapping in pager

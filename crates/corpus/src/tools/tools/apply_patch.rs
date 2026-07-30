@@ -56,6 +56,60 @@ impl Tool for ApplyPatchTool {
         PermissionLevel::L1
     }
 
+    fn approval_descriptor(
+        &self,
+        input: &serde_json::Value,
+        workspace: &fabric::WorkspacePolicy,
+    ) -> anyhow::Result<Option<fabric::tool::ToolApprovalDescriptor>> {
+        let base = input["base_dir"]
+            .as_str()
+            .map(std::path::PathBuf::from)
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    workspace.cwd().join(path)
+                }
+            })
+            .unwrap_or_else(|| workspace.cwd().to_path_buf());
+        let base = validate_mutation_path(workspace, workspace.protected_paths(), &base)
+            .map_err(anyhow::Error::msg)?;
+        let operations = if let Some(value) = input.get("patch_json").filter(|v| !v.is_null()) {
+            parse_structured_patch_json(&value.to_string())
+                .map_err(anyhow::Error::msg)?
+                .operations
+        } else {
+            let patch = input["patch"].as_str().unwrap_or_default();
+            if patch.trim_start().starts_with("*** Begin Patch") {
+                parse_structured_patch(patch)
+                    .map_err(anyhow::Error::msg)?
+                    .operations
+            } else {
+                platform::structured_patch::parse_unified_diff(patch)
+                    .map_err(anyhow::Error::msg)?
+                    .operations
+            }
+        };
+        let mut targets = Vec::new();
+        for operation in &operations {
+            for path in operation_paths(operation) {
+                targets.push(
+                    validate_mutation_path(
+                        workspace,
+                        workspace.protected_paths(),
+                        &base.join(path),
+                    )
+                    .map_err(anyhow::Error::msg)?,
+                );
+            }
+        }
+        targets.sort();
+        targets.dedup();
+        Ok(Some(fabric::tool::ToolApprovalDescriptor {
+            mutation_targets: targets,
+        }))
+    }
+
     fn boxed_clone(&self) -> Box<dyn Tool> {
         Box::new(ApplyPatchTool)
     }
@@ -141,6 +195,9 @@ impl Tool for ApplyPatchTool {
                 return preview_result(&structured.operations, &base_path, ctx, start).await;
             }
 
+            let (preview_files, preview_failures) =
+                preview_structured_operations(&structured.operations, &base_path, ctx).await;
+            let diff_text = render_patch_preview(&preview_files, &preview_failures);
             let before = snapshot_operation_digests(&structured.operations, &base_path);
             let result = apply_structured_scoped(&structured.operations, &base_path, ctx).await;
             let after = snapshot_operation_digests(&structured.operations, &base_path);
@@ -151,7 +208,7 @@ impl Tool for ApplyPatchTool {
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                     truncated: false,
-                    patch_delta: Some(patch_delta(&result)),
+                    patch_delta: Some(patch_delta(&result, Some(&diff_text))),
                 },
             };
         }
@@ -189,7 +246,7 @@ impl Tool for ApplyPatchTool {
             metadata: ToolResultMeta {
                 execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
                 truncated: false,
-                patch_delta: Some(patch_delta(&result)),
+                patch_delta: Some(patch_delta(&result, Some(patch))),
             },
         }
     }
@@ -280,7 +337,31 @@ fn tool_error(message: String, start: fabric::MonoTime, ctx: &ToolContext) -> To
     }
 }
 
-fn patch_delta(result: &super::structured_patch::StructuredPatchResult) -> fabric::PatchDelta {
+fn patch_delta(
+    result: &super::structured_patch::StructuredPatchResult,
+    diff_text: Option<&str>,
+) -> fabric::PatchDelta {
+    const PREVIEW_BYTES: usize = 64 * 1024;
+    let artifact = diff_text.and_then(|diff| {
+        ArtifactStore::new(
+            super::output::OutputConfig::default()
+                .overflow_dir
+                .join("artifacts"),
+        )
+        .store(diff.as_bytes(), "text/x-diff")
+        .ok()
+    });
+    let (diff_preview, diff_preview_truncated) = diff_text.map_or((None, false), |diff| {
+        if diff.len() <= PREVIEW_BYTES {
+            (Some(diff.to_string()), false)
+        } else {
+            let mut end = PREVIEW_BYTES;
+            while !diff.is_char_boundary(end) {
+                end -= 1;
+            }
+            (Some(diff[..end].to_string()), true)
+        }
+    });
     fabric::PatchDelta {
         applied: result
             .applied
@@ -312,8 +393,16 @@ fn patch_delta(result: &super::structured_patch::StructuredPatchResult) -> fabri
                 hunks_applied: change.hunks_applied,
                 bytes_before: change.bytes_before,
                 bytes_after: change.bytes_after,
+                is_binary: false,
             })
             .collect(),
+        diff_preview,
+        diff_artifact: artifact.map(|artifact| fabric::tool::PatchDiffArtifactRef {
+            sha256: artifact.sha256,
+            size_bytes: artifact.size_bytes,
+            mime: artifact.mime,
+        }),
+        diff_preview_truncated,
     }
 }
 

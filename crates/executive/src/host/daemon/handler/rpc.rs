@@ -70,6 +70,7 @@ impl RequestHandler {
                 self.handle_approval_response(connection, &id, &request)
                     .await
             }
+            "diff_artifact.get" => self.handle_diff_artifact_get(&id, &request).await,
             "approval.list" => self.handle_approval_list(connection, &id, &request).await,
             "approval.show" => self.handle_approval_show(connection, &id, &request).await,
             "approval.approve" => {

@@ -389,12 +389,16 @@ impl RequestHandler {
         }
 
         // One approval gate is shared by guarded tools and MCP elicitation.
+        let session_approvals = crate::application::admin_service::ScopedApprovalCache::open(
+            &data_dir.join("transient_session_grants.db"),
+        )?;
         let (socket_approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
         let approval_gate: Arc<dyn corpus::security::approval::ApprovalGate> =
             Arc::new(DurableSocketApprovalGate {
                 socket: Arc::new(socket_approval_gate),
                 repository: approval_repository.clone(),
                 clock: clock.clone(),
+                session_grants: session_approvals.clone(),
             });
 
         // MCP servers. Keep the manager alive: supplemental memory recall/capture calls the
@@ -861,7 +865,6 @@ impl RequestHandler {
         let admin_cached_prefix = cached_prefix.clone();
         let pending_approvals = crate::application::admin_service::PendingApprovals::default();
         let admin_pending_approvals = pending_approvals.clone();
-        let session_approvals = crate::application::admin_service::ScopedApprovalCache::default();
         let admin_session_approvals = session_approvals.clone();
         let memory_queue = Arc::new(Mutex::new(Vec::new()));
         let dasein_handle = self_field

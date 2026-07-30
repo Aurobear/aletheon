@@ -29,6 +29,7 @@ pub(crate) struct DurableSocketApprovalGate {
     pub(crate) socket: Arc<SocketApprovalGate>,
     pub(crate) repository: Arc<std::sync::Mutex<crate::application::approval::ApprovalRepository>>,
     pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) session_grants: crate::application::admin_service::ScopedApprovalCache,
 }
 
 #[async_trait]
@@ -37,6 +38,31 @@ impl corpus::security::approval::ApprovalGate for DurableSocketApprovalGate {
         &self,
         request: &corpus::security::approval::ApprovalRequest,
     ) -> corpus::security::approval::ApprovalDecision {
+        if self
+            .session_grants
+            .is_allowed(
+                &request.owner.principal_id,
+                &request.owner.thread_id,
+                &request.tool,
+            )
+            .await
+        {
+            return corpus::security::approval::ApprovalDecision::ApproveForSession;
+        }
+        if let Some(subject) = &request.scope_subject {
+            if self
+                .session_grants
+                .is_path_allowed(
+                    &request.owner.principal_id,
+                    &request.owner.thread_id,
+                    &request.tool,
+                    subject,
+                )
+                .await
+            {
+                return corpus::security::approval::ApprovalDecision::ApprovePathForSession;
+            }
+        }
         let requested_at_ms = self.clock.wall_now().0;
         if self
             .repository
@@ -63,6 +89,9 @@ impl corpus::security::approval::ApprovalGate for DurableSocketApprovalGate {
             corpus::security::approval::ApprovalDecision::Deny => "deny",
             corpus::security::approval::ApprovalDecision::ApproveForSession => {
                 "approve_for_session"
+            }
+            corpus::security::approval::ApprovalDecision::ApprovePathForSession => {
+                "approve_path_for_session"
             }
         };
         if self

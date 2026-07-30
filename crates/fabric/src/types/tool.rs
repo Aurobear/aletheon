@@ -124,6 +124,19 @@ pub struct PatchDelta {
     pub applied: Vec<PatchDeltaApplied>,
     pub failed: Vec<PatchDeltaFailed>,
     pub files_changed: Vec<PatchDeltaFileChange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_artifact: Option<PatchDiffArtifactRef>,
+    #[serde(default)]
+    pub diff_preview_truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatchDiffArtifactRef {
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub mime: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,6 +163,13 @@ pub struct PatchDeltaFileChange {
     pub hunks_applied: usize,
     pub bytes_before: u64,
     pub bytes_after: u64,
+    #[serde(default)]
+    pub is_binary: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolApprovalDescriptor {
+    pub mutation_targets: Vec<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -252,6 +272,15 @@ pub trait Tool: Send + Sync {
     /// Read-only and legacy tools inherit `None` and remain unaffected.
     fn execution_descriptor(&self) -> Option<ToolExecutionDescriptor> {
         None
+    }
+    /// Resolve typed mutation targets from already validated input before an
+    /// approval prompt. The default exposes no path-scoped choice.
+    fn approval_descriptor(
+        &self,
+        _input: &serde_json::Value,
+        _workspace: &WorkspacePolicy,
+    ) -> anyhow::Result<Option<ToolApprovalDescriptor>> {
+        Ok(None)
     }
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult;
 

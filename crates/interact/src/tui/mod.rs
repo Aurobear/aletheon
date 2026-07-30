@@ -14,6 +14,7 @@ pub mod command;
 pub mod completion;
 pub mod computer;
 pub mod conscious_core;
+pub mod diff_view;
 
 pub mod help_overlay;
 pub mod history_search;
@@ -322,6 +323,8 @@ struct App {
     first_render: bool,
     /// Pending approval dialog (shown as modal overlay).
     pending_approval: Option<approval_dialog::ApprovalDialog>,
+    detail: Option<diff_view::DiffView>,
+    latest_diff: Option<String>,
     /// Streaming controller for incremental rendering
     stream_ctrl: StreamController,
     /// Current turn's token count
@@ -386,6 +389,8 @@ impl App {
             pending_submit: None,
             first_render: true,
             pending_approval: None,
+            detail: None,
+            latest_diff: None,
             stream_ctrl: StreamController::new(Arc::clone(&clock)),
             turn_tokens: None,
             total_tokens: 0,

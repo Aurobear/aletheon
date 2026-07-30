@@ -1555,7 +1555,7 @@ mod tests {
             .reserve_command(
                 transaction.transaction_id,
                 &context.session_id,
-                context.agent,
+                context.agent.clone(),
                 repo.path(),
                 "validation-test".into(),
                 "validation".into(),
@@ -1625,7 +1625,7 @@ mod tests {
             .reserve_command(
                 transaction.transaction_id,
                 &context.session_id,
-                context.agent,
+                context.agent.clone(),
                 repo.path(),
                 "validation-test".into(),
                 "validation".into(),

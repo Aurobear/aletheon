@@ -79,6 +79,7 @@ impl Tool for CountingTool {
                     applied: vec![],
                     failed: vec![],
                     files_changed: vec![],
+                    ..Default::default()
                 }),
             },
         }

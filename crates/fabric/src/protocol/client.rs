@@ -53,6 +53,7 @@ pub enum ClientRpcRequest {
     SessionLoadRecent,
     SessionLoadPrevious(SessionParams),
     ApprovalResponse(ApprovalResponseParams),
+    DiffArtifactGet(DiffArtifactGetParams),
     MemoryAdd(MemoryAddParams),
     MemoryList(MemoryListParams),
     MemorySearch(MemorySearchParams),
@@ -194,12 +195,13 @@ pub struct InterruptParams {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TransientApprovalDecision {
     Approve,
     ApproveForSession,
     Deny,
+    ApprovePathForSession,
 }
 
 impl TransientApprovalDecision {
@@ -208,14 +210,39 @@ impl TransientApprovalDecision {
             Self::Approve => "approve",
             Self::ApproveForSession => "approve_for_session",
             Self::Deny => "deny",
+            Self::ApprovePathForSession => "approve_path_for_session",
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ApprovalResponseParams {
     pub approval_id: String,
     pub decision: TransientApprovalDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_hint: Option<TransientApprovalScopeHint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransientApprovalScopeSubject {
+    pub tool: String,
+    pub path_candidates: Vec<PathBuf>,
+    pub subject_version: u32,
+    pub subject_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransientApprovalScopeHint {
+    pub path_root: PathBuf,
+    pub subject_version: u32,
+    pub subject_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DiffArtifactGetParams {
+    pub sha256: String,
+    pub offset: u64,
+    pub limit: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -480,6 +507,26 @@ impl ClientRpcRequest {
         Self::ApprovalResponse(ApprovalResponseParams {
             approval_id: approval_id.into(),
             decision,
+            scope_hint: None,
+        })
+    }
+
+    pub fn scoped_approval_response(
+        approval_id: impl Into<String>,
+        scope_hint: TransientApprovalScopeHint,
+    ) -> Self {
+        Self::ApprovalResponse(ApprovalResponseParams {
+            approval_id: approval_id.into(),
+            decision: TransientApprovalDecision::ApprovePathForSession,
+            scope_hint: Some(scope_hint),
+        })
+    }
+
+    pub fn diff_artifact_get(sha256: impl Into<String>, offset: u64, limit: u32) -> Self {
+        Self::DiffArtifactGet(DiffArtifactGetParams {
+            sha256: sha256.into(),
+            offset,
+            limit,
         })
     }
 
@@ -661,6 +708,9 @@ impl ClientRpcRequest {
             }
             Self::ApprovalResponse(params) => {
                 ("approval_response", Some(serde_json::to_value(params)?))
+            }
+            Self::DiffArtifactGet(params) => {
+                ("diff_artifact.get", Some(serde_json::to_value(params)?))
             }
             Self::MemoryAdd(params) => ("memory.add", Some(serde_json::to_value(params)?)),
             Self::MemoryList(params) => ("memory.list", Some(serde_json::to_value(params)?)),

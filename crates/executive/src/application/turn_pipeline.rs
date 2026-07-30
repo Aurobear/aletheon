@@ -1198,6 +1198,7 @@ impl TurnPipeline {
                             "action_summary": pending.action_summary,
                             "risk_level": pending.risk_level,
                             "detail": pending.detail,
+                            "scope_subject": pending.scope_subject,
                         }
                     });
                     {
