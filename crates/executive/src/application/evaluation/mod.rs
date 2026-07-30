@@ -3,6 +3,8 @@ mod contract_issuer;
 mod evidence_collector;
 mod policy;
 
+use async_trait::async_trait;
+
 pub use coding_scorer::{
     coding_v2_rubric, CodingDimensionScorer, CodingV2Scorer, ScoredEvaluationInput,
 };
@@ -20,6 +22,31 @@ pub struct TurnEvaluationArtifacts {
     pub file_deltas: Vec<TurnFileDeltaSnapshot>,
     pub runtime_faults: Vec<String>,
     pub supplemental_evidence: Vec<fabric::types::metacognition_evidence::EvidenceItem>,
+}
+
+#[async_trait]
+pub trait EvaluationReceiptStore: Send + Sync {
+    async fn append_contract(
+        &self,
+        contract: &fabric::TaskEvaluationContract,
+    ) -> anyhow::Result<()>;
+    async fn append_evaluation(
+        &self,
+        snapshot: &fabric::EvaluationEvidenceSnapshot,
+        receipt: &fabric::EvaluationReceipt,
+    ) -> anyhow::Result<()>;
+    async fn get_receipt(
+        &self,
+        id: &fabric::EvaluationReceiptId,
+    ) -> anyhow::Result<Option<fabric::EvaluationReceipt>>;
+    async fn get_snapshot(
+        &self,
+        id: &fabric::EvaluationSnapshotId,
+    ) -> anyhow::Result<Option<fabric::EvaluationEvidenceSnapshot>>;
+    async fn latest_for_subject(
+        &self,
+        subject: &fabric::EvaluationSubject,
+    ) -> anyhow::Result<Option<fabric::EvaluationReceipt>>;
 }
 
 #[derive(Debug, thiserror::Error)]

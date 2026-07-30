@@ -6,6 +6,7 @@
 pub mod agent_control;
 pub mod artifact;
 pub mod channel;
+pub mod evaluation;
 pub mod external;
 pub mod gbrain;
 pub mod google;

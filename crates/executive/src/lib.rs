@@ -53,6 +53,10 @@ pub mod runtime {
         pub use crate::adapters::events::*;
     }
 
+    pub mod evaluation {
+        pub use crate::adapters::evaluation::*;
+    }
+
     pub mod plugin {
         pub use crate::adapters::plugin::*;
     }
