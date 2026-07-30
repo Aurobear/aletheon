@@ -2,7 +2,7 @@
 
 use crate::core::{
     AgentRuntimeId, CognitiveTaskContract, CognitiveTaskKind, CognitiveTurnState,
-    CompletionGateMode, RequiredAction,
+    CompletionGateMode, RequiredAction, ValidationRequirement,
 };
 use crate::harness::config::HarnessConfig;
 use crate::harness::linear::DynLlmRef;
@@ -334,13 +334,18 @@ impl LinearCognitiveSession {
         services: &dyn TurnServices,
     ) -> Option<Message> {
         let requirements = services.turn_requirements(request);
-        if requirements.is_empty() {
+        let evaluation = request.evaluation_contract.as_ref();
+        if requirements.is_empty() && evaluation.is_none() {
             self.inner.clear_cognitive_state();
             return None;
         }
-        let model_contract = render_turn_requirements(&requirements);
-        let required_actions = requirements
-            .into_iter()
+        let model_contract = render_turn_contract(evaluation, &requirements);
+        let track_evaluation_obligations = evaluation
+            .is_some_and(|contract| contract.mode == fabric::EvaluationMode::Enforce)
+            || requirements.is_empty();
+        let mut required_actions = requirements
+            .iter()
+            .cloned()
             .map(|requirement| match requirement {
                 fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => {
                     RequiredAction::InvokeAgent {
@@ -355,7 +360,45 @@ impl LinearCognitiveSession {
                 }
             })
             .collect::<Vec<_>>();
-        let task_kind = if required_actions
+        let mut validation_requirements = Vec::new();
+        if let Some(contract) = evaluation.filter(|_| track_evaluation_obligations) {
+            for evidence in &contract.required_evidence {
+                let evidence_kind = evidence_kind_name(evidence.kind);
+                for index in 1..=evidence.minimum_count {
+                    let sequence = (evidence.minimum_count > 1)
+                        .then(|| format!(" (item {index}/{})", evidence.minimum_count))
+                        .unwrap_or_default();
+                    validation_requirements.push(ValidationRequirement {
+                        id: format!("evaluation:evidence:{evidence_kind}:{index}"),
+                        description: format!(
+                            "observe {} `{evidence_kind}` evidence{sequence}",
+                            if evidence.authoritative {
+                                "authoritative"
+                            } else {
+                                "eligible"
+                            }
+                        ),
+                    });
+                }
+                if evidence.kind
+                    == fabric::types::metacognition_evidence::EvidenceKind::VerificationResult
+                    && !required_actions.iter().any(|action| {
+                        matches!(
+                            action,
+                            RequiredAction::InvokeTool { tool_name }
+                                if tool_name == "validation_run"
+                        )
+                    })
+                {
+                    required_actions.push(RequiredAction::InvokeTool {
+                        tool_name: "validation_run".into(),
+                    });
+                }
+            }
+        }
+        let task_kind = if evaluation.is_some() {
+            CognitiveTaskKind::CodeChange
+        } else if required_actions
             .iter()
             .any(|action| matches!(action, RequiredAction::InvokeAgent { .. }))
         {
@@ -369,20 +412,57 @@ impl LinearCognitiveSession {
                 task_kind,
                 required_actions,
                 deliverables: Vec::new(),
-                validation_requirements: Vec::new(),
+                validation_requirements,
             }));
         self.inner
-            .set_completion_gate_mode(CompletionGateMode::Enforce);
+            .set_completion_gate_mode(match (requirements.is_empty(), evaluation) {
+                (true, Some(contract)) if contract.mode == fabric::EvaluationMode::Shadow => {
+                    CompletionGateMode::Shadow
+                }
+                _ => CompletionGateMode::Enforce,
+            });
         Some(Message::system(model_contract))
     }
 }
 
-fn render_turn_requirements(requirements: &[fabric::TurnRequirement]) -> String {
+fn render_turn_contract(
+    evaluation: Option<&fabric::TaskEvaluationContract>,
+    requirements: &[fabric::TurnRequirement],
+) -> String {
     let mut lines = vec![
         "[cognitive_task_contract]".to_owned(),
-        "These host-authored obligations apply to this turn and are enforced at completion:"
+        "These host-authored obligations apply to this turn; their typed modes determine whether they are observed or enforced at completion:"
             .to_owned(),
     ];
+    if let Some(contract) = evaluation {
+        lines.push(format!(
+            "- Perform an explicitly typed coding task under rubric `{}` version {} in `{:?}` mode.",
+            contract.rubric.0, contract.rubric_version, contract.mode
+        ));
+        for evidence in &contract.required_evidence {
+            lines.push(format!(
+                "- Produce at least {} {}{} evidence item(s).",
+                evidence.minimum_count,
+                if evidence.authoritative {
+                    "authoritative "
+                } else {
+                    ""
+                },
+                evidence_kind_name(evidence.kind)
+            ));
+            if evidence.kind
+                == fabric::types::metacognition_evidence::EvidenceKind::VerificationResult
+            {
+                lines.push(
+                    "- Invoke `validation_run` and observe its authoritative terminal result; a pending command is not completion evidence."
+                        .into(),
+                );
+            }
+        }
+        for gate in &contract.required_gates {
+            lines.push(format!("- Satisfy evaluation gate `{}`.", gate.name));
+        }
+    }
     for requirement in requirements {
         lines.push(match requirement {
             fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => format!(
@@ -398,6 +478,21 @@ fn render_turn_requirements(requirements: &[fabric::TurnRequirement]) -> String 
         });
     }
     lines.join("\n")
+}
+
+fn evidence_kind_name(kind: fabric::types::metacognition_evidence::EvidenceKind) -> &'static str {
+    use fabric::types::metacognition_evidence::EvidenceKind;
+    match kind {
+        EvidenceKind::Assertion => "assertion",
+        EvidenceKind::Observation => "observation",
+        EvidenceKind::ActionResult => "action_result",
+        EvidenceKind::VerificationResult => "verification_result",
+        EvidenceKind::Metric => "metric",
+        EvidenceKind::Artifact => "artifact",
+        EvidenceKind::HumanFeedback => "human_feedback",
+        EvidenceKind::PolicyDecision => "policy_decision",
+        EvidenceKind::RuntimeFault => "runtime_fault",
+    }
 }
 
 async fn invoke_with_terminal_receipt(
@@ -815,9 +910,12 @@ mod context_tests {
 
     #[test]
     fn agent_requirement_names_the_runtime_override_field() {
-        let contract = render_turn_requirements(&[fabric::TurnRequirement::InvokeAgentRuntime {
-            runtime_id: "pi-rpc".into(),
-        }]);
+        let contract = render_turn_contract(
+            None,
+            &[fabric::TurnRequirement::InvokeAgentRuntime {
+                runtime_id: "pi-rpc".into(),
+            }],
+        );
         assert!(contract.contains("`agent_spawn`"));
         assert!(contract.contains("`runtime` field set exactly to `pi-rpc`"));
         assert!(contract.contains("runtime ID is not a profile name"));

@@ -529,6 +529,7 @@ impl ReActLoop {
                 }
                 self.observe_change_transaction(name, id, &content, is_error);
                 self.observe_managed_command(name, id, &content, is_error);
+                self.observe_evaluation_validation(name, id, &content, is_error);
                 if name == "request_user_input" && !is_error {
                     clarification_requested = clarification_question(&content);
                 }
@@ -844,6 +845,78 @@ impl ReActLoop {
                 session_id: session_id.into(),
             },
             source: EvidenceSource::Tool {
+                name: capability.into(),
+            },
+            level: EvidenceLevel::DeterministicallyVerified,
+            terminal_status: if succeeded {
+                TerminalStatus::Succeeded
+            } else {
+                TerminalStatus::Failed
+            },
+            locator,
+            digest: payload
+                .get("output_artifact_ref")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+        });
+    }
+
+    fn observe_evaluation_validation(
+        &mut self,
+        capability: &str,
+        call_id: &str,
+        content: &str,
+        is_error: bool,
+    ) {
+        if capability != "validation_run" {
+            return;
+        }
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(content) else {
+            return;
+        };
+        let Some(terminal) = payload.get("terminal").filter(|value| !value.is_null()) else {
+            return;
+        };
+        let requirement_id = self.cognitive_state.as_ref().and_then(|state| {
+            state
+                .contract
+                .validation_requirements
+                .iter()
+                .find_map(|item| {
+                    if !item
+                        .id
+                        .starts_with("evaluation:evidence:verification_result:")
+                    {
+                        return None;
+                    }
+                    let subject = EvidenceSubject::Validation {
+                        requirement_id: item.id.clone(),
+                    };
+                    self.evidence_ledger
+                        .successful_for(&subject)
+                        .is_none()
+                        .then(|| item.id.clone())
+                })
+        });
+        let Some(requirement_id) = requirement_id else {
+            return;
+        };
+        let succeeded = terminal.get("status").and_then(|value| value.as_str()) == Some("exited")
+            && terminal.get("exit_code").and_then(|value| value.as_i64()) == Some(0)
+            && !is_error;
+        let locator = payload
+            .get("output_artifact_ref")
+            .and_then(|value| value.as_str())
+            .map(|artifact_id| EvidenceLocator::Artifact {
+                artifact_id: artifact_id.into(),
+            })
+            .unwrap_or_else(|| EvidenceLocator::DurableReceipt {
+                receipt_id: call_id.into(),
+            });
+        self.evidence_ledger.record(EvidenceRecord {
+            id: EvidenceId(format!("evaluation-validation:{call_id}:{requirement_id}")),
+            subject: EvidenceSubject::Validation { requirement_id },
+            source: EvidenceSource::Validation {
                 name: capability.into(),
             },
             level: EvidenceLevel::DeterministicallyVerified,
