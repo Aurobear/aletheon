@@ -62,6 +62,9 @@ impl SessionGateway {
                             fabric::ItemPayload::ContextProjection { .. } => "context_projection",
                             fabric::ItemPayload::SystemNotice { .. } => "system_notice",
                             fabric::ItemPayload::CapabilityReceipt { .. } => "capability_receipt",
+                            fabric::ItemPayload::EvaluationReceiptRef { .. } => {
+                                "evaluation_receipt_ref"
+                            }
                             fabric::ItemPayload::ModelContextProjection { .. } => {
                                 "model_context_projection"
                             }

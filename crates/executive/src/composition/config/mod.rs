@@ -8,6 +8,7 @@ pub mod backpressure;
 mod channel;
 mod coding;
 pub mod diagnostics;
+mod evaluation;
 mod genome;
 mod grok_hardening;
 mod infra;
@@ -30,6 +31,7 @@ pub use cognit::config::{
     DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig, RoleRuntimeConfig,
 };
 pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
+pub use evaluation::EvaluationSettings;
 pub use genome::GenomeConfig;
 pub use grok_hardening::GrokHardeningConfig;
 pub use infra::{DaemonConfig, McpServerConfig, PluginsConfig, SandboxConfig};
@@ -97,6 +99,7 @@ pub struct AppConfig {
     pub hooks: HooksConfig,
     pub perception: PerceptionConfig,
     pub evolution: EvolutionSettings,
+    pub evaluation: EvaluationSettings,
     pub telegram: TelegramChannelConfig,
     pub goal_runtime: Option<GoalRuntimeConfig>,
     pub pi_runtime: CodingRuntimeConfig,
