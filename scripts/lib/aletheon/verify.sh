@@ -1,5 +1,33 @@
 #!/usr/bin/env bash
 
+_wait_for_health() {
+  local mode=$1 target=$2
+  [[ "$ALETHEON_READINESS_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || {
+    aletheon_die "ALETHEON_READINESS_TIMEOUT_SECONDS must be a positive integer"
+    return
+  }
+
+  local deadline=$((SECONDS + ALETHEON_READINESS_TIMEOUT_SECONDS)) output status
+  output=$(mktemp "${TMPDIR:-/tmp}/aletheon-health.XXXXXX") || return
+  chmod 0600 "$output"
+  while :; do
+    status=0
+    "$ALETHEON_LIBEXEC/healthcheck.sh" "$mode" "$target" >"$output" 2>&1 || status=$?
+    if ((status == 0)); then
+      cat "$output"
+      rm -f -- "$output"
+      return 0
+    fi
+    if ((SECONDS >= deadline)); then
+      cat "$output" >&2
+      rm -f -- "$output"
+      aletheon_die "runtime did not become ready within ${ALETHEON_READINESS_TIMEOUT_SECONDS}s: $target"
+      return
+    fi
+    sleep 1
+  done
+}
+
 _verify_gbrain_health() {
   local endpoint health
   if endpoint=$(gbrain_endpoint); then
@@ -26,7 +54,9 @@ cmd_verify() {
   systemctl is-active --quiet aletheon-core.service
   systemctl --user is-active --quiet aletheon.service
   systemctl --user is-active --quiet aletheon-pi-closure.timer
-  cmd_health
+  _wait_for_health --core-socket "$ALETHEON_CORE_SOCKET"
+  _wait_for_health --user-socket "$ALETHEON_USER_SOCKET"
+  _verify_gbrain_health
   local bin_dir=${ALETHEON_USER_BIN_DIR:-$HOME/.local/bin}
   local unit_dir=${ALETHEON_USER_UNIT_DIR:-$HOME/.config/systemd/user}
   cmp -s "$ALETHEON_LIBEXEC/pi-scheduled-task.sh" "$bin_dir/aletheon-pi-scheduled-task"
@@ -48,7 +78,7 @@ cmd_verify_user() {
   cmd_configure check
   systemctl --user is-active --quiet aletheon.service
   systemctl --user is-active --quiet aletheon-pi-closure.timer
-  "$ALETHEON_LIBEXEC/healthcheck.sh" --user-socket "$ALETHEON_USER_SOCKET"
+  _wait_for_health --user-socket "$ALETHEON_USER_SOCKET"
   _verify_gbrain_health
   cmp -s "$ALETHEON_LIBEXEC/pi-scheduled-task.sh" "$bin_dir/aletheon-pi-scheduled-task"
   cmp -s "$ALETHEON_ROOT/deploy/systemd/user/aletheon-pi-closure.service" "$unit_dir/aletheon-pi-closure.service"

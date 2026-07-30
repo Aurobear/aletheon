@@ -151,12 +151,12 @@ pub enum HarnessBuildError {
 **Files:**
 - Modify only defects found by validation.
 
-- [ ] Run `bash scripts/cargo-agent.sh fmt --all -- --check`.
-- [ ] Run focused tests from Tasks 1-9.
-- [ ] Run `bash scripts/aletheon.sh test architecture`.
-- [ ] Run `bash scripts/aletheon.sh acceptance architecture`.
-- [ ] As integration owner, run `bash scripts/cargo-agent.sh test --workspace` once.
-- [ ] Run `sudo bash scripts/aletheon.sh deploy` and require success.
-- [ ] Compare SHA-256 for `target/release/aletheon`, `/usr/bin/aletheon`, and both running system/user daemon executables.
-- [ ] Observe unchanged systemd restart counters across a stability interval.
-- [ ] Complete a real LLM request with `/usr/bin/aletheon` over the official user socket and reject any rendered/provider inference error.
+- [x] Run `bash scripts/cargo-agent.sh fmt --all -- --check`.
+- [x] Run focused tests from Tasks 1-9.
+- [x] Run `bash scripts/aletheon.sh test architecture`.
+- [x] Run `bash scripts/aletheon.sh acceptance architecture`.
+- [x] As integration owner, run `bash scripts/cargo-agent.sh test --workspace` once.
+- [x] Run `sudo bash scripts/aletheon.sh deploy` and require success.
+- [x] Compare SHA-256 for `target/release/aletheon`, `/usr/bin/aletheon`, and both running system/user daemon executables.
+- [x] Observe unchanged systemd restart counters across a stability interval.
+- [x] Complete a real LLM request with `/usr/bin/aletheon` over the official user socket and reject any rendered/provider inference error.
