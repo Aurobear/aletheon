@@ -358,6 +358,14 @@ impl LinearCognitiveSession {
                 fabric::TurnRequirement::ObserveTerminal { operation_id } => {
                     RequiredAction::ObserveTerminal { operation_id }
                 }
+                fabric::TurnRequirement::RunRoleGraph { .. } => RequiredAction::RunRoleGraph {
+                    root_task_id: request
+                        .context
+                        .turn_id
+                        .map(|turn_id| format!("root:{}", turn_id.0))
+                        .unwrap_or_else(|| "root:unassigned".into()),
+                    receipt_id: None,
+                },
             })
             .collect::<Vec<_>>();
         let mut validation_requirements = Vec::new();
@@ -475,6 +483,8 @@ fn render_turn_contract(
                 "- Observe authoritative terminal evidence for operation `{}`.",
                 operation_id.0
             ),
+            fabric::TurnRequirement::RunRoleGraph { .. } =>
+                "- Complete the host-authorized canonical role graph and persist its terminal receipt.".into(),
         });
     }
     lines.join("\n")

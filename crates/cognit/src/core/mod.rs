@@ -17,6 +17,7 @@ pub mod progress_auditor;
 pub mod reasoner;
 pub mod reflector;
 pub mod skill_extractor;
+pub mod task_decomposition;
 pub mod world_model;
 
 pub use self::experience_summarizer::ExperienceSummarizer;
@@ -24,3 +25,4 @@ pub use claim_auditor::*;
 pub use cognitive_task::*;
 pub use evidence::*;
 pub use progress_auditor::*;
+pub use task_decomposition::*;

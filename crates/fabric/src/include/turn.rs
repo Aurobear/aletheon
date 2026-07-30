@@ -55,9 +55,20 @@ pub struct CapabilityCall {
 /// matching prompt phrases in the execution loop.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum TurnRequirement {
-    InvokeAgentRuntime { runtime_id: String },
-    InvokeCapability { name: String },
-    ObserveTerminal { operation_id: OperationId },
+    InvokeAgentRuntime {
+        runtime_id: String,
+    },
+    InvokeCapability {
+        name: String,
+    },
+    ObserveTerminal {
+        operation_id: OperationId,
+    },
+    RunRoleGraph {
+        workspace_scope: Vec<String>,
+        allowed_capabilities: Vec<crate::AgentRuntimeCapability>,
+        expected_evidence: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

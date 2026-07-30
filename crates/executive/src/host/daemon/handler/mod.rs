@@ -453,6 +453,23 @@ fn parse_turn_requirements(
             fabric::TurnRequirement::InvokeAgentRuntime { runtime_id } => runtime_id,
             fabric::TurnRequirement::InvokeCapability { name } => name,
             fabric::TurnRequirement::ObserveTerminal { .. } => continue,
+            fabric::TurnRequirement::RunRoleGraph {
+                workspace_scope,
+                expected_evidence,
+                ..
+            } => {
+                if workspace_scope.len() > 64 || expected_evidence.len() > 64 {
+                    return Err("role graph requirement lists are limited to 64 items".into());
+                }
+                if workspace_scope
+                    .iter()
+                    .chain(expected_evidence)
+                    .any(|item| item.trim().is_empty() || item.len() > 4096)
+                {
+                    return Err("role graph requirement values must contain 1..=4096 bytes".into());
+                }
+                continue;
+            }
         };
         if value.trim().is_empty() || value.len() > 512 {
             return Err("turn requirement identifiers must contain 1..=512 bytes".into());

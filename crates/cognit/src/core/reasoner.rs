@@ -22,10 +22,12 @@ pub enum ReasoningStrategy {
 ///
 /// Produces reasoning chains from intents and world state. These chains
 /// are then consumed by the Planner to generate concrete plans.
+#[deprecated(note = "use the production cognitive harness instead")]
 pub struct Reasoner {
     default_strategy: ReasoningStrategy,
 }
 
+#[allow(deprecated)]
 impl Reasoner {
     pub fn new(default_strategy: ReasoningStrategy) -> Self {
         Self { default_strategy }
@@ -232,6 +234,7 @@ impl Reasoner {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use fabric::{Context, IntentSource};
