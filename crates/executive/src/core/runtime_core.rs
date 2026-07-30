@@ -241,6 +241,7 @@ impl RuntimeCore {
             app_config.goal_runtime.clone().unwrap_or_default(),
             app_config.pi_runtime.clone(),
             app_config.grok_hardening.clone(),
+            app_config.evaluation.clone(),
             app_config.sandbox_profiles.clone(),
             app_config.network_policy.clone(),
             app_config.agent_profiles.clone(),

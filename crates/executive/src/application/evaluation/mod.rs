@@ -2,6 +2,7 @@ mod coding_scorer;
 mod contract_issuer;
 mod evidence_collector;
 mod policy;
+mod service;
 
 use async_trait::async_trait;
 
@@ -11,6 +12,7 @@ pub use coding_scorer::{
 pub use contract_issuer::{DefaultTaskEvaluationContractIssuer, TaskEvaluationContractIssuer};
 pub use evidence_collector::{CodingEvidenceCollector, DefaultCodingEvidenceCollector};
 pub use policy::EvaluationSettlementPolicy;
+pub use service::EvaluationService;
 
 use crate::application::turn_diff_tracker::TurnFileDeltaSnapshot;
 

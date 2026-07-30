@@ -78,6 +78,7 @@ pub struct TurnCoordinator {
     grok_hardening: GrokHardeningConfig,
     backpressure: BackpressureConfig,
     session_input: Arc<super::session_input::SessionInputCoordinator>,
+    evaluation: Option<Arc<super::evaluation::EvaluationService>>,
 }
 
 impl TurnCoordinator {
@@ -95,6 +96,7 @@ impl TurnCoordinator {
             grok_hardening,
             backpressure: BackpressureConfig::default(),
             session_input: Arc::new(super::session_input::SessionInputCoordinator::in_memory()),
+            evaluation: None,
         }
     }
 
@@ -116,6 +118,14 @@ impl TurnCoordinator {
         session_input: Arc<super::session_input::SessionInputCoordinator>,
     ) -> Self {
         self.session_input = session_input;
+        self
+    }
+
+    pub fn with_evaluation_service(
+        mut self,
+        evaluation: Arc<super::evaluation::EvaluationService>,
+    ) -> Self {
+        self.evaluation = Some(evaluation);
         self
     }
 
@@ -303,6 +313,19 @@ impl TurnCoordinator {
         request.operation_id = operation.id;
         request.context.turn_id = Some(TurnId::new());
         let turn_id = request.context.turn_id.unwrap_or_default();
+        request.evaluation_contract = if let Some(evaluation) = &self.evaluation {
+            match evaluation.issue_contract(&request).await {
+                Ok(contract) => contract,
+                Err(error) => {
+                    self.kernel
+                        .fail_operation(operation.id, error.to_string())
+                        .await?;
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
         let cancel = CancellationToken::new();
         let active_key = ActiveTurnKey::from_request(&request);
         {
@@ -470,11 +493,11 @@ impl TurnCoordinator {
         match execution {
             Ok(execution) => {
                 let TurnExecution {
-                    result,
+                    mut result,
                     items,
                     projection,
                     context_projection,
-                    evaluation_artifacts: _,
+                    evaluation_artifacts,
                 } = execution;
                 if let Some(receipt) = context_projection {
                     receipt.validate()?;
@@ -513,6 +536,65 @@ impl TurnCoordinator {
                         &mut write_tracker,
                     )
                     .await?;
+                }
+                if let Some(contract) = &request.evaluation_contract {
+                    let evaluation = self.evaluation.as_ref().ok_or_else(|| {
+                        anyhow!("evaluation contract exists without an evaluation service")
+                    })?;
+                    match evaluation
+                        .evaluate(
+                            contract,
+                            &evaluation_artifacts,
+                            request.process_id,
+                            request.operation_id,
+                        )
+                        .await
+                    {
+                        Ok(receipt) => {
+                            result.stop =
+                                super::evaluation::EvaluationSettlementPolicy::settle_stop(
+                                    receipt.decision,
+                                    result.stop,
+                                );
+                            if result.stop != TurnStop::Completed {
+                                result.metrics.completed_normally = false;
+                            }
+                            self.append_tracked(
+                                &session_id,
+                                turn_id,
+                                &mut sequence,
+                                ItemPayload::EvaluationReceiptRef {
+                                    receipt: receipt.reference(),
+                                },
+                                WritePhase::EvaluationReceipt,
+                                &mut write_tracker,
+                            )
+                            .await?;
+                        }
+                        Err(error) => {
+                            tracing::error!(
+                                %error,
+                                mode = ?contract.mode,
+                                turn = %turn_id.0,
+                                "coding evaluation failed without a receipt"
+                            );
+                            self.append_tracked(
+                                &session_id,
+                                turn_id,
+                                &mut sequence,
+                                ItemPayload::SystemNotice {
+                                    content: format!("evaluation indeterminate: {error}"),
+                                },
+                                WritePhase::EvaluationReceipt,
+                                &mut write_tracker,
+                            )
+                            .await?;
+                            if contract.mode == fabric::EvaluationMode::Enforce {
+                                result.stop = TurnStop::Failed;
+                                result.metrics.completed_normally = false;
+                            }
+                        }
+                    }
                 }
                 let terminal = if result.stop == TurnStop::Completed {
                     ItemPayload::AssistantMessage {

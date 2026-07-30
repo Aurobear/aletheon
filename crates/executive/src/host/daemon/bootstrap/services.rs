@@ -197,6 +197,7 @@ pub(super) async fn build_turn_services(
     event_bus: Option<Arc<fabric::CanonicalEventBus>>,
     config: &DaemonConfig,
     grok_hardening: GrokHardeningConfig,
+    evaluation: crate::composition::config::EvaluationSettings,
     pi_runtime: &crate::composition::config::CodingRuntimeConfig,
     pi_work_allowed: bool,
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SessionManager>>>>>,
@@ -292,6 +293,11 @@ pub(super) async fn build_turn_services(
     } else {
         Arc::new(crate::application::session_input::SessionInputCoordinator::in_memory())
     };
+    let evaluation_service = crate::composition::turn_coordinator::compose_evaluation_service(
+        kernel.clone(),
+        data_dir,
+        evaluation,
+    )?;
     let coordinator = Arc::new(
         crate::composition::turn_coordinator::compose_turn_coordinator(
             kernel.clone(),
@@ -301,7 +307,8 @@ pub(super) async fn build_turn_services(
             grok_hardening.clone(),
         )
         .with_backpressure(config.backpressure.clone())
-        .with_session_input(session_input.clone()),
+        .with_session_input(session_input.clone())
+        .with_evaluation_service(evaluation_service),
     );
     let workspace_checkpoint = Arc::new(
         crate::application::workspace_checkpoint::WorkspaceCheckpointService::new(
