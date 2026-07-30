@@ -1,7 +1,9 @@
 # Metacognition Evolution Wiring (Workstream C)
 
 **Date:** 2026-07-30
-**Status:** Design draft (decisions open); implementation not started
+**Status:** Revised design; governance decisions locked; apply remains blocked
+until required A/B evidence, candidate-aware sandboxing, and restart-safe genome
+persistence exist
 **Scope:** Bring the dormant `metacog` self-evolution layer online as a
 **governed candidate-evaluation-and-evolution** step in the post-turn path —
 matching `architecture-overview.md:57` ("受治理候选评估与演化"). Evolution must
@@ -161,6 +163,10 @@ authority over them.
    are more likely to be rejected / never approved.
 4. Preserve reversibility and auditability: every accepted mutation has a durable
    `MutationReceipt` and a governed rollback path.
+5. Persist and read back the accepted genome atomically before an apply receipt
+   can report success; daemon restart must retain the effective version.
+6. Evaluate the candidate genome itself through a bounded typed sandbox suite;
+   repository compilation status is not candidate evidence.
 
 **Non-goals**
 
@@ -173,9 +179,9 @@ authority over them.
   constraint: the accept authority is the operator, routed through the existing
   approval subsystem. The self-approval guard already exists
   (`improvement/registry.rs:135-140`) and must be honored.
-- Making `MigrationManager::migrate` genuinely persist genome state, or turning
-  `SandboxRunner` into a real per-candidate sandbox — tracked as follow-ups
-  (§7), not required to wire the governed step.
+- Source-code mutation and production-time Cargo execution. Genome verification
+  uses a typed in-process candidate sandbox; code builds remain operator/dev
+  validation through `scripts/cargo-agent.sh`.
 - Any "auto-apply on Adopt" behavior. `Adopt` is a recommendation, not authority.
 - Turning evolution ON by default. Ships default-off, as today.
 
@@ -188,10 +194,10 @@ authority over them.
 Rejected — this makes the runtime its own authority, violating
 `architecture-overview.md:141` and the single-authority rule.
 
-**(B) Verified-candidate parking + out-of-band governed apply (RECOMMENDED).**
+**(B) Verified-candidate parking + out-of-band governed apply (selected).**
 The coordinator's job ends at producing a **durable verified candidate**
 (already the case, `service.rs:449-458`). A new, thin
-`GovernedEvolutionProposer` turns an `Adopt`/`PartialAdopt` verification into a
+`GovernedEvolutionProposer` turns an `Adopt` verification into a
 **pending `DaseinModification` approval** (no permit, no apply yet). The operator
 resolves it through the existing `ApprovalService`
 (`approval_service.rs:62, resolve() :134`); on approval, the resolve path mints
@@ -206,13 +212,14 @@ orthogonal to the governance wiring.
 
 ### 3.2 (a) Hook point — reuse the existing async/background spawn
 
-**Recommended: no new hook.** The correct hook already exists and is correctly
+**Locked decision: no new hook.** The correct hook already exists and is correctly
 shaped: the detached `tokio::spawn` at `turn_coordinator.rs:413`, strictly after
 kernel settlement (`terminal?;`, `:411`), fire-and-forget. Evolution stays
 **async/background**, never synchronous. The design changes *what the step does*
 and *how often*, not *where it fires*. Rationale: a synchronous evolution step
-would couple `cargo test --workspace` latency (`sandbox_runner.rs:32`) into the
-turn — unacceptable. `project()` already isolates the evolution error
+would couple candidate verification latency into the turn — unacceptable. The
+current direct `cargo test --workspace` runner (`sandbox_runner.rs:32`) is
+removed rather than retained in production. `project()` already isolates the evolution error
 (`post_turn_projection.rs:142-153`) and the spawn already swallows failures with a
 `warn!` (`turn_coordinator.rs:414-416`).
 
@@ -235,12 +242,36 @@ Evidence sources, layered by availability (this is the A/B degradation surface):
 | Memory-recalled prior outcomes | mnemosyne recall (A) | future | **A** |
 | Multi-agent evaluation receipts | Planner/Executor/Reviewer signal (B) | future | **B** |
 
-When A/B are absent the candidate is generated from reflection + sandbox +
-evaluator only. Because `Evaluator` gates on `SAFETY_THRESHOLD=0.8`
-(`candidate_evaluator.rs:11`) and thin evidence rarely clears it, most such
-candidates land `NeedsMoreTesting`/`Reject` (`service.rs:439-447`) and never
-reach an approval request — **the safe-degradation property is emergent, not
-bolted on.**
+The current evaluator does not consume A/B evidence and can recommend `Adopt`
+from a passing test result plus one bounded change
+(`candidate_evaluator.rs:34-99`). Safe degradation therefore cannot be emergent.
+Add an explicit `EvolutionEvidencePolicy`: an approval proposal requires a
+candidate-aware sandbox receipt plus the configured minimum number of durable
+coding-evaluation/multi-agent receipts for the same rubric and genome lineage.
+When A/B are unavailable, verification may park a candidate for inspection, but
+the proposer records `insufficient_evidence` and creates no approval.
+
+### 3.3.1 Candidate-aware sandbox
+
+Replace the production `SandboxRunner` behavior that invokes
+`cargo test --workspace` while ignoring `_candidate`
+(`crates/metacog/src/evolution/sandbox_runner.rs:28-40`). A genome candidate is
+data, not source code, so repository compilation is neither isolation nor proof
+that the candidate is safe.
+
+`GenomeCandidateSandbox` runs in-process over an isolated temporary genome/state
+root and must:
+
+1. load the exact candidate digest;
+2. validate immutable identity/boundary rules and numerical ranges;
+3. replay a bounded, versioned evaluation corpus against baseline and candidate;
+4. reject regressions in mandatory safety gates even when aggregate score rises;
+5. emit a durable `CandidateSandboxReceipt` containing candidate digest, corpus
+   version, passed/failed cases, elapsed budget, and terminal status.
+
+The daemon never launches Cargo. Repository checks remain implementation
+validation commands run through `bash scripts/cargo-agent.sh` outside the
+production mutation path.
 
 ### 3.4 (c) Governance / approval boundary — the core of C
 
@@ -253,7 +284,9 @@ Single-authority is preserved by **splitting proposal from authorization**:
   (`fabric/.../approval.rs:41`) and `subject.attributes` bound to
   `mutation_id` / `operation="apply"` / `verification_hash` exactly as
   `validate_evidence` requires (`service.rs:350-354`). It mints **no permit** and
-  performs **no apply**. This is the runtime's only reach — proposing.
+  performs **no apply**. `PartialAdopt` remains parked until a future typed
+  subset-candidate flow re-verifies the exact reduced change set; it never
+  inherits the original verification hash. This is the runtime's only reach.
 - The **operator** resolves the pending approval through the existing
   `ApprovalService::resolve` (`approval_service.rs:134`) / approval RPC
   (`rpc_approval.rs`). Only on human `Approved` does the resolve path request
@@ -268,8 +301,10 @@ Single-authority is preserved by **splitting proposal from authorization**:
 `identity.{name,description}` (`editor.rs:31-55`). It may **never** touch source
 code, on-disk config (beyond the genome artifact), prompts, or model weights
 (§2). This boundary is enforced structurally: `apply` calls `runtime.migrate`
-(`service.rs:521`), and `migrate` only edits the in-memory/YAML genome
-(`runtime.rs:181-191`).
+(`service.rs:521`). The live composition must configure an explicit genome path,
+and migration must write temp + fsync + atomic rename, read the genome back,
+verify its digest/version, then update the in-memory effective genome. A receipt
+cannot be `success=true` before durable read-back succeeds.
 
 ```
                  settled turn (post-gate)
@@ -284,7 +319,7 @@ code, on-disk config (beyond the genome artifact), prompts, or model weights
      DefaultMetacogService::verify          service.rs:372
         generate -> sandbox -> evaluate -> Decision + durable candidate
                           |
-             Adopt/PartialAdopt?  ------ no --> park as Rejected (service.rs:444), STOP
+             Adopt + evidence policy? ---- no --> park with typed reason, STOP
                           | yes
                           v
      [NEW] GovernedEvolutionProposer
@@ -313,18 +348,21 @@ requiring its own `metacog.rollback` permit + `DaseinModification` approval — 
 same authority boundary, in reverse. **Design fix required:** persist the
 `RollbackManager` snapshot stack (`rollback.rs`, currently in-memory only,
 `runtime.rs:37-38`) so rollback survives restart; otherwise a post-restart
-rollback restores only the lineage/version, not the genome snapshot.
+rollback restores only the lineage/version, not the genome snapshot. The fix is
+one atomic genome store containing the current version, content digest, previous
+version chain, and full rollback snapshots. Apply and rollback both persist and
+read back this store before emitting a success receipt.
 
 ### 3.6 (e) Scheduling — periodic, not every turn
 
-Recommended: keep the existing `trigger_every_n_turns` (bootstrap sets `10`,
+Keep the existing `trigger_every_n_turns` (bootstrap sets `10`,
 `request.rs:524`) + `trigger_on_failure` (`evolution_coordinator.rs:198-200`)
-for the **verify** step, run in background. The **apply** step is never
+for the **verify** step, run in background. The candidate-aware sandbox has an
+explicit elapsed/case budget and performs no Cargo build. The **apply** step is never
 scheduled — it is strictly operator-driven and out-of-band. There is no
 dream-cycle in the codebase today (`grep` for `dream*` is empty); introducing one
 is out of scope. Verify frequency must be bounded because each trigger can invoke
-`cargo test --workspace` (`sandbox_runner.rs:32`); a per-turn cadence is
-explicitly rejected.
+candidate replay work; a per-turn cadence is explicitly rejected.
 
 ## 4. Error handling
 
@@ -345,10 +383,10 @@ explicitly rejected.
   `service.rs:510, 650`); evidence is bound to `mutation_id`+hash
   (`validate_evidence :350-354`); idempotent re-apply requires matching
   permit/approval (`:481-490`).
-- **Resource/budget bounds.** Gate `SandboxRunner` behind the enabled flag and a
-  bounded cadence (§3.6); cap verify concurrency (the service already serializes
-  via `operations` async-mutex, `service.rs:280, 374`). Sandbox timeout/cost is a
-  follow-up (§7).
+- **Resource/budget bounds.** Gate `GenomeCandidateSandbox` behind the enabled
+  flag and bounded cadence (§3.6); cap replay cases, elapsed time, and verify
+  concurrency (the service already serializes via `operations` async-mutex,
+  `service.rs:280,374`). Exhaustion yields `NeedsMoreTesting`, never `Adopt`.
 
 ## 5. Verification
 
@@ -363,6 +401,14 @@ Unit (metacog, extend `crates/metacog/tests/service_contract.rs`):
   `migrate_calls == 0`).
 - **Rollback requires its own governed evidence** (`metacog.rollback` +
   `DaseinModification`).
+- **Candidate-aware sandbox:** changing the candidate digest changes the sandbox
+  receipt; an immutable-boundary regression is rejected even when repository
+  tests pass.
+- **Evidence policy:** `Adopt` without the required A/B receipt set parks with
+  `insufficient_evidence` and creates no approval.
+- **Restart durability:** apply persists and reads back the genome; reopening the
+  runtime sees the applied digest; governed rollback after reopen restores the
+  previous digest.
 
 Unit (executive):
 
@@ -391,6 +437,16 @@ bash scripts/cargo-agent.sh fmt --all -- --check
 bash scripts/aletheon.sh test architecture
 ```
 
+After implementation, the integration owner must run
+`sudo bash scripts/aletheon.sh deploy`, prove equal SHA-256 digests for the
+release, installed, machine-daemon, and user-daemon executables, observe stable
+restart counters, and complete a real LLM-backed `/usr/bin/aletheon` turn through
+the official user socket. Acceptance must observe candidate parking, human
+approval, durable read-back, daemon restart, and governed rollback in the
+installed runtime; rendered output, approval rows, genome store, mutation
+receipts, and daemon logs must agree. Temporary homes, direct service calls, and
+isolated daemons are diagnostic only.
+
 ## 6. Files touched
 
 - `crates/executive/src/core/evolution_coordinator.rs` — surface the verified
@@ -400,58 +456,52 @@ bash scripts/aletheon.sh test architecture
 - `crates/executive/src/host/daemon/bootstrap/request_ports.rs` — in
   `PostTurnDomainAdapter::post_evolution` (`:144-160`), after evidence-priority
   handling (`:165-167`), invoke the new proposer on `Adopt` verifications.
-- **New** `crates/executive/src/application/.../governed_evolution_proposer.rs`
+- **New** `crates/executive/src/application/governed_evolution_proposer.rs`
   — `GovernedEvolutionProposer`: verified-`Adopt` → pending `DaseinModification`
   approval via `ApprovalRepository::create` (`repository.rs:448`). No permit, no
   apply.
+- `crates/executive/src/application/mod.rs` — register the proposer module.
 - `crates/executive/src/application/approval_service.rs` — extend the resolve
   path (currently auto-coordinates only `ApplyCode`, `:154`) to, on
   `DaseinModification` `Approved`, request `metacog.apply` admission and call
   `DefaultMetacogService::apply`.
-- `crates/executive/src/host/daemon/bootstrap/request.rs` — keep default-off;
-  make `evolution_permitted` operator-configurable (currently hardcoded `false`,
-  `:523`) so the governed path can be exercised in a controlled runtime.
-- `crates/metacog/src/evolution/rollback.rs` (+ `runtime.rs`) — persist the
-  snapshot stack for restart-safe rollback (§3.5).
+- `crates/executive/src/host/daemon/bootstrap/request.rs` — keep default-off,
+  configure the durable genome path/store, and expose `evolution_permitted` only
+  after prerequisites are healthy (currently hardcoded `false`, `:523`).
+- `crates/metacog/src/evolution/sandbox_runner.rs` — replace direct Cargo with
+  `GenomeCandidateSandbox` and versioned replay corpus.
+- `crates/metacog/src/evolution/migration.rs`, `rollback.rs`, and
+  `governance/runtime.rs` — atomic genome store, read-back verification, durable
+  snapshots, and restart-safe rollback.
+- `crates/metacog/src/governance/service.rs` — apply success only after durable
+  genome read-back; evidence policy and typed insufficient-evidence state.
 - Tests: `crates/metacog/tests/service_contract.rs`,
   `crates/executive/tests/evolution_integration.rs`.
 
 ## 7. Scope boundary
 
-This is **Workstream C, Wave 3.** It has a **hard dependency on A (real memory)
-and B (real multi-agent signal)** for *meaningful* candidate evidence: without
-them, C still functions but candidates carry thin evidence and rarely clear the
-evaluator's safety gate — by design (§3.3). C is worth landing before A/B only to
-stand up and test the **governance wiring** (the missing authority-bound apply
-caller), not to produce valuable evolutions.
+This is **Workstream C, Wave 3.** Apply has hard dependencies on A/B evidence,
+candidate-aware sandboxing, and the durable genome store. Before those exist, C
+may land verify/parking/governance plumbing only; it must keep
+`evolution_permitted=false`, create no apply approval, and make no claim of
+production evolution capability.
 
 C explicitly **excludes**: any source/config/prompt/model self-modification
 (genome-only, §2); auto-apply on `Adopt`; turning evolution on by default;
-wiring the A/B experiment loop (`experiment*.rs`, option C in §3.1); making
-`SandboxRunner` a real per-candidate sandbox; and making `MigrationManager`
-persist full genome state. Those are tracked follow-ups, not part of bringing the
-governed step online.
+wiring the full A/B experiment scheduler (`experiment*.rs`, option C in §3.1).
+Candidate-aware sandboxing and persistent genome/rollback state are now required
+parts of bringing governed apply online, not follow-ups.
 
-## Open decisions for review (codex)
+## Locked review decisions
 
-1. **Governance authority for `DaseinModification`.** Confirm the accept
-   authority is the human operator via `ApprovalService::resolve`
-   (`approval_service.rs:134`) only — no automated policy approver. Should a
-   bounded auto-approve ever be permitted for the lowest-risk genome target
-   (`care.priorities` weight nudges within `MAX_ADJUSTMENT_MAGNITUDE=0.2`,
-   `candidate_evaluator.rs:13`), or is every genome mutation operator-gated?
-2. **May evolution ever touch code/config?** This design says **no** — genome
-   only. Confirm we are not reserving a future `ApplyCode`-category evolution
-   path. (Recommendation: keep code/config permanently out of the evolution
-   authority; it belongs to the goal/coding-approval path,
-   `attempt_coordinator.rs:1070`.)
-3. **Default posture.** Ship with `evolution_permitted` operator-configurable but
-   default-off (verify-only, no approvals created), or keep it hardcoded off
-   until A/B land?
-4. **Sandbox scope.** `SandboxRunner` currently runs `cargo test --workspace`
-   ignoring the candidate (`sandbox_runner.rs:32`). Is workspace-test-as-safety
-   acceptable as the interim "sandbox", or must a real per-candidate genome
-   sandbox precede enabling apply?
-5. **Rollback durability.** Accept the requirement to persist the
-   `RollbackManager` stack (§3.5), or rely solely on lineage + re-derivation for
-   post-restart reversal?
+1. **Authority:** every genome mutation and rollback requires a human-resolved
+   `DaseinModification` approval; there is no automated self-approval tier.
+2. **Mutation scope:** evolution is genome-only and never uses `ApplyCode` to
+   alter source, prompts, model routing, capabilities, or general configuration.
+3. **Default posture:** `evolution_permitted` remains false until A/B evidence,
+   candidate sandbox, and durable genome-store health are all available. It then
+   becomes operator-configurable but still defaults false.
+4. **Sandbox:** production uses a candidate-aware typed replay sandbox and never
+   invokes Cargo. Direct workspace Cargo is not accepted as candidate evidence.
+5. **Durability:** current genome and rollback snapshots are persisted and read
+   back; lineage alone is insufficient for post-restart reversal.
