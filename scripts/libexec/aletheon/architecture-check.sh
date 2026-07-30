@@ -885,7 +885,9 @@ fi
   rg -l 'CapabilityInvoker for' crates -g '*.rs' -g '!**/tests/**' 2>/dev/null \
     | grep -v 'crates/executive/src/application/governed_capability.rs' \
     | sed 's#^#capability_path|#; s#$#|CapabilityInvoker#' || true
-  rg -l '\bAdmissionRequest \{' crates/executive/src -g '*.rs' 2>/dev/null | sed 's#^#capability_path|#; s#$#|manual_admission#' || true
+  rg -l '\bAdmissionRequest \{' crates/executive/src -g '*.rs' 2>/dev/null \
+    | grep -v 'crates/executive/src/application/governed_capability.rs' \
+    | sed 's#^#capability_path|#; s#$#|manual_admission#' || true
 } | sort -u > "$path_actual"
 
 compare_maximum() {

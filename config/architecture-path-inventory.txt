@@ -1,4 +1,3 @@
-capability_path|crates/executive/src/application/governed_capability.rs|manual_admission
 capability_path|crates/executive/src/composition/exec_session.rs|ExecTurnServices
 capability_path|crates/kernel/src/capability/mod.rs|CapabilityInvoker
 turn_path|crates/executive/src/application/turn_pipeline.rs|TurnPipeline
