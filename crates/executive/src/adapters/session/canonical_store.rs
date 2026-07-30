@@ -16,7 +16,11 @@ pub struct CanonicalSessionStore {
     connection: Mutex<Connection>,
 }
 
-const DATABASE_SCHEMA_VERSION: i64 = 3;
+// Keep the database migration marker aligned with the newest record protocol
+// migration. Version 4 adds EvaluationReceiptRef Session items; older JSON
+// payloads are structurally compatible but must have their explicit record
+// version advanced before event-spine reconciliation compares them.
+const DATABASE_SCHEMA_VERSION: i64 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MigrationStep {
@@ -473,7 +477,7 @@ mod tests {
 
     #[tokio::test]
     async fn prior_session_records_are_atomically_upgraded_to_current_protocol() {
-        for legacy_version in [1, 2] {
+        for legacy_version in [1, 2, 3] {
             let temp = tempfile::tempdir().unwrap();
             let path = temp.path().join("sessions.db");
             let connection = Connection::open(&path).unwrap();
