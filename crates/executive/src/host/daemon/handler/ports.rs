@@ -33,6 +33,7 @@ pub(crate) struct HandlerPorts {
     pub(crate) google: Arc<dyn ExternalSourceUseCases>,
     pub(crate) workflow: Arc<dyn WorkflowUseCases>,
     pub(crate) turn: Arc<dyn TurnUseCases>,
+    pub(crate) evaluation: Arc<crate::application::evaluation::EvaluationService>,
     pub(crate) session_input: Arc<crate::application::session_input::SessionInputCoordinator>,
     pub(crate) conscious_workspaces:
         Arc<crate::application::conscious_workspace::ConsciousWorkspaceRegistry>,
@@ -65,6 +66,7 @@ impl HandlerPorts {
         google: Arc<dyn ExternalSourceUseCases>,
         workflow: Arc<dyn WorkflowUseCases>,
         turn: Arc<dyn TurnUseCases>,
+        evaluation: Arc<crate::application::evaluation::EvaluationService>,
         session_input: Arc<crate::application::session_input::SessionInputCoordinator>,
         conscious_workspaces: Arc<
             crate::application::conscious_workspace::ConsciousWorkspaceRegistry,
@@ -89,6 +91,7 @@ impl HandlerPorts {
             google,
             workflow,
             turn,
+            evaluation,
             session_input,
             conscious_workspaces,
             debug,

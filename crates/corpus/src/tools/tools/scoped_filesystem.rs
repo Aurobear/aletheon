@@ -234,6 +234,14 @@ mod tests {
             .execute(json!({"path": path, "content": "hello\nworld\n"}), &context)
             .await;
         assert!(!write.is_error, "{}", write.content);
+        let delta = write
+            .metadata
+            .patch_delta
+            .expect("successful file_write emits a typed delta");
+        assert_eq!(delta.files_changed.len(), 1);
+        assert_eq!(delta.files_changed[0].path, "nested/file.txt");
+        assert_eq!(delta.files_changed[0].bytes_before, 0);
+        assert_eq!(delta.files_changed[0].bytes_after, 12);
 
         let read = FileReadTool
             .execute(json!({"path": path, "offset": 1, "limit": 1}), &context)

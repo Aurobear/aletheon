@@ -24,6 +24,7 @@ pub struct ApprovalRequest {
     pub risk_level: String,
     /// Optional full command / diff for the user to inspect.
     pub detail: Option<String>,
+    pub scope_subject: Option<fabric::protocol::client::TransientApprovalScopeSubject>,
 }
 
 /// The user's decision on an approval request.
@@ -35,6 +36,8 @@ pub enum ApprovalDecision {
     Deny,
     /// Approve this action and auto-approve the same tool for the rest of the session.
     ApproveForSession,
+    /// Approve once now; the host persists only the validated path grant.
+    ApprovePathForSession,
 }
 
 /// Abstraction over how approval is requested from the user.
@@ -124,6 +127,7 @@ mod tests {
             action_summary: "rm -rf /tmp/x".into(),
             risk_level: "high".into(),
             detail: None,
+            scope_subject: None,
         };
         assert_eq!(gate.request(&req).await, ApprovalDecision::Deny);
     }
@@ -144,6 +148,7 @@ mod tests {
             action_summary: "write hello.txt".into(),
             risk_level: "low".into(),
             detail: None,
+            scope_subject: None,
         };
         assert_eq!(gate.request(&req).await, ApprovalDecision::Approve);
     }

@@ -877,6 +877,7 @@ impl ElicitationHandler for McpElicitationHandler {
         use crate::security::approval::{ApprovalDecision, ApprovalRequest};
 
         let req = ApprovalRequest {
+            scope_subject: None,
             owner: fabric::ApprovalOwner::new(
                 fabric::PrincipalId("mcp".into()),
                 fabric::ThreadId("mcp".into()),
@@ -900,7 +901,7 @@ impl ElicitationHandler for McpElicitationHandler {
 
         match self.gate.request(&req).await {
             ApprovalDecision::Approve | ApprovalDecision::ApproveForSession => Ok(true),
-            ApprovalDecision::Deny => Ok(false),
+            ApprovalDecision::Deny | ApprovalDecision::ApprovePathForSession => Ok(false),
         }
     }
 }

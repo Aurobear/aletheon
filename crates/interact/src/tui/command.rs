@@ -42,6 +42,10 @@ pub enum BuiltinCommand {
     },
     Interrupt,
     Context,
+    Task {
+        kind: String,
+    },
+    Evaluation,
     Profile,
     ProfileSet {
         name: String,
@@ -124,6 +128,18 @@ mod tests {
             parse_command("/memory search deployment path"),
             Some(CommandType::Builtin(BuiltinCommand::MemorySearch { query }))
                 if query == "deployment path"
+        ));
+    }
+
+    #[test]
+    fn parses_typed_task_and_local_evaluation_commands() {
+        assert!(matches!(
+            parse_command("/task coding"),
+            Some(CommandType::Builtin(BuiltinCommand::Task { kind })) if kind == "coding"
+        ));
+        assert!(matches!(
+            parse_command("/evaluation"),
+            Some(CommandType::Builtin(BuiltinCommand::Evaluation))
         ));
     }
 

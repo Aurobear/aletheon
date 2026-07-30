@@ -68,6 +68,8 @@ async fn concurrent_principals_keep_distinct_thread_authority() {
                         model_policy: Some("test-policy".into()),
                         deadline: None,
                         requirements: Vec::new(),
+                        requested_task_kind: None,
+                        evaluation_contract: None,
                     },
                     &TurnPolicy::daemon(),
                     move |request, _cancel| async move {
@@ -86,6 +88,7 @@ async fn concurrent_principals_keep_distinct_thread_authority() {
                             items: Vec::new(),
                             projection: None,
                             context_projection: None,
+                            evaluation_artifacts: Default::default(),
                         })
                     },
                 )
@@ -164,6 +167,7 @@ fn completed() -> TurnExecution {
         items: Vec::new(),
         projection: None,
         context_projection: None,
+        evaluation_artifacts: Default::default(),
     }
 }
 
@@ -202,6 +206,8 @@ async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
             model_policy: None,
             deadline: None,
             requirements: Vec::new(),
+            requested_task_kind: None,
+            evaluation_contract: None,
         };
         tasks.push(tokio::spawn(async move {
             barrier.wait().await;
@@ -255,6 +261,8 @@ async fn duplicate_principal_thread_is_rejected_and_kernel_operation_is_cancelle
             model_policy: None,
             deadline: None,
             requirements: Vec::new(),
+            requested_task_kind: None,
+            evaluation_contract: None,
         };
         tokio::spawn(async move {
             coordinator
@@ -278,6 +286,8 @@ async fn duplicate_principal_thread_is_rejected_and_kernel_operation_is_cancelle
                 model_policy: None,
                 deadline: None,
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &TurnPolicy::daemon(),
             |_, _| async { panic!("duplicate runner must not start") },

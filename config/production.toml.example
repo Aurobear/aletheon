@@ -15,6 +15,17 @@ transport = "openai"
 models = ["deepseek/deepseek-v4-pro"]
 max_context_length = 1000000
 
+# Production rollout starts in observation-only mode. Enforce remains an
+# explicit trusted-host decision after shadow calibration.
+[evaluation]
+enabled = true
+default_mode = "shadow"
+coding_rubric = "coding-v2"
+min_score_millis = 70000
+min_evidence_coverage_millis = 600
+min_confidence_millis = 700
+max_evaluation_ms = 5000
+
 [memory]
 backend = "sqlite"
 data_dir = "/var/lib/aletheon/mnemosyne"

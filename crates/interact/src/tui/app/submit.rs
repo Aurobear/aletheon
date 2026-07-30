@@ -434,6 +434,41 @@ pub async fn submit_message(app: &mut App, text: String) {
                 app.chat.add_text(ChatRole::System, msg);
                 return;
             }
+            Some(CommandType::Builtin(BuiltinCommand::Task { kind })) => {
+                let message = match kind.as_str() {
+                    "coding" => {
+                        app.requested_task_kind = Some(fabric::TaskKind::Coding);
+                        "Task kind: coding"
+                    }
+                    "off" => {
+                        app.requested_task_kind = None;
+                        "Task kind: off"
+                    }
+                    _ => "用法: /task coding|off",
+                };
+                app.chat.add_text(ChatRole::System, message.to_string());
+                return;
+            }
+            Some(CommandType::Builtin(BuiltinCommand::Evaluation)) => {
+                if let Some(receipt) = app.app_state.latest_evaluation.as_ref() {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        super::super::reducer::format_evaluation_receipt_ref(receipt),
+                    );
+                } else if let Some(session_id) = app.app_state.session_id.clone() {
+                    send_request(app, ClientRpcRequest::evaluation_latest(session_id, false)).await;
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "Querying latest evaluation receipt...".to_string(),
+                    );
+                } else {
+                    app.chat.add_text(
+                        ChatRole::System,
+                        "No evaluation receipt is cached for this session.".to_string(),
+                    );
+                }
+                return;
+            }
             Some(CommandType::Builtin(BuiltinCommand::Profile)) => {
                 write_request(app, ClientRpcRequest::AgentProfileList).await;
                 app.chat
@@ -550,19 +585,21 @@ pub async fn send_to_daemon(app: &mut App, text: &str) {
     app.next_request_id = app.next_request_id.saturating_add(1);
     let request = app.app_state.session_id.clone().map_or_else(
         || {
-            ClientRpcRequest::chat_with_requirements(
+            ClientRpcRequest::chat_with_task_kind(
                 text,
                 None,
                 &app.workspace,
                 app.turn_requirements.clone(),
+                app.requested_task_kind,
             )
         },
         |session_id| {
-            ClientRpcRequest::chat_with_requirements(
+            ClientRpcRequest::chat_with_task_kind(
                 text,
                 Some(fabric::SessionId(session_id)),
                 &app.workspace,
                 app.turn_requirements.clone(),
+                app.requested_task_kind,
             )
         },
     );
@@ -608,4 +645,106 @@ fn base64_encode(input: &str) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod task_kind_tests {
+    use std::sync::Arc;
+
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    use super::*;
+    use crate::tui::host_time::ClientClock;
+    use crate::tui::term_compat::TermCaps;
+
+    fn fixture_app() -> (App, tokio::net::UnixStream) {
+        let (stream, peer) = tokio::net::UnixStream::pair().unwrap();
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let app = App::new(
+            stream,
+            TermCaps {
+                true_color: false,
+                unicode: false,
+                width: 80,
+                height: 24,
+            },
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+        (app, peer)
+    }
+
+    #[tokio::test]
+    async fn task_slash_command_changes_only_typed_client_state() {
+        let (mut app, _peer) = fixture_app();
+
+        submit_message(&mut app, "/task coding".into()).await;
+        assert_eq!(app.requested_task_kind(), Some(fabric::TaskKind::Coding));
+
+        submit_message(&mut app, "/task off".into()).await;
+        assert_eq!(app.requested_task_kind(), None);
+    }
+
+    #[tokio::test]
+    async fn selected_task_kind_is_serialized_on_regular_chat() {
+        let (mut app, peer) = fixture_app();
+        submit_message(&mut app, "/task coding".into()).await;
+
+        submit_message(&mut app, "implement it".into()).await;
+
+        let mut reader = BufReader::new(peer);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(request["params"]["task_kind"], "coding");
+    }
+
+    #[tokio::test]
+    async fn evaluation_command_renders_cached_receipt_without_rpc() {
+        let (mut app, _peer) = fixture_app();
+        app.app_state.latest_evaluation = Some(fabric::EvaluationReceiptRef {
+            schema_version: 1,
+            receipt_id: fabric::EvaluationReceiptId(uuid::Uuid::from_u128(2)),
+            contract_id: fabric::EvaluationContractId(uuid::Uuid::from_u128(3)),
+            subject_kind: "turn".into(),
+            subject_id: "turn-1".into(),
+            decision: fabric::EvaluationDecision::Accepted,
+            weighted_total_millis: Some(90_000),
+            evidence_coverage_millis: 950,
+            confidence_millis: 900,
+            failed_gates: Vec::new(),
+            created_at_ms: 1,
+        });
+
+        submit_message(&mut app, "/evaluation".into()).await;
+
+        assert_eq!(app.next_request_id, 1);
+        let last = app.chat.entries.last().expect("evaluation output");
+        let super::super::super::chat::ChatEntry::Text(message) = last else {
+            panic!("evaluation output should be text");
+        };
+        assert_eq!(message.role, ChatRole::System);
+        assert!(message.content.contains("decision=accepted"));
+        assert!(message.content.contains("score=90.0"));
+    }
+
+    #[tokio::test]
+    async fn evaluation_command_queries_latest_receipt_when_cache_is_empty() {
+        let (mut app, peer) = fixture_app();
+        app.app_state.session_id = Some("session-a".into());
+
+        submit_message(&mut app, "/evaluation".into()).await;
+
+        let mut reader = BufReader::new(peer);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(request["method"], "evaluation.latest");
+        assert_eq!(request["params"]["session_id"], "session-a");
+        assert_eq!(app.next_request_id, 2);
+        assert!(app.pending_non_turn.contains(&1));
+    }
 }

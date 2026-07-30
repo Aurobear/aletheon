@@ -110,8 +110,7 @@ impl MigrationManager {
         let saved = {
             let gp = self.genome_path.lock().unwrap();
             if let Some(ref path) = *gp {
-                let loader = GenomeLoader::new();
-                loader.save(new_genome, path)?;
+                atomic_save(path, new_genome)?;
                 true
             } else {
                 false
@@ -200,4 +199,28 @@ impl MigrationManager {
             ),
         })
     }
+}
+
+fn atomic_save(path: &std::path::Path, genome: &Genome) -> Result<()> {
+    use anyhow::ensure;
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("tmp");
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&tmp)?;
+    file.write_all(serde_yaml::to_string(genome)?.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&tmp, path)?;
+    let readback = GenomeLoader::new().load(path)?;
+    ensure!(
+        serde_json::to_vec(&readback)? == serde_json::to_vec(genome)?,
+        "genome read-back mismatch"
+    );
+    Ok(())
 }

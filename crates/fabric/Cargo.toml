@@ -30,6 +30,7 @@ libc = { workspace = true }
 dashmap = "6"
 png = "0.17"
 base64 = "0.22"
+regex = { workspace = true }
 
 [features]
 default = []

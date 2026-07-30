@@ -272,7 +272,7 @@ impl Tool for AgentControlTool {
     }
 
     async fn execute(&self, input: Value, context: &ToolContext) -> ToolResult {
-        let Some(trusted) = context.agent else {
+        let Some(trusted) = context.agent.as_ref() else {
             return error_json("missing_trusted_agent_context");
         };
         let result = match self.operation {
@@ -290,6 +290,7 @@ impl Tool for AgentControlTool {
                         runtime_override: input.runtime,
                         required_capabilities: input.required_capabilities,
                         trusted_workspace: Some(trusted_workspace),
+                        delegator_authority: trusted.delegator_authority.clone(),
                         task: input.task,
                         context: input.context,
                         allowed_tools: input.tools,

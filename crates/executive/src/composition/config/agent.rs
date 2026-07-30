@@ -43,6 +43,8 @@ pub struct ExecutiveConfig {
     #[serde(default)]
     pub agent_loop: AgentLoopConfig,
     #[serde(default)]
+    pub multi_agent: MultiAgentConfig,
+    #[serde(default)]
     pub circuit_breaker: CircuitBreakerConfig,
     /// Which cognitive harness implementation to construct (see
     /// the configured cognitive harness. Defaults to `Linear`.
@@ -66,10 +68,21 @@ impl Default for ExecutiveConfig {
             context_window_tokens: 128_000,
             conscious_arbitration_mode: fabric::ConsciousArbitrationMode::Observe,
             agent_loop: AgentLoopConfig::default(),
+            multi_agent: MultiAgentConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
             harness_kind: HarnessKind::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct MultiAgentConfig {
+    /// Master production activation gate. Default-off until installed-runtime
+    /// acceptance proves provider coordination and child terminal behavior.
+    pub enabled: bool,
+    /// Automatically activate only for an explicit typed coding task.
+    pub automatic_for_coding: bool,
 }
 
 /// Default automatic-compaction trigger, as a whole percent of the context

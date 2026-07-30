@@ -11,6 +11,7 @@ use ratatui::{
 pub enum DialogDecision {
     Approve,
     ApproveForSession,
+    ApprovePathForSession,
     Deny,
 }
 
@@ -22,6 +23,8 @@ pub struct ApprovalDialog {
     pub risk_level: String,
     /// Full command / diff context for the user to inspect.
     pub detail: Option<String>,
+    pub scope_subject: Option<fabric::protocol::client::TransientApprovalScopeSubject>,
+    pub scroll: u16,
 }
 
 impl ApprovalDialog {
@@ -37,7 +40,17 @@ impl ApprovalDialog {
             action_summary: action_summary.into(),
             risk_level: risk_level.into(),
             detail: None,
+            scope_subject: None,
+            scroll: 0,
         }
+    }
+
+    pub fn with_scope_subject(
+        mut self,
+        subject: Option<fabric::protocol::client::TransientApprovalScopeSubject>,
+    ) -> Self {
+        self.scope_subject = subject;
+        self
     }
 
     pub fn with_detail(mut self, detail: Option<String>) -> Self {
@@ -55,6 +68,7 @@ impl ApprovalDialog {
         match c {
             'y' => Some(DialogDecision::Approve),
             'a' => Some(DialogDecision::ApproveForSession),
+            'p' => Some(DialogDecision::ApprovePathForSession),
             'n' | 'd' => Some(DialogDecision::Deny),
             _ => None,
         }
@@ -128,7 +142,8 @@ impl ApprovalDialog {
 
             let detail_spans: Vec<Line> = detail_lines
                 .iter()
-                .take(14)
+                .skip(self.scroll as usize)
+                .take(chunks[1].height as usize)
                 .map(|line| {
                     Line::from(Span::styled(
                         line.to_string(),
@@ -153,6 +168,16 @@ impl ApprovalDialog {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("lways  "),
+                Span::styled(
+                    if self.scope_subject.is_some() {
+                        "[p]ath  "
+                    } else {
+                        ""
+                    },
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(
                     "[N]",
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),

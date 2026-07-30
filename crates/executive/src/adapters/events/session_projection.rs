@@ -33,17 +33,19 @@ impl SessionProjection {
         store: &dyn SessionAppendStore,
         event: &SpineEvent,
     ) -> anyhow::Result<()> {
-        if event.visibility == EventVisibility::Sensitive {
+        if event.visibility == EventVisibility::Sensitive
+            || is_legacy_evaluation_projection_event(event)
+        {
             return Ok(());
         }
         match event.schema.0.as_str() {
             fabric::SchemaId::EVENT_SESSION_CREATED_V1 => {
                 let session = current_session(decode_inline_anyhow(event)?)?;
-                store.create(session).await
+                materialize_session_creation(store, session).await
             }
             fabric::SchemaId::EVENT_SESSION_FORKED_V1 => {
                 let fork = current_fork(decode_inline_anyhow(event)?)?;
-                store.create(fork.child.clone()).await?;
+                materialize_session_creation(store, fork.child.clone()).await?;
                 for item in fork.inherited_items {
                     let sequence = item.sequence;
                     let session_id = item.session_id.clone();
@@ -159,6 +161,27 @@ impl SessionProjection {
     }
 }
 
+async fn materialize_session_creation(
+    store: &dyn SessionAppendStore,
+    created: SessionRecord,
+) -> anyhow::Result<()> {
+    let Some(current) = store.load_session(&created.id).await? else {
+        return store.create(created).await;
+    };
+    anyhow::ensure!(
+        current.schema_version == created.schema_version
+            && current.id == created.id
+            && current.parent == created.parent
+            && current.created_at_ms == created.created_at_ms,
+        "session creation conflicts with persisted immutable content"
+    );
+    // Session status is a mutable read-model projection (for example startup
+    // recovery can mark an interrupted Turn). Replaying the original creation
+    // event must preserve that later status rather than treating it as a
+    // conflicting create retry.
+    Ok(())
+}
+
 impl EventProjection for SessionProjection {
     type State = PublicSessionState;
 
@@ -175,7 +198,9 @@ impl EventProjection for SessionProjection {
     }
 
     fn apply(&self, state: &mut Self::State, event: &SpineEvent) -> Result<(), ProjectionError> {
-        if event.visibility == EventVisibility::Sensitive {
+        if event.visibility == EventVisibility::Sensitive
+            || is_legacy_evaluation_projection_event(event)
+        {
             return Ok(());
         }
         match event.schema.0.as_str() {
@@ -185,6 +210,23 @@ impl EventProjection for SessionProjection {
             _ => Ok(()),
         }
     }
+}
+
+/// Releases before the dedicated evaluation schema incorrectly published
+/// domain evaluation observations as `turn.event/v1`. Keep those immutable
+/// historical events replayable without treating their non-ItemRecord payload
+/// as public Session data. New observations use `evaluation_observed/v1`.
+fn is_legacy_evaluation_projection_event(event: &SpineEvent) -> bool {
+    event.schema.0 == fabric::SchemaId::TURN_EVENT_V1
+        && event.envelope.source.0 == "evaluation-projection"
+        && matches!(
+            &event.payload,
+            EventPayload::Inline { value }
+                if value
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|kind| kind.starts_with("evaluation.") && kind.ends_with(".observed"))
+        )
 }
 
 fn decode_inline<T: DeserializeOwned>(event: &SpineEvent) -> Result<T, ProjectionError> {

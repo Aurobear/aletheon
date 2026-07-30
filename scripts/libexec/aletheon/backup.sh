@@ -52,7 +52,7 @@ while IFS= read -r -d '' file; do
 done < <(find "$stage/data" "$stage/config" "$stage/sqlite" -type f -print0 | sort -z)
 jq -s --arg created "$created" --arg host "$host_id" --arg version "$aletheon_version" \
   --arg schema "$schema_version" --argjson db_count "$db_count" \
-  '{format_version:1,aletheon_version:$version,schema_version:$schema,created_utc:$created,host_id:$host,components:["goal-approval-channel-google-state","mnemosyne-gbrain","artifacts","audit","config-policy","encrypted-credential-vault"],sqlite_databases:$db_count,repository_snapshot_id:null,files:.}' \
+  '{format_version:1,aletheon_version:$version,schema_version:$schema,created_utc:$created,host_id:$host,components:["goal-approval-channel-google-state","mnemosyne-gbrain-semantic-index","agent-settlement","event-session-evaluation","metacog-genome-lineage-proposals","transient-approval-grants","artifacts","audit","config-policy","encrypted-credential-vault"],sqlite_databases:$db_count,repository_snapshot_id:null,files:.}' \
   "$files_json" >"$stage/manifest.json"
 rm -f -- "$files_json"
 

@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use corpus::tools::tools::structured_patch::StructuredPatchResult;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TurnDiffTracker {
@@ -17,7 +18,31 @@ pub struct TurnFileDelta {
     pub bytes_after: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnFileDeltaSnapshot {
+    pub path: String,
+    pub edits: usize,
+    pub hunks_applied: usize,
+    pub bytes_before: u64,
+    pub bytes_after: u64,
+}
+
 impl TurnDiffTracker {
+    pub fn record_patch_delta(&mut self, delta: &fabric::PatchDelta) {
+        for change in &delta.files_changed {
+            let entry = self
+                .files
+                .entry(change.path.clone())
+                .or_insert_with(|| TurnFileDelta {
+                    bytes_before: change.bytes_before,
+                    ..Default::default()
+                });
+            entry.edits = entry.edits.saturating_add(1);
+            entry.hunks_applied = entry.hunks_applied.saturating_add(change.hunks_applied);
+            entry.bytes_after = change.bytes_after;
+        }
+    }
+
     pub fn record_patch(&mut self, delta: &StructuredPatchResult) {
         for change in &delta.files_changed {
             let entry = self
@@ -71,6 +96,22 @@ impl TurnDiffTracker {
         output
     }
 
+    pub fn snapshot(&self) -> Vec<TurnFileDeltaSnapshot> {
+        let mut snapshot = self
+            .files
+            .iter()
+            .map(|(path, delta)| TurnFileDeltaSnapshot {
+                path: path.clone(),
+                edits: delta.edits,
+                hunks_applied: delta.hunks_applied,
+                bytes_before: delta.bytes_before,
+                bytes_after: delta.bytes_after,
+            })
+            .collect::<Vec<_>>();
+        snapshot.sort_by(|left, right| left.path.cmp(&right.path));
+        snapshot
+    }
+
     pub fn reset(&mut self) {
         self.files.clear();
     }
@@ -121,6 +162,16 @@ mod tests {
         assert!(context.contains("| `Cargo.toml` | 1 | 1 | 0B → 240B |"));
         assert!(context.contains("| `src/main.rs` | 1 | 2 | 100B → 150B |"));
         assert!(context.ends_with("2 files changed, 3 hunks applied."));
+    }
+
+    #[test]
+    fn snapshot_is_sorted_and_does_not_expose_internal_map() {
+        let mut tracker = TurnDiffTracker::default();
+        tracker.record_file_write("z.rs", 2);
+        tracker.record_file_write("a.rs", 1);
+        let snapshot = tracker.snapshot();
+        assert_eq!(snapshot[0].path, "a.rs");
+        assert_eq!(snapshot[1].path, "z.rs");
     }
 }
 

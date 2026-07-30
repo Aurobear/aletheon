@@ -130,6 +130,12 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             patch_delta,
             ..
         } => {
+            if let Some(preview) = patch_delta
+                .as_ref()
+                .and_then(|delta| delta.diff_preview.clone())
+            {
+                app.latest_diff = Some(preview);
+            }
             app.chat
                 .update_exec_with_delta(&call_id, &output, is_error, patch_delta);
         }
@@ -340,6 +346,11 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
             .get("detail")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let scope_subject = params
+            .get("scope_subject")
+            .cloned()
+            .filter(|value| !value.is_null())
+            .and_then(|value| serde_json::from_value(value).ok());
         app.pending_approval = Some(
             super::approval_dialog::ApprovalDialog::new(
                 approval_id,
@@ -347,7 +358,8 @@ pub fn handle_approval(app: &mut App, msg: &serde_json::Value) {
                 action_summary,
                 risk_level,
             )
-            .with_detail(detail),
+            .with_detail(detail)
+            .with_scope_subject(scope_subject),
         );
     }
 }
@@ -413,6 +425,27 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
         } else if let Some(memory) = result.get("memory") {
             // /memory status response
             app.chat.set_assistant_stream(format_memory_status(memory));
+        } else if let Some(receipt) = result.get("receipt") {
+            if receipt.is_null() {
+                app.chat.add_text(
+                    ChatRole::System,
+                    "No evaluation receipt is available for this session.".to_string(),
+                );
+            } else {
+                match serde_json::from_value::<fabric::EvaluationReceiptRef>(receipt.clone()) {
+                    Ok(receipt) => {
+                        app.app_state.latest_evaluation = Some(receipt.clone());
+                        app.chat.add_text(
+                            ChatRole::System,
+                            super::reducer::format_evaluation_receipt_ref(&receipt),
+                        );
+                    }
+                    Err(error) => app.chat.add_text(
+                        ChatRole::System,
+                        format!("Invalid evaluation receipt response: {error}"),
+                    ),
+                }
+            }
         } else if let Some(content) = result.get("content").and_then(|value| value.as_str()) {
             // session.memory returns bounded markdown owned by the daemon.
             app.chat.set_assistant_stream(content.to_string());
@@ -549,8 +582,8 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
 }
 
 fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> bool {
-    use super::reducer::{reduce, UiAction, UiError};
-    use fabric::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage};
+    use super::reducer::{format_evaluation_receipt_ref, reduce, UiAction, UiError};
+    use fabric::protocol::client::{ClientEvent as ProtocolEvent, ClientMessage, ItemPhase};
 
     let candidate = message
         .get("params")
@@ -562,6 +595,15 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
     };
     let Ok(event) = message.into_v1() else {
         return false;
+    };
+    let evaluation = match &event {
+        ProtocolEvent::Item(item) if item.phase == ItemPhase::Completed => {
+            item.item.as_ref().and_then(|record| match &record.payload {
+                fabric::ItemPayload::EvaluationReceiptRef { receipt } => Some(receipt.clone()),
+                _ => None,
+            })
+        }
+        _ => None,
     };
     if matches!(
         &event,
@@ -584,7 +626,13 @@ fn apply_typed_protocol_event(app: &mut App, message: &serde_json::Value) -> boo
         ProtocolEvent::TurnStarted { .. } => return true,
         ProtocolEvent::TurnCompleted { .. } | ProtocolEvent::TurnStopped { .. } => unreachable!(),
     };
-    let _effects = reduce(&mut app.app_state, action);
+    let effects = reduce(&mut app.app_state, action);
+    if !effects.is_empty() {
+        if let Some(receipt) = evaluation {
+            app.chat
+                .add_text(ChatRole::System, format_evaluation_receipt_ref(&receipt));
+        }
+    }
     true
 }
 

@@ -43,7 +43,50 @@ fn request(input: &str) -> TurnRequest {
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     }
+}
+
+fn with_coding_contract(mut request: TurnRequest, mode: fabric::EvaluationMode) -> TurnRequest {
+    let turn_id = fabric::TurnId::new();
+    request.context.turn_id = Some(turn_id);
+    request.requested_task_kind = Some(fabric::TaskKind::Coding);
+    request.evaluation_contract = Some(fabric::TaskEvaluationContract {
+        schema_version: fabric::EVALUATION_SCHEMA_V1,
+        contract_id: fabric::EvaluationContractId::new(),
+        task_kind: fabric::TaskKind::Coding,
+        subject: fabric::EvaluationSubject::Turn {
+            turn_id,
+            operation_id: request.operation_id,
+        },
+        rubric: fabric::types::metacognition_evaluation::RubricId("coding-v2".into()),
+        rubric_version: 2,
+        mode,
+        objective_ref: fabric::EvidenceRef("test:objective".into()),
+        requirement_refs: Vec::new(),
+        required_evidence: vec![fabric::RequiredEvidence {
+            kind: fabric::types::metacognition_evidence::EvidenceKind::VerificationResult,
+            minimum_count: 1,
+            authoritative: true,
+        }],
+        required_gates: vec![
+            fabric::RequiredGate {
+                name: "required_verification_passed".into(),
+            },
+            fabric::RequiredGate {
+                name: "change_within_scope".into(),
+            },
+        ],
+        thresholds: fabric::EvaluationThresholds {
+            min_score_millis: 70_000,
+            min_evidence_coverage_millis: 600,
+            min_confidence_millis: 700,
+        },
+        issued_by: "test".into(),
+        issued_at_ms: 1,
+    });
+    request
 }
 
 #[tokio::test]
@@ -297,6 +340,188 @@ async fn streaming_session_keeps_thinking_out_of_visible_and_final_text() {
     assert!(!stream.0.lock().unwrap().iter().any(
         |event| matches!(event, CognitiveStreamEvent::TextDelta { delta } if delta.contains("internal reasoning"))
     ));
+}
+
+struct CodingContractServices {
+    llm: cognit::testing::mock_llm::MockLlmProvider,
+    terminal_validation: bool,
+}
+
+#[async_trait]
+impl TurnServices for CodingContractServices {
+    async fn recall(&self, _req: fabric::RecallRequest) -> anyhow::Result<fabric::RecallSet> {
+        Ok(Default::default())
+    }
+
+    async fn dasein_view(&self, _process: ProcessId) -> anyhow::Result<fabric::DaseinView> {
+        Ok(Default::default())
+    }
+
+    async fn agora_view(&self, _session_id: &str) -> anyhow::Result<fabric::AgoraView> {
+        Ok(Default::default())
+    }
+
+    async fn invoke(&self, call: CapabilityCall) -> CapabilityResult {
+        let output = if self.terminal_validation && call.name == "validation_run" {
+            serde_json::json!({
+                "session_id": "validation-session",
+                "terminal": {"status": "exited", "exit_code": 0},
+                "output_artifact_ref": "artifact://sha256/validation"
+            })
+            .to_string()
+        } else {
+            "unused".into()
+        };
+        CapabilityResult {
+            call_id: call.call_id,
+            output,
+            is_error: false,
+            usage: Default::default(),
+            audit_id: None,
+            patch_delta: None,
+        }
+    }
+
+    fn llm_provider(&self) -> Option<&dyn LlmProvider> {
+        Some(&self.llm)
+    }
+
+    fn tool_definitions(&self) -> Vec<ToolDefinition> {
+        vec![ToolDefinition {
+            name: "validation_run".into(),
+            description: "run a deterministic validation".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }]
+    }
+
+    fn turn_requirements(&self, request: &TurnRequest) -> Vec<fabric::TurnRequirement> {
+        request.requirements.clone()
+    }
+}
+
+fn coding_contract_services(name: &str, responses: usize) -> CodingContractServices {
+    let llm = cognit::testing::mock_llm::MockLlmProvider::new(name);
+    for _ in 0..responses {
+        llm.push_text_response("claimed complete", StopReason::EndTurn);
+    }
+    CodingContractServices {
+        llm,
+        terminal_validation: false,
+    }
+}
+
+fn projected_model_text(messages: &[fabric::Message]) -> String {
+    messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[tokio::test]
+async fn coding_contract_configures_code_change_without_turn_requirements() {
+    let services = coding_contract_services("coding-contract-shadow", 1);
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+
+    let result = session
+        .run_turn(
+            with_coding_contract(request("change code"), fabric::EvaluationMode::Shadow),
+            &services,
+            &NoopTurnEventSink,
+        )
+        .await
+        .expect("shadow contract remains observable without blocking completion");
+
+    assert_eq!(result.stop, TurnStop::Completed);
+    let calls = services.llm.call_log.lock().unwrap();
+    let projected = projected_model_text(calls.first().expect("model call"));
+    assert!(projected.contains("explicitly typed coding task"));
+    assert!(projected.contains("authoritative verification_result"));
+    assert!(projected.contains("change_within_scope"));
+}
+
+#[tokio::test]
+async fn coding_contract_configures_enforced_completion_gate() {
+    let services = coding_contract_services("coding-contract-enforce", 3);
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+
+    let result = session
+        .run_turn(
+            with_coding_contract(request("change code"), fabric::EvaluationMode::Enforce),
+            &services,
+            &NoopTurnEventSink,
+        )
+        .await
+        .expect("missing typed evidence becomes a blocked outcome");
+
+    assert_eq!(result.stop, TurnStop::Blocked);
+    assert!(result.output.contains("verification_result"));
+    let calls = services.llm.call_log.lock().unwrap();
+    assert!(projected_model_text(calls.first().expect("model call")).contains("validation_run"));
+}
+
+#[tokio::test]
+async fn coding_contract_merges_explicit_turn_requirements() {
+    let services = coding_contract_services("coding-contract-merged", 3);
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+    let mut turn = with_coding_contract(
+        request("delegate code change"),
+        fabric::EvaluationMode::Shadow,
+    );
+    turn.requirements = vec![fabric::TurnRequirement::InvokeAgentRuntime {
+        runtime_id: "pi-rpc".into(),
+    }];
+
+    let result = session
+        .run_turn(turn, &services, &NoopTurnEventSink)
+        .await
+        .expect("explicit turn requirements retain their enforced authority");
+
+    assert_eq!(result.stop, TurnStop::Blocked);
+    assert!(result.output.contains("pi-rpc"));
+    let calls = services.llm.call_log.lock().unwrap();
+    let projected = projected_model_text(calls.first().expect("model call"));
+    assert!(projected.contains("explicitly typed coding task"));
+    assert!(projected.contains("`agent_spawn`"));
+    assert!(projected.contains("`pi-rpc`"));
+}
+
+#[tokio::test]
+async fn terminal_validation_satisfies_enforced_coding_contract() {
+    let llm = cognit::testing::mock_llm::MockLlmProvider::new("coding-contract-terminal");
+    llm.push_response(LlmResponse {
+        content: vec![ContentBlock::ToolUse {
+            id: "validation-1".into(),
+            name: "validation_run".into(),
+            input: serde_json::json!({}),
+        }],
+        stop_reason: StopReason::ToolUse,
+        usage: Usage::default(),
+        cache_hit_tokens: 0,
+        cache_miss_tokens: 0,
+    });
+    llm.push_text_response("verified change", StopReason::EndTurn);
+    let services = CodingContractServices {
+        llm,
+        terminal_validation: true,
+    };
+    let mut session = LinearCognitiveSession::new(HarnessConfig::default(), dependencies());
+
+    let result = session
+        .run_turn(
+            with_coding_contract(request("change code"), fabric::EvaluationMode::Enforce),
+            &services,
+            &NoopTurnEventSink,
+        )
+        .await
+        .expect("authoritative terminal validation satisfies the cognitive gate");
+
+    assert_eq!(result.stop, TurnStop::Completed);
+    assert_eq!(result.output, "verified change");
 }
 
 struct RequiredCapabilityServices {

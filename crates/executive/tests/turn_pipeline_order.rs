@@ -29,6 +29,8 @@ fn request(process_id: ProcessId) -> TurnRequest {
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     }
 }
 

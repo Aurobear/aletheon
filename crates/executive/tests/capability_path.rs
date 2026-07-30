@@ -38,9 +38,11 @@ fn production_has_one_governed_capability_construction() {
         }
         // Agent-control owns a separate admission and settlement lifecycle;
         // its terminology must not be mistaken for capability admission.
-        if !path
-            .components()
-            .any(|part| part.as_os_str() == "agent_control")
+        let is_canonical_boundary = path.ends_with("src/application/governed_capability.rs");
+        if !is_canonical_boundary
+            && !path
+                .components()
+                .any(|part| part.as_os_str() == "agent_control")
         {
             for forbidden in [".admit(", ".settle(", "AdmissionRequest {"] {
                 assert!(

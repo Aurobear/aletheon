@@ -57,6 +57,16 @@ impl AgentCandidateProjector {
             ));
         }
         let (kind, contents) = match event {
+            AgentRuntimeEvent::CapabilityAttenuated { report, .. } => (
+                "capability_attenuated",
+                vec![(
+                    WorkspaceContent::Observation(self.observation(&format!(
+                        "child authority attenuated {} -> {}",
+                        report.requested_sha256, report.effective_sha256
+                    ))),
+                    false,
+                )],
+            ),
             AgentRuntimeEvent::Started { .. } => (
                 "started",
                 vec![(
@@ -347,7 +357,13 @@ fn bound_to(value: &str, max_bytes: usize) -> String {
 
 fn event_ids(event: &AgentRuntimeEvent) -> (AgentId, ProcessId, fabric::OperationId) {
     match event {
-        AgentRuntimeEvent::Started {
+        AgentRuntimeEvent::CapabilityAttenuated {
+            agent_id,
+            process_id,
+            operation_id,
+            ..
+        }
+        | AgentRuntimeEvent::Started {
             agent_id,
             process_id,
             operation_id,

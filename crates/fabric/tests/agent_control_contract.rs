@@ -29,6 +29,7 @@ fn spawn_request() -> AgentSpawnRequest {
         profile_id: AgentProfileId("reviewer".into()),
         runtime_id: RuntimeId("native-cognit".into()),
         trusted_workspace: None,
+        delegator_authority: None,
         cognitive_binding: None,
         task: "review the implementation".into(),
         context: AgentContextFork::SelectedProjection {
@@ -50,6 +51,7 @@ fn generic_intent(runtime_override: Option<&str>) -> AgentSpawnIntent {
         runtime_override: runtime_override.map(str::to_owned),
         required_capabilities: vec![AgentRuntimeCapability::CodeRead],
         trusted_workspace: None,
+        delegator_authority: None,
         task: "analyze".into(),
         context: AgentContextFork::None,
         allowed_tools: vec!["file_read".into()],

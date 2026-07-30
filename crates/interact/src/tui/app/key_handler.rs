@@ -58,19 +58,88 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('d') {
+        app.detail = if app.detail.is_some() {
+            None
+        } else {
+            app.latest_diff
+                .clone()
+                .map(super::super::diff_view::DiffView::new)
+        };
+        return;
+    }
+    if app.detail.is_some() {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                app.detail.as_mut().expect("checked detail").scroll_down();
+                return;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                app.detail.as_mut().expect("checked detail").scroll_up();
+                return;
+            }
+            KeyCode::Char('f') => {
+                if let Some(diff) = app.latest_diff.clone() {
+                    app.pager = Some(super::super::pager::PagerOverlay::new("Diff", diff));
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+
     // If approval dialog is active, route key to dialog
     if app.pending_approval.is_some() {
+        if matches!(key.code, KeyCode::Char('j') | KeyCode::Down) {
+            if let Some(dialog) = app.pending_approval.as_mut() {
+                dialog.scroll = dialog.scroll.saturating_add(1);
+            }
+            return;
+        }
+        if matches!(key.code, KeyCode::Char('k') | KeyCode::Up) {
+            if let Some(dialog) = app.pending_approval.as_mut() {
+                dialog.scroll = dialog.scroll.saturating_sub(1);
+            }
+            return;
+        }
         if let KeyCode::Char(c) = key.code {
             if let Some(decision) = ApprovalDialog::key_to_decision(c) {
                 let dialog = app.pending_approval.take().unwrap();
+                let scope_hint = match decision {
+                    DialogDecision::ApprovePathForSession => {
+                        dialog.scope_subject.as_ref().and_then(|subject| {
+                            subject.path_candidates.first().cloned().map(|path_root| {
+                                fabric::protocol::client::TransientApprovalScopeHint {
+                                    path_root,
+                                    subject_version: subject.subject_version,
+                                    subject_sha256: subject.subject_sha256.clone(),
+                                }
+                            })
+                        })
+                    }
+                    _ => None,
+                };
+                if decision == DialogDecision::ApprovePathForSession && scope_hint.is_none() {
+                    app.pending_approval = Some(dialog);
+                    return;
+                }
                 let decision = match decision {
                     DialogDecision::Approve => TransientApprovalDecision::Approve,
                     DialogDecision::ApproveForSession => {
                         TransientApprovalDecision::ApproveForSession
                     }
                     DialogDecision::Deny => TransientApprovalDecision::Deny,
+                    DialogDecision::ApprovePathForSession => {
+                        TransientApprovalDecision::ApprovePathForSession
+                    }
                 };
-                let resp = ClientRpcRequest::approval_response(dialog.approval_id, decision)
+                let request = match scope_hint {
+                    Some(hint) => {
+                        ClientRpcRequest::scoped_approval_response(dialog.approval_id, hint)
+                    }
+                    None => ClientRpcRequest::approval_response(dialog.approval_id, decision),
+                };
+                let resp = request
                     .to_json_rpc(None)
                     .expect("typed approval response serializes");
                 use tokio::io::AsyncWriteExt;

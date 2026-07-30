@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version.
-const CURRENT_VERSION: u32 = 16;
+const CURRENT_VERSION: u32 = 17;
 
 /// Migration 1 schema — the original `objectives` table without extended goal columns.
 const MIGRATION_1: &str = "
@@ -500,6 +500,21 @@ CREATE TABLE IF NOT EXISTS external_approval_audit (
 );
 ";
 
+/// Migration 17 — idempotent Goal consumption of settled evaluation receipts.
+const MIGRATION_17: &str = "
+CREATE TABLE IF NOT EXISTS goal_evaluation_feedback (
+    receipt_id TEXT PRIMARY KEY,
+    objective_id INTEGER NOT NULL REFERENCES objectives(objective_id) ON DELETE CASCADE,
+    attempt_id TEXT NOT NULL REFERENCES goal_attempts(attempt_id) ON DELETE CASCADE,
+    decision TEXT NOT NULL,
+    failed_gates_json TEXT NOT NULL,
+    retry_replan_required INTEGER NOT NULL CHECK(retry_replan_required IN (0,1)),
+    observed_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_goal_evaluation_feedback_attempt
+    ON goal_evaluation_feedback(objective_id, attempt_id);
+";
+
 /// Run all pending migrations inside a transaction.
 pub fn run_migrations(db: &Connection) -> Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -649,6 +664,15 @@ pub fn run_migrations(db: &Connection) -> Result<()> {
         tx.commit()?;
     }
 
+    if version < 17 {
+        let tx = db
+            .unchecked_transaction()
+            .context("begin migration 17 transaction")?;
+        tx.execute_batch(MIGRATION_17)?;
+        tx.pragma_update(None, "user_version", 17)?;
+        tx.commit()?;
+    }
+
     // Verify we're at the expected version.
     let current: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     anyhow::ensure!(
@@ -715,14 +739,14 @@ mod tests {
         let v1: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v1, 16);
+        assert_eq!(v1, CURRENT_VERSION);
 
         // Running again is a no-op.
         run_migrations(&db).unwrap();
         let v2: u32 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v2, 16);
+        assert_eq!(v2, CURRENT_VERSION);
     }
 
     #[test]

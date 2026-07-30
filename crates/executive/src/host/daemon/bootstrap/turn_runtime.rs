@@ -516,12 +516,13 @@ impl TurnApprovalPort for ProductionTurnApprovals {
         let pending = self.receiver.lock().await.recv().await?;
         let approval_id = self
             .pending
-            .insert(
+            .insert_scoped(
                 pending.request.owner.clone(),
                 pending.request.turn_id,
                 pending.request.call_id.clone(),
                 pending.request.tool.clone(),
                 pending.request.connection_id.clone(),
+                pending.request.scope_subject.clone(),
                 pending.respond,
             )
             .await;
@@ -531,6 +532,7 @@ impl TurnApprovalPort for ProductionTurnApprovals {
             action_summary: pending.request.action_summary,
             risk_level: pending.request.risk_level,
             detail: pending.request.detail,
+            scope_subject: pending.request.scope_subject,
         };
         Some(notice)
     }

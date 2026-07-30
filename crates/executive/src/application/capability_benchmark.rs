@@ -2,8 +2,8 @@
 //! exact same versioned task packet; the harness records observations without
 //! embedding product identities or declaring a winner from incomplete evidence.
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use fabric::cognitive_workflow::{AgentTaskPacket, CognitiveRoleOutput};
@@ -12,6 +12,263 @@ use fabric::{
     AgentSpawnRequest, AgentWaitRequest, OperationId, ProcessId, RuntimeId, WorkspacePolicy,
 };
 use serde::{Deserialize, Serialize};
+
+use super::evaluation::{EvaluationProjectionRecord, EvaluationProjectionSink};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CapabilityRollupKey {
+    pub runtime_id: String,
+    pub profile_id: String,
+    pub rubric_id: String,
+    pub rubric_version: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityMetricAggregate {
+    pub known_count: u64,
+    pub total: u64,
+}
+
+impl CapabilityMetricAggregate {
+    fn observe(&mut self, value: Option<u64>) {
+        if let Some(value) = value {
+            self.known_count += 1;
+            self.total = self.total.saturating_add(value);
+        }
+    }
+}
+
+/// Optional materialized view rebuilt exclusively from immutable evaluation
+/// receipt references. Usage dimensions stay separate rather than being folded
+/// into the quality score.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityReceiptRollup {
+    pub receipt_count: u64,
+    pub pass_count: u64,
+    pub scores_millis: Vec<u32>,
+    pub evidence_coverage_millis: CapabilityMetricAggregate,
+    pub confidence_millis: CapabilityMetricAggregate,
+    pub elapsed_ms: CapabilityMetricAggregate,
+    pub inference_rounds: CapabilityMetricAggregate,
+    pub provider_retries: CapabilityMetricAggregate,
+    pub tool_calls: CapabilityMetricAggregate,
+    pub tool_errors: CapabilityMetricAggregate,
+    pub cumulative_input_tokens: CapabilityMetricAggregate,
+    pub cumulative_output_tokens: CapabilityMetricAggregate,
+    pub active_context_tokens: CapabilityMetricAggregate,
+    pub cache_read_tokens: CapabilityMetricAggregate,
+    pub cache_write_tokens: CapabilityMetricAggregate,
+    #[serde(skip)]
+    receipt_ids: HashSet<fabric::EvaluationReceiptId>,
+}
+
+/// Read-only host input for runtime/profile selection. It contains no tool,
+/// workspace, or budget authority and therefore cannot expand a child request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilitySelectionObservation {
+    pub key: CapabilityRollupKey,
+    pub receipt_count: u64,
+    pub pass_count: u64,
+    pub median_score_millis: Option<u32>,
+}
+
+pub struct CapabilityRollupProjectionSink {
+    rollups: Mutex<HashMap<CapabilityRollupKey, CapabilityReceiptRollup>>,
+    durable: Option<Mutex<rusqlite::Connection>>,
+}
+
+impl Default for CapabilityRollupProjectionSink {
+    fn default() -> Self {
+        Self {
+            rollups: Mutex::new(HashMap::new()),
+            durable: None,
+        }
+    }
+}
+
+impl CapabilityRollupProjectionSink {
+    pub fn open(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
+        let connection = rusqlite::Connection::open(path)?;
+        connection.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             CREATE TABLE IF NOT EXISTS evaluation_rollup_inputs (
+               receipt_id TEXT PRIMARY KEY NOT NULL,
+               record_json TEXT NOT NULL,
+               created_at_ms INTEGER NOT NULL
+             );",
+        )?;
+        let records = {
+            let mut statement = connection.prepare(
+                "SELECT record_json FROM evaluation_rollup_inputs
+                 ORDER BY created_at_ms, receipt_id",
+            )?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let sink = Self {
+            rollups: Mutex::new(HashMap::new()),
+            durable: Some(Mutex::new(connection)),
+        };
+        for encoded in records {
+            let record = serde_json::from_str::<EvaluationProjectionRecord>(&encoded)?;
+            sink.observe(&record);
+        }
+        Ok(sink)
+    }
+
+    pub fn snapshot(&self) -> HashMap<CapabilityRollupKey, CapabilityReceiptRollup> {
+        self.rollups
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub fn selection_input(&self, profile_id: &str) -> Vec<CapabilitySelectionObservation> {
+        let mut values = self
+            .snapshot()
+            .into_iter()
+            .filter(|(key, rollup)| key.profile_id == profile_id && rollup.receipt_count > 0)
+            .map(|(key, rollup)| CapabilitySelectionObservation {
+                key,
+                receipt_count: rollup.receipt_count,
+                pass_count: rollup.pass_count,
+                median_score_millis: (!rollup.scores_millis.is_empty())
+                    .then(|| rollup.scores_millis[rollup.scores_millis.len() / 2]),
+            })
+            .collect::<Vec<_>>();
+        values.sort_by(|left, right| left.key.runtime_id.cmp(&right.key.runtime_id));
+        values
+    }
+
+    /// Durable evidence references for a single session and rubric. These are
+    /// read from the append-only projection input table rather than rollups so
+    /// governance can bind proposals to exact receipts.
+    pub fn evidence_for_session(
+        &self,
+        session_id: &str,
+        rubric_id: &str,
+    ) -> anyhow::Result<Vec<EvaluationProjectionRecord>> {
+        let Some(connection) = &self.durable else {
+            return Ok(Vec::new());
+        };
+        let connection = connection.lock().unwrap_or_else(|p| p.into_inner());
+        let mut statement = connection.prepare(
+            "SELECT record_json FROM evaluation_rollup_inputs ORDER BY created_at_ms, receipt_id",
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut records = Vec::new();
+        for encoded in rows {
+            let record: EvaluationProjectionRecord = serde_json::from_str(&encoded?)?;
+            if record.context.session_id == session_id && record.context.rubric_id == rubric_id {
+                records.push(record);
+            }
+        }
+        Ok(records)
+    }
+
+    pub fn preferred_runtime<'a>(
+        &self,
+        profile_id: &str,
+        eligible: impl IntoIterator<Item = &'a str>,
+    ) -> Option<String> {
+        let eligible = eligible.into_iter().collect::<HashSet<_>>();
+        self.selection_input(profile_id)
+            .into_iter()
+            .filter(|item| eligible.contains(item.key.runtime_id.as_str()))
+            .max_by(|left, right| {
+                // Compare pass ratios without floating point, then score and
+                // finally reverse runtime ID so max_by remains deterministic.
+                (u128::from(left.pass_count) * u128::from(right.receipt_count))
+                    .cmp(&(u128::from(right.pass_count) * u128::from(left.receipt_count)))
+                    .then_with(|| left.median_score_millis.cmp(&right.median_score_millis))
+                    .then_with(|| right.key.runtime_id.cmp(&left.key.runtime_id))
+            })
+            .map(|item| item.key.runtime_id)
+    }
+
+    fn observe(&self, record: &EvaluationProjectionRecord) {
+        let key = CapabilityRollupKey {
+            runtime_id: record.context.runtime_id.clone(),
+            profile_id: record.context.profile_id.clone(),
+            rubric_id: record.context.rubric_id.clone(),
+            rubric_version: record.context.rubric_version,
+        };
+        let mut rollups = self
+            .rollups
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let rollup = rollups.entry(key).or_default();
+        if !rollup.receipt_ids.insert(record.receipt.receipt_id) {
+            return;
+        }
+        rollup.receipt_count += 1;
+        if matches!(
+            record.receipt.decision,
+            fabric::EvaluationDecision::ObservedPass | fabric::EvaluationDecision::Accepted
+        ) {
+            rollup.pass_count += 1;
+        }
+        if let Some(score) = record.receipt.weighted_total_millis {
+            rollup.scores_millis.push(score);
+            rollup.scores_millis.sort_unstable();
+        }
+        rollup
+            .evidence_coverage_millis
+            .observe(Some(u64::from(record.receipt.evidence_coverage_millis)));
+        rollup
+            .confidence_millis
+            .observe(Some(u64::from(record.receipt.confidence_millis)));
+        let metrics = &record.context.metrics;
+        rollup.elapsed_ms.observe(metrics.elapsed_ms);
+        rollup.inference_rounds.observe(metrics.inference_rounds);
+        rollup.provider_retries.observe(metrics.provider_retries);
+        rollup.tool_calls.observe(metrics.tool_calls);
+        rollup.tool_errors.observe(metrics.tool_errors);
+        rollup
+            .cumulative_input_tokens
+            .observe(metrics.cumulative_input_tokens);
+        rollup
+            .cumulative_output_tokens
+            .observe(metrics.cumulative_output_tokens);
+        rollup
+            .active_context_tokens
+            .observe(metrics.active_context_tokens);
+        rollup.cache_read_tokens.observe(metrics.cache_read_tokens);
+        rollup
+            .cache_write_tokens
+            .observe(metrics.cache_write_tokens);
+    }
+}
+
+#[async_trait]
+impl EvaluationProjectionSink for CapabilityRollupProjectionSink {
+    fn name(&self) -> &'static str {
+        "capability_rollup"
+    }
+
+    async fn project(&self, record: &EvaluationProjectionRecord) -> anyhow::Result<()> {
+        if let Some(connection) = &self.durable {
+            let encoded = serde_json::to_string(record)?;
+            let inserted = connection
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .execute(
+                    "INSERT OR IGNORE INTO evaluation_rollup_inputs
+                     (receipt_id, record_json, created_at_ms) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![
+                        record.receipt.receipt_id.0.to_string(),
+                        encoded,
+                        record.receipt.created_at_ms
+                    ],
+                )?;
+            if inserted == 0 {
+                return Ok(());
+            }
+        }
+        self.observe(record);
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchmarkTarget {
@@ -209,6 +466,7 @@ impl CapabilityBenchmarkRuntime for AgentControlBenchmarkRuntime {
                 profile_id: target.profile_id.clone(),
                 runtime_id: target.runtime_id.clone(),
                 trusted_workspace: Some(self.trusted_workspace.clone()),
+                delegator_authority: None,
                 cognitive_binding: None,
                 task,
                 context: AgentContextFork::None,
@@ -481,5 +739,63 @@ mod tests {
         assert!(!report.comparison_complete);
         assert_eq!(report.missing_dimensions, vec!["active_context_tokens"]);
         assert_eq!(report.observations.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn capability_rollup_uses_receipt_quality_and_separate_usage_dimensions() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("rollups.db");
+        let sink = CapabilityRollupProjectionSink::open(&path).unwrap();
+        let receipt_id = fabric::EvaluationReceiptId::new();
+        let record = EvaluationProjectionRecord {
+            receipt: fabric::EvaluationReceiptRef {
+                schema_version: fabric::EVALUATION_SCHEMA_V1,
+                receipt_id,
+                contract_id: fabric::EvaluationContractId::new(),
+                subject_kind: "turn".into(),
+                subject_id: fabric::TurnId::new().0.to_string(),
+                decision: fabric::EvaluationDecision::ObservedPass,
+                weighted_total_millis: Some(82_000),
+                evidence_coverage_millis: 750,
+                confidence_millis: 880,
+                failed_gates: vec![],
+                created_at_ms: 1,
+            },
+            context: super::super::evaluation::EvaluationProjectionContext {
+                session_id: "session".into(),
+                runtime_id: "native".into(),
+                profile_id: "code-agent".into(),
+                effective_model_id: "provider/model".into(),
+                model_display_name: "model".into(),
+                workspace_boundary_sha256: "workspace-digest".into(),
+                verification_selection_sha256: "verification-digest".into(),
+                rubric_id: "coding-v2".into(),
+                rubric_version: 2,
+                process_id: ProcessId::new(),
+                metrics: super::super::evaluation::EvaluationProjectionMetrics {
+                    elapsed_ms: Some(100),
+                    inference_rounds: Some(3),
+                    provider_retries: Some(1),
+                    tool_calls: Some(5),
+                    ..Default::default()
+                },
+            },
+        };
+
+        sink.project(&record).await.unwrap();
+        sink.project(&record).await.unwrap();
+
+        drop(sink);
+        let sink = CapabilityRollupProjectionSink::open(path).unwrap();
+        let rollups = sink.snapshot();
+        let rollup = rollups.values().next().unwrap();
+        assert_eq!(rollup.receipt_count, 1, "receipt replay is idempotent");
+        assert_eq!(rollup.pass_count, 1);
+        assert_eq!(rollup.scores_millis, vec![82_000]);
+        assert_eq!(rollup.inference_rounds.total, 3);
+        assert_eq!(rollup.provider_retries.total, 1);
+        assert_eq!(rollup.tool_calls.total, 5);
+        assert_eq!(rollup.elapsed_ms.total, 100);
+        assert_eq!(rollup.confidence_millis.total, 880);
     }
 }

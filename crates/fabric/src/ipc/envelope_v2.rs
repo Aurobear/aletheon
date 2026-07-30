@@ -328,6 +328,7 @@ impl SchemaId {
     pub const EVENT_PROMPT_CANCELLED_V1: &'static str = "aletheon.event.prompt_cancelled/v1";
     pub const EVENT_INTERJECTION_CONSUMED_V1: &'static str =
         "aletheon.event.interjection_consumed/v1";
+    pub const EVENT_EVALUATION_OBSERVED_V1: &'static str = "aletheon.event.evaluation_observed/v1";
     pub const EVENT_WORKSPACE_CHECKPOINT_BEGAN_V1: &'static str =
         "aletheon.event.workspace_checkpoint_began/v1";
     pub const EVENT_WORKSPACE_CHECKPOINT_FINALIZED_V1: &'static str =

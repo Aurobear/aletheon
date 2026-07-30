@@ -73,6 +73,7 @@ mod goal_runtime_tests {
             models: vec!["model".into()],
             max_context_length: None,
             pricing: None,
+            backpressure: Default::default(),
         }
     }
 

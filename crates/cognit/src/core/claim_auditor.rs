@@ -131,6 +131,9 @@ fn claim_for(obligation: &Obligation) -> Option<(String, DeterministicClaim)> {
         )),
         Obligation::RequiredAction(action) => {
             let operation = match action {
+                RequiredAction::RunRoleGraph { root_task_id, .. } => {
+                    format!("role-graph:{root_task_id}")
+                }
                 RequiredAction::InvokeAgent { .. } => unreachable!("handled above"),
                 RequiredAction::InvokeTool { tool_name } => format!("tool:{tool_name}"),
                 RequiredAction::ObserveTerminal { operation_id } => {

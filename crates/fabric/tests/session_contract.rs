@@ -77,7 +77,7 @@ fn append_store_is_object_safe() {
 #[test]
 fn checked_in_schema_matches_exporter_shape() {
     let checked: serde_json::Value =
-        serde_json::from_str(include_str!("../../../schemas/session-v3.schema.json")).unwrap();
-    let generated = serde_json::to_value(schemars::schema_for!(SessionProtocolV3)).unwrap();
+        serde_json::from_str(include_str!("../../../schemas/session-v4.schema.json")).unwrap();
+    let generated = serde_json::to_value(schemars::schema_for!(SessionProtocolV4)).unwrap();
     assert_eq!(checked, generated);
 }

@@ -1,4 +1,5 @@
 pub(crate) mod anthropic;
+pub(crate) mod backpressure;
 pub(crate) mod ollama;
 pub(crate) mod openai_provider;
 pub(crate) mod provider;

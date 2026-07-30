@@ -153,6 +153,7 @@ pub fn spawn_request(root: AgentId, parent: Option<(AgentId, ProcessId)>) -> Age
         profile_id: AgentProfileId("worker".into()),
         runtime_id: RuntimeId(TEST_RUNTIME.into()),
         trusted_workspace: None,
+        delegator_authority: None,
         cognitive_binding: None,
         task: "perform controlled work".into(),
         context: AgentContextFork::SelectedProjection {

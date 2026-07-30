@@ -25,6 +25,10 @@ pub struct AgentRuntimeId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RequiredAction {
+    RunRoleGraph {
+        root_task_id: String,
+        receipt_id: Option<String>,
+    },
     InvokeAgent {
         runtime: AgentRuntimeId,
     },

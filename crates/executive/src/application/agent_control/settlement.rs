@@ -22,6 +22,37 @@ use tokio::sync::Mutex;
 
 use super::{AgentAdmissionLease, AgentRunRepository, LiveAgentRun};
 
+/// AgentControl's durable runtime/profile correlation for an authoritative
+/// evaluation receipt. It is an observation, not a second settlement receipt.
+pub struct AgentEvaluationProjectionSink {
+    inner: crate::application::post_turn_projection::DurableDomainEvaluationSink,
+}
+
+impl AgentEvaluationProjectionSink {
+    pub fn new(spine: Arc<dyn EventSpine>) -> Self {
+        Self {
+            inner: crate::application::post_turn_projection::DurableDomainEvaluationSink::new(
+                "agent_control",
+                spine,
+            ),
+        }
+    }
+}
+
+#[async_trait]
+impl crate::application::evaluation::EvaluationProjectionSink for AgentEvaluationProjectionSink {
+    fn name(&self) -> &'static str {
+        "agent_control"
+    }
+
+    async fn project(
+        &self,
+        record: &crate::application::evaluation::EvaluationProjectionRecord,
+    ) -> anyhow::Result<()> {
+        crate::application::evaluation::EvaluationProjectionSink::project(&self.inner, record).await
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettlementEvidence {
     Phase(SettlementPhase),
@@ -1376,6 +1407,7 @@ mod tests {
             profile_id: AgentProfileId("worker".into()),
             runtime_id: RuntimeId("test".into()),
             trusted_workspace: None,
+            delegator_authority: None,
             cognitive_binding: None,
             task: "settlement recovery fixture".into(),
             context: AgentContextFork::None,

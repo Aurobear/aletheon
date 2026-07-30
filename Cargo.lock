@@ -1271,6 +1271,7 @@ dependencies = [
  "nix 0.29.0",
  "parking_lot",
  "png",
+ "regex",
  "schemars",
  "serde",
  "serde_json",

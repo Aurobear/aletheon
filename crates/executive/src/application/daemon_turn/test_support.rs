@@ -24,11 +24,20 @@ pub(crate) struct DaemonTurnTestHarness {
 
 pub(crate) struct DaemonTurnTestBuilder {
     runner: TestTurnRunner,
+    prompt_queue: bool,
 }
 
 impl DaemonTurnTestBuilder {
     pub(crate) fn new(runner: TestTurnRunner) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            prompt_queue: false,
+        }
+    }
+
+    pub(crate) fn with_prompt_queue(mut self, enabled: bool) -> Self {
+        self.prompt_queue = enabled;
+        self
     }
 
     pub(crate) fn succeeding(output: impl Into<String>) -> Self {
@@ -48,6 +57,7 @@ impl DaemonTurnTestBuilder {
                     items: vec![],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             })
         }))
@@ -79,6 +89,8 @@ impl DaemonTurnTestBuilder {
             store.clone(),
             Arc::new(Mutex::new(Default::default())),
         ));
+        let mut grok_hardening = crate::composition::config::GrokHardeningConfig::default();
+        grok_hardening.prompt_queue = self.prompt_queue;
         let orchestrator = DaemonTurnOrchestrator {
             kernel: kernel.clone(),
             notify_tx: Arc::new(Mutex::new(None::<mpsc::Sender<String>>)),
@@ -88,7 +100,7 @@ impl DaemonTurnTestBuilder {
             turn_engine: None,
             coordinator: coordinator.clone(),
             session_service,
-            grok_hardening: Default::default(),
+            grok_hardening,
             active_profile: Arc::new(StubActiveAgentProfile),
             test_runner: Some(self.runner),
         };

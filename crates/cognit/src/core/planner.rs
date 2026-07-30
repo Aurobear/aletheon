@@ -14,8 +14,10 @@ use uuid::Uuid;
 ///
 /// Generates structured Plans from intents and reasoning chains.
 /// Each PlanStep includes an optional rollback action for reversibility.
+#[deprecated(note = "use the typed TaskDecompositionPolicy and canonical Planner role")]
 pub struct Planner;
 
+#[allow(deprecated)]
 impl Planner {
     pub fn new() -> Self {
         Self
@@ -282,6 +284,7 @@ impl Planner {
     }
 }
 
+#[allow(deprecated)]
 impl Default for Planner {
     fn default() -> Self {
         Self::new()
@@ -289,6 +292,7 @@ impl Default for Planner {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use fabric::IntentSource;

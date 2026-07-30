@@ -158,6 +158,14 @@ pub(crate) struct ConsolidatedRecord {
     pub content_hash: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddingJobRecord {
+    pub record_id: String,
+    pub operation: String,
+    pub item: Option<crate::RecallItem>,
+    pub attempts: u32,
+}
+
 pub struct ConsolidationRepository {
     connection: Mutex<Connection>,
     metrics: Mutex<MemoryMetrics>,
@@ -646,6 +654,171 @@ impl ConsolidationRepository {
             params![key, lease.owner],
         )?;
         tx.commit()?;
+        Ok(())
+    }
+
+    pub fn enqueue_embedding_backfill(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+        dimension: usize,
+        rotation_generation: u64,
+        now_ms: u64,
+    ) -> anyhow::Result<usize> {
+        let connection = self.connection.lock().unwrap();
+        Ok(connection.execute(
+            "INSERT OR IGNORE INTO memory_embedding_jobs
+             (record_id,operation,provider_id,model_id,dimension,rotation_generation,status,created_at_ms,updated_at_ms)
+             SELECT record_id,'upsert',?1,?2,?3,?4,'pending',?5,?5
+             FROM memory_records WHERE status='current'",
+            params![provider_id, model_id, dimension as i64, rotation_generation as i64, now_ms as i64],
+        )?)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn claim_embedding_jobs(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+        dimension: usize,
+        rotation_generation: u64,
+        owner: &str,
+        now_ms: u64,
+        lease_ms: u64,
+        limit: usize,
+    ) -> anyhow::Result<Vec<EmbeddingJobRecord>> {
+        let mut connection = self.connection.lock().unwrap();
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "UPDATE memory_embedding_jobs SET status='pending',lease_owner=NULL,lease_until_ms=NULL
+             WHERE status='leased' AND lease_until_ms < ?1",
+            [now_ms as i64],
+        )?;
+        let ids = {
+            let mut query = tx.prepare(
+                "SELECT record_id FROM memory_embedding_jobs
+                 WHERE provider_id=?1 AND model_id=?2 AND dimension=?3 AND rotation_generation=?4
+                   AND status='pending' AND retry_at_ms<=?5
+                 ORDER BY created_at_ms,record_id LIMIT ?6",
+            )?;
+            let ids = query
+                .query_map(
+                    params![
+                        provider_id,
+                        model_id,
+                        dimension as i64,
+                        rotation_generation as i64,
+                        now_ms as i64,
+                        limit as i64
+                    ],
+                    |row| row.get::<_, String>(0),
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            ids
+        };
+        let mut jobs = Vec::new();
+        for id in ids {
+            tx.execute(
+                "UPDATE memory_embedding_jobs SET status='leased',lease_owner=?1,
+                 lease_until_ms=?2,attempts=attempts+1,updated_at_ms=?3 WHERE record_id=?4
+                 AND provider_id=?5 AND model_id=?6 AND dimension=?7 AND rotation_generation=?8",
+                params![
+                    owner,
+                    now_ms.saturating_add(lease_ms) as i64,
+                    now_ms as i64,
+                    id,
+                    provider_id,
+                    model_id,
+                    dimension as i64,
+                    rotation_generation as i64
+                ],
+            )?;
+            let row = tx.query_row(
+                "SELECT j.operation,r.content,r.scope_json,c.confidence,j.attempts
+                 FROM memory_embedding_jobs j
+                 LEFT JOIN memory_records r ON r.record_id=j.record_id AND r.status='current'
+                 LEFT JOIN memory_candidates c ON c.id=r.candidate_id
+                 WHERE j.record_id=?1 AND j.provider_id=?2 AND j.model_id=?3
+                   AND j.dimension=?4 AND j.rotation_generation=?5",
+                params![
+                    id,
+                    provider_id,
+                    model_id,
+                    dimension as i64,
+                    rotation_generation as i64
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<f64>>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )?;
+            let item = match (row.1, row.2) {
+                (Some(content), Some(scope)) => {
+                    let mut metadata = crate::MemoryMetadata::local(&id, &id, chrono::Utc::now());
+                    metadata.confidence = row.3.unwrap_or(0.0);
+                    Some(crate::RecallItem {
+                        content,
+                        metadata,
+                        temporal_state: crate::TemporalState::Current,
+                        authority: crate::MemoryAuthority::VerifiedLocalSemantic,
+                        scope: serde_json::from_str(&scope)?,
+                        score: 0.0,
+                        evidence: None,
+                    })
+                }
+                _ => None,
+            };
+            jobs.push(EmbeddingJobRecord {
+                record_id: id,
+                operation: row.0,
+                item,
+                attempts: row.4 as u32,
+            });
+        }
+        tx.commit()?;
+        Ok(jobs)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_embedding_job(
+        &self,
+        record_id: &str,
+        provider_id: &str,
+        model_id: &str,
+        dimension: usize,
+        rotation_generation: u64,
+        owner: &str,
+        success: bool,
+        retry_at_ms: u64,
+        error: Option<&str>,
+        now_ms: u64,
+    ) -> anyhow::Result<()> {
+        let connection = self.connection.lock().unwrap();
+        let status = if success { "succeeded" } else { "pending" };
+        let changed = connection.execute(
+            "UPDATE memory_embedding_jobs SET status=?1,retry_at_ms=?2,last_error=?3,
+             lease_owner=NULL,lease_until_ms=NULL,updated_at_ms=?4
+             WHERE record_id=?5 AND provider_id=?6 AND model_id=?7 AND dimension=?8
+               AND rotation_generation=?9 AND status='leased' AND lease_owner=?10",
+            params![
+                status,
+                retry_at_ms as i64,
+                error,
+                now_ms as i64,
+                record_id,
+                provider_id,
+                model_id,
+                dimension as i64,
+                rotation_generation as i64,
+                owner
+            ],
+        )?;
+        anyhow::ensure!(changed == 1, "embedding job lease lost");
         Ok(())
     }
 }

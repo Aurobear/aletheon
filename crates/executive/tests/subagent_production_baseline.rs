@@ -112,6 +112,7 @@ fn context() -> ToolContext {
             caller_root_agent_id: root,
             parent_agent_id: root,
             parent_process_id: ProcessId::new(),
+            delegator_authority: None,
         }),
         working_dir: std::env::temp_dir(),
         session_id: "root-session".into(),

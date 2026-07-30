@@ -156,6 +156,8 @@ pub struct AgentControlService {
     lifecycle_hooks: Arc<dyn AgentLifecycleHookSink>,
     runtime_profile_requirements: HashMap<fabric::AgentProfileId, Vec<AgentRuntimeCapability>>,
     cognitive_task_admission: Option<Arc<dyn CognitiveTaskAdmissionPort>>,
+    capability_history:
+        Option<Arc<crate::application::capability_benchmark::CapabilityRollupProjectionSink>>,
 }
 
 impl std::fmt::Debug for AgentControlService {
@@ -202,6 +204,7 @@ impl AgentControlService {
             lifecycle_hooks: Arc::new(NoopAgentLifecycleHookSink),
             runtime_profile_requirements: HashMap::new(),
             cognitive_task_admission: None,
+            capability_history: None,
         }
     }
 
@@ -218,6 +221,14 @@ impl AgentControlService {
         admission: Arc<dyn CognitiveTaskAdmissionPort>,
     ) -> Self {
         self.cognitive_task_admission = Some(admission);
+        self
+    }
+
+    pub fn with_capability_history(
+        mut self,
+        history: Arc<crate::application::capability_benchmark::CapabilityRollupProjectionSink>,
+    ) -> Self {
+        self.capability_history = Some(history);
         self
     }
 
@@ -775,10 +786,24 @@ impl AgentControlPort for AgentControlService {
             }
             _ => AgentWorkspaceMode::SharedReadOnly,
         };
+        let history_runtime = if intent.runtime_override.is_none() {
+            self.capability_history.as_ref().and_then(|history| {
+                history.preferred_runtime(
+                    &intent.profile_id.0,
+                    self.runtimes
+                        .catalog()
+                        .iter()
+                        .map(|manifest| manifest.id.as_str()),
+                )
+            })
+        } else {
+            None
+        };
         let selector = intent
             .runtime_override
             .as_ref()
             .map(|value| runtime::RuntimeSelector::Alias(value.clone()))
+            .or_else(|| history_runtime.map(runtime::RuntimeSelector::Alias))
             .unwrap_or(runtime::RuntimeSelector::Auto);
         let selection = runtime::RuntimeSelectionRequest {
             selector,
@@ -842,6 +867,7 @@ impl AgentControlPort for AgentControlService {
             profile_id: intent.profile_id,
             runtime_id,
             trusted_workspace: intent.trusted_workspace,
+            delegator_authority: intent.delegator_authority,
             cognitive_binding: None,
             task: intent.task,
             context: intent.context,
@@ -853,7 +879,10 @@ impl AgentControlPort for AgentControlService {
         .await
     }
 
-    async fn spawn(&self, request: AgentSpawnRequest) -> Result<AgentHandle, AgentControlError> {
+    async fn spawn(
+        &self,
+        mut request: AgentSpawnRequest,
+    ) -> Result<AgentHandle, AgentControlError> {
         request.validate()?;
         let launcher = self.runtimes.resolve(&request.runtime_id)?;
         let mut context_builder = AgentContextProjectionBuilder::new().fork(&request.context)?;
@@ -862,6 +891,31 @@ impl AgentControlPort for AgentControlService {
         }
         let context = context_builder.build()?;
         let identity = self.validated_parent(&request).await?;
+        let attenuation_report = if let Some(parent_agent_id) = request.parent_agent_id {
+            let parent_authority = if let Some(parent) = self.live.get(parent_agent_id).await {
+                parent.reparent_authority().clone()
+            } else {
+                request.delegator_authority.clone().ok_or_else(|| {
+                    control_error(
+                        AgentControlErrorKind::Forbidden,
+                        "non-root Agent spawn has no authenticated delegator authority",
+                    )
+                })?
+            };
+            let requested = fabric::AgentDelegationAuthority::new(
+                request.trusted_workspace.clone(),
+                request.allowed_tools.clone(),
+                request.budget.clone(),
+            );
+            let (effective, report) = parent_authority.attenuate(&requested)?;
+            request.trusted_workspace = effective.workspace;
+            request.allowed_tools = effective.allowed_tools;
+            request.budget = effective.budget;
+            request.validate()?;
+            Some(report)
+        } else {
+            None
+        };
         let agent_id = identity.agent_id;
         let workspace_id = agent_workspace_id(agent_id);
         let request_hash = agent_spawn_request_hash(&request)?;
@@ -1193,6 +1247,16 @@ impl AgentControlPort for AgentControlService {
         }
         let memory_events = Arc::new(memory_events);
         let events: Arc<dyn AgentEventSink> = memory_events.clone();
+        if let Some(report) = attenuation_report {
+            events
+                .emit(AgentRuntimeEvent::CapabilityAttenuated {
+                    agent_id: handle.agent_id,
+                    process_id: handle.process_id,
+                    operation_id: handle.operation_id,
+                    report,
+                })
+                .await;
+        }
         self.tasks.lock().await.spawn(async move {
             run_agent(
                 kernel,

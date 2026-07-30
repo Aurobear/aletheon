@@ -22,9 +22,6 @@ use crate::host::daemon::handler::RequestHandler;
 use anyhow::Context;
 use cognit::core::reflector::Reflector;
 use corpus::hook::builtin::audit_hook;
-use corpus::security::audit::AuditLogger;
-use corpus::security::runner::ToolRunnerWithGuard;
-use corpus::security::sandbox::executor::{create_executor_with_front_backend, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
 use corpus::security::storm_breaker::StormBreaker;
 use corpus::skill::plugin::register_skill;
@@ -66,6 +63,7 @@ impl RequestHandler {
         goal_runtime: cognit::config::GoalRuntimeConfig,
         pi_runtime: crate::composition::config::CodingRuntimeConfig,
         grok_hardening: crate::composition::config::GrokHardeningConfig,
+        evaluation: crate::composition::config::EvaluationSettings,
         sandbox_profiles: fabric::SandboxProfiles,
         network_policy: fabric::network_policy::NetworkPolicy,
         agent_profiles: crate::composition::config::AgentProfilesConfig,
@@ -388,12 +386,16 @@ impl RequestHandler {
         }
 
         // One approval gate is shared by guarded tools and MCP elicitation.
+        let session_approvals = crate::application::admin_service::ScopedApprovalCache::open(
+            &data_dir.join("transient_session_grants.db"),
+        )?;
         let (socket_approval_gate, approval_rx) = SocketApprovalGate::new(clock.clone());
         let approval_gate: Arc<dyn corpus::security::approval::ApprovalGate> =
             Arc::new(DurableSocketApprovalGate {
                 socket: Arc::new(socket_approval_gate),
                 repository: approval_repository.clone(),
                 clock: clock.clone(),
+                session_grants: session_approvals.clone(),
             });
 
         // MCP servers. Keep the manager alive: supplemental memory recall/capture calls the
@@ -452,55 +454,16 @@ impl RequestHandler {
             Some(Arc::new(mcp))
         };
 
-        // Security
-        let sandbox_pref = SandboxPreference::from_str(&config.sandbox_preference);
-        let mut structured_exec_backend: Option<Arc<dyn corpus::security::StructuredToolSandbox>> =
-            None;
-        let exec_backend: Option<Box<dyn fabric::SandboxBackend>> = if grok_hardening.execd {
-            let binary_path = std::env::var_os("ALETHEON_EXECD_PATH")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| {
-                    std::env::current_exe()
-                        .ok()
-                        .and_then(|path| path.parent().map(|parent| parent.join("execd")))
-                        .unwrap_or_else(|| std::path::PathBuf::from("execd"))
-                });
-            let workspace = std::path::PathBuf::from(&config.working_dir)
-                .canonicalize()
-                .context("canonicalize execd workspace root")?;
-            let backend = crate::adapters::channel::execd_client::ExecdSandboxBackend::new(
-                crate::adapters::channel::execd_client::ExecdConfig {
-                    binary_path: binary_path.to_string_lossy().into_owned(),
-                    shared_secret: format!(
-                        "{}{}",
-                        uuid::Uuid::new_v4().simple(),
-                        uuid::Uuid::new_v4().simple()
-                    ),
-                    startup_timeout: std::time::Duration::from_secs(5),
-                    request_timeout: std::time::Duration::from_secs(30),
-                    workspace_roots: vec![workspace],
-                },
-            );
-            structured_exec_backend = Some(Arc::new(backend.clone()));
-            Some(Box::new(backend))
-        } else {
-            None
-        };
-        let sandbox = create_executor_with_front_backend(sandbox_pref, clock.clone(), exec_backend);
-        let audit_path = data_dir.join("audit.jsonl");
-        let audit_logger = AuditLogger::new(audit_path)?;
-        let mut runner = ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
-            .with_approval_gate(approval_gate);
-        if let Some(structured) = structured_exec_backend {
-            runner = runner.with_structured_sandbox(structured);
-        }
-        if grok_hardening.sandbox_profiles {
-            runner = runner.with_sandbox_profiles(sandbox_profiles);
-        }
-        if let Some(bus) = event_bus.as_ref() {
-            runner = runner.with_event_bus(bus.clone());
-        }
-        let tool_runner = Arc::new(Mutex::new(runner));
+        let tool_runner = super::security::build_tool_runner(
+            &data_dir,
+            &config.working_dir,
+            &config.sandbox_preference,
+            &grok_hardening,
+            sandbox_profiles,
+            approval_gate,
+            event_bus.as_ref(),
+            clock.clone(),
+        )?;
 
         let runtime_config = ExecutiveConfig {
             session_id: session_id.clone(),
@@ -513,14 +476,15 @@ impl RequestHandler {
             max_iterations: config.agent_max_iterations,
             compaction_threshold_percent: config.agent_compaction_threshold_percent,
             harness_kind: config.harness_kind,
+            multi_agent: config.multi_agent.clone(),
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
         let mut runtime = AletheonExecutive::new(runtime_config);
         let evo_config = EvolutionConfig {
             enabled: evolution_enabled,
-            evolution_permitted: false,
-            trigger_every_n_turns: 10,
+            evolution_permitted: config.evolution_permitted,
+            trigger_every_n_turns: config.evolution_trigger_every_n_turns,
             trigger_on_failure: true,
             window_size: 20,
             lineage_dir: data_dir.join("lineage"),
@@ -531,10 +495,12 @@ impl RequestHandler {
         }
 
         // Pipeline, reflector, episodic memory
-        let meta_runtime = Arc::new(DefaultMetaRuntime::new(
-            Version::new(0, 1, 0),
-            clock.clone(),
-        ));
+        let meta_runtime = Arc::new(
+            DefaultMetaRuntime::new(Version::new(0, 1, 0), clock.clone())
+                .with_genome_path(data_dir.join("genome.yaml"))
+                .with_work_dir(data_dir.join("metacog-sandbox"), clock.clone())
+                .with_lineage_path(data_dir.join("lineage").join("genome.jsonl"), clock.clone())?,
+        );
         let metacog: Arc<dyn metacog::MetacogService> =
             Arc::new(metacog::DefaultMetacogService::with_state_path(
                 meta_runtime,
@@ -688,18 +654,97 @@ impl RequestHandler {
         let retention_repository = Arc::new(mnemosyne::RetentionRepository::open(
             data_dir.join("memory_retention.db"),
         )?);
-        let local_memory: Arc<dyn mnemosyne::MemoryService> = Arc::new(
-            mnemosyne::DefaultMemoryService::new(
-                recall_memory.clone(),
-                fact_store.clone(),
-                core_memory.clone(),
-                episodic_memory.clone(),
+        let mut local_memory_service = mnemosyne::DefaultMemoryService::new(
+            recall_memory.clone(),
+            fact_store.clone(),
+            core_memory.clone(),
+            episodic_memory.clone(),
+            clock.clone(),
+        )
+        .with_memory_hybrid(grok_hardening.memory_hybrid || config.memory_policy.embedding.enabled)
+        .with_consolidation_repository(consolidation_repository.clone())
+        .with_retention_repository(retention_repository.clone());
+        let mut embedding_worker = None;
+        let embedding_config = &config.memory_policy.embedding;
+        if embedding_config.enabled {
+            anyhow::ensure!(
+                !embedding_config.provider.trim().is_empty()
+                    && !embedding_config.model.trim().is_empty()
+                    && !embedding_config.base_url.trim().is_empty()
+                    && embedding_config.dimensions > 0,
+                "enabled memory embedding requires provider, model, base_url, and dimensions"
+            );
+            let transport = match embedding_config.provider.as_str() {
+                "open_ai" => mnemosyne::EmbeddingTransport::OpenAi,
+                "ollama" => mnemosyne::EmbeddingTransport::Ollama,
+                other => anyhow::bail!("unsupported memory embedding provider '{other}'"),
+            };
+            let secret = if embedding_config.credential_env.is_empty() {
+                String::new()
+            } else {
+                std::env::var(&embedding_config.credential_env).unwrap_or_default()
+            };
+            let grant = mnemosyne::credential::EmbeddingCredentialGrant::new(
+                fabric::LOCAL_OWNER_PRINCIPAL,
+                &embedding_config.base_url,
+                embedding_config.provider.clone(),
+                u64::MAX,
+                embedding_config.rotation_generation,
+                secret,
+            );
+            let gate: Arc<dyn fabric::memory::ProviderBackpressurePort> = Arc::new(
+                cognit::inference::MachineProviderBackpressure::new(Default::default()),
+            );
+            let embedding: Arc<dyn fabric::EmbeddingProvider> =
+                Arc::new(mnemosyne::RemoteEmbeddingProvider::new(
+                    transport,
+                    embedding_config.base_url.clone(),
+                    embedding_config.model.clone(),
+                    embedding_config.dimensions,
+                    grant.clone(),
+                    clock.clone(),
+                    gate,
+                    std::time::Duration::from_millis(embedding_config.timeout_ms),
+                )?);
+            let vectors = Arc::new(mnemosyne::SqliteVectorBackend::open(
+                &data_dir.join("memory_vectors.db"),
+                embedding.clone(),
+                embedding_config.provider.clone(),
+                embedding_config.rotation_generation as u64,
+            )?);
+            embedding_worker = Some(mnemosyne::consolidation::MemoryEmbeddingWorker::new(
+                consolidation_repository.clone(),
+                embedding.clone(),
+                vectors.clone(),
+                embedding_config.provider.clone(),
+                embedding_config.rotation_generation as u64,
+                format!("embedding-worker:{}", std::process::id()),
                 clock.clone(),
-            )
-            .with_memory_hybrid(grok_hardening.memory_hybrid)
-            .with_consolidation_repository(consolidation_repository)
-            .with_retention_repository(retention_repository.clone()),
-        );
+            ));
+            local_memory_service = local_memory_service.with_vector_search_backend(
+                vectors,
+                &grant,
+                &embedding_config.base_url,
+                clock.wall_now().0.max(0) as u64 / 1_000,
+            );
+        }
+        if let Some(worker) = embedding_worker {
+            let worker_cancel = cancel_token.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                loop {
+                    tokio::select! {
+                        _ = worker_cancel.cancelled() => break,
+                        _ = interval.tick() => {
+                            if let Err(error) = worker.run_once().await {
+                                tracing::warn!(error = %error, "memory embedding worker iteration failed");
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        let local_memory: Arc<dyn mnemosyne::MemoryService> = Arc::new(local_memory_service);
         let supplemental_runtime =
             crate::adapters::gbrain::build_supplemental_memory_runtime_with_retention(
                 local_memory,
@@ -780,7 +825,6 @@ impl RequestHandler {
         let admin_cached_prefix = cached_prefix.clone();
         let pending_approvals = crate::application::admin_service::PendingApprovals::default();
         let admin_pending_approvals = pending_approvals.clone();
-        let session_approvals = crate::application::admin_service::ScopedApprovalCache::default();
         let admin_session_approvals = session_approvals.clone();
         let memory_queue = Arc::new(Mutex::new(Vec::new()));
         let dasein_handle = self_field
@@ -1105,6 +1149,7 @@ impl RequestHandler {
             event_bus.clone(),
             config,
             grok_hardening.clone(),
+            evaluation,
             &pi_runtime,
             pi_work_allowed,
             sessions.clone(),
@@ -1131,6 +1176,8 @@ impl RequestHandler {
             apply_objective_store,
             param_registry.clone(),
             agent_svc.agent_live_runs,
+            agent_svc.capability_rollups,
+            agent_svc.role_workflow_factory,
             canonical_event_spine.clone(),
             agent_svc.event_projections,
             agent_profile_registry.clone(),
@@ -1145,6 +1192,7 @@ impl RequestHandler {
         let turn_orchestrator = turn_svc.turn_orchestrator;
         let approved_apply = turn_svc.approved_apply;
         let lifecycle_registry = turn_svc.lifecycle_registry;
+        let evaluation_service = turn_svc.evaluation_service;
 
         let _turn_orch_for_telegram = turn_orchestrator.clone();
         let _cancel_for_telegram = cancel_token.clone();
@@ -1187,13 +1235,22 @@ impl RequestHandler {
             supplemental_memory_worker_task.map(|task| Arc::new(Mutex::new(Some(task))));
         let self_field_shutdown = Arc::new(Mutex::new(Some(self_field.clone())));
 
-        let approval_use_cases: Arc<dyn crate::application::ApprovalUseCases> =
-            Arc::new(crate::application::ApprovalService::new(
+        let approval_use_cases: Arc<dyn crate::application::ApprovalUseCases> = Arc::new(
+            crate::application::ApprovalService::new(
                 memory_group.approval_repository.clone(),
                 approved_apply.clone(),
                 clock.clone(),
                 main_agent_process_id.clone(),
-            ));
+            )
+            .with_dasein_coordinator(Arc::new(
+                crate::application::metacog_approval::GovernedMetacogApplyCoordinator::new(
+                    crate::application::governed_capability::canonical_permit_issuer(
+                        kernel.admission(),
+                    ),
+                    domains.metacog(),
+                ),
+            )),
+        );
         let admin_use_cases: Arc<dyn crate::application::AdminUseCases> =
             Arc::new(crate::application::AdminService::new(
                 crate::application::admin_service::AdminResources {
@@ -1427,6 +1484,7 @@ impl RequestHandler {
             google_use_cases,
             workflow_use_cases,
             turn_use_cases,
+            evaluation_service,
             session_input,
             conscious_registry,
             debug_handler,

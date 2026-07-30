@@ -61,6 +61,9 @@ pub enum EvidenceLocator {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvidenceSubject {
+    RoleGraphReceipt {
+        root_task_id: String,
+    },
     AgentInvocation {
         runtime: AgentRuntimeId,
     },

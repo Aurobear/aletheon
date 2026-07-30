@@ -103,6 +103,7 @@ pub enum WritePhase {
     ToolCall,
     ToolResult,
     ContextProjection,
+    EvaluationReceipt,
     TerminalFlush,
     ContextFragment,
 }
@@ -115,6 +116,7 @@ impl fmt::Display for WritePhase {
             Self::ToolCall => "tool_call",
             Self::ToolResult => "tool_result",
             Self::ContextProjection => "context_projection",
+            Self::EvaluationReceipt => "evaluation_receipt",
             Self::TerminalFlush => "terminal_flush",
             Self::ContextFragment => "context_fragment",
         };

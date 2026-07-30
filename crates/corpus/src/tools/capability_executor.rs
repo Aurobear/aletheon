@@ -160,7 +160,7 @@ impl ToolExecutor for CorpusToolExecutor {
         };
 
         let context = ToolContext {
-            agent: request.authority.agent,
+            agent: request.authority.agent.clone(),
             approval_authority: Some(fabric::ToolApprovalAuthority {
                 principal_id: request.authority.principal.clone(),
                 connection_id: request.authority.connection_id.clone(),
@@ -239,7 +239,7 @@ impl ToolExecutor for CorpusToolExecutor {
         };
 
         let context = ToolContext {
-            agent: request.authority.agent,
+            agent: request.authority.agent.clone(),
             approval_authority: Some(fabric::ToolApprovalAuthority {
                 principal_id: request.authority.principal.clone(),
                 connection_id: request.authority.connection_id.clone(),

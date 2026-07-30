@@ -1,3 +1,4 @@
+use executive::application::turn_recovery::{RecoveryClassification, TurnRecoveryStore};
 use executive::runtime::events::{DefaultEventProjectionSet, SqliteEventSpine};
 use executive::runtime::session::{
     canonical_store::CanonicalSessionStore, event_sourced_store::reconcile_committed_session_events,
@@ -112,6 +113,24 @@ async fn restart_reconciles_committed_session_events_missing_from_read_model() {
         vec![item]
     );
 
+    store
+        .mark_recovered_turn(
+            &session_id,
+            fabric::TurnId::new(),
+            RecoveryClassification::Interrupted,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .load_session(&session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        SessionStatus::Interrupted
+    );
+
     // A later restart replays the same committed prefix without duplicating
     // items or rejecting already-advanced projection checkpoints.
     drop(store);
@@ -125,6 +144,16 @@ async fn restart_reconciles_committed_session_events_missing_from_read_model() {
         .unwrap();
     assert_eq!(second.scanned, 2);
     assert_eq!(store.load_items(&session_id, None).await.unwrap().len(), 1);
+    assert_eq!(
+        store
+            .load_session(&session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        SessionStatus::Interrupted,
+        "creation replay must preserve later recovery state"
+    );
 }
 
 #[tokio::test]

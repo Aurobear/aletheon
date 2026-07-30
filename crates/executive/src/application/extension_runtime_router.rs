@@ -243,6 +243,7 @@ mod tests {
             profile_id: AgentProfileId("test".into()),
             runtime_id,
             trusted_workspace: None,
+            delegator_authority: None,
             cognitive_binding: None,
             task: "test".into(),
             context: AgentContextFork::default(),

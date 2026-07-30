@@ -25,6 +25,9 @@ pub enum ClientRpcRequest {
     Clear,
     Status,
     StatusFor(SessionParams),
+    EvaluationGet(EvaluationGetParams),
+    EvaluationLatest(EvaluationLatestParams),
+    EvaluationList(EvaluationListParams),
     Reflect,
     ReflectNow,
     ReflectNowFor(SessionParams),
@@ -50,6 +53,7 @@ pub enum ClientRpcRequest {
     SessionLoadRecent,
     SessionLoadPrevious(SessionParams),
     ApprovalResponse(ApprovalResponseParams),
+    DiffArtifactGet(DiffArtifactGetParams),
     MemoryAdd(MemoryAddParams),
     MemoryList(MemoryListParams),
     MemorySearch(MemorySearchParams),
@@ -103,6 +107,8 @@ pub struct ChatParams {
     pub workspace_roots: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requirements: Vec<crate::TurnRequirement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_kind: Option<crate::TaskKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -125,6 +131,27 @@ pub struct ResumeParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct SessionParams {
     pub session_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationGetParams {
+    pub session_id: String,
+    pub receipt_id: String,
+    #[serde(default)]
+    pub include_evidence: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationLatestParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub include_evidence: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct EvaluationListParams {
+    pub session_id: String,
+    pub limit: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -168,12 +195,13 @@ pub struct InterruptParams {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TransientApprovalDecision {
     Approve,
     ApproveForSession,
     Deny,
+    ApprovePathForSession,
 }
 
 impl TransientApprovalDecision {
@@ -182,14 +210,39 @@ impl TransientApprovalDecision {
             Self::Approve => "approve",
             Self::ApproveForSession => "approve_for_session",
             Self::Deny => "deny",
+            Self::ApprovePathForSession => "approve_path_for_session",
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ApprovalResponseParams {
     pub approval_id: String,
     pub decision: TransientApprovalDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_hint: Option<TransientApprovalScopeHint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransientApprovalScopeSubject {
+    pub tool: String,
+    pub path_candidates: Vec<PathBuf>,
+    pub subject_version: u32,
+    pub subject_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TransientApprovalScopeHint {
+    pub path_root: PathBuf,
+    pub subject_version: u32,
+    pub subject_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DiffArtifactGetParams {
+    pub sha256: String,
+    pub offset: u64,
+    pub limit: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -316,6 +369,7 @@ impl ClientRpcRequest {
             working_dir: workspace.cwd().to_path_buf(),
             workspace_roots: workspace.writable_roots().to_vec(),
             requirements: Vec::new(),
+            task_kind: None,
         })
     }
 
@@ -344,6 +398,22 @@ impl ClientRpcRequest {
         };
         params.session_id = session_id;
         params.requirements = requirements;
+        Self::Chat(params)
+    }
+
+    pub fn chat_with_task_kind(
+        message: impl Into<String>,
+        session_id: Option<SessionId>,
+        workspace: &WorkspacePolicy,
+        requirements: Vec<crate::TurnRequirement>,
+        task_kind: Option<crate::TaskKind>,
+    ) -> Self {
+        let mut params =
+            match Self::chat_with_requirements(message, session_id, workspace, requirements) {
+                Self::Chat(params) => params,
+                _ => unreachable!("chat constructor always returns chat"),
+            };
+        params.task_kind = task_kind;
         Self::Chat(params)
     }
 
@@ -387,6 +457,32 @@ impl ClientRpcRequest {
         })
     }
 
+    pub fn evaluation_get(
+        session_id: impl Into<String>,
+        receipt_id: crate::EvaluationReceiptId,
+        include_evidence: bool,
+    ) -> Self {
+        Self::EvaluationGet(EvaluationGetParams {
+            session_id: session_id.into(),
+            receipt_id: receipt_id.0.to_string(),
+            include_evidence,
+        })
+    }
+
+    pub fn evaluation_latest(session_id: impl Into<String>, include_evidence: bool) -> Self {
+        Self::EvaluationLatest(EvaluationLatestParams {
+            session_id: session_id.into(),
+            include_evidence,
+        })
+    }
+
+    pub fn evaluation_list(session_id: impl Into<String>, limit: u16) -> Self {
+        Self::EvaluationList(EvaluationListParams {
+            session_id: session_id.into(),
+            limit,
+        })
+    }
+
     pub fn mode_switch(mode: CollaborationMode) -> Self {
         Self::ModeSwitch(ModeSwitchParams {
             mode: mode.display_name().to_owned(),
@@ -411,6 +507,26 @@ impl ClientRpcRequest {
         Self::ApprovalResponse(ApprovalResponseParams {
             approval_id: approval_id.into(),
             decision,
+            scope_hint: None,
+        })
+    }
+
+    pub fn scoped_approval_response(
+        approval_id: impl Into<String>,
+        scope_hint: TransientApprovalScopeHint,
+    ) -> Self {
+        Self::ApprovalResponse(ApprovalResponseParams {
+            approval_id: approval_id.into(),
+            decision: TransientApprovalDecision::ApprovePathForSession,
+            scope_hint: Some(scope_hint),
+        })
+    }
+
+    pub fn diff_artifact_get(sha256: impl Into<String>, offset: u64, limit: u32) -> Self {
+        Self::DiffArtifactGet(DiffArtifactGetParams {
+            sha256: sha256.into(),
+            offset,
+            limit,
         })
     }
 
@@ -552,6 +668,13 @@ impl ClientRpcRequest {
             Self::Clear => ("clear", None),
             Self::Status => ("status", None),
             Self::StatusFor(params) => ("status", Some(serde_json::to_value(params)?)),
+            Self::EvaluationGet(params) => ("evaluation.get", Some(serde_json::to_value(params)?)),
+            Self::EvaluationLatest(params) => {
+                ("evaluation.latest", Some(serde_json::to_value(params)?))
+            }
+            Self::EvaluationList(params) => {
+                ("evaluation.list", Some(serde_json::to_value(params)?))
+            }
             Self::Reflect => ("reflect", None),
             Self::ReflectNow => ("reflect_now", None),
             Self::ReflectNowFor(params) => ("reflect_now", Some(serde_json::to_value(params)?)),
@@ -585,6 +708,9 @@ impl ClientRpcRequest {
             }
             Self::ApprovalResponse(params) => {
                 ("approval_response", Some(serde_json::to_value(params)?))
+            }
+            Self::DiffArtifactGet(params) => {
+                ("diff_artifact.get", Some(serde_json::to_value(params)?))
             }
             Self::MemoryAdd(params) => ("memory.add", Some(serde_json::to_value(params)?)),
             Self::MemoryList(params) => ("memory.list", Some(serde_json::to_value(params)?)),
@@ -1007,5 +1133,47 @@ mod request_tests {
             request["params"]["requirements"][0]["InvokeAgentRuntime"]["runtime_id"],
             "pi-rpc"
         );
+    }
+
+    #[test]
+    fn chat_serializes_explicit_coding_task_kind() {
+        let workspace =
+            WorkspacePolicy::from_resolved_roots("/tmp/project".into(), Vec::new()).unwrap();
+        let request = ClientRpcRequest::chat_with_task_kind(
+            "change code",
+            None,
+            &workspace,
+            vec![],
+            Some(crate::TaskKind::Coding),
+        )
+        .to_json_rpc(Some(7))
+        .unwrap();
+        assert_eq!(request["params"]["task_kind"], "coding");
+    }
+
+    #[test]
+    fn chat_without_task_kind_omits_the_field() {
+        let workspace =
+            WorkspacePolicy::from_resolved_roots("/tmp/project".into(), Vec::new()).unwrap();
+        let request = ClientRpcRequest::chat("hello", &workspace)
+            .to_json_rpc(Some(8))
+            .unwrap();
+        assert!(request["params"].get("task_kind").is_none());
+    }
+
+    #[test]
+    fn evaluation_queries_serialize_session_scope_and_bounds() {
+        let latest = ClientRpcRequest::evaluation_latest("session-a", false)
+            .to_json_rpc(Some(10))
+            .unwrap();
+        assert_eq!(latest["method"], "evaluation.latest");
+        assert_eq!(latest["params"]["session_id"], "session-a");
+        assert_eq!(latest["params"]["include_evidence"], false);
+
+        let list = ClientRpcRequest::evaluation_list("session-a", 100)
+            .to_json_rpc(Some(11))
+            .unwrap();
+        assert_eq!(list["method"], "evaluation.list");
+        assert_eq!(list["params"]["limit"], 100);
     }
 }

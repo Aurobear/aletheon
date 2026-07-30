@@ -7,6 +7,12 @@ pub use provider_config::{InferenceCandidate, ProviderClass};
 pub use router::InferenceRouter;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+pub fn provider_backpressure_metrics(
+) -> HashMap<String, crate::inference::ProviderBackpressureSnapshot> {
+    crate::adapters::inference::backpressure::all_provider_backpressure_snapshots()
+}
 
 /// Top-level configuration for the inference routing subsystem.
 ///

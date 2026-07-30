@@ -109,6 +109,8 @@ impl RuntimeCore {
                 app_config.bootstrap.conscious_arbitration_mode.as_deref(),
             )?,
             enable_evolution,
+            evolution_permitted: app_config.evolution.evolution_permitted,
+            evolution_trigger_every_n_turns: app_config.evolution.trigger_every_n_turns,
             mcp_servers: super::mcp_config::convert_mcp_servers(&app_config.mcp_servers),
             hooks: {
                 // Honor --config: hooks must come from the same file(s) as the
@@ -121,6 +123,7 @@ impl RuntimeCore {
             deployment: app_config.deployment.clone(),
             backpressure: app_config.backpressure.clone(),
             agent_admission: app_config.agent.admission.clone(),
+            multi_agent: app_config.multi_agent.clone(),
             agent_max_iterations: app_config.agent.max_iterations,
             agent_compaction_threshold_percent: app_config.agent.compaction_threshold,
             harness_kind: app_config.agent.harness_kind,
@@ -241,6 +244,7 @@ impl RuntimeCore {
             app_config.goal_runtime.clone().unwrap_or_default(),
             app_config.pi_runtime.clone(),
             app_config.grok_hardening.clone(),
+            app_config.evaluation.clone(),
             app_config.sandbox_profiles.clone(),
             app_config.network_policy.clone(),
             app_config.agent_profiles.clone(),

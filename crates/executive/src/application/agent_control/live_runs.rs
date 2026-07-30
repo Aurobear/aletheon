@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use fabric::ipc::envelope_v2::Target;
 use fabric::{
-    AgentBudget, AgentControlError, AgentControlErrorKind, AgentId, AgentSnapshot,
-    BackgroundResourceDecl, WorkspacePolicy, MAX_BACKGROUND_RESOURCES,
+    AgentControlError, AgentControlErrorKind, AgentDelegationAuthority, AgentId, AgentSnapshot,
+    BackgroundResourceDecl, MAX_BACKGROUND_RESOURCES,
 };
 use tokio::sync::{watch, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -23,57 +23,9 @@ pub struct LiveAgentRun {
     reparent_authority: Arc<ReparentAuthority>,
 }
 
-#[derive(Clone)]
-pub struct ReparentAuthority {
-    workspace: Option<WorkspacePolicy>,
-    allowed_tools: Vec<String>,
-    budget: AgentBudget,
-}
-
-impl ReparentAuthority {
-    pub fn new(
-        workspace: Option<WorkspacePolicy>,
-        allowed_tools: Vec<String>,
-        budget: AgentBudget,
-    ) -> Self {
-        Self {
-            workspace,
-            allowed_tools,
-            budget,
-        }
-    }
-
-    pub fn covers(&self, child: &Self) -> bool {
-        let tools_cover = child
-            .allowed_tools
-            .iter()
-            .all(|tool| self.allowed_tools.contains(tool));
-        let workspace_covers = match (&self.workspace, &child.workspace) {
-            (Some(parent), Some(child)) => child.writable_roots().iter().all(|child_root| {
-                parent
-                    .writable_roots()
-                    .iter()
-                    .any(|parent_root| child_root.starts_with(parent_root))
-            }),
-            (None, None) => true,
-            _ => false,
-        };
-        tools_cover && workspace_covers
-    }
-
-    pub fn accepts_budget(&self, child: &Self) -> bool {
-        self.budget.max_input_tokens >= child.budget.max_input_tokens
-            && self.budget.max_output_tokens >= child.budget.max_output_tokens
-            && self.budget.max_tool_calls >= child.budget.max_tool_calls
-            && self.budget.max_elapsed_ms >= child.budget.max_elapsed_ms
-            && self.budget.max_depth >= child.budget.max_depth
-            && match (self.budget.max_cost_usd, child.budget.max_cost_usd) {
-                (None, _) => true,
-                (Some(parent), Some(child)) => parent >= child,
-                (Some(_), None) => false,
-            }
-    }
-}
+/// Compatibility name retained for settlement callers. Fabric owns the
+/// canonical delegation/subset contract.
+pub type ReparentAuthority = AgentDelegationAuthority;
 
 struct ManagedResourceState {
     registration: BackgroundResourceRegistration,
@@ -291,8 +243,8 @@ impl LiveAgentRuns {
 mod tests {
     use super::*;
     use fabric::{
-        AgentHandle, AgentProfileId, AgentResourceClass, AgentRunStatus, OperationId, ProcessId,
-        RuntimeId,
+        AgentBudget, AgentHandle, AgentProfileId, AgentResourceClass, AgentRunStatus, OperationId,
+        ProcessId, RuntimeId, WorkspacePolicy,
     };
 
     fn run(resources: Vec<BackgroundResourceDecl>) -> LiveAgentRun {

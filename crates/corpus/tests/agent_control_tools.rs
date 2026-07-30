@@ -162,6 +162,7 @@ fn context(root: AgentId, parent: AgentId, process: ProcessId) -> ToolContext {
             caller_root_agent_id: root,
             parent_agent_id: parent,
             parent_process_id: process,
+            delegator_authority: None,
         }),
         working_dir: std::env::temp_dir(),
         session_id: "agent-control-test".into(),

@@ -8,6 +8,7 @@ pub mod backpressure;
 mod channel;
 mod coding;
 pub mod diagnostics;
+mod evaluation;
 mod genome;
 mod grok_hardening;
 mod infra;
@@ -19,7 +20,7 @@ mod supplemental_memory;
 
 pub use agent::{
     AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, ExecutiveConfig,
-    HooksConfig, PerceptionConfig,
+    HooksConfig, MultiAgentConfig, PerceptionConfig,
 };
 pub use backpressure::BackpressureConfig;
 pub use channel::TelegramChannelConfig;
@@ -30,6 +31,7 @@ pub use cognit::config::{
     DeploymentQuotaConfig, DeploymentSecretFilesConfig, GoalRuntimeConfig, RoleRuntimeConfig,
 };
 pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
+pub use evaluation::EvaluationSettings;
 pub use genome::GenomeConfig;
 pub use grok_hardening::GrokHardeningConfig;
 pub use infra::{DaemonConfig, McpServerConfig, PluginsConfig, SandboxConfig};
@@ -86,6 +88,8 @@ pub struct ProfileOverride {
 #[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
     pub agent: AgentConfig,
+    #[serde(default)]
+    pub multi_agent: MultiAgentConfig,
     pub providers: Vec<ProviderConfig>,
     pub model_aliases: HashMap<String, String>,
     pub model_routing: ModelRoutingConfig,
@@ -97,6 +101,7 @@ pub struct AppConfig {
     pub hooks: HooksConfig,
     pub perception: PerceptionConfig,
     pub evolution: EvolutionSettings,
+    pub evaluation: EvaluationSettings,
     pub telegram: TelegramChannelConfig,
     pub goal_runtime: Option<GoalRuntimeConfig>,
     pub pi_runtime: CodingRuntimeConfig,

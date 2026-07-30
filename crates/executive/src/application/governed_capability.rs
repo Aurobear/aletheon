@@ -10,10 +10,11 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use fabric::types::admission::RiskLevel;
 use fabric::{
-    AdmissionController, BroadcastEpoch, CapabilityAuthority, CapabilityCall, CapabilityInvoker,
-    CapabilityResult, CapabilityScope, ConsciousArbitrationMode, ContentId, FieldDecisionKind,
-    FieldDecisionReason, InvocationControl, PrincipalId, ProcessId, SalienceVector,
-    SandboxRequirement, UsageReport, WorkspaceAttribution,
+    AdmissionController, AdmissionRequest, BroadcastEpoch, CapabilityAuthority, CapabilityCall,
+    CapabilityId, CapabilityInvoker, CapabilityResult, CapabilityScope, ConsciousArbitrationMode,
+    ContentId, ExecutionPermit, FieldDecisionKind, FieldDecisionReason, InvocationControl,
+    OperationId, PrincipalId, ProcessId, SalienceVector, SandboxRequirement, UsageReport,
+    WorkspaceAttribution,
 };
 use kernel::capability::{DefaultCapabilityInvoker, ToolExecutor};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,75 @@ pub fn canonical_capability_invoker(
     executor: Arc<dyn ToolExecutor>,
 ) -> Arc<dyn CapabilityInvoker> {
     Arc::new(DefaultCapabilityInvoker::new(admission, executor))
+}
+
+/// Narrow application-owned permit lifecycle for governed system mutations.
+///
+/// Keeping admission construction here prevents approval consumers from
+/// assembling an alternate Kernel policy path.
+#[async_trait]
+pub trait GovernedPermitIssuer: Send + Sync {
+    async fn admit_system_modify(
+        &self,
+        principal: PrincipalId,
+        capability: CapabilityId,
+        action: String,
+        input_summary: String,
+    ) -> Result<ExecutionPermit>;
+
+    async fn settle_system_modify(&self, permit: &ExecutionPermit, success: bool) -> Result<()>;
+}
+
+struct KernelPermitIssuer {
+    admission: Arc<dyn AdmissionController>,
+}
+
+pub fn canonical_permit_issuer(
+    admission: Arc<dyn AdmissionController>,
+) -> Arc<dyn GovernedPermitIssuer> {
+    Arc::new(KernelPermitIssuer { admission })
+}
+
+#[async_trait]
+impl GovernedPermitIssuer for KernelPermitIssuer {
+    async fn admit_system_modify(
+        &self,
+        principal: PrincipalId,
+        capability: CapabilityId,
+        action: String,
+        input_summary: String,
+    ) -> Result<ExecutionPermit> {
+        self.admission
+            .admit(AdmissionRequest {
+                operation_id: OperationId::new(),
+                process_id: ProcessId::new(),
+                principal,
+                capability,
+                action,
+                input_summary,
+                risk: RiskLevel::SystemModify,
+                requested_scope: CapabilityScope::default(),
+                budget: None,
+                lease: None,
+                sandbox: SandboxRequirement::NotRequired,
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn settle_system_modify(&self, permit: &ExecutionPermit, success: bool) -> Result<()> {
+        self.admission
+            .settle(
+                permit.id,
+                UsageReport {
+                    permit_id: permit.id,
+                    exit_code: Some(if success { 0 } else { 1 }),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(Into::into)
+    }
 }
 
 /// Trusted execution context attached by Executive, never by model input.
@@ -611,7 +681,7 @@ impl TurnAuthorityProvider for RegistryAuthorityProvider {
         let requested_scope = requested_scope_for_call(call, &self.workspace)?;
         Ok(AuthorizedInvocation {
             authority: CapabilityAuthority {
-                agent: self.agent,
+                agent: self.agent.clone(),
                 principal: self.principal.clone(),
                 action: call.name.clone(),
                 requested_scope,

@@ -166,6 +166,7 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
         profile_id: AgentProfileId("worker".into()),
         runtime_id: RuntimeId("native-cognit".into()),
         trusted_workspace: None,
+        delegator_authority: None,
         cognitive_binding: None,
         task: "perform the task".into(),
         context: AgentContextFork::SelectedProjection {

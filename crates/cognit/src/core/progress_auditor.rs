@@ -36,6 +36,12 @@ impl ProgressDecision {
             Self::Continue { missing } => missing
                 .iter()
                 .map(|item| match item {
+                    Obligation::RequiredAction(RequiredAction::RunRoleGraph {
+                        root_task_id,
+                        ..
+                    }) => format!(
+                        "- complete role graph `{root_task_id}` and persist its terminal receipt"
+                    ),
                     Obligation::RequiredAction(RequiredAction::InvokeAgent { runtime }) => {
                         format!(
                             "- invoke agent runtime `{}` and observe its terminal result",
@@ -179,6 +185,11 @@ pub(crate) fn evidence_for_obligation<'a>(
         });
     }
     let subject = match obligation {
+        Obligation::RequiredAction(RequiredAction::RunRoleGraph { root_task_id, .. }) => {
+            EvidenceSubject::RoleGraphReceipt {
+                root_task_id: root_task_id.clone(),
+            }
+        }
         Obligation::RequiredAction(RequiredAction::InvokeAgent { runtime }) => {
             EvidenceSubject::AgentInvocation {
                 runtime: runtime.clone(),

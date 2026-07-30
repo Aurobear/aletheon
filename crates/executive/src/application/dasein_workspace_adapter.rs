@@ -17,6 +17,92 @@ use super::conscious_core_ports::{DaseinIntegration, DaseinWorkspacePort};
 const MAX_LIVED_SEMANTIC_BYTES: usize = 24 * 1024;
 const MAX_GROUNDED_OUTCOME_BYTES: usize = 24 * 1024;
 const MAX_GROUNDED_OUTCOME_VERSION_RETRIES: usize = 3;
+const EVALUATION_DASEIN_EVENT_NAMESPACE: uuid::Uuid =
+    uuid::Uuid::from_u128(0x91265e16_0709_45a0_a34d_0913240eef82);
+
+/// Projects settled evaluation confidence into Dasein's lived-experience
+/// ledger. It deliberately has no authority to mutate the receipt decision.
+pub struct DaseinEvaluationProjectionSink {
+    dasein: Arc<dyn DaseinOps>,
+    clock: Arc<dyn Clock>,
+}
+
+impl DaseinEvaluationProjectionSink {
+    pub fn new(dasein: Arc<dyn DaseinOps>, clock: Arc<dyn Clock>) -> Self {
+        Self { dasein, clock }
+    }
+}
+
+#[async_trait]
+impl crate::application::evaluation::EvaluationProjectionSink for DaseinEvaluationProjectionSink {
+    fn name(&self) -> &'static str {
+        "dasein"
+    }
+
+    async fn project(
+        &self,
+        record: &crate::application::evaluation::EvaluationProjectionRecord,
+    ) -> anyhow::Result<()> {
+        let status = match record.receipt.decision {
+            fabric::EvaluationDecision::ObservedPass | fabric::EvaluationDecision::Accepted => {
+                OutcomeStatus::Succeeded
+            }
+            fabric::EvaluationDecision::ObservedFail | fabric::EvaluationDecision::Rejected => {
+                OutcomeStatus::Failed
+            }
+            fabric::EvaluationDecision::Indeterminate => OutcomeStatus::Cancelled,
+        };
+        let receipt_id = record.receipt.receipt_id.0;
+        let event_id = SelfEventId(uuid::Uuid::new_v5(
+            &EVALUATION_DASEIN_EVENT_NAMESPACE,
+            receipt_id.as_bytes(),
+        ));
+        let summary = truncate_utf8(
+            &serde_json::to_string(&serde_json::json!({
+                "receipt_id": receipt_id,
+                "decision": record.receipt.decision,
+                "score_millis": record.receipt.weighted_total_millis,
+                "coverage_millis": record.receipt.evidence_coverage_millis,
+                "confidence_millis": record.receipt.confidence_millis,
+                "failed_gates": record.receipt.failed_gates,
+            }))?,
+            MAX_GROUNDED_OUTCOME_BYTES,
+        );
+        for attempt in 0..MAX_GROUNDED_OUTCOME_VERSION_RETRIES {
+            let expected_version = self.dasein.self_version().await;
+            let result = self
+                .dasein
+                .transition(SelfTransitionRequest {
+                    event_id,
+                    source: ExperienceSource::Metacog,
+                    observed_at: self.clock.wall_now(),
+                    content: InterpretedExperience::Outcome {
+                        summary: summary.clone(),
+                        status,
+                    },
+                    provenance: ExperienceProvenance {
+                        producer: "executive-evaluation-projection".into(),
+                        session_id: uuid::Uuid::parse_str(&record.context.session_id).ok(),
+                        turn_id: uuid::Uuid::parse_str(&record.receipt.subject_id).ok(),
+                        source_ref: Some(format!("evaluation-receipt:{receipt_id}")),
+                    },
+                    expected_version,
+                })
+                .await;
+            match result {
+                Ok(_) => return Ok(()),
+                Err(error)
+                    if attempt + 1 < MAX_GROUNDED_OUTCOME_VERSION_RETRIES
+                        && error.to_string().contains("version conflict") =>
+                {
+                    tokio::task::yield_now().await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("bounded Dasein evaluation retry loop always returns")
+    }
+}
 
 /// Post-decision adapter from Cognit's grounded evidence events into Dasein's
 /// canonical lived-experience ledger. Publication is observational: callers

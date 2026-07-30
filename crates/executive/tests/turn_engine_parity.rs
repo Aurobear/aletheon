@@ -130,6 +130,7 @@ async fn stub_engine_emits_started_and_settled_on_success() {
                 model_policy: None,
                 deadline: None,
                 requirements: Vec::new(),
+                requested_task_kind: None,
             },
             test_context(),
             sink.clone(),
@@ -192,6 +193,7 @@ async fn stub_engine_rejects_on_error() {
                 model_policy: None,
                 deadline: None,
                 requirements: Vec::new(),
+                requested_task_kind: None,
             },
             test_context(),
             sink,
@@ -208,8 +210,10 @@ fn turn_engine_request_round_trips_model_policy() {
         model_policy: Some("claude-opus-review".into()),
         deadline: Some(MonoDeadlineMillis(30_000)),
         requirements: Vec::new(),
+        requested_task_kind: Some(fabric::TaskKind::Coding),
     };
     assert_eq!(request.model_policy.as_deref(), Some("claude-opus-review"));
+    assert_eq!(request.requested_task_kind, Some(fabric::TaskKind::Coding));
 }
 
 #[test]

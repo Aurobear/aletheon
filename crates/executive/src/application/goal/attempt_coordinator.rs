@@ -172,6 +172,56 @@ pub struct AttemptCoordinator {
     coding_verification: Option<CodingVerification>,
 }
 
+/// Durable Goal observation of a settled evaluation. Failed gates are written
+/// by the shared sink as retry/replan evidence; this adapter cannot change the
+/// already-settled Turn or Goal state by itself.
+pub struct GoalEvaluationProjectionSink {
+    inner: crate::application::post_turn_projection::DurableDomainEvaluationSink,
+    store: Arc<Mutex<ObjectiveStore>>,
+}
+
+impl GoalEvaluationProjectionSink {
+    pub fn new(spine: Arc<dyn fabric::EventSpine>, store: Arc<Mutex<ObjectiveStore>>) -> Self {
+        Self {
+            inner: crate::application::post_turn_projection::DurableDomainEvaluationSink::new(
+                "goal", spine,
+            ),
+            store,
+        }
+    }
+}
+
+#[async_trait]
+impl crate::application::evaluation::EvaluationProjectionSink for GoalEvaluationProjectionSink {
+    fn name(&self) -> &'static str {
+        "goal"
+    }
+
+    async fn project(
+        &self,
+        record: &crate::application::evaluation::EvaluationProjectionRecord,
+    ) -> anyhow::Result<()> {
+        if record.receipt.subject_kind == "goal_attempt" {
+            self.store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Goal store lock poisoned"))?
+                .record_evaluation_feedback(&record.receipt)?;
+        }
+        crate::application::evaluation::EvaluationProjectionSink::project(&self.inner, record).await
+    }
+}
+
+/// Typed retry/replan evidence derived only from a settled evaluation receipt.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GoalEvaluationFeedback {
+    pub receipt_id: fabric::EvaluationReceiptId,
+    pub goal_id: GoalId,
+    pub attempt_id: AttemptId,
+    pub decision: fabric::EvaluationDecision,
+    pub failed_gates: Vec<String>,
+    pub retry_replan_required: bool,
+}
+
 impl AttemptCoordinator {
     pub fn new(
         store: Arc<Mutex<ObjectiveStore>>,

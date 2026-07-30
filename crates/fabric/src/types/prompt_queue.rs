@@ -61,6 +61,10 @@ pub struct PromptEnvelope {
     /// lose client/workflow requirements when another connection owns processing.
     #[serde(default)]
     pub requirements: Vec<crate::TurnRequirement>,
+    /// Explicit task semantics survive durable queueing. The host still owns
+    /// evaluation mode, rubric, thresholds, and the issued contract.
+    #[serde(default)]
+    pub requested_task_kind: Option<crate::TaskKind>,
     pub created_at_unix: u64,
     pub updated_at_unix: u64,
     pub state: PromptState,
@@ -187,6 +191,7 @@ mod tests {
             kind: PromptKind::Prompt,
             content: "hello".to_string(),
             requirements: Vec::new(),
+            requested_task_kind: None,
             created_at_unix: 1,
             updated_at_unix: 1,
             state: PromptState::Queued,

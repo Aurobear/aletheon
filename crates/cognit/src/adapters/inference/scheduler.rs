@@ -433,6 +433,7 @@ mod tests {
                     models: vec!["gpt-4o".to_string()],
                     max_context_length: None,
                     pricing: None,
+                    backpressure: Default::default(),
                 },
                 model: "gpt-4o".to_string(),
             }],

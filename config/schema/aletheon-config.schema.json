@@ -782,6 +782,57 @@
         }
       ]
     },
+    "EvaluationMode": {
+      "enum": [
+        "shadow",
+        "enforce"
+      ],
+      "type": "string"
+    },
+    "EvaluationSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "coding_rubric": {
+          "default": "coding-v2",
+          "type": "string"
+        },
+        "default_mode": {
+          "$ref": "#/$defs/EvaluationMode",
+          "default": "shadow"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max_evaluation_ms": {
+          "default": 5000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_confidence_millis": {
+          "default": 700,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_evidence_coverage_millis": {
+          "default": 600,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_score_millis": {
+          "default": 70000,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "EvolutionSettings": {
       "additionalProperties": false,
       "description": "Self-evolution loop settings. Default OFF (HIGH-risk autonomy).",
@@ -789,6 +840,11 @@
         "enabled": {
           "default": false,
           "description": "Master switch for the self-evolution loop.\nWhen false (default), the loop is inert regardless of other settings.",
+          "type": "boolean"
+        },
+        "evolution_permitted": {
+          "default": false,
+          "description": "Operator gate for creating governed mutation proposals. This never\nbypasses human approval and defaults to false independently of enabled.",
           "type": "boolean"
         },
         "trigger_every_n_turns": {
@@ -1386,6 +1442,19 @@
           "default": "~/.aletheon/memory",
           "type": "string"
         },
+        "embedding": {
+          "$ref": "#/$defs/MemoryEmbeddingConfig",
+          "default": {
+            "base_url": "",
+            "credential_env": "",
+            "dimensions": 0,
+            "enabled": false,
+            "model": "",
+            "provider": "",
+            "rotation_generation": 0,
+            "timeout_ms": 0
+          }
+        },
         "extraction": {
           "$ref": "#/$defs/MemoryExtractionConfig",
           "default": {
@@ -1438,6 +1507,51 @@
             "spool_path": "~/.aletheon/memory/memory-spool.db",
             "write_source": "aletheon"
           }
+        }
+      },
+      "type": "object"
+    },
+    "MemoryEmbeddingConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "base_url": {
+          "default": "",
+          "type": "string"
+        },
+        "credential_env": {
+          "default": "",
+          "type": "string"
+        },
+        "dimensions": {
+          "default": 0,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "model": {
+          "default": "",
+          "type": "string"
+        },
+        "provider": {
+          "default": "",
+          "description": "`open_ai` or `ollama`.",
+          "type": "string"
+        },
+        "rotation_generation": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "default": 400,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -1553,6 +1667,22 @@
             "string",
             "null"
           ]
+        }
+      },
+      "type": "object"
+    },
+    "MultiAgentConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "automatic_for_coding": {
+          "default": false,
+          "description": "Automatically activate only for an explicit typed coding task.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Master production activation gate. Default-off until installed-runtime\nacceptance proves provider coordination and child terminal behavior.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -1734,6 +1864,34 @@
       },
       "type": "object"
     },
+    "ProviderBackpressureConfig": {
+      "additionalProperties": false,
+      "description": "Provider-level backpressure. Unlike turn admission this coordinates all\nsessions and role children in the daemon process that use the same provider.",
+      "properties": {
+        "max_concurrent_requests": {
+          "default": 2,
+          "description": "Maximum simultaneous requests for one provider identity.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_cooldown_ms": {
+          "default": 60000,
+          "description": "Upper bound applied to provider-advised shared cooldown.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queue_timeout_ms": {
+          "default": 120000,
+          "description": "Maximum time a caller may wait for cooldown and a fair permit.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "ProviderConfig": {
       "additionalProperties": false,
       "description": "Per-provider configuration.",
@@ -1741,6 +1899,15 @@
         "api_key": {
           "default": "",
           "type": "string"
+        },
+        "backpressure": {
+          "$ref": "#/$defs/ProviderBackpressureConfig",
+          "default": {
+            "max_concurrent_requests": 2,
+            "max_cooldown_ms": 60000,
+            "queue_timeout_ms": 120000
+          },
+          "description": "Machine/provider-scoped admission and cooldown policy. Every provider\ninstance built by the canonical factory shares this policy by `name`."
         },
         "base_url": {
           "type": "string"
@@ -2310,10 +2477,23 @@
         }
       }
     },
+    "evaluation": {
+      "$ref": "#/$defs/EvaluationSettings",
+      "default": {
+        "coding_rubric": "coding-v2",
+        "default_mode": "shadow",
+        "enabled": false,
+        "max_evaluation_ms": 5000,
+        "min_confidence_millis": 700,
+        "min_evidence_coverage_millis": 600,
+        "min_score_millis": 70000
+      }
+    },
     "evolution": {
       "$ref": "#/$defs/EvolutionSettings",
       "default": {
         "enabled": false,
+        "evolution_permitted": false,
         "trigger_every_n_turns": 10
       }
     },
@@ -2395,6 +2575,16 @@
       "default": {
         "backend": "sqlite",
         "data_dir": "~/.aletheon/memory",
+        "embedding": {
+          "base_url": "",
+          "credential_env": "",
+          "dimensions": 0,
+          "enabled": false,
+          "model": "",
+          "provider": "",
+          "rotation_generation": 0,
+          "timeout_ms": 0
+        },
         "extraction": {
           "enabled": true,
           "max_facts_per_turn": 5,
@@ -2453,6 +2643,13 @@
         "default": null,
         "multimodal": null,
         "reasoning": null
+      }
+    },
+    "multi_agent": {
+      "$ref": "#/$defs/MultiAgentConfig",
+      "default": {
+        "automatic_for_coding": false,
+        "enabled": false
       }
     },
     "network_policy": {

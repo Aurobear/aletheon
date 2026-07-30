@@ -21,6 +21,7 @@ fn request(
         profile_id: AgentProfileId("worker".into()),
         runtime_id: RuntimeId("test".into()),
         trusted_workspace: None,
+        delegator_authority: None,
         cognitive_binding: None,
         task: "inspect the repository".into(),
         context: AgentContextFork::None,

@@ -19,6 +19,12 @@ use super::mailbox::AgentRuntimeInbox;
 
 #[derive(Debug, Clone)]
 pub enum AgentRuntimeEvent {
+    CapabilityAttenuated {
+        agent_id: AgentId,
+        process_id: ProcessId,
+        operation_id: OperationId,
+        report: fabric::AgentAttenuationReport,
+    },
     Started {
         agent_id: AgentId,
         process_id: ProcessId,
@@ -83,6 +89,11 @@ impl SpineAgentEventSink {
 
     fn append(&self, event: &AgentRuntimeEvent) -> anyhow::Result<()> {
         let (schema, kind, extra) = match event {
+            AgentRuntimeEvent::CapabilityAttenuated { report, .. } => (
+                "aletheon.agent.capability_attenuated.v1",
+                "capability_attenuated",
+                serde_json::to_value(report).unwrap_or(serde_json::Value::Null),
+            ),
             AgentRuntimeEvent::Started { .. } => (
                 fabric::SchemaId::EVENT_AGENT_STARTED_V1,
                 "started",

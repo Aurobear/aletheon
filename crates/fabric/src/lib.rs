@@ -200,8 +200,9 @@ pub use types::admission::{
 };
 pub use types::agent::Pid;
 pub use types::agent_control::{
-    AgentApprovalPolicy, AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork,
-    AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
+    AgentApprovalPolicy, AgentArtifact, AgentAttenuationReport, AgentBroadcastRef, AgentBudget,
+    AgentBudgetField, AgentContextFork, AgentControlError, AgentControlErrorKind,
+    AgentControlMessage, AgentControlPort, AgentDelegationAuthority, AgentHandle,
     AgentInteractionMode, AgentListRequest, AgentMessageDeliveryState, AgentMessageKind,
     AgentMessagePayload, AgentMessageReceipt, AgentProfile, AgentRecoveryDecision,
     AgentRecoveryReceipt, AgentResult, AgentRunStatus, AgentRuntimeCapability, AgentSendRequest,
@@ -237,6 +238,13 @@ pub use types::coding_job::{
     WorkspaceBoundary,
 };
 pub use types::context::{Context, TraceState};
+pub use types::evaluation::{
+    EvaluationContractError, EvaluationContractId, EvaluationDecision, EvaluationEvidenceSnapshot,
+    EvaluationExecutionContext, EvaluationMode, EvaluationReceipt, EvaluationReceiptId,
+    EvaluationReceiptRef, EvaluationSnapshotId, EvaluationSubject, EvaluationThresholds,
+    EvidenceRef, RequiredEvidence, RequiredGate, TaskEvaluationContract, TaskKind,
+    EVALUATION_SCHEMA_V1,
+};
 pub use types::extension::{
     ActivationConstraints, ExtensionCatalog, ExtensionContractError, ExtensionDescriptor,
     ExtensionId, ExtensionKind, ExtensionOrigin, ExtensionSnapshot,
@@ -284,7 +292,6 @@ pub use types::process::{
     ProcessIdentity, ProcessOwnership, ProcessRecord, ProcessSignal, ProcessSnapshot, ProcessState,
     SpaceId, SpawnSpec,
 };
-pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
     resolve_profile, IsolationLevel, ProfileName, ProfileResolveError, ResolvedSandboxPolicy,
     SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig, SandboxExecutor,
@@ -294,8 +301,8 @@ pub use types::sandbox::{
 pub use types::sandbox_glob::expand_deny_globs;
 pub use types::session::{
     AppendOutcome, ItemId, ItemPayload, ItemRecord, SessionAppendStore, SessionFork,
-    SessionForkedEvent, SessionNotification, SessionProtocolV2, SessionProtocolV3, SessionRecord,
-    SessionStatus, TurnId, TurnRecord, SESSION_SCHEMA_VERSION,
+    SessionForkedEvent, SessionNotification, SessionProtocolV2, SessionProtocolV3,
+    SessionProtocolV4, SessionRecord, SessionStatus, TurnId, TurnRecord, SESSION_SCHEMA_VERSION,
 };
 pub use types::space::{
     AccessMode, AgoraSpaceId, AgoraVersion, ArtifactId, ContextBinding, ContextSpace, MemoryViewId,

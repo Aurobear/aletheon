@@ -616,6 +616,33 @@ pub struct ProviderConfig {
     /// Optional static pricing for per-provider cost accounting. `None` = unpriced.
     #[serde(default)]
     pub pricing: Option<ProviderPricing>,
+    /// Machine/provider-scoped admission and cooldown policy. Every provider
+    /// instance built by the canonical factory shares this policy by `name`.
+    #[serde(default)]
+    pub backpressure: ProviderBackpressureConfig,
+}
+
+/// Provider-level backpressure. Unlike turn admission this coordinates all
+/// sessions and role children in the daemon process that use the same provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProviderBackpressureConfig {
+    /// Maximum simultaneous requests for one provider identity.
+    pub max_concurrent_requests: usize,
+    /// Maximum time a caller may wait for cooldown and a fair permit.
+    pub queue_timeout_ms: u64,
+    /// Upper bound applied to provider-advised shared cooldown.
+    pub max_cooldown_ms: u64,
+}
+
+impl Default for ProviderBackpressureConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_requests: 2,
+            queue_timeout_ms: 120_000,
+            max_cooldown_ms: 60_000,
+        }
+    }
 }
 
 /// Optional static per-provider pricing (USD per 1K tokens) for cost accounting.
@@ -696,6 +723,10 @@ pub struct EvolutionSettings {
     /// When false (default), the loop is inert regardless of other settings.
     #[serde(default)] // bool default = false
     pub enabled: bool,
+    /// Operator gate for creating governed mutation proposals. This never
+    /// bypasses human approval and defaults to false independently of enabled.
+    #[serde(default)]
+    pub evolution_permitted: bool,
     /// Trigger evolution every N turns.
     #[serde(default = "default_evolution_trigger_every_n_turns")]
     pub trigger_every_n_turns: usize,
@@ -709,6 +740,7 @@ impl Default for EvolutionSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            evolution_permitted: false,
             trigger_every_n_turns: default_evolution_trigger_every_n_turns(),
         }
     }

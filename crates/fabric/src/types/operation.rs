@@ -49,6 +49,7 @@ pub struct MonoDeadlineMillis(pub u64);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationKind {
     Turn,
+    Evaluation,
     ModelCall,
     CapabilityCall,
     MemoryConsolidation,

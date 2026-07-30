@@ -46,6 +46,7 @@ impl AgoraTaskTools {
     fn author(&self, context: &ToolContext) -> ProcessId {
         context
             .agent
+            .as_ref()
             .map(|agent| agent.parent_process_id)
             .unwrap_or(self.host_process)
     }

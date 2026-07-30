@@ -129,8 +129,35 @@ pub trait EmbeddingProvider: Send + Sync {
     /// Embed a text string into a vector of floats.
     async fn embed(&self, text: &str) -> Result<Vec<f32>>;
 
+    /// Embed a bounded batch. Providers may override this with one transport
+    /// request; the default preserves compatibility for local/test adapters.
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let mut embeddings = Vec::with_capacity(texts.len());
+        for text in texts {
+            embeddings.push(self.embed(text).await?);
+        }
+        Ok(embeddings)
+    }
+
+    /// Stable provenance identity used to detect stale vector indexes.
+    fn model_id(&self) -> &str {
+        "unknown"
+    }
+
     /// Return the dimension of the embedding vectors.
     fn dimension(&self) -> usize;
+}
+
+/// Opaque admission lease retained for one provider request.
+pub trait ProviderRequestPermit: Send + Sync {}
+impl<T: Send + Sync> ProviderRequestPermit for T {}
+
+/// Dependency-neutral machine/provider admission boundary used by remote
+/// embedding adapters as well as LLM transports.
+#[async_trait]
+pub trait ProviderBackpressurePort: Send + Sync {
+    async fn acquire(&self, provider_key: &str) -> Result<Box<dyn ProviderRequestPermit>>;
+    fn observe_retry_after(&self, provider_key: &str, retry_after_ms: Option<u64>);
 }
 
 /// Memory backend trait — like VFS super_operations.

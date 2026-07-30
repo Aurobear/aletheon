@@ -1,5 +1,6 @@
 //! Composition of the application turn coordinator with local persistence.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use fabric::{EventSpine, SessionAppendStore};
@@ -10,6 +11,25 @@ use crate::adapters::session::event_sourced_store::EventSourcedSessionStore;
 use crate::application::event_projection::EventProjectionSink;
 use crate::application::turn_coordinator::TurnCoordinator;
 use crate::composition::config::GrokHardeningConfig;
+
+pub fn compose_evaluation_service(
+    kernel: Arc<KernelRuntime>,
+    data_dir: &Path,
+    settings: crate::composition::config::EvaluationSettings,
+    projection: Arc<crate::application::evaluation::EvaluationProjection>,
+    capability_rollups: Arc<
+        crate::application::capability_benchmark::CapabilityRollupProjectionSink,
+    >,
+) -> anyhow::Result<Arc<crate::application::evaluation::EvaluationService>> {
+    let store: Arc<dyn crate::application::evaluation::EvaluationReceiptStore> = Arc::new(
+        crate::adapters::evaluation::SqliteEvaluationStore::open(data_dir.join("evaluations.db"))?,
+    );
+    Ok(Arc::new(
+        crate::application::evaluation::EvaluationService::new(kernel, settings, store)?
+            .with_projection(projection)
+            .with_capability_rollups(capability_rollups),
+    ))
+}
 
 pub fn compose_turn_coordinator(
     kernel: Arc<KernelRuntime>,

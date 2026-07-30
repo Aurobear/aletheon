@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use crate::tui::host_time::ClientTimer;
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use fabric::Timer;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -55,6 +55,10 @@ pub struct Args {
     #[arg(long = "require-agent-runtime", value_name = "RUNTIME", global = true)]
     pub required_agent_runtimes: Vec<String>,
 
+    /// Explicit task kind sent to the host; ordinary prompts are never classified.
+    #[arg(long = "task-kind", value_enum, global = true)]
+    pub task_kind: Option<TaskKindArg>,
+
     /// Force TUI mode
     #[arg(long)]
     pub tui: bool,
@@ -87,6 +91,19 @@ pub struct Args {
     /// Exit after N seconds (default: 120)
     #[arg(long, default_value_t = 120)]
     pub test_timeout: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TaskKindArg {
+    Coding,
+}
+
+impl From<TaskKindArg> for fabric::TaskKind {
+    fn from(value: TaskKindArg) -> Self {
+        match value {
+            TaskKindArg::Coding => Self::Coding,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -249,22 +266,24 @@ pub async fn run() -> Result<()> {
     // Handle positional message args
     if !args.message_args.is_empty() {
         let msg = args.message_args.join(" ");
-        return single_message_with_workspace_and_requirements(
+        return single_message_with_workspace_requirements_and_task_kind(
             &socket,
             &msg,
             &workspace,
             requirements,
+            args.task_kind.map(Into::into),
         )
         .await;
     }
 
     // Handle -m flag
     if let Some(msg) = args.message {
-        return single_message_with_workspace_and_requirements(
+        return single_message_with_workspace_requirements_and_task_kind(
             &socket,
             &msg,
             &workspace,
             requirements,
+            args.task_kind.map(Into::into),
         )
         .await;
     }
@@ -277,11 +296,12 @@ pub async fn run() -> Result<()> {
         auto_submit: args.auto_submit,
         test_timeout: args.test_timeout,
     };
-    super::run_with_workspace_requirements(
+    super::run_with_workspace_requirements_and_task_kind(
         socket.to_string_lossy().as_ref(),
         test_config,
         workspace,
         requirements,
+        args.task_kind.map(Into::into),
     )
     .await
 }
@@ -498,6 +518,23 @@ pub async fn single_message_with_workspace_and_requirements(
     workspace: &fabric::WorkspacePolicy,
     requirements: Vec<fabric::TurnRequirement>,
 ) -> Result<()> {
+    single_message_with_workspace_requirements_and_task_kind(
+        socket,
+        msg,
+        workspace,
+        requirements,
+        None,
+    )
+    .await
+}
+
+pub async fn single_message_with_workspace_requirements_and_task_kind(
+    socket: &PathBuf,
+    msg: &str,
+    workspace: &fabric::WorkspacePolicy,
+    requirements: Vec<fabric::TurnRequirement>,
+    task_kind: Option<fabric::TaskKind>,
+) -> Result<()> {
     let mut stream = UnixStream::connect(socket).await?;
     let (reader, mut writer) = stream.split();
     let mut reader = BufReader::new(reader);
@@ -519,10 +556,10 @@ pub async fn single_message_with_workspace_and_requirements(
                 println!("{}", workspace.cwd().display());
                 return Ok(());
             }
-            _ => benchmark_chat_request(msg, workspace, requirements.clone()),
+            _ => benchmark_chat_request(msg, workspace, requirements.clone(), task_kind),
         }
     } else {
-        benchmark_chat_request(msg, workspace, requirements)
+        benchmark_chat_request(msg, workspace, requirements, task_kind)
     };
     let request = typed_request.to_json_rpc(Some(1))?;
     let req_str = serde_json::to_string(&request)?;
@@ -677,17 +714,19 @@ fn benchmark_chat_request(
     message: &str,
     workspace: &fabric::WorkspacePolicy,
     requirements: Vec<fabric::TurnRequirement>,
+    task_kind: Option<fabric::TaskKind>,
 ) -> ClientRpcRequest {
     match std::env::var("ALETHEON_BENCHMARK_SESSION_ID") {
-        Ok(session_id) if !session_id.trim().is_empty() => {
-            ClientRpcRequest::chat_with_requirements(
-                message,
-                Some(fabric::SessionId(session_id)),
-                workspace,
-                requirements,
-            )
+        Ok(session_id) if !session_id.trim().is_empty() => ClientRpcRequest::chat_with_task_kind(
+            message,
+            Some(fabric::SessionId(session_id)),
+            workspace,
+            requirements,
+            task_kind,
+        ),
+        _ => {
+            ClientRpcRequest::chat_with_task_kind(message, None, workspace, requirements, task_kind)
         }
-        _ => ClientRpcRequest::chat_with_requirements(message, None, workspace, requirements),
     }
 }
 
@@ -695,6 +734,14 @@ fn benchmark_chat_request(
 mod workflow_cli_tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn parses_coding_task_kind_for_message_and_tui() {
+        let message = Args::try_parse_from(["aletheon", "--task-kind", "coding", "hello"]).unwrap();
+        assert_eq!(message.task_kind, Some(TaskKindArg::Coding));
+        let tui = Args::try_parse_from(["aletheon", "--task-kind", "coding", "--tui"]).unwrap();
+        assert_eq!(tui.task_kind, Some(TaskKindArg::Coding));
+    }
 
     #[test]
     fn parses_workflow_list() {

@@ -91,3 +91,63 @@ forward = "typed_parse_and_schema_validation"
 rollback = "matching_config_and_binary"
 evidence = "crates/executive/tests/layered_config_contract.rs"
 integrity_query = "checked-in schema equality"
+
+[[transition]]
+component = "semantic_embedding"
+from = "1"
+to = "1"
+kind = "contract"
+data_change = false
+backup_required = true
+forward = "reopen_current_and_resume_leases"
+rollback = "matching_data_and_binary"
+evidence = "crates/mnemosyne/src/backends/semantic/storage.rs"
+integrity_query = "PRAGMA integrity_check"
+
+[[transition]]
+component = "metacog_genome"
+from = "1"
+to = "1"
+kind = "contract"
+data_change = false
+backup_required = true
+forward = "digest_readback_and_lineage_replay"
+rollback = "matching_data_and_binary"
+evidence = "crates/metacog/tests/service_contract.rs"
+integrity_query = "digest and atomic read-back"
+
+[[transition]]
+component = "transient_approval_grants"
+from = "1"
+to = "1"
+kind = "contract"
+data_change = false
+backup_required = true
+forward = "reopen_current_and_expire_stale_grants"
+rollback = "matching_data_and_binary"
+evidence = "crates/executive/tests/admin_service.rs"
+integrity_query = "PRAGMA integrity_check"
+
+[[transition]]
+component = "evaluation_rollups"
+from = "1"
+to = "1"
+kind = "contract"
+data_change = false
+backup_required = true
+forward = "rebuild_from_immutable_receipts"
+rollback = "matching_data_and_binary"
+evidence = "crates/executive/src/application/capability_benchmark.rs"
+integrity_query = "PRAGMA integrity_check"
+
+[[transition]]
+component = "evolution_proposals"
+from = "1"
+to = "1"
+kind = "contract"
+data_change = false
+backup_required = true
+forward = "reopen_and_resume_idempotent_approval"
+rollback = "matching_data_and_binary"
+evidence = "crates/executive/src/application/evolution_proposer.rs"
+integrity_query = "PRAGMA integrity_check"
