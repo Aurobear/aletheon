@@ -29,6 +29,7 @@ pub mod embodied_recovery;
 pub mod embodiment_authority;
 pub mod embodiment_progress;
 pub mod embodiment_service;
+pub mod evaluation;
 pub mod event_projection;
 pub mod extension_install;
 pub mod extension_manage;
