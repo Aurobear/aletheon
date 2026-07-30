@@ -29,7 +29,7 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
 
 - `sudo bash scripts/aletheon.sh deploy` 已通过；release、`/usr/bin` 及两个运行中
   daemon 的统一摘要为
-  `4b0720172a090bfd81d092d3974fcddf4fa4702e89c876501fc989bf25c38440`，
+  `f870a8058e9fbdc0e0385d913139fb185976faceb0d9eff3986458e2615ecad5`，
   deploy gate 同时证明 restart counter 在两个 7 秒窗口保持稳定，并通过 official
   user socket 的真实请求。
 - 首次真实 TUI 多轮复核暴露了一个终态顺序缺陷：Cognit 的 pipeline-local
