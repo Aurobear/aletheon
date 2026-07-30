@@ -18,6 +18,8 @@ pub struct MemoryConfig {
     pub extraction: MemoryExtractionConfig,
     #[serde(default)]
     pub promotion: MemoryPromotionConfig,
+    #[serde(default)]
+    pub embedding: MemoryEmbeddingConfig,
 }
 
 impl Default for MemoryConfig {
@@ -29,8 +31,29 @@ impl Default for MemoryConfig {
             recall: Default::default(),
             extraction: Default::default(),
             promotion: Default::default(),
+            embedding: Default::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct MemoryEmbeddingConfig {
+    pub enabled: bool,
+    /// `open_ai` or `ollama`.
+    pub provider: String,
+    pub model: String,
+    pub base_url: String,
+    pub dimensions: usize,
+    pub credential_env: String,
+    #[serde(default = "default_embedding_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default)]
+    pub rotation_generation: u32,
+}
+
+fn default_embedding_timeout_ms() -> u64 {
+    400
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

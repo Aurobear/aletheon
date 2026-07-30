@@ -14,6 +14,7 @@ pub mod self_memory;
 #[cfg(feature = "cognitive-memory")]
 pub mod semantic;
 pub mod supplemental;
+pub mod vector_sqlite;
 
 pub use episodic::EpisodicMemory;
 #[cfg(feature = "cognitive-memory")]

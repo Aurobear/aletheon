@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
+use fabric::memory::{ProviderBackpressurePort, ProviderRequestPermit};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::config::ProviderBackpressureConfig;
@@ -17,6 +19,30 @@ pub struct ProviderBackpressureSnapshot {
     pub cooldown_updates: u64,
     pub active: usize,
     pub available_permits: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct MachineProviderBackpressure {
+    config: ProviderBackpressureConfig,
+}
+
+impl MachineProviderBackpressure {
+    pub fn new(config: ProviderBackpressureConfig) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait]
+impl ProviderBackpressurePort for MachineProviderBackpressure {
+    async fn acquire(&self, provider_key: &str) -> anyhow::Result<Box<dyn ProviderRequestPermit>> {
+        Ok(Box::new(
+            acquire(&state_for(provider_key, self.config)).await?,
+        ))
+    }
+
+    fn observe_retry_after(&self, provider_key: &str, retry_after_ms: Option<u64>) {
+        state_for(provider_key, self.config).observe_retry_after(retry_after_ms);
+    }
 }
 
 #[derive(Debug)]

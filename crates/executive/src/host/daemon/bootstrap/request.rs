@@ -690,18 +690,97 @@ impl RequestHandler {
         let retention_repository = Arc::new(mnemosyne::RetentionRepository::open(
             data_dir.join("memory_retention.db"),
         )?);
-        let local_memory: Arc<dyn mnemosyne::MemoryService> = Arc::new(
-            mnemosyne::DefaultMemoryService::new(
-                recall_memory.clone(),
-                fact_store.clone(),
-                core_memory.clone(),
-                episodic_memory.clone(),
+        let mut local_memory_service = mnemosyne::DefaultMemoryService::new(
+            recall_memory.clone(),
+            fact_store.clone(),
+            core_memory.clone(),
+            episodic_memory.clone(),
+            clock.clone(),
+        )
+        .with_memory_hybrid(grok_hardening.memory_hybrid || config.memory_policy.embedding.enabled)
+        .with_consolidation_repository(consolidation_repository.clone())
+        .with_retention_repository(retention_repository.clone());
+        let mut embedding_worker = None;
+        let embedding_config = &config.memory_policy.embedding;
+        if embedding_config.enabled {
+            anyhow::ensure!(
+                !embedding_config.provider.trim().is_empty()
+                    && !embedding_config.model.trim().is_empty()
+                    && !embedding_config.base_url.trim().is_empty()
+                    && embedding_config.dimensions > 0,
+                "enabled memory embedding requires provider, model, base_url, and dimensions"
+            );
+            let transport = match embedding_config.provider.as_str() {
+                "open_ai" => mnemosyne::EmbeddingTransport::OpenAi,
+                "ollama" => mnemosyne::EmbeddingTransport::Ollama,
+                other => anyhow::bail!("unsupported memory embedding provider '{other}'"),
+            };
+            let secret = if embedding_config.credential_env.is_empty() {
+                String::new()
+            } else {
+                std::env::var(&embedding_config.credential_env).unwrap_or_default()
+            };
+            let grant = mnemosyne::credential::EmbeddingCredentialGrant::new(
+                fabric::LOCAL_OWNER_PRINCIPAL,
+                &embedding_config.base_url,
+                embedding_config.provider.clone(),
+                u64::MAX,
+                embedding_config.rotation_generation,
+                secret,
+            );
+            let gate: Arc<dyn fabric::memory::ProviderBackpressurePort> = Arc::new(
+                cognit::inference::MachineProviderBackpressure::new(Default::default()),
+            );
+            let embedding: Arc<dyn fabric::EmbeddingProvider> =
+                Arc::new(mnemosyne::RemoteEmbeddingProvider::new(
+                    transport,
+                    embedding_config.base_url.clone(),
+                    embedding_config.model.clone(),
+                    embedding_config.dimensions,
+                    grant.clone(),
+                    clock.clone(),
+                    gate,
+                    std::time::Duration::from_millis(embedding_config.timeout_ms),
+                )?);
+            let vectors = Arc::new(mnemosyne::SqliteVectorBackend::open(
+                &data_dir.join("memory_vectors.db"),
+                embedding.clone(),
+                embedding_config.provider.clone(),
+                embedding_config.rotation_generation as u64,
+            )?);
+            embedding_worker = Some(mnemosyne::consolidation::MemoryEmbeddingWorker::new(
+                consolidation_repository.clone(),
+                embedding.clone(),
+                vectors.clone(),
+                embedding_config.provider.clone(),
+                embedding_config.rotation_generation as u64,
+                format!("embedding-worker:{}", std::process::id()),
                 clock.clone(),
-            )
-            .with_memory_hybrid(grok_hardening.memory_hybrid)
-            .with_consolidation_repository(consolidation_repository)
-            .with_retention_repository(retention_repository.clone()),
-        );
+            ));
+            local_memory_service = local_memory_service.with_vector_search_backend(
+                vectors,
+                &grant,
+                &embedding_config.base_url,
+                clock.wall_now().0.max(0) as u64 / 1_000,
+            );
+        }
+        if let Some(worker) = embedding_worker {
+            let worker_cancel = cancel_token.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                loop {
+                    tokio::select! {
+                        _ = worker_cancel.cancelled() => break,
+                        _ = interval.tick() => {
+                            if let Err(error) = worker.run_once().await {
+                                tracing::warn!(error = %error, "memory embedding worker iteration failed");
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        let local_memory: Arc<dyn mnemosyne::MemoryService> = Arc::new(local_memory_service);
         let supplemental_runtime =
             crate::adapters::gbrain::build_supplemental_memory_runtime_with_retention(
                 local_memory,

@@ -27,6 +27,7 @@ mod recall;
 pub mod retention;
 pub mod service;
 
+pub use adapters::embedding::{EmbeddingAdapterError, EmbeddingTransport, RemoteEmbeddingProvider};
 pub use agent_scope::{AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft};
 pub use composite_service::{
     CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
@@ -41,6 +42,9 @@ pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDec
 // intentionally not re-exported here — it would collide with the existing
 // multi-agent `MemoryScope` re-exported below (`r#impl::core_memory::scope`).
 // Reach the facade's scope type via `mnemosyne::service::MemoryScope`.
+pub use backends::vector_sqlite::{
+    EmbeddedRecord, SqliteVectorBackend, VectorIndexState, VectorIndexWriter,
+};
 pub use model::{
     MemoryAuthority, MemoryKind, MemoryMetadata, MemoryProvenance, MemoryRecord, MemoryRecordId,
     MemoryScope, MemorySensitivity, MemoryStatus, ScopeAncestry, TemporalState,
