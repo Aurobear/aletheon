@@ -253,3 +253,25 @@ fi
 test "$(git -C "$ROOT" grep -l 'resolve_and_create' -- crates/executive/src | wc -l)" -eq 1
 git -C "$ROOT" grep -q 'resolve_and_create' -- crates/executive/src/core/system_core_runtime.rs
 echo 'multi-user runtime architecture boundary: pass'
+python3 "$ROOT/scripts/verify-approval-closure.py"
+
+# Hotspot budgets make ownership concentration measurable. They do not claim a
+# large file is defective; they prevent silent growth until responsibility is
+# split or the reviewed budget/owner record is deliberately updated.
+python3 - "$ROOT" "$ROOT/config/architecture/hotspot-budgets.tsv" <<'PY'
+import pathlib, sys
+root, manifest = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+seen = set()
+for line_no, raw in enumerate(manifest.read_text().splitlines(), 1):
+    if not raw or raw.startswith("#"): continue
+    path, maximum, owner, responsibility = raw.split("\t", 3)
+    if path in seen or not owner.strip() or not responsibility.strip():
+        raise SystemExit(f"invalid hotspot ownership row {line_no}")
+    seen.add(path)
+    source = root / path
+    if not source.is_file(): raise SystemExit(f"missing hotspot source: {path}")
+    actual = sum(1 for _ in source.open("rb"))
+    if actual > int(maximum):
+        raise SystemExit(f"hotspot budget exceeded: {path} lines={actual} max={maximum} owner={owner}")
+print(f"hotspot ownership budgets verified: {len(seen)}")
+PY

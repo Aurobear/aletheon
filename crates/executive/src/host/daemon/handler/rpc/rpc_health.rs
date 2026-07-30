@@ -134,6 +134,15 @@ impl RequestHandler {
             .await
             .map_or(0, |items| items.len());
         let health = self.ports.health.health().await;
+        let turn_watchdog = self.ports.turn.watchdog_snapshot().await;
+        let providers = cognit::inference::provider_backpressure_metrics();
+        let mut alerts = Vec::new();
+        if turn_watchdog.overdue > 0 || turn_watchdog.stale_without_deadline > 0 {
+            alerts.push("turn_watchdog_stale");
+        }
+        if providers.values().any(|provider| provider.rejected > 0) {
+            alerts.push("provider_backpressure_rejected");
+        }
         let mcp = self.mcp.as_ref().map(|manager| manager.health_snapshot());
         let external_status = mcp_external_status(mcp.as_ref());
         json!({
@@ -150,6 +159,16 @@ impl RequestHandler {
                 "uptime_seconds": health.uptime_seconds,
                 "active_connections": health.active_connections,
                 "session_count": session_count,
+                "metrics": {
+                    "provider_backpressure": providers,
+                    "turn_watchdog": turn_watchdog,
+                },
+                "operator_slo": {
+                    "stale_turn_after_ms": 900000,
+                    "provider_rejection_alert_threshold": 1,
+                    "readiness_required": "ready",
+                    "alerts": alerts
+                },
                 "daemon_version": env!("CARGO_PKG_VERSION")
             }
         })

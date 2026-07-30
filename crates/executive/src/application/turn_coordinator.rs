@@ -49,6 +49,16 @@ pub struct ActiveTurn {
     pub operation_id: fabric::OperationId,
     pub turn_id: TurnId,
     pub cancel: CancellationToken,
+    pub started_at: fabric::MonoTime,
+    pub deadline_at: Option<fabric::MonoDeadline>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct TurnWatchdogSnapshot {
+    pub active: usize,
+    pub oldest_age_ms: u64,
+    pub overdue: usize,
+    pub stale_without_deadline: usize,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -136,6 +146,28 @@ impl TurnCoordinator {
     /// Number of currently active turns across all connections.
     pub async fn active_turn_count(&self) -> usize {
         self.active.lock().await.len()
+    }
+
+    pub async fn watchdog_snapshot(&self, stale_after_ms: u64) -> TurnWatchdogSnapshot {
+        let now = self.clock.mono_now();
+        let active = self.active.lock().await;
+        let mut snapshot = TurnWatchdogSnapshot {
+            active: active.len(),
+            ..Default::default()
+        };
+        for turn in active.values() {
+            let age = now.0.saturating_sub(turn.started_at.0);
+            snapshot.oldest_age_ms = snapshot.oldest_age_ms.max(age);
+            if turn
+                .deadline_at
+                .is_some_and(|deadline| deadline.is_expired_at(now))
+            {
+                snapshot.overdue += 1;
+            } else if turn.deadline_at.is_none() && age >= stale_after_ms {
+                snapshot.stale_without_deadline += 1;
+            }
+        }
+        snapshot
     }
 
     /// D2-M5-T2: check if backpressure limit is exceeded.
@@ -360,6 +392,10 @@ impl TurnCoordinator {
                     operation_id: operation.id,
                     turn_id,
                     cancel: cancel.clone(),
+                    started_at: self.clock.mono_now(),
+                    deadline_at: request
+                        .deadline
+                        .map(|d| MonoDeadline::after(self.clock.mono_now(), d.0)),
                 },
             );
         }

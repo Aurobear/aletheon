@@ -292,7 +292,6 @@ pub use types::process::{
     ProcessIdentity, ProcessOwnership, ProcessRecord, ProcessSignal, ProcessSnapshot, ProcessState,
     SpaceId, SpawnSpec,
 };
-pub use types::resource::{ManagedResource, ResourceState};
 pub use types::sandbox::{
     resolve_profile, IsolationLevel, ProfileName, ProfileResolveError, ResolvedSandboxPolicy,
     SandboxBackend, SandboxCapabilities, SandboxCommand, SandboxConfig, SandboxExecutor,

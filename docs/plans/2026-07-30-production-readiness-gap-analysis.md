@@ -2,14 +2,31 @@
 
 **Date:** 2026-07-30
 **Last reviewed:** 2026-07-31
-**Status:** 基于当前代码的缺口分析与跨 workstream 协调记录；不是实现计划
+**Status:** 实现后复核记录；安装态验收前仍不得标称整体 production-ready
 **Scope:** 区分已经实现、已设计但未实现、部分覆盖和完全未覆盖的生产能力；
 给出启用门槛、依赖顺序和文件所有权约束。F1/F2 是建议新增的 workstream，
 落地前仍需各自的设计与实现计划。本文件不定义具体接口或实现步骤。
 
-> **验收口径。** 当前只有评分内核基础部分有 2026-07-30 的历史安装态生产
-> 验收；Goal retry/replan 与 AgentControl capability selection 仍是未完成的 L2
-> 闭环（`docs/plans/2026-07-30-coding-capability-evaluation-kernel-implementation.md:11-14,1109-1146`）。
+## 0. 2026-07-31 实现后复核
+
+以下结论取代 §3 中实现前的“当前事实”描述，但保留原表作为缺口来源：
+
+| 项 | 当前实现证据 | 安装态前状态 |
+|---|---|---|
+| F1 | provider-keyed permit、共享 cooldown 及独立计数位于 `crates/cognit/src/adapters/inference/backpressure.rs:13-181`；health RPC 导出全部 snapshot（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:137-171`） | 代码闭环，待安装态压力验收 |
+| F2 | closure matrix 将已暴露操作绑定到 producer/resolver/receipt/replay，并将其余操作显式 deny（`config/approval-closure.toml:1-78`）；架构门禁执行 verifier（`tests/suites/architecture/architecture_check.sh` 末尾） | 代码闭环，待真实人工 resolve/restart 验收 |
+| #3 | Fabric 提供统一 trust/classification/scrub 契约（`crates/fabric/src/types/data_governance.rs:1-121`）；Memory 与 Turn 持久投影消费该契约（`crates/mnemosyne/src/consolidation/extractor.rs`、`crates/executive/src/application/turn_pipeline.rs`） | 代码闭环，待泄漏 fixture 验收 |
+| #4 | health 导出 provider 与 Turn watchdog 指标和默认 SLO alerts（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:137-171`）；Turn 诊断来自 active index 与 monotonic age（`crates/executive/src/application/turn_coordinator.rs:45-62,151-170`） | 代码闭环，待运行态故障注入 |
+| #5 | backup 使用 SQLite online backup 并逐库检查（`scripts/libexec/aletheon/backup.sh:20-43`），restore 在复制前后校验（`scripts/libexec/aletheon/restore.sh:38-72`）；migration inventory 覆盖 12 个持久组件（`config/release/migration-matrix.toml`、`scripts/libexec/aletheon/verify/migration-matrix.sh:16-65`） | 代码闭环，待安装态 backup/restore drill |
+| #6 | 非本地 MCP 对 restricted-data egress fail closed，并将返回内容标为 untrusted 后 scrub（`crates/corpus/src/tools/mcp/wrapper.rs:91-127`） | 主要外部工具路径闭环，待真实 channel/MCP 验收 |
+| #7 | F1 关闭 machine provider 协调；Hardware 已由 production embodiment composition 调用（`crates/executive/src/host/daemon/bootstrap/request.rs:823-850`）；role runtime 先 prepare 后注册（`crates/executive/src/host/daemon/bootstrap/runtime.rs:322-364`） | 路由代码闭环，待逐 runtime 安装态矩阵 |
+| #8 | 版本化 coding harness 已存在（`tests/coding/README.md:1-31`），CI 验证 replay/契约（`.github/workflows/ci.yml:81-85`），release gate 执行 acceptance 与 installed-host drill（`scripts/libexec/aletheon/release-acceptance.sh:296-339`） | 确定性门禁闭环，真实模型 workflow 待本次运行 |
+| #9 | responsibility 位于 `config/architecture/module-boundaries.txt:21-25`；hotspot owner/line budget 位于 `config/architecture/hotspot-budgets.tsv:1-6` 并由 architecture fitness test 执行 | 持续治理项，不作一次性“完成”声明 |
+
+> **验收口径。** 评分内核基础部分已有 2026-07-30 的历史安装态生产验收；
+> Goal retry/replan 与 AgentControl capability selection 的 L2 闭环已于
+> 2026-07-31 实现并通过 focused tests，但仍须按实现计划重复安装态验收
+>（`docs/plans/2026-07-30-coding-capability-evaluation-kernel-implementation.md:11-13,1108-1145`）。
 > E′/A/B/C/D、F1/F2 以及本文列出的横向加固，在通过各自安装态验收前都不得
 > 标称 `production-wired`。
 
@@ -168,7 +185,7 @@ Wave 3  受治理演化
 以下条件同时满足前，只能报告单项 capability 的实现/测试状态，不能报告整个
 Agent OS 已适合日常生产开发：
 
-1. 评分内核剩余 Goal/AgentControl L2 闭环完成，并重新执行安装态验收；
+1. 评分内核 Goal/AgentControl L2 闭环重新执行安装态验收；
 2. E′、F1 和 B 的实际 child fan-out 在官方 socket 上被观测，且 provider retries、
    inference rounds、tool calls 和 active context 分开计量；
 3. 暴露的每个破坏性 capability 都有 F2 矩阵中的 producer、human resolve、resume、

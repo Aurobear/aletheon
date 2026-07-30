@@ -11,7 +11,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::config::ProviderBackpressureConfig;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 pub struct ProviderBackpressureSnapshot {
     pub admitted: u64,
     pub queued: u64,
@@ -171,6 +171,15 @@ pub fn provider_backpressure_snapshot(provider_key: &str) -> Option<ProviderBack
         .expect("provider registry lock poisoned")
         .get(provider_key)
         .map(|state| state.snapshot())
+}
+
+pub fn all_provider_backpressure_snapshots() -> HashMap<String, ProviderBackpressureSnapshot> {
+    registry()
+        .lock()
+        .expect("provider registry lock poisoned")
+        .iter()
+        .map(|(key, state)| (key.clone(), state.snapshot()))
+        .collect()
 }
 
 pub(crate) async fn acquire(state: &Arc<ProviderState>) -> anyhow::Result<OwnedSemaphorePermit> {

@@ -184,11 +184,11 @@ mod tests {
     use super::*;
     use crate::{evolution::candidate::CandidateGenerator, genome::loader::GenomeLoader};
     use fabric::MutationIntent;
-    use kernel::chronos::SystemClock;
+    use kernel::chronos::TestClock;
 
     #[tokio::test]
     async fn validates_candidate_without_launching_cargo() {
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
+        let clock: Arc<dyn Clock> = Arc::new(TestClock::default());
         let base = GenomeLoader::new()
             .load(std::path::Path::new("/missing"))
             .unwrap();

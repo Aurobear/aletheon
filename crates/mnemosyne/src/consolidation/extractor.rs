@@ -1,6 +1,5 @@
 use super::{ExtractionCompletion, MemoryCandidate};
 use crate::{MemoryKind, MemoryScope};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,16 +80,11 @@ impl CandidateExtractor {
     }
 }
 fn redact(value: &str) -> String {
-    let patterns = [
-        r"(?i)(api[_-]?key|token|password)\s*[:=]\s*\S+",
-        r"-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----",
-    ];
-    patterns.iter().fold(value.to_string(), |v, p| {
-        Regex::new(p)
-            .unwrap()
-            .replace_all(&v, "[REDACTED]")
-            .into_owned()
-    })
+    fabric::types::data_governance::scrub_for_projection(
+        value,
+        fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+    )
+    .content
 }
 fn truncate(mut value: String, max: usize) -> String {
     if value.len() <= max {

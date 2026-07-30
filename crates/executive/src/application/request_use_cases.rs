@@ -572,6 +572,11 @@ impl SessionLifecycleUseCases for ProductionSessionLifecycle {
 
 #[async_trait]
 pub trait TurnUseCases: Send + Sync {
+    async fn watchdog_snapshot(
+        &self,
+    ) -> crate::application::turn_coordinator::TurnWatchdogSnapshot {
+        Default::default()
+    }
     async fn execute(
         &self,
         id: serde_json::Value,
@@ -647,6 +652,14 @@ impl ProductionTurnUseCases {
 
 #[async_trait]
 impl TurnUseCases for ProductionTurnUseCases {
+    async fn watchdog_snapshot(
+        &self,
+    ) -> crate::application::turn_coordinator::TurnWatchdogSnapshot {
+        self.orchestrator
+            .coordinator
+            .watchdog_snapshot(15 * 60 * 1000)
+            .await
+    }
     async fn execute(
         &self,
         id: serde_json::Value,

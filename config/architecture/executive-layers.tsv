@@ -312,3 +312,16 @@ crates/executive/src/extensions/runtime/mod.rs	adapter	executive	extension runti
 crates/executive/src/extensions/runtime/subprocess.rs	adapter	executive	extension subprocess adapter
 crates/executive/src/host/daemon/bootstrap/runtime/runtime_tests.rs	host	executive	daemon runtime tests
 crates/executive/src/host/daemon/handler/rpc/rpc_skill.rs	host	executive	daemon Skill RPC transport
+crates/executive/src/adapters/evaluation/mod.rs	adapter	executive	evaluation persistence adapter
+crates/executive/src/adapters/evaluation/sqlite_store.rs	adapter	executive	durable evaluation receipt store
+crates/executive/src/application/evaluation/coding_scorer.rs	application	executive	coding evaluation scoring policy
+crates/executive/src/application/evaluation/contract_issuer.rs	application	executive	evaluation contract issuance
+crates/executive/src/application/evaluation/evidence_collector.rs	application	executive	evaluation evidence collection
+crates/executive/src/application/evaluation/mod.rs	application	executive	evaluation application facade
+crates/executive/src/application/evaluation/policy.rs	application	executive	evaluation settlement policy
+crates/executive/src/application/evaluation/projection.rs	application	executive	evaluation receipt projection
+crates/executive/src/application/evaluation/service.rs	application	executive	evaluation use case
+crates/executive/src/application/evolution_proposer.rs	application	executive	governed evolution proposal use case
+crates/executive/src/application/metacog_approval.rs	application	executive	governed metacog apply coordinator
+crates/executive/src/composition/config/evaluation.rs	composition	executive	evaluation configuration composition
+crates/executive/src/host/daemon/handler/rpc/rpc_evaluation.rs	host	executive	evaluation RPC transport

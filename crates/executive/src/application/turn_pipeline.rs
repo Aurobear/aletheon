@@ -1061,16 +1061,24 @@ impl TurnPipeline {
                         }
                         TurnEventV1::ToolCallComplete { call_id, name: _, args } => {
                             if let Some(tc) = tool_calls_for_session.iter_mut().find(|(id, _, _)| id == call_id) {
-                                tc.2 = args.clone();
+                                let projected_args = fabric::types::data_governance::scrub_json_for_projection(
+                                    args,
+                                    fabric::types::data_governance::ContentTrust::ToolUntrusted,
+                                );
+                                tc.2 = projected_args.clone();
                                 canonical_items.push(fabric::ItemPayload::ToolCall {
-                                    call_id: call_id.clone(), name: tc.1.clone(), input: args.clone(),
+                                    call_id: call_id.clone(), name: tc.1.clone(), input: projected_args,
                                 });
                             }
                         }
                         TurnEventV1::ToolResult { name, call_id, content, is_error, .. } => {
-                            tool_results_for_session.push((call_id.clone(), content.clone(), *is_error));
+                            let projected_content = fabric::types::data_governance::scrub_for_projection(
+                                content,
+                                fabric::types::data_governance::ContentTrust::ToolUntrusted,
+                            ).content;
+                            tool_results_for_session.push((call_id.clone(), projected_content.clone(), *is_error));
                             canonical_items.push(fabric::ItemPayload::ToolResult {
-                                call_id: call_id.clone(), content: content.clone(), is_error: *is_error,
+                                call_id: call_id.clone(), content: projected_content, is_error: *is_error,
                                 permit_id: None, audit_id: None,
                             });
                             let evidence = fabric::Evidence::from_tool_result(

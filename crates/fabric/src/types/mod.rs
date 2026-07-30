@@ -17,6 +17,7 @@ pub mod conscious_core;
 pub mod conscious_core_trace;
 pub mod conscious_field_metrics;
 pub mod context;
+pub mod data_governance;
 pub mod embodiment;
 pub mod evaluation;
 pub mod evidence;

@@ -8,10 +8,9 @@
 
 **Tech Stack:** Rust, Tokio, Serde/Schemars, SHA-256, rusqlite/WAL, existing Kernel operation tree, Fabric client/session protocols, Cognit completion gate, Metacog deterministic evaluator.
 
-**Status:** Tasks 1-14 are an as-built baseline accepted on 2026-07-30. That
-acceptance proves authoritative evaluation and L1 receipt observation. It does
-not prove Goal retry/replan or AgentControl capability-selection behavior; those
-L2 closures remain unchecked below.
+**Status:** Tasks 1-14 are an as-built baseline accepted on 2026-07-30. The two
+L2 core-consumer closures were implemented on 2026-07-31 and passed their focused
+tests; the repeated installed-runtime acceptance remains pending below.
 
 ---
 
@@ -921,9 +920,9 @@ Expected: FAIL.
 - [x] **Step 3: Implement a receipt-ref-only projection fanout**
 
 Create `EvaluationProjection` with narrow optional sink traits. Goal durably
-observes failed gates as future retry/replan evidence but does not yet consume
-them in `AttemptCoordinator`; AgentControl durably observes runtime/profile
-correlations but does not yet use them for capability selection; Mnemosyne
+observes failed gates as retry/replan evidence consumed by `AttemptCoordinator`;
+AgentControl exposes durable runtime/profile rollups as read-only capability
+selection input without expanding child authority; Mnemosyne
 records eligible experience with evidence refs; Agora
 attaches the receipt ref/failures to the task; Dasein receives a grounded outcome
 without decision authority. Capability rollups group immutable receipts by
@@ -1106,9 +1105,9 @@ rerun after any relevant code change.
   `aletheon.event.evaluation_observed/v1`; legacy misclassified observations replayed
   without poison, and `event_projection_poison` was empty after deployment.
 
-## Remaining L2 core-consumer closure
+## L2 core-consumer closure
 
-- [ ] **Goal consumes evaluation outcomes as retry/replan evidence**
+- [x] **Goal consumes evaluation outcomes as retry/replan evidence**
 
   Add a durable, idempotent Goal consumer keyed by `receipt_id` and linked to the
   owning attempt subject. `ObservedFail`/`Rejected` and `Indeterminate` produce a
@@ -1123,7 +1122,7 @@ rerun after any relevant code change.
   **Verification:**
   `bash scripts/cargo-agent.sh test -p executive --test evaluation_goal_feedback`
 
-- [ ] **AgentControl exposes evaluation history to host capability selection**
+- [x] **AgentControl exposes evaluation history to host capability selection**
 
   Add a read-only selection input built from the durable capability rollup. The
   host policy may prefer or narrow a runtime/profile, but the selected launch

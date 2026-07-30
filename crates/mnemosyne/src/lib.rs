@@ -27,11 +27,16 @@ mod recall;
 pub mod retention;
 pub mod service;
 
-pub use adapters::embedding::{EmbeddingAdapterError, EmbeddingTransport, RemoteEmbeddingProvider};
+pub mod embedding {
+    pub use crate::adapters::embedding::{
+        EmbeddingAdapterError, EmbeddingTransport, RemoteEmbeddingProvider,
+    };
+}
 pub use agent_scope::{AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft};
 pub use composite_service::{
     CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
 };
+pub use embedding::{EmbeddingAdapterError, EmbeddingTransport, RemoteEmbeddingProvider};
 pub use fact_service::{
     AddFactRequest, DefaultFactUseCases, FactServiceError, FactUseCases, FactView,
     ListFactsRequest, SearchFactsRequest,

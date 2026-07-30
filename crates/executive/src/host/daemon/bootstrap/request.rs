@@ -1286,7 +1286,9 @@ impl RequestHandler {
             )
             .with_dasein_coordinator(Arc::new(
                 crate::application::metacog_approval::GovernedMetacogApplyCoordinator::new(
-                    kernel.admission(),
+                    crate::application::governed_capability::canonical_permit_issuer(
+                        kernel.admission(),
+                    ),
                     domains.metacog(),
                 ),
             )),

@@ -1,0 +1,68 @@
+format_version = 1
+default_policy = "deny"
+
+[[operation]]
+name = "apply_code"
+category = "apply_code"
+status = "closed"
+producer = "crates/executive/src/application/goal/attempt_coordinator.rs"
+resolver = "crates/executive/src/application/approval_service.rs"
+receipt = "crates/executive/src/application/approval/apply_coordinator.rs"
+replay_test = "crates/executive/tests/approved_apply_flow.rs"
+
+[[operation]]
+name = "activate_goal"
+category = "activate_goal"
+status = "closed"
+producer = "crates/executive/src/adapters/channel/gmail/goal_draft.rs"
+resolver = "crates/executive/src/host/daemon/bootstrap/channels.rs"
+receipt = "crates/executive/src/adapters/channel/gmail/goal_draft.rs"
+replay_test = "crates/executive/tests/gmail_goal_draft.rs"
+
+[[operation]]
+name = "send_mail"
+category = "send_mail"
+status = "closed"
+producer = "crates/executive/src/adapters/channel/gmail/report.rs"
+resolver = "crates/executive/src/adapters/channel/gmail/report.rs"
+receipt = "crates/executive/src/adapters/channel/gmail/report.rs"
+replay_test = "crates/executive/tests/gmail_report_policy.rs"
+
+[[operation]]
+name = "apply_genome"
+category = "dasein_modification"
+status = "closed"
+producer = "crates/executive/src/application/evolution_proposer.rs"
+resolver = "crates/executive/src/application/approval_service.rs"
+receipt = "crates/metacog/src/governance/service.rs"
+replay_test = "crates/metacog/tests/service_contract.rs"
+
+[[operation]]
+name = "rollback_genome"
+category = "dasein_modification"
+status = "denied"
+
+[[operation]]
+name = "delete_file"
+category = "delete_file"
+status = "denied"
+
+[[operation]]
+name = "git_push"
+category = "git_push"
+status = "denied"
+
+[[operation]]
+name = "modify_calendar"
+category = "modify_calendar"
+status = "denied"
+
+[[operation]]
+name = "capability_expansion"
+category = "capability_expansion"
+status = "denied"
+
+[[operation]]
+name = "budget_expansion"
+category = "budget_expansion"
+status = "denied"

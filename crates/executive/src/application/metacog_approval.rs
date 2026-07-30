@@ -1,25 +1,22 @@
 //! Human-approved Metacog apply boundary.
 
 use crate::application::approval_service::{ApprovalServiceError, DaseinMutationCoordinator};
+use crate::application::governed_capability::GovernedPermitIssuer;
 use async_trait::async_trait;
-use fabric::types::admission::RiskLevel;
-use fabric::{
-    AdmissionController, AdmissionRequest, ApprovalSnapshot, CapabilityId, CapabilityScope,
-    OperationId, ProcessId, SandboxRequirement, UsageReport,
-};
+use fabric::{ApprovalSnapshot, CapabilityId};
 use std::sync::Arc;
 
 pub struct GovernedMetacogApplyCoordinator {
-    admission: Arc<dyn AdmissionController>,
+    permits: Arc<dyn GovernedPermitIssuer>,
     metacog: Arc<dyn metacog::MetacogService>,
 }
 
 impl GovernedMetacogApplyCoordinator {
     pub fn new(
-        admission: Arc<dyn AdmissionController>,
+        permits: Arc<dyn GovernedPermitIssuer>,
         metacog: Arc<dyn metacog::MetacogService>,
     ) -> Self {
-        Self { admission, metacog }
+        Self { permits, metacog }
     }
 }
 
@@ -73,20 +70,13 @@ impl DaseinMutationCoordinator for GovernedMetacogApplyCoordinator {
             .verification;
 
         let permit = self
-            .admission
-            .admit(AdmissionRequest {
-                operation_id: OperationId::new(),
-                process_id: ProcessId::new(),
-                principal: approval.owner_id.clone(),
-                capability: CapabilityId("metacog.apply".into()),
-                action: "apply verified genome mutation".into(),
-                input_summary: mutation_id.to_string(),
-                risk: RiskLevel::SystemModify,
-                requested_scope: CapabilityScope::default(),
-                budget: None,
-                lease: None,
-                sandbox: SandboxRequirement::NotRequired,
-            })
+            .permits
+            .admit_system_modify(
+                approval.owner_id.clone(),
+                CapabilityId("metacog.apply".into()),
+                "apply verified genome mutation".into(),
+                mutation_id.to_string(),
+            )
             .await
             .map_err(|e| ApprovalServiceError::RuntimeUnavailable(e.to_string()))?;
         let result = self
@@ -99,15 +89,8 @@ impl DaseinMutationCoordinator for GovernedMetacogApplyCoordinator {
                 },
             })
             .await;
-        self.admission
-            .settle(
-                permit.id,
-                UsageReport {
-                    permit_id: permit.id,
-                    exit_code: Some(if result.is_ok() { 0 } else { 1 }),
-                    ..Default::default()
-                },
-            )
+        self.permits
+            .settle(&permit, result.is_ok())
             .await
             .map_err(|e| ApprovalServiceError::Store(e.to_string()))?;
         result

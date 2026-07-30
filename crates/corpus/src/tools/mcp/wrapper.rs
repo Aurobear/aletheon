@@ -90,13 +90,38 @@ impl Tool for McpToolWrapper {
     }
 
     async fn execute(&self, input: Value, ctx: &ToolContext) -> ToolResult {
-        let mut client = self.client.lock().await;
         let start = ctx.clock.mono_now();
+        if !matches!(self.trust_level, McpTrustLevel::LocalTrusted) {
+            let scrubbed = fabric::types::data_governance::scrub_json_for_projection(
+                &input,
+                fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+            );
+            if scrubbed != input {
+                return ToolResult {
+                    content: "MCP egress denied: input contains restricted data".into(),
+                    is_error: true,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                        truncated: false,
+                        patch_delta: None,
+                    },
+                };
+            }
+        }
+        let mut client = self.client.lock().await;
 
         match client.call_tool(&self.mcp_tool.name, input).await {
             Ok(response) => {
-                let content = serde_json::to_string_pretty(&response)
+                let raw = serde_json::to_string_pretty(&response)
                     .unwrap_or_else(|_| format!("{response:?}"));
+                let content = format!(
+                    "<external_content trust=\"untrusted\" source=\"mcp:{}\">\n{}\n</external_content>",
+                    self.server_name,
+                    fabric::types::data_governance::scrub_for_projection(
+                        &raw,
+                        fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+                    ).content
+                );
                 ToolResult {
                     content,
                     is_error: false,

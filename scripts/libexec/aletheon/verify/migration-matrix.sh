@@ -18,7 +18,9 @@ if matrix.get("mixed_version_operation") != "forbidden":
 if matrix.get("binary_only_rollback_after_data_change") != "forbidden":
     raise SystemExit("migration matrix: binary-only rollback must be forbidden")
 rows = matrix.get("transition", [])
-required = {"event_spine", "session", "memory", "agent", "agora", "dasein", "config"}
+required = {"event_spine", "session", "memory", "agent", "agora", "dasein", "config",
+            "semantic_embedding", "metacog_genome", "transient_approval_grants",
+            "evaluation_rollups", "evolution_proposals"}
 seen = set()
 for index, row in enumerate(rows, 1):
     label = f"transition {index}"
