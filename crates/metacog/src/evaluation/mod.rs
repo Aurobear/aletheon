@@ -4,6 +4,6 @@ pub mod model;
 pub mod outcome;
 pub mod rubric;
 
-pub use engine::DeterministicEvaluator;
+pub use engine::{DeterministicEvaluator, EvaluationError};
 pub use model::{DimensionScore, DimensionValue, EvaluationReport, GateResult, RubricId};
 pub use rubric::{Rubric, RubricDimension, RubricGate};
