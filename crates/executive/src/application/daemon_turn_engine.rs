@@ -68,6 +68,7 @@ impl TurnEngine for DaemonTurnEngine {
     ) -> Result<TurnEngineResult, TurnEngineError> {
         let turn_id = fabric::TurnId::new();
         events.on_turn_started(turn_id).await;
+        let evaluation_profile_name = context.profile.profile_name.clone();
 
         let principal_context = context.principal_context.ok_or_else(|| {
             TurnEngineError::InvalidContext("daemon principal context is missing".into())
@@ -149,6 +150,12 @@ impl TurnEngine for DaemonTurnEngine {
         };
         let context_projection =
             serde_json::from_value(raw["projection"]["conscious_context"].clone()).ok();
+        let mut evaluation_artifacts = serde_json::from_value::<
+            crate::application::evaluation::TurnEvaluationArtifacts,
+        >(raw["evaluation_artifacts"].clone())
+        .unwrap_or_default();
+        evaluation_artifacts.workspace = Some((*context.workspace).clone());
+        evaluation_artifacts.profile_name = evaluation_profile_name;
         let status = if turn_cancel.is_cancelled() {
             TurnEngineStatus::Cancelled
         } else if succeeded {
@@ -169,6 +176,7 @@ impl TurnEngine for DaemonTurnEngine {
             items,
             projection: Some(projection),
             context_projection,
+            evaluation_artifacts,
         };
         let result = TurnEngineResult {
             turn_id,

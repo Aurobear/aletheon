@@ -140,6 +140,7 @@ impl TurnService {
                     items: recording.take_items().await,
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             })
             .await?;

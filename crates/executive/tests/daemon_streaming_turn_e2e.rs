@@ -62,6 +62,7 @@ fn context(
         batch_planner: None,
         session_input: test.session_input.clone(),
         prompt_queue_enabled: false,
+        capability_receipts: Arc::new(tokio::sync::Mutex::new(Vec::new())),
     }
 }
 

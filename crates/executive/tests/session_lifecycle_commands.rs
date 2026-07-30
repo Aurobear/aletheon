@@ -57,6 +57,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
                     items: vec![],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             },
         )
@@ -114,6 +115,7 @@ async fn resume_fork_replay_and_interrupt_share_canonical_state() {
                         items: vec![],
                         projection: None,
                         context_projection: None,
+                        evaluation_artifacts: Default::default(),
                     })
                 },
             )

@@ -106,6 +106,7 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
                         },
                     }),
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             }
         })

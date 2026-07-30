@@ -88,6 +88,7 @@ async fn concurrent_principals_keep_distinct_thread_authority() {
                             items: Vec::new(),
                             projection: None,
                             context_projection: None,
+                            evaluation_artifacts: Default::default(),
                         })
                     },
                 )
@@ -166,6 +167,7 @@ fn completed() -> TurnExecution {
         items: Vec::new(),
         projection: None,
         context_projection: None,
+        evaluation_artifacts: Default::default(),
     }
 }
 

@@ -14,7 +14,7 @@ pub use policy::EvaluationSettlementPolicy;
 
 use crate::application::turn_diff_tracker::TurnFileDeltaSnapshot;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct TurnEvaluationArtifacts {
     pub workspace: Option<fabric::WorkspacePolicy>,
     pub profile_name: String,

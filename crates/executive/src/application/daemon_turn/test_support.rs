@@ -48,6 +48,7 @@ impl DaemonTurnTestBuilder {
                     items: vec![],
                     projection: None,
                     context_projection: None,
+                    evaluation_artifacts: Default::default(),
                 })
             })
         }))

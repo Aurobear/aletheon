@@ -24,6 +24,7 @@ pub struct TurnExecution {
     pub items: Vec<ItemPayload>,
     pub projection: Option<super::post_turn_projection::PostTurnDispatch>,
     pub context_projection: Option<fabric::ContextProjectionReceipt>,
+    pub evaluation_artifacts: super::evaluation::TurnEvaluationArtifacts,
 }
 
 struct CompletedExecution {
@@ -473,6 +474,7 @@ impl TurnCoordinator {
                     items,
                     projection,
                     context_projection,
+                    evaluation_artifacts: _,
                 } = execution;
                 if let Some(receipt) = context_projection {
                     receipt.validate()?;

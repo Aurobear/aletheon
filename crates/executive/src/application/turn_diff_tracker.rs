@@ -28,6 +28,21 @@ pub struct TurnFileDeltaSnapshot {
 }
 
 impl TurnDiffTracker {
+    pub fn record_patch_delta(&mut self, delta: &fabric::PatchDelta) {
+        for change in &delta.files_changed {
+            let entry = self
+                .files
+                .entry(change.path.clone())
+                .or_insert_with(|| TurnFileDelta {
+                    bytes_before: change.bytes_before,
+                    ..Default::default()
+                });
+            entry.edits = entry.edits.saturating_add(1);
+            entry.hunks_applied = entry.hunks_applied.saturating_add(change.hunks_applied);
+            entry.bytes_after = change.bytes_after;
+        }
+    }
+
     pub fn record_patch(&mut self, delta: &StructuredPatchResult) {
         for change in &delta.files_changed {
             let entry = self

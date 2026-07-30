@@ -726,6 +726,9 @@ impl TurnPipeline {
         let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
             crate::application::turn_diff_tracker::TurnDiffTracker::default(),
         ));
+        let evaluation_diff_tracker = turn_diff_tracker.clone();
+        let capability_receipts = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let evaluation_capability_receipts = capability_receipts.clone();
         let diff_session_input = self.session_input.clone();
         let diff_principal = lifecycle_principal.clone();
         let diff_thread = lifecycle_thread.clone();
@@ -751,25 +754,10 @@ impl TurnPipeline {
                     .await;
                 if !result.is_error {
                     let mut tracker = tracker.lock().await;
-                    let changed = if n == "apply_patch" {
-                        serde_json::from_str::<
-                            corpus::tools::tools::structured_patch::StructuredPatchResult,
-                        >(&result.output)
-                        .map(|delta| {
-                            tracker.record_patch(&delta);
-                        })
-                        .is_ok()
-                    } else if n == "file_write" {
-                        inp.get("path")
-                            .and_then(serde_json::Value::as_str)
-                            .zip(inp.get("content").and_then(serde_json::Value::as_str))
-                            .map(|(path, content)| {
-                                tracker.record_file_write(path, content.len() as u64);
-                            })
-                            .is_some()
-                    } else {
-                        false
-                    };
+                    let changed = result.patch_delta.as_ref().is_some_and(|delta| {
+                        tracker.record_patch_delta(delta);
+                        !delta.files_changed.is_empty()
+                    });
                     let injection = changed.then(|| tracker.to_context_injection());
                     drop(tracker);
                     if let Some(injection) = injection.filter(|value| !value.is_empty()) {
@@ -796,6 +784,8 @@ impl TurnPipeline {
 
         let goal_message = message.to_string();
         let goal_message_for_gw = goal_message.clone();
+        let evaluation_workspace = turn_request.context.workspace.clone();
+        let evaluation_profile_name = turn_request.context.permission_profile.0.clone();
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ToolLoopStarted)?;
 
@@ -815,6 +805,7 @@ impl TurnPipeline {
                 batch_planner,
                 session_input: self.session_input.clone(),
                 prompt_queue_enabled: self.prompt_queue_enabled,
+                capability_receipts,
             },
         ));
 
@@ -1037,8 +1028,14 @@ impl TurnPipeline {
         // failed task always produces one ordered Error -> TurnDone sequence.
         // Successful tasks produce exactly one TurnDone even when Cognit also
         // reported completion before its task joined.
-        let turn_error = text.as_ref().err().map(ToString::to_string);
-        let normalized_terminal_events = terminal_events.into_client_events(turn_error);
+        let runtime_faults = text
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .into_iter()
+            .collect::<Vec<_>>();
+        let normalized_terminal_events = terminal_events
+            .into_client_events(runtime_faults.first().cloned());
         {
             let sender = notify_tx.lock().await.clone();
             if let Some(tx) = sender {
@@ -1166,6 +1163,22 @@ impl TurnPipeline {
         pipeline_lifecycle.apply(TurnPipelineEvent::PostTurnSettled)?;
         pipeline_lifecycle.apply(TurnPipelineEvent::ProjectionFinished)?;
 
+        let mut retained_receipts = evaluation_capability_receipts.lock().await.clone();
+        retained_receipts.sort_by(|left, right| {
+            left.finished_at
+                .cmp(&right.finished_at)
+                .then_with(|| left.invocation_id.cmp(&right.invocation_id))
+        });
+        let evaluation_artifacts =
+            crate::application::evaluation::TurnEvaluationArtifacts {
+                workspace: Some(evaluation_workspace),
+                profile_name: evaluation_profile_name,
+                capability_receipts: retained_receipts,
+                file_deltas: evaluation_diff_tracker.lock().await.snapshot(),
+                runtime_faults,
+                supplemental_evidence: Vec::new(),
+            };
+
         Ok(json!({"jsonrpc": "2.0", "id": id, "result": {
             "response": text, "turn": turn, "succeeded": turn_succeeded,
                 "metrics": {
@@ -1176,6 +1189,7 @@ impl TurnPipeline {
                     "completed_normally": metrics.completed_normally
                 },
                 "canonical_items": canonical_items,
+                "evaluation_artifacts": evaluation_artifacts,
                 "projection": {
                     "session_id": session_id_for_agora,
                     "agora_start_version": agora_start_version,
