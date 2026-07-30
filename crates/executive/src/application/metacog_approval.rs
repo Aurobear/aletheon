@@ -90,7 +90,7 @@ impl DaseinMutationCoordinator for GovernedMetacogApplyCoordinator {
             })
             .await;
         self.permits
-            .settle(&permit, result.is_ok())
+            .settle_system_modify(&permit, result.is_ok())
             .await
             .map_err(|e| ApprovalServiceError::Store(e.to_string()))?;
         result

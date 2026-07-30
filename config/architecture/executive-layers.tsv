@@ -325,3 +325,4 @@ crates/executive/src/application/evolution_proposer.rs	application	executive	gov
 crates/executive/src/application/metacog_approval.rs	application	executive	governed metacog apply coordinator
 crates/executive/src/composition/config/evaluation.rs	composition	executive	evaluation configuration composition
 crates/executive/src/host/daemon/handler/rpc/rpc_evaluation.rs	host	executive	evaluation RPC transport
+crates/executive/src/host/daemon/bootstrap/security.rs	composition	executive	tool security composition

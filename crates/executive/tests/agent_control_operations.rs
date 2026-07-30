@@ -49,7 +49,7 @@ async fn operations_enforce_root_scope_and_wait_timeout() {
 }
 
 #[tokio::test]
-async fn trusted_live_root_process_can_spawn_its_first_durable_child() {
+async fn trusted_live_root_process_with_authority_can_spawn_its_first_durable_child() {
     let launcher = TestLauncher::blocked();
     let fixture = fixture(2, launcher.clone());
     let root = AgentId::new();
@@ -69,11 +69,13 @@ async fn trusted_live_root_process_can_spawn_its_first_durable_child() {
         .await
         .unwrap();
 
-    let child = fixture
-        .port
-        .spawn(spawn_request(root, Some((root, process.id))))
-        .await
-        .unwrap();
+    let mut request = spawn_request(root, Some((root, process.id)));
+    request.delegator_authority = Some(fabric::AgentDelegationAuthority::new(
+        request.trusted_workspace.clone(),
+        request.allowed_tools.clone(),
+        request.budget.clone(),
+    ));
+    let child = fixture.port.spawn(request).await.unwrap();
     assert_ne!(child.agent_id, root);
     assert_eq!(child.root_agent_id, root);
     assert_eq!(child.parent_agent_id, Some(root));

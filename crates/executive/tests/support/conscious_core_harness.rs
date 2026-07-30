@@ -239,7 +239,7 @@ struct AgentLifecycleEvidence {
 }
 
 fn agent_spawn_request(root: AgentId, parent: fabric::ProcessId, label: &str) -> AgentSpawnRequest {
-    AgentSpawnRequest {
+    let mut request = AgentSpawnRequest {
         root_agent_id: root,
         parent_agent_id: Some(root),
         parent_process_id: Some(parent),
@@ -263,7 +263,13 @@ fn agent_spawn_request(root: AgentId, parent: fabric::ProcessId, label: &str) ->
             max_cost_usd: Some(0.0),
             max_depth: 2,
         },
-    }
+    };
+    request.delegator_authority = Some(fabric::AgentDelegationAuthority::new(
+        request.trusted_workspace.clone(),
+        request.allowed_tools.clone(),
+        request.budget.clone(),
+    ));
+    request
 }
 
 fn append_lifecycle_receipt(

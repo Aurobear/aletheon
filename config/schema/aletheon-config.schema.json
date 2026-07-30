@@ -842,6 +842,11 @@
           "description": "Master switch for the self-evolution loop.\nWhen false (default), the loop is inert regardless of other settings.",
           "type": "boolean"
         },
+        "evolution_permitted": {
+          "default": false,
+          "description": "Operator gate for creating governed mutation proposals. This never\nbypasses human approval and defaults to false independently of enabled.",
+          "type": "boolean"
+        },
         "trigger_every_n_turns": {
           "default": 10,
           "description": "Trigger evolution every N turns.",
@@ -2488,6 +2493,7 @@
       "$ref": "#/$defs/EvolutionSettings",
       "default": {
         "enabled": false,
+        "evolution_permitted": false,
         "trigger_every_n_turns": 10
       }
     },

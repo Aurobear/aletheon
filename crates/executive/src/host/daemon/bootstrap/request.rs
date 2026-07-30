@@ -22,9 +22,6 @@ use crate::host::daemon::handler::RequestHandler;
 use anyhow::Context;
 use cognit::core::reflector::Reflector;
 use corpus::hook::builtin::audit_hook;
-use corpus::security::audit::AuditLogger;
-use corpus::security::runner::ToolRunnerWithGuard;
-use corpus::security::sandbox::executor::{create_executor_with_front_backend, SandboxPreference};
 use corpus::security::socket_approval::SocketApprovalGate;
 use corpus::security::storm_breaker::StormBreaker;
 use corpus::skill::plugin::register_skill;
@@ -457,55 +454,16 @@ impl RequestHandler {
             Some(Arc::new(mcp))
         };
 
-        // Security
-        let sandbox_pref = SandboxPreference::from_str(&config.sandbox_preference);
-        let mut structured_exec_backend: Option<Arc<dyn corpus::security::StructuredToolSandbox>> =
-            None;
-        let exec_backend: Option<Box<dyn fabric::SandboxBackend>> = if grok_hardening.execd {
-            let binary_path = std::env::var_os("ALETHEON_EXECD_PATH")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| {
-                    std::env::current_exe()
-                        .ok()
-                        .and_then(|path| path.parent().map(|parent| parent.join("execd")))
-                        .unwrap_or_else(|| std::path::PathBuf::from("execd"))
-                });
-            let workspace = std::path::PathBuf::from(&config.working_dir)
-                .canonicalize()
-                .context("canonicalize execd workspace root")?;
-            let backend = crate::adapters::channel::execd_client::ExecdSandboxBackend::new(
-                crate::adapters::channel::execd_client::ExecdConfig {
-                    binary_path: binary_path.to_string_lossy().into_owned(),
-                    shared_secret: format!(
-                        "{}{}",
-                        uuid::Uuid::new_v4().simple(),
-                        uuid::Uuid::new_v4().simple()
-                    ),
-                    startup_timeout: std::time::Duration::from_secs(5),
-                    request_timeout: std::time::Duration::from_secs(30),
-                    workspace_roots: vec![workspace],
-                },
-            );
-            structured_exec_backend = Some(Arc::new(backend.clone()));
-            Some(Box::new(backend))
-        } else {
-            None
-        };
-        let sandbox = create_executor_with_front_backend(sandbox_pref, clock.clone(), exec_backend);
-        let audit_path = data_dir.join("audit.jsonl");
-        let audit_logger = AuditLogger::new(audit_path)?;
-        let mut runner = ToolRunnerWithGuard::new(sandbox, audit_logger, clock.clone())
-            .with_approval_gate(approval_gate);
-        if let Some(structured) = structured_exec_backend {
-            runner = runner.with_structured_sandbox(structured);
-        }
-        if grok_hardening.sandbox_profiles {
-            runner = runner.with_sandbox_profiles(sandbox_profiles);
-        }
-        if let Some(bus) = event_bus.as_ref() {
-            runner = runner.with_event_bus(bus.clone());
-        }
-        let tool_runner = Arc::new(Mutex::new(runner));
+        let tool_runner = super::security::build_tool_runner(
+            &data_dir,
+            &config.working_dir,
+            &config.sandbox_preference,
+            &grok_hardening,
+            sandbox_profiles,
+            approval_gate,
+            event_bus.as_ref(),
+            clock.clone(),
+        )?;
 
         let runtime_config = ExecutiveConfig {
             session_id: session_id.clone(),

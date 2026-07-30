@@ -44,7 +44,7 @@ pub trait GovernedPermitIssuer: Send + Sync {
         input_summary: String,
     ) -> Result<ExecutionPermit>;
 
-    async fn settle(&self, permit: &ExecutionPermit, success: bool) -> Result<()>;
+    async fn settle_system_modify(&self, permit: &ExecutionPermit, success: bool) -> Result<()>;
 }
 
 struct KernelPermitIssuer {
@@ -84,7 +84,7 @@ impl GovernedPermitIssuer for KernelPermitIssuer {
             .map_err(Into::into)
     }
 
-    async fn settle(&self, permit: &ExecutionPermit, success: bool) -> Result<()> {
+    async fn settle_system_modify(&self, permit: &ExecutionPermit, success: bool) -> Result<()> {
         self.admission
             .settle(
                 permit.id,

@@ -38,6 +38,7 @@ fn provider(base_url: String) -> std::sync::Arc<dyn LlmProvider> {
         models: vec!["test-model".into()],
         max_context_length: None,
         pricing: None,
+        backpressure: Default::default(),
     };
     cognit::composition::inference_factory::create_provider(
         &config,
