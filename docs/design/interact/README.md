@@ -1,7 +1,7 @@
 # Aletheon CLI
 
 > 用户交互入口，支持单消息和 TUI 两种模式。通过 Unix socket 与 aletheon daemon 通信。
-> CLI 与 TUI 逻辑都在 `interact` crate（`interact/src/tui/`、`interact/src/acix/`）。
+> CLI 与 TUI 逻辑都在 `interact` crate（`crates/interact/src/tui/`、`crates/interact/src/acix/`）。
 
 **模块编号:** CLI
 **关联模块:** [daemon](../executive/daemon.md), [ui](ui.md)
@@ -14,18 +14,18 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| CLI arg parsing | ✅ Implemented | `interact/src/main.rs` | clap, -m/--tui/--simple |
-| Single message mode | ✅ Implemented | `interact/src/main.rs` | `-m "text"` → send → print → exit |
-| Simple REPL mode | ✅ Implemented | `interact/src/main.rs` | `--simple`, stdin loop |
-| TUI mode (default) | ✅ Implemented | `interact/src/tui/mod.rs` | ratatui, alternate screen |
-| Chat widget | ✅ Implemented | `interact/src/tui/chat.rs` | Message list, scroll, streaming update |
-| Input handling | ✅ Implemented | `interact/src/tui/mod.rs` | CJK-aware, IME delay, cursor movement |
-| Command parser | ✅ Implemented | `interact/src/tui/command.rs` | /help, /clear, /quit, /status, /skills |
-| Skill loader | ✅ Implemented | `interact/src/tui/skill.rs` | ~/.aletheon/skills/ SKILL.md |
-| Status bar | ✅ Implemented | `interact/src/tui/status.rs` | Connection status, model name |
-| Markdown renderer | ✅ Implemented | `interact/src/tui/markdown.rs` | Styled text for ratatui |
-| Terminal compat | ✅ Implemented | `interact/src/tui/term_compat.rs` | Unicode/color detection |
-| Computer view | 🔶 Partial | `interact/src/tui/computer.rs` | Feature-gated (input+display+a11y) |
+| CLI arg parsing | ✅ Implemented | `crates/aletheon/src/main.rs` | clap, -m/--tui/--simple |
+| Single message mode | ✅ Implemented | `crates/aletheon/src/main.rs` | `-m "text"` → send → print → exit |
+| Simple REPL mode | ✅ Implemented | `crates/aletheon/src/main.rs` | `--simple`, stdin loop |
+| TUI mode (default) | ✅ Implemented | `crates/interact/src/tui/mod.rs` | ratatui, alternate screen |
+| Chat widget | ✅ Implemented | `crates/interact/src/tui/chat.rs` | Message list, scroll, streaming update |
+| Input handling | ✅ Implemented | `crates/interact/src/tui/mod.rs` | CJK-aware, IME delay, cursor movement |
+| Command parser | ✅ Implemented | `crates/interact/src/tui/command.rs` | /help, /clear, /quit, /status, /skills |
+| Skill loader | ✅ Implemented | `crates/interact/src/tui/registry.rs` | Runtime command/skill registry integration |
+| Status bar | ✅ Implemented | `crates/interact/src/tui/status.rs` | Connection status, model name |
+| Markdown renderer | ✅ Implemented | `crates/interact/src/tui/markdown.rs` | Styled text for ratatui |
+| Terminal compat | ✅ Implemented | `crates/interact/src/tui/term_compat.rs` | Unicode/color detection |
+| Computer view | 🔶 Partial | `crates/interact/src/tui/computer.rs` | Feature-gated (input+display+a11y) |
 | Streaming display | ⬜ Planned | — | Response chunks not streamed to TUI |
 | History persistence | ⬜ Planned | — | No command history across sessions |
 | Multi-line editor | ⬜ Planned | — | Only Shift+Enter newline, no real editor |
@@ -106,7 +106,7 @@
 
 ## 3. 三种运行模式
 
-入口文件: `interact/src/main.rs`
+入口文件: `crates/aletheon/src/main.rs`
 
 ```rust
 #[derive(Parser)]
@@ -195,7 +195,7 @@ async fn simple_cli(socket: &PathBuf) -> Result<()> {
 
 ## 5. TUI 架构
 
-代码位置: `interact/src/tui/`
+代码位置: `crates/interact/src/tui/`
 
 ### 5.1 App 状态
 
@@ -238,7 +238,7 @@ poll 超时:
 
 ### 5.3 输入处理
 
-代码位置: `interact/src/tui/mod.rs` `handle_key()`
+代码位置: `crates/interact/src/tui/mod.rs` `handle_key()`
 
 | 按键 | 行为 |
 |------|------|
@@ -287,7 +287,7 @@ CJK 检测范围: `U+4E00-9FFF`, `U+3400-4DBF`, `U+3000-303F`, `U+FF00-FFEF`, `U
 
 ### 5.5 命令系统
 
-代码位置: `interact/src/tui/command.rs`
+代码位置: `crates/interact/src/tui/command.rs`
 
 以 `/` 开头的输入被解析为命令:
 
@@ -303,7 +303,7 @@ CJK 检测范围: `U+4E00-9FFF`, `U+3400-4DBF`, `U+3000-303F`, `U+FF00-FFEF`, `U
 
 ### 5.6 技能系统
 
-代码位置: `interact/src/tui/skill.rs`
+代码位置: `crates/interact/src/tui/registry.rs`
 
 技能目录: `~/.aletheon/skills/`
 
@@ -318,7 +318,7 @@ CJK 检测范围: `U+4E00-9FFF`, `U+3400-4DBF`, `U+3000-303F`, `U+FF00-FFEF`, `U
 
 加载逻辑:
 1. 扫描 skills 目录下的子目录
-2. 读取每个子目录的 `SKILL.md`
+2. 读取每个子目录中的 SKILL.md 文件
 3. 首段作为 description，全文作为 content
 4. `/skill-name args` → 将 SKILL.md content + args 作为消息发送到 daemon
 

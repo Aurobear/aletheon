@@ -1,64 +1,29 @@
 # corpus
 
-Body runtime for the Aletheon agent — the "body" that executes actions.
+Governed capability execution for tools, skills, hooks, MCP extensions,
+sandboxing, and optional desktop drivers.
 
-## Overview
+## Current layout
 
-The `corpus` crate contains all body/execution functionality:
-
-- **Core execution** — Body runtime and sandboxed environments
-- **Drivers** — Hardware drivers and platform adapters
-- **Tools** — Tool implementations, hooks, skills, MCP client
-- **Security** — Security pipeline and sandbox execution
-
-## Architecture
-
-```
-corpus/src/
-├── core/           — Core execution body (BodyRuntime, conversions)
-├── bridge/         — Bridge interface
-├── testing/        — Mock sandbox for testing
-├── drivers/        — Hardware drivers and platform adapters
-│   ├── driver/     — Driver trait and types
-│   └── platform/   — Platform-specific implementations (Linux, Android)
-├── tools/          — Tool implementations
-│   ├── hooks/      — Lifecycle hooks
-│   ├── skills/     — Skill definitions
-│   └── mcp/        — MCP client
-└── security/       — Security pipeline
-    ├── pipeline/   — Security evaluation pipeline
-    └── sandbox/    — Sandboxed execution
+```text
+src/
+  catalog/      runtime extension discovery
+  core/         execution-body composition
+  service/      governed invocation service
+  tools/        built-in tools and MCP adapters
+  security/     approval, policy, runner, and sandbox enforcement
+  skill/        skill loading and routing
+  hook/         lifecycle hook registry
+  drivers/      optional input/display/a11y/OCR adapters
+  extension/    extension contracts and activation
 ```
 
-## Key Types
+Host filesystem, process, PTY, service, and sandbox contracts are owned by the
+`platform` crate. Android platform support is not implemented here. The former
+empty `drivers/io` and `drivers/proc` placeholders have been removed.
 
-### Core
-- `BodyRuntime` — Main body execution runtime
-- `Sandbox` — Sandboxed execution environment
+## Validation
 
-### Drivers
-- `Driver` — Hardware driver trait
-- `InputDriver` — Input device driver
-- `DisplayDriver` — Display driver
-
-### Tools
-- `Tool` — Tool trait for defining tools
-- `ToolResult` — Tool execution result
-- `HookEngine` — Lifecycle hook system
-- `SkillRegistry` — Skill registration
-
-### Security
-- `SecurityPipeline` — Security evaluation pipeline
-- `SandboxExecutor` — Sandboxed code execution
-
-## Usage
-
-```rust
-use corpus::tools::{Tool, ToolResult};
-use corpus::security::SecurityPipeline;
-use corpus::drivers::Driver;
+```bash
+bash scripts/cargo-agent.sh test -p corpus
 ```
-
-## Dependencies
-
-- `base` — Core traits and types

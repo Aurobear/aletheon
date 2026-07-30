@@ -170,7 +170,7 @@ Everything flows inward through the SelfField, is interpreted, and only then rea
 - [SelfField Design](self-field.md) -- Full design of the 8-layer SelfField
 - [Architecture Overview](../architecture-overview.md) -- System architecture and data flow
 - [MetaRuntime](../metacog/meta-runtime.md) -- Self-modification and evolution
-- [Hook System](hook-system.md) -- Pre/post hooks that wrap SelfField review
+- [Hook System](../executive/hook-system.md) -- Pre/post hooks that wrap SelfField review
 - [Perception Sources](perception-sources.md) -- How external input enters the system
 - [Writable Root](writable-root.md) -- FUSE-based self-access layer
 - [Dasein Crate](../../../crates/dasein/src/lib.rs) -- SelfField implementation crate

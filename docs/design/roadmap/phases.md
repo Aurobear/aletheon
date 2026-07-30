@@ -2,7 +2,10 @@
 
 > 统一 6 Phase 定义，每个阶段独立交付价值。
 >
-> **Phase 1-4 已全部实现，Phase 5 已实质完成（eBPF mock、向量记忆、FUSE real mount、Split Sandbox、Container Sandbox、Integrity Monitor），Phase 6 部分实现（自动化系统已实现，多设备/内核 IPC 延后）。B1-B5 实现批次 + 设计改进 PR 均已合并。** 下方为各 Phase 的设计规格，实现代码在 `crates/*/src/`。
+> 下方是设计路线，不是安装态完成证明。当前稳定能力和实验/计划边界见
+> 顶层 `README.md` 与本目录 `README.md`。特别是 eBPF 仍为 `/proc` 回退，
+> FUSE 仅默认 stub，本地 llama.cpp、Android、嵌入式、多设备和自定义内核
+> IPC 均未作为生产能力交付。
 
 ### Phase 1: 最小可用 Agent (2-3 周)
 
@@ -155,22 +158,21 @@
 └── 验收: Agent 间通信延迟 <10μs               ← 当前 Unix socket 延迟 ~100μs
 ```
 
-**Phase 5 已完成项:**
-- eBPF 感知: mock /proc 回退可用（sched/net/block），真实 eBPF ring buffer 未实现
-- 向量记忆: Qdrant 后端可用（需 feature flag），BM25 + TF-IDF 工具搜索已实现
-- FUSE: fuse3 真实挂载已实现（FUSE AgentFs real mount）
-- Split Sandbox: SplitSandbox（bwrap + fallback chain）已实现
-- Container Sandbox: ContainerSandbox 已实现（B5）
-- Integrity Monitor: IntegrityMonitor 已实现（B5）
-- io_uring IPC: 代码存在（feature gate），默认未启用
+**Phase 5 当前边界:**
+- eBPF 感知: `/proc`/`/sys` 回退可用，真实 eBPF ring buffer 未实现
+- 向量记忆: 后端代码受 off-by-default feature 保护，不是 live daemon 默认路径
+- FUSE: AgentFs 内存 API 可用；当前 crate 无可启用的 fuse3 feature，安装态仅 stub
+- Sandbox: Bubblewrap/Process/Noop 可用；旧 Split/Container 名称不是当前实现
+- Integrity Monitor: 旧实现已移除；安装态使用二进制 provenance 与运行时 health 门禁
+- io_uring IPC: 兼容代码存在但非官方 daemon socket 默认传输
 
 ### Phase 6: 高级功能 (持续)
 
 ```
 ├── DiGraph 编排 (DAG 工作流)              ← 已实现 (orchestration/digraph/)
 ├── 云端推理 fallback                       ← 代码已实现 (inference/router.rs)，但未接入 Engine
-├── Android 平台适配                        ← 已实现 (platform/android.rs)
-├── 自动化系统                              ← 已实现 (automation/，B4 + design improvements)
+├── Android 平台适配                        ← 目标设计，当前 workspace 未实现
+├── 自动化系统                              ← 通用 automation 模块已移除；当前仅 goal/channel worker 与 systemd timers
 ├── MCP OAuth 2.0                          ← 已实现 (mcp/auth.rs，B5)
 ├── MCP Transports (StreamableHTTP + SSE)  ← 已实现 (B4)
 ├── 嵌入式 SDK                              ← 未实现
@@ -181,7 +183,7 @@
 └── 生态建设 (插件系统、技能市场)              ← 部分实现 (plugin/ 系统)
 ```
 
-**Phase 6 剩余未实现项:** 嵌入式 SDK、多设备记忆同步（延后）、内核 IPC（延后）、NVIDIA 统一内存、技能市场。
+**Phase 6 剩余未实现项:** Android/嵌入式 SDK、多设备记忆同步（延后）、内核 IPC（延后）、NVIDIA 统一内存、技能市场。
 
 ### 实现批次 (B1-B5) + 设计改进
 
@@ -193,5 +195,5 @@
 | B2 | #100 | Tool enhancement + observability — 6 modules, 98 tests |
 | B3 | #102 | Inference + memory — 4 modules, 43 tests |
 | B4 | #103 | Platform integration — Panic Recovery, Boot, Awareness, FUSE, MCP Transports |
-| B5 | #104 | Advanced features — IntegrityMonitor, MCP OAuth 2.0, Container Sandbox |
+| B5 | #104 | Historical batch; IntegrityMonitor/Container Sandbox were later removed, MCP support evolved |
 | Design | #105 | Design improvements — Memory Pipeline, Split Sandbox, Automation |

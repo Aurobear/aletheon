@@ -1,45 +1,33 @@
-# Dasein Crate — Self Model
+# Dasein Crate — Self and Lived-State Policy
 
-> The self-awareness and self-protection layer — hooks, security, resilience, and perception.
+`dasein` owns identity, boundary, care, narrative, continuity, lived
+temporality, mutation transitions, and host-facing perception policy.
 
-**Crate:** `dasein`
-**Source:** `crates/dasein/`
-**Last updated:** 2026-06-14
+## Current structure
 
----
-
-## Crate Structure
-
+```text
+crates/dasein/src/
+  core/         SelfField policy/read-model layers
+  dasein/       versioned lived-state reducer and persistence
+  bridge/       loop-detector and policy adapters
+  impl/
+    perception/ perception manager, sources, and experimental AgentFs/FUSE stub
+    mutation/   mutation approval policy
+  testing/      mock perception support
 ```
-crates/dasein/
-├── core/           — Shared types and traits
-├── bridge/         — Cross-crate integration points
-├── impl/
-│   ├── hook/       — Hook system (21 event types, trust model, config layers)
-│   ├── resilience/ — DaemonGuardian, WatchdogTimer, SafeMode, crash recovery
-│   ├── security/   — InputSanitizer, ResourceGovernor, EmergencyKillswitch, IntegrityMonitor
-│   ├── perception/ — PerceptionManager, EventAggregator, sources, FUSE
-│   └── mod.rs
-└── testing/        — Test utilities
-```
+
+Hooks are owned by Corpus/Executive integration, while admission, resource
+governance, supervision, audit, and sandbox enforcement belong to Kernel,
+Executive, Fabric, and Corpus. Removed self-protection/resilience classes are
+retained only in explicitly historical documents.
 
 ## Documents
 
-| Document | Scope |
-|----------|-------|
-| [self-field.md](self-field.md) | SelfField architecture — 8 internal layers, review() pipeline |
-| [hook-system.md](hook-system.md) | Hook event types, trust model, config layers, command execution |
-| [loop-detector.md](loop-detector.md) | LoopDetector, RiskClassifier, CircuitBreaker, OutputGuardrail, per-agent isolation |
-| [writable-root.md](writable-root.md) | WritableRoot path isolation, FileSystemSandboxPolicy, PathAccessGuard |
-| [self-protection.md](self-protection.md) | InputSanitizer, ResourceGovernor, EmergencyKillswitch, IntegrityMonitor |
-| [resilience.md](resilience.md) | Error handling, panic recovery, rate limiting, backpressure |
-| [perception-sources.md](perception-sources.md) | System service management, perception source integration |
-
-## Internal Pattern
-
-Each `impl/` module follows the core/bridge/impl/testing pattern:
-
-- **core/** — shared types and trait definitions
-- **bridge/** — cross-crate integration points
-- **impl/** — concrete implementations
-- **testing/** — test utilities and mocks
+| Document | Status |
+|----------|--------|
+| [self-field.md](self-field.md) | Current conceptual layers and ownership boundaries |
+| [perception.md](perception.md) | Current perception design with experimental-source caveats |
+| [first-principle.md](first-principle.md) | SelfField design principle |
+| [writable-root.md](writable-root.md) | Current sandbox path-isolation design |
+| [self-protection.md](self-protection.md) | Historical removed implementation design |
+| [resilience.md](resilience.md) | Historical removed implementation design |

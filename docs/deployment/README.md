@@ -1,8 +1,8 @@
 # Aletheon operations guide
 
 This is the canonical entry point for building, installing, deploying, and
-checking a native Aletheon host. Dated files below `docs/archive/` preserve
-historical decisions and evidence; do not use them as current runbooks.
+checking a native Aletheon host. Dated architecture evidence and implementation plans preserve historical
+decisions; do not use them as current runbooks.
 
 ## Runtime topology
 

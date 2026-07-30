@@ -7,7 +7,7 @@
 **模块编号:** 03 (沙箱子系统)
 **关联模块:** [tool-system.md](tools.md), [mcp-integration.md](mcp.md)
 **最后更新:** 2026-06-06
-**来源:** 从 `03-tool-system.md` 的 2.3-2.5、3.6、4.6 节提取。
+**来源:** 从早期工具系统设计合并；原拆分文档已移除。
 
 ---
 
@@ -139,7 +139,7 @@ cgroups:
 - Android 端完全不可用（无 bubblewrap）
 - 开发者被迫使用 `--privileged` 破坏容器安全隔离
 
-**来源文档：** `gap-analysis/phase-3/tool-system/sandbox-backend-portability.md`
+**历史来源：** 已移除的 sandbox portability gap analysis。
 
 ---
 
@@ -292,4 +292,4 @@ fallback_log_level = "warn"
 - `crates/corpus/src/security/sandbox/policy.rs` — `FilesystemPolicy`, `WritableRoot`, `FsDefault` enum, `protected_metadata`, `unreadable_globs`
 - `crates/corpus/src/security/sandbox/bwrap_builder.rs` — `BwrapBuilder`: ordered bwrap arg construction from `FilesystemPolicy`, reprotection of `.git`/`.agents` dirs
 - `crates/corpus/src/security/sandbox/glob_scanner.rs` — `GlobScanner`: ripgrep-first + walkdir fallback for glob matching
-- `crates/corpus/src/security/sandbox/container.rs` — `ContainerBackend`: Docker/Podman container runtime support
+- Container backend — removed from the current sandbox implementation; Bubblewrap/Process/Noop are the available backends.

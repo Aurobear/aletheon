@@ -4,7 +4,7 @@
 
 > Aletheon 的可扩展性核心，允许用户在推理循环的关键节点注入自定义逻辑。
 >
-> **从 `session-lifecycle.md` 提取** — 原文 §4.2。
+> 从早期 session lifecycle 设计合并；原拆分文档已移除。
 
 **关联模块:** [Session 生命周期](../executive/session.md), [安全模型](../corpus/security.md), [工具系统](../corpus/tools.md)
 

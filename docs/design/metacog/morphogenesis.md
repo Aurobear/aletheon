@@ -1,5 +1,9 @@
 # Morphogenesis — Self-Evolution Pipeline
 
+> **Status:** Historical design. The former morphogenesis pipeline paths below
+> were replaced by the current evidence/evaluation/evolution/governance
+> architecture described in `crates/metacog/README.md`.
+
 > New document — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
 
 > Morphogenesis is Aletheon's self-evolution flow. The agent does not update code — it regenerates itself. The pipeline: run -> reflect -> mutate spec -> generate candidate -> evaluate -> migrate -> become.

@@ -20,7 +20,7 @@ aletheon CLI
 
 CLI 入口位于 `crates/aletheon/src/main.rs:1-35`；daemon launcher 位于
 `crates/executive/src/host/launcher.rs:56-111`；Unix server 位于
-`crates/executive/src/impl/daemon/server.rs:622-708`。
+`crates/executive/src/host/daemon/server.rs:622-708`。
 
 ## 2. 责任边界
 
@@ -47,7 +47,7 @@ Daemon 不负责：
 当前 bootstrap 已按关注点拆分：
 
 ```text
-crates/executive/src/impl/daemon/bootstrap/
+crates/executive/src/host/daemon/bootstrap/
   request       composition entry
   services      domain services and ports
   runtime       model/agent runtime assembly
@@ -73,7 +73,7 @@ socket frame
 ```
 
 Turn 的唯一接口定义于
-`crates/executive/src/service/turn_engine.rs:14-22`。RPC handler 只做协议转换、
+`crates/executive/src/application/turn_engine.rs:14-22`。RPC handler 只做协议转换、
 身份/上下文解析和 use-case 调用。
 
 ## 5. Host 模式
@@ -87,7 +87,7 @@ Host 选择不应改变 Turn、permission、session 或 recovery 语义。
 
 当配置 `execd = true` 时，Executive 创建随机 shared secret、限制 workspace root
 并启动 `execd`：
-`crates/executive/src/impl/daemon/bootstrap/request.rs:452-479`。
+`crates/executive/src/host/daemon/bootstrap/request.rs:452-479`。
 
 Execd 只执行已批准的低层副作用。它不是第二个 daemon authority，也不是 Runtime。
 

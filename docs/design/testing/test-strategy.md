@@ -1,8 +1,8 @@
 # 测试策略 (Test Strategy)
 
-> 测试分层、覆盖目标和验收标准。系统化单元测试已就位，614 tests pass，Mock 基础设施完整。
+> 测试分层、覆盖目标和验收标准。测试数量随 workspace 演进，不在文档中冻结。
 
-**关联模块:** [Mock 策略](mock-strategy.md), [CI 流水线](ci-pipeline.md)
+**关联模块:** `tests/`, `.github/workflows/`, `scripts/aletheon.sh`
 **最后更新:** 2026-06-07 (B1-B5 merged)
 
 ---
@@ -11,7 +11,7 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| Unit tests | ✅ Implemented | `crates/*/src/` | 614 tests pass |
+| Unit tests | ✅ Implemented | `crates/*/src/` | Current count comes from the test run, not this document |
 | Mock infrastructure | ✅ Implemented | `crates/*/src/testing/` | MockLlm, MockMemory, MockPerception |
 | Integration tests | 🟡 Partial | inline `#[cfg(test)]` | 模块内集成测试存在 |
 | E2E tests | ⬜ Planned | — | 待 CI 落地后实现 |
@@ -23,8 +23,8 @@
 
 | 层次 | 测试什么 | 工具 | 覆盖目标 |
 |------|----------|------|----------|
-| 单元测试 | 纯逻辑（parser、validator、classifier） | `cargo test` | >80% |
-| 集成测试 | 模块交互（engine+tool、perception+bridge） | `cargo test --test` | 核心路径 100% |
+| 单元测试 | 纯逻辑（parser、validator、classifier） | `bash scripts/cargo-agent.sh test -p <package>` | >80% |
+| 集成测试 | 模块交互（engine+tool、perception+bridge） | `bash scripts/cargo-agent.sh test -p <package> --test <target>` | 核心路径 100% |
 | 沙箱测试 | 隔离生效（namespace、seccomp、cgroups） | bubblewrap + test | 关键安全路径 |
 | eBPF 测试 | 内核程序加载和事件采集 | libbpf + test | 加载+事件采集 |
 | 端到端 | 完整用户流程 | agent-cli + test | 关键用户场景 |
@@ -177,7 +177,7 @@ fn test_crash_recovery_from_checkpoint() {
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Unit tests | ✅ Implemented | 614 tests pass across all crates |
+| Unit tests | ✅ Implemented | Count is reported by the current workspace run |
 | Mock infrastructure | ✅ Implemented | MockLlm, MockMemory, MockPerception in `crates/*/src/testing/` |
 | Integration tests | 🟡 Partial | 模块内 `#[cfg(test)]` 集成测试存在，无 dedicated test suite |
 | E2E tests | 未实现 | — |

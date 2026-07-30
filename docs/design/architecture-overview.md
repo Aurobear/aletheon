@@ -9,9 +9,8 @@
 Aletheon 是 native-first、长期运行、受治理的 Agent 系统。它维护身份、认知、
 目标、经验与外部行动，但不修改 Linux 内核，也不把所有领域拆成服务。
 
-Canonical 宪法见
-`../arch/Aletheon_MacroKernel_Architecture_Final(2).md`；当前依赖审计见
-`../arch/CURRENT_ARCHITECTURE_AND_COUPLING_ANALYSIS.md`。
+当前架构边界由本文件、`config/architecture/` 门禁、
+`docs/arch/CORE_REFACTOR_COMPLETION_REPORT.md` 和实际 workspace 共同约束。
 
 ## 2. 运行结构
 
@@ -98,7 +97,7 @@ machine provider registry
 可以提供事实，模型输出不能反向覆盖 authority。
 
 `TurnEngine` 的权威接口位于
-`crates/executive/src/service/turn_engine.rs:14-22`。入口不得自行运行另一套 LLM
+`crates/executive/src/application/turn_engine.rs:14-22`。入口不得自行运行另一套 LLM
 loop。
 
 ## 5. Runtime、Platform 与 execd

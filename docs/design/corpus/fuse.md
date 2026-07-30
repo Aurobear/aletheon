@@ -2,10 +2,10 @@
 
 # FUSE 虚拟文件系统接口
 
-> 通过 FUSE 挂载点暴露 Agent 状态、感知数据和控制接口，让 shell 脚本和系统工具可以直接与 Agent 交互。
+> FUSE 目标设计。当前默认构建只提供内存 AgentFs 和未挂载的 stub。
 
 **模块编号:** 08
-**关联模块:** [编排引擎](../executive/orchestration.md), [IPC 与内核](../fabric/ipc.md), [感知层](perception.md)
+**关联模块:** [编排引擎](../executive/orchestration.md), [IPC 与内核](../fabric/ipc.md), [感知层](../dasein/perception.md)
 **最后更新:** 2026-06-07
 
 ---
@@ -16,15 +16,18 @@
 |-----------|--------|---------------|-------|
 | AgentFs (in-memory API) | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/filesystem.rs` | In-memory virtual filesystem with read/write/readdir, pause support |
 | FsNode types | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/filesystem.rs` | Directory/File/DynamicFile node types |
-| FUSE module | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/mod.rs` | Module entry point |
-| FuseMount | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/mount.rs` | `fuse3::path::PathFileSystem` integration behind `fuse` feature flag; stub mode when feature disabled |
-| PathFileSystem impl | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/mount.rs` | `AgentFs` implements `fuse3::path::PathFileSystem` (lookup, getattr, read, write, readdir) behind `#[cfg(feature = "fuse")]` |
+| FUSE module | 🔶 Partial | `crates/dasein/src/impl/perception/fuse/mod.rs` | In-memory facade and stub lifecycle |
+| FuseMount | 🔶 Stub only | `crates/dasein/src/impl/perception/fuse/mount.rs` | Default build always reports unmounted |
+| PathFileSystem impl | ⬜ Unavailable | `crates/dasein/src/impl/perception/fuse/mount.rs` | Source is cfg-gated, but `dasein` currently declares neither a `fuse` feature nor the fuse3 dependency |
 | StateProvider trait | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/provider.rs` | Abstraction for data sources (`get_sensor_data`, `get_context`, `get_log`, `get_agent_status`) |
 | LiveStateProvider | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/provider.rs` | Reads live system state from `/proc` (loadavg, meminfo, diskstats, net/dev) |
 | MockStateProvider | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/provider.rs` | In-memory mock with pre-settable responses and call recording for testing |
 | ControlsValidator | ✅ Implemented | `crates/dasein/src/impl/perception/fuse/controls.rs` | Write validation for `/controls/` (toggle "0"/"1", TOML syntax check, allowlist) |
 
-> **Note:** The real FUSE mount is implemented behind the `fuse` feature flag. When `fuse` is enabled, `AgentFs` implements `fuse3::path::PathFileSystem` and `FuseMount` performs an actual mount via `fuse3::Session`. Without the feature, `FuseMount` operates in stub mode (always reports unmounted). The directory structure `/context/`, `/controls/`, `/sensors/`, `/logs/`, `/agents/` is fully wired.
+> **Current limitation:** `mount.rs` contains cfg-gated fuse3 source, but the
+> crate has no enableable `fuse` feature/dependency. Production builds therefore
+> compile only the stub. A real mount requires an explicit feature/dependency,
+> integration tests, systemd lifecycle, and installed acceptance.
 
 ---
 

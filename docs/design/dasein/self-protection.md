@@ -2,7 +2,11 @@
 
 # Agent 自我保护 (Agent Self-Protection)
 
-> 安全模型定义了 Agent 对系统的权限，自我保护定义了 Agent 如何保护自己。三个保护层（InputSanitizer、ResourceGovernor、EmergencyKillswitch）及完整性监控均已实现。
+> **Status:** Historical target design. The former InputSanitizer,
+> ResourceGovernor, EmergencyKillswitch, and IntegrityMonitor implementation
+> modules were removed; the names below must not be treated as current
+> installed capabilities. Current enforcement is provided by governed
+> admission, approval, sandbox, audit, and runtime-health boundaries.
 
 **关联模块:** [安全模型](../corpus/security.md), [资源治理](resilience.md), [错误处理](resilience.md)
 **最后更新:** 2026-06-07
@@ -13,10 +17,10 @@
 
 | Component | Status | Code Location | Notes |
 |-----------|--------|---------------|-------|
-| InputSanitizer | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/input_sanitizer.rs` | Prompt injection detection + sanitization |
-| ResourceGovernor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/resource_governor.rs` | Multi-resource limits + throttling |
-| EmergencyKillswitch | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/emergency_killswitch.rs` | Multi-trigger emergency stop |
-| IntegrityMonitor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/integrity_monitor.rs` | FNV-1a hash checking, baseline tracking, killswitch integration |
+| InputSanitizer | Removed legacy design | — | No current standalone implementation |
+| ResourceGovernor | Removed legacy design | — | Resource admission is owned by Kernel/Executive |
+| EmergencyKillswitch | Removed legacy design | — | Cancellation and supervision are current runtime mechanisms |
+| IntegrityMonitor | Removed legacy design | — | Installed provenance validation is the current deployment control |
 
 ---
 
@@ -26,10 +30,10 @@ Agent 自我保护层防御三类威胁：
 
 | 威胁 | 防御层 | 严重性 | 当前状态 |
 |------|--------|--------|----------|
-| **Prompt Injection** — 恶意输入试图劫持 Agent 行为 | InputSanitizer | Critical | ✅ Implemented |
-| **资源失控** — Agent 消耗过多 CPU/内存/磁盘/Token | ResourceGovernor | High | ✅ Implemented |
-| **代码篡改** — 配置或二进制被非法修改 | IntegrityMonitor | High | ✅ Implemented |
-| **Agent 失能** — 连续失败/异常行为需紧急停止 | EmergencyKillswitch | Critical | ✅ Implemented |
+| **Prompt Injection** — 恶意输入试图劫持 Agent 行为 | InputSanitizer | Critical | Historical design |
+| **资源失控** — Agent 消耗过多 CPU/内存/磁盘/Token | ResourceGovernor | High | Historical design |
+| **代码篡改** — 配置或二进制被非法修改 | IntegrityMonitor | High | Historical design |
+| **Agent 失能** — 连续失败/异常行为需紧急停止 | EmergencyKillswitch | Critical | Historical design |
 
 ---
 
@@ -225,12 +229,12 @@ struct IntegrityMonitor {
 
 ## Implementation Summary
 
-> 自我保护三层防御及完整性监控均已实现。InputSanitizer 提供输入净化，ResourceGovernor 提供资源限制和节流，EmergencyKillswitch 提供多触发紧急停止，IntegrityMonitor 提供 FNV-1a 文件哈希检查和基线追踪。
+> 以下为已移除实现的历史汇总，不代表当前安装态能力。
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| InputSanitizer | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/input_sanitizer.rs` |
-| ResourceGovernor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/resource_governor.rs` |
-| EmergencyKillswitch | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/emergency_killswitch.rs` |
-| IntegrityMonitor | ✅ Implemented | `crates/dasein/src/impl/security/self_protection/integrity_monitor.rs` — FNV-1a, baseline, killswitch integration |
+| InputSanitizer | Historical design | — |
+| ResourceGovernor | Historical design | — |
+| EmergencyKillswitch | Historical design | — |
+| IntegrityMonitor | Historical design | — — FNV-1a, baseline, killswitch integration |
 | SelfUpdateManager | ⬜ Planned | Update + rollback designed |
