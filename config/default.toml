@@ -63,6 +63,18 @@ preference = "auto"
 [plugins]
 directories = []
 
+# Host-owned coding evaluation is explicitly enabled for the shipped runtime.
+# The Rust schema default remains disabled so legacy configs that omit this
+# section preserve their historical behavior.
+[evaluation]
+enabled = true
+default_mode = "shadow"
+coding_rubric = "coding-v2"
+min_score_millis = 70000
+min_evidence_coverage_millis = 600
+min_confidence_millis = 700
+max_evaluation_ms = 5000
+
 [memory]
 backend = "sqlite"
 data_dir = "~/.aletheon/memory"

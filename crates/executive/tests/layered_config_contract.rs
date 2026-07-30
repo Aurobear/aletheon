@@ -239,6 +239,13 @@ fn checked_in_leju_deepseek_uses_the_openai_transport() {
             config.agent.default_model.as_deref(),
             Some("deepseek/deepseek-v4-pro")
         );
+        assert!(
+            config.evaluation.enabled,
+            "checked-in runtime config must explicitly enable shadow evaluation: {}",
+            path.display()
+        );
+        assert_eq!(config.evaluation.default_mode, fabric::EvaluationMode::Shadow);
+        assert_eq!(config.evaluation.coding_rubric, "coding-v2");
     }
 }
 
