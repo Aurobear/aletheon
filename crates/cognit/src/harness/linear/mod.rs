@@ -1,7 +1,9 @@
 pub mod awareness;
 pub mod batching;
 pub mod circuit_breaker;
+mod compaction_observability;
 mod completion;
+mod exploration;
 pub mod goal_tracker;
 pub mod message_compose;
 pub mod metrics;
@@ -12,10 +14,11 @@ mod tool_exec;
 mod tool_output;
 
 pub use batching::{partition_tool_calls, ToolBatch};
+pub use compaction_observability::{compaction_metrics, CompactionMetrics};
 pub use metrics::TurnMetrics;
 
-const MIN_EXPLORATION_INPUT_TOKENS: u64 = 10_000;
-const MAX_EXPLORATION_INPUT_TOKENS: u64 = 24_000;
+use compaction_observability::{record_degenerate, record_evicted, record_sampler_error};
+use exploration::{exploration_input_token_budget, should_close_exploration};
 
 /// Minimum length (trimmed chars) an answer must have before a
 /// reflection-triggered stop is treated as terminal. Below this, both run loops
@@ -27,34 +30,6 @@ pub(super) const MIN_SUBSTANTIVE_ANSWER_CHARS: usize = 40;
 /// try a different approach" nudge so the loop re-plans instead of repeating a
 /// failing call. The counter resets on any tool success or after the nudge.
 pub(super) const REPLAN_ON_CONSECUTIVE_ERRORS: usize = 3;
-
-fn exploration_input_token_budget(context_window_tokens: usize) -> u64 {
-    (context_window_tokens as u64 / 100)
-        .clamp(MIN_EXPLORATION_INPUT_TOKENS, MAX_EXPLORATION_INPUT_TOKENS)
-}
-
-/// Breadth-scanning tools that count toward the exploration budget.
-///
-/// `file_read` is deliberately excluded: reading a specific file is the
-/// productive step the model must always be allowed to take before answering,
-/// so the exploration cutoff never blocks "read the key file, then answer".
-/// Only cheap, potentially-unbounded scanning (glob/grep/search) is clamped.
-fn is_inspection_tool(name: &str) -> bool {
-    matches!(name, "glob" | "grep" | "file_search")
-}
-
-fn should_close_exploration<'a>(
-    iteration: usize,
-    cumulative_input_tokens: u64,
-    context_window_tokens: usize,
-    tool_names: impl IntoIterator<Item = &'a str>,
-) -> bool {
-    let names = tool_names.into_iter().collect::<Vec<_>>();
-    iteration > 1
-        && !names.is_empty()
-        && names.iter().all(|name| is_inspection_tool(name))
-        && cumulative_input_tokens >= exploration_input_token_budget(context_window_tokens)
-}
 
 use async_trait::async_trait;
 use circuit_breaker::CircuitBreaker;
@@ -74,7 +49,6 @@ use fabric::message::Message;
 use fabric::policy::verifier::Verifier;
 use fabric::self_field::{Intent, IntentSource};
 use fabric::{Clock, CompactionStrategy, ToolDefinition};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Thin wrapper to allow passing `&dyn LlmProvider` to generic functions
@@ -127,25 +101,6 @@ pub trait BatchPlanner: Send + Sync {
 /// Marker injected into user messages when plan mode is active.
 /// Shared between `ReActLoop` and `Controller` to keep them in sync.
 pub const PLAN_MODE_MARKER: &str = "[PLAN MODE ACTIVE]";
-
-static COMPACTION_DEGENERATE_TOTAL: AtomicU64 = AtomicU64::new(0);
-static COMPACTION_SAMPLER_ERROR_TOTAL: AtomicU64 = AtomicU64::new(0);
-static COMPACTION_EVICTED_MESSAGES_TOTAL: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CompactionMetrics {
-    pub degenerate_total: u64,
-    pub sampler_error_total: u64,
-    pub evicted_messages_total: u64,
-}
-
-pub fn compaction_metrics() -> CompactionMetrics {
-    CompactionMetrics {
-        degenerate_total: COMPACTION_DEGENERATE_TOTAL.load(Ordering::Relaxed),
-        sampler_error_total: COMPACTION_SAMPLER_ERROR_TOTAL.load(Ordering::Relaxed),
-        evicted_messages_total: COMPACTION_EVICTED_MESSAGES_TOTAL.load(Ordering::Relaxed),
-    }
-}
 
 pub type EvictedCallback = Arc<dyn Fn(Vec<Message>) + Send + Sync>;
 
@@ -339,15 +294,14 @@ impl ReActLoop {
     ) {
         match outcome.failure.as_ref() {
             Some(fabric::CompactionFailure::DegenerateSummary { .. }) => {
-                COMPACTION_DEGENERATE_TOTAL.fetch_add(1, Ordering::Relaxed);
+                record_degenerate();
             }
             Some(fabric::CompactionFailure::SamplerError { .. }) => {
-                COMPACTION_SAMPLER_ERROR_TOTAL.fetch_add(1, Ordering::Relaxed);
+                record_sampler_error();
             }
             _ => {}
         }
-        COMPACTION_EVICTED_MESSAGES_TOTAL
-            .fetch_add(outcome.evicted.len() as u64, Ordering::Relaxed);
+        record_evicted(outcome.evicted.len());
         if let Some(event_sink) = event_sink {
             event_sink.emit(crate::harness::event_sink::Event::CompactionOutcome {
                 strategy: format!("{:?}", outcome.strategy).to_ascii_lowercase(),
