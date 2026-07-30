@@ -31,6 +31,8 @@ pub(super) struct AgentServices {
     pub canonical_event_spine: Arc<crate::adapters::events::SqliteEventSpine>,
     pub event_projections: Arc<crate::adapters::events::DefaultEventProjectionSet>,
     pub agent_live_runs: Arc<crate::application::agent_control::LiveAgentRuns>,
+    pub capability_rollups:
+        Arc<crate::application::capability_benchmark::CapabilityRollupProjectionSink>,
 }
 
 pub(super) async fn build_agent_services(
@@ -82,6 +84,11 @@ pub(super) async fn build_agent_services(
         )
         .map_err(|error| anyhow::anyhow!(error.to_string()))?,
     );
+    let capability_rollups = Arc::new(
+        crate::application::capability_benchmark::CapabilityRollupProjectionSink::open(
+            data_dir.join("evaluation-rollups.db"),
+        )?,
+    );
     let agent_control_service = Arc::new(
         crate::application::agent_control::AgentControlService::new(
             kernel.clone(),
@@ -98,6 +105,7 @@ pub(super) async fn build_agent_services(
             canonical_event_spine.clone(),
         )
         .with_runtime_profile_requirements(runtime_profile_requirements)
+        .with_capability_history(capability_rollups.clone())
         .with_cognitive_task_admission(Arc::new(
             crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(agora),
         ))
@@ -175,6 +183,7 @@ pub(super) async fn build_agent_services(
         canonical_event_spine,
         event_projections,
         agent_live_runs,
+        capability_rollups,
     })
 }
 
@@ -225,6 +234,9 @@ pub(super) async fn build_turn_services(
     apply_objective_store: Arc<std::sync::Mutex<crate::application::goal::ObjectiveStore>>,
     param_registry: Arc<ParamRegistry>,
     agent_live_runs: Arc<crate::application::agent_control::LiveAgentRuns>,
+    capability_rollups: Arc<
+        crate::application::capability_benchmark::CapabilityRollupProjectionSink,
+    >,
     canonical_event_spine: Arc<crate::adapters::events::SqliteEventSpine>,
     event_projections: Arc<crate::adapters::events::DefaultEventProjectionSet>,
     agent_profile_registry: Arc<crate::adapters::runtime::AgentProfileRegistry>,
@@ -298,16 +310,12 @@ pub(super) async fn build_turn_services(
         canonical_event_spine.clone(),
         event_projections.clone(),
     );
-    let capability_rollups = Arc::new(
-        crate::application::capability_benchmark::CapabilityRollupProjectionSink::open(
-            data_dir.join("evaluation-rollups.db"),
-        )?,
-    );
     let mut evaluation_sinks: Vec<
         Arc<dyn crate::application::evaluation::EvaluationProjectionSink>,
     > = vec![
         Arc::new(crate::application::goal::GoalEvaluationProjectionSink::new(
             canonical_event_spine.clone(),
+            apply_objective_store.clone(),
         )),
         Arc::new(
             crate::application::agent_control::settlement::AgentEvaluationProjectionSink::new(

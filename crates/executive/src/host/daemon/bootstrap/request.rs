@@ -1133,6 +1133,7 @@ impl RequestHandler {
             apply_objective_store,
             param_registry.clone(),
             agent_svc.agent_live_runs,
+            agent_svc.capability_rollups,
             canonical_event_spine.clone(),
             agent_svc.event_projections,
             agent_profile_registry.clone(),

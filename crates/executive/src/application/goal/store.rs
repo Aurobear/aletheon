@@ -28,6 +28,65 @@ pub(crate) const GOAL_COLS: &str = concat!(
 );
 
 impl ObjectiveStore {
+    /// Consume a Goal-attempt evaluation exactly once. Returns `None` when the
+    /// receipt was already observed and therefore cannot trigger another retry.
+    pub fn record_evaluation_feedback(
+        &self,
+        receipt: &fabric::EvaluationReceiptRef,
+    ) -> Result<Option<super::GoalEvaluationFeedback>> {
+        anyhow::ensure!(
+            receipt.subject_kind == "goal_attempt",
+            "evaluation subject is not a Goal attempt"
+        );
+        let (goal, attempt) = receipt
+            .subject_id
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("invalid Goal attempt evaluation subject"))?;
+        let goal_id = fabric::GoalId(goal.parse::<i64>()?);
+        let attempt_id = fabric::AttemptId(uuid::Uuid::parse_str(attempt)?);
+        let linked: i64 = self.db.query_row(
+            "SELECT COUNT(*) FROM goal_attempts WHERE objective_id = ?1 AND attempt_id = ?2",
+            rusqlite::params![goal_id.0, attempt_id.0.to_string()],
+            |row| row.get(0),
+        )?;
+        anyhow::ensure!(
+            linked == 1,
+            "evaluation does not match a durable Goal attempt"
+        );
+        let retry_replan_required = matches!(
+            receipt.decision,
+            fabric::EvaluationDecision::ObservedFail
+                | fabric::EvaluationDecision::Rejected
+                | fabric::EvaluationDecision::Indeterminate
+        );
+        let inserted = self.db.execute(
+            "INSERT OR IGNORE INTO goal_evaluation_feedback
+             (receipt_id, objective_id, attempt_id, decision, failed_gates_json,
+              retry_replan_required, observed_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                receipt.receipt_id.0.to_string(),
+                goal_id.0,
+                attempt_id.0.to_string(),
+                format!("{:?}", receipt.decision),
+                serde_json::to_string(&receipt.failed_gates)?,
+                retry_replan_required,
+                receipt.created_at_ms,
+            ],
+        )?;
+        if inserted == 0 {
+            return Ok(None);
+        }
+        Ok(Some(super::GoalEvaluationFeedback {
+            receipt_id: receipt.receipt_id,
+            goal_id,
+            attempt_id,
+            decision: receipt.decision,
+            failed_gates: receipt.failed_gates.clone(),
+            retry_replan_required,
+        }))
+    }
+
     // -----------------------------------------------------------------------
     // Legacy API (preserved for backward compatibility)
     // -----------------------------------------------------------------------

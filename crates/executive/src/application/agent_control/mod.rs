@@ -156,6 +156,8 @@ pub struct AgentControlService {
     lifecycle_hooks: Arc<dyn AgentLifecycleHookSink>,
     runtime_profile_requirements: HashMap<fabric::AgentProfileId, Vec<AgentRuntimeCapability>>,
     cognitive_task_admission: Option<Arc<dyn CognitiveTaskAdmissionPort>>,
+    capability_history:
+        Option<Arc<crate::application::capability_benchmark::CapabilityRollupProjectionSink>>,
 }
 
 impl std::fmt::Debug for AgentControlService {
@@ -202,6 +204,7 @@ impl AgentControlService {
             lifecycle_hooks: Arc::new(NoopAgentLifecycleHookSink),
             runtime_profile_requirements: HashMap::new(),
             cognitive_task_admission: None,
+            capability_history: None,
         }
     }
 
@@ -218,6 +221,14 @@ impl AgentControlService {
         admission: Arc<dyn CognitiveTaskAdmissionPort>,
     ) -> Self {
         self.cognitive_task_admission = Some(admission);
+        self
+    }
+
+    pub fn with_capability_history(
+        mut self,
+        history: Arc<crate::application::capability_benchmark::CapabilityRollupProjectionSink>,
+    ) -> Self {
+        self.capability_history = Some(history);
         self
     }
 
@@ -775,10 +786,24 @@ impl AgentControlPort for AgentControlService {
             }
             _ => AgentWorkspaceMode::SharedReadOnly,
         };
+        let history_runtime = if intent.runtime_override.is_none() {
+            self.capability_history.as_ref().and_then(|history| {
+                history.preferred_runtime(
+                    &intent.profile_id.0,
+                    self.runtimes
+                        .catalog()
+                        .iter()
+                        .map(|manifest| manifest.id.as_str()),
+                )
+            })
+        } else {
+            None
+        };
         let selector = intent
             .runtime_override
             .as_ref()
             .map(|value| runtime::RuntimeSelector::Alias(value.clone()))
+            .or_else(|| history_runtime.map(runtime::RuntimeSelector::Alias))
             .unwrap_or(runtime::RuntimeSelector::Auto);
         let selection = runtime::RuntimeSelectionRequest {
             selector,

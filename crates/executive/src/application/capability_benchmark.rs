@@ -62,6 +62,16 @@ pub struct CapabilityReceiptRollup {
     receipt_ids: HashSet<fabric::EvaluationReceiptId>,
 }
 
+/// Read-only host input for runtime/profile selection. It contains no tool,
+/// workspace, or budget authority and therefore cannot expand a child request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilitySelectionObservation {
+    pub key: CapabilityRollupKey,
+    pub receipt_count: u64,
+    pub pass_count: u64,
+    pub median_score_millis: Option<u32>,
+}
+
 pub struct CapabilityRollupProjectionSink {
     rollups: Mutex<HashMap<CapabilityRollupKey, CapabilityReceiptRollup>>,
     durable: Option<Mutex<rusqlite::Connection>>,
@@ -111,6 +121,43 @@ impl CapabilityRollupProjectionSink {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+
+    pub fn selection_input(&self, profile_id: &str) -> Vec<CapabilitySelectionObservation> {
+        let mut values = self
+            .snapshot()
+            .into_iter()
+            .filter(|(key, rollup)| key.profile_id == profile_id && rollup.receipt_count > 0)
+            .map(|(key, rollup)| CapabilitySelectionObservation {
+                key,
+                receipt_count: rollup.receipt_count,
+                pass_count: rollup.pass_count,
+                median_score_millis: (!rollup.scores_millis.is_empty())
+                    .then(|| rollup.scores_millis[rollup.scores_millis.len() / 2]),
+            })
+            .collect::<Vec<_>>();
+        values.sort_by(|left, right| left.key.runtime_id.cmp(&right.key.runtime_id));
+        values
+    }
+
+    pub fn preferred_runtime<'a>(
+        &self,
+        profile_id: &str,
+        eligible: impl IntoIterator<Item = &'a str>,
+    ) -> Option<String> {
+        let eligible = eligible.into_iter().collect::<HashSet<_>>();
+        self.selection_input(profile_id)
+            .into_iter()
+            .filter(|item| eligible.contains(item.key.runtime_id.as_str()))
+            .max_by(|left, right| {
+                // Compare pass ratios without floating point, then score and
+                // finally reverse runtime ID so max_by remains deterministic.
+                (u128::from(left.pass_count) * u128::from(right.receipt_count))
+                    .cmp(&(u128::from(right.pass_count) * u128::from(left.receipt_count)))
+                    .then_with(|| left.median_score_millis.cmp(&right.median_score_millis))
+                    .then_with(|| right.key.runtime_id.cmp(&left.key.runtime_id))
+            })
+            .map(|item| item.key.runtime_id)
     }
 
     fn observe(&self, record: &EvaluationProjectionRecord) {
