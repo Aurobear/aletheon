@@ -68,6 +68,8 @@ impl DefaultMetaRuntime {
     /// Create with a custom genome file path.
     pub fn with_genome_path(mut self, path: PathBuf) -> Self {
         self.migration_mgr.set_genome_path(path.clone());
+        self.rollback_mgr = RollbackManager::with_path(path.with_extension("store.json"))
+            .expect("load durable genome rollback store");
         self.genome_path = Some(path);
         self
     }
@@ -152,18 +154,15 @@ impl MetaRuntimeOps for DefaultMetaRuntime {
         let genome = self.read_genome().await?;
         let candidate = self.candidate_gen.generate(&genome, intent).await?;
 
-        // Save snapshot for rollback before migration
-        {
-            let version_str = self.version.to_string();
-            self.rollback_mgr.save_snapshot(&version_str, &genome);
-        }
-
         Ok(candidate)
     }
 
     /// Test a candidate in sandbox.
     async fn sandbox_test(&self, candidate: &RuntimeCandidate) -> Result<TestResult> {
-        self.sandbox_runner.run_tests(candidate).await
+        let baseline = self.read_genome().await?;
+        self.sandbox_runner
+            .run_tests_against(candidate, Some(&baseline))
+            .await
     }
 
     /// Evaluate a candidate after testing.
@@ -179,8 +178,17 @@ impl MetaRuntimeOps for DefaultMetaRuntime {
     ///
     /// Records the migration in the lineage and updates the cached genome.
     async fn migrate(&self, candidate: &RuntimeCandidate) -> Result<MigrationResult> {
+        let current = self.read_genome().await?;
+        self.rollback_mgr
+            .save_snapshot(&self.version.to_string(), &current)?;
         // Use the migration manager to record the version transition
         let result = self.migration_mgr.migrate(candidate).await?;
+
+        if let Some(path) = &self.genome_path {
+            atomic_save_genome(path, &candidate.genome)?;
+        }
+        self.rollback_mgr
+            .record_current(&result.to_version, &candidate.genome)?;
 
         // Update cached genome
         {
@@ -195,6 +203,10 @@ impl MetaRuntimeOps for DefaultMetaRuntime {
     async fn rollback(&self) -> Result<()> {
         let genome = self.rollback_mgr.rollback().await?;
 
+        if let Some(path) = &self.genome_path {
+            atomic_save_genome(path, &genome)?;
+        }
+
         // Update cached genome to the rolled-back version
         {
             let mut cached = self.current_genome.lock().unwrap();
@@ -208,4 +220,28 @@ impl MetaRuntimeOps for DefaultMetaRuntime {
     fn current_version(&self) -> Version {
         self.version.clone()
     }
+}
+
+fn atomic_save_genome(path: &std::path::Path, genome: &Genome) -> Result<()> {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let bytes = serde_yaml::to_string(genome)?.into_bytes();
+    let tmp = path.with_extension("tmp");
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&tmp)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&tmp, path)?;
+    let readback = GenomeLoader::new().load(path)?;
+    anyhow::ensure!(
+        serde_json::to_vec(&readback)? == serde_json::to_vec(genome)?,
+        "durable genome read-back mismatch"
+    );
+    Ok(())
 }

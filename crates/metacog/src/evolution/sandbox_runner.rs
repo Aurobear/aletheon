@@ -1,125 +1,214 @@
-//! Sandbox runner — tests candidate runtimes in isolation.
+//! Candidate-aware, bounded genome sandbox.
 //!
-//! Runs cargo test in the workspace and parses the output to produce
-//! a TestResult with pass/fail counts and failure details.
+//! A genome is data, so production verification validates and replays the exact
+//! candidate. It deliberately never launches repository build tools.
 
 use anyhow::{Context, Result};
-use fabric::{Clock, RuntimeCandidate, TestResult};
-use std::sync::Arc;
+use fabric::{Clock, Genome, RuntimeCandidate, TestResult};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
+
+const CORPUS_VERSION: &str = "genome-safety-v1";
+const MAX_CASES: usize = 32;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidateSandboxReceipt {
+    pub candidate_id: uuid::Uuid,
+    pub candidate_digest: String,
+    pub corpus_version: String,
+    pub passed_cases: Vec<String>,
+    pub failed_cases: Vec<String>,
+    pub elapsed_ms: u64,
+    pub terminal_status: String,
+}
 
 pub struct SandboxRunner {
-    /// Working directory for running tests (defaults to current dir).
-    work_dir: std::path::PathBuf,
+    receipt_dir: Option<PathBuf>,
     clock: Arc<dyn Clock>,
 }
 
 impl SandboxRunner {
     pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
-            work_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            receipt_dir: None,
             clock,
         }
     }
 
-    pub fn with_work_dir(work_dir: std::path::PathBuf, clock: Arc<dyn Clock>) -> Self {
-        Self { work_dir, clock }
+    /// Compatibility constructor: the directory now stores sandbox receipts;
+    /// it is never used as a process working directory.
+    pub fn with_work_dir(work_dir: PathBuf, clock: Arc<dyn Clock>) -> Self {
+        Self {
+            receipt_dir: Some(work_dir.join("candidate-sandbox-receipts")),
+            clock,
+        }
     }
 
-    /// Run sandbox tests on a candidate runtime.
-    ///
-    /// Runs `cargo test --workspace --message-format=json` and parses
-    /// the JSON output to extract test results.
-    pub async fn run_tests(&self, _candidate: &RuntimeCandidate) -> Result<TestResult> {
+    pub async fn run_tests_against(
+        &self,
+        candidate: &RuntimeCandidate,
+        baseline: Option<&Genome>,
+    ) -> Result<TestResult> {
         let start = self.clock.mono_now();
-
-        let output = tokio::process::Command::new("cargo")
-            .args(["test", "--workspace", "--message-format=json"])
-            .current_dir(&self.work_dir)
-            .output()
-            .await
-            .context("Failed to run cargo test")?;
-
-        let elapsed_ms = self.clock.mono_now().0 - start.0;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        // Parse JSON test results from cargo test
-        let mut tests_run = 0usize;
-        let mut tests_passed = 0usize;
-        let mut tests_failed = 0usize;
-        let mut failures = Vec::new();
-
-        for line in stdout.lines() {
-            if line.trim().is_empty() {
-                continue;
+        let encoded =
+            serde_json::to_vec(&candidate.genome).context("serialize candidate genome")?;
+        let digest = format!("{:x}", Sha256::digest(&encoded));
+        let mut passed = Vec::new();
+        let mut failed = Vec::new();
+        let mut check = |name: &str, ok: bool| {
+            if passed.len() + failed.len() >= MAX_CASES {
+                return;
             }
-            // cargo test --message-format=json outputs one JSON object per line
-            if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
-                let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                match event_type {
-                    "test" => {
-                        let name = event
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        let test_event = event.get("event").and_then(|v| v.as_str()).unwrap_or("");
-                        match test_event {
-                            "ok" => {
-                                tests_run += 1;
-                                tests_passed += 1;
-                            }
-                            "failed" => {
-                                tests_run += 1;
-                                tests_failed += 1;
-                                let stderr =
-                                    event.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
-                                failures.push(format!("{}: {}", name, stderr.trim()));
-                            }
-                            "ignored" | "bench" => {
-                                // Count ignored/bench but don't fail
-                            }
-                            _ => {}
-                        }
-                    }
-                    "suite" => {
-                        // Suite-level events — we rely on individual test events
-                    }
-                    _ => {}
-                }
-            }
+            (if ok { &mut passed } else { &mut failed }).push(name.to_string());
+        };
+
+        check(
+            "identity.name.non_empty",
+            !candidate.genome.identity.name.trim().is_empty(),
+        );
+        check(
+            "identity.self_model.non_empty",
+            !candidate.genome.identity.self_model.trim().is_empty(),
+        );
+        let ids: HashSet<_> = candidate
+            .genome
+            .boundary
+            .rules
+            .iter()
+            .map(|r| &r.id)
+            .collect();
+        check(
+            "boundary.ids.unique",
+            ids.len() == candidate.genome.boundary.rules.len(),
+        );
+        check(
+            "boundary.fields.valid",
+            candidate.genome.boundary.rules.iter().all(|r| {
+                !r.id.trim().is_empty()
+                    && !r.condition.trim().is_empty()
+                    && !r.action.trim().is_empty()
+            }),
+        );
+        check(
+            "care.weights.finite_range",
+            candidate
+                .genome
+                .care
+                .priorities
+                .iter()
+                .all(|p| p.weight.is_finite() && (0.0..=1.0).contains(&p.weight)),
+        );
+        check(
+            "mutation.sandbox.required",
+            candidate.genome.mutation.require_sandbox,
+        );
+        check(
+            "mutation.approval.required",
+            candidate.genome.mutation.require_self_field_approval,
+        );
+        check(
+            "lifecycle.intervals.nonzero",
+            candidate.genome.lifecycle.health_check_interval_secs > 0
+                && candidate.genome.lifecycle.max_idle_time_secs > 0,
+        );
+        check(
+            "mutation.targets.genome_only",
+            candidate.genome.mutation.allowed_targets.iter().all(|t| {
+                matches!(
+                    t.as_str(),
+                    "care.priorities" | "boundary.rules" | "identity.name" | "identity.description"
+                )
+            }),
+        );
+        if let Some(base) = baseline {
+            check(
+                "identity.self_model.immutable",
+                candidate.genome.identity.self_model == base.identity.self_model,
+            );
+            let mandatory: Vec<_> = base
+                .boundary
+                .rules
+                .iter()
+                .filter(|r| r.action.eq_ignore_ascii_case("deny") || r.id.contains("immutable"))
+                .collect();
+            check(
+                "mandatory.boundaries.no_regression",
+                mandatory.iter().all(|rule| {
+                    candidate.genome.boundary.rules.iter().any(|r| {
+                        r.id == rule.id
+                            && r.condition == rule.condition
+                            && r.action == rule.action
+                            && r.priority >= rule.priority
+                    })
+                }),
+            );
         }
 
-        // If we couldn't parse JSON output, fall back to exit code
-        if tests_run == 0 {
-            let passed = output.status.success();
-            if passed {
-                // No test output parsed but exit was 0 — assume some tests ran
-                tests_run = 1;
-                tests_passed = 1;
+        let elapsed_ms = self.clock.mono_now().0.saturating_sub(start.0);
+        let receipt = CandidateSandboxReceipt {
+            candidate_id: candidate.id,
+            candidate_digest: digest,
+            corpus_version: CORPUS_VERSION.into(),
+            passed_cases: passed.clone(),
+            failed_cases: failed.clone(),
+            elapsed_ms,
+            terminal_status: if failed.is_empty() {
+                "passed"
             } else {
-                tests_run = 1;
-                tests_failed = 1;
-                // Try to extract failure info from stderr
-                let last_lines: Vec<&str> = stderr.lines().rev().take(10).collect();
-                failures.push(format!(
-                    "cargo test failed (no JSON output). stderr tail: {}",
-                    last_lines
-                        .iter()
-                        .rev()
-                        .copied()
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                ));
+                "rejected"
             }
+            .into(),
+        };
+        if let Some(dir) = &self.receipt_dir {
+            std::fs::create_dir_all(dir)?;
+            let final_path = dir.join(format!("{}.json", candidate.id));
+            let tmp = dir.join(format!(".{}.tmp", candidate.id));
+            let bytes = serde_json::to_vec_pretty(&receipt)?;
+            std::fs::write(&tmp, bytes)?;
+            std::fs::rename(tmp, final_path)?;
         }
-
         Ok(TestResult {
-            passed: tests_failed == 0,
-            tests_run,
-            tests_passed,
-            tests_failed,
-            failures,
+            passed: failed.is_empty(),
+            tests_run: passed.len() + failed.len(),
+            tests_passed: passed.len(),
+            tests_failed: failed.len(),
+            failures: failed,
             elapsed_ms,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{evolution::candidate::CandidateGenerator, genome::loader::GenomeLoader};
+    use fabric::MutationIntent;
+    use kernel::chronos::SystemClock;
+
+    #[tokio::test]
+    async fn validates_candidate_without_launching_cargo() {
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock::new());
+        let base = GenomeLoader::new()
+            .load(std::path::Path::new("/missing"))
+            .unwrap();
+        let candidate = CandidateGenerator::new(clock.clone())
+            .generate(
+                &base,
+                &MutationIntent {
+                    target: "care.priorities".into(),
+                    change: serde_json::json!({"topic":"helpfulness","weight_delta":0.01}),
+                    reason: "test".into(),
+                    reversible: true,
+                },
+            )
+            .await
+            .unwrap();
+        let result = SandboxRunner::new(clock)
+            .run_tests_against(&candidate, Some(&base))
+            .await
+            .unwrap();
+        assert!(result.passed, "{:?}", result.failures);
+        assert!(result.tests_run >= 10);
     }
 }
