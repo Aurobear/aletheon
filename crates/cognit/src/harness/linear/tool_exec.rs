@@ -40,6 +40,7 @@ impl ReActLoop {
         let start = self.clock.mono_now();
         let mut tool_calls_made: usize = 0;
         let mut tool_errors: usize = 0;
+        let mut provider_retries = 0_u64;
         self.verify_attempts = 0;
 
         event_sink.emit(Event::TurnStarted { iteration: 0 });
@@ -61,6 +62,7 @@ impl ReActLoop {
                     let metrics = TurnMetrics {
                         tool_calls_made,
                         tool_errors,
+                        provider_retries,
                         elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
@@ -84,6 +86,7 @@ impl ReActLoop {
                     {
                         let backoff_ms = streaming_retry_delay_ms(&e, transient_attempt);
                         transient_attempt += 1;
+                        provider_retries = provider_retries.saturating_add(1);
                         warn!(
                             attempt = transient_attempt,
                             backoff_ms, error = %e,
@@ -199,6 +202,7 @@ impl ReActLoop {
                         let metrics = TurnMetrics {
                             tool_calls_made,
                             tool_errors,
+                            provider_retries,
                             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                             iterations: self.iteration,
                             completed_normally: false,
@@ -225,6 +229,7 @@ impl ReActLoop {
                 let metrics = TurnMetrics {
                     tool_calls_made,
                     tool_errors,
+                    provider_retries,
                     elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     iterations: self.iteration,
                     completed_normally: true,
@@ -415,6 +420,7 @@ impl ReActLoop {
                     let metrics = TurnMetrics {
                         tool_calls_made,
                         tool_errors,
+                        provider_retries,
                         elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
@@ -468,6 +474,7 @@ impl ReActLoop {
                         let metrics = TurnMetrics {
                             tool_calls_made,
                             tool_errors,
+                            provider_retries,
                             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                             iterations: self.iteration,
                             completed_normally: false,
@@ -659,6 +666,7 @@ impl ReActLoop {
                     TurnMetrics {
                         tool_calls_made,
                         tool_errors,
+                        provider_retries,
                         elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                         iterations: self.iteration,
                         completed_normally: false,
@@ -711,6 +719,7 @@ impl ReActLoop {
                 let metrics = TurnMetrics {
                     tool_calls_made,
                     tool_errors,
+                    provider_retries,
                     elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
                     iterations: self.iteration,
                     completed_normally: false,
@@ -753,6 +762,7 @@ impl ReActLoop {
         let metrics = TurnMetrics {
             tool_calls_made,
             tool_errors,
+            provider_retries,
             elapsed_ms: self.clock.mono_now().0.saturating_sub(start.0),
             iterations: self.iteration,
             completed_normally: false,

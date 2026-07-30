@@ -123,6 +123,7 @@ impl TurnEngine for DaemonTurnEngine {
         let metrics = fabric::TurnMetrics {
             tool_calls_made: metric["tool_calls_made"].as_u64().unwrap_or(0) as usize,
             tool_errors: metric["tool_errors"].as_u64().unwrap_or(0) as usize,
+            provider_retries: metric["provider_retries"].as_u64().unwrap_or(0),
             elapsed_ms: metric["elapsed_ms"].as_u64().unwrap_or(0),
             iterations: metric["iterations"].as_u64().unwrap_or(0) as usize,
             completed_normally: metric["completed_normally"].as_bool().unwrap_or(false),
@@ -159,6 +160,7 @@ impl TurnEngine for DaemonTurnEngine {
         evaluation_artifacts.session_id = turn_request.context.thread_id.0.clone();
         evaluation_artifacts.runtime_id = "native-turn".into();
         evaluation_artifacts.projection_metrics.elapsed_ms = Some(metrics.elapsed_ms);
+        evaluation_artifacts.projection_metrics.provider_retries = Some(metrics.provider_retries);
         evaluation_artifacts.projection_metrics.tool_calls = Some(metrics.tool_calls_made as u64);
         evaluation_artifacts.projection_metrics.tool_errors = Some(metrics.tool_errors as u64);
         let status = if turn_cancel.is_cancelled() {

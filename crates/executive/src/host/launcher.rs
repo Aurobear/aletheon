@@ -172,6 +172,7 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
         iterations = result.metrics.iterations,
         tool_calls = result.metrics.tool_calls_made,
         tool_errors = result.metrics.tool_errors,
+        provider_retries = result.metrics.provider_retries,
         success,
         "Execution complete"
     );
@@ -179,6 +180,7 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
         serde_json::to_string_pretty(&serde_json::json!({
             "success": success, "operation_id": operation_id.0, "response": result.output, "iterations": result.metrics.iterations,
             "tool_calls_made": result.metrics.tool_calls_made, "tool_errors": result.metrics.tool_errors,
+            "provider_retries": result.metrics.provider_retries,
             "elapsed_ms": result.metrics.elapsed_ms,
         }))?
     } else {

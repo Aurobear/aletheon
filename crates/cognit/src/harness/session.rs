@@ -663,6 +663,7 @@ impl CognitiveSession for LinearCognitiveSession {
                 metrics: FabricTurnMetrics {
                     tool_calls_made: metrics.tool_calls_made,
                     tool_errors: metrics.tool_errors,
+                    provider_retries: metrics.provider_retries,
                     elapsed_ms: metrics.elapsed_ms,
                     iterations: metrics.iterations,
                     completed_normally: metrics.completed_normally,
@@ -810,6 +811,7 @@ impl CognitiveSession for LinearCognitiveSession {
             metrics: FabricTurnMetrics {
                 tool_calls_made: metrics.tool_calls_made,
                 tool_errors: metrics.tool_errors,
+                provider_retries: metrics.provider_retries,
                 elapsed_ms: metrics.elapsed_ms,
                 iterations: metrics.iterations,
                 completed_normally: metrics.completed_normally,

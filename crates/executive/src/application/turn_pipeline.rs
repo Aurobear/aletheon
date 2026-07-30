@@ -1091,6 +1091,7 @@ impl TurnPipeline {
             metrics: fabric::TurnMetrics {
                 tool_calls_made: 0,
                 tool_errors: 0,
+                provider_retries: 0,
                 elapsed_ms: 0,
                 iterations: 0,
                 completed_normally: false,
@@ -1219,7 +1220,7 @@ impl TurnPipeline {
                         inference_rounds: Some(
                             metrics.iterations.try_into().unwrap_or(u64::MAX),
                         ),
-                        provider_retries: None,
+                        provider_retries: Some(metrics.provider_retries),
                         tool_calls: Some(metrics.tool_calls_made as u64),
                         tool_errors: Some(metrics.tool_errors as u64),
                         cumulative_input_tokens: Some(acc_tokens_in),
@@ -1235,6 +1236,7 @@ impl TurnPipeline {
                 "metrics": {
                     "tool_calls_made": metrics.tool_calls_made,
                     "tool_errors": metrics.tool_errors,
+                    "provider_retries": metrics.provider_retries,
                     "elapsed_ms": metrics.elapsed_ms,
                     "iterations": metrics.iterations,
                     "completed_normally": metrics.completed_normally

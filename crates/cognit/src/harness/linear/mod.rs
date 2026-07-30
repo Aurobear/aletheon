@@ -1523,6 +1523,51 @@ mod tests {
     struct TextLlm {
         calls: Mutex<usize>,
     }
+
+    struct TransientThenTextLlm {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for TransientThenTextLlm {
+        async fn complete(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> anyhow::Result<LlmResponse> {
+            unreachable!("streaming test only")
+        }
+
+        async fn complete_stream(
+            &self,
+            _m: &[Message],
+            _t: &[ToolDefinition],
+        ) -> anyhow::Result<LlmStream> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(
+                    crate::adapters::inference::provider::InferenceFailure::transient(
+                        "provider_unavailable",
+                    ),
+                );
+            }
+            Ok(Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::TextDelta {
+                    text: "recovered".into(),
+                }),
+                Ok(StreamChunk::Done {
+                    stop_reason: StopReason::EndTurn,
+                }),
+            ])))
+        }
+
+        fn name(&self) -> &str {
+            "transient-then-text"
+        }
+
+        fn max_context_length(&self) -> usize {
+            100_000
+        }
+    }
     #[async_trait]
     impl LlmProvider for TextLlm {
         async fn complete(
@@ -1638,6 +1683,42 @@ mod tests {
             crate::harness::event_sink::Event::TurnDone { result: Ok(text) }
                 if text == "answer 2"
         )));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn streaming_transient_provider_retry_is_counted_separately() {
+        let mut lp = ReActLoop::new(
+            HarnessConfig {
+                max_iterations: 2,
+                learning_enabled: false,
+                compaction_enabled: false,
+                ..HarnessConfig::default()
+            },
+            Box::new(NoopCompressor),
+        );
+        lp.messages.push(Message::user("go"));
+        let llm = TransientThenTextLlm {
+            calls: AtomicUsize::new(0),
+        };
+        let sink = CollectingEventSink(Mutex::new(Vec::new()));
+
+        let (out, metrics) = lp
+            .run_streaming(
+                &llm,
+                &[],
+                |_id: &str, _name: &str, _input: &serde_json::Value| async {
+                    unreachable!("no tool calls expected")
+                },
+                || async { Ok(Vec::new()) },
+                &sink,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(out, "recovered");
+        assert_eq!(metrics.iterations, 1);
+        assert_eq!(metrics.provider_retries, 1);
+        assert_eq!(llm.calls.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
