@@ -58,6 +58,7 @@ pub struct DaemonConfig {
     pub backpressure: crate::composition::config::BackpressureConfig,
     /// Root-scoped multi-Agent topology and rollout limits.
     pub agent_admission: cognit::config::AgentAdmissionConfig,
+    pub multi_agent: crate::composition::config::MultiAgentConfig,
     /// 0 = unlimited agent iterations; populated from AppConfig.agent.max_iterations.
     pub agent_max_iterations: usize,
     /// Percent of the context window at which automatic compaction triggers;

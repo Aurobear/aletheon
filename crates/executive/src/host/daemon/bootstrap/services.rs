@@ -33,6 +33,8 @@ pub(super) struct AgentServices {
     pub agent_live_runs: Arc<crate::application::agent_control::LiveAgentRuns>,
     pub capability_rollups:
         Arc<crate::application::capability_benchmark::CapabilityRollupProjectionSink>,
+    pub role_workflow_factory:
+        Option<Arc<crate::application::cognitive_role_workflow::RoleWorkflowFactory>>,
 }
 
 pub(super) async fn build_agent_services(
@@ -101,13 +103,15 @@ pub(super) async fn build_agent_services(
                 )
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?,
             ),
-            agent_runtimes,
+            agent_runtimes.clone(),
             canonical_event_spine.clone(),
         )
         .with_runtime_profile_requirements(runtime_profile_requirements)
         .with_capability_history(capability_rollups.clone())
         .with_cognitive_task_admission(Arc::new(
-            crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(agora),
+            crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(
+                agora.clone(),
+            ),
         ))
         .with_budget_controller(kernel.budget_controller())
         .with_event_spine(canonical_event_spine.clone())
@@ -162,6 +166,53 @@ pub(super) async fn build_agent_services(
         "Agent terminal resource cleanup completed"
     );
     let agent_control: Arc<dyn fabric::AgentControlPort> = agent_control_service.clone();
+    let role_workflow_factory = if agent_runtimes
+        .catalog()
+        .iter()
+        .any(|manifest| manifest.id == crate::adapters::runtime::NATIVE_COGNIT_RUNTIME_ID)
+    {
+        let base_profile = agent_profiles_for_tools
+            .get("code-agent")
+            .or_else(|| {
+                agent_profiles_for_tools
+                    .values()
+                    .min_by_key(|profile| &profile.id.0)
+            })
+            .cloned();
+        base_profile
+            .map(|profile| {
+                let launch = crate::application::cognitive_role_workflow::RoleLaunchProfile {
+                    profile_id: profile.id,
+                    allowed_tools: profile.allowed_tools,
+                };
+                let profiles = [
+                    fabric::cognitive_workflow::CognitiveRole::Planner,
+                    fabric::cognitive_workflow::CognitiveRole::Explorer,
+                    fabric::cognitive_workflow::CognitiveRole::Executor,
+                    fabric::cognitive_workflow::CognitiveRole::Tester,
+                    fabric::cognitive_workflow::CognitiveRole::Reviewer,
+                    fabric::cognitive_workflow::CognitiveRole::Fixer,
+                ]
+                .into_iter()
+                .map(|role| (role, launch.clone()))
+                .collect();
+                crate::application::cognitive_role_workflow::RoleWorkflowFactory::new(
+                    agent_control.clone(),
+                    Arc::new(
+                        crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(
+                            agora.clone(),
+                        ),
+                    ),
+                    fabric::RuntimeId(crate::adapters::runtime::NATIVE_COGNIT_RUNTIME_ID.into()),
+                    profiles,
+                    10 * 60 * 1_000,
+                )
+                .map(Arc::new)
+            })
+            .transpose()?
+    } else {
+        None
+    };
     let agent_live_runs = agent_control_service.live_runs();
     let agent_shutdown_cancel = cancel_token.clone();
     tokio::spawn(async move {
@@ -184,6 +235,7 @@ pub(super) async fn build_agent_services(
         event_projections,
         agent_live_runs,
         capability_rollups,
+        role_workflow_factory,
     })
 }
 
@@ -236,6 +288,9 @@ pub(super) async fn build_turn_services(
     agent_live_runs: Arc<crate::application::agent_control::LiveAgentRuns>,
     capability_rollups: Arc<
         crate::application::capability_benchmark::CapabilityRollupProjectionSink,
+    >,
+    role_workflow_factory: Option<
+        Arc<crate::application::cognitive_role_workflow::RoleWorkflowFactory>,
     >,
     canonical_event_spine: Arc<crate::adapters::events::SqliteEventSpine>,
     event_projections: Arc<crate::adapters::events::DefaultEventProjectionSet>,
@@ -453,6 +508,12 @@ pub(super) async fn build_turn_services(
     ));
     let lifecycle_registry =
         Arc::new(crate::application::lifecycle_contributors::LifecycleRegistry::default());
+    let active_profile_port: Arc<
+        dyn crate::application::turn_runtime_ports::ActiveAgentProfilePort,
+    > = Arc::new(super::turn_runtime::ProductionActiveAgentProfile::new(
+        active_profile.clone(),
+        agent_profile_registry.clone(),
+    ));
     let pipeline = Arc::new(crate::application::TurnPipeline::new(
         crate::application::turn_pipeline::TurnPipelineResources {
             session_gateway: session_gateway.clone(),
@@ -474,13 +535,9 @@ pub(super) async fn build_turn_services(
             lifecycle: lifecycle_registry.clone(),
             lifecycle_enabled: grok_hardening.lifecycle_contributors,
             event_bus: event_bus.clone(),
+            role_workflow_factory,
+            active_profile: active_profile_port.clone(),
         },
-    ));
-    let active_profile_port: Arc<
-        dyn crate::application::turn_runtime_ports::ActiveAgentProfilePort,
-    > = Arc::new(super::turn_runtime::ProductionActiveAgentProfile::new(
-        active_profile.clone(),
-        agent_profile_registry.clone(),
     ));
     let turn_orchestrator = Arc::new(crate::application::DaemonTurnOrchestrator::new(
         crate::application::daemon_turn::DaemonTurnResources {

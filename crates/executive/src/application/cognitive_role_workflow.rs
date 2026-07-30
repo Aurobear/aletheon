@@ -16,6 +16,7 @@ use fabric::{
     AgentSpawnRequest, AgentWaitRequest, AgoraSpaceId, OperationId, ProcessId, RuntimeId,
     WorkspacePolicy,
 };
+use tokio_util::sync::CancellationToken;
 
 use super::cognitive_workspace::{CognitiveWorkspaceCoordinator, CognitiveWorkspaceError};
 
@@ -25,7 +26,6 @@ pub struct RoleLaunchProfile {
     pub allowed_tools: Vec<String>,
 }
 
-#[derive(Clone)]
 pub struct AgentControlRoleInvoker {
     control: Arc<dyn AgentControlPort>,
     root_agent_id: AgentId,
@@ -35,6 +35,9 @@ pub struct AgentControlRoleInvoker {
     trusted_workspace: WorkspacePolicy,
     profiles: HashMap<CognitiveRole, RoleLaunchProfile>,
     wait_timeout_ms: u64,
+    delegator_authority: fabric::AgentDelegationAuthority,
+    remaining_budget: tokio::sync::Mutex<AgentBudget>,
+    cancellation: CancellationToken,
 }
 
 impl AgentControlRoleInvoker {
@@ -48,6 +51,9 @@ impl AgentControlRoleInvoker {
         trusted_workspace: WorkspacePolicy,
         profiles: HashMap<CognitiveRole, RoleLaunchProfile>,
         wait_timeout_ms: u64,
+        delegator_authority: fabric::AgentDelegationAuthority,
+        remaining_budget: AgentBudget,
+        cancellation: CancellationToken,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(wait_timeout_ms > 0, "role wait timeout must be nonzero");
         Ok(Self {
@@ -59,7 +65,82 @@ impl AgentControlRoleInvoker {
             trusted_workspace,
             profiles,
             wait_timeout_ms,
+            delegator_authority,
+            remaining_budget: tokio::sync::Mutex::new(remaining_budget),
+            cancellation,
         })
+    }
+}
+
+#[derive(Clone)]
+pub struct RoleWorkflowFactory {
+    control: Arc<dyn AgentControlPort>,
+    workspace: Arc<CognitiveWorkspaceCoordinator>,
+    runtime_id: RuntimeId,
+    profiles: HashMap<CognitiveRole, RoleLaunchProfile>,
+    wait_timeout_ms: u64,
+}
+
+#[derive(Clone)]
+pub struct TurnRoleLaunchContext {
+    pub root_agent_id: AgentId,
+    pub parent_agent_id: AgentId,
+    pub parent_process_id: ProcessId,
+    pub workspace: WorkspacePolicy,
+    pub delegator_authority: fabric::AgentDelegationAuthority,
+    pub remaining_budget: AgentBudget,
+    pub cancellation: CancellationToken,
+}
+
+impl RoleWorkflowFactory {
+    pub fn new(
+        control: Arc<dyn AgentControlPort>,
+        workspace: Arc<CognitiveWorkspaceCoordinator>,
+        runtime_id: RuntimeId,
+        profiles: HashMap<CognitiveRole, RoleLaunchProfile>,
+        wait_timeout_ms: u64,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(wait_timeout_ms > 0, "role wait timeout must be nonzero");
+        for role in [
+            CognitiveRole::Planner,
+            CognitiveRole::Explorer,
+            CognitiveRole::Executor,
+            CognitiveRole::Tester,
+            CognitiveRole::Reviewer,
+            CognitiveRole::Fixer,
+        ] {
+            anyhow::ensure!(
+                profiles.contains_key(&role),
+                "missing launch profile for {role:?}"
+            );
+        }
+        Ok(Self {
+            control,
+            workspace,
+            runtime_id,
+            profiles,
+            wait_timeout_ms,
+        })
+    }
+
+    pub fn bind(&self, context: TurnRoleLaunchContext) -> anyhow::Result<CognitiveRoleWorkflow> {
+        let invoker = AgentControlRoleInvoker::new(
+            self.control.clone(),
+            context.root_agent_id,
+            Some(context.parent_agent_id),
+            Some(context.parent_process_id),
+            self.runtime_id.clone(),
+            context.workspace,
+            self.profiles.clone(),
+            self.wait_timeout_ms,
+            context.delegator_authority,
+            context.remaining_budget,
+            context.cancellation,
+        )?;
+        Ok(CognitiveRoleWorkflow::new(
+            self.workspace.clone(),
+            Arc::new(invoker),
+        ))
     }
 }
 
@@ -96,6 +177,35 @@ impl CognitiveRoleInvoker for AgentControlRoleInvoker {
             "Execute this versioned cognitive task packet. Return only one JSON CognitiveRoleOutput object whose projection_id and workspace_version exactly match the packet; prose cannot advance the stage.\n{packet_json}"
         );
         let budget = &packet.role_profile.budget;
+        let mut remaining = self.remaining_budget.lock().await;
+        let child_budget = AgentBudget {
+            max_input_tokens: budget.max_input_tokens.min(remaining.max_input_tokens),
+            max_output_tokens: budget.max_output_tokens.min(remaining.max_output_tokens),
+            max_tool_calls: budget.max_tool_calls.min(remaining.max_tool_calls),
+            max_elapsed_ms: budget.max_elapsed_ms.min(remaining.max_elapsed_ms),
+            max_cost_usd: remaining.max_cost_usd,
+            max_depth: 1.min(remaining.max_depth),
+        };
+        child_budget.validate().map_err(anyhow::Error::new)?;
+        // Sequential execution makes this reservation the only outstanding
+        // role budget. It remains charged on failure; unused dimensions are
+        // released from authoritative terminal usage below.
+        remaining.max_input_tokens = remaining
+            .max_input_tokens
+            .saturating_sub(child_budget.max_input_tokens);
+        remaining.max_output_tokens = remaining
+            .max_output_tokens
+            .saturating_sub(child_budget.max_output_tokens);
+        remaining.max_tool_calls = remaining
+            .max_tool_calls
+            .saturating_sub(child_budget.max_tool_calls);
+        remaining.max_elapsed_ms = remaining
+            .max_elapsed_ms
+            .saturating_sub(child_budget.max_elapsed_ms);
+        if remaining.max_cost_usd.is_some() {
+            remaining.max_cost_usd = Some(0.0);
+        }
+        drop(remaining);
         let handle = self
             .control
             .spawn(AgentSpawnRequest {
@@ -105,33 +215,29 @@ impl CognitiveRoleInvoker for AgentControlRoleInvoker {
                 profile_id: launch.profile_id.clone(),
                 runtime_id: self.runtime_id.clone(),
                 trusted_workspace: Some(self.trusted_workspace.clone()),
-                delegator_authority: None,
+                delegator_authority: Some(self.delegator_authority.clone()),
                 cognitive_binding: Some(binding),
                 task,
                 context: AgentContextFork::None,
                 broadcast_refs: Vec::new(),
                 allowed_tools: launch.allowed_tools.clone(),
-                budget: AgentBudget {
-                    max_input_tokens: budget.max_input_tokens,
-                    max_output_tokens: budget.max_output_tokens,
-                    max_tool_calls: budget.max_tool_calls,
-                    max_elapsed_ms: budget.max_elapsed_ms,
-                    max_cost_usd: None,
-                    max_depth: 1,
-                },
+                budget: child_budget.clone(),
                 background_decls: Vec::new(),
             })
             .await
             .map_err(anyhow::Error::new)?;
-        let snapshot = self
-            .control
-            .wait(AgentWaitRequest {
-                caller_root_agent_id: self.root_agent_id,
-                agent_id: handle.agent_id,
-                timeout_ms: self.wait_timeout_ms.min(budget.max_elapsed_ms),
-            })
-            .await
-            .map_err(anyhow::Error::new)?;
+        let wait_request = AgentWaitRequest {
+            caller_root_agent_id: self.root_agent_id,
+            agent_id: handle.agent_id,
+            timeout_ms: self.wait_timeout_ms.min(child_budget.max_elapsed_ms),
+        };
+        let snapshot = tokio::select! {
+            snapshot = self.control.wait(wait_request.clone()) => snapshot.map_err(anyhow::Error::new)?,
+            _ = self.cancellation.cancelled() => {
+                self.control.cancel(self.root_agent_id, handle.agent_id).await.map_err(anyhow::Error::new)?;
+                self.control.wait(wait_request).await.map_err(anyhow::Error::new)?
+            }
+        };
         anyhow::ensure!(
             snapshot.status.is_terminal(),
             "Agent wait returned a non-terminal snapshot"
@@ -145,6 +251,39 @@ impl CognitiveRoleInvoker for AgentControlRoleInvoker {
         let result = snapshot.result.ok_or_else(|| {
             anyhow::anyhow!("successful cognitive role has no authoritative result")
         })?;
+        let mut remaining = self.remaining_budget.lock().await;
+        remaining.max_input_tokens = remaining.max_input_tokens.saturating_add(
+            child_budget
+                .max_input_tokens
+                .saturating_sub(result.usage.input_tokens),
+        );
+        remaining.max_output_tokens = remaining.max_output_tokens.saturating_add(
+            child_budget
+                .max_output_tokens
+                .saturating_sub(result.usage.output_tokens),
+        );
+        remaining.max_elapsed_ms = remaining.max_elapsed_ms.saturating_add(
+            child_budget
+                .max_elapsed_ms
+                .saturating_sub(result.usage.elapsed_ms),
+        );
+        let used_tools = result
+            .usage
+            .observability
+            .tool_calls
+            .unwrap_or(u64::from(child_budget.max_tool_calls));
+        remaining.max_tool_calls = remaining.max_tool_calls.saturating_add(
+            child_budget
+                .max_tool_calls
+                .saturating_sub(used_tools.try_into().unwrap_or(u32::MAX)),
+        );
+        if let Some(reserved) = child_budget.max_cost_usd {
+            remaining.max_cost_usd = Some(
+                remaining.max_cost_usd.unwrap_or_default()
+                    + (reserved - result.usage.cost_usd.unwrap_or(reserved)).max(0.0),
+            );
+        }
+        drop(remaining);
         let output: CognitiveRoleOutput =
             serde_json::from_str(&result.output).map_err(|error| {
                 anyhow::anyhow!("cognitive role output is not strict JSON: {error}")
@@ -170,7 +309,7 @@ pub struct CodingWorkflowRequest {
     pub expected_evidence: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CodingWorkflowReceipt {
     pub workspace_version: u64,
     pub current_owner: ProcessId,
@@ -190,7 +329,7 @@ pub struct AcceptanceWorkflowRequest {
     pub expected_evidence: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AcceptanceWorkflowReceipt {
     pub workspace_version: u64,
     pub current_owner: ProcessId,
@@ -200,7 +339,7 @@ pub struct AcceptanceWorkflowReceipt {
     pub resolved_finding_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FullCodingWorkflowReceipt {
     pub coding: CodingWorkflowReceipt,
     pub acceptance: AcceptanceWorkflowReceipt,

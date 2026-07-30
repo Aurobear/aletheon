@@ -514,6 +514,7 @@ impl RequestHandler {
             max_iterations: config.agent_max_iterations,
             compaction_threshold_percent: config.agent_compaction_threshold_percent,
             harness_kind: config.harness_kind,
+            multi_agent: config.multi_agent.clone(),
             ..Default::default()
         };
         let runtime_config_snapshot = runtime_config.clone();
@@ -1134,6 +1135,7 @@ impl RequestHandler {
             param_registry.clone(),
             agent_svc.agent_live_runs,
             agent_svc.capability_rollups,
+            agent_svc.role_workflow_factory,
             canonical_event_spine.clone(),
             agent_svc.event_projections,
             agent_profile_registry.clone(),

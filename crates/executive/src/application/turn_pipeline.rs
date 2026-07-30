@@ -64,6 +64,10 @@ pub struct TurnPipeline {
     pub(crate) lifecycle: Arc<crate::application::lifecycle_contributors::LifecycleRegistry>,
     pub(crate) lifecycle_enabled: bool,
     pub(crate) event_bus: Option<Arc<CanonicalEventBus>>,
+    pub(crate) role_workflow_factory:
+        Option<Arc<crate::application::cognitive_role_workflow::RoleWorkflowFactory>>,
+    pub(crate) active_profile:
+        Arc<dyn crate::application::turn_runtime_ports::ActiveAgentProfilePort>,
 }
 
 pub(crate) struct TurnPipelineResources {
@@ -89,6 +93,10 @@ pub(crate) struct TurnPipelineResources {
     pub(crate) lifecycle: Arc<crate::application::lifecycle_contributors::LifecycleRegistry>,
     pub(crate) lifecycle_enabled: bool,
     pub(crate) event_bus: Option<Arc<CanonicalEventBus>>,
+    pub(crate) role_workflow_factory:
+        Option<Arc<crate::application::cognitive_role_workflow::RoleWorkflowFactory>>,
+    pub(crate) active_profile:
+        Arc<dyn crate::application::turn_runtime_ports::ActiveAgentProfilePort>,
 }
 
 impl TurnPipeline {
@@ -113,6 +121,8 @@ impl TurnPipeline {
             lifecycle: resources.lifecycle,
             lifecycle_enabled: resources.lifecycle_enabled,
             event_bus: resources.event_bus,
+            role_workflow_factory: resources.role_workflow_factory,
+            active_profile: resources.active_profile,
         }
     }
 
@@ -179,9 +189,9 @@ impl TurnPipeline {
         request: &TurnRequest,
         objective: &str,
         owner: ProcessId,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<(fabric::cognitive_workflow::CognitiveTaskNodeId, u64)>> {
         let Some(agora) = &self.agora else {
-            return Ok(());
+            return Ok(None);
         };
         use fabric::cognitive_workflow::{
             CognitiveRole, CognitiveStage, CognitiveTaskNode, CognitiveTaskNodeId,
@@ -189,12 +199,17 @@ impl TurnPipeline {
         };
         let space = AgoraSpaceId(request.context.thread_id.0.clone());
         let tasks = agora.list_tasks(space.clone()).await?;
-        if !tasks.tasks.is_empty() {
-            return Ok(());
+        let turn_id = request
+            .context
+            .turn_id
+            .ok_or_else(|| anyhow::anyhow!("cognitive root requires canonical TurnId"))?;
+        let root_id = CognitiveTaskNodeId(format!("root:{}", turn_id.0));
+        if tasks.tasks.iter().any(|task| task.id == root_id) {
+            return Ok(Some((root_id, tasks.workspace_version)));
         }
         let bounded_objective = objective.chars().take(4096).collect::<String>();
         let task = CognitiveTaskNode {
-            id: CognitiveTaskNodeId("root".into()),
+            id: root_id.clone(),
             parent_id: None,
             objective: bounded_objective,
             role: CognitiveRole::Root,
@@ -218,15 +233,155 @@ impl TurnPipeline {
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
-            required_artifact_kinds: Vec::new(),
+            required_artifact_kinds: vec![
+                fabric::cognitive_workflow::CognitiveArtifactKind::TaskContract,
+            ],
             artifact_refs: Vec::new(),
             unresolved_finding_ids: Vec::new(),
         };
-        crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(agora.clone())
-            .commit_task_at(space, tasks.workspace_version, task, owner)
+        let workspace = crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(
+            agora.clone(),
+        );
+        let version = workspace
+            .commit_task_at(space.clone(), tasks.workspace_version, task, owner)
             .await
             .map_err(anyhow::Error::new)?;
-        Ok(())
+        let requirement_refs = request
+            .evaluation_contract
+            .as_ref()
+            .map(|contract| {
+                contract
+                    .requirement_refs
+                    .iter()
+                    .map(|item| item.0.clone())
+                    .collect()
+            })
+            .unwrap_or_else(|| vec![format!("turn:{}:objective", turn_id.0)]);
+        let acceptance_criteria = request
+            .evaluation_contract
+            .as_ref()
+            .map(|contract| {
+                contract
+                    .required_gates
+                    .iter()
+                    .map(|gate| gate.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let contract = fabric::cognitive_workflow::CognitiveArtifactEnvelope::proposed(
+            space.clone(),
+            root_id.clone(),
+            owner,
+            vec![format!("turn:{}", turn_id.0)],
+            Vec::new(),
+            1.0,
+            fabric::cognitive_workflow::CognitiveArtifact::TaskContract(
+                fabric::cognitive_workflow::CognitiveTaskContractArtifact {
+                    objective: objective.chars().take(4096).collect(),
+                    requirement_refs,
+                    acceptance_criteria,
+                    instruction_refs: Vec::new(),
+                    workspace_scope: request
+                        .context
+                        .workspace
+                        .writable_roots()
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect(),
+                },
+            ),
+        )?;
+        let version = workspace
+            .commit_artifact_at(space, version, contract, owner)
+            .await
+            .map_err(anyhow::Error::new)?;
+        Ok(Some((root_id, version)))
+    }
+
+    async fn prepare_role_graph(
+        &self,
+        request: &TurnRequest,
+        objective: &str,
+        main_pid: ProcessId,
+        root: Option<(fabric::cognitive_workflow::CognitiveTaskNodeId, u64)>,
+        cancellation: CancellationToken,
+    ) -> anyhow::Result<
+        Option<(
+            crate::application::cognitive_role_workflow::CognitiveRoleWorkflow,
+            crate::application::cognitive_role_workflow::CodingWorkflowRequest,
+        )>,
+    > {
+        use cognit::TaskDecompositionPolicy;
+        let config = self.runtime_ports.config.config().await;
+        let profile = self.active_profile.snapshot().await?;
+        let process = self.kernel.inspect_process(main_pid).await?;
+        let budget = fabric::AgentBudget {
+            max_input_tokens: profile.max_input_tokens,
+            max_output_tokens: profile.max_output_tokens,
+            max_tool_calls: profile.max_tool_calls,
+            max_elapsed_ms: profile.max_elapsed_ms,
+            max_cost_usd: None,
+            max_depth: 1,
+        };
+        let mut allowed_tools = profile.allowed_tools.iter().cloned().collect::<Vec<_>>();
+        allowed_tools.sort();
+        let authority = fabric::AgentDelegationAuthority::new(
+            Some(request.context.workspace.clone()),
+            allowed_tools,
+            budget.clone(),
+        );
+        let prerequisites_available = root.is_some() && self.role_workflow_factory.is_some();
+        let decomposition = cognit::DeterministicTaskDecompositionPolicy.decompose(
+            &cognit::DecompositionContext {
+                task_kind: request.requested_task_kind,
+                requirements: request.requirements.clone(),
+                multi_agent_enabled: config.multi_agent.enabled,
+                automatic_for_coding: config.multi_agent.automatic_for_coding,
+                agora_available: root.is_some(),
+                parent_authority: prerequisites_available.then_some(authority.clone()),
+                remaining_budget: budget.clone(),
+                objective: objective.to_owned(),
+            },
+        )?;
+        let cognit::TaskDecomposition::RoleGraph {
+            workspace_scope,
+            allowed_capabilities,
+            expected_evidence,
+            ..
+        } = decomposition
+        else {
+            return Ok(None);
+        };
+        let (task_node_id, expected_workspace_version) =
+            root.ok_or_else(|| anyhow::anyhow!("role graph root task unavailable"))?;
+        let factory = self
+            .role_workflow_factory
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("role workflow factory unavailable"))?;
+        let workflow = factory.bind(
+            crate::application::cognitive_role_workflow::TurnRoleLaunchContext {
+                root_agent_id: process.agent_id,
+                parent_agent_id: process.agent_id,
+                parent_process_id: main_pid,
+                workspace: request.context.workspace.clone(),
+                delegator_authority: authority,
+                remaining_budget: budget,
+                cancellation,
+            },
+        )?;
+        Ok(Some((
+            workflow,
+            crate::application::cognitive_role_workflow::CodingWorkflowRequest {
+                space: AgoraSpaceId(request.context.thread_id.0.clone()),
+                task_node_id,
+                expected_workspace_version,
+                current_owner: main_pid,
+                workspace_scope,
+                project_instructions: Vec::new(),
+                allowed_capabilities,
+                expected_evidence,
+            },
+        )))
     }
 
     async fn dispatch_lifecycle(
@@ -358,7 +513,17 @@ impl TurnPipeline {
         // one pending clarification in this scoped Agora space.
         self.resume_single_pending_clarification(&turn_request, &message)
             .await?;
-        self.ensure_root_cognitive_task(&turn_request, &message, main_pid)
+        let cognitive_root = self
+            .ensure_root_cognitive_task(&turn_request, &message, main_pid)
+            .await?;
+        let role_graph = self
+            .prepare_role_graph(
+                &turn_request,
+                &message,
+                main_pid,
+                cognitive_root,
+                scope_token.clone(),
+            )
             .await?;
 
         let checkpoint_id = self
@@ -794,9 +959,24 @@ impl TurnPipeline {
         pipeline_lifecycle.apply(TurnPipelineEvent::ToolLoopStarted)?;
 
         // Spawn ReAct loop
-        let mut react_task = tokio::spawn(submit_streaming_daemon_turn(
-            turn_request,
-            DaemonStreamingTurnContext {
+        let mut react_task = if let Some((workflow, workflow_request)) = role_graph {
+            tokio::spawn(async move {
+                let started = std::time::Instant::now();
+                let receipt = workflow.run_full_coding_workflow(workflow_request).await?;
+                Ok(fabric::TurnResult {
+                    output: serde_json::to_string(&receipt)?,
+                    stop: fabric::TurnStop::Completed,
+                    metrics: fabric::TurnMetrics {
+                        elapsed_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                        completed_normally: true,
+                        ..Default::default()
+                    },
+                })
+            })
+        } else {
+            tokio::spawn(submit_streaming_daemon_turn(
+                turn_request,
+                DaemonStreamingTurnContext {
                 config,
                 llm: llm.clone(),
                 tool_defs,
@@ -810,8 +990,9 @@ impl TurnPipeline {
                 session_input: self.session_input.clone(),
                 prompt_queue_enabled: self.prompt_queue_enabled,
                 capability_receipts,
-            },
-        ));
+                },
+            ))
+        };
 
         // -- Event + approval pumping loop --
         let notify_tx = self.notify_tx.clone();

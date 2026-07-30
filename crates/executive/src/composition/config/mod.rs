@@ -20,7 +20,7 @@ mod supplemental_memory;
 
 pub use agent::{
     AgentConfig, AgentLoopConfig, CircuitBreakerConfig, EvolutionSettings, ExecutiveConfig,
-    HooksConfig, PerceptionConfig,
+    HooksConfig, MultiAgentConfig, PerceptionConfig,
 };
 pub use backpressure::BackpressureConfig;
 pub use channel::TelegramChannelConfig;
@@ -88,6 +88,8 @@ pub struct ProfileOverride {
 #[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
     pub agent: AgentConfig,
+    #[serde(default)]
+    pub multi_agent: MultiAgentConfig,
     pub providers: Vec<ProviderConfig>,
     pub model_aliases: HashMap<String, String>,
     pub model_routing: ModelRoutingConfig,

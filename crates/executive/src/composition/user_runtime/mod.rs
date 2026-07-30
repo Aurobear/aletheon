@@ -94,6 +94,7 @@ impl UserRuntimeConfig {
             deployment,
             backpressure: app.backpressure.clone(),
             agent_admission: app.agent.admission.clone(),
+            multi_agent: app.multi_agent.clone(),
             agent_max_iterations: app.agent.max_iterations,
             agent_compaction_threshold_percent: app.agent.compaction_threshold,
             harness_kind: app.agent.harness_kind,

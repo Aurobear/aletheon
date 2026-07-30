@@ -782,6 +782,57 @@
         }
       ]
     },
+    "EvaluationMode": {
+      "enum": [
+        "shadow",
+        "enforce"
+      ],
+      "type": "string"
+    },
+    "EvaluationSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "coding_rubric": {
+          "default": "coding-v2",
+          "type": "string"
+        },
+        "default_mode": {
+          "$ref": "#/$defs/EvaluationMode",
+          "default": "shadow"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max_evaluation_ms": {
+          "default": 5000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_confidence_millis": {
+          "default": 700,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_evidence_coverage_millis": {
+          "default": 600,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_score_millis": {
+          "default": 70000,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "EvolutionSettings": {
       "additionalProperties": false,
       "description": "Self-evolution loop settings. Default OFF (HIGH-risk autonomy).",
@@ -1557,6 +1608,22 @@
       },
       "type": "object"
     },
+    "MultiAgentConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "automatic_for_coding": {
+          "default": false,
+          "description": "Automatically activate only for an explicit typed coding task.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Master production activation gate. Default-off until installed-runtime\nacceptance proves provider coordination and child terminal behavior.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "NetworkDefaultAction": {
       "enum": [
         "allow",
@@ -2310,6 +2377,18 @@
         }
       }
     },
+    "evaluation": {
+      "$ref": "#/$defs/EvaluationSettings",
+      "default": {
+        "coding_rubric": "coding-v2",
+        "default_mode": "shadow",
+        "enabled": false,
+        "max_evaluation_ms": 5000,
+        "min_confidence_millis": 700,
+        "min_evidence_coverage_millis": 600,
+        "min_score_millis": 70000
+      }
+    },
     "evolution": {
       "$ref": "#/$defs/EvolutionSettings",
       "default": {
@@ -2453,6 +2532,13 @@
         "default": null,
         "multimodal": null,
         "reasoning": null
+      }
+    },
+    "multi_agent": {
+      "$ref": "#/$defs/MultiAgentConfig",
+      "default": {
+        "automatic_for_coding": false,
+        "enabled": false
       }
     },
     "network_policy": {
