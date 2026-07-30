@@ -29,6 +29,12 @@ pub struct TurnEvaluationArtifacts {
     /// Typed host runtime identity. This is never inferred from model output.
     #[serde(default)]
     pub runtime_id: String,
+    /// Typed effective provider/model route selected by the host.
+    #[serde(default)]
+    pub effective_model_id: String,
+    /// Typed display name for the effective model route.
+    #[serde(default)]
+    pub model_display_name: String,
     pub workspace: Option<fabric::WorkspacePolicy>,
     pub profile_name: String,
     pub capability_receipts: Vec<fabric::CapabilityTerminalReceipt>,

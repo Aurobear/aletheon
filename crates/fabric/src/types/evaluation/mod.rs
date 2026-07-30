@@ -10,7 +10,8 @@ pub use contract::{
 };
 pub use evidence::{EvaluationEvidenceSnapshot, EvaluationSnapshotId};
 pub use receipt::{
-    EvaluationDecision, EvaluationReceipt, EvaluationReceiptId, EvaluationReceiptRef,
+    EvaluationDecision, EvaluationExecutionContext, EvaluationReceipt, EvaluationReceiptId,
+    EvaluationReceiptRef,
 };
 
 pub const EVALUATION_SCHEMA_V1: u16 = 1;

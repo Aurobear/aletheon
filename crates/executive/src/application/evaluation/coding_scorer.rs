@@ -294,6 +294,8 @@ mod tests {
         TurnEvaluationArtifacts {
             session_id: "test-session".into(),
             runtime_id: "test-runtime".into(),
+            effective_model_id: "test-provider/test-model".into(),
+            model_display_name: "test-model".into(),
             workspace: Some(
                 fabric::WorkspacePolicy::from_resolved_roots("/tmp/project".into(), vec![])
                     .unwrap(),

@@ -7,6 +7,8 @@ use fabric::{
     TaskEvaluationContract, TurnRequest, EVALUATION_SCHEMA_V1,
 };
 use kernel::KernelRuntime;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use super::{
     coding_v2_rubric, CodingDimensionScorer, CodingEvidenceCollector,
@@ -150,6 +152,20 @@ impl EvaluationService {
                 report,
                 failed_gates,
                 evaluator: "metacog.deterministic/coding-v2@2".into(),
+                execution: fabric::EvaluationExecutionContext {
+                    runtime_id: artifacts.runtime_id.clone(),
+                    agent_profile: artifacts.profile_name.clone(),
+                    effective_model_id: artifacts.effective_model_id.clone(),
+                    model_display_name: artifacts.model_display_name.clone(),
+                    workspace_boundary_sha256: digest_json(&artifacts.workspace)?,
+                    verification_selection_sha256: digest_json(
+                        &artifacts
+                            .capability_receipts
+                            .iter()
+                            .filter(|receipt| receipt.capability == "validation_run")
+                            .collect::<Vec<_>>(),
+                    )?,
+                },
                 created_at_ms: Utc::now().timestamp_millis(),
             };
             receipt.validate(contract, &snapshot)?;
@@ -167,6 +183,16 @@ impl EvaluationService {
                             session_id: artifacts.session_id.clone(),
                             runtime_id: artifacts.runtime_id.clone(),
                             profile_id: artifacts.profile_name.clone(),
+                            effective_model_id: receipt.execution.effective_model_id.clone(),
+                            model_display_name: receipt.execution.model_display_name.clone(),
+                            workspace_boundary_sha256: receipt
+                                .execution
+                                .workspace_boundary_sha256
+                                .clone(),
+                            verification_selection_sha256: receipt
+                                .execution
+                                .verification_selection_sha256
+                                .clone(),
                             rubric_id: contract.rubric.0.clone(),
                             rubric_version: contract.rubric_version,
                             process_id: owner,
@@ -197,4 +223,8 @@ impl EvaluationService {
             }
         }
     }
+}
+
+fn digest_json(value: &impl Serialize) -> anyhow::Result<String> {
+    Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(value)?)))
 }

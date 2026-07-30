@@ -36,6 +36,23 @@ pub enum EvaluationDecision {
     Indeterminate,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EvaluationExecutionContext {
+    /// Host-owned runtime adapter identity; never inferred from model prose.
+    pub runtime_id: String,
+    /// Effective Agent profile resolved by the host for this turn.
+    pub agent_profile: String,
+    /// Effective provider/model route reported by typed host state.
+    pub effective_model_id: String,
+    /// User-facing model display name reported by typed host state.
+    pub model_display_name: String,
+    /// Digest of the authenticated workspace policy used for scope scoring.
+    pub workspace_boundary_sha256: String,
+    /// Digest of the ordered validation receipts selected for scoring.
+    pub verification_selection_sha256: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvaluationReceipt {
     pub schema_version: u16,
@@ -48,6 +65,10 @@ pub struct EvaluationReceipt {
     pub decision: EvaluationDecision,
     pub failed_gates: Vec<String>,
     pub evaluator: String,
+    /// Durable host correlation needed to compare runtime capability without
+    /// trusting model self-identification or recomputing workspace selection.
+    #[serde(default)]
+    pub execution: EvaluationExecutionContext,
     pub created_at_ms: i64,
 }
 
@@ -178,6 +199,7 @@ mod tests {
             decision: EvaluationDecision::Accepted,
             failed_gates: vec![],
             evaluator: "test".into(),
+            execution: EvaluationExecutionContext::default(),
             created_at_ms: 1,
         };
         assert_eq!(

@@ -117,6 +117,8 @@ impl Fixture {
                         evaluation_artifacts: TurnEvaluationArtifacts {
                             session_id: request.context.thread_id.0.clone(),
                             runtime_id: "test-runtime".into(),
+                            effective_model_id: "test-provider/test-model".into(),
+                            model_display_name: "test-model".into(),
                             workspace: Some(request.context.workspace.clone()),
                             profile_name: "code-agent".into(),
                             capability_receipts: vec![receipt],
@@ -166,6 +168,14 @@ async fn shadow_failure_persists_receipt_before_completed_turn() {
     assert_eq!(result.stop, TurnStop::Completed);
     let receipt = fixture.receipt().await;
     assert_eq!(receipt.decision, EvaluationDecision::ObservedFail);
+    assert_eq!(receipt.execution.runtime_id, "test-runtime");
+    assert_eq!(
+        receipt.execution.effective_model_id,
+        "test-provider/test-model"
+    );
+    assert_eq!(receipt.execution.agent_profile, "code-agent");
+    assert_eq!(receipt.execution.workspace_boundary_sha256.len(), 64);
+    assert_eq!(receipt.execution.verification_selection_sha256.len(), 64);
     assert_eq!(
         fixture
             .kernel

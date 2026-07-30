@@ -30,6 +30,14 @@ pub struct EvaluationProjectionContext {
     pub session_id: String,
     pub runtime_id: String,
     pub profile_id: String,
+    #[serde(default)]
+    pub effective_model_id: String,
+    #[serde(default)]
+    pub model_display_name: String,
+    #[serde(default)]
+    pub workspace_boundary_sha256: String,
+    #[serde(default)]
+    pub verification_selection_sha256: String,
     pub rubric_id: String,
     pub rubric_version: u32,
     pub process_id: fabric::ProcessId,

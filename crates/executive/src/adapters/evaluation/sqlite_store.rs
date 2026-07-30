@@ -441,6 +441,7 @@ mod tests {
             decision: EvaluationDecision::ObservedFail,
             failed_gates: vec!["required_verification_passed".into()],
             evaluator: "test-evaluator".into(),
+            execution: fabric::EvaluationExecutionContext::default(),
             created_at_ms: 2,
         }
     }

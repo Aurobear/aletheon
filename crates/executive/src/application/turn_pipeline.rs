@@ -600,7 +600,8 @@ impl TurnPipeline {
         // the per-turn system context so the model never guesses its identity
         // from training priors or a provider-compatible wire protocol.
         let llm = self.runtime_ports.models.select(&message).await;
-        bind_runtime_facts(&mut request_messages, &llm.runtime_facts());
+        let model_runtime_facts = llm.runtime_facts();
+        bind_runtime_facts(&mut request_messages, &model_runtime_facts);
 
         // -- Governed capability setup --
         // Context Space seed — user turn input is private overlay data, not
@@ -786,6 +787,8 @@ impl TurnPipeline {
         let goal_message_for_gw = goal_message.clone();
         let evaluation_workspace = turn_request.context.workspace.clone();
         let evaluation_profile_name = turn_request.context.permission_profile.0.clone();
+        let evaluation_effective_model_id = model_runtime_facts.effective_model_id.clone();
+        let evaluation_model_display_name = model_runtime_facts.display_name.clone();
 
         pipeline_lifecycle.apply(TurnPipelineEvent::ToolLoopStarted)?;
 
@@ -817,6 +820,8 @@ impl TurnPipeline {
         let mut canonical_items: Vec<fabric::ItemPayload> = Vec::new();
         let mut acc_tokens_in: u64 = 0;
         let mut acc_tokens_out: u64 = 0;
+        let mut acc_cache_read_tokens: u64 = 0;
+        let mut active_context_tokens: Option<u64> = None;
         let mut terminal_events = TerminalEventBuffer::default();
 
         let text = loop {
@@ -942,9 +947,19 @@ impl TurnPipeline {
                                 return Err(error);
                             }
                         }
-                        TurnEventV1::Usage { tokens_in, tokens_out, .. } => {
-                            acc_tokens_in += *tokens_in as u64;
-                            acc_tokens_out += *tokens_out as u64;
+                        TurnEventV1::Usage {
+                            tokens_in,
+                            tokens_out,
+                            cache_hit_tokens,
+                            ..
+                        } => {
+                            acc_tokens_in = acc_tokens_in.saturating_add((*tokens_in).into());
+                            acc_tokens_out = acc_tokens_out.saturating_add((*tokens_out).into());
+                            acc_cache_read_tokens = acc_cache_read_tokens
+                                .saturating_add((*cache_hit_tokens).into());
+                        }
+                        TurnEventV1::ContextUpdate { used_tokens, .. } => {
+                            active_context_tokens = Some((*used_tokens).into());
                         }
                         _ => {}
                     }
@@ -1001,6 +1016,23 @@ impl TurnPipeline {
                         &event,
                     ).await?;
                     let is_terminal = terminal_events.observe(&event);
+                    match &event {
+                        TurnEventV1::Usage {
+                            tokens_in,
+                            tokens_out,
+                            cache_hit_tokens,
+                            ..
+                        } => {
+                            acc_tokens_in = acc_tokens_in.saturating_add((*tokens_in).into());
+                            acc_tokens_out = acc_tokens_out.saturating_add((*tokens_out).into());
+                            acc_cache_read_tokens = acc_cache_read_tokens
+                                .saturating_add((*cache_hit_tokens).into());
+                        }
+                        TurnEventV1::ContextUpdate { used_tokens, .. } => {
+                            active_context_tokens = Some((*used_tokens).into());
+                        }
+                        _ => {}
+                    }
                     if !is_terminal {
                         let sender = notify_tx.lock().await.clone();
                         if let Some(tx) = sender {
@@ -1173,6 +1205,8 @@ impl TurnPipeline {
             crate::application::evaluation::TurnEvaluationArtifacts {
                 session_id: session_id_for_agora.clone(),
                 runtime_id: "native-turn".into(),
+                effective_model_id: evaluation_effective_model_id,
+                model_display_name: evaluation_model_display_name,
                 workspace: Some(evaluation_workspace),
                 profile_name: evaluation_profile_name,
                 capability_receipts: retained_receipts,
@@ -1182,10 +1216,16 @@ impl TurnPipeline {
                 projection_metrics:
                     crate::application::evaluation::EvaluationProjectionMetrics {
                         elapsed_ms: Some(metrics.elapsed_ms),
-                        inference_rounds: None,
+                        inference_rounds: Some(
+                            metrics.iterations.try_into().unwrap_or(u64::MAX),
+                        ),
                         provider_retries: None,
                         tool_calls: Some(metrics.tool_calls_made as u64),
                         tool_errors: Some(metrics.tool_errors as u64),
+                        cumulative_input_tokens: Some(acc_tokens_in),
+                        cumulative_output_tokens: Some(acc_tokens_out),
+                        active_context_tokens,
+                        cache_read_tokens: Some(acc_cache_read_tokens),
                         ..Default::default()
                     },
             };
