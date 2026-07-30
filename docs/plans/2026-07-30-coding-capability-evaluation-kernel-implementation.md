@@ -58,7 +58,7 @@ crates/executive/tests/
 - Modify: `crates/fabric/src/lib.rs:56-92`
 - Test: inline unit tests in the four new files
 
-- [ ] **Step 1: Write failing round-trip and validation tests**
+- [x] **Step 1: Write failing round-trip and validation tests**
 
 ```rust
 #[test]
@@ -82,13 +82,13 @@ fn evidence_snapshot_digest_is_order_stable_and_detects_payload_changes() {
 }
 ```
 
-- [ ] **Step 2: Run the Fabric library tests and observe missing types**
+- [x] **Step 2: Run the Fabric library tests and observe missing types**
 
 Run: `bash scripts/cargo-agent.sh test -p fabric --lib evaluation -- --nocapture`
 
 Expected: FAIL because `types::evaluation` and its contracts do not exist.
 
-- [ ] **Step 3: Implement the versioned types**
+- [x] **Step 3: Implement the versioned types**
 
 Use newtype UUID IDs and these public shapes:
 
@@ -145,13 +145,13 @@ ordered evidence. `EvaluationReceipt::validate` must verify schema/version,
 contract/subject identity, snapshot digest, decision/mode compatibility, and
 failed-gate/report consistency.
 
-- [ ] **Step 4: Export the module and rerun tests**
+- [x] **Step 4: Export the module and rerun tests**
 
 Run: `bash scripts/cargo-agent.sh test -p fabric --lib evaluation -- --nocapture`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(fabric): add evaluation contracts and receipts`
 
@@ -168,7 +168,7 @@ Commit subject: `feat(fabric): add evaluation contracts and receipts`
 - Test: `crates/fabric/src/protocol/client.rs` unit tests
 - Test: `crates/executive/src/adapters/session/prompt_queue_sqlite.rs` unit tests
 
-- [ ] **Step 1: Add failing typed transport tests**
+- [x] **Step 1: Add failing typed transport tests**
 
 ```rust
 #[test]
@@ -188,13 +188,13 @@ fn chat_without_task_kind_omits_the_field() {
 }
 ```
 
-- [ ] **Step 2: Run focused tests**
+- [x] **Step 2: Run focused tests**
 
 Run: `bash scripts/cargo-agent.sh test -p fabric protocol::client::request_tests -- --nocapture`
 
 Expected: FAIL because `task_kind` and `chat_with_task_kind` do not exist.
 
-- [ ] **Step 3: Implement optional typed fields with compatibility defaults**
+- [x] **Step 3: Implement optional typed fields with compatibility defaults**
 
 Add to `ChatParams`:
 
@@ -217,7 +217,7 @@ Extend queue enqueue methods to accept task kind in the same call that accepts
 requirements, and persist it in the SQLite JSON/body representation. The
 plain `enqueue` method passes `None`.
 
-- [ ] **Step 4: Run Fabric and prompt-queue tests**
+- [x] **Step 4: Run Fabric and prompt-queue tests**
 
 Run: `bash scripts/cargo-agent.sh test -p fabric protocol::client::request_tests -- --nocapture`
 
@@ -225,7 +225,7 @@ Run: `bash scripts/cargo-agent.sh test -p executive prompt_queue_sqlite -- --noc
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(protocol): carry explicit coding task kind`
 
@@ -241,7 +241,7 @@ Commit subject: `feat(protocol): carry explicit coding task kind`
 - Test: `crates/executive/src/composition/config/evaluation.rs`
 - Test: `crates/fabric/src/types/session.rs`
 
-- [ ] **Step 1: Add failing config and Session compatibility tests**
+- [x] **Step 1: Add failing config and Session compatibility tests**
 
 ```rust
 #[test]
@@ -261,7 +261,7 @@ fn receipt_ref_round_trips_in_session_item() {
 }
 ```
 
-- [ ] **Step 2: Run tests and observe missing variants/settings**
+- [x] **Step 2: Run tests and observe missing variants/settings**
 
 Run: `bash scripts/cargo-agent.sh test -p executive evaluation_defaults_disabled_and_shadow -- --nocapture`
 
@@ -269,7 +269,7 @@ Run: `bash scripts/cargo-agent.sh test -p fabric receipt_ref_round_trips_in_sess
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement configuration and variants**
+- [x] **Step 3: Implement configuration and variants**
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -291,7 +291,7 @@ Default to disabled/shadow/`coding-v2`/70_000/600/700/5_000 and provide a
 `OperationKind`, and `EvaluationReceiptRef` to `ItemPayload`. Increment
 `SESSION_SCHEMA_VERSION` and preserve decoding of prior tagged payloads.
 
-- [ ] **Step 4: Run config/schema/Fabric tests**
+- [x] **Step 4: Run config/schema/Fabric tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive composition::config -- --nocapture`
 
@@ -299,7 +299,7 @@ Run: `bash scripts/cargo-agent.sh test -p fabric --lib session -- --nocapture`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(runtime): configure evaluation settlement`
 
@@ -312,7 +312,7 @@ Commit subject: `feat(runtime): configure evaluation settlement`
 - Modify: `crates/metacog/src/evaluation/mod.rs:1-9`
 - Test: inline tests in `crates/metacog/src/evaluation/engine.rs`
 
-- [ ] **Step 1: Add failing integrity tests**
+- [x] **Step 1: Add failing integrity tests**
 
 ```rust
 #[test]
@@ -333,13 +333,13 @@ fn coverage_is_weight_based_and_unverified_evidence_cannot_score() {
 }
 ```
 
-- [ ] **Step 2: Run Metacog tests**
+- [x] **Step 2: Run Metacog tests**
 
 Run: `bash scripts/cargo-agent.sh test -p metacog evaluation::engine -- --nocapture`
 
 Expected: FAIL because evidence-backed evaluation and errors do not exist.
 
-- [ ] **Step 3: Add `evaluate_evidence_backed` without breaking the legacy method**
+- [x] **Step 3: Add `evaluate_evidence_backed` without breaking the legacy method**
 
 The new method receives `&[EvidenceItem]` and `EvaluationThresholds`. It first
 calls the existing structural/weight calculation, then verifies:
@@ -361,13 +361,13 @@ authoritative 1000, corroborated 700, unverified 0; unverified references return
 `UnsupportedEvidenceTrust`. Eligibility additionally requires contract coverage
 and confidence thresholds.
 
-- [ ] **Step 4: Run Metacog tests**
+- [x] **Step 4: Run Metacog tests**
 
 Run: `bash scripts/cargo-agent.sh test -p metacog evaluation::engine -- --nocapture`
 
 Expected: PASS, including all existing deterministic evaluator tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(metacog): validate evidence-backed evaluations`
 
@@ -385,7 +385,7 @@ Commit subject: `feat(metacog): validate evidence-backed evaluations`
 - Modify: `crates/executive/src/application/turn_diff_tracker.rs:7-77`
 - Test: inline tests in the new modules
 
-- [ ] **Step 1: Add failing scorer truth-table tests**
+- [x] **Step 1: Add failing scorer truth-table tests**
 
 ```rust
 #[test]
@@ -410,13 +410,13 @@ fn missing_validation_is_unknown_and_fails_required_gate() {
 }
 ```
 
-- [ ] **Step 2: Run Executive evaluation tests**
+- [x] **Step 2: Run Executive evaluation tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive application::evaluation -- --nocapture`
 
 Expected: FAIL because the evaluation application module does not exist.
 
-- [ ] **Step 3: Implement artifacts, rubric, collector, scorer, and policy**
+- [x] **Step 3: Implement artifacts, rubric, collector, scorer, and policy**
 
 `TurnEvaluationArtifacts` contains the authenticated workspace, profile name,
 capability terminal receipts, sorted file deltas, runtime faults, and optional
@@ -472,13 +472,13 @@ Scope resolves every relative file delta against the authenticated workspace,
 rejects absolute/parent traversal, and checks writable/protected roots. Unknown
 optional dimensions remain `Unknown`.
 
-- [ ] **Step 4: Run scorer tests**
+- [x] **Step 4: Run scorer tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive application::evaluation -- --nocapture`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(executive): score coding evidence with coding-v2`
 
@@ -492,7 +492,7 @@ Commit subject: `feat(executive): score coding evidence with coding-v2`
 - Modify: `crates/executive/src/adapters/mod.rs:1-16`
 - Test: inline tests in `sqlite_store.rs`
 
-- [ ] **Step 1: Add failing durability/idempotency tests**
+- [x] **Step 1: Add failing durability/idempotency tests**
 
 ```rust
 #[tokio::test]
@@ -519,13 +519,13 @@ async fn conflicting_receipt_id_is_rejected_without_partial_snapshot() {
 }
 ```
 
-- [ ] **Step 2: Run adapter tests**
+- [x] **Step 2: Run adapter tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive sqlite_evaluation_store -- --nocapture`
 
 Expected: FAIL because the store does not exist.
 
-- [ ] **Step 3: Implement WAL schema and transactional writes**
+- [x] **Step 3: Implement WAL schema and transactional writes**
 
 Open one mutex-protected rusqlite connection, execute `PRAGMA journal_mode=WAL`,
 `PRAGMA foreign_keys=ON`, create the five design tables/indexes, and use
@@ -533,13 +533,13 @@ Open one mutex-protected rusqlite connection, execute `PRAGMA journal_mode=WAL`,
 idempotency. `append_evaluation` inserts evidence, snapshot, and receipt inside
 one transaction and commits only after every foreign key/body check succeeds.
 
-- [ ] **Step 4: Run store tests**
+- [x] **Step 4: Run store tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive sqlite_evaluation_store -- --nocapture`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(storage): persist evaluation receipts atomically`
 
@@ -555,7 +555,7 @@ Commit subject: `feat(storage): persist evaluation receipts atomically`
 - Test: `crates/executive/src/application/daemon_react.rs` unit tests
 - Test: `crates/executive/tests/turn_pipeline_order.rs`
 
-- [ ] **Step 1: Add failing receipt capture test**
+- [x] **Step 1: Add failing receipt capture test**
 
 ```rust
 #[tokio::test]
@@ -568,13 +568,13 @@ async fn daemon_services_publish_terminal_receipts_to_turn_artifacts() {
 }
 ```
 
-- [ ] **Step 2: Run daemon tests**
+- [x] **Step 2: Run daemon tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive daemon_services_publish_terminal_receipts -- --nocapture`
 
 Expected: FAIL because `DaemonTurnServices` currently drops `record_capability_receipt`.
 
-- [ ] **Step 3: Wire shared collectors**
+- [x] **Step 3: Wire shared collectors**
 
 Add `receipts: Arc<Mutex<Vec<CapabilityTerminalReceipt>>>` to
 `DaemonStreamingTurnContext`/`DaemonTurnServices` and override:
@@ -590,7 +590,7 @@ task reaches its terminal result, snapshot both collectors into
 `TurnEvaluationArtifacts`. Extend `TurnExecution` with those artifacts and have
 `DaemonTurnEngine` forward them to the coordinator.
 
-- [ ] **Step 4: Run daemon and pipeline tests**
+- [x] **Step 4: Run daemon and pipeline tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive daemon_react -- --nocapture`
 
@@ -598,7 +598,7 @@ Run: `bash scripts/cargo-agent.sh test -p executive --test turn_pipeline_order -
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(runtime): retain terminal coding evidence`
 
@@ -614,7 +614,7 @@ Commit subject: `feat(runtime): retain terminal coding evidence`
 - Modify: `crates/executive/src/host/daemon/bootstrap/services.rs:279-305`
 - Test: `crates/executive/tests/evaluation_turn_settlement.rs`
 
-- [ ] **Step 1: Add the settlement matrix test**
+- [x] **Step 1: Add the settlement matrix test**
 
 ```rust
 #[tokio::test]
@@ -637,13 +637,13 @@ async fn enforce_failure_cannot_report_completed() {
 }
 ```
 
-- [ ] **Step 2: Run the new integration target**
+- [x] **Step 2: Run the new integration target**
 
 Run: `bash scripts/cargo-agent.sh test -p executive --test evaluation_turn_settlement -- --nocapture`
 
 Expected: FAIL because coordinator evaluation dependencies do not exist.
 
-- [ ] **Step 3: Implement `EvaluationService` and coordinator wiring**
+- [x] **Step 3: Implement `EvaluationService` and coordinator wiring**
 
 `EvaluationService::issue_contract` returns `None` when no task kind or when
 evaluation is disabled; a coding kind while enabled always returns/persists a
@@ -659,7 +659,7 @@ a distinct durable write phase. Apply policy to `TurnResult.stop` before choosin
 the final terminal item. Detached post-turn projections remain after Kernel
 terminalization.
 
-- [ ] **Step 4: Run settlement and existing coordinator tests**
+- [x] **Step 4: Run settlement and existing coordinator tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive --test evaluation_turn_settlement -- --nocapture`
 
@@ -667,7 +667,7 @@ Run: `bash scripts/cargo-agent.sh test -p executive --test turn_coordinator_life
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(executive): settle coding turns through evaluation`
 
@@ -679,7 +679,7 @@ Commit subject: `feat(executive): settle coding turns through evaluation`
 - Modify: `crates/cognit/src/harness/session.rs:331-400`
 - Test: `crates/cognit/tests/cognitive_session.rs`
 
-- [ ] **Step 1: Add failing shadow/enforce contract tests**
+- [x] **Step 1: Add failing shadow/enforce contract tests**
 
 ```rust
 #[tokio::test]
@@ -692,13 +692,13 @@ async fn coding_contract_configures_code_change_without_turn_requirements() {
 }
 ```
 
-- [ ] **Step 2: Run the focused Cognit test**
+- [x] **Step 2: Run the focused Cognit test**
 
 Run: `bash scripts/cargo-agent.sh test -p cognit --test cognitive_session coding_contract_configures -- --nocapture`
 
 Expected: FAIL because only `TurnRequirement` configures cognitive state.
 
-- [ ] **Step 3: Merge both typed contract sources**
+- [x] **Step 3: Merge both typed contract sources**
 
 If `evaluation_contract` exists, build a `CognitiveTaskContract` with
 `CodeChange`, objective, validation requirements for required verification and
@@ -706,13 +706,13 @@ scope, plus actions implied by `TurnRequirement`. Render a system contract from
 typed fields. Set completion mode from evaluation mode. Only clear cognitive
 state when both evaluation contract and requirements are absent.
 
-- [ ] **Step 4: Run Cognit tests**
+- [x] **Step 4: Run Cognit tests**
 
 Run: `bash scripts/cargo-agent.sh test -p cognit --test cognitive_session -- --nocapture`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(cognit): enforce coding evidence contracts`
 
@@ -729,7 +729,7 @@ Commit subject: `feat(cognit): enforce coding evidence contracts`
 - Modify: all test `TurnRequest` constructors reported by `rg -n 'TurnRequest \\{' crates`
 - Test: `crates/executive/src/host/daemon/handler/mod.rs` unit tests
 
-- [ ] **Step 1: Add failing RPC parsing tests**
+- [x] **Step 1: Add failing RPC parsing tests**
 
 ```rust
 #[test]
@@ -740,13 +740,13 @@ fn task_kind_parser_accepts_only_typed_coding_value() {
 }
 ```
 
-- [ ] **Step 2: Run handler tests**
+- [x] **Step 2: Run handler tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive task_kind_parser -- --nocapture`
 
 Expected: FAIL.
 
-- [ ] **Step 3: Thread the typed field without prompt inference**
+- [x] **Step 3: Thread the typed field without prompt inference**
 
 Parse `params.task_kind` with Serde into `TaskKind`; reject any invalid enum as
 JSON-RPC `-32602`. Add the typed argument to `TurnUseCases::execute`, daemon
@@ -754,7 +754,7 @@ orchestrator queue/direct calls, `TurnEngineRequest`, and reconstructed
 `TurnRequest`. Queued execution reads the value stored on `PromptEnvelope`.
 Every compatibility constructor passes `None`.
 
-- [ ] **Step 4: Run handler, engine parity, and queue tests**
+- [x] **Step 4: Run handler, engine parity, and queue tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive task_kind -- --nocapture`
 
@@ -762,7 +762,7 @@ Run: `bash scripts/cargo-agent.sh test -p executive --test turn_engine_parity --
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(daemon): admit typed coding turns`
 
@@ -780,7 +780,7 @@ Commit subject: `feat(daemon): admit typed coding turns`
 - Modify: `crates/interact/src/tui/app/mod.rs`
 - Test: existing CLI parser and TUI app unit tests
 
-- [ ] **Step 1: Add failing CLI/TUI tests**
+- [x] **Step 1: Add failing CLI/TUI tests**
 
 ```rust
 #[test]
@@ -799,7 +799,7 @@ fn task_slash_command_changes_only_typed_client_state() {
 }
 ```
 
-- [ ] **Step 2: Run Interact and aletheon parser tests**
+- [x] **Step 2: Run Interact and aletheon parser tests**
 
 Run: `bash scripts/cargo-agent.sh test -p interact task_kind -- --nocapture`
 
@@ -807,7 +807,7 @@ Run: `bash scripts/cargo-agent.sh test -p aletheon parses_coding_task_kind -- --
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement explicit selection and typed result UI**
+- [x] **Step 3: Implement explicit selection and typed result UI**
 
 Add a clap value enum with only `coding`, carry it through `MessageLaunch` and
 `TuiLaunch`, and call `chat_with_task_kind`. TUI `/task` accepts exactly
@@ -816,7 +816,7 @@ line with decision, score, coverage, confidence, and failed gates from typed
 response/event data. `/evaluation` renders the latest cached/query result and
 does not call an LLM.
 
-- [ ] **Step 4: Run parser/TUI tests**
+- [x] **Step 4: Run parser/TUI tests**
 
 Run: `bash scripts/cargo-agent.sh test -p interact task_kind -- --nocapture`
 
@@ -824,7 +824,7 @@ Run: `bash scripts/cargo-agent.sh test -p aletheon parses_coding_task_kind -- --
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(interact): expose coding evaluation mode`
 
@@ -839,7 +839,7 @@ Commit subject: `feat(interact): expose coding evaluation mode`
 - Modify: `crates/executive/src/host/daemon/handler/mod.rs`
 - Test: handler RPC unit tests
 
-- [ ] **Step 1: Add failing authority/bounds tests**
+- [x] **Step 1: Add failing authority/bounds tests**
 
 ```rust
 #[tokio::test]
@@ -852,13 +852,13 @@ async fn evaluation_list_clamps_limit_and_scopes_to_principal() {
 }
 ```
 
-- [ ] **Step 2: Run RPC tests**
+- [x] **Step 2: Run RPC tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive rpc_evaluation -- --nocapture`
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement read-only methods**
+- [x] **Step 3: Implement read-only methods**
 
 Add typed requests for `evaluation.get`, `evaluation.latest`, and
 `evaluation.list`. Require authenticated principal ownership, clamp list limits
@@ -866,13 +866,13 @@ to `1..=100`, return summary by default, and reveal evidence payloads only when
 the caller already has matching session/workspace authority. Do not add mutation
 methods.
 
-- [ ] **Step 4: Run RPC tests**
+- [x] **Step 4: Run RPC tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive rpc_evaluation -- --nocapture`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(gateway): expose evaluation receipts`
 
@@ -891,7 +891,7 @@ Commit subject: `feat(gateway): expose evaluation receipts`
 - Modify: `crates/executive/src/application/cognitive_workspace.rs`
 - Test: `crates/executive/tests/evaluation_protocol_e2e.rs`
 
-- [ ] **Step 1: Add failing single-receipt projection test**
+- [x] **Step 1: Add failing single-receipt projection test**
 
 ```rust
 #[tokio::test]
@@ -907,13 +907,13 @@ async fn every_projection_observes_the_same_persisted_receipt_id() {
 }
 ```
 
-- [ ] **Step 2: Run projection E2E test**
+- [x] **Step 2: Run projection E2E test**
 
 Run: `bash scripts/cargo-agent.sh test -p executive --test evaluation_protocol_e2e every_projection -- --nocapture`
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement a receipt-ref-only projection fanout**
+- [x] **Step 3: Implement a receipt-ref-only projection fanout**
 
 Create `EvaluationProjection` with narrow optional sink traits. Goal receives
 failed gates as retry/replan evidence; AgentControl records runtime/profile
@@ -924,7 +924,7 @@ runtime/profile/rubric and expose count, pass rate, score distribution,
 coverage/confidence, latency, provider retries/rounds, and tool calls as separate
 fields.
 
-- [ ] **Step 4: Run projection and benchmark tests**
+- [x] **Step 4: Run projection and benchmark tests**
 
 Run: `bash scripts/cargo-agent.sh test -p executive --test evaluation_protocol_e2e -- --nocapture`
 
@@ -932,7 +932,7 @@ Run: `bash scripts/cargo-agent.sh test -p executive capability_benchmark -- --no
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `feat(runtime): project evaluation capability outcomes`
 
@@ -944,13 +944,13 @@ Commit subject: `feat(runtime): project evaluation capability outcomes`
 - Modify: all affected snapshots/fixtures reported by compiler and schema tests
 - Test: Fabric, Metacog, Cognit, Executive, Interact, and aletheon focused targets
 
-- [ ] **Step 1: Format-check all touched Rust**
+- [x] **Step 1: Format-check all touched Rust**
 
 Run: `bash scripts/cargo-agent.sh fmt --all -- --check`
 
 Expected: PASS.
 
-- [ ] **Step 2: Run narrow package checks sequentially**
+- [x] **Step 2: Run narrow package checks sequentially**
 
 Run: `bash scripts/cargo-agent.sh check -p fabric`
 
@@ -966,7 +966,7 @@ Run: `bash scripts/cargo-agent.sh check -p aletheon`
 
 Expected: every command exits 0. Do not run Executive or workspace builds concurrently.
 
-- [ ] **Step 3: Run focused behavioral suites**
+- [x] **Step 3: Run focused behavioral suites**
 
 Run: `bash scripts/cargo-agent.sh test -p fabric --lib evaluation`
 
@@ -984,7 +984,7 @@ Run: `bash scripts/cargo-agent.sh test -p interact task_kind`
 
 Expected: PASS.
 
-- [ ] **Step 4: Inspect final staged diff and commit validation fixes**
+- [x] **Step 4: Inspect final staged diff and commit validation fixes**
 
 Run: `git diff --check && git diff --stat && git status --short`
 
@@ -1002,20 +1002,20 @@ Commit subject: `test(evaluation): verify production coding settlement`
 - Evidence: system deployment output, SHA-256 comparison, systemd counters,
   official socket request, persisted receipt/session rows, rendered TUI, logs
 
-- [ ] **Step 1: Deploy the release to the system runtime**
+- [x] **Step 1: Deploy the release to the system runtime**
 
 Run: `sudo bash scripts/aletheon.sh deploy`
 
 Expected: deployment succeeds using the system installation mode.
 
-- [ ] **Step 2: Verify all executable digests match**
+- [x] **Step 2: Verify all executable digests match**
 
 Run:
 
 ```bash
 TARGET=$(sha256sum target/release/aletheon | awk '{print $1}')
 INSTALLED=$(sha256sum /usr/bin/aletheon | awk '{print $1}')
-MACHINE_PID=$(systemctl show -p MainPID --value aletheon.service)
+MACHINE_PID=$(systemctl show -p MainPID --value aletheon-core.service)
 USER_PID=$(systemctl --user show -p MainPID --value aletheon.service)
 MACHINE_EXE=$(readlink -f /proc/$MACHINE_PID/exe)
 USER_EXE=$(readlink -f /proc/$USER_PID/exe)
@@ -1026,22 +1026,22 @@ printf '%s\n' "$TARGET" "$INSTALLED" \
 
 Expected: all four digests are identical.
 
-- [ ] **Step 3: Record stable restart counters**
+- [x] **Step 3: Record stable restart counters**
 
 Run:
 
 ```bash
-systemctl show aletheon.service -p NRestarts -p MainPID -p ActiveState
+systemctl show aletheon-core.service -p NRestarts -p MainPID -p ActiveState
 systemctl --user show aletheon.service -p NRestarts -p MainPID -p ActiveState
 sleep 10
-systemctl show aletheon.service -p NRestarts -p MainPID -p ActiveState
+systemctl show aletheon-core.service -p NRestarts -p MainPID -p ActiveState
 systemctl --user show aletheon.service -p NRestarts -p MainPID -p ActiveState
 ```
 
 Expected: both remain active, MainPID values remain stable, and restart counters
 do not increase.
 
-- [ ] **Step 4: Run real installed coding requests**
+- [x] **Step 4: Run real installed coding requests**
 
 Use `/usr/bin/aletheon` with `--task-kind coding` and the official user socket.
 Run three fresh sessions plus multiple turns in one unchanged TUI session when
@@ -1050,14 +1050,14 @@ provider error and must produce one persisted `coding-v2` shadow receipt whose
 contract, evidence snapshot, Session reference, operation parent, score,
 coverage, confidence, and gates agree.
 
-- [ ] **Step 5: Cross-check runtime evidence**
+- [x] **Step 5: Cross-check runtime evidence**
 
 Inspect the rendered frame, canonical Session items, `evaluations.db`, daemon
 logs, and monitor verdict. Any disagreement is a failed acceptance. Confirm
 provider inference rounds, retries, tool calls, cumulative usage, active
 context, cache use, and quality remain separate measurements.
 
-- [ ] **Step 6: Final completion audit**
+- [x] **Step 6: Final completion audit**
 
 For every design goal and every task above, record the proving file/test/runtime
 evidence. Do not mark complete if a core projection, enforce state, installed
@@ -1065,3 +1065,31 @@ binary digest, real request, or durable receipt is missing or indirect.
 
 Commit any acceptance-driven fixes with a conventional subject and explanatory
 body, redeploy, and repeat all affected acceptance steps.
+
+
+## Completion evidence (2026-07-30)
+
+- Focused checks: all Task 14 package checks and behavioral targets passed through
+  `bash scripts/cargo-agent.sh`; the transient retry counter and legacy projection
+  replay regressions also passed their dedicated tests.
+- Installed runtime: `sudo bash scripts/aletheon.sh deploy` passed with SHA-256
+  `2bc2bb11f95a6c82facbff2fc868dc45fc083c0f50f36efc11f1cd02c006c1d6` for
+  `target/release/aletheon`, `/usr/bin/aletheon`, and both running executables.
+- Service stability: machine `aletheon-core.service` PID `241493` and user
+  `aletheon.service` PID `241513` remained active with `NRestarts=0`.
+- Three clean fresh installed-TUI sessions: `83b4b5d8-7742-4ba7-ad0c-291d9d7ed8d1`,
+  `f8924477-acdb-4d37-8aff-77b126705f67`, and
+  `bcc146ce-c7f1-4328-8072-bd4c298be27d`.
+- Clean unchanged multi-turn session: `1d6f47a2-a0ce-4fb0-b067-dbe357c16439`;
+  all three turns reached durable `turn_done`, returned the prompt, rendered correct
+  answers, and exposed the matching `/evaluation` summary.
+- Durable cross-check: six Session receipt references matched `evaluations.db`,
+  evidence snapshots, rollup inputs, evaluation/parent operation settlement, and
+  `evaluation.get`; each clean receipt recorded inference rounds, zero provider
+  retries, tool metrics, cumulative usage, active context, and cache use separately.
+- Negative observability proof: retrying session
+  `6d743276-0a80-42c4-9a02-76883ddafa5d` durably recorded three provider retries
+  independently from two inference rounds and one tool call.
+- Projection integrity: new observations use
+  `aletheon.event.evaluation_observed/v1`; legacy misclassified observations replayed
+  without poison, and `event_projection_poison` was empty after deployment.
