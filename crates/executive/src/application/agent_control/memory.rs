@@ -135,6 +135,18 @@ impl MemoryRecordingAgentEventSink {
 
     fn record(&self, event: &AgentRuntimeEvent) -> Result<(), AgentControlError> {
         let (kind, content, event_id) = match event {
+            AgentRuntimeEvent::CapabilityAttenuated {
+                operation_id,
+                report,
+                ..
+            } => (
+                MemoryKind::Episodic,
+                format!(
+                    "child Agent authority attenuated: {} -> {}",
+                    report.requested_sha256, report.effective_sha256
+                ),
+                format!("operation:{operation_id:?}:capability-attenuated"),
+            ),
             AgentRuntimeEvent::Started { operation_id, .. } => (
                 MemoryKind::Episodic,
                 "child Agent runtime started".to_string(),

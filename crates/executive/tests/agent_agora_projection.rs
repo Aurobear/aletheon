@@ -36,6 +36,7 @@ fn input() -> AgentRuntimeInput {
         profile_id: AgentProfileId("worker".into()),
         runtime_id: RuntimeId("native-cognit".into()),
         trusted_workspace: None,
+        delegator_authority: None,
         cognitive_binding: None,
         task: "inspect the evidence".into(),
         context: AgentContextFork::SelectedProjection { items: vec![] },

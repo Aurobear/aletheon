@@ -246,6 +246,7 @@ fn agent_spawn_request(root: AgentId, parent: fabric::ProcessId, label: &str) ->
         profile_id: AgentProfileId(format!("acceptance-{label}")),
         runtime_id: RuntimeId(ACCEPTANCE_RUNTIME.into()),
         trusted_workspace: None,
+        delegator_authority: None,
         cognitive_binding: None,
         task: format!("bounded acceptance task {label}"),
         context: AgentContextFork::SelectedProjection {

@@ -262,6 +262,11 @@ impl NativeCognitRuntime {
                     caller_root_agent_id: input.handle.root_agent_id,
                     parent_agent_id: input.handle.agent_id,
                     parent_process_id: input.handle.process_id,
+                    delegator_authority: Some(fabric::AgentDelegationAuthority::new(
+                        input.workspace.clone(),
+                        input.request.allowed_tools.clone(),
+                        input.request.budget.clone(),
+                    )),
                 }),
                 process_id: input.handle.process_id,
                 operation_id: input.handle.operation_id,

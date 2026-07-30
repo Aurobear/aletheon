@@ -200,8 +200,9 @@ pub use types::admission::{
 };
 pub use types::agent::Pid;
 pub use types::agent_control::{
-    AgentApprovalPolicy, AgentArtifact, AgentBroadcastRef, AgentBudget, AgentContextFork,
-    AgentControlError, AgentControlErrorKind, AgentControlMessage, AgentControlPort, AgentHandle,
+    AgentApprovalPolicy, AgentArtifact, AgentAttenuationReport, AgentBroadcastRef, AgentBudget,
+    AgentBudgetField, AgentContextFork, AgentControlError, AgentControlErrorKind,
+    AgentControlMessage, AgentControlPort, AgentDelegationAuthority, AgentHandle,
     AgentInteractionMode, AgentListRequest, AgentMessageDeliveryState, AgentMessageKind,
     AgentMessagePayload, AgentMessageReceipt, AgentProfile, AgentRecoveryDecision,
     AgentRecoveryReceipt, AgentResult, AgentRunStatus, AgentRuntimeCapability, AgentSendRequest,

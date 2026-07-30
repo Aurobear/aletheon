@@ -393,6 +393,7 @@ impl CapabilityBenchmarkRuntime for AgentControlBenchmarkRuntime {
                 profile_id: target.profile_id.clone(),
                 runtime_id: target.runtime_id.clone(),
                 trusted_workspace: Some(self.trusted_workspace.clone()),
+                delegator_authority: None,
                 cognitive_binding: None,
                 task,
                 context: AgentContextFork::None,

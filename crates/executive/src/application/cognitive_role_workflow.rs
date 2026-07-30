@@ -105,6 +105,7 @@ impl CognitiveRoleInvoker for AgentControlRoleInvoker {
                 profile_id: launch.profile_id.clone(),
                 runtime_id: self.runtime_id.clone(),
                 trusted_workspace: Some(self.trusted_workspace.clone()),
+                delegator_authority: None,
                 cognitive_binding: Some(binding),
                 task,
                 context: AgentContextFork::None,

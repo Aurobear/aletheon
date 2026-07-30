@@ -884,6 +884,7 @@ mod tests {
             profile_id: fabric::AgentProfileId("test".into()),
             runtime_id: fabric::RuntimeId("runtime.generic".into()),
             trusted_workspace: None,
+            delegator_authority: None,
             cognitive_binding: None,
             task: "test".into(),
             context: fabric::AgentContextFork::default(),

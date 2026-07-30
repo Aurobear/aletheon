@@ -546,7 +546,7 @@ impl Tool for ExecCommandTool {
                 .reserve_command(
                     transaction_id,
                     &ctx.session_id,
-                    ctx.agent,
+                    ctx.agent.clone(),
                     &ctx.working_dir,
                     command_session_id.clone(),
                     "shell".into(),
@@ -677,7 +677,12 @@ impl Tool for ValidationRunTool {
             return tool_error("validation_run transaction registry is unavailable");
         };
         let transaction = match registry
-            .verify_current(transaction_id, &ctx.session_id, ctx.agent, &ctx.working_dir)
+            .verify_current(
+                transaction_id,
+                &ctx.session_id,
+                ctx.agent.clone(),
+                &ctx.working_dir,
+            )
             .await
         {
             Ok(snapshot)
@@ -739,7 +744,7 @@ impl Tool for ValidationRunTool {
             .reserve_command(
                 transaction_id,
                 &ctx.session_id,
-                ctx.agent,
+                ctx.agent.clone(),
                 &ctx.working_dir,
                 command_session_id.clone(),
                 "validation".into(),

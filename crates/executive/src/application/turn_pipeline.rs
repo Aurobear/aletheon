@@ -700,6 +700,7 @@ impl TurnPipeline {
                         caller_root_agent_id: agent_id,
                         parent_agent_id: agent_id,
                         parent_process_id: main_pid,
+                        delegator_authority: None,
                     }),
                     process_id: main_pid,
                     operation_id,

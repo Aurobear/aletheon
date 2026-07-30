@@ -1710,6 +1710,7 @@ mod tests {
             caller_root_agent_id: fabric::AgentId::new(),
             parent_agent_id: fabric::AgentId::new(),
             parent_process_id: fabric::ProcessId::new(),
+            delegator_authority: None,
         });
 
         runner

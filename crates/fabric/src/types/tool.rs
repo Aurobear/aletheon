@@ -4,13 +4,19 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{AgentId, CapabilityScope, PrincipalId, ProcessId, ThreadId, TurnId, WorkspacePolicy};
+use crate::{
+    AgentDelegationAuthority, AgentId, CapabilityScope, PrincipalId, ProcessId, ThreadId, TurnId,
+    WorkspacePolicy,
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentToolContext {
     pub caller_root_agent_id: AgentId,
     pub parent_agent_id: AgentId,
     pub parent_process_id: ProcessId,
+    /// Host-minted authority forwarded to AgentControl for child attenuation.
+    #[serde(skip)]
+    pub delegator_authority: Option<AgentDelegationAuthority>,
 }
 
 /// Permission level for tools.

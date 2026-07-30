@@ -611,7 +611,7 @@ impl TurnAuthorityProvider for RegistryAuthorityProvider {
         let requested_scope = requested_scope_for_call(call, &self.workspace)?;
         Ok(AuthorizedInvocation {
             authority: CapabilityAuthority {
-                agent: self.agent,
+                agent: self.agent.clone(),
                 principal: self.principal.clone(),
                 action: call.name.clone(),
                 requested_scope,

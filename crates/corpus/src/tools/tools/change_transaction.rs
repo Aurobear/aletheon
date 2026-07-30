@@ -615,7 +615,7 @@ impl Tool for TransactionalFileWriteTool {
         };
         let before = match self
             .registry
-            .verify_current(id, &ctx.session_id, ctx.agent, &ctx.working_dir)
+            .verify_current(id, &ctx.session_id, ctx.agent.clone(), &ctx.working_dir)
             .await
         {
             Ok(snapshot) => snapshot,
@@ -702,7 +702,7 @@ impl Tool for ChangeAcceptTool {
         };
         match self
             .registry
-            .accept(id, &ctx.session_id, ctx.agent, &ctx.working_dir)
+            .accept(id, &ctx.session_id, ctx.agent.clone(), &ctx.working_dir)
             .await
         {
             Ok(snapshot) => ToolResult {
@@ -765,7 +765,7 @@ impl Tool for ChangeRollbackTool {
         };
         match self
             .registry
-            .rollback(id, &ctx.session_id, ctx.agent, &ctx.working_dir)
+            .rollback(id, &ctx.session_id, ctx.agent.clone(), &ctx.working_dir)
             .await
         {
             Ok(snapshot) => ToolResult {
@@ -886,7 +886,7 @@ impl Tool for TransactionalRepoInspectTool {
         };
         match self
             .registry
-            .begin_with_context(&ctx.session_id, ctx.agent, repository_context)
+            .begin_with_context(&ctx.session_id, ctx.agent.clone(), repository_context)
             .await
         {
             Ok(snapshot) => {
@@ -960,7 +960,7 @@ impl Tool for TransactionalApplyPatchTool {
         };
         let before = match self
             .registry
-            .verify_current(id, &ctx.session_id, ctx.agent, &root)
+            .verify_current(id, &ctx.session_id, ctx.agent.clone(), &root)
             .await
         {
             Ok(snapshot) => snapshot,
@@ -1066,7 +1066,7 @@ impl Tool for TransactionalGitDiffTool {
         };
         let snapshot = match self
             .registry
-            .verify_current(id, &ctx.session_id, ctx.agent, &root)
+            .verify_current(id, &ctx.session_id, ctx.agent.clone(), &root)
             .await
         {
             Ok(snapshot) => snapshot,
@@ -1478,11 +1478,13 @@ mod tests {
             caller_root_agent_id: fabric::AgentId::new(),
             parent_agent_id: fabric::AgentId::new(),
             parent_process_id: fabric::ProcessId::new(),
+            delegator_authority: None,
         };
         let sibling = fabric::AgentToolContext {
             caller_root_agent_id: owner.caller_root_agent_id,
             parent_agent_id: fabric::AgentId::new(),
             parent_process_id: fabric::ProcessId::new(),
+            delegator_authority: None,
         };
         let transaction = registry
             .begin_for_agent("shared-session", Some(owner), repo.path())
