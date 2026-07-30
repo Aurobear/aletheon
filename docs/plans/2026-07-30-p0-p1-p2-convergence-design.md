@@ -1,7 +1,7 @@
 # P0/P1/P2 Convergence Design
 
 **Date:** 2026-07-30  
-**Status:** Approved for planning  
+**Status:** Implemented; final installed-runtime acceptance pending<br>
 **Scope:** Repair the P0, P1, and P2 findings from the repository review without expanding the product feature set.
 
 ## 1. Goals
@@ -40,7 +40,7 @@ Security reporting will direct reporters to the repository's GitHub Security Adv
 
 `build_harness` will return a typed `Result` instead of panicking for a harness that requires Executive-owned ports. Callers must handle the construction error explicitly. Robot construction remains in Executive, preserving the existing dependency direction.
 
-`WorldState` will receive or retain an `Arc<dyn fabric::Clock>`. Deadline evaluation will use `clock.mono_now()`. Tests will use a deterministic clock to verify both notification and expiry paths without wall-clock sleeps where practical.
+`WorldState` will receive an `Arc<dyn fabric::Clock>` created by the composition root from the kernel implementation. Machine and user runtime composition each create exactly one kernel clock and share it across their components, so monotonic deadlines use one epoch. Deadline evaluation will use `clock.mono_now()`. Tests will use `kernel::chronos::TestClock` to verify both notification and expiry paths without wall-clock sleeps where practical.
 
 The empty `proc` and `io` drivers will either be removed from compiled module exports when unused or documented and typed as unavailable capabilities. They will not pretend to be implemented production drivers.
 

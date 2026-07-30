@@ -49,6 +49,8 @@ jobs:
       - name: Verify preinstalled stable toolchain
         run: rustup run stable rustc --version
       - run: bash scripts/aletheon.sh test architecture
+      - name: Verify documentation paths
+        run: python3 scripts/check-doc-paths.py
       - name: Reject architecture drift
         env:
           ARCH_BASE_REF: origin/${{ github.base_ref || 'dev' }}
@@ -109,15 +111,15 @@ jobs:
         run: bash scripts/cargo-agent.sh +stable build --workspace --release
 
   strict-msrv:
-    name: Rust 1.88 MSRV
+    name: Rust 1.85 MSRV
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, Linux, X64, aletheon]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Verify preinstalled MSRV toolchain
-        run: rustup run 1.88.0 rustc --version
-      - run: bash scripts/cargo-agent.sh +1.88.0 check --workspace --all-targets
+        run: rustup run 1.85.0 rustc --version
+      - run: bash scripts/cargo-agent.sh +1.85.0 check --workspace --all-targets
 
   strict-pi-contract:
     name: Pinned Pi RPC contract
