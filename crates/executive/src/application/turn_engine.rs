@@ -32,6 +32,7 @@ pub struct TurnEngineRequest {
     pub model_policy: Option<String>,
     pub deadline: Option<MonoDeadlineMillis>,
     pub requirements: Vec<fabric::TurnRequirement>,
+    pub requested_task_kind: Option<fabric::TaskKind>,
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +162,7 @@ impl TurnEngine for SessionTurnEngine {
             model_policy,
             deadline: request.deadline,
             requirements: request.requirements,
-            requested_task_kind: None,
+            requested_task_kind: request.requested_task_kind,
             evaluation_contract: None,
         };
 

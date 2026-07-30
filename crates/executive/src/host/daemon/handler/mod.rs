@@ -301,6 +301,10 @@ impl RequestHandler {
             Ok(requirements) => requirements,
             Err(error) => return rpc_error(&id, -32602, error),
         };
+        let task_kind = match parse_task_kind(&request["params"]["task_kind"]) {
+            Ok(task_kind) => task_kind,
+            Err(error) => return rpc_error(&id, -32602, error),
+        };
         let workspace = match resolve_requested_workspace(&request["params"]) {
             Ok(workspace) => workspace,
             Err(error) => {
@@ -335,6 +339,7 @@ impl RequestHandler {
             thread_id,
             workspace,
             requirements,
+            task_kind,
         )
         .await
     }
@@ -349,6 +354,7 @@ impl RequestHandler {
         thread_id: fabric::ThreadId,
         workspace: fabric::WorkspacePolicy,
         requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
     ) -> serde_json::Value {
         if thread_id.0.trim().is_empty() || message.trim().is_empty() {
             return rpc_error(&id, -32602, "thread_id and message are required");
@@ -397,7 +403,7 @@ impl RequestHandler {
         tracing::info!(message = %message, thread_id = %context.thread_id.0, "Chat request received");
         self.ports
             .turn
-            .execute(id, message, context, requirements)
+            .execute(id, message, context, requirements, task_kind)
             .await
     }
 
@@ -453,6 +459,15 @@ fn parse_turn_requirements(
         }
     }
     Ok(requirements)
+}
+
+fn parse_task_kind(value: &serde_json::Value) -> Result<Option<fabric::TaskKind>, String> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    serde_json::from_value(value.clone())
+        .map(Some)
+        .map_err(|error| format!("invalid task kind: {error}"))
 }
 
 fn unix_now() -> u64 {
@@ -551,5 +566,18 @@ mod working_dir_tests {
             {"InvokeAgentRuntime":{"runtime_id":"  "}}
         ]))
         .is_err());
+    }
+
+    #[test]
+    fn task_kind_parser_accepts_only_typed_coding_value() {
+        assert_eq!(
+            super::parse_task_kind(&serde_json::json!("coding")).unwrap(),
+            Some(fabric::TaskKind::Coding)
+        );
+        assert!(super::parse_task_kind(&serde_json::json!("write code")).is_err());
+        assert_eq!(
+            super::parse_task_kind(&serde_json::Value::Null).unwrap(),
+            None
+        );
     }
 }

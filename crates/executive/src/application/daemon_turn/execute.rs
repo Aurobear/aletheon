@@ -37,8 +37,9 @@ impl DaemonTurnOrchestrator {
         message: &str,
         context: PrincipalContext,
         requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
     ) -> serde_json::Value {
-        self.execute_turn_with_context(id, message, context, requirements)
+        self.execute_turn_with_context(id, message, context, requirements, task_kind)
             .await
     }
 
@@ -50,7 +51,7 @@ impl DaemonTurnOrchestrator {
         message: &str,
         context: PrincipalContext,
     ) -> serde_json::Value {
-        self.execute_turn_with_context(id, message, context, Vec::new())
+        self.execute_turn_with_context(id, message, context, Vec::new(), None)
             .await
     }
 
@@ -60,10 +61,11 @@ impl DaemonTurnOrchestrator {
         message: &str,
         context: PrincipalContext,
         requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
     ) -> serde_json::Value {
         if prompt_admission_mode(self.grok_hardening.prompt_queue) == PromptAdmissionMode::Direct {
             return self
-                .execute_one_turn(id, message, context, requirements)
+                .execute_one_turn(id, message, context, requirements, task_kind)
                 .await;
         }
 
@@ -85,7 +87,7 @@ impl DaemonTurnOrchestrator {
                 message.to_owned(),
                 idempotency_key,
                 requirements,
-                None,
+                task_kind,
             )
             .await
         {
@@ -157,8 +159,14 @@ impl DaemonTurnOrchestrator {
     ) -> serde_json::Value {
         context.connection_id = prompt.connection_id;
         context.thread_id = prompt.thread_id;
-        self.execute_one_turn(id, &prompt.content, context, prompt.requirements)
-            .await
+        self.execute_one_turn(
+            id,
+            &prompt.content,
+            context,
+            prompt.requirements,
+            prompt.requested_task_kind,
+        )
+        .await
     }
 
     async fn execute_one_turn(
@@ -167,6 +175,7 @@ impl DaemonTurnOrchestrator {
         message: &str,
         context: PrincipalContext,
         requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
     ) -> serde_json::Value {
         // -- Kernel: register main agent --
         let main_pid = match self.ensure_main_agent().await {
@@ -197,7 +206,7 @@ impl DaemonTurnOrchestrator {
             model_policy,
             deadline: None,
             requirements,
-            requested_task_kind: None,
+            requested_task_kind: task_kind,
             evaluation_contract: None,
         };
 
@@ -222,6 +231,7 @@ impl DaemonTurnOrchestrator {
                             model_policy: request.model_policy.clone(),
                             deadline: request.deadline,
                             requirements: request.requirements.clone(),
+                            requested_task_kind: request.requested_task_kind,
                         },
                         crate::application::turn_engine::TurnEngineContext {
                             principal_id: request.context.principal_id.clone(),
@@ -285,7 +295,13 @@ mod tests {
             .await;
         let response = harness
             .orchestrator
-            .execute_turn(json!(7), "hello", context("daemon-success"), Vec::new())
+            .execute_turn(
+                json!(7),
+                "hello",
+                context("daemon-success"),
+                Vec::new(),
+                None,
+            )
             .await;
 
         assert_eq!(response["result"]["response"], "mock answer");
@@ -315,7 +331,7 @@ mod tests {
             .await;
         let response = harness
             .orchestrator
-            .execute_turn(json!(8), "hello", context("daemon-error"), Vec::new())
+            .execute_turn(json!(8), "hello", context("daemon-error"), Vec::new(), None)
             .await;
 
         assert_eq!(response["error"]["code"], -32603);
@@ -330,5 +346,57 @@ mod tests {
             .lock()
             .await
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn task_kind_survives_direct_and_queued_admission() {
+        for (queued, thread) in [(false, "task-kind-direct"), (true, "task-kind-queued")] {
+            let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let observed_by_runner = observed.clone();
+            let runner = Arc::new(move |request: TurnRequest, _cancel| {
+                observed_by_runner
+                    .lock()
+                    .unwrap()
+                    .push(request.requested_task_kind);
+                Box::pin(async move {
+                    Ok(crate::application::turn_coordinator::TurnExecution {
+                        result: fabric::TurnResult {
+                            output: "typed turn".into(),
+                            stop: fabric::TurnStop::Completed,
+                            metrics: fabric::TurnMetrics {
+                                completed_normally: true,
+                                ..Default::default()
+                            },
+                        },
+                        items: Vec::new(),
+                        projection: None,
+                        context_projection: None,
+                        evaluation_artifacts: Default::default(),
+                    })
+                }) as futures::future::BoxFuture<'static, _>
+            });
+            let harness = DaemonTurnTestBuilder::new(runner)
+                .with_prompt_queue(queued)
+                .build()
+                .await;
+
+            let response = harness
+                .orchestrator
+                .execute_turn(
+                    json!(thread),
+                    "explicit coding turn",
+                    context(thread),
+                    Vec::new(),
+                    Some(fabric::TaskKind::Coding),
+                )
+                .await;
+
+            assert_eq!(response["result"]["response"], "typed turn");
+            assert_eq!(
+                observed.lock().unwrap().as_slice(),
+                &[Some(fabric::TaskKind::Coding)],
+                "queued={queued}"
+            );
+        }
     }
 }

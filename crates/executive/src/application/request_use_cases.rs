@@ -578,6 +578,7 @@ pub trait TurnUseCases: Send + Sync {
         message: String,
         context: PrincipalContext,
         requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
     ) -> serde_json::Value;
     async fn wait(&self, id: OperationId) -> anyhow::Result<OperationResult>;
     async fn cancel(&self, id: OperationId) -> anyhow::Result<()>;
@@ -652,9 +653,10 @@ impl TurnUseCases for ProductionTurnUseCases {
         message: String,
         context: PrincipalContext,
         requirements: Vec<fabric::TurnRequirement>,
+        task_kind: Option<fabric::TaskKind>,
     ) -> serde_json::Value {
         self.orchestrator
-            .execute_turn(id, &message, context, requirements)
+            .execute_turn(id, &message, context, requirements, task_kind)
             .await
     }
     async fn wait(&self, id: OperationId) -> anyhow::Result<OperationResult> {
