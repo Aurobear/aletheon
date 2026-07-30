@@ -1538,6 +1538,7 @@ impl TerminalEventBuffer {
         }
     }
 
+    #[cfg(test)]
     fn into_client_events(self, turn_error: Option<String>) -> Vec<ClientEvent> {
         let error = self.error.or(turn_error);
         if !self.turn_done {
