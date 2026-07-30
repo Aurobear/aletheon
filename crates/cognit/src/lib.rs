@@ -71,6 +71,9 @@ pub mod inference {
     pub mod scheduler {
         pub use crate::adapters::inference::scheduler::*;
     }
+    pub use crate::adapters::inference::backpressure::{
+        provider_backpressure_snapshot, ProviderBackpressureSnapshot,
+    };
     pub use scheduler::*;
 }
 

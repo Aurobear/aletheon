@@ -3,11 +3,17 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use async_trait::async_trait;
+use fabric::{
+    InferenceCapabilities, LlmResponse, LlmStream, Message, ModelRuntimeFacts, ToolDefinition,
+};
+use futures::StreamExt;
 
 use crate::adapters::inference::anthropic::AnthropicProvider;
 use crate::adapters::inference::ollama::OllamaProvider;
 use crate::adapters::inference::openai_provider::OpenAiProvider;
 use crate::adapters::inference::provider::LlmProvider;
+use crate::adapters::inference::{backpressure, provider::InferenceFailure};
 use crate::config::{ProviderConfig, ProviderPricing, ProviderTimeoutConfig, Transport};
 
 /// Concrete protocol selected after resolving the compatibility-only `Auto` mode.
@@ -73,7 +79,7 @@ pub fn create_provider(
     let resolved = resolve_provider_definition(config)?;
     let api_key = resolve_api_key(config, &resolved.credential_env_name);
 
-    match resolved.kind {
+    let provider: Arc<dyn LlmProvider> = match resolved.kind {
         ProviderKind::Anthropic => {
             let mut provider = AnthropicProvider::new(&api_key, model)
                 .with_base_url(&config.base_url)
@@ -82,7 +88,7 @@ pub fn create_provider(
             if let Some(context) = resolved.max_context_length {
                 provider = provider.with_max_context(context);
             }
-            Ok(Arc::new(provider))
+            Arc::new(provider)
         }
         ProviderKind::OpenAi => {
             let mut provider = OpenAiProvider::new(&api_key, model, &config.base_url)
@@ -91,7 +97,7 @@ pub fn create_provider(
             if let Some(context) = resolved.max_context_length {
                 provider = provider.with_max_context(context);
             }
-            Ok(Arc::new(provider))
+            Arc::new(provider)
         }
         ProviderKind::Ollama => {
             let mut provider = OllamaProvider::new(model)
@@ -101,8 +107,79 @@ pub fn create_provider(
             if let Some(context) = resolved.max_context_length {
                 provider = provider.with_max_context(context);
             }
-            Ok(Arc::new(provider))
+            Arc::new(provider)
         }
+    };
+    Ok(Arc::new(BackpressuredProvider {
+        inner: provider,
+        state: backpressure::state_for(&config.name, config.backpressure),
+    }))
+}
+
+struct BackpressuredProvider {
+    inner: Arc<dyn LlmProvider>,
+    state: Arc<backpressure::ProviderState>,
+}
+
+fn observe_failure(state: &backpressure::ProviderState, error: &anyhow::Error) {
+    let retry_after = error
+        .chain()
+        .find_map(|source| source.downcast_ref::<InferenceFailure>())
+        .and_then(|failure| failure.retry_after_ms);
+    backpressure::observe_retry_after(state, retry_after);
+}
+
+#[async_trait]
+impl LlmProvider for BackpressuredProvider {
+    fn capabilities(&self) -> InferenceCapabilities {
+        self.inner.capabilities()
+    }
+
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> Result<LlmResponse> {
+        let _permit = backpressure::acquire(&self.state).await?;
+        let result = self.inner.complete(messages, tools).await;
+        if let Err(error) = &result {
+            observe_failure(&self.state, error);
+        }
+        result
+    }
+
+    async fn complete_stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> Result<LlmStream> {
+        let permit = backpressure::acquire(&self.state).await?;
+        match self.inner.complete_stream(messages, tools).await {
+            Ok(stream) => {
+                let state = self.state.clone();
+                Ok(Box::pin(stream.map(move |item| {
+                    let _keep_permit_alive = &permit;
+                    if let Err(error) = &item {
+                        observe_failure(&state, error);
+                    }
+                    item
+                })))
+            }
+            Err(error) => {
+                observe_failure(&self.state, &error);
+                Err(error)
+            }
+        }
+    }
+
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn runtime_facts(&self) -> ModelRuntimeFacts {
+        self.inner.runtime_facts()
+    }
+    fn max_context_length(&self) -> usize {
+        self.inner.max_context_length()
     }
 }
 
@@ -136,6 +213,7 @@ mod tests {
                 input_per_1k: 0.1,
                 output_per_1k: 0.2,
             }),
+            backpressure: Default::default(),
         }
     }
 

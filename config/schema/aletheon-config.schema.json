@@ -1801,6 +1801,34 @@
       },
       "type": "object"
     },
+    "ProviderBackpressureConfig": {
+      "additionalProperties": false,
+      "description": "Provider-level backpressure. Unlike turn admission this coordinates all\nsessions and role children in the daemon process that use the same provider.",
+      "properties": {
+        "max_concurrent_requests": {
+          "default": 2,
+          "description": "Maximum simultaneous requests for one provider identity.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_cooldown_ms": {
+          "default": 60000,
+          "description": "Upper bound applied to provider-advised shared cooldown.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queue_timeout_ms": {
+          "default": 120000,
+          "description": "Maximum time a caller may wait for cooldown and a fair permit.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "ProviderConfig": {
       "additionalProperties": false,
       "description": "Per-provider configuration.",
@@ -1808,6 +1836,15 @@
         "api_key": {
           "default": "",
           "type": "string"
+        },
+        "backpressure": {
+          "$ref": "#/$defs/ProviderBackpressureConfig",
+          "default": {
+            "max_concurrent_requests": 2,
+            "max_cooldown_ms": 60000,
+            "queue_timeout_ms": 120000
+          },
+          "description": "Machine/provider-scoped admission and cooldown policy. Every provider\ninstance built by the canonical factory shares this policy by `name`."
         },
         "base_url": {
           "type": "string"
