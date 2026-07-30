@@ -237,6 +237,12 @@ pub use types::coding_job::{
     WorkspaceBoundary,
 };
 pub use types::context::{Context, TraceState};
+pub use types::evaluation::{
+    EvaluationContractError, EvaluationContractId, EvaluationDecision, EvaluationEvidenceSnapshot,
+    EvaluationMode, EvaluationReceipt, EvaluationReceiptId, EvaluationReceiptRef,
+    EvaluationSnapshotId, EvaluationSubject, EvaluationThresholds, EvidenceRef, RequiredEvidence,
+    RequiredGate, TaskEvaluationContract, TaskKind, EVALUATION_SCHEMA_V1,
+};
 pub use types::extension::{
     ActivationConstraints, ExtensionCatalog, ExtensionContractError, ExtensionDescriptor,
     ExtensionId, ExtensionKind, ExtensionOrigin, ExtensionSnapshot,
