@@ -90,7 +90,7 @@ impl EvaluationProjectionSink for DurableDomainEvaluationSink {
             "retry_replan_evidence": record.receipt.failed_gates,
         });
         let mut envelope = EnvelopeV2::new(
-            SchemaId::from(SchemaId::TURN_EVENT_V1),
+            SchemaId::from(SchemaId::EVENT_EVALUATION_OBSERVED_V1),
             EnvelopeV2Target("evaluation-projection".into()),
             EnvelopeV2Target(format!("{}:{}", self.domain, record.receipt.subject_id)),
             EnvelopeV2Delivery::Direct,

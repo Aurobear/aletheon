@@ -33,7 +33,9 @@ impl SessionProjection {
         store: &dyn SessionAppendStore,
         event: &SpineEvent,
     ) -> anyhow::Result<()> {
-        if event.visibility == EventVisibility::Sensitive {
+        if event.visibility == EventVisibility::Sensitive
+            || is_legacy_evaluation_projection_event(event)
+        {
             return Ok(());
         }
         match event.schema.0.as_str() {
@@ -196,7 +198,9 @@ impl EventProjection for SessionProjection {
     }
 
     fn apply(&self, state: &mut Self::State, event: &SpineEvent) -> Result<(), ProjectionError> {
-        if event.visibility == EventVisibility::Sensitive {
+        if event.visibility == EventVisibility::Sensitive
+            || is_legacy_evaluation_projection_event(event)
+        {
             return Ok(());
         }
         match event.schema.0.as_str() {
@@ -206,6 +210,23 @@ impl EventProjection for SessionProjection {
             _ => Ok(()),
         }
     }
+}
+
+/// Releases before the dedicated evaluation schema incorrectly published
+/// domain evaluation observations as `turn.event/v1`. Keep those immutable
+/// historical events replayable without treating their non-ItemRecord payload
+/// as public Session data. New observations use `evaluation_observed/v1`.
+fn is_legacy_evaluation_projection_event(event: &SpineEvent) -> bool {
+    event.schema.0 == fabric::SchemaId::TURN_EVENT_V1
+        && event.envelope.source.0 == "evaluation-projection"
+        && matches!(
+            &event.payload,
+            EventPayload::Inline { value }
+                if value
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|kind| kind.starts_with("evaluation.") && kind.ends_with(".observed"))
+        )
 }
 
 fn decode_inline<T: DeserializeOwned>(event: &SpineEvent) -> Result<T, ProjectionError> {

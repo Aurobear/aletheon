@@ -195,6 +195,34 @@ fn every_default_projection_has_a_distinct_descriptor() {
 }
 
 #[test]
+fn public_session_skips_legacy_misclassified_evaluation_observations() {
+    let tree = EventTreeId::new();
+    let mut legacy = event(
+        tree,
+        1,
+        SchemaId::TURN_EVENT_V1,
+        EventVisibility::Control,
+        EventPayload::Inline {
+            value: serde_json::json!({
+                "kind": "evaluation.agent_control.observed",
+                "receipt": {"receipt_id": "legacy"}
+            }),
+        },
+        None,
+    );
+    legacy.envelope.source = EnvelopeV2Target("evaluation-projection".into());
+
+    let store = SqliteProjectionStore::open(":memory:").unwrap();
+    let (state, checkpoint) = store.advance(&SessionProjection, &[legacy]).unwrap();
+    assert!(state.sessions.is_empty());
+    assert_eq!(checkpoint.through_sequence, 1);
+    assert!(store
+        .poison_for_tree("public-session", tree)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
 fn default_projection_set_reports_lag_and_poison_without_stopping_peers() {
     let tree = EventTreeId::new();
     let malformed = event(
