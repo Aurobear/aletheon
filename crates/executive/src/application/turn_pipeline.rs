@@ -1276,33 +1276,18 @@ impl TurnPipeline {
             }
         }
 
-        // Terminal events are buffered while the ReAct task is running so a
-        // failed task always produces one ordered Error -> TurnDone sequence.
-        // Successful tasks produce exactly one TurnDone even when Cognit also
-        // reported completion before its task joined.
+        // Terminal events are buffered while the ReAct task is running. They
+        // must not be exposed to clients here: the coordinator still owns the
+        // active-turn entry and durable terminal settlement after this
+        // pipeline returns. The daemon orchestration boundary emits the
+        // authoritative Error -> TurnDone sequence only after that settlement.
         let runtime_faults = text
             .as_ref()
             .err()
             .map(ToString::to_string)
             .into_iter()
             .collect::<Vec<_>>();
-        let normalized_terminal_events = terminal_events
-            .into_client_events(runtime_faults.first().cloned());
-        {
-            let sender = notify_tx.lock().await.clone();
-            if let Some(tx) = sender {
-                for event in normalized_terminal_events {
-                    let Ok(json_str) = event_to_json(&event) else {
-                        warn!("Unable to serialize terminal turn event");
-                        continue;
-                    };
-                    if tx.send(json_str).await.is_err() {
-                        warn!("Event sink closed, unable to send terminal turn event");
-                        break;
-                    }
-                }
-            }
-        }
+        let _buffered_terminal_events = terminal_events;
 
         let turn_succeeded = text.is_ok();
         let result = text.unwrap_or_else(|e| fabric::TurnResult {

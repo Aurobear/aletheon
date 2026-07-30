@@ -8,7 +8,9 @@ use super::orchestrator::DaemonTurnOrchestrator;
 use std::sync::Arc;
 
 use crate::application::turn_policy::TurnPolicy;
-use fabric::{PrincipalContext, PromptEnvelope, PromptKind, TurnRequest};
+use fabric::{
+    events::ui_event::ClientEvent, PrincipalContext, PromptEnvelope, PromptKind, TurnRequest,
+};
 use serde_json::json;
 use tracing::warn;
 
@@ -251,12 +253,41 @@ impl DaemonTurnOrchestrator {
                 })
             })
             .await;
+        self.emit_authoritative_terminal_events(coordinated.as_ref().err())
+            .await;
         match coordinated {
             Ok(result) => {
                 json!({"jsonrpc": "2.0", "id": id, "result": {"response": result.output}})
             }
             Err(error) => {
                 json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": error.to_string()}})
+            }
+        }
+    }
+
+    /// Notify the client only after `TurnCoordinator::submit_with` has removed
+    /// the active entry and settled the kernel operation. A Cognit TurnDone is
+    /// a pipeline-local result, not authoritative permission to start another
+    /// turn on the same thread.
+    async fn emit_authoritative_terminal_events(&self, error: Option<&anyhow::Error>) {
+        let Some(sender) = self.notify_tx.lock().await.clone() else {
+            return;
+        };
+        let mut events = Vec::with_capacity(if error.is_some() { 2 } else { 1 });
+        if let Some(error) = error {
+            events.push(ClientEvent::Error {
+                message: error.to_string(),
+            });
+        }
+        events.push(ClientEvent::TurnDone);
+        for event in events {
+            let Ok(payload) = crate::host::daemon::handler::format::event_to_json(&event) else {
+                warn!("unable to serialize authoritative terminal turn event");
+                continue;
+            };
+            if sender.send(payload).await.is_err() {
+                warn!("event sink closed before authoritative terminal turn event");
+                break;
             }
         }
     }
@@ -322,6 +353,31 @@ mod tests {
             2,
             "coordinator persists user and terminal items"
         );
+    }
+
+    #[tokio::test]
+    async fn terminal_client_event_is_emitted_after_active_turn_release() {
+        let harness = DaemonTurnTestBuilder::succeeding("mock answer")
+            .build()
+            .await;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        harness.orchestrator.set_notify_sender(tx).await;
+
+        let response = harness
+            .orchestrator
+            .execute_turn(
+                json!(71),
+                "hello",
+                context("daemon-terminal-order"),
+                Vec::new(),
+                None,
+            )
+            .await;
+
+        assert_eq!(response["result"]["response"], "mock answer");
+        let terminal = rx.recv().await.expect("authoritative terminal event");
+        assert!(terminal.contains("turn_done"));
+        assert_eq!(harness.coordinator.active_turn_count().await, 0);
     }
 
     #[tokio::test]
