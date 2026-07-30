@@ -8,6 +8,11 @@
 
 **Tech Stack:** Rust, Tokio, Serde/Schemars, SHA-256, rusqlite/WAL, existing Kernel operation tree, Fabric client/session protocols, Cognit completion gate, Metacog deterministic evaluator.
 
+**Status:** Tasks 1-14 are an as-built baseline accepted on 2026-07-30. That
+acceptance proves authoritative evaluation and L1 receipt observation. It does
+not prove Goal retry/replan or AgentControl capability-selection behavior; those
+L2 closures remain unchecked below.
+
 ---
 
 ## Requirement anchors
@@ -915,9 +920,11 @@ Expected: FAIL.
 
 - [x] **Step 3: Implement a receipt-ref-only projection fanout**
 
-Create `EvaluationProjection` with narrow optional sink traits. Goal receives
-failed gates as retry/replan evidence; AgentControl records runtime/profile
-correlations; Mnemosyne records eligible experience with evidence refs; Agora
+Create `EvaluationProjection` with narrow optional sink traits. Goal durably
+observes failed gates as future retry/replan evidence but does not yet consume
+them in `AttemptCoordinator`; AgentControl durably observes runtime/profile
+correlations but does not yet use them for capability selection; Mnemosyne
+records eligible experience with evidence refs; Agora
 attaches the receipt ref/failures to the task; Dasein receives a grounded outcome
 without decision authority. Capability rollups group immutable receipts by
 runtime/profile/rubric and expose count, pass rate, score distribution,
@@ -1069,6 +1076,11 @@ body, redeploy, and repeat all affected acceptance steps.
 
 ## Completion evidence (2026-07-30)
 
+The evidence below is historical acceptance for the baseline binary and daemon
+state on 2026-07-30. It must not be treated as acceptance of a later revision or
+as proof of the unchecked L2 work below; installed-runtime acceptance must be
+rerun after any relevant code change.
+
 - Focused checks: all Task 14 package checks and behavioral targets passed through
   `bash scripts/cargo-agent.sh`; the transient retry counter and legacy projection
   replay regressions also passed their dedicated tests.
@@ -1093,3 +1105,42 @@ body, redeploy, and repeat all affected acceptance steps.
 - Projection integrity: new observations use
   `aletheon.event.evaluation_observed/v1`; legacy misclassified observations replayed
   without poison, and `event_projection_poison` was empty after deployment.
+
+## Remaining L2 core-consumer closure
+
+- [ ] **Goal consumes evaluation outcomes as retry/replan evidence**
+
+  Add a durable, idempotent Goal consumer keyed by `receipt_id` and linked to the
+  owning attempt subject. `ObservedFail`/`Rejected` and `Indeterminate` produce a
+  typed retry/replan input containing failed gates; passing receipts produce no
+  retry. Replaying the same receipt must not create another attempt or transition.
+
+  **Files:**
+  - Modify: `crates/executive/src/application/goal/attempt_coordinator.rs`
+  - Modify: `crates/executive/src/application/goal/mod.rs`
+  - Test: `crates/executive/tests/evaluation_goal_feedback.rs`
+
+  **Verification:**
+  `bash scripts/cargo-agent.sh test -p executive --test evaluation_goal_feedback`
+
+- [ ] **AgentControl exposes evaluation history to host capability selection**
+
+  Add a read-only selection input built from the durable capability rollup. The
+  host policy may prefer or narrow a runtime/profile, but the selected launch
+  request must still pass per-child authority attenuation and may never gain
+  tools, workspace roots, protected-path access, or budget from a receipt.
+
+  **Files:**
+  - Modify: `crates/executive/src/application/capability_benchmark.rs`
+  - Modify: `crates/executive/src/application/agent_control/mod.rs`
+  - Test: `crates/executive/tests/evaluation_agent_selection.rs`
+
+  **Verification:**
+  `bash scripts/cargo-agent.sh test -p executive --test evaluation_agent_selection`
+
+- [ ] **Repeat installed-runtime acceptance**
+
+  After both closures pass focused checks, run
+  `sudo bash scripts/aletheon.sh deploy`, prove equal SHA-256 digests for the
+  release, installed, and running executables, observe stable restart counters,
+  and perform a real typed coding request over the official user socket.

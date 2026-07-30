@@ -2,7 +2,8 @@
 
 **Date:** 2026-07-30
 
-**Status:** Approved direction, implementation pending
+**Status:** Baseline implemented and production-accepted on 2026-07-30;
+behavioral core-consumer closure remains pending
 
 **Scope:** Production evaluation for explicitly typed coding/development tasks
 
@@ -64,8 +65,11 @@ derived by matching natural-language prompts.
 - Shadow mode observes without changing successful Turn settlement.
 - Enforce mode prevents an ineligible coding Turn from being reported as
   completed.
-- TUI, CLI, Goal, AgentControl, Mnemosyne, Agora, and capability benchmarking
-  consume the same receipt rather than re-scoring independently.
+- TUI, CLI, Goal, AgentControl, Mnemosyne, Agora, Dasein, and capability
+  benchmarking observe the same receipt rather than re-scoring independently.
+- Observation is not sufficient for behavioral consumers: Goal must turn a
+  rejected/indeterminate receipt into typed retry/replan input, and AgentControl
+  must expose receipt-derived runtime/profile history to capability selection.
 - Runtime/profile comparisons use identical contracts and rubrics while keeping
   provider calls, retries, inference rounds, tool calls, active context,
   cumulative usage, latency, and quality as separate metrics.
@@ -323,10 +327,19 @@ Metacog validates and aggregates it.
 
 ### 7.6 Other core modules
 
-- **Goal:** link goal attempts to receipt subjects and use rejected receipts as
-  typed retry/replan input.
-- **AgentControl:** record runtime/profile identity in subject correlations and
-  aggregate long-term capability distributions.
+There are two explicit integration levels. A sink that durably records the same
+receipt satisfies **L1 observation** only. A domain that changes its next
+decision from the receipt satisfies **L2 behavioral integration**. Documentation
+and acceptance must never call L1 "closed-loop" integration.
+
+- **Goal:** L1 records the receipt and failed gates. L2 links the receipt subject
+  to the owning attempt and converts `Rejected`/`Indeterminate` plus failed gates
+  into typed retry/replan evidence consumed by `AttemptCoordinator`. Replays are
+  idempotent by receipt ID and cannot create duplicate attempts.
+- **AgentControl:** L1 records runtime/profile correlation. L2 exposes durable
+  receipt distributions to a host-owned capability-selection policy; the policy
+  may narrow or prefer a runtime/profile but cannot widen authority or let one
+  receipt auto-promote a profile.
 - **Mnemosyne:** learn only from persisted receipt/evidence references, never
   from an assistant's unsupported success claim.
 - **Agora:** attach the receipt reference, failed gates, and unresolved findings
@@ -338,6 +351,12 @@ Metacog validates and aggregates it.
   bounded `evaluation.list` APIs.
 - **CapabilityBenchmark:** compare receipts produced under the same rubric,
   contract shape, workspace boundary, and verification selection.
+
+As-built baseline (2026-07-30): authoritative settlement, Gateway/TUI reads,
+Mnemosyne, Agora, Dasein, and capability rollups reached their intended baseline.
+Goal and AgentControl currently have L1 observation; their L2 behavior is a
+separate required closure slice and is not covered by the historical installed
+acceptance recorded in the implementation plan.
 
 ## 8. Authoritative lifecycle
 
@@ -610,7 +629,12 @@ branch.
   before the Turn.
 - Shadow failure completes with warning; enforce failure cannot report
   `Completed`.
-- Goal attempt consumes a rejected receipt for retry/replan.
+- Goal observation records the same rejected receipt and failed gates.
+- Goal L2 test: a rejected receipt linked to an active attempt is consumed once
+  as typed retry/replan evidence; replaying the same receipt creates no duplicate
+  retry or plan transition.
+- AgentControl L2 test: durable rollups are queryable by a host-owned selection
+  policy, and any policy result remains bounded by the caller's effective grant.
 - Mnemosyne, Agora, Dasein, AgentControl, and capability rollups receive the
   same persisted receipt ID.
 - Pi/native benchmark runs identical contracts and reports quality and usage
