@@ -1,243 +1,303 @@
 # Per-Child Capability Attenuation (E′)
 
 **Date:** 2026-07-30
-**Status:** Design approved (decisions locked); implementation not started
-**Scope:** Enforce that a spawned child agent's effective capabilities are a
-subset of its parent's runtime-effective grant, at the spawn choke point.
-This is the security prerequisite for Wave 1 (B, multi-agent planning).
+**Status:** Revised design; security decisions locked; implementation not started
+**Scope:** Derive one authoritative effective child grant before admission and
+enforce `child-effective ⊆ parent-runtime-effective` for tools, workspace policy,
+and budget. This is the security prerequisite for Wave 1 multi-agent planning.
 
-> Roadmap context: this is the sole remaining item of the E′ hardening wave.
-> The second candidate item — a suspected `Retry-After` backoff bug — was
-> **verified to be a false positive** during design: the streaming retry path
-> honors `Retry-After` via `streaming_retry_delay_ms`
-> (`crates/cognit/src/harness/linear/tool_exec.rs:1255-1262`,
-> `exponential.max(provider_advised)`), proven by the test
-> `streaming_retry_honors_a_longer_provider_retry_after`
-> (`tool_exec.rs:1323-1338`); the non-streaming path treats it as authoritative
-> at `crates/cognit/src/adapters/inference/scheduler.rs:316-332`. No change is
-> needed there.
+## 1. Current state and corrected problem statement
 
-## 1. Background & Problem
+`AgentControlService::spawn()` currently validates parent identity at
+`crates/executive/src/application/agent_control/mod.rs:596-665`, but constructs
+the live authority directly from the requested workspace, tools, and budget at
+`mod.rs:1074-1083`. The native runtime filters tools from that same request.
+Nothing intersects the request with the parent's runtime-effective grant.
 
-When a parent agent spawns a child, the requested tool set is validated **only
-against the child's own `AgentProfile` ceiling** — never intersected with the
-parent's actual runtime-effective grant.
+The existing `ReparentAuthority` is useful but is not yet a complete subset
+contract:
 
-Current flow (verified):
+- `covers()` checks tool membership and writable-root containment only
+  (`live_runs.rs:46-62`).
+- `WorkspacePolicy` also carries `protected_paths`
+  (`crates/fabric/src/types/local_authority.rs:71-76`); a child that omits a
+  parent's protected credential path is wider even when its writable roots are
+  identical.
+- `validated_parent()` supports an external root process that is live in Kernel
+  but absent from the Agent repository/live registry (`mod.rs:625-648`). A
+  `LiveAgentRuns`-only resolver would therefore break the first root-to-child
+  spawn.
+- Request budget is consumed by admission and Kernel deadline construction
+  before `LiveAgentRun::new` (`mod.rs:876-900`), and the request is persisted at
+  `mod.rs:1021-1032`. Narrowing only the launcher and live-run authority would
+  leave admission, deadlines, hashes, and durable records inconsistent.
 
+The effective grant consequently has four consumer classes, all of which must
+receive exactly the same value:
+
+```text
+parent authority + child request
+              |
+              v
+       attenuate once
+              |
+      +-------+----------+-------------+
+      |                  |             |
+ admission/deadline   durable record  runtime tool/workspace filter
+                                         |
+                                   LiveAgentRun authority
 ```
-parent -> AgentControlService::spawn(request)          crates/executive/src/application/agent_control/mod.rs:855
-       -> validated_parent(&request)                    mod.rs (identity: agent_id, depth, parent_profile)
-       -> launcher.launch(AgentRuntimeInput{request})   crates/executive/src/application/agent_control/execution.rs:368
-       -> NativeCognitRuntimeLauncher::execute()         crates/executive/.../native_cognit.rs:203
-       -> validate_requested_tools(request.allowed_tools, profile)  native_cognit.rs:209 (def 751-762)
-       -> tools.filter(|t| request.allowed_tools.contains(t.name))   native_cognit.rs:254
-```
 
-The gap:
+## 2. Goals and non-goals
 
-- `validate_requested_tools` checks `requested ⊆ child.profile.allowed_tools`,
-  a static role ceiling. It does **not** check `requested ⊆ parent-effective`.
-- The child's live-run authority is constructed from **its own** request, not a
-  narrowed set: `ReparentAuthority::new(request.trusted_workspace,
-  request.allowed_tools, request.budget)` at `mod.rs:1078-1082`.
-- Therefore a parent that was itself narrowed at runtime can still spawn a child
-  requesting more, as long as the child's profile permits it. The invariant
-  `child-effective ⊆ parent-effective` is not enforced at spawn.
+### Goals
 
-What already exists (and is reused, not rebuilt):
+1. Resolve the parent's runtime-effective authority without trusting model input.
+2. Compute the effective child authority once, immediately after parent identity
+   validation and before request hashing, admission, process allocation, deadline
+   construction, or persistence.
+3. Enforce tools, writable roots, protected paths, and every `AgentBudget`
+   dimension. More protected paths means less authority.
+4. Apply the effective request to every downstream consumer and persist enough
+   evidence to distinguish requested from effective authority.
+5. Compose transitively for grandchildren.
+6. Fail closed when a non-root parent authority cannot be resolved.
 
-- `ReparentAuthority` = `{ workspace: Option<WorkspacePolicy>, allowed_tools:
-  Vec<String>, budget: AgentBudget }` — `crates/executive/.../live_runs.rs:27-31`.
-- `ReparentAuthority::covers(child)` checks **tools ⊆ and workspace-roots
-  covered** — `live_runs.rs:46-62`.
-- `ReparentAuthority::accepts_budget(child)` checks every budget dimension —
-  `live_runs.rs:64-80`.
-- Parent authority is stored per live run (`LiveAgentRun.reparent_authority:
-  Arc<ReparentAuthority>`, `live_runs.rs:23`) and is lookup-able:
-  `LiveAgentRuns::get(agent).await -> Option<LiveAgentRun>` (`live_runs.rs:277`)
-  then `.reparent_authority()` (`live_runs.rs:145`).
-- `AgentControlService` owns the registry: `live: Arc<LiveAgentRuns>`
-  (`mod.rs:146`).
+### Non-goals
 
-So `covers()` + `accepts_budget()` already express the full subset predicate for
-tools + workspace + budget. They are only enforced at reparent/settlement time,
-**not at spawn**.
+- Aggregate reservation across multiple siblings. E′ is the per-child subset
+  invariant; machine/provider concurrency and shared budget reservation remain
+  owned by admission/backpressure.
+- Per-agent MCP registration. MCP tools remain subject to the same effective
+  name filter, but registry partitioning is separate.
+- Changing the authority of a true root spawn with no parent.
+- Any fallback that widens authority.
 
-### 1.1 Critical subtlety — two grant consumers
+## 3. Typed authority source
 
-The granted tool set is read in **two** places, and narrowing must be applied to
-**both** or it is cosmetic:
+### 3.1 `AgentDelegationAuthority`
 
-1. `LiveAgentRun.reparent_authority` — used to `covers()`-check *grandchildren*
-   (transitive delegation) and at settlement.
-2. `request.allowed_tools` carried into `AgentRuntimeInput` and consumed by the
-   runtime tool filter at `native_cognit.rs:254` — this is what actually decides
-   which tools the child can call.
-
-Narrowing only (1) would let the child still call every requested tool via (2).
-The effective set must feed both.
-
-## 2. Goals / Non-goals
-
-**Goals**
-
-1. At spawn, enforce `child-effective ⊆ parent-effective` for **tools,
-   workspace, and budget** (all three; the primitives already exist so it is the
-   same cost as tools-only).
-2. Attenuation composes transitively: a grandchild is bounded by the (already
-   narrowed) child, which is bounded by the parent.
-3. On over-request, **silently narrow to the intersection** and emit a durable
-   observability event — never widen, never (for tool over-request) fail the
-   spawn. Consistent with the codebase's recoverable-over-terminal ethos.
-4. **Fail closed**: if a non-root spawn cannot resolve its parent's authority,
-   reject — never fall through to an ungated grant.
-
-**Non-goals**
-
-- The typed `CapabilityGrant` newtype (approach B). Deferred; may be revisited if
-  Wave 1 (B) needs correct-by-construction guarantees.
-- Changing root-agent grant semantics (the root is the trust anchor).
-- Per-agent MCP tool scoping (separate concern; MCP tools are registered
-  globally in bootstrap today).
-- Any behavior that could *widen* an existing grant.
-
-## 3. Design
-
-### 3.1 Enforcement point
-
-Inside `AgentControlService::spawn()` (`mod.rs:855`), after `validated_parent`
-and before the `LiveAgentRun::new(...)` construction at `mod.rs:1074-1083`.
-
-### 3.2 New primitive — `ReparentAuthority::attenuate`
-
-Add to `live_runs.rs`:
+Move the cross-boundary grant shape into Fabric rather than passing an
+Executive-private `ReparentAuthority` through public structs:
 
 ```rust
-/// What was removed while narrowing a child's requested authority to fit its
-/// parent's effective grant. Empty report == no narrowing occurred.
-#[derive(Debug, Default, Clone)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentDelegationAuthority {
+    pub workspace: Option<WorkspacePolicy>,
+    pub allowed_tools: Vec<String>,
+    pub budget: AgentBudget,
+}
+```
+
+`AgentSpawnIntent` and `AgentSpawnRequest` gain a host-only
+`#[serde(skip)] delegator_authority: Option<AgentDelegationAuthority>`. Model or
+wire JSON can never mint it.
+
+The authoritative source is selected as follows:
+
+1. **True root request:** both parent IDs absent; no attenuation.
+2. **Managed child parent:** resolve the parent from `LiveAgentRuns` and use its
+   already-effective authority. Ignore any presented copy for authorization.
+3. **External root parent:** `validated_parent()` has proved that the Kernel
+   process is the matching live root. Require the host-injected
+   `delegator_authority`; if absent, reject `Forbidden`.
+
+The agent-control tool boundary extends `AgentToolContext`
+(`crates/fabric/src/types/tool.rs:10`, today only `caller_root_agent_id` /
+`parent_agent_id` / `parent_process_id`) with this host-only authority. The mint
+sites are the runtime composition points that already build `AgentToolContext`:
+the turn runtime for the root/main agent
+(`crates/executive/src/application/turn_pipeline.rs:699`) and the child runtime
+launcher (`crates/executive/src/adapters/runtime/native_cognit.rs:261`). Each
+must populate the delegable authority from the *actual installed tool set,
+effective `WorkspacePolicy`, and delegable budget* at that site — never from
+profile defaults. The corpus tool boundary that forwards a spawn is
+`crates/corpus/src/tools/tools/agent_control.rs:295`, where the model supplies
+`allowed_tools`; the parent grant must therefore arrive out-of-band through the
+host-only `delegator_authority` field, not this input. The sandbox-runner mirror
+is `crates/corpus/src/security/runner.rs:1709`. Host-driven workflow callers
+obtain the same typed authority from the turn runtime; they must not reconstruct
+it from profile defaults.
+
+### 3.2 One subset contract (single owner)
+
+`AgentDelegationAuthority` is the **only** type that implements the subset
+contract — `covers()`, `accepts_budget()`, and `attenuate()` (§4). These are
+pure functions defined in Fabric next to the type
+(`crates/fabric/src/types/agent_control.rs`), with per-field workspace logic
+delegated to `WorkspacePolicy` helpers in
+`crates/fabric/src/types/local_authority.rs` (which already ships
+`narrow_writable_roots`, `local_authority.rs:116`). The Executive-private
+`ReparentAuthority` (`crates/executive/src/application/agent_control/live_runs.rs:27`,
+whose `covers()` / `accepts_budget()` live at `:46` / `:64`) is retired:
+`LiveAgentRun` stores an `AgentDelegationAuthority` directly. To bound call-site
+churn, `live_runs.rs` may keep `ReparentAuthority` **only** as
+`pub type ReparentAuthority = AgentDelegationAuthority` — never a second struct
+with its own subset or attenuation logic. Executive calls the Fabric functions;
+per §9 it must not reimplement them. This single home is a hard invariant of the
+design: two subset implementations is precisely the failure mode E′ exists to
+prevent.
+
+## 4. Attenuation semantics
+
+Add a pure operation returning both the effective grant and an audit report:
+
+```rust
 pub struct AttenuationReport {
     pub dropped_tools: Vec<String>,
-    pub dropped_roots: Vec<std::path::PathBuf>,
-    pub budget_capped: bool,
+    pub dropped_writable_roots: Vec<PathBuf>,
+    pub inherited_protected_paths: Vec<PathBuf>,
+    pub budget_capped_fields: Vec<AgentBudgetField>,
+    pub requested_sha256: String,
+    pub effective_sha256: String,
 }
 
-impl AttenuationReport {
-    pub fn is_noop(&self) -> bool {
-        self.dropped_tools.is_empty()
-            && self.dropped_roots.is_empty()
-            && !self.budget_capped
-    }
-}
-
-impl ReparentAuthority {
-    /// Intersect a child's `requested` authority with `self` (the parent's
-    /// effective grant). The result is always covered by the parent. Never
-    /// widens.
-    pub fn attenuate(&self, requested: &Self) -> (Self, AttenuationReport);
-}
+pub fn attenuate(
+    parent: &AgentDelegationAuthority,
+    requested: &AgentDelegationAuthority,
+) -> Result<(AgentDelegationAuthority, AttenuationReport), AgentControlError>;
 ```
 
-Per-field semantics:
+Field rules:
 
-- **tools**: keep each requested tool iff `self.allowed_tools.contains(it)`;
-  the rest go to `dropped_tools`.
-- **workspace**: keep each child writable root iff it is covered by some parent
-  root (`child_root.starts_with(parent_root)`) — mirrors the `covers()` logic at
-  `live_runs.rs:51-58`. Uncovered roots go to `dropped_roots`. If the parent's
-  workspace is `None` (no filesystem authority), the result is `None`.
-- **budget**: per-dimension `min(requested, parent)` over exactly the dimensions
-  `accepts_budget` checks (`max_input_tokens`, `max_output_tokens`,
-  `max_tool_calls`, `max_elapsed_ms`, `max_depth`, and `max_cost_usd` where the
-  parent's `Some` bound caps a child's). `budget_capped = true` if any dimension
-  was reduced.
+- **Tools:** stable intersection in child-request order; duplicate names are
+  rejected by existing request validation.
+- **Writable roots:** retain a child root only when it is inside a parent root.
+  `child.workspace = None` remains no filesystem authority and is always narrower
+  than a parent workspace. A parent `None` forces child `None`.
+- **Protected paths:** the effective policy contains the union of parent and
+  child protected paths, canonicalized through `ProtectedPathPolicy::new`.
+  Parent protections may never be dropped by a child that retains filesystem
+  authority. A child with `workspace=None` has no filesystem authority, so no
+  protection list needs to be materialized.
+- **Working directory:** retain the child's cwd because cwd is independent of
+  writable authority; it grants no write access by itself
+  (`local_authority.rs:111-116`).
+- **Budget:** take the per-field minimum for input/output tokens, tool calls,
+  elapsed time, depth, and cost. For cost, parent `None` is unbounded; parent
+  `Some(x)` caps child `None` to `Some(x)`.
 
-Post-condition (add a `debug_assert!`): for any inputs,
-`self.covers(&effective) && self.accepts_budget(&effective)` holds.
+`attenuate()` is total except for one fallible step: materializing the unioned
+protected paths via `ProtectedPathPolicy::new`
+(`crates/fabric/src/types/local_authority.rs:165`, which returns `Result`). That
+is the only `Err` source — every other field rule is a total intersection or
+minimum — which is why the signature returns `Result`.
 
-### 3.3 `spawn()` wiring
+Extend the single `covers()` predicate (on `AgentDelegationAuthority`, §3.2) so
+its filesystem truth table treats `None` as no authority and verifies both
+writable containment and inherited protection. Required post-condition:
 
+```text
+parent.covers(effective)
+&& parent.accepts_budget(effective)
+&& (effective.workspace.is_none()
+    || effective.protected_paths ⊇ parent.protected_paths)
 ```
-if request has no parent (root / trust anchor):
-    unchanged — no attenuation, no event.
-else:
-    parent_run = self.live.get(parent_agent_id).await
-    if parent_run is None:
-        return control_error(Forbidden, "parent authority unavailable for attenuation")  // FAIL CLOSED
-    requested  = ReparentAuthority::new(request.trusted_workspace, request.allowed_tools, request.budget)
-    (effective, report) = parent_run.reparent_authority().attenuate(&requested)
-    if !report.is_noop():
-        emit AgentRuntimeEvent::CapabilityAttenuated { agent_id, parent_agent_id, report }
-    // Apply `effective` to BOTH consumers (§1.1):
-    //   (a) the request/AgentRuntimeInput handed to the launcher  -> narrows native_cognit.rs:254 filter
-    //   (b) LiveAgentRun::new(..., effective)                     -> replaces the raw request-derived authority at mod.rs:1078
+
+## 5. Spawn ordering
+
+`spawn()` must use this order:
+
+```text
+request.validate()
+launcher/profile resolution
+validated_parent()
+resolve_parent_authority()
+attenuate() -> effective request + report
+hash effective request
+admission.reserve(effective)
+Kernel process/deadline from effective budget
+persist AgentRunRecord containing effective request
+construct AgentRuntimeInput from effective request
+construct LiveAgentRun from effective authority
+emit CapabilityAttenuated after durable AgentRunRecord creation
+launch runtime
 ```
 
-"No parent" is determined by the existing root signal on the request
-(`parent_agent_id` absent). The exact field/optionality is pinned in the plan.
+The durable record stores the effective request as the executable truth, and the
+existing `request_hash` (`agent_spawn_request_hash`,
+`crates/executive/src/application/agent_control/mod.rs:48,867`) is computed over
+that **effective** request, not the original. The `requested_sha256` /
+`effective_sha256` in `AttenuationReport` are digests of the delegation-authority
+grant only (tools + workspace + budget) and are distinct from `request_hash`;
+they let the audit event show exactly what narrowed. The attenuation event
+carries those digests and the removed fields; it does not persist secrets or
+unrestricted workspace content.
 
-### 3.4 New event variant
+## 6. Error handling
 
-Add `CapabilityAttenuated` to `AgentRuntimeEvent` (`execution.rs:21`), carrying
-`agent_id`, `parent_agent_id`, and the `AttenuationReport` fields. It flows
-through the existing `AgentEventSink` chain
-(`MemoryRecordingAgentEventSink` / `SpineAgentEventSink`) for durable audit —
-no new transport.
+- Missing managed-parent live authority: `Forbidden`.
+- External root identity validated but host delegation authority absent:
+  `Forbidden`.
+- Protected-path canonicalization failure: reject before admission.
+- Empty effective tools or writable roots: allowed; the child runs with less
+  authority.
+- Any post-condition failure: return an internal authority error in release and
+  trigger `debug_assert!` in debug builds; never continue with the request.
+- Root request with no parent: unchanged and emits no attenuation event.
 
-## 4. Error handling
+## 7. Verification
 
-- **Missing parent authority** on a non-root spawn → `Forbidden` (fail closed).
-  Never degrade to an ungated grant.
-- **Empty effective tool set** after narrowing → allowed. The child spawns; any
-  tool call returns the normal, recoverable "tool not found" result and the
-  model can adapt. (Chosen policy: silent-narrow, not empty→reject.)
-- `attenuate()` is pure and infallible.
-- Root-agent path introduces **no new failure mode**.
+Unit/contract tests:
 
-## 5. Verification
+- Tool, root, budget, and cost intersections.
+- Parent protected paths are inherited even when absent in the child request.
+- `Some(parent workspace)` covers a child `None`; parent `None` rejects/forces
+  any child workspace to `None`.
+- Property test for the complete post-condition.
 
-Unit tests in `live_runs.rs`:
+AgentControl integration tests:
 
-- `attenuate` drops tools the parent does not hold; `dropped_tools` lists them.
-- `attenuate` narrows workspace roots to the covered subset; parent-`None` →
-  child-`None`.
-- `attenuate` caps each budget dimension to the parent min; `budget_capped` set.
-- Property/post-condition: for arbitrary inputs,
-  `parent.covers(&effective) && parent.accepts_budget(&effective)`.
+- Managed parent `{a,b}` and child `{a,b,c}` produces `{a,b}` in admission,
+  deadline, persisted request, runtime input, and live authority.
+- External Kernel root plus host delegation authority can spawn its first child.
+- The same external root without a host delegation authority fails closed.
+- A grandchild cannot regain a dropped tool, root, protected path, or budget.
+- Replaying/observing `CapabilityAttenuated` does not change an existing grant.
 
-Integration tests in `agent_control`:
+Validation commands:
 
-- Parent tools `{a,b}` spawns child requesting `{a,b,c}` → child effective
-  `{a,b}`; a `CapabilityAttenuated` event is emitted; the runtime filter yields
-  only `{a,b}`.
-- Transitive: grandchild ⊆ child ⊆ parent.
-- Fail-closed: `parent_agent_id` present but no live run → spawn `Forbidden`.
-- Root spawn (no parent) unchanged; no event emitted.
-- Pre-existing `covers()` / `accepts_budget()` / reparent tests stay green.
-
-Commands (via the wrapper, narrowest first):
-
-```
-bash scripts/cargo-agent.sh test -p executive
+```bash
+bash scripts/cargo-agent.sh test -p fabric --lib agent_control
+bash scripts/cargo-agent.sh test -p executive application::agent_control
 bash scripts/cargo-agent.sh fmt --all -- --check
 bash scripts/aletheon.sh test architecture
 ```
 
-## 6. Files touched
+Installed acceptance is required because the change affects tool context,
+AgentControl, persistence, daemon bootstrap, and runtime launch. Run
+`sudo bash scripts/aletheon.sh deploy`, verify binary digests and stable restart
+counters, then prove root -> child -> grandchild attenuation through the official
+user socket during a real LLM-backed request.
 
-- `crates/executive/src/application/agent_control/live_runs.rs`
-  — add `AttenuationReport` + `ReparentAuthority::attenuate` + unit tests.
-- `crates/executive/src/application/agent_control/execution.rs`
-  — add `AgentRuntimeEvent::CapabilityAttenuated` variant.
-- `crates/executive/src/application/agent_control/mod.rs`
-  — `spawn()`: parent lookup, attenuate, emit event, apply the effective set to
-  both the launcher input and `LiveAgentRun::new`.
-- `native_cognit.rs` is **unchanged**: it already filters by
-  `request.allowed_tools`; it simply receives the narrowed set.
+Status caveat: to date only the evaluation-kernel base has a historical
+production-acceptance record. E′ — like the L2 permission closed-loop and the
+other roadmap workstreams (A/B/C/D) — is to-be-implemented design and must not be
+described as production-wired until this installed acceptance passes.
 
-## 7. Scope boundary
+## 8. Files touched
 
-This is E′ (Wave 0). It unblocks Wave 1 (B — multi-agent planning), which spawns
-Planner/Executor/Reviewer children that must be attenuated. The typed
-`CapabilityGrant` newtype (approach B) is intentionally deferred.
+- `crates/fabric/src/types/agent_control.rs` — `AgentDelegationAuthority` and
+  host-only authority fields.
+- `crates/fabric/src/types/tool.rs` — trusted delegation authority on
+  `AgentToolContext`.
+- `crates/fabric/src/types/local_authority.rs` — complete protected-path-aware
+  narrowing/subset helpers.
+- `crates/corpus/src/tools/tools/agent_control.rs` — forward only the host-minted
+  delegator authority.
+- `crates/executive/src/application/agent_control/live_runs.rs` — complete
+  attenuation and subset predicate.
+- `crates/executive/src/application/agent_control/mod.rs` — resolve, attenuate,
+  and replace the request before all consumers.
+- `crates/executive/src/application/agent_control/execution.rs` — durable
+  `CapabilityAttenuated` event.
+- Runtime/tool-context composition sites
+  (`crates/executive/src/application/turn_pipeline.rs:699`,
+  `crates/executive/src/adapters/runtime/native_cognit.rs:261`) — mint authority
+  from effective runtime state, never from requested profile defaults.
+
+## 9. Dependency boundary
+
+E′ remains Wave 0 and must pass installed acceptance before the multi-agent
+planning loop is enabled. B may use the new typed grant but may not introduce a
+second attenuation implementation.
