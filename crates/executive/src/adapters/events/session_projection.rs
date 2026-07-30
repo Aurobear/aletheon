@@ -39,11 +39,11 @@ impl SessionProjection {
         match event.schema.0.as_str() {
             fabric::SchemaId::EVENT_SESSION_CREATED_V1 => {
                 let session = current_session(decode_inline_anyhow(event)?)?;
-                store.create(session).await
+                materialize_session_creation(store, session).await
             }
             fabric::SchemaId::EVENT_SESSION_FORKED_V1 => {
                 let fork = current_fork(decode_inline_anyhow(event)?)?;
-                store.create(fork.child.clone()).await?;
+                materialize_session_creation(store, fork.child.clone()).await?;
                 for item in fork.inherited_items {
                     let sequence = item.sequence;
                     let session_id = item.session_id.clone();
@@ -157,6 +157,27 @@ impl SessionProjection {
         session.items.push(item);
         Ok(())
     }
+}
+
+async fn materialize_session_creation(
+    store: &dyn SessionAppendStore,
+    created: SessionRecord,
+) -> anyhow::Result<()> {
+    let Some(current) = store.load_session(&created.id).await? else {
+        return store.create(created).await;
+    };
+    anyhow::ensure!(
+        current.schema_version == created.schema_version
+            && current.id == created.id
+            && current.parent == created.parent
+            && current.created_at_ms == created.created_at_ms,
+        "session creation conflicts with persisted immutable content"
+    );
+    // Session status is a mutable read-model projection (for example startup
+    // recovery can mark an interrupted Turn). Replaying the original creation
+    // event must preserve that later status rather than treating it as a
+    // conflicting create retry.
+    Ok(())
 }
 
 impl EventProjection for SessionProjection {
