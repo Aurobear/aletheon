@@ -103,6 +103,8 @@ pub struct ChatParams {
     pub workspace_roots: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requirements: Vec<crate::TurnRequirement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_kind: Option<crate::TaskKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -316,6 +318,7 @@ impl ClientRpcRequest {
             working_dir: workspace.cwd().to_path_buf(),
             workspace_roots: workspace.writable_roots().to_vec(),
             requirements: Vec::new(),
+            task_kind: None,
         })
     }
 
@@ -344,6 +347,22 @@ impl ClientRpcRequest {
         };
         params.session_id = session_id;
         params.requirements = requirements;
+        Self::Chat(params)
+    }
+
+    pub fn chat_with_task_kind(
+        message: impl Into<String>,
+        session_id: Option<SessionId>,
+        workspace: &WorkspacePolicy,
+        requirements: Vec<crate::TurnRequirement>,
+        task_kind: Option<crate::TaskKind>,
+    ) -> Self {
+        let mut params =
+            match Self::chat_with_requirements(message, session_id, workspace, requirements) {
+                Self::Chat(params) => params,
+                _ => unreachable!("chat constructor always returns chat"),
+            };
+        params.task_kind = task_kind;
         Self::Chat(params)
     }
 
@@ -1007,5 +1026,31 @@ mod request_tests {
             request["params"]["requirements"][0]["InvokeAgentRuntime"]["runtime_id"],
             "pi-rpc"
         );
+    }
+
+    #[test]
+    fn chat_serializes_explicit_coding_task_kind() {
+        let workspace =
+            WorkspacePolicy::from_resolved_roots("/tmp/project".into(), Vec::new()).unwrap();
+        let request = ClientRpcRequest::chat_with_task_kind(
+            "change code",
+            None,
+            &workspace,
+            vec![],
+            Some(crate::TaskKind::Coding),
+        )
+        .to_json_rpc(Some(7))
+        .unwrap();
+        assert_eq!(request["params"]["task_kind"], "coding");
+    }
+
+    #[test]
+    fn chat_without_task_kind_omits_the_field() {
+        let workspace =
+            WorkspacePolicy::from_resolved_roots("/tmp/project".into(), Vec::new()).unwrap();
+        let request = ClientRpcRequest::chat("hello", &workspace)
+            .to_json_rpc(Some(8))
+            .unwrap();
+        assert!(request["params"].get("task_kind").is_none());
     }
 }

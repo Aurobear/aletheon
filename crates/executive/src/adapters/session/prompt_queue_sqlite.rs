@@ -200,6 +200,7 @@ mod tests {
                     vec![fabric::TurnRequirement::InvokeAgentRuntime {
                         runtime_id: "pi-rpc".into(),
                     }],
+                    Some(fabric::TaskKind::Coding),
                 )
                 .await
                 .unwrap();
@@ -254,6 +255,15 @@ mod tests {
             vec![fabric::TurnRequirement::InvokeAgentRuntime {
                 runtime_id: "pi-rpc".into()
             }]
+        );
+        assert_eq!(
+            store
+                .get(first_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .requested_task_kind,
+            Some(fabric::TaskKind::Coding)
         );
         assert_eq!(snapshot.pending.len(), 1);
         assert_eq!(snapshot.pending[0].content, "second");

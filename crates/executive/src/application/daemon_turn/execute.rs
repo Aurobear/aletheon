@@ -85,6 +85,7 @@ impl DaemonTurnOrchestrator {
                 message.to_owned(),
                 idempotency_key,
                 requirements,
+                None,
             )
             .await
         {
@@ -196,6 +197,8 @@ impl DaemonTurnOrchestrator {
             model_policy,
             deadline: None,
             requirements,
+            requested_task_kind: None,
+            evaluation_contract: None,
         };
 
         let _turn_token = self.begin_turn_token().await;

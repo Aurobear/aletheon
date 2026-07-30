@@ -299,6 +299,8 @@ impl NativeCognitRuntime {
             model_policy: Some(resolved.profile.model.clone()),
             deadline: None,
             requirements: Vec::new(),
+            requested_task_kind: None,
+            evaluation_contract: None,
         };
         let timeout = Duration::from_millis(
             resolved
@@ -366,6 +368,8 @@ impl NativeCognitRuntime {
                 model_policy: Some(resolved.profile.model.clone()),
                 deadline: None,
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             };
         };
         let llm_usage = services.llm.usage();

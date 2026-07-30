@@ -82,6 +82,8 @@ impl TurnEngine for DaemonTurnEngine {
                 .or(context.profile.model_policy.clone()),
             deadline: request.deadline,
             requirements: request.requirements,
+            requested_task_kind: None,
+            evaluation_contract: None,
         };
 
         {

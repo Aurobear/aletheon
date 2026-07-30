@@ -69,6 +69,8 @@ async fn projection_runs_after_terminal_settlement_and_cannot_fail_the_turn() {
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     };
 
     let result = coordinator

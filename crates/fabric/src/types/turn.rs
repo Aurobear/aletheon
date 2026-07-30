@@ -17,6 +17,12 @@ pub struct TurnRequest {
     /// protocol data and must never be inferred by matching prompt text.
     #[serde(default)]
     pub requirements: Vec<crate::TurnRequirement>,
+    /// Explicit client/workflow task semantics. Never inferred from `input`.
+    #[serde(default)]
+    pub requested_task_kind: Option<crate::TaskKind>,
+    /// Host-issued evaluation contract. Clients cannot author this field.
+    #[serde(default)]
+    pub evaluation_contract: Option<crate::TaskEvaluationContract>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

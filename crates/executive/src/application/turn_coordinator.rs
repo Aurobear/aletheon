@@ -253,6 +253,7 @@ impl TurnCoordinator {
             kind: PromptKind::Prompt,
             content: String::new(),
             requirements: Vec::new(),
+            requested_task_kind: None,
             created_at_unix: 0,
             updated_at_unix: 0,
             state: PromptState::Queued,

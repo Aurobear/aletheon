@@ -165,6 +165,8 @@ async fn every_turn_has_operation_id() {
                 model_policy: None,
                 deadline: None,
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -448,6 +450,8 @@ async fn deadline_exceeded_sets_operation_to_cancelled() {
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(50)),
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )

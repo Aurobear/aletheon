@@ -36,6 +36,8 @@ fn request(input: &str) -> TurnRequest {
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     }
 }
 fn text(message: &Message) -> &str {

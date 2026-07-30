@@ -197,6 +197,7 @@ impl SessionInputCoordinator {
             content,
             idempotency_key,
             Vec::new(),
+            None,
         )
         .await
     }
@@ -210,6 +211,7 @@ impl SessionInputCoordinator {
         content: String,
         idempotency_key: String,
         requirements: Vec<fabric::TurnRequirement>,
+        requested_task_kind: Option<fabric::TaskKind>,
     ) -> Result<PromptEnvelope> {
         let _guard = self.operation_lock.lock().await;
         let existing = self.store.ordered(&principal, &thread).await?;
@@ -243,6 +245,7 @@ impl SessionInputCoordinator {
                 kind,
                 content,
                 requirements,
+                requested_task_kind,
                 created_at_unix: now,
                 updated_at_unix: now,
                 state: PromptState::Queued,

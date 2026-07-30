@@ -43,6 +43,8 @@ async fn turn_service_submits_one_turn() {
                 model_policy: None,
                 deadline: None,
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -203,6 +205,8 @@ async fn daemon_and_exec_turn_services_match_scripted_tool_order_and_output() {
         model_policy: None,
         deadline: None,
         requirements: Vec::new(),
+        requested_task_kind: None,
+        evaluation_contract: None,
     };
 
     let daemon_result = daemon
@@ -329,6 +333,8 @@ async fn deadline_timeout_returns_cancelled() {
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(100)),
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -359,6 +365,8 @@ async fn no_deadline_completes_normally() {
                 model_policy: None,
                 deadline: None,
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -387,6 +395,8 @@ async fn deadline_not_exceeded_completes_normally() {
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(60_000)),
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -418,6 +428,8 @@ async fn clock_measures_elapsed_for_turn_metrics() {
                 model_policy: None,
                 deadline: None,
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -463,6 +475,8 @@ async fn clock_deadline_short_returns_cancelled() {
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(1)),
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )
@@ -494,6 +508,8 @@ async fn clock_deadline_long_completes_normally() {
                 model_policy: None,
                 deadline: Some(MonoDeadlineMillis(5000)),
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )

@@ -161,6 +161,8 @@ pub async fn run_exec(request: ExecLaunch) -> Result<ExecHostOutcome> {
                 model_policy: (!request.model.is_empty()).then_some(request.model),
                 deadline: None,
                 requirements: Vec::new(),
+                requested_task_kind: None,
+                evaluation_contract: None,
             },
             &NoopTurnEventSink,
         )

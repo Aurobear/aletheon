@@ -161,6 +161,8 @@ impl TurnEngine for SessionTurnEngine {
             model_policy,
             deadline: request.deadline,
             requirements: request.requirements,
+            requested_task_kind: None,
+            evaluation_contract: None,
         };
 
         let sink = FabricEventSink;
