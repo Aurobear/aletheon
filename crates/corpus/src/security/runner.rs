@@ -9,6 +9,7 @@ use tracing::warn;
 
 use super::approval::{ApprovalDecision, ApprovalGate, ApprovalRequest, AutoDenyGate};
 use super::audit::{AuditLogger, AuditRecord};
+use super::command_effect::{classify_command, CommandEffect};
 use super::escape_detector::{EscapePolicy, ShellEscalationDetector};
 use super::loop_detector::{LoopDetector, LoopDetectorConfig, LoopVerdict};
 use super::output_guardrail::OutputGuardrail;
@@ -209,6 +210,30 @@ impl ToolRunnerWithGuard {
 
     /// Check policy using execpolicy if available, otherwise fall back to inline PolicyEngine.
     fn check_policy(&self, tool_name: &str, input: &serde_json::Value) -> PolicyVerdict {
+        if tool_name == "exec_command" {
+            let command = input
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            match classify_command(command) {
+                CommandEffect::Destructive => {
+                    return PolicyVerdict::Deny {
+                        reason: "destructive managed commands are forbidden".into(),
+                    };
+                }
+                CommandEffect::SystemChange => {
+                    return PolicyVerdict::Deny {
+                        reason: "system package, service, and privilege changes are unavailable inside the production command sandbox; report this host boundary and stop without retrying or calling repo_inspect".into(),
+                    };
+                }
+                CommandEffect::NetworkEgress | CommandEffect::ReadOnlyNetwork => {
+                    return PolicyVerdict::RequireApproval {
+                        reason: "managed command requests external network access".into(),
+                    };
+                }
+                CommandEffect::ReadOnly | CommandEffect::WorkspaceMutation => {}
+            }
+        }
         if let Some(ref policy) = self.exec_policy {
             let cmd = Self::build_command_vec(tool_name, input);
             let eval = policy.check(&cmd, fabric::execpolicy::default_heuristics);
@@ -318,6 +343,7 @@ impl ToolRunnerWithGuard {
                     &input,
                     tool.permission_level(),
                     turn_id,
+                    &ctx.session_id,
                     None,
                     &start,
                     "denied",
@@ -345,6 +371,7 @@ impl ToolRunnerWithGuard {
                             &input,
                             tool.permission_level(),
                             turn_id,
+                            &ctx.session_id,
                             None,
                             &start,
                             "rule_denied",
@@ -364,6 +391,7 @@ impl ToolRunnerWithGuard {
                                 &input,
                                 tool.permission_level(),
                                 turn_id,
+                                &ctx.session_id,
                                 None,
                                 &start,
                                 "approval_authority_missing",
@@ -415,6 +443,7 @@ impl ToolRunnerWithGuard {
                                         &input,
                                         tool.permission_level(),
                                         turn_id,
+                                        &ctx.session_id,
                                         None,
                                         &start,
                                         "approval_denied",
@@ -450,6 +479,7 @@ impl ToolRunnerWithGuard {
                     &input,
                     tool.permission_level(),
                     turn_id,
+                    &ctx.session_id,
                     None,
                     &start,
                     "network_approval_authority_missing",
@@ -492,6 +522,7 @@ impl ToolRunnerWithGuard {
                     &input,
                     tool.permission_level(),
                     turn_id,
+                    &ctx.session_id,
                     None,
                     &start,
                     "network_approval_denied",
@@ -518,6 +549,7 @@ impl ToolRunnerWithGuard {
                     &input,
                     tool.permission_level(),
                     turn_id,
+                    &ctx.session_id,
                     None,
                     &start,
                     "loop_blocked",
@@ -535,6 +567,7 @@ impl ToolRunnerWithGuard {
                     &input,
                     tool.permission_level(),
                     turn_id,
+                    &ctx.session_id,
                     None,
                     &start,
                     "escalated",
@@ -552,6 +585,7 @@ impl ToolRunnerWithGuard {
                     &input,
                     tool.permission_level(),
                     turn_id,
+                    &ctx.session_id,
                     None,
                     &start,
                     "interrupted",
@@ -948,6 +982,7 @@ impl ToolRunnerWithGuard {
             &input,
             tool.permission_level(),
             turn_id,
+            &ctx.session_id,
             Some(&final_result),
             &start,
             &verdict_str,
@@ -996,12 +1031,13 @@ impl ToolRunnerWithGuard {
         input: &serde_json::Value,
         level: PermissionLevel,
         turn_id: &str,
+        session_id: &str,
         result: Option<&ToolResult>,
         start: &fabric::MonoTime,
         verdict: &str,
     ) -> anyhow::Result<()> {
         self.log_audit_with_backend(
-            audit_id, tool_name, input, level, turn_id, result, start, verdict, None,
+            audit_id, tool_name, input, level, turn_id, session_id, result, start, verdict, None,
         )
         .await
     }
@@ -1014,16 +1050,26 @@ impl ToolRunnerWithGuard {
         input: &serde_json::Value,
         level: PermissionLevel,
         turn_id: &str,
+        session_id: &str,
         result: Option<&ToolResult>,
         start: &fabric::MonoTime,
         verdict: &str,
         sandbox_backend: Option<String>,
     ) -> anyhow::Result<()> {
-        let category = self.risk_classifier.classify(tool_name);
+        let category = if tool_name == "exec_command" {
+            input
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .map(classify_command)
+                .map(CommandEffect::risk_category)
+                .unwrap_or_else(|| self.risk_classifier.classify(tool_name))
+        } else {
+            self.risk_classifier.classify(tool_name)
+        };
         let record = AuditRecord {
             audit_id,
             timestamp: self.clock.wall_now(),
-            session_id: String::new(), // Will be filled by caller or context
+            session_id: session_id.to_owned(),
             turn_id: turn_id.to_string(),
             tool_name: tool_name.to_string(),
             args: input.clone(),
@@ -1971,72 +2017,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn runner_execpolicy_prompt_triggers_approval() {
-        // Build an execpolicy that prompts for "bash_exec".
-        let mut policy = ExecPolicy::new();
-        policy.add_rule(ExecPrefixRule::new("bash_exec", ExecDecision::Prompt));
-
-        let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger, test_clock())
-            .with_approval_gate(Arc::new(AutoApproveGate))
-            .with_policy(policy);
-
-        let tool = DummyL2Tool;
-        let result = runner
-            .execute_tool(
-                &tool,
-                serde_json::json!({
-                    "command": "rm -rf /tmp/test",
-                    "network_enabled": true
-                }),
-                &make_ctx(),
-                "t1",
-            )
-            .await;
-        assert!(
-            matches!(result, Ok(_) | Err(ToolError::OutputRejected(_))),
-            "approval should pass before output validation: {result:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn runner_no_execpolicy_falls_back_to_policy_engine() {
-        // Without with_policy(), the inline PolicyEngine is used.
-        let audit_logger = AuditLogger::new(std::path::PathBuf::from("/dev/null")).unwrap();
-        let mut runner = ToolRunnerWithGuard::with_default_sandbox(audit_logger, test_clock())
-            .with_approval_gate(Arc::new(AutoApproveGate));
-
-        let tool = DummyL2Tool;
-        let result = runner
-            .execute_tool(
-                &tool,
-                serde_json::json!({
-                    "command": "rm -rf /tmp/test",
-                    "network_enabled": true
-                }),
-                &make_ctx(),
-                "t1",
-            )
-            .await;
-        assert!(
-            matches!(result, Ok(_) | Err(ToolError::OutputRejected(_))),
-            "inline policy should pass before output validation: {result:?}"
-        );
-    }
-
-    #[test]
-    fn build_command_vec_extracts_bash_command() {
-        let input = serde_json::json!({ "command": "rm -rf /tmp/test" });
-        let cmd = ToolRunnerWithGuard::build_command_vec("bash_exec", &input);
-        // Command string is kept as a single token to preserve shell syntax.
-        assert_eq!(cmd, vec!["bash_exec", "rm -rf /tmp/test"]);
-    }
-
-    #[test]
-    fn build_command_vec_non_bash_tool() {
-        let input = serde_json::json!({ "path": "/tmp/file.txt" });
-        let cmd = ToolRunnerWithGuard::build_command_vec("file_read", &input);
-        assert_eq!(cmd, vec!["file_read"]);
-    }
+    #[path = "runner_tail_tests.rs"]
+    mod tail_tests;
 }

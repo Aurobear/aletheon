@@ -678,6 +678,7 @@ impl ReActLoop {
             // Check if reflection recommended stopping.
             if self.reflection_engine.should_stop() {
                 let mut fallback = text_parts.join("\n");
+                let mut synthesized_for_display = None;
                 // Reflection halts the tool loop, but must not surface an empty
                 // or stub answer. When no substantive answer exists yet, force
                 // ONE final tool-free synthesis pass over the gathered evidence.
@@ -701,7 +702,8 @@ impl ReActLoop {
                                 .collect::<Vec<_>>()
                                 .join("\n");
                             if !synth.trim().is_empty() {
-                                fallback = synth;
+                                fallback = synth.clone();
+                                synthesized_for_display = Some(synth);
                             }
                         }
                         Err(e) => {
@@ -712,6 +714,13 @@ impl ReActLoop {
                 if fallback.trim().is_empty() {
                     fallback = "Reflection recommended stopping; no answer could be synthesized."
                         .to_string();
+                    synthesized_for_display = Some(fallback.clone());
+                }
+                // `complete()` does not produce streaming deltas. The TUI renders
+                // assistant content from TextDelta events rather than TurnDone's
+                // terminal receipt, so publish the forced synthesis exactly once.
+                if let Some(synth) = synthesized_for_display {
+                    event_sink.emit(Event::TextDelta { delta: synth });
                 }
                 event_sink.emit(Event::TurnDone {
                     result: Ok(fallback.clone()),
