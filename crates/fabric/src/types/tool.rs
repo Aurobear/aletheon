@@ -77,6 +77,7 @@ pub struct ToolApprovalAuthority {
     pub workspace: WorkspacePolicy,
     /// Kernel-granted resource scope for this exact capability invocation.
     pub granted_scope: CapabilityScope,
+    pub permission_mode: crate::permission::HostPermissionMode,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

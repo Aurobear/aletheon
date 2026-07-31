@@ -121,6 +121,7 @@ impl Scenario {
                 .unwrap(),
                 session_id: "scenario".into(),
                 working_dir: std::env::temp_dir(),
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
             },
             control: InvocationControl {
                 cancel,

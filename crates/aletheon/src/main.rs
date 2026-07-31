@@ -11,7 +11,7 @@
 
 use aletheon::workspace::WorkspaceArgs;
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use interact::cli::TaskKindArg;
 use std::path::PathBuf;
 use tracing_subscriber::prelude::*;
@@ -25,6 +25,20 @@ mod acp;
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Permission profile: safe, dev, or full.
+    #[arg(
+        short = 'P',
+        long = "permission-mode",
+        global = true,
+        value_enum,
+        default_value = "safe"
+    )]
+    permission_mode: PermissionModeArg,
+
+    /// Shortcut for `-P full`.
+    #[arg(long, global = true, conflicts_with = "permission_mode")]
+    full: bool,
 
     /// Run the feature-gated ACP stdio gateway.
     #[cfg(feature = "acp")]
@@ -70,6 +84,30 @@ struct Cli {
     /// TUI test timeout in seconds
     #[arg(long, default_value_t = 120, hide = true)]
     test_timeout: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+enum PermissionModeArg {
+    #[default]
+    #[value(alias = "restricted")]
+    Safe,
+    #[value(alias = "developer")]
+    Dev,
+    #[value(alias = "unrestricted")]
+    Full,
+}
+
+impl PermissionModeArg {
+    fn effective(self, full: bool) -> &'static str {
+        if full {
+            return "full";
+        }
+        match self {
+            Self::Safe => "safe",
+            Self::Dev => "dev",
+            Self::Full => "full",
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -347,6 +385,8 @@ async fn handle_extension(cmd: &ExtensionCmd) -> anyhow::Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let permission_mode = cli.permission_mode.effective(cli.full);
+    std::env::set_var("ALETHEON_PERMISSION_MODE", permission_mode);
     #[cfg(feature = "acp")]
     if cli.acp {
         anyhow::ensure!(
@@ -675,5 +715,24 @@ mod daemon_cli_tests {
 
         let tui = Cli::try_parse_from(["aletheon", "--task-kind", "coding"]).unwrap();
         assert_eq!(tui.task_kind, Some(TaskKindArg::Coding));
+    }
+
+    #[test]
+    fn parses_short_and_compatible_permission_modes() {
+        let short = Cli::try_parse_from(["aletheon", "-P", "full"]).unwrap();
+        assert_eq!(short.permission_mode.effective(short.full), "full");
+
+        let compatible =
+            Cli::try_parse_from(["aletheon", "--permission-mode", "unrestricted"]).unwrap();
+        assert_eq!(
+            compatible.permission_mode.effective(compatible.full),
+            "full"
+        );
+    }
+
+    #[test]
+    fn full_flag_is_a_shortcut_for_unrestricted_permissions() {
+        let cli = Cli::try_parse_from(["aletheon", "--full"]).unwrap();
+        assert_eq!(cli.permission_mode.effective(cli.full), "full");
     }
 }

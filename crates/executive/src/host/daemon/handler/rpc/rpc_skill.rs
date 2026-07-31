@@ -78,6 +78,7 @@ impl RequestHandler {
             workspace,
             Vec::new(),
             None,
+            fabric::permission::HostPermissionMode::Safe,
         )
         .await
     }

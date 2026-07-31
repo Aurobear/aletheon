@@ -75,23 +75,34 @@ async fn managed_command_policy_uses_host_classified_effects() {
     assert!(matches!(
         runner.check_policy(
             "exec_command",
-            &serde_json::json!({"command":"which glab && glab --version"})
+            &serde_json::json!({"command":"which glab && glab --version"}),
+            false
         ),
         PolicyVerdict::Allow
     ));
     assert!(matches!(
         runner.check_policy(
             "exec_command",
-            &serde_json::json!({"command":"glab mr view 22 --repo owner/repo"})
+            &serde_json::json!({"command":"glab mr view 22 --repo owner/repo"}),
+            false
         ),
         PolicyVerdict::RequireApproval { .. }
     ));
     assert!(matches!(
         runner.check_policy(
             "exec_command",
-            &serde_json::json!({"command":"sudo apt-get install glab"})
+            &serde_json::json!({"command":"sudo apt-get install glab"}),
+            false
         ),
         PolicyVerdict::Deny { .. }
+    ));
+    assert!(matches!(
+        runner.check_policy(
+            "exec_command",
+            &serde_json::json!({"command":"sudo apt-get install glab"}),
+            true
+        ),
+        PolicyVerdict::Allow
     ));
 }
 

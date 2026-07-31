@@ -318,6 +318,7 @@ impl ProviderWorkerRuntime {
                                 session_id: context.session_id,
                                 working_dir: context.working_dir,
                                 sandbox: SandboxRequirement::NotRequired,
+                                permission_mode: fabric::permission::HostPermissionMode::Safe,
                                 cancel: cancel.clone(),
                                 turn_count: 0,
                                 repo_hooks_trusted: false,

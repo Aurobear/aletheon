@@ -44,6 +44,7 @@ pub use cli::run;
 /// line mode, and `-m` mode from silently diverging.
 pub fn chat_request(message: &str, workspace: &fabric::WorkspacePolicy) -> serde_json::Value {
     fabric::protocol::client::ClientRpcRequest::chat(message, workspace)
+        .chat_with_permission_mode(crate::host::permission_mode_from_environment())
         .to_json_rpc(Some(1))
         .expect("typed chat request serializes")
 }

@@ -533,8 +533,13 @@ impl Tool for ExecCommandTool {
         let cwd = ctx.working_dir.to_string_lossy().into_owned();
         let command_session_id = uuid::Uuid::new_v4().to_string();
         let effect = classify_command(command);
+        let unrestricted = ctx
+            .approval_authority
+            .as_ref()
+            .map(|authority| authority.permission_mode.is_full())
+            .unwrap_or(false);
         let transaction = if let Some(registry) = &self.sessions.change_transactions {
-            if effect.requires_transaction() {
+            if effect.requires_transaction() && !unrestricted {
                 let Some(transaction_id) = input
                     .get("transaction_id")
                     .and_then(|value| value.as_str())

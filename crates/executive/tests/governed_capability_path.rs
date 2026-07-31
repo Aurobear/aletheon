@@ -45,6 +45,7 @@ impl TurnAuthorityProvider for RecordingAuthority {
                 .unwrap(),
                 session_id: "session-1".into(),
                 working_dir: "/trusted/workspace".into(),
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
             },
             control: InvocationControl::default(),
         })

@@ -88,6 +88,8 @@ pub struct CapabilityAuthority {
     // Compatibility projection for non-approval consumers.
     pub session_id: String,
     pub working_dir: PathBuf,
+    #[serde(default)]
+    pub permission_mode: crate::permission::HostPermissionMode,
 }
 
 #[derive(Debug, Clone)]

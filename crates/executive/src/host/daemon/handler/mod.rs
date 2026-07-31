@@ -305,16 +305,18 @@ impl RequestHandler {
             Ok(task_kind) => task_kind,
             Err(error) => return rpc_error(&id, -32602, error),
         };
-        let workspace = match resolve_requested_workspace(&request["params"]) {
-            Ok(workspace) => workspace,
-            Err(error) => {
-                return serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": { "code": -32602, "message": error }
-                });
-            }
-        };
+        let permission_mode = parse_host_permission_mode(&request["params"]["permission_mode"]);
+        let workspace =
+            match resolve_requested_workspace_with_mode(&request["params"], permission_mode) {
+                Ok(workspace) => workspace,
+                Err(error) => {
+                    return serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32602, "message": error }
+                    });
+                }
+            };
         let thread_id = if let Some(session_id) = request["params"]["session_id"]
             .as_str()
             .filter(|value| !value.trim().is_empty())
@@ -340,6 +342,7 @@ impl RequestHandler {
             workspace,
             requirements,
             task_kind,
+            permission_mode,
         )
         .await
     }
@@ -355,6 +358,7 @@ impl RequestHandler {
         workspace: fabric::WorkspacePolicy,
         requirements: Vec<fabric::TurnRequirement>,
         task_kind: Option<fabric::TaskKind>,
+        permission_mode: fabric::permission::HostPermissionMode,
     ) -> serde_json::Value {
         if thread_id.0.trim().is_empty() || message.trim().is_empty() {
             return rpc_error(&id, -32602, "thread_id and message are required");
@@ -365,8 +369,16 @@ impl RequestHandler {
             connection.connection_id.clone(),
             thread_id,
             workspace,
-            fabric::PermissionProfileId::workspace_write(),
-            fabric::ApprovalPolicy::OnRequest,
+            if permission_mode.is_full() {
+                fabric::PermissionProfileId::danger_full_access()
+            } else {
+                fabric::PermissionProfileId::workspace_write()
+            },
+            if permission_mode.is_full() {
+                fabric::ApprovalPolicy::Never
+            } else {
+                fabric::ApprovalPolicy::OnRequest
+            },
         );
         if let Err(error) = self.bind_thread_authority(&context, None) {
             return serde_json::json!({
@@ -510,6 +522,13 @@ impl LegacySessionThreadAdapter {
 fn resolve_requested_workspace(
     params: &serde_json::Value,
 ) -> Result<fabric::WorkspacePolicy, String> {
+    resolve_requested_workspace_with_mode(params, fabric::permission::HostPermissionMode::Safe)
+}
+
+fn resolve_requested_workspace_with_mode(
+    params: &serde_json::Value,
+    permission_mode: fabric::permission::HostPermissionMode,
+) -> Result<fabric::WorkspacePolicy, String> {
     let requested = params["working_dir"]
         .as_str()
         .ok_or_else(|| "missing working_dir".to_string())?;
@@ -531,8 +550,23 @@ fn resolve_requested_workspace(
         Some(PathBuf::from(requested)),
         roots.into_iter().skip(1).collect(),
     )
-    .resolve(Path::new(requested))
+    .resolve_with_profile(
+        Path::new(requested),
+        &if permission_mode.is_full() {
+            fabric::PermissionProfileId::danger_full_access()
+        } else {
+            fabric::PermissionProfileId::workspace_write()
+        },
+    )
     .map_err(|error| error.to_string())
+}
+
+fn parse_host_permission_mode(value: &serde_json::Value) -> fabric::permission::HostPermissionMode {
+    match value.as_str() {
+        Some("full" | "unrestricted") => fabric::permission::HostPermissionMode::Full,
+        Some("developer" | "dev") => fabric::permission::HostPermissionMode::Developer,
+        _ => fabric::permission::HostPermissionMode::Safe,
+    }
 }
 
 #[cfg(test)]
@@ -595,6 +629,19 @@ mod working_dir_tests {
         assert_eq!(
             super::parse_task_kind(&serde_json::Value::Null).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn permission_mode_parser_is_fail_closed() {
+        assert!(super::parse_host_permission_mode(&serde_json::json!("full")).is_full());
+        assert_eq!(
+            super::parse_host_permission_mode(&serde_json::json!("dev")),
+            fabric::permission::HostPermissionMode::Developer
+        );
+        assert_eq!(
+            super::parse_host_permission_mode(&serde_json::json!("unknown")),
+            fabric::permission::HostPermissionMode::Safe
         );
     }
 }
