@@ -1,4 +1,4 @@
-use fabric::governed_review::GovernedReviewJob;
+use fabric::types::governed_review::GovernedReviewJob;
 use fabric::Message;
 use serde::Serialize;
 
@@ -9,7 +9,7 @@ struct ReviewInput<'a> {
     schema_version: u16,
     subject_type: &'a str,
     subject_refs: &'a [String],
-    evidence: &'a [fabric::governed_review::ReviewEvidence],
+    evidence: &'a [fabric::types::governed_review::ReviewEvidence],
     evidence_digest: &'a str,
     policy_ref: &'a str,
     allowed_operations: &'a [String],

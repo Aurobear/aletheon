@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use fabric::governed_review::{
+use fabric::types::governed_review::{
     GovernedReviewJob, GovernedReviewReceipt, ProposedReviewChange, ReviewStatus, ReviewUsage,
     REVIEW_SCHEMA_CURRENT, REVIEW_SCHEMA_PREVIOUS,
 };
@@ -594,7 +594,7 @@ fn redacted_error(error: &str) -> String {
         error,
         fabric::types::data_governance::ContentTrust::ExternalUntrusted,
     );
-    let max = fabric::governed_review::MAX_REVIEW_ERROR_BYTES;
+    let max = fabric::types::governed_review::MAX_REVIEW_ERROR_BYTES;
     if governed.content.len() <= max {
         return governed.content;
     }

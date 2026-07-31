@@ -19,7 +19,7 @@ const MAX_WAIT_MS: u64 = 120_000;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SubmitParams {
-    job: fabric::governed_review::GovernedReviewJob,
+    job: fabric::types::governed_review::GovernedReviewJob,
 }
 
 #[derive(Deserialize)]
@@ -108,7 +108,8 @@ impl RequestHandler {
             match serde_json::from_value::<WaitParams>(request["params"].clone()) {
                 Ok(params)
                     if !params.job_id.trim().is_empty()
-                        && params.job_id.len() <= fabric::governed_review::MAX_REVIEW_ID_BYTES
+                        && params.job_id.len()
+                            <= fabric::types::governed_review::MAX_REVIEW_ID_BYTES
                         && (1..=MAX_WAIT_MS).contains(&params.timeout_ms) =>
                 {
                     params
@@ -171,7 +172,7 @@ fn parse_job_params(id: &Value, request: &Value) -> Result<JobParams, Value> {
     match serde_json::from_value::<JobParams>(request["params"].clone()) {
         Ok(params)
             if !params.job_id.trim().is_empty()
-                && params.job_id.len() <= fabric::governed_review::MAX_REVIEW_ID_BYTES =>
+                && params.job_id.len() <= fabric::types::governed_review::MAX_REVIEW_ID_BYTES =>
         {
             Ok(params)
         }
@@ -187,7 +188,7 @@ fn parse_job_params(id: &Value, request: &Value) -> Result<JobParams, Value> {
 fn service_error(id: &Value, error: ReviewServiceError) -> Value {
     match error {
         ReviewServiceError::Store(ReviewStoreError::InvalidContract(
-            fabric::governed_review::ReviewContractError::UnsupportedSchema(_),
+            fabric::types::governed_review::ReviewContractError::UnsupportedSchema(_),
         )) => rpc_error(id, INCOMPATIBLE_SCHEMA, error.to_string()),
         ReviewServiceError::Store(ReviewStoreError::IdempotencyConflict) => {
             rpc_error(id, IDEMPOTENCY_CONFLICT, error.to_string())

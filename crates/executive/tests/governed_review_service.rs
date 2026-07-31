@@ -6,7 +6,7 @@ use executive::application::governed_review::{
     GovernedReviewLimits, GovernedReviewService, GovernedReviewStore,
 };
 use executive::application::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
-use fabric::governed_review::*;
+use fabric::types::governed_review::*;
 use fabric::{ContentBlock, LlmResponse, LlmStream, StopReason, Usage};
 use tokio::sync::Mutex;
 

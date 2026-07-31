@@ -4,7 +4,7 @@ use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use fabric::governed_review::{
+use fabric::types::governed_review::{
     GovernedReviewJob, GovernedReviewReceipt, ReviewStatus, ReviewUsage,
 };
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,7 @@ struct IdempotencyRecord {
 #[derive(Debug, thiserror::Error)]
 pub enum ReviewStoreError {
     #[error("invalid review contract: {0}")]
-    InvalidContract(#[from] fabric::governed_review::ReviewContractError),
+    InvalidContract(#[from] fabric::types::governed_review::ReviewContractError),
     #[error("review state is corrupt: {0}")]
     Corrupt(String),
     #[error("review job was not found")]

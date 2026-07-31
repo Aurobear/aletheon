@@ -71,7 +71,6 @@ pub use types::external_identity;
 pub use types::external_source;
 pub use types::genome;
 pub use types::goal;
-pub use types::governed_review;
 pub use types::grounding;
 pub use types::hook;
 pub use types::hook_ext;

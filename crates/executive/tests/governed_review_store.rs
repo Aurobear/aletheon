@@ -1,7 +1,7 @@
 use std::os::unix::fs::PermissionsExt;
 
 use executive::application::governed_review::{GovernedReviewStore, ReviewStoreError};
-use fabric::governed_review::*;
+use fabric::types::governed_review::*;
 
 fn digest(byte: char) -> String {
     std::iter::repeat_n(byte, 64).collect()
