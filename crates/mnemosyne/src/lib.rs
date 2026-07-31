@@ -107,7 +107,7 @@ pub use ops::decay;
 pub use ops::schema;
 
 #[cfg(feature = "cognitive-memory")]
-pub use ops::consolidation;
+pub use ops::consolidation as cognitive_consolidation;
 #[cfg(feature = "cognitive-memory")]
 pub use ops::router;
 

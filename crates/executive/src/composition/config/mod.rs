@@ -107,7 +107,7 @@ pub struct AppConfig {
     pub pi_runtime: CodingRuntimeConfig,
     pub deployment: DeploymentConfig,
     pub grok_hardening: GrokHardeningConfig,
-    /// D2-M5-T2: overload/backpressure limits (default unlimited).
+    /// Host-owned overload/backpressure limits with bounded daemon defaults.
     #[serde(default)]
     pub backpressure: BackpressureConfig,
     /// S1 sandbox profiles (from trusted daemon config, never from repo).

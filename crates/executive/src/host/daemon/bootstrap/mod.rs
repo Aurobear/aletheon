@@ -39,6 +39,7 @@ use crate::host::daemon::handler::RequestHandler;
 pub(super) struct DaemonComposition {
     request: Arc<HandlerPorts>,
     active_connections: Arc<AtomicUsize>,
+    max_connections: Option<usize>,
     thread_authority: Arc<crate::application::thread_authority::ThreadAuthorityStore>,
     grok_hardening: GrokHardeningConfig,
     workspace_trust: Arc<crate::application::workspace_trust::WorkspaceTrustResolver>,
@@ -51,6 +52,7 @@ impl DaemonComposition {
             ports: self.request,
             notify_tx: None,
             active_connections: self.active_connections,
+            max_connections: self.max_connections,
             thread_authority: self.thread_authority,
             grok_hardening: self.grok_hardening,
             workspace_trust: self.workspace_trust,

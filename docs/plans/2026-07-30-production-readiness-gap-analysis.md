@@ -47,6 +47,21 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
   三次均失败，不能用 monitor/frame 表面 PASS 覆盖 provider 证据；需要 provider
   稳定后重新取得三次连续零错误结果，才可关闭安装态门槛。
 
+### 0.2 2026-07-31 定位与 always-on 承载复核
+
+本节进一步取代把“存在模块”“默认启用”和“生产接线”混为一谈的旧表述：
+
+| 项 | 当前代码事实 | 准确缺口 / 本轮处理 |
+|---|---|---|
+| 离线混合推理 | production runtime 构造并使用 `LlmScheduler`（`crates/executive/src/core/runtime_core.rs:153-177`），scheduler 会在 provider 失败后尝试下一候选（`crates/cognit/src/adapters/inference/scheduler.rs:270-353`）；但默认配置只有云 provider，本地 Ollama 示例被注释（`config/default.toml:35-57`），`IntentClassifier`/`InferenceRouter` 未进入安装运行时（`crates/cognit/README.md:23-25`） | 不能写成“turn 没有 failover”，也不能宣称默认 offline-first。README 改为 cloud-default、Ollama 可配置、llama.cpp planned；真正默认本地兜底仍是开放项 |
+| Linux sandbox | Bubblewrap 提供真实 namespace 隔离；此前 capabilities 声称 seccomp，但没有生成/传入 `--seccomp` BPF FD。`Auto` 还会沿 Bubblewrap → Process → Noop 退化（`crates/corpus/src/security/sandbox/executor.rs:39-46`） | 本轮停止虚假 seccomp 声明，并将 shipped safe/dev 默认改为 `require`；`full` 仍由用户显式选择无沙箱。真实 seccomp filter 是后续独立 workstream |
+| daemon 连接与 turn | accept loop 原先在 peer credential 后无条件 spawn connection（`crates/executive/src/host/daemon/server.rs:639-667`）；Turn backpressure 已存在，但默认无限（`crates/executive/src/composition/config/backpressure.rs`） | 本轮引入默认 64 个连接、8 个并发 turn 的 host-owned 上限，并以原子 admission 防止并发越界 |
+| 顶层 turn 累计工作量 | Provider 单请求、tool result 和 child Agent 各有局部上限，但 shipped `agent.max_iterations=0` 允许顶层循环无限 | 本轮 shipped 默认改为 50 iterations；累计 provider tokens/成本/事件字节的统一硬结算仍是开放项 |
+| Event spine | SQLite append 有 1 秒写 admission timeout（`crates/executive/src/adapters/events/sqlite_event_spine.rs:175-183`），但没有统一容量水位、retention/vacuum 调度 | 仍为 P0 开放项；不能用 append backpressure 代替磁盘生命周期治理 |
+| OS 集成 | FUSE 是 design-only（`README.md:286-289`）；eBPF/io_uring 是 feature-gated/experimental（`README.md:274-282`） | 必须分别报告 `planned`、`experimental`、`installed`，不得统称“已生产接入”或简单统称“mock” |
+| Mnemosyne migration | supplemental store 已有 `PRAGMA user_version` runner；FactStore 有幂等列迁移，但其他 backend 多为各自 `CREATE TABLE IF NOT EXISTS` | 缺口是主存 backend 的统一 schema/version/migration policy，不是“完全没有 migration runner” |
+| CI | 默认-feature workspace suite 之外，PR 现在分别编译 io_uring、Linux integration 和 Mnemosyne all-features contract，并执行每 target 5 秒的 bounded fuzz；依赖系统 Leptonica/Tesseract 的 `ocr-tesseract` 不伪装成通用 runner 可编译 | OS feature contract 与 bounded fuzz 已进入 PR gate；原生 OCR 依赖必须由专用 runner/image gate，FUSE/eBPF 仍无可 gate 的生产 feature |
+
 > **验收口径。** 评分内核基础部分已有 2026-07-30 的历史安装态生产验收；
 > Goal retry/replan 与 AgentControl capability selection 的 L2 闭环已于
 > 2026-07-31 实现并通过 focused tests，但仍须按实现计划重复安装态验收

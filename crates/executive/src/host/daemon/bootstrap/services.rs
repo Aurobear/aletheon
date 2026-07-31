@@ -63,7 +63,10 @@ pub(super) async fn build_agent_services(
             .map_err(|error| anyhow::anyhow!(error.to_string()))?,
     );
     let canonical_event_spine = Arc::new(
-        crate::adapters::events::SqliteEventSpine::open(data_dir.join("events.db"))
+        crate::adapters::events::SqliteEventSpine::open_bounded(
+            data_dir.join("events.db"),
+            config.backpressure.max_event_spine_bytes,
+        )
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "canonical event spine unavailable; using process-local fallback");
                 crate::adapters::events::SqliteEventSpine::open(":memory:")

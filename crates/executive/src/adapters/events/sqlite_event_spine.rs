@@ -29,6 +29,7 @@ pub struct EventReadFilter {
 
 pub struct SqliteEventSpine {
     connection: parking_lot::Mutex<Connection>,
+    max_bytes: Option<u64>,
     accepted: AtomicU64,
     rejected: AtomicU64,
     backpressure_rejections: AtomicU64,
@@ -40,6 +41,10 @@ pub fn default_event_spine_path() -> std::path::PathBuf {
 
 impl SqliteEventSpine {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_bounded(path, None)
+    }
+
+    pub fn open_bounded(path: impl AsRef<Path>, max_bytes: Option<u64>) -> Result<Self> {
         let connection = Connection::open(path).context("open event spine")?;
         connection.execute_batch(
             "PRAGMA foreign_keys = ON;
@@ -65,6 +70,7 @@ impl SqliteEventSpine {
         )?;
         Ok(Self {
             connection: parking_lot::Mutex::new(connection),
+            max_bytes,
             accepted: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
             backpressure_rejections: AtomicU64::new(0),
@@ -194,6 +200,19 @@ impl SqliteEventSpine {
                 bail!("event id retry conflicts with persisted content");
             }
             return serde_json::from_str(&existing_event).context("decode idempotent spine event");
+        }
+        if let Some(max_bytes) = self.max_bytes {
+            let page_count: u64 =
+                transaction.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+            let page_size: u64 = transaction.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+            let logical_bytes = page_count.saturating_mul(page_size);
+            if logical_bytes.saturating_add(input_json.len() as u64) > max_bytes {
+                self.backpressure_rejections.fetch_add(1, Ordering::Relaxed);
+                bail!(
+                    "event spine capacity exceeded: logical bytes {logical_bytes}, append bytes {}, limit {max_bytes}",
+                    input_json.len()
+                );
+            }
         }
 
         transaction.execute(
