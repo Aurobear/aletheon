@@ -39,13 +39,13 @@ pub(crate) fn classify_command(command: &str) -> CommandEffect {
     let normalized = strip_safe_redirections(normalized);
     let lower = normalized.to_ascii_lowercase();
 
-    if contains_program(&lower, &["rm", "rmdir", "mkfs", "shutdown", "reboot"])
+    if invokes_program(&lower, &["rm", "rmdir", "mkfs", "shutdown", "reboot"])
         || lower.contains("git reset --hard")
         || lower.contains("git clean -f")
     {
         return CommandEffect::Destructive;
     }
-    if contains_program(
+    if invokes_program(
         &lower,
         &[
             "sudo",
@@ -66,7 +66,7 @@ pub(crate) fn classify_command(command: &str) -> CommandEffect {
     if is_read_only_glab_command(&normalized) {
         return CommandEffect::ReadOnlyNetwork;
     }
-    if contains_program(&lower, &["curl", "wget", "ssh", "scp", "nc", "ncat"])
+    if invokes_program(&lower, &["curl", "wget", "ssh", "scp", "nc", "ncat"])
         || lower.contains("glab api ")
     {
         return CommandEffect::NetworkEgress;
@@ -100,10 +100,11 @@ fn is_read_only_glab_command(command: &str) -> bool {
             .any(|segment| matches!(segment, &"glab --version" | &"glab version"))
 }
 
-fn contains_program(command: &str, programs: &[&str]) -> bool {
+fn invokes_program(command: &str, programs: &[&str]) -> bool {
     command
-        .split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&' | '(' | ')'))
-        .any(|token| programs.contains(&token))
+        .split(|ch: char| matches!(ch, ';' | '|' | '&' | '(' | ')'))
+        .filter_map(|segment| segment.split_whitespace().next())
+        .any(|program| programs.contains(&program))
 }
 
 fn has_mutating_shell_syntax(command: &str) -> bool {
@@ -256,6 +257,11 @@ mod tests {
             classify_command("glab api --method=DELETE projects/1"),
             CommandEffect::NetworkEgress
         );
+        assert_eq!(
+            classify_command("which snap; which apt-get; which curl"),
+            CommandEffect::ReadOnly
+        );
+        assert_eq!(classify_command("echo rm"), CommandEffect::ReadOnly);
         assert_eq!(
             classify_command("printf x > file"),
             CommandEffect::WorkspaceMutation
