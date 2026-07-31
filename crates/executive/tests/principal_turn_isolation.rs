@@ -183,6 +183,7 @@ async fn concurrent_backpressure_admission_never_oversubscribes_capacity() {
         )
         .with_backpressure(executive::composition::config::BackpressureConfig {
             max_concurrent_turns: Some(1),
+            ..Default::default()
         }),
     );
     let process = kernel
