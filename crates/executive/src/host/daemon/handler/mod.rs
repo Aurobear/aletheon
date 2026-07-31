@@ -24,6 +24,8 @@ pub struct RequestHandler {
     pub(crate) notify_tx: Option<mpsc::Sender<String>>,
     /// Active connection count.
     pub(crate) active_connections: Arc<AtomicUsize>,
+    /// Host-owned connection admission limit.
+    pub(crate) max_connections: Option<usize>,
     /// User-state-root-scoped immutable thread authority records.
     pub(crate) thread_authority: Arc<crate::application::thread_authority::ThreadAuthorityStore>,
     /// Feature flags for Grok-hardening mechanisms (folder_trust, etc.).

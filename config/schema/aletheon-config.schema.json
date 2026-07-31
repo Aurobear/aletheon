@@ -217,12 +217,32 @@
     },
     "BackpressureConfig": {
       "additionalProperties": false,
-      "description": "Backpressure limits for turn admission.\n\nDefault (`max_concurrent_turns = None`): unlimited, backward compatible.\nSet `max_concurrent_turns = Some(N)` to reject new turns with a 503-like\nerror when N turns are already in-flight.",
+      "description": "Backpressure limits for turn admission.",
       "properties": {
         "max_concurrent_turns": {
-          "default": null,
-          "description": "Maximum number of concurrent turns allowed across all connections.\n`None` means unlimited (default).",
+          "default": 8,
+          "description": "Maximum number of concurrent turns allowed across all connections.\n`None` explicitly disables the limit.",
           "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_connections": {
+          "default": 64,
+          "description": "Maximum authenticated Unix socket connections per daemon.\n`None` explicitly disables the limit.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_event_spine_bytes": {
+          "default": 1073741824,
+          "description": "Maximum logical SQLite bytes for the canonical event spine.\n`None` explicitly disables the size limit.",
+          "format": "uint64",
           "minimum": 0,
           "type": [
             "integer",
@@ -2391,9 +2411,11 @@
     "backpressure": {
       "$ref": "#/$defs/BackpressureConfig",
       "default": {
-        "max_concurrent_turns": null
+        "max_concurrent_turns": 8,
+        "max_connections": 64,
+        "max_event_spine_bytes": 1073741824
       },
-      "description": "D2-M5-T2: overload/backpressure limits (default unlimited)."
+      "description": "Host-owned overload/backpressure limits with bounded daemon defaults."
     },
     "bootstrap": {
       "$ref": "#/$defs/RuntimeBootstrapConfig",

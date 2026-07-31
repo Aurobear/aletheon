@@ -55,6 +55,16 @@ fn append_is_idempotent_and_conflicting_retry_is_rejected() {
 }
 
 #[test]
+fn bounded_spine_rejects_append_before_exceeding_capacity() {
+    let store = SqliteEventSpine::open_bounded(":memory:", Some(1)).unwrap();
+    let error = store
+        .append(event(EventTreeId::new(), EventId::new()))
+        .unwrap_err();
+    assert!(error.to_string().contains("event spine capacity exceeded"));
+    assert_eq!(store.metrics().backpressure_rejections, 1);
+}
+
+#[test]
 fn allocates_monotonic_tree_order_under_concurrency() {
     let directory = tempdir().unwrap();
     let store = Arc::new(SqliteEventSpine::open(directory.path().join("events.db")).unwrap());

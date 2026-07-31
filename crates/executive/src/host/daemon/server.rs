@@ -658,7 +658,13 @@ impl UnixServer {
                     let (notify_tx, notify_rx) =
                         mpsc::channel::<String>(CONNECTION_NOTIFICATION_CAPACITY);
                     handler.set_notify_channel(notify_tx).await;
-                    handler.increment_connections();
+                    if !handler.try_increment_connections() {
+                        warn!(
+                            limit = ?handler.max_connections,
+                            "Connection rejected by daemon admission limit"
+                        );
+                        continue;
+                    }
 
                     self.connections.spawn(async move {
                         if let Err(e) = Self::handle_connection(stream, handler, notify_rx, connection).await {

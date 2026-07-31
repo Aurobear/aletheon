@@ -3,14 +3,20 @@
 # default_provider and default_model match the first configured provider below.
 default_provider = "leju"
 default_model = "deepseek/deepseek-v4-pro"
-# 0 = no iteration cap (termination via LLM stop, circuit breaker, tool budget)
-max_iterations = 0
+# Bound cumulative provider/tool rounds for every top-level turn. Set 0 only in
+# an explicitly reviewed override when another authoritative budget is present.
+max_iterations = 50
 
 [agent.provider_timeouts]
 # Bound connection setup, whole non-stream responses / stream headers, and SSE silence.
 connect_timeout_ms = 10000
 request_timeout_ms = 90000
 stream_idle_timeout_ms = 90000
+
+[backpressure]
+max_concurrent_turns = 8
+max_connections = 64
+max_event_spine_bytes = 1073741824
 
 [agent.admission]
 max_agents_per_root = 64
@@ -57,7 +63,7 @@ max_context_length = 1000000
 # max_context_length = 32768
 
 [sandbox]
-preference = "auto"
+preference = "require"
 # bubblewrap_path = "/usr/bin/bwrap"
 
 [plugins]

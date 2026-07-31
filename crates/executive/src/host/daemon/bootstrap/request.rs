@@ -1498,6 +1498,7 @@ impl RequestHandler {
         let composition = super::DaemonComposition {
             request: handler_ports,
             active_connections,
+            max_connections: config.backpressure.max_connections,
             thread_authority: Arc::new(
                 crate::application::thread_authority::ThreadAuthorityStore::persistent(
                     data_dir.join("thread-authority"),
