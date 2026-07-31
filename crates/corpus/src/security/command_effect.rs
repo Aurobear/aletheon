@@ -97,7 +97,7 @@ fn is_read_only_glab_command(command: &str) -> bool {
         && segments.iter().all(|segment| is_read_only_segment(segment))
         && !segments
             .iter()
-            .any(|segment| matches!(segment, &"glab --version" | &"glab version"))
+            .any(|segment| matches!(segment.as_str(), "glab --version" | "glab version"))
 }
 
 fn invokes_program(command: &str, programs: &[&str]) -> bool {
@@ -116,12 +116,47 @@ fn has_mutating_shell_syntax(command: &str) -> bool {
         || command.contains(" -exec")
 }
 
-fn split_shell_segments(command: &str) -> Vec<&str> {
-    command
-        .split([';', '|', '&'])
-        .map(str::trim)
-        .filter(|segment| !segment.is_empty())
-        .collect()
+fn split_shell_segments(command: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+
+    for character in command.chars() {
+        if escaped {
+            current.push(character);
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote != Some('\'') {
+            current.push(character);
+            escaped = true;
+            continue;
+        }
+        if matches!(character, '\'' | '"') {
+            if quote == Some(character) {
+                quote = None;
+            } else if quote.is_none() {
+                quote = Some(character);
+            }
+            current.push(character);
+            continue;
+        }
+        if quote.is_none() && matches!(character, ';' | '|' | '&') {
+            let segment = current.trim();
+            if !segment.is_empty() {
+                segments.push(segment.to_owned());
+            }
+            current.clear();
+        } else {
+            current.push(character);
+        }
+    }
+    let segment = current.trim();
+    if !segment.is_empty() {
+        segments.push(segment.to_owned());
+    }
+    segments
 }
 
 fn is_read_only_segment(segment: &str) -> bool {
@@ -133,10 +168,23 @@ fn is_read_only_segment(segment: &str) -> bool {
         "cat" | "ls" | "pwd" | "echo" | "which" | "whoami" | "head" | "tail" | "wc" | "grep"
         | "rg" | "stat" | "realpath" | "readlink" | "uname" | "date" | "id" | "env"
         | "printenv" | "lsb_release" => true,
+        // A shell-local directory change has no durable host effect. The
+        // remaining pipeline segments are classified independently.
+        "cd" => words.len() == 2 && !words[1].starts_with('-'),
         "command" => words.get(1) == Some(&"-v"),
         "find" => !words
             .iter()
             .any(|word| matches!(*word, "-delete" | "-exec" | "-execdir")),
+        // Keep xargs fail-closed except for option-free (or null-delimited)
+        // dispatch to a command that this classifier already proves read-only.
+        "xargs" => {
+            let nested = words[1..]
+                .iter()
+                .copied()
+                .skip_while(|word| matches!(*word, "-0" | "--null" | "-r" | "--no-run-if-empty"))
+                .collect::<Vec<_>>();
+            !nested.is_empty() && is_read_only_segment(&nested.join(" "))
+        }
         "git" => matches!(
             words.get(1).copied(),
             Some(
@@ -273,5 +321,29 @@ mod tests {
             CommandEffect::WorkspaceMutation
         );
         assert_eq!(classify_command("rm -rf ."), CommandEffect::Destructive);
+    }
+
+    #[test]
+    fn bounded_repository_statistics_are_read_only() {
+        assert_eq!(
+            classify_command(
+                "cd /workspace && find crates -name '*.rs' -type f | xargs wc -l | tail -20"
+            ),
+            CommandEffect::ReadOnly
+        );
+        assert_eq!(
+            classify_command("find crates -print0 | xargs -0 -r wc -l"),
+            CommandEffect::ReadOnly
+        );
+        assert_eq!(
+            classify_command(
+                "find crates -name '*.rs' | xargs grep -l '#\\[tokio::test\\]\\|#\\[test\\]' 2>/dev/null | wc -l"
+            ),
+            CommandEffect::ReadOnly
+        );
+        assert_eq!(
+            classify_command("find crates -print0 | xargs -0 sh -c 'rm \"$1\"'"),
+            CommandEffect::WorkspaceMutation
+        );
     }
 }

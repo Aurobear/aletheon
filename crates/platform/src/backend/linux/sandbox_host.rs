@@ -1,4 +1,12 @@
-//! Linux SandboxHost — namespace/seccomp/cgroup fail-closed (H1-06).
+//! Linux host-capability probe for the still-incomplete Platform contract.
+//!
+//! This adapter is **not** the production command-execution sandbox. Governed
+//! tools use `corpus::security::sandbox::SandboxExecutor`, whose installed
+//! Linux route selects the probed Bubblewrap namespace backend (or fails
+//! closed when the configured preference requires it). Keep `apply`
+//! unsupported here until the broader Platform host contract has a receipt
+//! owner; do not infer from this stub that production tool execution is
+//! unsandboxed.
 
 use crate::error::HostError;
 use crate::receipt::HostReceipt;

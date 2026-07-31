@@ -159,6 +159,31 @@ fn labelled_data_preserves_metadata_and_escapes_control_shaped_text() {
 }
 
 #[test]
+fn projection_rescrubs_legacy_secret_bearing_records() {
+    let memory = item(
+        "legacy-secret",
+        "provider key sk-crossSessionSecret123 and API 密钥 abcdefgh123456",
+        MemoryAuthority::LocalEpisode,
+        0.8,
+        1_700_000_001,
+    );
+    let projection = DefaultMemoryWorkspaceProjector
+        .project(
+            &RecallSet {
+                items: vec![memory],
+                degraded_sources: vec![],
+            },
+            MemoryProjectionLimits::default(),
+        )
+        .unwrap();
+
+    let labelled = &projection.records[0].labelled_data;
+    assert!(!labelled.contains("sk-crossSessionSecret123"));
+    assert!(!labelled.contains("abcdefgh123456"));
+    assert_eq!(labelled.matches("[REDACTED]").count(), 2);
+}
+
+#[test]
 fn candidates_are_private_typed_and_link_record_to_source_epoch() {
     let recall = RecallSet {
         items: vec![

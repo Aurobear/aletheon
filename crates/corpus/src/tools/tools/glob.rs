@@ -20,7 +20,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "Discover an unknown path with bounded, specific globs after known files have been read. Do not use glob to begin a repository overview, and do not inventory language or file extensions. Use `patterns` only to batch a small set of specific missing paths. Avoid unqualified recursive inventory such as '**/*'. Returns deduplicated relative paths from the root directory."
+        "Discover an unknown path with bounded, specific globs after known files have been read. NEVER submit '**' or '**/*': those policy-rejected patterns do not execute. Do not use glob to begin a repository overview, and do not inventory language or file extensions. Use `patterns` only to batch a small set of specific missing paths. Returns deduplicated relative paths from the root directory."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -29,7 +29,7 @@ impl Tool for GlobTool {
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Glob pattern to match (e.g. '**/*.rs', '*.txt', 'src/**/*.py')"
+                    "description": "A bounded, scoped glob such as 'crates/*/Cargo.toml' or 'src/**/*.py'. '**' and '**/*' are forbidden and will be rejected."
                 },
                 "patterns": {
                     "type": "array",
@@ -83,7 +83,7 @@ impl Tool for GlobTool {
             .find(|pattern| matches!(pattern.trim(), "**" | "**/*"))
         {
             return ToolResult {
-                content: format!("Error: unqualified recursive inventory '{pattern}' is too broad. Read known entry files first, then use scoped patterns such as 'crates/*/Cargo.toml' or 'crates/executive/src/**/*.rs'."),
+                content: format!("Policy guidance: unqualified recursive inventory '{pattern}' was not executed. Read known entry files first, then use scoped patterns such as 'crates/*/Cargo.toml' or 'crates/executive/src/**/*.rs'."),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
@@ -452,7 +452,8 @@ mod tests {
             .await;
 
         assert!(result.is_error);
-        assert!(result.content.contains("too broad"));
+        assert!(result.content.starts_with("Policy guidance:"));
+        assert!(result.content.contains("was not executed"));
     }
 
     #[tokio::test]
