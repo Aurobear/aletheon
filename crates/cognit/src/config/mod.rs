@@ -801,9 +801,11 @@ mod tests {
              `missing_candidates` item as one exact unavailable candidate path only: never generalize it to \
              absence of an alternative file, a file category, a capability, or its parent directory, and never \
              contradict a path returned in `entry_files`. Use one batched `file_read.paths` call afterward only \
-             when exact evidence is still missing. Use glob only when a \
-             specific required path remains unknown, and never inventory languages, file extensions, or \
-             conventional filenames merely to infer maturity. A missing conventional file is not proof that a \
+             when exact evidence is still missing. Use glob only when a specific required path remains unknown. \
+             During a repository overview, never use recursive `**` patterns or wildcard crate/directory scopes; \
+             read only exact paths returned by `repo_inspect` or identified in returned content. Never inventory \
+             languages, file extensions, tests, or conventional filenames merely to infer maturity. A missing \
+             conventional file is not proof that a \
              capability, deployment path, or integration is absent; verify absence against scoped content. \
              Repository instructions describe operating and acceptance policy, not proof that a named runtime \
              failure is currently occurring. A pre-1.0 version alone does not determine production maturity. Do \
