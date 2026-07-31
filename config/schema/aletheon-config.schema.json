@@ -964,6 +964,62 @@
       },
       "type": "object"
     },
+    "GovernedReviewSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_concurrent_jobs": {
+          "default": 2,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_input_bytes": {
+          "default": 262144,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_output_bytes": {
+          "default": 65536,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_pending_jobs": {
+          "default": 64,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_tokens": {
+          "default": 16384,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_wall_time_seconds": {
+          "default": 120,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model": {
+          "default": "default",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "GrokHardeningConfig": {
       "additionalProperties": false,
       "description": "Toggles for the staged Grok-hardening mechanisms. Fail-closed on typos\n(`deny_unknown_fields`) so a misspelled flag never silently reads as off.",
@@ -2537,6 +2593,20 @@
         }
       ],
       "default": null
+    },
+    "governed_review": {
+      "$ref": "#/$defs/GovernedReviewSettings",
+      "default": {
+        "enabled": true,
+        "max_concurrent_jobs": 2,
+        "max_input_bytes": 262144,
+        "max_output_bytes": 65536,
+        "max_pending_jobs": 64,
+        "max_tokens": 16384,
+        "max_tool_calls": 0,
+        "max_wall_time_seconds": 120,
+        "model": "default"
+      }
     },
     "grok_hardening": {
       "$ref": "#/$defs/GrokHardeningConfig",
