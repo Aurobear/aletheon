@@ -18,7 +18,7 @@ Aletheon's architecture is built on three pillars: **SelfField** (the self-aware
 |  Reason / Plan / Reflect / Learn / Criticize                 |
 +-------------------------------------------------------------+
 |  corpus (Execution)                                           |
-|  Tools / Shell / Filesystem / Kernel / MCP / ROS             |
+|  Tools / Shell / Filesystem / Kernel / MCP / Hardware          |
 +-------------------------------------------------------------+
 |  Memory (Persistence)                                        |
 |  Episodic / Semantic / Procedural / Self Memory              |
@@ -79,7 +79,7 @@ User request / Perception event
 
 ## corpus
 
-corpus is the agent's embodied execution layer. It interacts with the operating system, runs tools, manages sandboxes, and bridges to external systems (MCP servers, ROS nodes, browser automation).
+corpus is the agent's embodied execution layer. It interacts with the operating system, runs tools, manages sandboxes, and bridges to external systems (MCP servers, hardware devices via the `hardware` crate, browser automation).
 
 **What it does:**
 
