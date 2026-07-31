@@ -92,6 +92,27 @@ impl Tool for GlobTool {
                 },
             };
         }
+        let redirected = patterns
+            .iter()
+            .filter(|pattern| super::overview_guard::broad_pattern(pattern))
+            .cloned()
+            .collect::<Vec<_>>();
+        if super::overview_guard::active(ctx) && !redirected.is_empty() {
+            return ToolResult {
+                content: json!({
+                    "overview_policy_redirect": true,
+                    "not_executed": redirected,
+                    "guidance": "Read exact paths returned by repo_inspect or identified in returned content. Label evidence not inspected in this turn as unverified."
+                })
+                .to_string(),
+                is_error: false,
+                metadata: ToolResultMeta {
+                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                    truncated: false,
+                    patch_delta: None,
+                },
+            };
+        }
 
         let root = input
             .get("root")

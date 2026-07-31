@@ -23,6 +23,7 @@ pub mod module_build;
 pub mod module_load;
 pub(crate) mod mutation_path;
 pub mod output;
+pub(crate) mod overview_guard;
 pub mod process_list;
 pub mod registry;
 pub mod repo_inspect;

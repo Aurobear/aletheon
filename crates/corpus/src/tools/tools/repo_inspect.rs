@@ -85,17 +85,20 @@ impl Tool for RepoInspectTool {
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let start = ctx.clock.mono_now();
         match inspect(input, ctx) {
-            Ok(context) => ToolResult {
-                content: serde_json::to_string_pretty(&context).unwrap_or_else(|error| {
-                    format!("repository context serialization failed: {error}")
-                }),
-                is_error: false,
-                metadata: ToolResultMeta {
-                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                    truncated: false,
-                    patch_delta: None,
-                },
-            },
+            Ok(context) => {
+                super::overview_guard::mark(ctx);
+                ToolResult {
+                    content: serde_json::to_string_pretty(&context).unwrap_or_else(|error| {
+                        format!("repository context serialization failed: {error}")
+                    }),
+                    is_error: false,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                        truncated: false,
+                        patch_delta: None,
+                    },
+                }
+            }
             Err(error) => ToolResult {
                 content: format!("repository inspection failed: {error}"),
                 is_error: true,
