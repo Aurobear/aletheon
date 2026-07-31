@@ -1479,15 +1479,19 @@ impl RequestHandler {
                 crate::application::governed_review::GovernedReviewStore::open(&data_dir)
                     .context("opening governed review store")?,
             );
-            let model = if governed_review.model == "default" {
-                if config.model.trim().is_empty() {
-                    "default".to_owned()
-                } else {
-                    config.model.clone()
-                }
+            let requested_model = if governed_review.model == "default" {
+                // The machine inference registry owns the effective default.
+                // A daemon-facing model id may itself contain '/', so it must
+                // not be reinterpreted here as a provider-qualified spec.
+                ""
             } else {
-                governed_review.model.clone()
+                governed_review.model.as_str()
             };
+            let model = inference
+                .capabilities(requested_model)
+                .await
+                .context("resolving governed review model through machine inference")?
+                .model_spec;
             let service = crate::application::governed_review::GovernedReviewService::new(
                 store,
                 inference.clone(),
