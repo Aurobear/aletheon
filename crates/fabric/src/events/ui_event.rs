@@ -224,6 +224,14 @@ pub enum ClientEvent {
     TextDelta {
         text: String,
     },
+    /// Authoritative assistant text emitted after durable turn settlement.
+    ///
+    /// Unlike `TextDelta`, this replaces the in-progress assistant draft. It
+    /// lets clients reconcile a bounded live stream if an intermediate delta
+    /// was lost without treating a partial draft as the terminal answer.
+    TextSnapshot {
+        text: String,
+    },
     ThinkingDelta {
         text: String,
     },
@@ -383,6 +391,19 @@ mod subagent_state_tests {
 #[cfg(test)]
 mod client_event_compatibility_tests {
     use super::ClientEvent;
+
+    #[test]
+    fn terminal_text_snapshot_round_trips() {
+        let event = ClientEvent::TextSnapshot {
+            text: "authoritative answer".into(),
+        };
+        let encoded = serde_json::to_value(&event).unwrap();
+        assert_eq!(encoded["type"], "text_snapshot");
+        assert!(matches!(
+            ClientEvent::decode_if_known(encoded),
+            Some(ClientEvent::TextSnapshot { text }) if text == "authoritative answer"
+        ));
+    }
 
     #[test]
     fn unknown_additive_event_is_ignored_without_panic() {

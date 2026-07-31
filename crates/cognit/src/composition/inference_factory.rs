@@ -5,7 +5,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use fabric::{
-    InferenceCapabilities, LlmResponse, LlmStream, Message, ModelRuntimeFacts, ToolDefinition,
+    memory::DEFAULT_TRANSIENT_PROVIDER_COOLDOWN_MS, InferenceCapabilities, LlmResponse, LlmStream,
+    Message, ModelRuntimeFacts, ToolDefinition,
 };
 use futures::StreamExt;
 
@@ -13,7 +14,10 @@ use crate::adapters::inference::anthropic::AnthropicProvider;
 use crate::adapters::inference::ollama::OllamaProvider;
 use crate::adapters::inference::openai_provider::OpenAiProvider;
 use crate::adapters::inference::provider::LlmProvider;
-use crate::adapters::inference::{backpressure, provider::InferenceFailure};
+use crate::adapters::inference::{
+    backpressure,
+    provider::{InferenceFailure, InferenceFailureKind},
+};
 use crate::config::{ProviderConfig, ProviderPricing, ProviderTimeoutConfig, Transport};
 
 /// Concrete protocol selected after resolving the compatibility-only `Auto` mode.
@@ -112,7 +116,10 @@ pub fn create_provider(
     };
     Ok(Arc::new(BackpressuredProvider {
         inner: provider,
-        state: backpressure::state_for(&config.name, config.backpressure),
+        state: backpressure::state_for(
+            &fabric::memory::provider_backpressure_key(&config.base_url, model),
+            config.backpressure,
+        ),
     }))
 }
 
@@ -125,7 +132,13 @@ fn observe_failure(state: &backpressure::ProviderState, error: &anyhow::Error) {
     let retry_after = error
         .chain()
         .find_map(|source| source.downcast_ref::<InferenceFailure>())
-        .and_then(|failure| failure.retry_after_ms);
+        .and_then(|failure| {
+            failure.retry_after_ms.or_else(|| {
+                (failure.kind == InferenceFailureKind::Transient
+                    && failure.code == "provider_unavailable")
+                    .then_some(DEFAULT_TRANSIENT_PROVIDER_COOLDOWN_MS)
+            })
+        });
     backpressure::observe_retry_after(state, retry_after);
 }
 
@@ -271,5 +284,20 @@ mod tests {
             .unwrap();
             assert_eq!(provider.name(), "model");
         }
+    }
+
+    #[test]
+    fn transient_provider_failure_without_retry_after_still_sets_shared_cooldown() {
+        let key = format!("fallback-cooldown-{}", uuid::Uuid::new_v4());
+        let state = backpressure::state_for(&key, Default::default());
+
+        observe_failure(&state, &InferenceFailure::transient("provider_unavailable"));
+
+        assert_eq!(
+            backpressure::provider_backpressure_snapshot(&key)
+                .unwrap()
+                .cooldown_updates,
+            1
+        );
     }
 }

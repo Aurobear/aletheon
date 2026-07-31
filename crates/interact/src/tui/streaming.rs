@@ -118,6 +118,21 @@ impl StreamController {
         self.tail.push_str(text);
     }
 
+    /// Replace the in-progress response with the authoritative terminal text.
+    ///
+    /// Live deltas are intentionally bounded and may be incomplete after
+    /// backpressure. A terminal snapshot resets every draft buffer so the
+    /// committed UI cannot preserve a malformed partial response.
+    pub fn replace_text(&mut self, text: &str) {
+        self.committed.clear();
+        self.tail.clear();
+        self.thinking_buf.clear();
+        self.thinking = false;
+        self.thinking_start = None;
+        self.table_holdback = TableHoldbackState::None;
+        self.tail.push_str(text);
+    }
+
     pub fn current_text(&mut self) -> String {
         let mut result = String::new();
         if self.thinking && !self.thinking_collapsed {

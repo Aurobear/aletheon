@@ -396,7 +396,7 @@ impl LlmProvider for AnthropicProvider {
         let stream = futures::stream::unfold(
             AnthropicStreamState {
                 byte_stream: Box::pin(byte_stream),
-                buffer: String::new(),
+                buffer: super::utf8_stream::Utf8StreamBuffer::default(),
                 tool_state: AnthropicToolState::default(),
                 usage: Usage::default(),
                 stop_reason: StopReason::EndTurn,
@@ -406,10 +406,18 @@ impl LlmProvider for AnthropicProvider {
                 loop {
                     // Try to extract a complete SSE event from the buffer
                     // Anthropic SSE format: "event: <type>\n" followed by "data: <json>\n\n"
-                    if let Some(double_newline) = state.buffer.find("\n\n") {
-                        let block = state.buffer[..double_newline].to_string();
-                        state.buffer = state.buffer[double_newline + 2..].to_string();
-
+                    let block = match state.buffer.take_event() {
+                        Ok(block) => block,
+                        Err(error) => {
+                            return Some((
+                                Err(anyhow::anyhow!(
+                                    "provider stream contained invalid UTF-8: {error}"
+                                )),
+                                state,
+                            ));
+                        }
+                    };
+                    if let Some(block) = block {
                         let mut event_type = String::new();
                         let mut data = String::new();
 
@@ -572,16 +580,18 @@ impl LlmProvider for AnthropicProvider {
                         {
                             Err(_) => return Some((Err(provider_timeout()), state)),
                             Ok(Some(Ok(bytes))) => {
-                                let text = String::from_utf8_lossy(&bytes);
-                                state.buffer.push_str(&text);
+                                state.buffer.push(&bytes);
                             }
                             Ok(Some(Err(e))) => {
                                 return Some((Err(provider_request_error(e)), state));
                             }
                             Ok(None) => {
                                 // Stream ended
-                                if !state.buffer.trim().is_empty() {
-                                    tracing::warn!("Stream ended with unprocessed data");
+                                if !state.buffer.is_empty() {
+                                    tracing::warn!(
+                                        remaining_bytes = state.buffer.len(),
+                                        "Stream ended with unprocessed data"
+                                    );
                                 }
                                 return Some((
                                     Ok(StreamChunk::Done {
@@ -612,7 +622,7 @@ impl LlmProvider for AnthropicProvider {
 struct AnthropicStreamState {
     byte_stream:
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<Vec<u8>, reqwest::Error>> + Send>>,
-    buffer: String,
+    buffer: super::utf8_stream::Utf8StreamBuffer,
     tool_state: AnthropicToolState,
     usage: Usage,
     stop_reason: StopReason,

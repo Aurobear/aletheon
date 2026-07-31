@@ -1886,7 +1886,7 @@
     },
     "ProviderBackpressureConfig": {
       "additionalProperties": false,
-      "description": "Provider-level backpressure. Unlike turn admission this coordinates all\nsessions and role children in the daemon process that use the same provider.",
+      "description": "Provider-level backpressure. Unlike turn admission this coordinates all\nsessions and role children through the machine-core process that use the\nsame canonical provider endpoint and model.",
       "properties": {
         "max_concurrent_requests": {
           "default": 2,
@@ -1902,9 +1902,16 @@
           "minimum": 0,
           "type": "integer"
         },
+        "min_request_interval_ms": {
+          "default": 0,
+          "description": "Minimum spacing between request starts for one provider identity.\n\nThis is a machine-wide pacing boundary, not a per-session retry delay.\nZero preserves providers that do not require proactive rate pacing.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "queue_timeout_ms": {
           "default": 120000,
-          "description": "Maximum time a caller may wait for cooldown and a fair permit.",
+          "description": "Maximum time a caller may wait for cooldown, pacing, and a fair permit.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -1925,9 +1932,10 @@
           "default": {
             "max_concurrent_requests": 2,
             "max_cooldown_ms": 60000,
+            "min_request_interval_ms": 0,
             "queue_timeout_ms": 120000
           },
-          "description": "Machine/provider-scoped admission and cooldown policy. Every provider\ninstance built by the canonical factory shares this policy by `name`."
+          "description": "Machine/provider-scoped admission and cooldown policy. Every provider\ninstance built by the canonical factory shares this policy by canonical\nendpoint and model."
         },
         "base_url": {
           "type": "string"

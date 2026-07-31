@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use futures::StreamExt;
-use tokio::io::BufReader;
+use tokio::io::{AsyncReadExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -197,6 +197,88 @@ async fn handle_connection(
             anyhow::bail!(message);
         }
         match request {
+            CoreRequest::AcquireProviderPermit { provider_key, .. } => {
+                match inference.acquire_provider_permit(&provider_key).await {
+                    Ok(_permit) => {
+                        write_json_line(
+                            &mut writer,
+                            &CoreFrame::ProviderPermitAcquired { id },
+                            max_frame_bytes,
+                        )
+                        .await?;
+                        // The connection is the lease. Hold the authoritative
+                        // permit until the caller drops its opaque permit and
+                        // closes the socket; no orphan lease/reaper is needed.
+                        let mut byte = [0_u8; 1];
+                        while reader.read(&mut byte).await? != 0 {}
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        write_json_line(
+                            &mut writer,
+                            &CoreFrame::Error {
+                                id,
+                                message: error.to_string(),
+                            },
+                            max_frame_bytes,
+                        )
+                        .await?;
+                    }
+                }
+            }
+            CoreRequest::ObserveProviderRetryAfter {
+                provider_key,
+                retry_after_ms,
+                ..
+            } => {
+                match inference
+                    .observe_provider_retry_after(&provider_key, retry_after_ms)
+                    .await
+                {
+                    Ok(()) => {
+                        write_json_line(
+                            &mut writer,
+                            &CoreFrame::ProviderCooldownObserved { id },
+                            max_frame_bytes,
+                        )
+                        .await?;
+                    }
+                    Err(error) => {
+                        write_json_line(
+                            &mut writer,
+                            &CoreFrame::Error {
+                                id,
+                                message: error.to_string(),
+                            },
+                            max_frame_bytes,
+                        )
+                        .await?;
+                    }
+                }
+            }
+            CoreRequest::ProviderBackpressureMetrics { .. } => {
+                match inference.provider_backpressure_metrics().await {
+                    Ok(providers) => {
+                        write_json_line(
+                            &mut writer,
+                            &CoreFrame::ProviderBackpressureMetrics { id, providers },
+                            max_frame_bytes,
+                        )
+                        .await?;
+                    }
+                    Err(error) => {
+                        write_json_line(
+                            &mut writer,
+                            &CoreFrame::Error {
+                                id,
+                                message: error.to_string(),
+                            },
+                            max_frame_bytes,
+                        )
+                        .await?;
+                    }
+                }
+            }
             CoreRequest::Capabilities { model_spec, .. } => {
                 match inference.capabilities(&model_spec).await {
                     Ok(capabilities) => {

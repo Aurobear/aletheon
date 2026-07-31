@@ -490,7 +490,7 @@ impl Tool for ExecCommandTool {
     }
 
     fn description(&self) -> &str {
-        "Start a managed shell command. Returns an incremental output cursor and a session_id when the command remains active; use write_stdin to poll, steer, cancel, or reap it."
+        "Start a managed shell command only when no dedicated tool can perform the operation. For repository overview, prefer repo_inspect, batched file_read, scoped glob, git_status, and git_log; do not build, test, or count an inventory merely to infer maturity. Returns an incremental output cursor and a session_id when the command remains active; use write_stdin to poll, steer, cancel, or reap it."
     }
 
     fn input_schema(&self) -> serde_json::Value {

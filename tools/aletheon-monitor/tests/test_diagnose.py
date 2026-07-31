@@ -1,7 +1,13 @@
 import asyncio
+import json
 from src.tools import tui as tui_tools
 from src.tools import diagnose as diag
-from src.tools.diagnose import build_timeline, frame_assertions, provider_metrics
+from src.tools.diagnose import (
+    build_timeline,
+    event_acceptance,
+    frame_assertions,
+    provider_metrics,
+)
 
 
 def test_diagnose_stops_tui_on_capture_error(monkeypatch):
@@ -150,6 +156,78 @@ def test_provider_timeout_frame_cannot_pass_as_final_answer():
     )["passed"] is False
 
 
+def test_provider_error_code_discussed_in_answer_is_not_rendered_failure():
+    assertions = frame_assertions(
+        "主要风险：provider_unavailable 仍然会使对应验收失败。\n❯",
+        prompt_visible=True,
+    )
+    assert next(
+        a for a in assertions if a["name"] == "forbidden:provider_unavailable"
+    )["passed"] is True
+    assert next(a for a in assertions if a["name"] == "final_answer")["passed"] is True
+
+
+def test_repository_overview_requires_repo_inspect_before_scoped_discovery(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {
+            "type": "tool_call_complete",
+            "params": {
+                "tool": "glob",
+                "args": {"patterns": ["**/*.rs"]},
+            },
+        },
+        {
+            "type": "tool_call_complete",
+            "params": {"tool": "repo_inspect", "args": {"root": "/repo"}},
+        },
+        {"type": "text_snapshot", "params": {"text": "A" * 80 + "."}},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertions = {item["name"]: item for item in accepted["assertions"]}
+    assert assertions["repository_overview_starts_with_repo_inspect"]["passed"] is False
+    assert assertions["repository_overview_waits_for_repo_inspect"]["passed"] is False
+    assert assertions["repository_overview_avoids_broad_glob"]["passed"] is False
+
+
+def test_repository_overview_waits_for_repo_inspect_result(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {
+            "type": "tool_call_complete",
+            "params": {"call_id": "repo", "tool": "repo_inspect", "args": {}},
+        },
+        {
+            "type": "tool_call_complete",
+            "params": {"call_id": "search", "tool": "file_search", "args": {}},
+        },
+        {
+            "type": "tool_call_result",
+            "params": {"call_id": "repo", "tool": "repo_inspect", "is_error": False},
+        },
+        {
+            "type": "tool_call_result",
+            "params": {
+                "call_id": "search",
+                "tool": "file_search",
+                "is_error": False,
+            },
+        },
+        {"type": "text_snapshot", "params": {"text": "A" * 80 + "."}},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertions = {item["name"]: item for item in accepted["assertions"]}
+    assert assertions["repository_overview_starts_with_repo_inspect"]["passed"] is True
+    assert assertions["repository_overview_waits_for_repo_inspect"]["passed"] is False
+    assert assertions["repository_overview_waits_for_repo_inspect"][
+        "premature_tools"
+    ] == ["file_search"]
+
+
 def test_provider_metrics_count_retries_and_errors():
     metrics = provider_metrics({
         "lines": [
@@ -159,3 +237,127 @@ def test_provider_metrics_count_retries_and_errors():
     })
     assert metrics["retry_attempts"] >= 1
     assert metrics["provider_error_markers"] >= 2
+
+
+def test_event_acceptance_fails_closed_on_tool_error_and_truncated_markdown(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {"type": "tool_call_start", "params": {"call_id": "c1", "tool": "exec_command"}},
+        {
+            "type": "tool_call_result",
+            "params": {
+                "call_id": "c1",
+                "tool": "exec_command",
+                "is_error": True,
+            },
+        },
+        {
+            "type": "text_delta",
+            "params": {"text": "`" + ("incomplete answer " * 8)},
+        },
+        {
+            "type": "text_snapshot",
+            "params": {"text": "`" + ("incomplete answer " * 8)},
+        },
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text(
+        "".join(__import__("json").dumps(record) + "\n" for record in records)
+    )
+
+    result = event_acceptance(str(path))
+
+    assert result["tool_errors"] == [{"tool": "exec_command", "call_id": "c1"}]
+    assert next(
+        item for item in result["assertions"]
+        if item["name"] == "tool_results_successful"
+    )["passed"] is False
+    assert next(
+        item for item in result["assertions"]
+        if item["name"] == "terminal_text_boundary"
+    )["passed"] is False
+    assert next(
+        item for item in result["assertions"]
+        if item["name"] == "markdown_backticks_balanced"
+    )["passed"] is False
+
+
+def test_event_acceptance_accepts_complete_markdown_table_boundary(tmp_path):
+    path = tmp_path / "events.jsonl"
+    text = (
+        "这是已经完整结束的项目评审结果，表格为最后一节。"
+        + ("证据充分。" * 12)
+        + "\n\n| 维度 | 结果 |\n|---|---|\n| 风险 | 未关闭 |"
+    )
+    records = [
+        {"type": "text_snapshot", "params": {"text": text}},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+
+    result = event_acceptance(str(path))
+    assertion = next(
+        item for item in result["assertions"]
+        if item["name"] == "terminal_text_boundary"
+    )
+    assert assertion["passed"] is True
+
+
+def test_event_acceptance_accepts_complete_successful_turn(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {"type": "usage", "params": {}},
+        {"type": "tool_call_start", "params": {"call_id": "c1", "tool": "file_read"}},
+        {
+            "type": "tool_call_result",
+            "params": {"call_id": "c1", "tool": "file_read", "is_error": False},
+        },
+        {
+            "type": "text_delta",
+            "params": {"text": "A substantive, grounded answer with enough detail. " * 3},
+        },
+        {
+            "type": "text_snapshot",
+            "params": {"text": "A substantive, grounded answer with enough detail. " * 3},
+        },
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text(
+        "".join(__import__("json").dumps(record) + "\n" for record in records)
+    )
+
+    result = event_acceptance(str(path))
+
+    assert result["inference_rounds"] == 1
+    assert result["tool_calls"] == 1
+    assert result["text_source"] == "text_snapshot"
+    assert all(item["passed"] for item in result["assertions"])
+
+
+def test_event_acceptance_uses_terminal_snapshot_after_dropped_delta(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {"type": "tool_call_start", "params": {"call_id": "c1", "tool": "file_read"}},
+        {
+            "type": "tool_call_result",
+            "params": {"call_id": "c1", "tool": "file_read", "is_error": False},
+        },
+        {
+            "type": "text_delta",
+            "params": {"text": "broken 评分|------------|"},
+        },
+        {
+            "type": "text_snapshot",
+            "params": {"text": "A complete authoritative answer with grounded details. " * 3},
+        },
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text(
+        "".join(__import__("json").dumps(record) + "\n" for record in records)
+    )
+
+    result = event_acceptance(str(path))
+
+    assert result["text_source"] == "text_snapshot"
+    assert result["delta_text_chars"] < result["text_chars"]
+    assert all(item["passed"] for item in result["assertions"])

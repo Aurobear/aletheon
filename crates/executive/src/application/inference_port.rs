@@ -1,5 +1,6 @@
 //! Inference boundary between user-owned execution and model providers.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use fabric::{LlmProvider, LlmResponse, LlmStream, Message, ModelRuntimeFacts, ToolDefinition};
@@ -34,6 +35,43 @@ impl From<anyhow::Error> for InferenceError {
 /// Object-safe inference operations used by the user runtime.
 #[async_trait::async_trait]
 pub trait InferencePort: Send + Sync {
+    async fn acquire_provider_permit(
+        &self,
+        provider_key: &str,
+    ) -> Result<Box<dyn fabric::memory::ProviderRequestPermit>, InferenceError> {
+        // `MachineProviderBackpressure` is a lightweight handle over Cognit's
+        // process-global provider-keyed registry. Creating a handle here does
+        // not create split admission state. The installed CoreRpcClient also
+        // overrides this method so user-daemon consumers hold the permit in
+        // the machine-core process over the socket lease.
+        use fabric::memory::ProviderBackpressurePort;
+        cognit::inference::MachineProviderBackpressure::new(Default::default())
+            .acquire(provider_key)
+            .await
+            .map_err(InferenceError::from)
+    }
+
+    async fn observe_provider_retry_after(
+        &self,
+        provider_key: &str,
+        retry_after_ms: Option<u64>,
+    ) -> Result<(), InferenceError> {
+        // See `acquire_provider_permit`: this handle updates the same
+        // process-global provider-keyed cooldown registry.
+        use fabric::memory::ProviderBackpressurePort;
+        cognit::inference::MachineProviderBackpressure::new(Default::default())
+            .observe_retry_after(provider_key, retry_after_ms)
+            .await;
+        Ok(())
+    }
+
+    async fn provider_backpressure_metrics(
+        &self,
+    ) -> Result<HashMap<String, cognit::inference::ProviderBackpressureSnapshot>, InferenceError>
+    {
+        Ok(cognit::inference::provider_backpressure_metrics())
+    }
+
     async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
         Err(anyhow::anyhow!("model capabilities are unavailable for '{model_spec}'").into())
     }
@@ -41,6 +79,41 @@ pub trait InferencePort: Send + Sync {
     async fn complete(&self, request: CoreInferenceRequest) -> Result<LlmResponse, InferenceError>;
 
     async fn stream(&self, request: CoreInferenceRequest) -> Result<LlmStream, InferenceError>;
+}
+
+/// Routes non-LLM provider consumers (currently remote embeddings) through the
+/// same machine-core permit/cooldown authority as LLM inference.
+pub struct InferenceProviderBackpressure {
+    inference: Arc<dyn InferencePort>,
+}
+
+impl InferenceProviderBackpressure {
+    pub fn new(inference: Arc<dyn InferencePort>) -> Self {
+        Self { inference }
+    }
+}
+
+#[async_trait::async_trait]
+impl fabric::memory::ProviderBackpressurePort for InferenceProviderBackpressure {
+    async fn acquire(
+        &self,
+        provider_key: &str,
+    ) -> anyhow::Result<Box<dyn fabric::memory::ProviderRequestPermit>> {
+        self.inference
+            .acquire_provider_permit(provider_key)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    async fn observe_retry_after(&self, provider_key: &str, retry_after_ms: Option<u64>) {
+        if let Err(error) = self
+            .inference
+            .observe_provider_retry_after(provider_key, retry_after_ms)
+            .await
+        {
+            tracing::warn!(%error, provider_key, "provider cooldown observation degraded");
+        }
+    }
 }
 
 /// Compatibility adapter that delegates to an in-process provider.

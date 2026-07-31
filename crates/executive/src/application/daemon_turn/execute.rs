@@ -253,8 +253,14 @@ impl DaemonTurnOrchestrator {
                 })
             })
             .await;
-        self.emit_authoritative_terminal_events(coordinated.as_ref().err())
-            .await;
+        self.emit_authoritative_terminal_events(
+            coordinated
+                .as_ref()
+                .ok()
+                .map(|result| result.output.as_str()),
+            coordinated.as_ref().err(),
+        )
+        .await;
         match coordinated {
             Ok(result) => {
                 json!({"jsonrpc": "2.0", "id": id, "result": {"response": result.output}})
@@ -269,11 +275,21 @@ impl DaemonTurnOrchestrator {
     /// the active entry and settled the kernel operation. A Cognit TurnDone is
     /// a pipeline-local result, not authoritative permission to start another
     /// turn on the same thread.
-    async fn emit_authoritative_terminal_events(&self, error: Option<&anyhow::Error>) {
+    async fn emit_authoritative_terminal_events(
+        &self,
+        output: Option<&str>,
+        error: Option<&anyhow::Error>,
+    ) {
         let Some(sender) = self.notify_tx.lock().await.clone() else {
             return;
         };
-        let mut events = Vec::with_capacity(if error.is_some() { 2 } else { 1 });
+        let mut events =
+            Vec::with_capacity(1 + usize::from(output.is_some()) + usize::from(error.is_some()));
+        if let Some(text) = output {
+            events.push(ClientEvent::TextSnapshot {
+                text: text.to_owned(),
+            });
+        }
         if let Some(error) = error {
             events.push(ClientEvent::Error {
                 message: error.to_string(),
@@ -375,6 +391,9 @@ mod tests {
             .await;
 
         assert_eq!(response["result"]["response"], "mock answer");
+        let snapshot = rx.recv().await.expect("authoritative text snapshot");
+        assert!(snapshot.contains("text_snapshot"));
+        assert!(snapshot.contains("mock answer"));
         let terminal = rx.recv().await.expect("authoritative terminal event");
         assert!(terminal.contains("turn_done"));
         assert_eq!(harness.coordinator.active_turn_count().await, 0);

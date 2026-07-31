@@ -693,7 +693,9 @@ impl RequestHandler {
                 secret,
             );
             let gate: Arc<dyn fabric::memory::ProviderBackpressurePort> = Arc::new(
-                cognit::inference::MachineProviderBackpressure::new(Default::default()),
+                crate::application::inference_port::InferenceProviderBackpressure::new(
+                    inference.clone(),
+                ),
             );
             let embedding: Arc<dyn fabric::EmbeddingProvider> =
                 Arc::new(mnemosyne::RemoteEmbeddingProvider::new(
@@ -1491,6 +1493,7 @@ impl RequestHandler {
             session_gateway,
             memory_group.memory_service.clone(),
             memory_group.supplemental_memory_health.clone(),
+            inference.clone(),
             transport_ports,
         ));
         let workspace_trust =

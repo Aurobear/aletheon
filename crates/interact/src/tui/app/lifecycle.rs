@@ -223,6 +223,7 @@ pub async fn simple_line_mode(
 
     let stdin = io::stdin();
     let mut read_buf = vec![0u8; 8192];
+    let mut response_buf = super::super::json_lines::JsonLineBuffer::default();
     let mut latest_evaluation: Option<fabric::EvaluationReceiptRef> = None;
 
     loop {
@@ -334,8 +335,21 @@ pub async fn simple_line_mode(
                         return Ok(());
                     }
                     Ok(n) => {
-                        let chunk = String::from_utf8_lossy(&read_buf[..n]);
-                        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(chunk.trim()) {
+                        response_buf.push(&read_buf[..n]);
+                        loop {
+                            let line = match response_buf.take_line() {
+                                Ok(Some(line)) => line,
+                                Ok(None) => break,
+                                Err(error) => {
+                                    eprintln!(
+                                        "Error: daemon protocol contained invalid UTF-8: {error}"
+                                    );
+                                    return Ok(());
+                                }
+                            };
+                            if let Ok(msg) =
+                                serde_json::from_str::<serde_json::Value>(line.trim())
+                            {
                             // Handle out-of-band approval_request notification
                             if msg.get("method").and_then(|v| v.as_str()) == Some("approval_request")
                                 && msg.get("result").is_none()
@@ -438,7 +452,8 @@ pub async fn simple_line_mode(
                             } else if let Some(err) = msg["error"]["message"].as_str() {
                                 eprintln!("Error: {err}\n");
                             }
-                            return Ok(());
+                                return Ok(());
+                            }
                         }
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {

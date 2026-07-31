@@ -5,11 +5,21 @@ use std::time::Duration;
 
 use anyhow::{ensure, Context};
 use async_trait::async_trait;
-use fabric::memory::ProviderBackpressurePort;
+use fabric::memory::{ProviderBackpressurePort, DEFAULT_TRANSIENT_PROVIDER_COOLDOWN_MS};
 use fabric::{Clock, EmbeddingProvider};
 use serde::Deserialize;
 
 use crate::credential::EmbeddingCredentialGrant;
+
+fn retry_after_ms(status: reqwest::StatusCode, value: Option<&str>) -> Option<u64> {
+    value
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(|seconds| seconds.saturating_mul(1_000))
+        .or_else(|| {
+            (status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error())
+                .then_some(DEFAULT_TRANSIENT_PROVIDER_COOLDOWN_MS)
+        })
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum EmbeddingAdapterError {
@@ -53,7 +63,7 @@ impl RemoteEmbeddingProvider {
         ensure!(dimension > 0, "embedding dimension must be positive");
         let base_url = base_url.into();
         let model = model.into();
-        let provider_key = format!("embedding:{}:{}", grant.provider_id, model);
+        let provider_key = fabric::memory::provider_backpressure_key(&base_url, &model);
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(timeout.min(Duration::from_secs(10)))
@@ -95,22 +105,33 @@ impl RemoteEmbeddingProvider {
         if self.transport == EmbeddingTransport::OpenAi && !secret.is_empty() {
             request = request.bearer_auth(secret);
         }
-        let response = request.send().await.map_err(|error| {
-            if error.is_timeout() {
-                EmbeddingAdapterError::Timeout
-            } else {
-                EmbeddingAdapterError::ProviderUnavailable
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                self.backpressure
+                    .observe_retry_after(
+                        &self.provider_key,
+                        Some(DEFAULT_TRANSIENT_PROVIDER_COOLDOWN_MS),
+                    )
+                    .await;
+                return Err(if error.is_timeout() {
+                    EmbeddingAdapterError::Timeout
+                } else {
+                    EmbeddingAdapterError::ProviderUnavailable
+                }
+                .into());
             }
-        })?;
+        };
         if !response.status().is_success() {
-            let retry_after_ms = response
+            let retry_after = response
                 .headers()
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u64>().ok())
-                .map(|seconds| seconds.saturating_mul(1_000));
+                .map(str::to_owned);
+            let retry_after_ms = retry_after_ms(response.status(), retry_after.as_deref());
             self.backpressure
-                .observe_retry_after(&self.provider_key, retry_after_ms);
+                .observe_retry_after(&self.provider_key, retry_after_ms)
+                .await;
             return Err(EmbeddingAdapterError::ProviderUnavailable.into());
         }
         #[derive(Deserialize)]
@@ -144,6 +165,24 @@ impl RemoteEmbeddingProvider {
             "embedding response dimension mismatch"
         );
         Ok(vectors)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_after_uses_provider_advice_and_transient_fallback_only() {
+        assert_eq!(
+            retry_after_ms(reqwest::StatusCode::TOO_MANY_REQUESTS, Some("9")),
+            Some(9_000)
+        );
+        assert_eq!(
+            retry_after_ms(reqwest::StatusCode::TOO_MANY_REQUESTS, None),
+            Some(DEFAULT_TRANSIENT_PROVIDER_COOLDOWN_MS)
+        );
+        assert_eq!(retry_after_ms(reqwest::StatusCode::BAD_REQUEST, None), None);
     }
 }
 

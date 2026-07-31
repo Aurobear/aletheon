@@ -41,6 +41,9 @@ pub fn scrub_for_projection(value: &str, trust: ContentTrust) -> GovernedContent
         r"-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----",
         r"\bAKIA[0-9A-Z]{16}\b",
         r"\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b",
+        r"\bsk-[A-Za-z0-9._-]{8,}\b",
+        r"\bkey-[A-Za-z0-9._-]{8,}\b",
+        r"(?i)(?:api\s*)?密钥\s*[:=]?\s*[A-Za-z0-9._-]{8,}",
         r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
     ];
     let mut content = value.to_owned();
@@ -136,5 +139,16 @@ mod tests {
         assert_eq!(scrubbed["nested"]["access_token"], "[REDACTED]");
         assert_eq!(scrubbed["nested"]["safe"], "value");
         assert_eq!(scrubbed["contact"], "[REDACTED]");
+    }
+
+    #[test]
+    fn scrubs_unlabelled_provider_keys_and_chinese_key_labels() {
+        let result = scrub_for_projection(
+            "old sk-exampleSecret123 and key-crossSession456; API 密钥 abcdefgh123456",
+            ContentTrust::ExternalUntrusted,
+        );
+        assert_eq!(result.content, "old [REDACTED] and [REDACTED]; [REDACTED]");
+        assert_eq!(result.classification, DataClassification::Restricted);
+        assert_eq!(result.redactions, 3);
     }
 }

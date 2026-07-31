@@ -28,6 +28,22 @@ struct FakeInference;
 
 #[async_trait::async_trait]
 impl InferencePort for FakeInference {
+    async fn provider_backpressure_metrics(
+        &self,
+    ) -> Result<
+        std::collections::HashMap<String, cognit::inference::ProviderBackpressureSnapshot>,
+        InferenceError,
+    > {
+        Ok(std::collections::HashMap::from([(
+            "fixture-provider".into(),
+            cognit::inference::ProviderBackpressureSnapshot {
+                admitted: 7,
+                available_permits: 2,
+                ..Default::default()
+            },
+        )]))
+    }
+
     async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
         Ok(ModelCapabilities {
             model_spec: format!("resolved/{model_spec}"),
@@ -135,6 +151,50 @@ async fn server_uses_peer_credentials_and_correlates_complete_and_stream_frames(
         0o660
     );
     let client = harness.client();
+    let provider_key = "https://provider.example::fixture";
+    let first_provider_permit = client.acquire_provider_permit(provider_key).await.unwrap();
+    assert_eq!(harness.observed_peer().await.uid, unsafe {
+        libc::geteuid()
+    });
+    let second_provider_permit = client.acquire_provider_permit(provider_key).await.unwrap();
+    assert_eq!(harness.observed_peer().await.uid, unsafe {
+        libc::geteuid()
+    });
+    let third_acquire = tokio::spawn({
+        let client = client.clone();
+        async move { client.acquire_provider_permit(provider_key).await }
+    });
+    assert_eq!(harness.observed_peer().await.uid, unsafe {
+        libc::geteuid()
+    });
+    assert!(
+        !third_acquire.is_finished(),
+        "the machine-core lease must retain the second configured permit"
+    );
+    drop(first_provider_permit);
+    let third_provider_permit =
+        tokio::time::timeout(std::time::Duration::from_secs(1), third_acquire)
+            .await
+            .expect("dropping the socket-backed lease releases the machine permit")
+            .expect("provider permit task joins")
+            .unwrap();
+    drop(second_provider_permit);
+    drop(third_provider_permit);
+    client
+        .observe_provider_retry_after(provider_key, Some(1))
+        .await
+        .unwrap();
+    assert_eq!(harness.observed_peer().await.uid, unsafe {
+        libc::geteuid()
+    });
+
+    let provider_metrics = client.provider_backpressure_metrics().await.unwrap();
+    assert_eq!(provider_metrics["fixture-provider"].admitted, 7);
+    assert_eq!(provider_metrics["fixture-provider"].available_permits, 2);
+    assert_eq!(harness.observed_peer().await.uid, unsafe {
+        libc::geteuid()
+    });
+
     let capabilities = client.capabilities("fast").await.unwrap();
     assert_eq!(capabilities.model_spec, "resolved/fast");
     assert_eq!(capabilities.display_name, "fixture-model");

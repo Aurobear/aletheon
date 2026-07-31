@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::super::approval_dialog::{ApprovalDialog, DialogDecision};
 use super::super::chat::{ChatWidget, Role as ChatRole};
+use super::super::session_picker::SessionPickerAction;
 use super::super::App;
 use super::submit::{submit_message, write_request};
 
@@ -41,6 +42,26 @@ pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
 }
 
 pub async fn handle_key(app: &mut App, key: KeyEvent) {
+    if let Some(mut picker) = app.session_picker.take() {
+        match picker.handle_key(key) {
+            SessionPickerAction::Continue => app.session_picker = Some(picker),
+            SessionPickerAction::Close => {}
+            SessionPickerAction::Resume(session_id) => {
+                let request_id =
+                    write_request(app, ClientRpcRequest::resume(session_id.clone())).await;
+                app.pending_commands.insert(
+                    request_id,
+                    super::super::PendingCommand::Resume {
+                        previous_session_id: app.app_state.session_id.clone(),
+                    },
+                );
+                app.chat
+                    .add_text(ChatRole::System, format!("恢复会话 {session_id}..."));
+            }
+        }
+        return;
+    }
+
     // If pager overlay is active, route key to pager
     if let Some(ref mut pager) = app.pager {
         if pager.handle_key(key) {

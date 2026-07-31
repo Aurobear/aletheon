@@ -3,12 +3,25 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWr
 
 use crate::application::inference_port::{CoreInferenceRequest, ModelCapabilities};
 use fabric::{LlmResponse, StreamChunk};
+use std::collections::HashMap;
 
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CoreRequest {
+    AcquireProviderPermit {
+        id: u64,
+        provider_key: String,
+    },
+    ObserveProviderRetryAfter {
+        id: u64,
+        provider_key: String,
+        retry_after_ms: Option<u64>,
+    },
+    ProviderBackpressureMetrics {
+        id: u64,
+    },
     Capabilities {
         id: u64,
         model_spec: String,
@@ -24,6 +37,29 @@ pub enum CoreRequest {
 }
 
 impl CoreRequest {
+    pub fn acquire_provider_permit(id: u64, provider_key: impl Into<String>) -> Self {
+        Self::AcquireProviderPermit {
+            id,
+            provider_key: provider_key.into(),
+        }
+    }
+
+    pub fn observe_provider_retry_after(
+        id: u64,
+        provider_key: impl Into<String>,
+        retry_after_ms: Option<u64>,
+    ) -> Self {
+        Self::ObserveProviderRetryAfter {
+            id,
+            provider_key: provider_key.into(),
+            retry_after_ms,
+        }
+    }
+
+    pub fn provider_backpressure_metrics(id: u64) -> Self {
+        Self::ProviderBackpressureMetrics { id }
+    }
+
     pub fn capabilities(id: u64, model_spec: impl Into<String>) -> Self {
         Self::Capabilities {
             id,
@@ -41,9 +77,12 @@ impl CoreRequest {
 
     pub fn id(&self) -> u64 {
         match self {
-            Self::Capabilities { id, .. } | Self::Complete { id, .. } | Self::Stream { id, .. } => {
-                *id
-            }
+            Self::AcquireProviderPermit { id, .. }
+            | Self::ObserveProviderRetryAfter { id, .. }
+            | Self::ProviderBackpressureMetrics { id }
+            | Self::Capabilities { id, .. }
+            | Self::Complete { id, .. }
+            | Self::Stream { id, .. } => *id,
         }
     }
 }
@@ -51,6 +90,16 @@ impl CoreRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CoreFrame {
+    ProviderPermitAcquired {
+        id: u64,
+    },
+    ProviderCooldownObserved {
+        id: u64,
+    },
+    ProviderBackpressureMetrics {
+        id: u64,
+        providers: HashMap<String, cognit::inference::ProviderBackpressureSnapshot>,
+    },
     Capabilities {
         id: u64,
         capabilities: ModelCapabilities,
@@ -75,7 +124,10 @@ pub enum CoreFrame {
 impl CoreFrame {
     pub fn id(&self) -> u64 {
         match self {
-            Self::Capabilities { id, .. }
+            Self::ProviderPermitAcquired { id }
+            | Self::ProviderCooldownObserved { id }
+            | Self::ProviderBackpressureMetrics { id, .. }
+            | Self::Capabilities { id, .. }
             | Self::Response { id, .. }
             | Self::Chunk { id, .. }
             | Self::Completed { id }

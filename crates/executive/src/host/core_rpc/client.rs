@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -15,6 +16,12 @@ use fabric::{LlmResponse, LlmStream};
 use super::protocol::{
     read_json_line, write_json_line, CoreFrame, CoreRequest, DEFAULT_MAX_FRAME_BYTES,
 };
+
+struct CoreRpcProviderPermit {
+    // The machine core retains its semaphore permit until this authenticated
+    // connection closes. Dropping the client-side reader releases authority.
+    _connection: BufReader<UnixStream>,
+}
 
 fn core_error(message: String) -> anyhow::Error {
     if message.ends_with("provider_unavailable") {
@@ -62,6 +69,115 @@ impl CoreRpcClient {
 
 #[async_trait::async_trait]
 impl InferencePort for CoreRpcClient {
+    async fn acquire_provider_permit(
+        &self,
+        provider_key: &str,
+    ) -> Result<Box<dyn fabric::memory::ProviderRequestPermit>, InferenceError> {
+        let id = self.next_id();
+        let stream = self
+            .connect_and_send(&CoreRequest::acquire_provider_permit(id, provider_key))
+            .await?;
+        let mut reader = BufReader::new(stream);
+        let frame = read_json_line::<_, CoreFrame>(&mut reader, self.max_frame_bytes)
+            .await
+            .map_err(InferenceError::from)?
+            .ok_or_else(|| {
+                InferenceError::from(anyhow::anyhow!(
+                    "core RPC closed before provider permit response"
+                ))
+            })?;
+        if frame.id() != id {
+            return Err(anyhow::anyhow!(
+                "core RPC response id {} does not match request id {id}",
+                frame.id()
+            )
+            .into());
+        }
+        match frame {
+            CoreFrame::ProviderPermitAcquired { .. } => Ok(Box::new(CoreRpcProviderPermit {
+                _connection: reader,
+            })),
+            CoreFrame::Error { message, .. } => Err(core_error(message).into()),
+            other => Err(anyhow::anyhow!(
+                "unexpected core RPC frame for provider permit request: {other:?}"
+            )
+            .into()),
+        }
+    }
+
+    async fn observe_provider_retry_after(
+        &self,
+        provider_key: &str,
+        retry_after_ms: Option<u64>,
+    ) -> Result<(), InferenceError> {
+        let id = self.next_id();
+        let stream = self
+            .connect_and_send(&CoreRequest::observe_provider_retry_after(
+                id,
+                provider_key,
+                retry_after_ms,
+            ))
+            .await?;
+        let mut reader = BufReader::new(stream);
+        let frame = read_json_line::<_, CoreFrame>(&mut reader, self.max_frame_bytes)
+            .await
+            .map_err(InferenceError::from)?
+            .ok_or_else(|| {
+                InferenceError::from(anyhow::anyhow!(
+                    "core RPC closed before provider cooldown response"
+                ))
+            })?;
+        if frame.id() != id {
+            return Err(anyhow::anyhow!(
+                "core RPC response id {} does not match request id {id}",
+                frame.id()
+            )
+            .into());
+        }
+        match frame {
+            CoreFrame::ProviderCooldownObserved { .. } => Ok(()),
+            CoreFrame::Error { message, .. } => Err(core_error(message).into()),
+            other => Err(anyhow::anyhow!(
+                "unexpected core RPC frame for provider cooldown request: {other:?}"
+            )
+            .into()),
+        }
+    }
+
+    async fn provider_backpressure_metrics(
+        &self,
+    ) -> Result<HashMap<String, cognit::inference::ProviderBackpressureSnapshot>, InferenceError>
+    {
+        let id = self.next_id();
+        let stream = self
+            .connect_and_send(&CoreRequest::provider_backpressure_metrics(id))
+            .await?;
+        let mut reader = BufReader::new(stream);
+        let frame = read_json_line::<_, CoreFrame>(&mut reader, self.max_frame_bytes)
+            .await
+            .map_err(InferenceError::from)?
+            .ok_or_else(|| {
+                InferenceError::from(anyhow::anyhow!(
+                    "core RPC closed before provider metrics response"
+                ))
+            })?;
+        if frame.id() != id {
+            return Err(anyhow::anyhow!(
+                "core RPC response id {} does not match request id {id}",
+                frame.id()
+            )
+            .into());
+        }
+        match frame {
+            CoreFrame::ProviderBackpressureMetrics { providers, .. } => Ok(providers),
+            CoreFrame::Error { message, .. } => Err(core_error(message).into()),
+            other => Err(anyhow::anyhow!(
+                "unexpected core RPC frame for provider metrics request: {other:?}"
+            )
+            .into()),
+        }
+    }
+
     async fn capabilities(&self, model_spec: &str) -> Result<ModelCapabilities, InferenceError> {
         let id = self.next_id();
         let stream = self

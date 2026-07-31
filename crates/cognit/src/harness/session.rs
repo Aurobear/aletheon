@@ -846,8 +846,16 @@ fn bounded_error(message: &str) -> String {
 }
 
 fn bounded_dasein_context(content: &str) -> String {
+    // Dasein state is durable host-projected context, not the current user
+    // message. Scrub before bounding so prior outcomes cannot re-expose a
+    // secret to a later turn or session.
+    let governed = fabric::types::data_governance::scrub_for_projection(
+        content,
+        fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+    );
+    let content = governed.content;
     if content.len() <= MAX_DASEIN_CONTEXT_BYTES {
-        return content.to_owned();
+        return content;
     }
     let mut boundary = MAX_DASEIN_CONTEXT_BYTES;
     while boundary > 0 && !content.is_char_boundary(boundary) {
@@ -900,6 +908,17 @@ mod context_tests {
 
         assert!(bounded.len() <= MAX_DASEIN_CONTEXT_BYTES + 80);
         assert!(bounded.contains("existential context truncated"));
+    }
+
+    #[test]
+    fn dasein_context_rescrubs_secret_bearing_durable_state() {
+        let bounded = bounded_dasein_context(
+            "prior outcome sk-daseinSecret123; API 密钥 daseinLabelSecret123",
+        );
+
+        assert!(!bounded.contains("sk-daseinSecret123"));
+        assert!(!bounded.contains("daseinLabelSecret123"));
+        assert_eq!(bounded.matches("[REDACTED]").count(), 2);
     }
 
     #[test]

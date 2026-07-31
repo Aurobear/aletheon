@@ -28,12 +28,23 @@ pub fn try_read_socket_with_recorder(
             }
             Ok(n) => {
                 changed = true;
-                let chunk = String::from_utf8_lossy(&app.read_buf[..n]);
-                app.response_buf.push_str(&chunk);
+                app.response_buf.push(&app.read_buf[..n]);
 
-                while let Some(newline_pos) = app.response_buf.find('\n') {
-                    let line = app.response_buf[..newline_pos].trim().to_string();
-                    app.response_buf.drain(..=newline_pos);
+                loop {
+                    let line = match app.response_buf.take_line() {
+                        Ok(Some(line)) => line.trim().to_string(),
+                        Ok(None) => break,
+                        Err(error) => {
+                            app.chat.add_text(
+                                ChatRole::System,
+                                format!("Error: daemon protocol contained invalid UTF-8: {error}"),
+                            );
+                            app.streaming = false;
+                            app.status.waiting = false;
+                            app.app_state.streaming = false;
+                            break;
+                        }
+                    };
 
                     if line.is_empty() {
                         continue;
@@ -102,6 +113,11 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
         }
         ClientEvent::TextDelta { text } => {
             app.stream_ctrl.push_text(&text);
+            app.chat
+                .set_assistant_stream(app.stream_ctrl.current_text());
+        }
+        ClientEvent::TextSnapshot { text } => {
+            app.stream_ctrl.replace_text(&text);
             app.chat
                 .set_assistant_stream(app.stream_ctrl.current_text());
         }
@@ -493,6 +509,18 @@ fn apply_pending_command_response(app: &mut App, message: &serde_json::Value) ->
         (super::PendingCommand::InitializeSkills, Some(result), None) => {
             if let Some(skills) = result.get("skills") {
                 app.registry.set_skills_from_json(skills);
+            }
+        }
+        (super::PendingCommand::OpenSessionPicker, Some(result), None) => {
+            let sessions = result.get("sessions").unwrap_or(&serde_json::Value::Null);
+            match super::session_picker::SessionPicker::from_json(
+                sessions,
+                app.app_state.session_id.clone(),
+            ) {
+                Ok(picker) => app.session_picker = Some(picker),
+                Err(error) => app
+                    .chat
+                    .add_text(ChatRole::System, format!("无法打开会话列表：{error}")),
             }
         }
         (super::PendingCommand::NewSession { clear_screen }, Some(result), None)
@@ -1194,6 +1222,49 @@ mod tests {
         assert!(!app.status.waiting);
         assert!(!app.app_state.streaming);
         assert!(!app.turn_active);
+    }
+
+    #[tokio::test]
+    async fn terminal_text_snapshot_replaces_an_incomplete_stream() {
+        let (stream, _peer) = tokio::net::UnixStream::pair().unwrap();
+        let caps = TermCaps {
+            true_color: false,
+            unicode: false,
+            width: 80,
+            height: 24,
+        };
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
+        let mut app = App::new(
+            stream,
+            caps,
+            "test".into(),
+            Arc::new(ClientClock::new()),
+            workspace,
+            Vec::new(),
+        );
+
+        handle_event(
+            &mut app,
+            &serde_json::json!({"type": "text_delta", "text": "partial |---"}),
+        );
+        handle_event(
+            &mut app,
+            &serde_json::json!({
+                "type": "text_snapshot",
+                "text": "complete authoritative answer."
+            }),
+        );
+
+        assert_eq!(
+            app.stream_ctrl.current_text(),
+            "complete authoritative answer."
+        );
+        assert!(matches!(
+            app.chat.entries.last(),
+            Some(ChatEntry::Text(message))
+                if message.content == "complete authoritative answer."
+        ));
     }
 
     #[tokio::test]
