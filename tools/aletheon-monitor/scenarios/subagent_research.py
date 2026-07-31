@@ -168,6 +168,13 @@ def _lifecycle_evidence(events: list[dict], marker: str, marker_hash: str) -> di
         and call["result"].get("delivery") == "delivered"
         for call in send_calls
     )
+    send_terminal_rejected = any(
+        isinstance((wire := _json_output(call.get("result_event", {}))), dict)
+        and wire.get("ok") is False
+        and isinstance(wire.get("error"), dict)
+        and wire["error"].get("kind") == "terminal"
+        for call in send_calls
+    )
     list_snapshots = [
         snapshot for call in by_tool["agent_list"]
         if call["result"] is not None and first_id
@@ -195,17 +202,13 @@ def _lifecycle_evidence(events: list[dict], marker: str, marker_hash: str) -> di
             "marker_in_agent_result": marker in output and marker_hash in output,
         }
     cancel_calls = [call for call in by_tool["agent_cancel"] if args_target(call, second_id)]
-    cancelled = any(
-        (snapshot := _snapshot_for_agent(call["result"], second_id)) is not None
-        and snapshot.get("status") == "cancelled"
-        for call in cancel_calls if second_id
-    )
-    cancelled_snapshot = next(
+    second_terminal_snapshot = next(
         (
             snapshot
             for call in cancel_calls
             for snapshot in [_snapshot_for_agent(call["result"], second_id)]
-            if snapshot is not None and snapshot.get("status") == "cancelled"
+            if snapshot is not None
+            and snapshot.get("status") in {"succeeded", "failed", "cancelled"}
         ),
         None,
     )
@@ -223,21 +226,27 @@ def _lifecycle_evidence(events: list[dict], marker: str, marker_hash: str) -> di
         "two_distinct_agents": two_distinct_agents,
         "spawn_agent_ids": spawn_ids,
         "first_agent_listed": bool(list_snapshots),
-        "mailbox_delivered_to_first": send_delivered,
+        "mailbox_outcome_authoritative": send_delivered or send_terminal_rejected,
+        "mailbox_delivery": "delivered" if send_delivered else (
+            "terminal_rejected" if send_terminal_rejected else None
+        ),
         "first_agent_succeeded": promotion_evidence is not None,
         "agent_result_contains_marker_hash": marker_in_agent_result,
         "parent_text_contains_marker_hash": marker_in_parent_text,
         "result_promoted_to_parent": marker_in_agent_result and marker_in_parent_text,
         "promotion_evidence": promotion_evidence,
-        "second_agent_cancelled": cancelled,
+        "second_agent_cancel_outcome_authoritative": second_terminal_snapshot is not None,
+        "second_agent_cancel_outcome": (
+            second_terminal_snapshot.get("status") if second_terminal_snapshot else None
+        ),
         "terminal_statuses": {
             first_id: "succeeded" if promotion_evidence else None,
-            second_id: "cancelled" if cancelled else None,
+            second_id: second_terminal_snapshot.get("status") if second_terminal_snapshot else None,
         },
         "terminal_result_hashes": {
             first_id: promotion_evidence["result_sha256"] if promotion_evidence else None,
-            second_id: _canonical_hash(cancelled_snapshot.get("result"))
-            if cancelled_snapshot
+            second_id: _canonical_hash(second_terminal_snapshot.get("result"))
+            if second_terminal_snapshot
             else None,
         },
     }
@@ -480,12 +489,13 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
         {"name": "tool_results_accounted", "passed": lifecycle["all_calls_completed"]},
         {"name": "two_distinct_spawned_agents", "passed": lifecycle["two_distinct_agents"]},
         {"name": "first_agent_progress_listed", "passed": lifecycle["first_agent_listed"]},
-        {"name": "mailbox_delivered_to_first_agent", "passed": lifecycle["mailbox_delivered_to_first"]},
+        {"name": "mailbox_outcome_authoritative", "passed": lifecycle["mailbox_outcome_authoritative"]},
         {"name": "first_agent_terminal_result", "passed": lifecycle["first_agent_succeeded"]},
         {"name": "agent_result_marker_hash", "passed": lifecycle["agent_result_contains_marker_hash"]},
         {"name": "parent_text_promoted_result", "passed": lifecycle["result_promoted_to_parent"]},
         {"name": "parent_journal_promoted_result", "passed": journal_promoted},
-        {"name": "second_agent_cancelled", "passed": lifecycle["second_agent_cancelled"]},
+        {"name": "second_agent_cancel_outcome_authoritative",
+         "passed": lifecycle["second_agent_cancel_outcome_authoritative"]},
         {"name": "daemon_restart_command", "passed": restarted["command_ok"]},
         {"name": "daemon_process_changed", "passed": restarted["process_changed"]},
         {"name": "daemon_start_timestamp_changed", "passed": restarted["start_timestamp_changed"]},

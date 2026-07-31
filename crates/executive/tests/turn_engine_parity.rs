@@ -88,6 +88,7 @@ fn test_context() -> TurnEngineContext {
         ),
         profile: test_profile(),
         cancel_token: tokio_util::sync::CancellationToken::new(),
+        notification_sender: None,
         principal_context: None,
     }
 }
