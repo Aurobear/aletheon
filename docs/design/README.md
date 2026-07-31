@@ -194,7 +194,7 @@ aletheon/
 ├── systemd/
 │   └── aletheond.service       # systemd 服务文件
 │
-├── references/                 # 参考项目 (~3GB, gitignored)
+├── references/                 # 参考项目 (~3GB, gitignored)  目前已经删除了
 │
 └── docs/
     ├── design/                 # 按 Crate 组织的设计文档 (本目录)
@@ -256,7 +256,7 @@ aletheon/
 
 ## Crate 内部结构模式
 
-所有 crate 遵循统一的三层内部结构：
+所有 crate 遵循统一的三层内部结构：  这里约束也不对了，实际上
 
 ```
 crates/*/

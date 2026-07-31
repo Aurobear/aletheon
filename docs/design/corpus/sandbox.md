@@ -1,4 +1,4 @@
-> Migrated from docs/design/execution/sandbox.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from docs/design/execution/sandbox.md — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 # 沙箱执行 (Sandbox Execution)
 

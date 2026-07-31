@@ -16,6 +16,9 @@ capability domain -> Fabric metacognition ABI -> Metacog
                                  governed evolution boundary
 ```
 
-Metacog uses feature-owned modules. Deleted technical-layer roots named
-`core`, `bridge`, and `impl` must not return under `crates/metacog/src`.
+Metacog uses feature-owned modules directly under `crates/metacog/src/`
+(`genome`, `governance`, `evolution`, `evaluation`, `evidence`, `experience`,
+`improvement`, `problem`, `reflection`, `adapters`). The old technical-layer
+roots `core`, `bridge`, and `impl` were removed during the architecture
+decoupling refactor and must not return.
 Coding-specific contracts remain in the Executive-side adapter.

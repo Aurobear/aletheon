@@ -85,7 +85,7 @@ and remove both listener and ACL immediately after completion.
 Run `verify-network-exposure.sh --strict`, save redacted `ss -lntup`, firewall
 rules, and `tailscale status --json` summaries, then test:
 
-1. Localhost can reach the Unix socket; there is no Aletheon TCP listener.
+1. Localhost can reach the Unix sockets (`/run/aletheon/core.sock` and `/run/user/$UID/aletheon/aletheon.sock`); there is no Aletheon TCP listener.
 2. An approved operator device can SSH to the Tailscale address.
 3. An unapproved tailnet device cannot SSH or reach any service.
 4. A LAN peer cannot SSH or reach Aletheon/GBrain.

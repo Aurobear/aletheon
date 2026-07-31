@@ -87,7 +87,7 @@ Host 选择不应改变 Turn、permission、session 或 recovery 语义。
 
 当配置 `execd = true` 时，Executive 创建随机 shared secret、限制 workspace root
 并启动 `execd`：
-`crates/executive/src/host/daemon/bootstrap/request.rs:452-479`。
+`crates/executive/src/host/daemon/bootstrap/security.rs:22-37`。
 
 Execd 只执行已批准的低层副作用。它不是第二个 daemon authority，也不是 Runtime。
 

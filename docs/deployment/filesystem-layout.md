@@ -14,7 +14,7 @@ Aletheon has three path modes:
 ├── config.toml                 root:aletheon 0640
 ├── policy/                     root:aletheon 0750
 └── credentials/                root:aletheon 0750
-    └── individual keys/files   aletheon:aletheon 0600
+    ├── key files in individual subdirs aletheon:aletheon 0600  # google-vault.key root:aletheon 0600
 
 /var/lib/aletheon/              aletheon:aletheon 0750
 ├── state/
@@ -28,8 +28,10 @@ Aletheon has three path modes:
 
 /var/cache/aletheon/            aletheon:aletheon 0750
 /run/aletheon/                  aletheon:aletheon 0750
-└── aletheon.sock               aletheon:aletheon 0660
+└── core.sock                    aletheon:aletheon 0660   # machine daemon socket
 ```
+
+User daemon sockets live under `/run/user/$UID/aletheon/aletheon.sock` (0600).
 
 `/run/aletheon` is canonical. Linux normally provides `/var/run -> /run`, so
 older clients keep working through the operating-system symlink; Aletheon does

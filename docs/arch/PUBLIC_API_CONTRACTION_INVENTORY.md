@@ -19,7 +19,7 @@ consumer -> stable crate facade -> application port
 | Mnemosyne | memory DTO/ports, recall/retention contracts, required local-memory and supplemental host handles | adapters, application, backends, domain and recall internals are private; no `impl` container | `crates/mnemosyne/src/lib.rs:8-28`, `crates/mnemosyne/src/lib.rs:105-139` |
 | Executive | application contracts, composition/host entry points, selected root DTOs | adapters and compatibility are crate-private; old `service`, `user_runtime`, and `impl` roots are absent | `crates/executive/src/lib.rs:13-21`, `crates/executive/src/lib.rs:24-40` |
 | Dasein | SelfField plus explicit perception/mutation host facades | physical `impl` remains private as allowed for the non-primary refactor scope | `crates/dasein/src/lib.rs:61-85` |
-| Metacog | meta-runtime DTO/service contracts and evolution facade | physical `impl` remains private as allowed for the non-primary refactor scope | `crates/metacog/src/lib.rs:1-15` |
+| Metacog | meta-runtime DTO/service contracts and evolution facade | `adapters` is crate-private; no `impl` container (removed post-refactor) | `crates/metacog/src/lib.rs:1-20` |
 
 `executive::testing` is doc-hidden test characterization access, not a production stability promise (`crates/executive/src/lib.rs:64-95`). Production code must receive the corresponding ports from composition. It must not be used by non-test workspace crates.
 
@@ -43,7 +43,7 @@ The machine-counted compatibility ledger now contains no Phase 9 exits (`config/
 - Root/public implementation exports and cross-crate implementation imports are counted by `scripts/aletheon.sh acceptance architecture` and ratcheted in `config/architecture/metrics.env`.
 - The complete Executive layer snapshot is `config/architecture/executive-layers.tsv`; crate public-module snapshots are `config/architecture/module-boundaries.txt`.
 - Canonical path ownership is frozen in `config/architecture-path-inventory.txt`; exceptions are counted in `config/architecture-allowlist.txt` and `config/architecture/compatibility-debt.tsv`.
-- Phase 9 exit values are `CROSS_CRATE_IMPL_REFERENCES=0` and `PUBLIC_IMPL_ADAPTER_EXPORTS=0` (`config/architecture/metrics.env`).
+- Phase 9 exit values are `CROSS_CRATE_IMPL_REFERENCES=0` (current: 0). Note: `PUBLIC_IMPL_ADAPTER_EXPORTS` is now 1 due to `crates/metacog/src/lib.rs:20` `pub use adapters::{` — this is an intentional facade re-export, not a regression.
 
 ## Validation evidence
 

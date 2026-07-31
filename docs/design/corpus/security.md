@@ -1,4 +1,4 @@
-> Migrated from docs/design/security/security-model.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
+> Migrated from docs/design/security/security-model.md — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
 
 # 安全策略 (Security Policy)
 

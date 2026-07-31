@@ -22,10 +22,10 @@ be verified. Audit files are created `0600` and rotated daily/at 100 MiB with
 a new chain segment, retain the rotated predecessor when validating the first
 post-rotation `_previous_hash`.
 
-Health exposes only bounded categories/counts/ages. Collect queue depth, sync
-lag, retry count, free disk/inodes, backup age, worker crash count, and oldest
-approval age. Do not deploy a public dashboard or metrics listener; query the
-local Unix health RPC through approved Tailscale SSH.
+Health RPC returns readiness/liveness, provider backpressure, turn watchdog,
+session count, uptime, and memory queue depth. Additional thresholds for free
+disk/inodes, backup age, worker crash count, and oldest approval age are
+configured in `[deployment.health]` but not surfaced by the RPC.
 
 Release tests inject non-production canaries into headers, multiline messages,
 email/provider bodies, huge errors, and model-key forms; none may appear in
