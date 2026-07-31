@@ -716,6 +716,7 @@ fn benchmark_chat_request(
     requirements: Vec<fabric::TurnRequirement>,
     task_kind: Option<fabric::TaskKind>,
 ) -> ClientRpcRequest {
+    let permission_mode = crate::host::permission_mode_from_environment();
     let request = match std::env::var("ALETHEON_BENCHMARK_SESSION_ID") {
         Ok(session_id) if !session_id.trim().is_empty() => ClientRpcRequest::chat_with_task_kind(
             message,
@@ -724,11 +725,23 @@ fn benchmark_chat_request(
             requirements,
             task_kind,
         ),
+        _ if permission_mode != fabric::permission::HostPermissionMode::Safe => {
+            ClientRpcRequest::chat_with_task_kind(
+                message,
+                Some(fabric::SessionId(format!(
+                    "permission-{}",
+                    uuid::Uuid::new_v4()
+                ))),
+                workspace,
+                requirements,
+                task_kind,
+            )
+        }
         _ => {
             ClientRpcRequest::chat_with_task_kind(message, None, workspace, requirements, task_kind)
         }
     };
-    request.chat_with_permission_mode(crate::host::permission_mode_from_environment())
+    request.chat_with_permission_mode(permission_mode)
 }
 
 #[cfg(test)]
