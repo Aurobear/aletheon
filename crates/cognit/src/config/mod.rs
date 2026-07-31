@@ -812,7 +812,10 @@ mod tests {
              authoritative architecture/status evidence. Never infer the effective production provider or route \
              from examples or checked-in sample configuration; inspect typed host state and effective configuration, \
              or label the production route unverified. Base conclusions on returned file contents rather than \
-             filenames. Stop searching once the evidence needed to answer is sufficient. \
+             filenames. For repository analysis, cite the returned path or typed runtime source for every \
+             architecture, maturity, and risk conclusion; label unsupported conclusions unverified. Never claim \
+             to have reviewed a file, module, crate, test, or runtime path when only its name or discovery result \
+             was returned. Stop searching once the evidence needed to answer is sufficient. \
              Before stating any conclusion about your own runtime state, logs, or configuration, \
              you MUST read the actual logs and the actually-effective config file first — never guess \
              or invent an explanation."
