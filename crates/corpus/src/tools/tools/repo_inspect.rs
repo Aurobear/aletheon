@@ -27,6 +27,15 @@ const ENTRY_CANDIDATES: &[&str] = &[
     "go.mod",
     "Makefile",
     ".aletheon-validation.toml",
+    "ARCHITECTURE.md",
+    "docs/architecture.md",
+    "docs/design/architecture-overview.md",
+    "docs/STATUS.md",
+    "docs/status.md",
+    "docs/roadmap.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    ".github/workflows/ci.yml",
 ];
 
 pub struct RepoInspectTool;
@@ -38,7 +47,7 @@ impl Tool for RepoInspectTool {
     }
 
     fn description(&self) -> &str {
-        "Inspect a repository by batch-reading bounded known entry files. Returns a versioned, content-backed RepositoryContext with instruction/manifests, missing candidates, VCS state, and explicit evidence references."
+        "Required first inspection for an unfamiliar repository or workspace overview. Call it alone and wait for the result before further discovery. Batch-reads bounded known entry files and returns a versioned, content-backed RepositoryContext with instruction/manifests, missing candidates, VCS state, and explicit evidence references."
     }
 
     fn input_schema(&self) -> serde_json::Value {
