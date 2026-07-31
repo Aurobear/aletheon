@@ -152,6 +152,26 @@ def _contradicted_presence_claims(text: str, found_paths: list[str]) -> list[dic
     }.values())
 
 
+def _unsupported_staffing_inferences(text: str) -> list[str]:
+    """Flag staffing-count conclusions that repository metadata cannot prove."""
+    subject = re.compile(
+        r"(?:maintainer|contributor|developer|team|staff(?:ing)?|"
+        r"维护者|贡献者|开发者|团队|作者|项目)",
+        re.IGNORECASE,
+    )
+    count = re.compile(
+        r"(?:\b(?:single|solo|one[- ]person|one[- ]developer)\b|"
+        r"单人|个人项目|一人|唯一(?:维护者|开发者)|只有一)",
+        re.IGNORECASE,
+    )
+    disclaimer = re.compile(r"(?:do not infer|cannot establish|无法推断|不能证明)", re.IGNORECASE)
+    return [
+        clause.strip()[:240]
+        for clause in re.split(r"[\n。；;]+", text)
+        if subject.search(clause) and count.search(clause) and not disclaimer.search(clause)
+    ]
+
+
 def event_acceptance(path: str | None, require_repository_overview: bool = False) -> dict:
     """Check authoritative events for hidden tool and output failures."""
     summary = {
@@ -304,6 +324,7 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
         )
         found_entry_paths = _repo_inspect_entry_paths(results, first_repo_call_id)
         presence_conflicts = _contradicted_presence_claims(text, found_entry_paths)
+        staffing_inferences = _unsupported_staffing_inferences(text)
         calls_before_repo = (
             completed_calls[:completed_calls.index(first_repo_call)]
             if first_repo_call in completed_calls
@@ -377,6 +398,11 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
                 "passed": not presence_conflicts,
                 "found_entry_paths": found_entry_paths,
                 "conflicts": presence_conflicts,
+            },
+            {
+                "name": "repository_overview_avoids_staffing_inference",
+                "passed": not staffing_inferences,
+                "claims": staffing_inferences,
             },
         ])
     return summary

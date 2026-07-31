@@ -213,6 +213,14 @@ fn inspect(input: serde_json::Value, ctx: &ToolContext) -> anyhow::Result<Reposi
         instructions,
         manifests,
         entry_files,
+        evidence_constraints: vec![
+            "Authorship metadata and commit history do not establish maintainer, contributor, or staffing count."
+                .into(),
+            "A version identifier alone does not establish production maturity or API stability."
+                .into(),
+            "Unavailable candidate paths are exact-path evidence only and cannot establish category or capability absence."
+                .into(),
+        ],
         exact_follow_up_paths,
         missing_candidates,
         vcs_state,
@@ -465,6 +473,10 @@ mod tests {
             .all(|file| file.artifact_ref.starts_with("artifact://sha256/")));
         assert!(result.missing_candidates.contains(&"README.md".into()));
         assert!(result.exact_follow_up_paths.is_empty());
+        assert!(result
+            .evidence_constraints
+            .iter()
+            .any(|constraint| constraint.contains("staffing count")));
     }
 
     #[test]

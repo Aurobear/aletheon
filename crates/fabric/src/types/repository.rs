@@ -9,6 +9,10 @@ pub struct RepositoryContext {
     pub instructions: Vec<InstructionSource>,
     pub manifests: Vec<ManifestRef>,
     pub entry_files: Vec<RepositoryFileEvidence>,
+    /// Interpretation constraints that bound conclusions from repository
+    /// metadata without suppressing the underlying evidence.
+    #[serde(default)]
+    pub evidence_constraints: Vec<String>,
     /// Bounded exact paths derived from the root manifest for evidence-driven
     /// follow-up without wildcard repository inventory.
     #[serde(default)]
