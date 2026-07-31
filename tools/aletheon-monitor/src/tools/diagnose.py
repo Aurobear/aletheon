@@ -123,7 +123,7 @@ def _contradicted_presence_claims(text: str, found_paths: list[str]) -> list[dic
             aliases[f"{root.casefold()}/"] = f"{root}/"
     absence = re.compile(
         r"(?:\b(?:no|without)\b|\b(?:is|are)\s+(?:missing|absent|not\s+found)\b|"
-        r"\bdoes\s+not\s+exist\b|无|没有|不存在|缺少)",
+        r"\bdoes\s+not\s+exist\b|无|没有|不存在|缺少|缺失)",
         re.IGNORECASE,
     )
     conflicts = []

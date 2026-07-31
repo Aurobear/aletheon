@@ -37,6 +37,17 @@ const ENTRY_CANDIDATES: &[&str] = &[
     "CONTRIBUTING.md",
     ".github/workflows/ci.yml",
 ];
+const ENTRY_ALTERNATIVES: &[&[&str]] = &[
+    &["README.md", "README"],
+    &[
+        "ARCHITECTURE.md",
+        "docs/architecture.md",
+        "docs/design/architecture-overview.md",
+        "docs/STATUS.md",
+        "docs/status.md",
+        "docs/roadmap.md",
+    ],
+];
 
 pub struct RepoInspectTool;
 
@@ -142,6 +153,18 @@ fn inspect(input: serde_json::Value, ctx: &ToolContext) -> anyhow::Result<Reposi
             Err(error) => missing_candidates.push(format!("{candidate} ({error})")),
         }
     }
+    let found_paths = found
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    missing_candidates.retain(|missing| {
+        let candidate = missing
+            .split_once(" (")
+            .map_or(missing.as_str(), |pair| pair.0);
+        !ENTRY_ALTERNATIVES.iter().any(|group| {
+            group.contains(&candidate) && group.iter().any(|path| found_paths.contains(path))
+        })
+    });
 
     let instructions = found
         .iter()
@@ -387,6 +410,43 @@ mod tests {
             .iter()
             .all(|file| file.artifact_ref.starts_with("artifact://sha256/")));
         assert!(result.missing_candidates.contains(&"README.md".into()));
+    }
+
+    #[test]
+    fn inspection_does_not_report_missing_alternative_when_category_is_present() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("README.md"), "# Present\n").unwrap();
+        std::fs::create_dir_all(temp.path().join("docs/design")).unwrap();
+        std::fs::write(
+            temp.path().join("docs/design/architecture-overview.md"),
+            "# Architecture\n",
+        )
+        .unwrap();
+        let context = ToolContext {
+            agent: None,
+            approval_authority: None,
+            working_dir: temp.path().to_path_buf(),
+            session_id: "repo-alternative-test".into(),
+            clock: Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let result = inspect(json!({}), &context).unwrap();
+
+        assert!(!result
+            .missing_candidates
+            .iter()
+            .any(|path| path == "README"));
+        assert!(!result.missing_candidates.iter().any(|path| {
+            matches!(
+                path.as_str(),
+                "ARCHITECTURE.md"
+                    | "docs/architecture.md"
+                    | "docs/STATUS.md"
+                    | "docs/status.md"
+                    | "docs/roadmap.md"
+            )
+        }));
     }
 
     #[test]

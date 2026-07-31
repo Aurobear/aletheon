@@ -442,7 +442,7 @@ def test_repository_overview_rejects_absence_claim_contradicted_by_entry_files(t
             "output": repo_output,
         }},
         {"type": "text_snapshot", "params": {
-            "text": "项目文档不足：无 README、无 docs/ 目录。" + "A" * 80,
+            "text": "项目文档不足：README 均缺失、无 docs/ 目录。" + "A" * 80,
         }},
         {"type": "turn_done", "params": {}},
     ]
