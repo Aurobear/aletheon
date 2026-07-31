@@ -3,15 +3,19 @@
 > **Status:** Historical design. The former `impl` memory layout below is not a
 > current implementation inventory. Current service/runtime ownership and
 > feature boundaries are summarized in `crates/mnemosyne/README.md`.
+> **All `mnemosyne/src/impl/*` paths in the tables below refer to the old
+> directory layout, which was removed during the architecture decoupling refactor.**
+> Current paths use `domain/`, `application/`, `adapters/`, `model/`, `recall/`,
+> `backends/`, `ops/`, `consolidation/` directly under `crates/mnemosyne/src/`.
 
 > Consolidated from earlier design drafts; current code paths and capability status must be verified against the repository.
 
 > Inspired by Letta (MemGPT)'s three-tier self-editing memory architecture, enabling agents to manage their own memory like an OS manages virtual memory. Self-learning loop.
 
 **Module:** 02
-**Crates:** `executive` (executive-level memory: CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline), `mnemosyne` (backend storage: episodic, semantic, procedural, self_memory, router)
-**Related modules:** [cognitive-engine](../executive/react-loop.md), [tool-system](../executive/orchestration.md)
-**Last Updated:** 2026-06-14
+**Crates:** `mnemosyne` (all memory: CoreMemory, RecallMemory, ArchivalMemory, compressor, pipeline, backends)
+**Related modules:** [cognitive-engine](../executive/react-loop.md), [executive orchestration](../executive/orchestration.md)
+**Last Updated:** 2026-07-31 (added note: all `impl/` paths below are historical; see `crates/mnemosyne/src/` for current layout)
 
 ---
 

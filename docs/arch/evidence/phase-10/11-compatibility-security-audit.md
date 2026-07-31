@@ -1,6 +1,6 @@
 # Phase 10 compatibility and security audit
 
-Source requirements: `docs/arch/CORE_ARCHITECTURE_DECOUPLING_REFACTOR_PLAN.md:958-975` and `docs/plans/core-refactor/11_PHASE_10_GLOBAL_VERIFICATION.md:94-100`.
+Source requirements: `docs/arch/CORE_ARCHITECTURE_DECOUPLING_REFACTOR_PLAN.md:958-975` and `docs/arch/CORE_REFACTOR_VERIFICATION_STATUS.md`.
 
 The authoritative execution is the green `bash scripts/cargo-agent.sh test --workspace` run in `08-workspace-test.log` (330.44 s). The following named tests are present as `ok` in that log.
 

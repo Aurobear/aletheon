@@ -17,7 +17,7 @@
 目标: 能在 Arch Linux 上跑起来的 aletheon daemon
 
 ├── 项目骨架搭建
-│   ├── Cargo workspace (base, memory, corpus, dasein, cognit, runtime, metacog, interact)
+│   ├── Cargo workspace (fabric, mnemosyne, corpus, dasein, cognit, executive, metacog, interact)
 │   ├── 目录结构
 │   └── CI/CD 基础
 │

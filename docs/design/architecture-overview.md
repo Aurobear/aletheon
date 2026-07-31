@@ -44,10 +44,10 @@ Executive -> Hardware (experimental; not production-wired)
 | `aletheon` | CLI、daemon、exec、TUI/ACP 顶层装配 |
 | `executive` | Turn/Session/Goal/Agent 编排、approval、最终验证与 settlement |
 | `kernel` | Operation、Process、Admission、Chronos、Space、Supervision |
-| `runtime` | 外部执行器 lifecycle、manifest、WorkOrder、event、receipt、selection |
+| `runtime` | 外部执行器 lifecycle、manifest、event、receipt、selection |
 | `cognit` | cognition、reasoning、planning、review、harness |
 | `corpus` | 工具、MCP、provider adapter 与受治理 capability execution |
-| `platform` | Host OS contract、selector 与 Linux/Windows/macOS backend |
+| `platform` | Host OS contract、selector 与 Linux backend（Android/macOS/Windows 未实现） |
 | `execd` | 独立进程中的受约束文件/进程副作用 |
 | `hardware` | 设备身份、租约、命令、遥测与 simulator；当前 experimental |
 | `fabric` | 跨领域协议、ID、envelope 与兼容基础设施 |

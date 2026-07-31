@@ -1,13 +1,13 @@
 # 认知引擎 (Cognitive Engine)
 
-> Migrated from docs/design/core/cognitive-engine.md — code paths updated to match actual crate names (base, cognit, corpus, dasein, memory, metacog, interact, runtime)
-> Note: Context compaction/compression moved to runtime/memory; LoopDetector integration moved to self/loop-detector.md
+> Migrated from docs/design/core/cognitive-engine.md — code paths updated to match actual crate names (fabric, cognit, corpus, dasein, mnemosyne, metacog, interact, executive)
+> Note: Context compaction/compression moved to mnemosyne; LoopDetector integration lives in `crates/fabric/src/security/loop_detector.rs`
 
 > 驱动 Agent 推理与决策的核心循环，采用 ReAct 工具循环 + content-block 消息协议。主动行为引擎。
 
 **模块编号:** 01
 **关联模块:** [memory-system](../mnemosyne/memory-system.md), [tool-system](../corpus/tools.md)
-**最后更新:** 2026-06-06
+**最后更新:** 2026-07-31
 
 ---
 
@@ -17,8 +17,8 @@
 |-----------|--------|---------------|-------|
 | ReAct loop | ✅ Implemented | `engine.rs:run_turn()` | Core tool loop works end-to-end |
 | ContentBlock types | ✅ Implemented | `message.rs` | Text, ToolUse, ToolResult, Image |
-| Context compaction | ✅ Implemented | `memory/compressor/` | AdvancedCompressor with token-budget tail protection, iterative summary, tool output pre-pruning. Old `CompactionManager` in `memory/compaction.rs` kept for reference |
-| Streaming | ✅ Implemented | `llm/provider.rs:complete_stream()` | `LlmStream` trait with SSE chunk streaming |
+| Context compaction | ✅ Implemented | `crates/mnemosyne/src/application/compressor/` | AdvancedCompressor with token-budget tail protection, iterative summary, tool output pre-pruning |
+| Streaming | ✅ Implemented | `crates/cognit/src/adapters/inference/provider.rs` | `LlmStream` trait with SSE chunk streaming |
 | Checkpointable trait | ⬜ Planned | — | `session/journal.rs` has `EventJournal` instead |
 | LoopDetector integration | ✅ Implemented | `security/loop_detector.rs` | Wired to engine via `pre_check()`/`post_check()` |
 

@@ -8,9 +8,11 @@ release notes. On a supported staging host, run the complete migration and
 restore drill before production.
 
 ```sh
-sudo upgrade-aletheon.sh \
+sudo /usr/libexec/aletheon/upgrade-aletheon.sh \
   --binary ./release/aletheon \
   --sha256-file ./release/aletheon.sha256 \
+  --authorized-users ./release/authorized-users \
+  --user-backup-command ./release/user-backup.sh \
   --assets ./release/assets
 ```
 

@@ -45,7 +45,7 @@ key, or a credential tracked by the current Git checkout.
 
 1. Create a second credential at the provider when overlap is supported.
 2. Feed it over standard input, never as an argument:
-   `sudo aletheon-secret-init.sh rotate provider.env < protected-file`.
+   `sudo /usr/libexec/aletheon/aletheon-secret-init.sh rotate provider.env < protected-file`.
 3. Run `systemctl restart aletheon` and wait for `aletheon-healthcheck.sh`.
 4. Exercise the affected integration and inspect only outcome/error codes.
 5. Revoke the old credential and securely remove the protected input.

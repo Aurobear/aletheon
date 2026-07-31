@@ -22,15 +22,15 @@ host/composition -> adapters -> external systems
 
 | Metric | Phase 0 | Final | Assessment |
 |---|---:|---:|---|
-| Core external-identifier hits | 252 | 33 | -86.9%; remaining counted vocabulary is adapter/compatibility-boundary material |
-| Public impl/adapter exports | 24 | 0 | target reached |
+| Core external-identifier hits | 252 | 26 | -89.7%; remaining counted vocabulary is adapter/compatibility-boundary material |
+| Public impl/adapter exports | 24 | 1 | single intentional facade re-export at `crates/metacog/src/lib.rs:20` |
 | Cross-crate impl references | 12 | 0 | target reached |
 | Forbidden infrastructure imports | 20 | 8 | -60%; remaining counted imports are reviewed boundary/false-positive patterns, with no new findings |
 | Fabric provider-specific types | not separately frozen | 0 | target reached |
 | Provider-name branches | 0 | 0 | target held |
 | URL provider inference | 0 | 0 | target held |
 | Provider error-text branches | 0 | 0 | target held |
-| Opaque-value inspections | 2 | 2 | bounded reviewed compatibility parsing, not business branching |
+| Opaque-value inspections | 2 | 1 | bounded reviewed compatibility parsing, not business branching |
 | Compatibility ledger rows | 19 | 2 | only persisted ExternalEvent v1 read compatibility remains |
 
 Final ratchets are authoritative at `config/architecture/metrics.env:2-10`; the remaining compatibility exits are explicit at `config/architecture/compatibility-debt.tsv:3-4`.

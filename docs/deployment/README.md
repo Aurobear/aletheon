@@ -85,7 +85,7 @@ are external to the repository:
 
 ```text
 /etc/aletheon/credentials/provider.env    machine core provider
-~/.config/aletheon/daemon.env             user daemon and Pi provider
+~/.config/aletheon/.env                 monitor environment
 ~/.config/aletheon/gbrain.env             optional GBrain bearer token
 ```
 

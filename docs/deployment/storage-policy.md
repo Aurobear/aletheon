@@ -19,8 +19,7 @@ rescanned.
 
 Cleanup is fail-closed. A producer may add `.cleanup-after` with an expiry epoch
 only after the entry is acknowledged or a worktree is verified clean. The daily
-job processes abandoned clean worktrees, caches, expired sessions, then retained
-artifacts. It never removes an entry containing `.active`, `.pinned`, or
+job processes abandoned clean worktrees, sessions, artifacts, then caches. It never removes an entry containing `.active`, `.pinned`, or
 `.legal-hold`, and it rejects symlinks or paths outside the managed root. Google
 outbox/projection and GBrain dead-letter deletion must use their transactional
 acknowledgement APIs rather than filesystem cleanup.
