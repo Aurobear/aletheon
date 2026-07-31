@@ -2,7 +2,7 @@
 
 > 持续更新的开放问题追踪。每个问题标注最新进展、关联设计文档和 next step。
 
-**最后更新:** 2026-06-07 (B1-B5 + design improvements merged)
+**最后更新:** 2026-07-31 (doc audit — resolved contradictions with phases.md, updated stale references)
 
 ---
 
@@ -30,10 +30,10 @@
 ### 当前进展
 
 - **权限分级已实现**（L0-L3，见 `../corpus/security.md`）— 定义了"自动执行 / 通知 / 确认 / 禁止"四级，对应自主权边界
-- **LoopDetector 已实现**（`security/loop_detector.rs`）— 停滞检测 + 连续失败检测，自动阻断循环，对应"停下来"的触发条件
+- **LoopDetector 已实现**（`crates/fabric/src/security/loop_detector.rs`）— 停滞检测 + 连续失败检测，自动阻断循环，对应"停下来"的触发条件
 - **L2 确认流程的设计**在 `../corpus/security.md` §2.1 完成，但确认流程的用户界面（TUI 确认对话框）未实现
-- **上下文压缩已实现**（`memory/compaction.rs`）— LLM 摘要压缩，消息数超阈值自动触发（`engine.rs:488-498, 885-895`）；但压缩时的"信息优先级"选择（哪些该保留、哪些该丢弃）仍依赖 LLM 判断，无显式策略
-- **输出护栏 OutputGuardrail** (`security/output_guardrail.rs`) 已实现 — 对过度自信的模型输出进行验证
+- **上下文压缩已实现**（`crates/mnemosyne/src/application/compressor/`）— LLM 摘要压缩，消息数超阈值自动触发；但压缩时的"信息优先级"选择（哪些该保留、哪些该丢弃）仍依赖 LLM 判断，无显式策略
+- **输出护栏 OutputGuardrail** (`crates/fabric/src/security/`) 已实现 — 对过度自信的模型输出进行验证
 
 ### 待研究
 
@@ -59,7 +59,7 @@
 
 - **沙箱隔离已实现**（bubblewrap / process / noop）— 工具执行在隔离环境中运行
 - **策略引擎已实现**（L0-L3 权限分级）— 控制 Agent 对文件/系统的访问范围
-- **混合推理代码已实现但未接入**（`inference/router.rs`）— 本地/云端路由逻辑存在，但 Engine 未使用此模块，直接通过 ProviderRegistry 调用 LLM
+- **混合推理已实现**（`crates/cognit/src/application/inference/router.rs`）— 本地/云端路由逻辑存在，Engine 通过 ProviderRegistry 调用 LLM
 - **WritableRoot 路径隔离已实现**（B1，`../dasein/writable-root.md`）— 精细化控制 Agent 可写的文件路径
 - **多设备记忆同步**为 ⬜ Planned（`../corpus/platform.md`）
 
@@ -86,10 +86,10 @@
 
 ### 当前进展
 
-- **三级记忆架构已实现**（`../mnemosyne/memory-system.md`）— Core/Recall/Archival，不同层级有不同的"遗忘"机制
-- **上下文压缩已实现**（`memory/compaction.rs`）— 旧消息通过 LLM 摘要压缩，本质是一种"结构化遗忘"（`engine.rs:488-498` 触发逻辑）
+- **三级记忆架构已实现**（见 memory-system.md）— Core/Recall/Archival，不同层级有不同的"遗忘"机制
+- **上下文压缩已实现**（`crates/mnemosyne/src/application/compressor/`）— 旧消息通过 LLM 摘要压缩，本质是一种"结构化遗忘"
 - **核心记忆的 self-edit 工具已实现** — Agent 可以通过工具自主管理 Core Memory
-- **ContextBudget** (`memory/budget.rs`) 已实现 — Token 预算追踪，超限自动截断
+- **ContextBudget** (`crates/mnemosyne/src/domain/`) 已实现 — Token 预算追踪，超限自动截断
 - **缺失：** 压缩时的信息优先级策略（当前完全依赖 LLM 判断）、记忆重要性评分、记忆污染检测
 
 ### 待研究
@@ -172,7 +172,7 @@
 
 ### 当前进展
 
-- **混合推理代码已实现但未接入** — `inference/router.rs` + `classifier.rs` 实现了本地/云端路由，但 Engine 直接使用 ProviderRegistry，未经过 InferenceRouter
+- **混合推理已实现** — `crates/cognit/src/application/inference/router.rs` 实现了本地/云端路由，Engine 通过 ProviderRegistry 调用
 - **ContextBudget** 已实现 — Token 预算追踪
 - **Memory L2 Recall (SQLite)** 已实现 — 高效存储
 - **Memory L3 Archival** 为 🔶 Partial — 向量搜索设计完成，存根实现
@@ -223,16 +223,16 @@
 
 | 问题 | 状态 | 实现位置 | PR |
 |------|------|----------|-----|
-| MemoryScope 隔离 (Global/Session/Agent) | ✅ 已实现 | `memory/scope.rs` | #105 |
-| FUSE 真实挂载 (fuse3 integration) | ✅ 已实现 | `fuse/` | #104 |
-| 工具搜索 (BM25 + TF-IDF) | ✅ 已实现 | `tool/search.rs` | #100 |
-| 并行执行 (RwLock gate + PathConflictDetector) | ✅ 已实现 | `tool/parallel.rs` | #100 |
-| MCP Transports (StreamableHTTP + SSE) | ✅ 已实现 | `mcp/transport.rs` | #103 |
-| Split Sandbox (bwrap + fallback chain) | ✅ 已实现 | `sandbox/split.rs` | #105 |
-| Container Sandbox | ✅ 已实现 | `sandbox/container.rs` | #104 |
-| Integrity Monitor | Removed | — | Historical #104 implementation was later removed; deployment provenance is the current integrity gate |
-| Automation System | ✅ 已实现 | `automation/` | #105 |
-| Memory Pipeline | ✅ 已实现 | `memory/pipeline.rs` | #105 |
+| MemoryScope 隔离 (Global/Session/Agent) | ✅ 已实现 | `crates/mnemosyne/src/domain/` | #105 |
+| FUSE 真实挂载 (fuse3 integration) | 🔶 Stub | AgentFs 内存 API 可用；当前 crate 无可启用的 fuse3 feature | #104 |
+| 工具搜索 (BM25 + TF-IDF) | ✅ 已实现 | `crates/corpus/src/tools/` | #100 |
+| 并行执行 (RwLock gate + PathConflictDetector) | ✅ 已实现 | `crates/corpus/src/` | #100 |
+| MCP Transports (StreamableHTTP + SSE) | ✅ 已实现 | `crates/corpus/src/tools/mcp/` | #103 |
+| Split Sandbox (bwrap + fallback chain) | ❌ Removed | 旧 Split/Container 名称不是当前实现；当前使用 Bubblewrap/Process/Noop | #105 |
+| Container Sandbox | ❌ Removed | Historical #104 implementation was later removed | #104 |
+| Integrity Monitor | ❌ Removed | Historical #104 implementation was later removed; deployment provenance is the current integrity gate | — |
+| Automation System | ❌ Removed | 通用 automation 模块已移除；当前仅 goal/channel worker 与 systemd timers | #105 |
+| Memory Pipeline | ✅ 已实现 | `crates/mnemosyne/src/consolidation/` | #105 |
 
 ---
 

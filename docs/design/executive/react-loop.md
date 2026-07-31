@@ -2,9 +2,9 @@
 
 > Consolidated from earlier design drafts; current code paths and capability status must be verified against the repository.
 
-**Crate:** `executive`
+**Crates:** `cognit` (ReAct loop), `fabric` (message types, LoopDetector), `mnemosyne` (compaction)
 **Code location:** `crates/cognit/src/harness/linear/step.rs`
-**Last Updated:** 2026-06-14
+**Last Updated:** 2026-07-31
 
 ---
 

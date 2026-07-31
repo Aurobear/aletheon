@@ -184,8 +184,8 @@ See [the architecture overview](docs/design/architecture-overview.md) and [desig
 
 ## 5. Crate Architecture
 
-Aletheon is organized as fifteen domain/runtime crates plus one executable
-assembly crate:
+Aletheon is organized as sixteen domain/runtime crates plus one executable
+assembly crate and two example crates:
 
 | Crate | Concept | Role |
 |---|---|---|
@@ -200,7 +200,7 @@ assembly crate:
 | `metacog` | Meta | self-evolution scaffolding |
 | `gateway` | Channels | channel-neutral intent/effect dispatch and transports |
 | `kernel` | Kernel services | clock/timer implementations and process/operation foundations |
-| `platform` | Host platform | Linux/macOS/Windows host capability contracts and adapters |
+| `platform` | Host platform | Linux host capability contracts and adapters (Android/macOS/Windows not implemented) |
 | `runtime` | Agent runtime contracts | external runtime manifests and deterministic selection |
 | `hardware` | Embodiment | typed hardware permits, receipts, and deterministic simulator |
 | `execd` | Isolated executor | privileged/isolated filesystem execution daemon |
@@ -247,7 +247,7 @@ execd     ---> platform
 | Hook system (lifecycle hooks) | ✅ Stable | `crates/corpus/src/hook/` | `crates/executive/tests/` |
 | Bubblewrap Sandbox | ✅ Stable | `crates/corpus/src/security/sandbox/bubblewrap.rs` | `crates/corpus/tests/` |
 | Multi-agent Collaboration | ✅ Stable | `crates/executive/src/application/orchestration/agent.rs` | `crates/executive/tests/` |
-| io_uring IPC backend | 🔧 Experimental | `crates/fabric/src/ipc/backends/io_uring.rs` | `crates/fabric/tests/` |
+| io_uring IPC backend | 🔧 Experimental | `crates/fabric/src/ipc/backends/io_uring_transport.rs` | `crates/fabric/tests/` |
 | Local/Offline Model | 🔧 Experimental | — | — |
 | Self-evolution loop example | 🔧 Requires explicit opt-in | `examples/evolution_loop/` | `crates/executive/tests/self_evolution_loop_test.rs` |
 | eBPF kernel awareness | 📋 Design | `crates/fabric/src/ipc/bus/kernel_bus.rs` | — |
@@ -526,9 +526,9 @@ User Request / System Event
 | Phase 3.5 | Hook + MCP + Plugin + Agent system | Done |
 | Phase 4 | Streaming + context compression + perception-to-engine | Done |
 | P0 (stabilization) | cargo check/clippy clean, all tests pass, Legacy Engine removal | Done |
-| P1 (stabilization) | EventBus migration and initial large-file decomposition | In progress |
+| P1 (stabilization) | EventBus migration and initial large-file decomposition | Done |
 | P2 (stabilization) | ReActLoop circuit breaker, goal tracker, reflection, tool exec sub-modules | Done |
-| P3 (stabilization) | Docs alignment with codebase reality | In progress |
+| P3 (stabilization) | Docs alignment with codebase reality | Done |
 | Phase 5 | eBPF perception + vector memory + FUSE | Experimental/Planned |
 | Phase 6 | io_uring IPC + D-Bus + Android + DiGraph | Experimental/Planned |
 
@@ -607,5 +607,5 @@ bash scripts/cargo-agent.sh +stable check --workspace
 
 ---
 
-*Document version: 0.2.0*
-*Last updated: 2026-06-14*
+*Document version: 0.3.0*
+*Last updated: 2026-07-31*
