@@ -1686,6 +1686,7 @@ mod tests {
                 kind: "cargo".into(),
             }],
             entry_files: Vec::new(),
+            exact_follow_up_paths: Vec::new(),
             missing_candidates: Vec::new(),
             vcs_state: VcsSnapshot::default(),
             validation_commands: vec![
@@ -1784,6 +1785,7 @@ mod tests {
                 kind: "cargo".into(),
             }],
             entry_files: Vec::new(),
+            exact_follow_up_paths: Vec::new(),
             missing_candidates: Vec::new(),
             vcs_state: VcsSnapshot::default(),
             validation_commands: Vec::new(),

@@ -9,6 +9,10 @@ pub struct RepositoryContext {
     pub instructions: Vec<InstructionSource>,
     pub manifests: Vec<ManifestRef>,
     pub entry_files: Vec<RepositoryFileEvidence>,
+    /// Bounded exact paths derived from the root manifest for evidence-driven
+    /// follow-up without wildcard repository inventory.
+    #[serde(default)]
+    pub exact_follow_up_paths: Vec<String>,
     pub missing_candidates: Vec<String>,
     pub vcs_state: VcsSnapshot,
     pub validation_commands: Vec<ValidationSpec>,
