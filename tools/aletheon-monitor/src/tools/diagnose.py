@@ -137,7 +137,7 @@ def _contradicted_presence_claims(text: str, found_paths: list[str]) -> list[dic
         for alias, evidence_path in aliases.items():
             alias_index = folded.find(alias)
             prefix_targets_alias = any(
-                match.start() < alias_index and alias_index - match.end() <= 24
+                match.start() < alias_index and alias_index - match.end() <= 6
                 for match in prefixes
             )
             if alias_index >= 0 and (strong or prefix_targets_alias):
