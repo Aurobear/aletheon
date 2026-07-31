@@ -121,18 +121,26 @@ def _contradicted_presence_claims(text: str, found_paths: list[str]) -> list[dic
         if "/" in normalized:
             root = normalized.split("/", 1)[0]
             aliases[f"{root.casefold()}/"] = f"{root}/"
-    absence = re.compile(
-        r"(?:\b(?:no|without)\b|\b(?:is|are)\s+(?:missing|absent|not\s+found)\b|"
-        r"\bdoes\s+not\s+exist\b|无|没有|不存在|缺少|缺失)",
+    strong_absence = re.compile(
+        r"(?:\b(?:is|are)\s+(?:missing|absent|not\s+found)\b|"
+        r"\bdoes\s+not\s+exist\b|不存在|缺少|缺失)",
         re.IGNORECASE,
     )
+    prefix_absence = re.compile(r"(?:\b(?:no|without)\b|无|没有)", re.IGNORECASE)
     conflicts = []
     for clause in re.split(r"[\n。；;,，:：]+", text):
         folded = clause.casefold()
-        if not absence.search(clause):
+        strong = strong_absence.search(clause)
+        prefixes = list(prefix_absence.finditer(clause))
+        if not strong and not prefixes:
             continue
         for alias, evidence_path in aliases.items():
-            if alias in folded:
+            alias_index = folded.find(alias)
+            prefix_targets_alias = any(
+                match.start() < alias_index and alias_index - match.end() <= 24
+                for match in prefixes
+            )
+            if alias_index >= 0 and (strong or prefix_targets_alias):
                 conflicts.append({
                     "claimed_absent": alias,
                     "evidence_path": evidence_path,

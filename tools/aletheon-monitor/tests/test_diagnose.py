@@ -483,3 +483,27 @@ def test_repository_overview_accepts_exact_missing_candidate_without_conflict(tm
         if item["name"] == "repository_overview_presence_claims_match_evidence"
     )
     assert assertion["passed"] is True
+
+
+def test_repository_overview_does_not_confuse_claim_about_file_content_with_absence(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {"type": "tool_call_complete", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "args": {},
+        }},
+        {"type": "tool_call_result", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "is_error": False,
+            "output": json.dumps({"entry_files": [{"path": "README.md"}]}),
+        }},
+        {"type": "text_snapshot", "params": {
+            "text": "`README.md` Section 6 无任何非 Linux 平台的 stable 条目。" + "A" * 80,
+        }},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_presence_claims_match_evidence"
+    )
+    assert assertion["passed"] is True
