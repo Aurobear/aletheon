@@ -345,12 +345,10 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
                 for pattern in patterns
                 if isinstance(pattern, str)
                 and (
-                    pattern == "**"
-                    or pattern.startswith("**/")
-                    or pattern.startswith("docs/**/")
-                    or (
-                        "**/" in pattern
-                        and any(marker in pattern.split("**/", 1)[0] for marker in ("*", "?", "["))
+                    "**" in pattern
+                    or any(
+                        any(marker in segment for marker in ("*", "?", "["))
+                        for segment in pattern.replace("\\", "/").split("/")[:-1]
                     )
                 )
             )
