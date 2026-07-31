@@ -185,6 +185,12 @@ jobs:
             tool_input_json
             message_roundtrip
           )
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # Sanitizer builds are target-specific and expensive on the bounded
+            # self-hosted runner. Gate representative parse and round-trip
+            # contracts on every PR; scheduled/manual runs retain the full set.
+            targets=(envelope_v2_parse envelope_v2_roundtrip)
+          fi
           for target in "${targets[@]}"; do
             bash scripts/cargo-agent.sh +nightly fuzz run "$target" \
               --fuzz-dir crates/executive/fuzz -- -max_total_time="$seconds"
