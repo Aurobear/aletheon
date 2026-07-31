@@ -14,13 +14,14 @@ struct ReviewInput<'a> {
     policy_ref: &'a str,
     allowed_operations: &'a [String],
     result_schema: ResultSchema,
+    result_example: serde_json::Value,
 }
 
 #[derive(Serialize)]
 struct ResultSchema {
     evidence_assessed: &'static str,
     findings: &'static str,
-    proposed_changes: &'static str,
+    proposed_changes: serde_json::Value,
     confidence_millis: &'static str,
     unresolved_conflicts: &'static str,
     policy_decision: &'static str,
@@ -38,11 +39,36 @@ pub fn compile(job: &GovernedReviewJob) -> anyhow::Result<(Vec<Message>, usize, 
         result_schema: ResultSchema {
             evidence_assessed: "array<string: supplied evidence reference>",
             findings: "array<string>",
-            proposed_changes: "array<{operation,target_ref,preconditions,rationale}>",
+            proposed_changes: serde_json::json!({
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["operation", "target_ref", "preconditions", "rationale"],
+                    "properties": {
+                        "operation": "string from allowed_operations",
+                        "target_ref": "string from subject_refs",
+                        "preconditions": "array<string>",
+                        "rationale": "string"
+                    }
+                }
+            }),
             confidence_millis: "integer 0..1000",
             unresolved_conflicts: "array<string>",
             policy_decision: "string",
         },
+        result_example: serde_json::json!({
+            "evidence_assessed": ["evidence/reference"],
+            "findings": ["finding grounded in supplied evidence"],
+            "proposed_changes": [{
+                "operation": "allowed_operation",
+                "target_ref": "subject/reference",
+                "preconditions": ["typed precondition"],
+                "rationale": "evidence-grounded rationale"
+            }],
+            "confidence_millis": 950,
+            "unresolved_conflicts": [],
+            "policy_decision": "reviewed"
+        }),
     })?;
     let input_bytes = GOVERNED_REVIEW_SYSTEM_PROMPT
         .len()
