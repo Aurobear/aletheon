@@ -661,6 +661,10 @@ pub async fn single_message_with_workspace_requirements_and_task_kind(
                                 had_streaming_text = true;
                                 // skip — result text comes in the final response
                             }
+                            ClientEvent::TextSnapshot { .. } => {
+                                had_streaming_text = true;
+                                // skip — result text comes in the final response
+                            }
                             ClientEvent::TurnDone => { /* streaming done */ }
                             _ => {}
                         }
@@ -674,6 +678,13 @@ pub async fn single_message_with_workspace_requirements_and_task_kind(
                 // Deduplicate consecutive identical lines (some models repeat text)
                 let deduped = deduplicate_response(text);
                 println!("{deduped}");
+            } else if resp["result"]["queued"].as_bool() == Some(true) {
+                let prompt_id = resp["result"]["prompt_id"]
+                    .as_str()
+                    .unwrap_or("unknown");
+                return Err(anyhow::anyhow!(
+                    "request was queued as {prompt_id}; this one-shot client did not observe a terminal result"
+                ));
             } else if !resp["result"]["reflections"].is_null() {
                 println!("{}", format_reflections(&resp["result"]["reflections"]));
             } else if !resp["result"]["genome"].is_null() {
@@ -717,29 +728,45 @@ fn benchmark_chat_request(
     task_kind: Option<fabric::TaskKind>,
 ) -> ClientRpcRequest {
     let permission_mode = crate::host::permission_mode_from_environment();
-    let request = match std::env::var("ALETHEON_BENCHMARK_SESSION_ID") {
-        Ok(session_id) if !session_id.trim().is_empty() => ClientRpcRequest::chat_with_task_kind(
+    let explicit_session = std::env::var("ALETHEON_BENCHMARK_SESSION_ID")
+        .ok()
+        .filter(|session_id| !session_id.trim().is_empty());
+    single_message_chat_request(
+        message,
+        workspace,
+        requirements,
+        task_kind,
+        permission_mode,
+        explicit_session,
+    )
+}
+
+fn single_message_chat_request(
+    message: &str,
+    workspace: &fabric::WorkspacePolicy,
+    requirements: Vec<fabric::TurnRequirement>,
+    task_kind: Option<fabric::TaskKind>,
+    permission_mode: fabric::permission::HostPermissionMode,
+    explicit_session: Option<String>,
+) -> ClientRpcRequest {
+    let request = match explicit_session {
+        Some(session_id) => ClientRpcRequest::chat_with_task_kind(
             message,
             Some(fabric::SessionId(session_id)),
             workspace,
             requirements,
             task_kind,
         ),
-        _ if permission_mode != fabric::permission::HostPermissionMode::Safe => {
-            ClientRpcRequest::chat_with_task_kind(
-                message,
-                Some(fabric::SessionId(format!(
-                    "permission-{}",
-                    uuid::Uuid::new_v4()
-                ))),
-                workspace,
-                requirements,
-                task_kind,
-            )
-        }
-        _ => {
-            ClientRpcRequest::chat_with_task_kind(message, None, workspace, requirements, task_kind)
-        }
+        _ => ClientRpcRequest::chat_with_task_kind(
+            message,
+            Some(fabric::SessionId(format!(
+                "message-{}",
+                uuid::Uuid::new_v4()
+            ))),
+            workspace,
+            requirements,
+            task_kind,
+        ),
     };
     request.chat_with_permission_mode(permission_mode)
 }
@@ -755,6 +782,43 @@ mod workflow_cli_tests {
         assert_eq!(message.task_kind, Some(TaskKindArg::Coding));
         let tui = Args::try_parse_from(["aletheon", "--task-kind", "coding", "--tui"]).unwrap();
         assert_eq!(tui.task_kind, Some(TaskKindArg::Coding));
+    }
+
+    #[test]
+    fn one_shot_messages_use_fresh_sessions_unless_explicitly_overridden() {
+        let workspace =
+            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), Vec::new()).unwrap();
+        let fresh = single_message_chat_request(
+            "hello",
+            &workspace,
+            Vec::new(),
+            None,
+            fabric::permission::HostPermissionMode::Safe,
+            None,
+        );
+        let explicit = single_message_chat_request(
+            "hello",
+            &workspace,
+            Vec::new(),
+            None,
+            fabric::permission::HostPermissionMode::Safe,
+            Some("shared-session".into()),
+        );
+
+        assert!(matches!(
+            fresh,
+            ClientRpcRequest::Chat(fabric::protocol::client::ChatParams {
+                session_id: Some(fabric::SessionId(id)),
+                ..
+            }) if id.starts_with("message-")
+        ));
+        assert!(matches!(
+            explicit,
+            ClientRpcRequest::Chat(fabric::protocol::client::ChatParams {
+                session_id: Some(fabric::SessionId(id)),
+                ..
+            }) if id == "shared-session"
+        ));
     }
 
     #[test]

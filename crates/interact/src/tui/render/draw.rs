@@ -30,6 +30,7 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
     let frame_counter = app.frame_counter;
 
     let pager_ref = &app.pager;
+    let session_picker_ref = &app.session_picker;
 
     terminal.draw(|f| {
         let size = f.area();
@@ -39,6 +40,12 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
             let mut pager_buf = ratatui::buffer::Buffer::empty(size);
             pager.render(size, &mut pager_buf);
             f.buffer_mut().merge(&pager_buf);
+            return;
+        }
+        if let Some(ref picker) = session_picker_ref {
+            let mut picker_buf = ratatui::buffer::Buffer::empty(size);
+            picker.render(size, &mut picker_buf);
+            f.buffer_mut().merge(&picker_buf);
             return;
         }
 

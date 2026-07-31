@@ -1,6 +1,7 @@
 //! TUI interface — interactive terminal UI and CLI entry point.
 
 pub mod app;
+mod json_lines;
 pub mod reducer;
 pub mod render;
 pub mod response;
@@ -24,6 +25,7 @@ pub mod markdown;
 pub mod pager;
 pub mod plan_view;
 pub mod registry;
+pub mod session_picker;
 pub mod state;
 pub mod status;
 pub mod streaming;
@@ -304,7 +306,7 @@ struct App {
     /// cleared by turn_done. Used by auto-submit to know when the next
     /// message can be sent.
     turn_active: bool,
-    response_buf: String,
+    response_buf: json_lines::JsonLineBuffer,
     caps: TermCaps,
     /// Monotonically increasing JSON-RPC request id.
     next_request_id: u64,
@@ -338,6 +340,8 @@ struct App {
     completion: CompletionPopup,
     /// Pager overlay (Ctrl+T to open, q/Esc to close)
     pager: Option<pager::PagerOverlay>,
+    /// Canonical session list with keyboard navigation and resume action.
+    session_picker: Option<session_picker::SessionPicker>,
     /// Frame counter for spinner animation.
     frame_counter: u64,
     /// Centralized application state (mode, awareness, context).
@@ -378,7 +382,7 @@ impl App {
             running: true,
             streaming: false,
             turn_active: false,
-            response_buf: String::new(),
+            response_buf: json_lines::JsonLineBuffer::default(),
             caps,
             next_request_id: 1,
             pending_commands: BTreeMap::new(),
@@ -398,6 +402,7 @@ impl App {
             history: CommandHistory::new(),
             completion: CompletionPopup::new(),
             pager: None,
+            session_picker: None,
             frame_counter: 0,
             app_state: AppState::default(),
             plan_view: PlanViewState::default(),
@@ -434,6 +439,7 @@ enum PendingCommand {
     InitializeSkills,
     NewSession { clear_screen: bool },
     Resume { previous_session_id: Option<String> },
+    OpenSessionPicker,
 }
 
 #[cfg(test)]

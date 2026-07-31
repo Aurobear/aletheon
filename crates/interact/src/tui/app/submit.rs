@@ -173,7 +173,12 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
-                send_request(app, ClientRpcRequest::Sessions).await;
+                let request_id = write_request(app, ClientRpcRequest::Sessions).await;
+                app.pending_commands
+                    .insert(request_id, super::super::PendingCommand::OpenSessionPicker);
+                app.pending_non_turn.insert(request_id);
+                app.streaming = true;
+                app.status.waiting = true;
                 app.chat
                     .add_text(ChatRole::System, "查询会话列表中...".to_string());
                 return;

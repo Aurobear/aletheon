@@ -151,6 +151,10 @@ pub struct ExecEntry {
 }
 
 impl ExecEntry {
+    fn is_policy_guidance(&self) -> bool {
+        self.is_error && self.output.starts_with("Policy guidance:")
+    }
+
     pub fn new(call_id: String, tool: String, args: String) -> Self {
         Self {
             call_id,
@@ -205,7 +209,10 @@ impl ExecEntry {
     pub fn render_lines(&self, frame_counter: u64, _width: u16) -> Vec<Line<'static>> {
         const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-        let dot_color = if self.is_error {
+        let policy_guidance = self.is_policy_guidance();
+        let dot_color = if policy_guidance {
+            Color::Yellow
+        } else if self.is_error {
             Color::Red
         } else if !self.finished {
             Color::Yellow
@@ -215,6 +222,8 @@ impl ExecEntry {
 
         let status = if !self.finished {
             format!(" {}", SPINNER[frame_counter as usize % SPINNER.len()])
+        } else if policy_guidance {
+            " ⚠".to_string()
         } else if self.is_error {
             " ✗".to_string()
         } else {
@@ -1252,6 +1261,28 @@ mod tests {
             .collect::<String>();
         assert!(text.contains("• Ran git status ✗"));
         assert!(text.contains("fatal: repository unavailable"));
+    }
+
+    #[test]
+    fn test_exec_entry_renders_policy_rejection_as_guidance() {
+        let mut entry = ExecEntry::new(
+            "call_glob".to_string(),
+            "glob".to_string(),
+            r#"{"pattern":"**/*"}"#.to_string(),
+        );
+        entry.finish(
+            "Policy guidance: unqualified recursive inventory was not executed.",
+            true,
+        );
+        let text = entry
+            .render_lines(0, 80)
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(text.contains("⚠"));
+        assert!(!text.contains('✗'));
+        assert!(entry.is_error, "policy rejection remains a tool failure");
     }
 
     #[test]
