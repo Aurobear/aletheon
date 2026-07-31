@@ -2,8 +2,9 @@
 
 **Date:** 2026-07-30
 **Last reviewed:** 2026-07-31
-**Status:** 实现、部署与部分安装态复核记录；真实 TUI provider 验收仍未通过，
-因此不得标称整体 production-ready
+**Status:** 实现、部署与部分安装态复核记录；最新系统部署与真实 TUI 的机械门禁已通过，
+但连续三次真实 TUI、同会话多轮及其余 §9 门槛尚未全部关闭，因此不得标称整体
+production-ready
 **Scope:** 区分已经实现、已设计但未实现、部分覆盖和完全未覆盖的生产能力；
 给出启用门槛、依赖顺序和文件所有权约束。F1/F2 是本分析最初识别的新增
 workstream；当前分支已实现其代码闭环，但仍按下述安装态证据独立判定。
@@ -11,14 +12,14 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
 
 ## 0. 2026-07-31 实现后复核
 
-以下结论取代 §3 中实现前的“当前事实”描述，但保留原表作为缺口来源：
+以下结论与 §3 均已按当前代码重写；不再保留与实现相冲突的旧“当前事实”：
 
 | 项 | 当前实现证据 | 当前验收状态 |
 |---|---|---|
-| F1 | provider-keyed permit、共享 cooldown 及独立计数位于 `crates/cognit/src/adapters/inference/backpressure.rs:13-181`；health RPC 导出全部 snapshot（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:137-171`） | 代码闭环；安装态真实请求观察到 provider 重试，尚未通过零错误压力验收 |
+| F1 | machine core 持有 endpoint/model-keyed permit、主动 request-start pacing 与 cooldown；LLM canonical factory 直接消费，user-daemon embedding 经 core RPC 获取 socket-backed lease（`crates/cognit/src/adapters/inference/backpressure.rs:50-186`、`crates/cognit/src/composition/inference_factory.rs:117-185`、`crates/executive/src/host/core_rpc/server.rs:200-280`）；health 分开导出 core/user snapshot（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:138-179`） | 跨进程代码与 focused test 闭环；双客户端 pacing 及最新系统部署的 official-client smoke 已通过，仍待 child/embedding fan-out 和连续真实 TUI 质量门禁 |
 | F2 | closure matrix 将已暴露操作绑定到 producer/resolver/receipt/replay，并将其余操作显式 deny（`config/approval-closure.toml:1-78`）；架构门禁执行 verifier（`tests/suites/architecture/architecture_check.sh` 末尾） | 代码闭环，待真实人工 resolve/restart 验收 |
-| #3 | Fabric 提供统一 trust/classification/scrub 契约（`crates/fabric/src/types/data_governance.rs:1-140`）；Memory 与 Turn 持久投影消费该契约（`crates/mnemosyne/src/consolidation/extractor.rs`、`crates/executive/src/application/turn_pipeline.rs`） | 代码闭环，focused 泄漏 fixture 已通过；待真实外部通道验收 |
-| #4 | health 导出 provider 与 Turn watchdog 指标和默认 SLO alerts（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:137-171`）；Turn 诊断来自 active index 与 monotonic age（`crates/executive/src/application/turn_coordinator.rs:45-62,151-170`） | 代码闭环，待运行态故障注入 |
+| #3 | Fabric 提供统一 trust/classification/scrub 契约（`crates/fabric/src/types/data_governance.rs:1-153`）；Memory projection、最终 context assembly 与 Dasein injection 均在模型可见边界再次 scrub（`crates/mnemosyne/src/projection.rs:260-267`、`crates/executive/src/application/context_assembler.rs`、`crates/cognit/src/harness/session.rs`） | 代码、focused 泄漏 fixture 和一次系统部署已完成；仍待安装态跨会话 secret fixture 与真实外部通道验收 |
+| #4 | health 导出 machine-core/user provider 与 Turn watchdog 指标和默认 SLO alerts（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:138-187`）；monitor 只调用 process-global health，并对 readiness/SLO alert fail closed；现又从 durable TUI events 检查 tool error、权威 `text_snapshot`、终态文本结构和 `turn_done`（`tools/aletheon-monitor/src/tools/health.py:31-132`、`tools/aletheon-monitor/src/tools/diagnose.py:72-198`） | 代码、focused monitor tests 和最新系统部署完成；仍待可控故障注入矩阵 |
 | #5 | backup 使用 SQLite online backup 并逐库检查（`scripts/libexec/aletheon/backup.sh:20-43`），restore 在复制前后校验（`scripts/libexec/aletheon/restore.sh:38-72`）；migration inventory 覆盖 12 个持久组件（`config/release/migration-matrix.toml`、`scripts/libexec/aletheon/verify/migration-matrix.sh:16-65`） | 代码闭环，待安装态 backup/restore drill |
 | #6 | 非本地 MCP 对 restricted-data egress fail closed，并将返回内容标为 untrusted 后 scrub（`crates/corpus/src/tools/mcp/wrapper.rs:91-127`） | 主要外部工具路径闭环，待真实 channel/MCP 验收 |
 | #7 | F1 关闭 machine provider 协调；Hardware 已由 production embodiment composition 调用（`crates/executive/src/host/daemon/bootstrap/request.rs:823-850`）；role runtime 先 prepare 后注册（`crates/executive/src/host/daemon/bootstrap/runtime.rs:322-364`） | 路由代码闭环，待逐 runtime 安装态矩阵 |
@@ -27,11 +28,14 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
 
 ### 0.1 2026-07-31 安装态复核结果
 
-- `sudo bash scripts/aletheon.sh deploy` 已通过；release、`/usr/bin` 及两个运行中
-  daemon 的统一摘要为
-  `f870a8058e9fbdc0e0385d913139fb185976faceb0d9eff3986458e2615ecad5`，
+- 2026-07-31 15:19 的 `sudo bash scripts/aletheon.sh deploy` 已通过；当次
+  release、`/usr/bin`、`aletheon-core.service` 与 user `aletheon.service` 的运行中
+  可执行文件统一摘要为
+  `954b85a64e1bf6031886c3f6d51094c211ac670320ce5a6052fa307d4cd003ba`。
   deploy gate 同时证明 restart counter 在两个 7 秒窗口保持稳定，并通过 official
-  user socket 的真实请求。
+  user socket 的真实请求。当前实际 machine unit 是 active 的
+  `aletheon-core.service`；`aletheon.service` 这个 system-scope 兼容 unit inactive
+  不能据此否认 machine core。
 - 首次真实 TUI 多轮复核暴露了一个终态顺序缺陷：Cognit 的 pipeline-local
   `TurnDone` 曾先于 coordinator active-index 清理到达客户端，紧接的同 thread
   follow-up 因此被拒绝。现在 pipeline 只缓冲该事件
@@ -46,6 +50,55 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
   返回输入框且 frame 无错误，但 journal 再次记录 `provider_unavailable` retry。
   三次均失败，不能用 monitor/frame 表面 PASS 覆盖 provider 证据；需要 provider
   稳定后重新取得三次连续零错误结果，才可关闭安装态门槛。
+- 本轮安装态复核（session `66e107c7-1e81-4f42-85c8-9b0a39614d8b`）再次在
+  2026-07-31 14:16:14–14:17:00 记录 4 次 `provider_unavailable` retry，且 monitor
+  在权威 `turn_done` 前超时。因此它是明确 FAIL，不纳入三次连续通过计数。
+- 补入主动 pacing 后，两个并发、独立的
+  `/usr/bin/aletheon --full` official-socket client 都在 18.721 秒内获得非空终态；
+  machine-core snapshot 为 `admitted=4, paced=1, queued=1, rejected=0`，且对应
+  journal 无 provider error。这是 F1 的安装态跨 session pacing 正证据。
+- 随后的三个 fresh TUI repository-analysis run 都没有 provider retry/error，但按
+  frame + durable event 重算只有第一个真正通过：run 2 的 provider 输出以未闭合
+  Markdown/未完成中文句子结束；run 3 的 8 个 tool 中有 1 个
+  `exec_command` 因缺少 change transaction 失败。原 monitor 将三者都报 PASS 是
+  monitor defect；`tools/aletheon-monitor/src/tools/diagnose.py:72-174` 已改为
+  fail closed，72 个 monitor tests 通过。三份 bundle 为
+  `.scenario-runs/acceptance/real-tui-repo-review-{1,2,3}.json`，对应 private event
+  receipts 为 `98ef...f37`、`ba08...23`、`9f83...bd1`。因此连续三次计数仍为 0。
+- 15:33 再次运行 deploy 时，安装与服务重启已完成，但 official-client smoke 连续
+  收到上游 HTTP 503（无 `Retry-After`），最终 status 124；machine snapshot
+  记录 `cooldown_updates=5`，服务 restart counter 仍为 0。该次 deploy **整体失败**，
+  不能被前一次成功覆盖，也不能归咎为 backpressure authority 缺失。
+- 之后的修复部署已于 16:40 完整通过：release、`/usr/bin/aletheon` 与运行中的 user
+  daemon 摘要均为
+  `38959ba3921f69b3e171935ff307e56ba7c2144522efe94b80245111c1f4b0c9`，
+  official user socket 真实请求、两段 restart 稳定窗口均通过；当前 user unit
+  `NRestarts=0`。因此 15:33 的 503 是一次真实失败证据，但不再是“latest deploy”
+  状态。
+- 终态质量链路又关闭了两个真实缺陷。第一，bounded live event channel 丢失增量时，
+  daemon 在 coordinator settlement 后发送完整 `TextSnapshot` 再发送 `TurnDone`
+  （`crates/fabric/src/events/ui_event.rs:227-234`；
+  `crates/executive/src/application/daemon_turn/execute.rs:274-308`），TUI 以 snapshot
+  替换草稿（`crates/interact/src/tui/response.rs:103-112`）。第二，三个 provider
+  adapter 不再对任意网络 chunk 调用 lossy UTF-8，而是在完整 SSE/NDJSON frame
+  边界严格解码（`crates/cognit/src/adapters/inference/utf8_stream.rs:1-49`；
+  `openai_provider.rs:572-597`、`anthropic.rs:394-420`、`ollama.rs:346-370`）。
+  monitor 同时要求恰好一个 snapshot 位于权威 `turn_done` 前，并拒绝 U+FFFD
+  （`tools/aletheon-monitor/src/tools/diagnose.py:124-197`）。
+- `aletheon -m` 的默认会话冲突也已在代码中关闭：每个 one-shot 默认使用新的
+  `message-<uuid>` session；只有显式设置 `ALETHEON_BENCHMARK_SESSION_ID` 才共享
+  session（`crates/interact/src/tui/cli.rs:724-771`）。显式共享请求若只收到
+  `{queued:true}`，现在返回错误而非空输出 exit 0（同文件 `:676-687`）。
+- 最新部署后的真实 TUI run 11 在 provider、tool、终态结构、snapshot 与编码断言上
+  全部通过（`.scenario-runs/acceptance/real-tui-repo-review-11.json`），但答案引用了
+  本文修订前的陈旧 one-shot 缺口。依照“架构/成熟度结论必须符合实际代码”的口径，
+  该次不计入最终连续三次 streak；须在本文纠偏后重新起算。
+- 后续系统部署完整通过，release、`/usr/bin/aletheon` 与运行中 user daemon
+  摘要一致，两段 restart 稳定窗口和 official user-socket 请求通过。具体当前摘要
+  以本轮 typed runtime/deploy provenance 输出为准，本文不维护可漂移的“最新 SHA”。随后 run 36 的 provider/tool/snapshot/UTF-8
+  与 repository-overview 顺序均通过，但答案仍把历史 secret 事件写成当前已证漏洞、引用
+  旧部署摘要，并从计划推导 single-runtime 缺口；按事实准确性门禁仍判 FAIL。该结果证明
+  monitor 机械 PASS 不能代替人工/评分内核的事实时态校验。
 
 ### 0.2 2026-07-31 定位与 always-on 承载复核
 
@@ -57,7 +110,7 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
 | Linux sandbox | Bubblewrap 提供真实 namespace 隔离；此前 capabilities 声称 seccomp，但没有生成/传入 `--seccomp` BPF FD。`Auto` 还会沿 Bubblewrap → Process → Noop 退化（`crates/corpus/src/security/sandbox/executor.rs:39-46`） | 本轮停止虚假 seccomp 声明，并将 shipped safe/dev 默认改为 `require`；`full` 仍由用户显式选择无沙箱。真实 seccomp filter 是后续独立 workstream |
 | daemon 连接与 turn | accept loop 原先在 peer credential 后无条件 spawn connection（`crates/executive/src/host/daemon/server.rs:639-667`）；Turn backpressure 已存在，但默认无限（`crates/executive/src/composition/config/backpressure.rs`） | 本轮引入默认 64 个连接、8 个并发 turn 的 host-owned 上限，并以原子 admission 防止并发越界 |
 | 顶层 turn 累计工作量 | Provider 单请求、tool result 和 child Agent 各有局部上限，但 shipped `agent.max_iterations=0` 允许顶层循环无限 | 本轮 shipped 默认改为 50 iterations；累计 provider tokens/成本/事件字节的统一硬结算仍是开放项 |
-| Event spine | SQLite append 有 1 秒写 admission timeout（`crates/executive/src/adapters/events/sqlite_event_spine.rs:175-183`），但没有统一容量水位、retention/vacuum 调度 | 仍为 P0 开放项；不能用 append backpressure 代替磁盘生命周期治理 |
+| Event spine | SQLite append 有 1 秒写 admission timeout，并在 production bootstrap 消费 shipped 1 GiB `max_event_spine_bytes` 硬上限（`crates/executive/src/adapters/events/sqlite_event_spine.rs:181-216`、`crates/executive/src/host/daemon/bootstrap/services.rs:66-69`、`config/default.toml:19`） | 无界增长已关闭；达到 hard cap 后 fail-closed，但 retention/vacuum 调度与容量预警仍开放，不能把拒写上限等同于完整磁盘生命周期治理 |
 | OS 集成 | FUSE 是 design-only（`README.md:286-289`）；eBPF/io_uring 是 feature-gated/experimental（`README.md:274-282`） | 必须分别报告 `planned`、`experimental`、`installed`，不得统称“已生产接入”或简单统称“mock” |
 | Mnemosyne migration | supplemental store 已有 `PRAGMA user_version` runner；FactStore 有幂等列迁移，但其他 backend 多为各自 `CREATE TABLE IF NOT EXISTS` | 缺口是主存 backend 的统一 schema/version/migration policy，不是“完全没有 migration runner” |
 | CI | 默认-feature workspace suite 之外，PR 现在分别编译 io_uring、Linux integration 和 Mnemosyne all-features contract，并执行每 target 5 秒的 bounded fuzz；依赖系统 Leptonica/Tesseract 的 `ocr-tesseract` 不伪装成通用 runner 可编译 | OS feature contract 与 bounded fuzz 已进入 PR gate；原生 OCR 依赖必须由专用 runner/image gate，FUSE/eBPF 仍无可 gate 的生产 feature |
@@ -97,15 +150,15 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
 
 | # | 能力 | 当前事实与准确缺口 | 严重度 |
 |---|---|---|---|
-| 1 | **F1：机器级 provider 并发、限流与冷却协调** | 已有跨连接 turn 数限制，但默认无限且粒度是 turn，不是 provider（`crates/executive/src/composition/config/backpressure.rs:9-29`）。`LlmScheduler` 有路由、failover、health 和逐请求 retry（`crates/cognit/src/adapters/inference/scheduler.rs:68-80,308-339`），没有共享的 provider-keyed permit/cooldown 状态。A 已正确提出一个消费者需求，但机器级所有权、所有 LLM/embedding caller 的接入、共享 `Retry-After`、公平性和可观测性仍未设计/验收。架构账本也明确列为未完成（`docs/design/architecture-overview.md:128-134`）。 | 🔴 极高 |
-| 2 | **F2：审批平面清单与破坏性动作闭环** | 系统存在三条不同审批平面，不能合并描述：transient tool gate、durable `ApprovalCategory`、Metacog governance，详见 §4。`SendMail` 已有高风险 approval、执行前 binding 校验，以及幂等 outbox/reconciliation（`crates/executive/src/adapters/channel/gmail/report.rs:144-327,421-445`），不是“完全未接线”的类别；2026-07-31 的仓库级检索未找到 `DeleteFile`/`GitPush` 的生产 producer。缺口是逐类别证明 producer → human resolve → resume → terminal receipt/replay，而不是再造一个审批枚举。 | 🔴 高（安全） |
-| 3 | **统一密钥/PII scrub 与最小化投影** | Memory consolidation 已对 API key/token/password/private key 做局部 redaction（`crates/mnemosyne/src/consolidation/extractor.rs:37-94`）；Agora trace 明确将内容视为敏感，除非另有脱敏投影（`crates/agora/src/trace/mod.rs:8-14`）。缺的是记忆、工具输出、事件、审计/API 投影共用的分类与 scrub 契约，以及防止原始敏感载荷进入非必要持久层的验证。 | 🟠 高 |
-| 4 | **运营遥测、SLO 与卡死检测** | daemon 已有 `status`/`health` RPC（`crates/executive/src/host/daemon/handler/rpc.rs:46-49`），health 返回 liveness/readiness/components（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:125-155`）；Turn 和 native child 也已有可选 deadline/budget timeout（`crates/executive/src/composition/turn_service.rs:121-138`、`crates/executive/src/adapters/runtime/native_cognit.rs:305-333`）。剩余缺口是经验证的 metrics 导出、队列/permit/cooldown 指标、默认 operator SLO/告警，以及区分“有 deadline”与“能发现并诊断卡死 Turn”的 watchdog 策略。 | 🟠 高 |
-| 5 | **跨存储统一生命周期** | 不能再表述为“没有保留策略”：Mnemosyne 已有带 backup、lease、age 和 batch 的 retention compactor（`crates/mnemosyne/src/retention/compactor.rs:5-12,29-44,57-103`），MemoryService 执行 forget（`crates/mnemosyne/src/service.rs:1013-1037`），Corpus 也清理过期 overflow（`crates/corpus/src/tools/tools/output/persistence.rs:102-125`）。真实缺口是跨库 inventory、schema/version 规则、备份/恢复次序、容量水位、vacuum/compaction 调度和统一 retention 证明。 | 🟠 中高 |
-| 6 | **工具输出与外部通道的注入/egress 治理** | Recall 已渲染为 `untrusted="true"` 并明确禁止把历史内容当指令（`crates/mnemosyne/src/projection.rs:234-250`）；child context 也标为 untrusted reference data（`crates/executive/src/adapters/runtime/native_cognit.rs:769-785`）。尚未证明所有工具结果、邮件/MCP/外部 channel 摄入都采用同等 typed trust 标记，也未形成跨工具 egress/data-classification 策略。 | 🟠 中高 |
-| 7 | **provider/runtime 完整性** | 架构仍明确列出 Runtime selector 未统一、Pi RPC diff/artifact receipt 未完成、Hardware 无生产 caller，以及 machine-wide provider coordination 未完成（`docs/design/architecture-overview.md:123-134`）。需要按实际 provider/runtime 路由逐条验证，而不是用单个 mock 或 fallback 代表完整支持。 | 🟡 中 |
-| 8 | **真实行为回归 fixture/harness/receipt 门禁** | 评分内核基础已生产验收，且存在通用 `CapabilityBenchmarkRuntime`（`crates/executive/src/application/capability_benchmark.rs:373-425`）；但架构仍将“真实 coding fixture/harness/receipt”列为未完成（`docs/design/architecture-overview.md:134`）。缺的是版本化真实仓库 fixture、相同 task packet/contract、权威终态 receipt、可复现失败分类以及进入 CI/发布门禁的策略。 | 🟡 中 |
-| 9 | **可维护性与所有权集中度** | 2026-07-31 使用 `wc -l` 的快照为：`crates/corpus/src/security/runner.rs` 1998、`crates/executive/src/application/agent_control/mod.rs` 1779、`crates/executive/src/application/agent_control/settlement.rs` 1556、`crates/cognit/src/harness/linear/mod.rs` 2177、`crates/mnemosyne/src/service.rs` 1469。它们是变更冲突和评审负担信号，不单独证明质量差或 bus factor=1。`SECURITY.md:13-30` 已提供私密报告流程；人员风险必须由维护者/所有权数据单独评估，本文不再作“单人项目”断言。 | 🟡 中 |
+| 1 | **F1：机器级 provider 并发、主动节拍与冷却协调** | 双进程 authority 已统一到 machine core：endpoint/model key、socket-backed embedding lease、core health snapshot 均已接线（`crates/fabric/src/include/memory.rs:155-175`、`crates/executive/src/application/inference_port.rs:77-109`、`rpc_health.rs:138-179`）。当前又增加 machine-wide request-start pacing（`crates/cognit/src/adapters/inference/backpressure.rs:78-153`）及无建议 transient 的 30 秒 fallback。双 official-client installed pacing 与最新 deploy smoke 已通过；剩余缺口是 child/embedding fan-out及连续三次全工具成功、终态完整且事实准确的真实 TUI。 | 🔴 极高（验收） |
+| 2 | **F2：审批平面清单与破坏性动作闭环** | 三条 authority 仍须区分（见 §4）；closure matrix 已将当前暴露的 `apply_code`、`activate_goal`、`send_mail`、`apply_genome` 绑定到 producer/resolver/receipt/replay，并显式 deny 其余动作（`config/approval-closure.toml:1-68`）。剩余缺口是真实 human resolve → resume → terminal receipt → restart/replay，不是再造审批枚举。 | 🔴 高（验收） |
+| 3 | **统一密钥/PII scrub 与最小化投影** | 共享 typed scrub 位于 `crates/fabric/src/types/data_governance.rs:1-153`。consolidation、legacy recall projection、最终 host fragment assembly、Dasein durable injection 与工具/MCP 投影都消费它；本轮 focused fixtures 证明 raw `sk-`/`key-`/中文密钥标签不会从旧状态进入模型上下文。剩余缺口是重新部署后的跨会话与真实 channel/MCP 复核。 | 🟠 高（验收） |
+| 4 | **运营遥测、SLO 与卡死检测** | health 已导出 machine-core/user provider snapshot、active Turn age 与默认 SLO alerts（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:138-187`）；monitor 不再无 session 调用 session-scoped `status`，且 readiness/SLO alert 会使 verdict 失败（`tools/aletheon-monitor/src/tools/health.py:31-132`）。durable TUI event 校验现可拒绝隐藏 tool error、不完整增量、缺失权威 snapshot 与 UTF-8 replacement（`tools/aletheon-monitor/src/tools/diagnose.py:72-198`）。Turn watchdog 使用 active index 与 monotonic age（`crates/executive/src/application/turn_coordinator.rs:45-62,151-170`）。普通 one-shot 已隔离 session，显式共享 queued receipt 则 fail closed；剩余缺口是通用异步 queued receipt/terminal correlation 与安装态故障注入矩阵。 | 🟠 高（验收） |
+| 5 | **跨存储统一生命周期** | migration inventory、SQLite online backup/restore 校验、Mnemosyne retention compactor 与 Event spine shipped hard cap 已形成代码闭环（`config/release/migration-matrix.toml`、`scripts/libexec/aletheon/backup.sh:20-43`、`scripts/libexec/aletheon/restore.sh:38-72`、`crates/mnemosyne/src/retention/compactor.rs:5-103`、`crates/executive/src/adapters/events/sqlite_event_spine.rs:204-216`）。剩余缺口是 Event spine retention/vacuum/预警与整套安装态 backup/restore drill。 | 🟠 中高 |
+| 6 | **工具输出与外部通道的注入/egress 治理** | Recall 和 child context 已标 untrusted；非本地 MCP 对 restricted egress fail closed 并 scrub 返回内容（`crates/mnemosyne/src/projection.rs:234-267`、`crates/executive/src/adapters/runtime/native_cognit.rs:769-785`、`crates/corpus/src/tools/mcp/wrapper.rs:91-127`）。剩余缺口是逐 channel/MCP 安装态矩阵，而不是主 MCP 路径完全缺失。 | 🟠 中高（验收） |
+| 7 | **provider/runtime 完整性** | selector 当前可在 manifested `native-cognit` 与 `pi-rpc` 间按 capability/priority 选择（`crates/executive/src/host/daemon/bootstrap/request.rs:996-1012,1098-1104`）；`pi-coder`、Goal provider worker 与 executable extension 仍经 compatibility/普通注册，未统一进 manifest selection（同文件 `:1026-1097`、`crates/executive/src/host/daemon/bootstrap/extensions.rs:300-323`）。Hardware 已有 production caller；resident Pi RPC 的 artifact list 仍为空（`crates/executive/src/adapters/runtime/pi_rpc.rs:420-434`）。缺口是统一真实外部路由、补 RPC artifact receipt，并做逐 runtime 安装态矩阵。 | 🟡 中 |
+| 8 | **真实行为回归 fixture/harness/receipt 门禁** | 版本化 coding harness、deterministic replay/contract CI 和 release installed-host drill 已落地（`tests/coding/README.md:1-31`、`.github/workflows/ci.yml:81-85`、`scripts/libexec/aletheon/release-acceptance.sh:296-339`）。真实验收现同时要求 provider clean、全 tool success、权威 snapshot、终态文本完整且架构/成熟度结论符合实际代码。最新 deploy 已通过；run 11 的机械断言通过但引用陈旧计划事实，故 streak 仍未重新成立。 | 🟡 中（验收） |
+| 9 | **可维护性与所有权集中度** | 2026-07-31 使用 `wc -l` 的当前快照为：`crates/corpus/src/security/runner.rs` 2038、`crates/executive/src/application/agent_control/mod.rs` 1843、`crates/executive/src/application/agent_control/settlement.rs` 1557、`crates/cognit/src/harness/linear/mod.rs` 2177、`crates/mnemosyne/src/service.rs` 1469。它们是变更冲突和评审负担信号，不单独证明质量差或 bus factor=1。`SECURITY.md:13-30` 已提供私密报告流程；人员风险必须由维护者/所有权数据单独评估，本文不再作“单人项目”断言。 | 🟡 中 |
 
 > **已确认不是缺口：AgentControl 结算级 crash recovery。** settlement store 有
 > `agent_settlement_receipts`、`idempotency_key`、`IdempotentReplay` 和
@@ -136,9 +189,9 @@ approval，也不执行或恢复动作，不能作为审批闭环原语。
   `AgentControlPort::cancel` 并观察权威终态，不能再写成“只在 wait 边界”
   （`docs/plans/2026-07-30-multi-agent-planning-loop-design.md:345-349,463-464`）。
   真正未定义的是角色图中途崩溃后的重放/恢复策略。
-- **C：** 旧 sandbox 忽略 candidate、rollback snapshot 仅内存、migration 不足以
-  证明 durable apply；修订稿已把 candidate-aware sandbox 与 restart-safe store
-  纳入 Wave 3 必需项，而不是后续优化。
+- **C：** candidate-aware sandbox、durable genome store 与治理 apply 代码已落地但
+  default-off；没有真实安装态 human approval/apply/read-back/rollback 证据前，不能因
+  focused tests 通过就宣称受治理自演化已生产启用。
 - **A：** remote embedding 已要求共享 backpressure contract；A 不负责证明所有
   LLM caller 都接入 F1。大规模 backfill 性能和容量边界仍需真实数据验收。
 - **D：** 已覆盖 capability negotiation 和旧 peer fail-closed；尚未覆盖的是完整
