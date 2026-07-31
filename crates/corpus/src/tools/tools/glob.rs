@@ -20,7 +20,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "Discover an unknown path with bounded, specific globs after known files have been read. NEVER submit '**' or '**/*': those policy-rejected patterns do not execute. Do not use glob to begin a repository overview, and do not inventory language or file extensions. In a repository overview, recursive documentation inventories such as 'docs/**/*.md', wildcard-scope inventories such as 'crates/*/tests/**/*.rs', and batches larger than 6 patterns are broad and forbidden; read exact architecture/status paths returned by repo_inspect instead. Use `patterns` only to batch a small set of specific missing paths. Returns deduplicated relative paths from the root directory."
+        "Discover a small set of specific unknown paths after known files have been read. NEVER submit recursive patterns or wildcard directory scopes for a repository overview: those requests are redirected without execution. Do not use glob to begin an overview or inventory languages, extensions, crates, source trees, tests, documentation, or scripts. After repo_inspect, use file_read with exact_follow_up_paths or exact paths identified in returned content. Use `patterns` only for a small set of exact candidate paths whose existence is unknown. Returns deduplicated relative paths from the root directory."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -29,13 +29,13 @@ impl Tool for GlobTool {
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "A bounded, scoped glob such as 'crates/*/Cargo.toml' or 'src/**/*.py'. '**' and '**/*' are forbidden and will be rejected."
+                    "description": "One specific unknown-path probe. During repository overview use an exact candidate path such as 'docs/architecture.md'; recursive patterns and wildcard directory scopes are forbidden."
                 },
                 "patterns": {
                     "type": "array",
                     "items": {"type": "string"},
                     "maxItems": 20,
-                    "description": "Up to 20 specific missing-path patterns to evaluate together; not for extension inventories."
+                    "description": "Up to 20 exact candidate paths to probe together; never use this for crate, source, test, documentation, script, language, or extension inventories."
                 },
                 "root": {
                     "type": "string",
@@ -83,7 +83,7 @@ impl Tool for GlobTool {
             .find(|pattern| matches!(pattern.trim(), "**" | "**/*"))
         {
             return ToolResult {
-                content: format!("Policy guidance: unqualified recursive inventory '{pattern}' was not executed. Read known entry files first, then use scoped patterns such as 'crates/*/Cargo.toml' or 'crates/executive/src/**/*.rs'."),
+                content: format!("Policy guidance: unqualified recursive inventory '{pattern}' was not executed. Read known entry files first, then use exact paths returned by repo_inspect or identified in returned content."),
                 is_error: true,
                 metadata: ToolResultMeta {
                     execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
