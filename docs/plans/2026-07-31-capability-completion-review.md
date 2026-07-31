@@ -3,10 +3,11 @@
 **Date:** 2026-07-31
 **Status:** 已按当前代码和 2026-07-31 安装态证据复核；session picker、安全边界、
 machine-core provider 协调、权威终态 snapshot 与严格 UTF-8 stream framing 均已进入
-系统安装二进制。最新 deploy 已通过，但真实 TUI 连续 streak 和其余整体门槛尚未关闭。
+系统安装二进制。2026-08-01 最新 deploy、三次连续 fresh TUI 与同一未重启 TUI 的
+三轮 scoped 请求均已通过；其余整体门槛尚未关闭。
 所有"当前事实"取当前工作树
 `path:line` 快照；行号易变，不作架构契约。
-**Branch when reviewed:** `auro/test/20260731-plan-acceptance-cleanup`（未提交、暂不创建 PR）
+**Branch when reviewed:** `auro/test/20260801-production-acceptance`
 **目的:** 汇总"对比 Claude/Codex/Pi 后仍可补全的生产能力 + TUI 现状 + 最新分支/session
 + 遗留问题"，供 Codex 逐条审核与取舍。
 **验收口径继承:** 本稿不推翻 `docs/plans/2026-07-30-production-readiness-gap-analysis.md`
@@ -211,6 +212,8 @@ delta channel 当成权威终态。daemon 在 settlement 后发送完整 `TextSn
 ### 5.1 整体生产就绪：仓库 ledger 判为未通过
 
 以下 PASS/FAIL/FAIL 是**历史验收记录，不是当前 provider 健康状态或当前三次 streak**。
+2026-08-01 当前覆盖证据已记录于 `docs/plans/2026-07-30-production-readiness-gap-analysis.md`
+§0.0：三次连续 fresh TUI 和同会话三轮均通过；但 §9.1–§9.5 专项门禁仍未全部关闭。
 旧三次 fresh-session 因 daemon journal 的 `provider_unavailable` 全部失败。主动 pacing
 部署后当时的新三次 run 已无 provider error，但重新核对 durable event 后是 PASS/FAIL/FAIL：
 第二次输出结构不完整，第三次含一个失败 `exec_command`。monitor 曾把三次都判 PASS，
