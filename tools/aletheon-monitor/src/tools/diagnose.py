@@ -269,7 +269,15 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
                 pattern
                 for pattern in patterns
                 if isinstance(pattern, str)
-                and (pattern == "**" or pattern.startswith("**/"))
+                and (
+                    pattern == "**"
+                    or pattern.startswith("**/")
+                    or pattern.startswith("docs/**/")
+                    or (
+                        "**/" in pattern
+                        and any(marker in pattern.split("**/", 1)[0] for marker in ("*", "?", "["))
+                    )
+                )
             )
         summary["assertions"].extend([
             {

@@ -192,6 +192,38 @@ def test_repository_overview_requires_repo_inspect_before_scoped_discovery(tmp_p
     assert assertions["repository_overview_avoids_broad_glob"]["passed"] is False
 
 
+def test_repository_overview_rejects_recursive_docs_and_wildcard_scope_inventories(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {
+            "type": "tool_call_complete",
+            "params": {"call_id": "repo", "tool": "repo_inspect", "args": {}},
+        },
+        {
+            "type": "tool_call_result",
+            "params": {"call_id": "repo", "tool": "repo_inspect", "is_error": False},
+        },
+        {
+            "type": "tool_call_complete",
+            "params": {
+                "call_id": "glob",
+                "tool": "glob",
+                "args": {"patterns": ["docs/**/*.md", "crates/*/tests/**/*.rs"]},
+            },
+        },
+        {"type": "text_snapshot", "params": {"text": "A" * 80 + "."}},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_avoids_broad_glob"
+    )
+    assert assertion["passed"] is False
+    assert assertion["patterns"] == ["docs/**/*.md", "crates/*/tests/**/*.rs"]
+
+
 def test_repository_overview_waits_for_repo_inspect_result(tmp_path):
     path = tmp_path / "events.jsonl"
     records = [
