@@ -132,7 +132,7 @@ fn is_read_only_segment(segment: &str) -> bool {
     match program {
         "cat" | "ls" | "pwd" | "echo" | "which" | "whoami" | "head" | "tail" | "wc" | "grep"
         | "rg" | "stat" | "realpath" | "readlink" | "uname" | "date" | "id" | "env"
-        | "printenv" => true,
+        | "printenv" | "lsb_release" => true,
         "command" => words.get(1) == Some(&"-v"),
         "find" => !words
             .iter()
@@ -259,6 +259,12 @@ mod tests {
         );
         assert_eq!(
             classify_command("which snap; which apt-get; which curl"),
+            CommandEffect::ReadOnly
+        );
+        assert_eq!(
+            classify_command(
+                "cat /etc/os-release 2>/dev/null || lsb_release -a 2>/dev/null || uname -a"
+            ),
             CommandEffect::ReadOnly
         );
         assert_eq!(classify_command("echo rm"), CommandEffect::ReadOnly);

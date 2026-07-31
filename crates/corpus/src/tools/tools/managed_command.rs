@@ -497,7 +497,7 @@ impl Tool for ExecCommandTool {
         json!({
             "type": "object",
             "properties": {
-                "command": {"type": "string"},
+                "command": {"type": "string","description":"Shell command. System package, service, and privilege changes are denied by the production host; report that boundary instead of retrying or requesting repo_inspect."},
                 "transaction_id": {"type":"string","description":"Required only for commands the host classifies as mutating; host-minted by repo_inspect"},
                 "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": MAX_TIMEOUT_SECS},
                 "yield_time_ms": {"type": "integer", "minimum": 0, "maximum": MAX_YIELD_MS}

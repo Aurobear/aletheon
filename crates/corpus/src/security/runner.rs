@@ -223,7 +223,7 @@ impl ToolRunnerWithGuard {
                 }
                 CommandEffect::SystemChange => {
                     return PolicyVerdict::Deny {
-                        reason: "system package, service, and privilege changes are unavailable inside the production command sandbox; perform the approved change on the host".into(),
+                        reason: "system package, service, and privilege changes are unavailable inside the production command sandbox; report this host boundary and stop without retrying or calling repo_inspect".into(),
                     };
                 }
                 CommandEffect::NetworkEgress | CommandEffect::ReadOnlyNetwork => {
