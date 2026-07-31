@@ -143,6 +143,7 @@ mod tests {
                     allowed_paths,
                     ..Default::default()
                 },
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
             }),
             working_dir: root.to_path_buf(),
             session_id: "test".into(),

@@ -60,12 +60,30 @@ pub(crate) fn resolve_user_socket(explicit: Option<PathBuf>) -> anyhow::Result<P
 fn resolve_workspace(selection: WorkspaceLaunch) -> anyhow::Result<fabric::WorkspacePolicy> {
     let process_cwd = std::env::current_dir()
         .map_err(|source| anyhow::anyhow!("cannot resolve process cwd: {source}"))?;
-    Ok(
-        fabric::WorkspaceSelection::new(selection.cwd, selection.add_dirs).resolve_with_profile(
-            &process_cwd,
-            &fabric::PermissionProfileId::workspace_write(),
-        )?,
-    )
+    let mode = permission_mode_from_environment();
+    let profile = if mode.is_full() {
+        fabric::PermissionProfileId::danger_full_access()
+    } else {
+        fabric::PermissionProfileId::workspace_write()
+    };
+    let mut add_dirs = selection.add_dirs;
+    if mode.is_full()
+        && !add_dirs
+            .iter()
+            .any(|path| path == std::path::Path::new("/"))
+    {
+        add_dirs.push(PathBuf::from("/"));
+    }
+    Ok(fabric::WorkspaceSelection::new(selection.cwd, add_dirs)
+        .resolve_with_profile(&process_cwd, &profile)?)
+}
+
+pub(crate) fn permission_mode_from_environment() -> fabric::permission::HostPermissionMode {
+    match std::env::var("ALETHEON_PERMISSION_MODE").as_deref() {
+        Ok("full" | "unrestricted") => fabric::permission::HostPermissionMode::Full,
+        Ok("dev" | "developer") => fabric::permission::HostPermissionMode::Developer,
+        _ => fabric::permission::HostPermissionMode::Safe,
+    }
 }
 
 pub async fn run_single_message(request: MessageLaunch) -> anyhow::Result<()> {

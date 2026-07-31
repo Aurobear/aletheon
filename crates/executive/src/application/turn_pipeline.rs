@@ -650,6 +650,13 @@ impl TurnPipeline {
             }
             _ => {}
         }
+        if turn_request
+            .context
+            .permission_profile
+            .permits_filesystem_root()
+        {
+            sandbox_requirement = SandboxRequirement::NotRequired;
+        }
 
         // -- Context source preparation --
         self.runtime_ports.storm.reset().await;
@@ -905,6 +912,15 @@ impl TurnPipeline {
                         anyhow::anyhow!("turn capability authority has no TurnId")
                     })?,
                     workspace: turn_request.context.workspace.clone(),
+                    permission_mode: if turn_request
+                        .context
+                        .permission_profile
+                        .permits_filesystem_root()
+                    {
+                        fabric::permission::HostPermissionMode::Full
+                    } else {
+                        fabric::permission::HostPermissionMode::Safe
+                    },
                     session_id: sess_id.clone(),
                     working_dir: turn_request.context.workspace.cwd().to_path_buf(),
                     sandbox: sandbox_requirement,
@@ -1829,6 +1845,7 @@ mod terminal_event_tests {
                 )
                 .unwrap(),
                 granted_scope: fabric::CapabilityScope::default(),
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
             }),
             agent: None,
             working_dir: temp.path().to_path_buf(),

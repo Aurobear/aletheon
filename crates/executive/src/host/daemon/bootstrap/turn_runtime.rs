@@ -663,6 +663,7 @@ impl GovernedTurnCapabilityPort for ProductionGovernedCapabilities {
                 context.cancel,
             )
             .with_agent_context(context.agent)
+            .with_permission_mode(context.permission_mode)
             .with_turn_event_sender(stream_sender.clone()),
         );
         let action_loop = context.action_loop;

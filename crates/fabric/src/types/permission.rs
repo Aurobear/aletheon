@@ -3,8 +3,29 @@
 //! Defines the permission mode, per-tool rules, and a context that resolves
 //! whether a tool invocation should be allowed, denied, or prompted to the user.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+
+/// Host execution authority selected explicitly by a trusted local client.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HostPermissionMode {
+    #[default]
+    Safe,
+    Developer,
+    Full,
+}
+
+impl HostPermissionMode {
+    pub fn is_full(self) -> bool {
+        matches!(self, Self::Full)
+    }
+
+    pub fn permits_open_network(self) -> bool {
+        matches!(self, Self::Developer | Self::Full)
+    }
+}
 
 /// High-level permission mode for the session.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -207,5 +228,14 @@ mod tests {
             ctx.resolve("bash", "reboot", true),
             PermissionBehavior::Allow
         );
+    }
+
+    #[test]
+    fn host_profiles_separate_network_and_full_host_access() {
+        assert!(!HostPermissionMode::Safe.permits_open_network());
+        assert!(HostPermissionMode::Developer.permits_open_network());
+        assert!(HostPermissionMode::Full.permits_open_network());
+        assert!(!HostPermissionMode::Developer.is_full());
+        assert!(HostPermissionMode::Full.is_full());
     }
 }

@@ -110,6 +110,7 @@ pub struct CapabilityExecutionContext {
     pub thread_id: fabric::ThreadId,
     pub turn_id: fabric::TurnId,
     pub workspace: fabric::WorkspacePolicy,
+    pub permission_mode: fabric::permission::HostPermissionMode,
     pub session_id: String,
     pub working_dir: PathBuf,
     pub sandbox: SandboxRequirement,
@@ -552,6 +553,7 @@ pub struct RegistryAuthorityProvider {
     sandbox: SandboxRequirement,
     cancel: CancellationToken,
     turn_event_sender: Option<fabric::ipc::TurnEventSender>,
+    permission_mode: fabric::permission::HostPermissionMode,
 }
 
 impl RegistryAuthorityProvider {
@@ -581,6 +583,7 @@ impl RegistryAuthorityProvider {
             sandbox,
             cancel,
             turn_event_sender: None,
+            permission_mode: fabric::permission::HostPermissionMode::Safe,
         }
     }
 
@@ -591,6 +594,14 @@ impl RegistryAuthorityProvider {
 
     pub fn with_turn_event_sender(mut self, sender: Option<fabric::ipc::TurnEventSender>) -> Self {
         self.turn_event_sender = sender;
+        self
+    }
+
+    pub fn with_permission_mode(
+        mut self,
+        permission_mode: fabric::permission::HostPermissionMode,
+    ) -> Self {
+        self.permission_mode = permission_mode;
         self
     }
 }
@@ -695,6 +706,7 @@ impl TurnAuthorityProvider for RegistryAuthorityProvider {
                 workspace: self.workspace.clone(),
                 session_id: self.session_id.clone(),
                 working_dir: self.working_dir.clone(),
+                permission_mode: self.permission_mode,
             },
             control: InvocationControl {
                 cancel: self.cancel.clone(),

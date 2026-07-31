@@ -115,6 +115,7 @@ impl EmbodimentExecutionPort for EmbodimentService {
                 workspace: self.workspace.clone(),
                 session_id: "embodiment".into(),
                 working_dir: self.workspace.cwd().to_path_buf(),
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
             },
             control: InvocationControl {
                 cancel,

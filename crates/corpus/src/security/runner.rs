@@ -209,7 +209,15 @@ impl ToolRunnerWithGuard {
     }
 
     /// Check policy using execpolicy if available, otherwise fall back to inline PolicyEngine.
-    fn check_policy(&self, tool_name: &str, input: &serde_json::Value) -> PolicyVerdict {
+    fn check_policy(
+        &self,
+        tool_name: &str,
+        input: &serde_json::Value,
+        unrestricted: bool,
+    ) -> PolicyVerdict {
+        if unrestricted {
+            return PolicyVerdict::Allow;
+        }
         if tool_name == "exec_command" {
             let command = input
                 .get("command")
@@ -332,9 +340,14 @@ impl ToolRunnerWithGuard {
         let tool_name = tool.name();
         let start = self.clock.mono_now();
         let mut sandbox_backend: Option<String> = None;
+        let unrestricted = ctx
+            .approval_authority
+            .as_ref()
+            .map(|authority| authority.permission_mode.is_full())
+            .unwrap_or(false);
 
         // 1. Policy check
-        let policy_verdict = self.check_policy(tool_name, &input);
+        let policy_verdict = self.check_policy(tool_name, &input, unrestricted);
         match policy_verdict {
             PolicyVerdict::Deny { reason } => {
                 self.log_audit(
@@ -471,7 +484,7 @@ impl ToolRunnerWithGuard {
                 .get("network_enabled")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
-        if bash_network_requested {
+        if bash_network_requested && !unrestricted {
             let Some(authority) = ctx.approval_authority.as_ref() else {
                 self.log_audit(
                     audit_id,
@@ -602,7 +615,9 @@ impl ToolRunnerWithGuard {
         // is the D1 feature flag boundary: when absent, preserve the legacy
         // contract exactly (only bash_exec is routed through SandboxExecutor).
         let execution_descriptor = tool.execution_descriptor();
-        let strategy = if self.sandbox_profiles.is_none() {
+        let strategy = if unrestricted {
+            ToolExecutionStrategy::InProcess
+        } else if self.sandbox_profiles.is_none() {
             if tool_name == "bash_exec" {
                 ToolExecutionStrategy::Sandboxed
             } else {
@@ -1376,6 +1391,7 @@ mod tests {
                 workspace: fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![])
                     .unwrap(),
                 granted_scope: fabric::CapabilityScope::default(),
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
             }),
             agent: None,
             working_dir: std::path::PathBuf::from("/tmp"),

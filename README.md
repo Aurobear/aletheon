@@ -416,6 +416,21 @@ L3 - Forbidden (never execute)
   +-- Disable security services
 ```
 
+The installed CLI exposes three host permission profiles:
+
+| Mode | Short command | Filesystem / commands | Network | Approvals |
+|---|---|---|---|---|
+| `safe` (default) | `aletheon -P safe` | Workspace-scoped and policy-guarded | Configured allowlist | On request |
+| `dev` | `aletheon -P dev` | Workspace-scoped and policy-guarded | Open | On request |
+| `full` | `aletheon -P full` or `aletheon --full` | Host-wide, unsandboxed | Open | Never |
+
+`full` is intended only for a trusted, single-user development machine. It lets
+model-selected tools invoke host commands (including `sudo` when the operating
+system permits it) without an Aletheon confirmation. Command and tool audit
+events remain enabled. The compatibility names `restricted`, `developer`, and
+`unrestricted` are accepted by `--permission-mode`; launchers may alternatively
+set `ALETHEON_PERMISSION_MODE=safe|dev|full`.
+
 ---
 
 ## 11. Cognitive Engine

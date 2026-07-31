@@ -370,7 +370,11 @@ async fn dispatch_versioned_request(
             )
             .resolve_with_profile(
                 &request.working_dir,
-                &fabric::PermissionProfileId::workspace_write(),
+                &if request.permission_mode.is_full() {
+                    fabric::PermissionProfileId::danger_full_access()
+                } else {
+                    fabric::PermissionProfileId::workspace_write()
+                },
             );
             let response = match workspace {
                 Ok(workspace) => {
@@ -383,6 +387,7 @@ async fn dispatch_versioned_request(
                             workspace,
                             Vec::new(),
                             None,
+                            request.permission_mode,
                         )
                         .await
                 }

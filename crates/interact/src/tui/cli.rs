@@ -716,7 +716,7 @@ fn benchmark_chat_request(
     requirements: Vec<fabric::TurnRequirement>,
     task_kind: Option<fabric::TaskKind>,
 ) -> ClientRpcRequest {
-    match std::env::var("ALETHEON_BENCHMARK_SESSION_ID") {
+    let request = match std::env::var("ALETHEON_BENCHMARK_SESSION_ID") {
         Ok(session_id) if !session_id.trim().is_empty() => ClientRpcRequest::chat_with_task_kind(
             message,
             Some(fabric::SessionId(session_id)),
@@ -727,7 +727,8 @@ fn benchmark_chat_request(
         _ => {
             ClientRpcRequest::chat_with_task_kind(message, None, workspace, requirements, task_kind)
         }
-    }
+    };
+    request.chat_with_permission_mode(crate::host::permission_mode_from_environment())
 }
 
 #[cfg(test)]

@@ -53,6 +53,7 @@ impl TurnAuthorityProvider for AllowAuthority {
                     .unwrap(),
                 session_id: SPACE.into(),
                 working_dir: "/tmp".into(),
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
             },
             control: InvocationControl::default(),
         })

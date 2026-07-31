@@ -280,6 +280,7 @@ impl NativeCognitRuntime {
                 session_id: input.handle.agent_id.0.to_string(),
                 working_dir: principal_context.workspace.cwd().to_path_buf(),
                 sandbox: SandboxRequirement::NotRequired,
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
                 cancel: input.cancellation.clone(),
                 turn_count: 0,
                 repo_hooks_trusted: principal_context.repo_hooks_trusted,

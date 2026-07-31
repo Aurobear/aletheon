@@ -44,6 +44,7 @@ fn authorized_request(name: &str, input: serde_json::Value, call_id: &str) -> Ca
                 .unwrap(),
             session_id: "test-session".into(),
             working_dir: std::env::temp_dir(),
+            permission_mode: fabric::permission::HostPermissionMode::Safe,
         },
         control: InvocationControl::default(),
     }

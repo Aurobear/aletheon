@@ -109,6 +109,8 @@ pub struct ChatParams {
     pub requirements: Vec<crate::TurnRequirement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_kind: Option<crate::TaskKind>,
+    #[serde(default)]
+    pub permission_mode: crate::permission::HostPermissionMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -370,6 +372,7 @@ impl ClientRpcRequest {
             workspace_roots: workspace.writable_roots().to_vec(),
             requirements: Vec::new(),
             task_kind: None,
+            permission_mode: crate::permission::HostPermissionMode::Safe,
         })
     }
 
@@ -415,6 +418,16 @@ impl ClientRpcRequest {
             };
         params.task_kind = task_kind;
         Self::Chat(params)
+    }
+
+    pub fn chat_with_permission_mode(
+        mut self,
+        permission_mode: crate::permission::HostPermissionMode,
+    ) -> Self {
+        if let Self::Chat(params) = &mut self {
+            params.permission_mode = permission_mode;
+        }
+        self
     }
 
     pub fn skill_invoke(
@@ -846,6 +859,8 @@ pub struct ChatRequest {
     pub working_dir: std::path::PathBuf,
     #[serde(default)]
     pub additional_writable_roots: Vec<std::path::PathBuf>,
+    #[serde(default)]
+    pub permission_mode: crate::permission::HostPermissionMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

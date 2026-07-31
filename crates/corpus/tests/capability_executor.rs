@@ -118,6 +118,7 @@ fn request(operation_id: OperationId, process_id: ProcessId) -> CapabilityReques
                 .unwrap(),
             session_id: "session-1".into(),
             working_dir: std::env::temp_dir(),
+            permission_mode: fabric::permission::HostPermissionMode::Safe,
         },
         control: InvocationControl {
             cancel: CancellationToken::new(),
