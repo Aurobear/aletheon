@@ -299,6 +299,11 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "task": {"type": "string", "description": "Task to send to the TUI"},
+                "require_repository_overview": {
+                    "type": "boolean",
+                    "description": "Require repo_inspect to complete before scoped discovery and reject repository-wide ** glob patterns.",
+                    "default": False,
+                },
             },
             "required": ["task"],
         },
@@ -357,7 +362,9 @@ _HANDLERS = {
     ),
     "aletheon_tui_stop": lambda client, args: tui_mod.tui_stop(),
     "aletheon_diagnose": lambda client, args: diagnose_mod.diagnose(
-        client, task=args.get("task", ""),
+        client,
+        task=args.get("task", ""),
+        require_repository_overview=args.get("require_repository_overview", False),
     ),
 }
 
