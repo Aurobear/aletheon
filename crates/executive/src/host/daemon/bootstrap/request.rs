@@ -64,6 +64,7 @@ impl RequestHandler {
         pi_runtime: crate::composition::config::CodingRuntimeConfig,
         grok_hardening: crate::composition::config::GrokHardeningConfig,
         evaluation: crate::composition::config::EvaluationSettings,
+        governed_review: crate::composition::config::GovernedReviewSettings,
         sandbox_profiles: fabric::SandboxProfiles,
         network_policy: fabric::network_policy::NetworkPolicy,
         agent_profiles: crate::composition::config::AgentProfilesConfig,
@@ -1472,6 +1473,44 @@ impl RequestHandler {
             capabilities: capability_service,
             clock: clock.clone(),
         });
+        governed_review.validate()?;
+        let review = if governed_review.enabled {
+            let store = Arc::new(
+                crate::application::governed_review::GovernedReviewStore::open(&data_dir)
+                    .context("opening governed review store")?,
+            );
+            let requested_model = if governed_review.model == "default" {
+                // The machine inference registry owns the effective default.
+                // A daemon-facing model id may itself contain '/', so it must
+                // not be reinterpreted here as a provider-qualified spec.
+                ""
+            } else {
+                governed_review.model.as_str()
+            };
+            let model = inference
+                .capabilities(requested_model)
+                .await
+                .context("resolving governed review model through machine inference")?
+                .model_spec;
+            let service = crate::application::governed_review::GovernedReviewService::new(
+                store,
+                inference.clone(),
+                model,
+                governed_review.limits()?,
+                uuid::Uuid::new_v4().to_string(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            )
+            .context("constructing governed review service")?;
+            service.recover().await;
+            Some(service)
+        } else {
+            None
+        };
         let handler_ports = Arc::new(crate::host::daemon::handler::ports::HandlerPorts::new(
             kernel.clone(),
             admin_pending_approvals.clone(),
@@ -1494,6 +1533,7 @@ impl RequestHandler {
             memory_group.memory_service.clone(),
             memory_group.supplemental_memory_health.clone(),
             inference.clone(),
+            review,
             transport_ports,
         ));
         let workspace_trust =

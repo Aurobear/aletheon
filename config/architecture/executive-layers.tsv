@@ -326,3 +326,9 @@ crates/executive/src/application/metacog_approval.rs	application	executive	gover
 crates/executive/src/composition/config/evaluation.rs	composition	executive	evaluation configuration composition
 crates/executive/src/host/daemon/handler/rpc/rpc_evaluation.rs	host	executive	evaluation RPC transport
 crates/executive/src/host/daemon/bootstrap/security.rs	composition	executive	tool security composition
+crates/executive/src/application/governed_review/mod.rs	application	executive	governed review application facade
+crates/executive/src/application/governed_review/prompt.rs	application	executive	evidence-only review prompt compilation
+crates/executive/src/application/governed_review/service.rs	application	executive	bounded governed review lifecycle
+crates/executive/src/application/governed_review/store.rs	application	executive	durable governed review authority
+crates/executive/src/composition/config/governed_review.rs	composition	executive	governed review configuration composition
+crates/executive/src/host/daemon/handler/rpc/rpc_review.rs	host	executive	governed review RPC transport

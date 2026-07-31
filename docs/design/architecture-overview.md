@@ -122,6 +122,29 @@ verification 与 settlement 权威。
 
 ## 7. 当前未完成项
 
+### 7.1 通用 Governed Review 服务
+
+外部控制器通过现有的 authenticated user socket 提交有界证据审查，不获得工具、
+文件系统或领域适配器权限：
+
+```text
+review.submit
+  -> Fabric N/N-1 bounded job contract
+  -> Executive principal-scoped durable queue
+  -> shared InferencePort (tools = [])
+  -> allowlist/output/budget validation
+  -> fsync-backed terminal receipt
+  -> review.wait / status / cancel
+```
+
+Fabric 只拥有 wire-safe DTO；Executive 拥有幂等、执行、取消和终态结算；daemon RPC
+仅投影该 authority。`queued` 和 `running` 不是成功，调用方必须观察 terminal receipt。
+实现位于 `crates/fabric/src/types/governed_review.rs`、
+`crates/executive/src/application/governed_review/` 与
+`crates/executive/src/host/daemon/handler/rpc/rpc_review.rs`。生产验收使用官方 user
+socket 发起真实推理，并同时要求候选/安装/运行进程摘要一致且 systemd restart counter
+稳定。
+
 - MCP 执行归 Corpus，但配置仍从 Cognit 重导出：
   `crates/corpus/src/tools/mcp/config.rs:54-56`；
 - Platform selector 已接通 target 对应的原生 probe：`crates/platform/src/selector.rs:26-59`，完整 Host contract 仍在收敛；

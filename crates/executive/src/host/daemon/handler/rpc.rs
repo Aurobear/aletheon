@@ -11,6 +11,7 @@ mod rpc_google;
 mod rpc_health;
 mod rpc_memory;
 mod rpc_reflection;
+mod rpc_review;
 mod rpc_session;
 mod rpc_skill;
 mod rpc_turn;
@@ -56,6 +57,11 @@ impl RequestHandler {
                 self.handle_conscious_diagnostics(connection, &id, &request)
                     .await
             }
+            "review.capabilities" => self.handle_review_capabilities(&id).await,
+            "review.submit" => self.handle_review_submit(connection, &id, &request).await,
+            "review.status" => self.handle_review_status(connection, &id, &request).await,
+            "review.wait" => self.handle_review_wait(connection, &id, &request).await,
+            "review.cancel" => self.handle_review_cancel(connection, &id, &request).await,
 
             // ── Admin / meta ──────────────────────────────────────────
             "daemon.shutdown" => self.handle_daemon_shutdown(&id, &request).await,

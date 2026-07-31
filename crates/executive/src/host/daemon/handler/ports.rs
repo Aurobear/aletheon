@@ -42,6 +42,7 @@ pub(crate) struct HandlerPorts {
     pub(crate) recall_service: Arc<dyn mnemosyne::MemoryService>,
     pub(crate) memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
     pub(crate) inference: Arc<dyn crate::application::inference_port::InferencePort>,
+    pub(crate) review: Option<Arc<crate::application::governed_review::GovernedReviewService>>,
     pub(crate) transport: Arc<TransportPorts>,
 }
 
@@ -77,6 +78,7 @@ impl HandlerPorts {
         recall_service: Arc<dyn mnemosyne::MemoryService>,
         memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
         inference: Arc<dyn crate::application::inference_port::InferencePort>,
+        review: Option<Arc<crate::application::governed_review::GovernedReviewService>>,
         transport: Arc<TransportPorts>,
     ) -> Self {
         Self {
@@ -101,6 +103,7 @@ impl HandlerPorts {
             recall_service,
             memory_health,
             inference,
+            review,
             transport,
         }
     }

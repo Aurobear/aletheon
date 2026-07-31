@@ -25,3 +25,4 @@ bootstrap	-	executive.composition	executive host	credential-reference	default	ty
 integrations	-	executive.composition	executive adapter factories	SecretRef only	disabled	adapter-specific fail-closed resolution
 evaluation	-	executive.composition	executive evaluation service	no	default	rubric, timeout, evidence bounds
 multi_agent	-	executive.composition	executive cognitive role workflow	no	disabled	role graph, iteration, authority bounds
+governed_review	-	executive.composition	executive governed review service	no	bounded default	model route, queue, evidence, and zero-tool bounds

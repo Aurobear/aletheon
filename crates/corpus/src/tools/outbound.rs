@@ -125,6 +125,12 @@ impl EndpointPolicy {
     pub(crate) fn client(&self, timeout: Duration) -> Result<reqwest::Client, reqwest::Error> {
         let timeout = timeout.min(MAX_OUTBOUND_TIMEOUT);
         reqwest::Client::builder()
+            // EndpointPolicy validates and resolves the destination itself. An
+            // ambient process proxy would bypass that resolver and can also
+            // route loopback-only services off-host, so governed protocol
+            // adapters must always connect to their validated endpoint
+            // directly.
+            .no_proxy()
             .connect_timeout(Duration::from_secs(10).min(timeout))
             .timeout(timeout)
             .redirect(reqwest::redirect::Policy::none())

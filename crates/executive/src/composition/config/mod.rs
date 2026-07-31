@@ -10,6 +10,7 @@ mod coding;
 pub mod diagnostics;
 mod evaluation;
 mod genome;
+mod governed_review;
 mod grok_hardening;
 mod infra;
 mod integrations;
@@ -33,6 +34,7 @@ pub use cognit::config::{
 pub use diagnostics::{EffectiveConfigView, LayerInfo, LayersView};
 pub use evaluation::EvaluationSettings;
 pub use genome::GenomeConfig;
+pub use governed_review::GovernedReviewSettings;
 pub use grok_hardening::GrokHardeningConfig;
 pub use infra::{DaemonConfig, McpServerConfig, PluginsConfig, SandboxConfig};
 pub use integrations::{
@@ -102,6 +104,7 @@ pub struct AppConfig {
     pub perception: PerceptionConfig,
     pub evolution: EvolutionSettings,
     pub evaluation: EvaluationSettings,
+    pub governed_review: GovernedReviewSettings,
     pub telegram: TelegramChannelConfig,
     pub goal_runtime: Option<GoalRuntimeConfig>,
     pub pi_runtime: CodingRuntimeConfig,

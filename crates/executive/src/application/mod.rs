@@ -39,6 +39,7 @@ pub mod extension_service;
 pub mod goal;
 pub mod goal_service;
 pub mod governed_capability;
+pub mod governed_review;
 pub mod harness_factory;
 pub mod health;
 pub mod hook_lifecycle;

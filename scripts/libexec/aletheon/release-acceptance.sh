@@ -350,6 +350,22 @@ esac
 production_uid=$(installed_user_uid "$production_user")
 production_gid=$(id -g "$production_user")
 production_socket=$(installed_user_socket "$production_user")
+core_restarts_before=$(systemctl show aletheon-core.service -p NRestarts --value)
+user_restarts_before=$(run_as_installed_user "$production_user" \
+  systemctl --user show aletheon.service -p NRestarts --value)
+run_as_installed_user "$production_user" python3 \
+  "$repo_root/scripts/libexec/aletheon/governed-review-smoke.py" "$production_socket" \
+  | tee "$guest_artifacts/governed-review-smoke.json"
+jq -e '.status == "PASS" and .receipt.status == "completed" and
+  .receipt.evidence_digest != null and .receipt.usage.inference_requests == 1' \
+  "$guest_artifacts/governed-review-smoke.json" >/dev/null
+core_restarts_after=$(systemctl show aletheon-core.service -p NRestarts --value)
+user_restarts_after=$(run_as_installed_user "$production_user" \
+  systemctl --user show aletheon.service -p NRestarts --value)
+[[ "$core_restarts_before" == "$core_restarts_after" &&
+   "$user_restarts_before" == "$user_restarts_after" ]] || {
+  echo "governed review smoke changed installed runtime restart counters" >&2; exit 1;
+}
 candidate_source_commit=$(git -C "$repo_root" rev-parse HEAD)
 production_workspace=$(mktemp -d "/var/tmp/aletheon-production-workspace.${production_uid}.XXXXXX")
 rmdir -- "$production_workspace"

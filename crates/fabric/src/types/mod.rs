@@ -30,6 +30,7 @@ pub mod external_identity;
 pub mod external_source;
 pub mod genome;
 pub mod goal;
+pub mod governed_review;
 pub mod grounding;
 pub mod hook;
 pub mod hook_ext;
