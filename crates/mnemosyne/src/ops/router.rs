@@ -1,6 +1,7 @@
 //! MemoryRouter — dispatches to the correct backend by MemoryType.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;

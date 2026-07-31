@@ -70,6 +70,20 @@ jobs:
       - name: Test workspace
         run: bash scripts/cargo-agent.sh +stable test --workspace
 
+  feature-contracts:
+    name: Feature contracts
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, aletheon]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check io_uring contract
+        run: bash scripts/cargo-agent.sh +stable check -p fabric --all-targets --features io_uring
+      - name: Check Linux integration contracts
+        run: bash scripts/cargo-agent.sh +stable check -p corpus --all-targets --features dbus,input,display,a11y,ocr,sandbox-primitives
+      - name: Check memory feature contracts
+        run: bash scripts/cargo-agent.sh +stable check -p mnemosyne --all-targets --all-features
+
   strict-contracts:
     name: Strict contracts
     if: github.event_name != 'pull_request'
@@ -146,7 +160,7 @@ jobs:
 
   strict-fuzz:
     name: Fuzz quick-check
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, Linux, X64, aletheon]
     timeout-minutes: 20
     steps:
@@ -158,6 +172,10 @@ jobs:
       - name: Run all executive fuzz targets
         shell: bash
         run: |
+          seconds=30
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            seconds=5
+          fi
           targets=(
             envelope_v2_parse
             envelope_v2_roundtrip
@@ -169,5 +187,5 @@ jobs:
           )
           for target in "${targets[@]}"; do
             bash scripts/cargo-agent.sh +nightly fuzz run "$target" \
-              --fuzz-dir crates/executive/fuzz -- -max_total_time=30
+              --fuzz-dir crates/executive/fuzz -- -max_total_time="$seconds"
           done

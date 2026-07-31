@@ -60,7 +60,7 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
 | Event spine | SQLite append 有 1 秒写 admission timeout（`crates/executive/src/adapters/events/sqlite_event_spine.rs:175-183`），但没有统一容量水位、retention/vacuum 调度 | 仍为 P0 开放项；不能用 append backpressure 代替磁盘生命周期治理 |
 | OS 集成 | FUSE 是 design-only（`README.md:286-289`）；eBPF/io_uring 是 feature-gated/experimental（`README.md:274-282`） | 必须分别报告 `planned`、`experimental`、`installed`，不得统称“已生产接入”或简单统称“mock” |
 | Mnemosyne migration | supplemental store 已有 `PRAGMA user_version` runner；FactStore 有幂等列迁移，但其他 backend 多为各自 `CREATE TABLE IF NOT EXISTS` | 缺口是主存 backend 的统一 schema/version/migration policy，不是“完全没有 migration runner” |
-| CI | PR gate 只跑默认-feature workspace suite（`.github/workflows/ci.yml:60-71`）；fuzz 仅 schedule/manual（`.github/workflows/ci.yml:147-172`） | `--all-features` 的可编译 OS feature matrix 与 bounded PR fuzz gate 仍开放 |
+| CI | 默认-feature workspace suite 之外，PR 现在分别编译 io_uring、Linux integration 和 Mnemosyne all-features contract，并执行每 target 5 秒的 bounded fuzz；依赖系统 Leptonica/Tesseract 的 `ocr-tesseract` 不伪装成通用 runner 可编译 | OS feature contract 与 bounded fuzz 已进入 PR gate；原生 OCR 依赖必须由专用 runner/image gate，FUSE/eBPF 仍无可 gate 的生产 feature |
 
 > **验收口径。** 评分内核基础部分已有 2026-07-30 的历史安装态生产验收；
 > Goal retry/replan 与 AgentControl capability selection 的 L2 闭环已于
