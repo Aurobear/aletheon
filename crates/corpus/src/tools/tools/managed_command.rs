@@ -14,6 +14,7 @@ use tokio::sync::{oneshot, Mutex};
 
 use super::change_transaction::ChangeTransactionRegistry;
 use super::{PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
+use crate::security::command_effect::classify_command;
 
 const MAX_RETAINED_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_ARTIFACT_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
@@ -497,7 +498,7 @@ impl Tool for ExecCommandTool {
             "type": "object",
             "properties": {
                 "command": {"type": "string"},
-                "transaction_id": {"type":"string","description":"Required by the production registry; host-minted by repo_inspect"},
+                "transaction_id": {"type":"string","description":"Required only for commands the host classifies as mutating; host-minted by repo_inspect"},
                 "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": MAX_TIMEOUT_SECS},
                 "yield_time_ms": {"type": "integer", "minimum": 0, "maximum": MAX_YIELD_MS}
             },
@@ -531,36 +532,41 @@ impl Tool for ExecCommandTool {
             .min(MAX_YIELD_MS);
         let cwd = ctx.working_dir.to_string_lossy().into_owned();
         let command_session_id = uuid::Uuid::new_v4().to_string();
+        let effect = classify_command(command);
         let transaction = if let Some(registry) = &self.sessions.change_transactions {
-            let Some(transaction_id) = input
-                .get("transaction_id")
-                .and_then(|value| value.as_str())
-                .and_then(|value| uuid::Uuid::parse_str(value).ok())
-                .map(fabric::change_transaction::ChangeTransactionId)
-            else {
-                return tool_error(
-                    "exec_command requires a valid transaction_id from repo_inspect in the production runtime",
-                );
-            };
-            match registry
-                .reserve_command(
-                    transaction_id,
-                    &ctx.session_id,
-                    ctx.agent.clone(),
-                    &ctx.working_dir,
-                    command_session_id.clone(),
-                    "shell".into(),
-                )
-                .await
-            {
-                Ok(snapshot) => Some((transaction_id, snapshot.current.digest)),
-                Err(failure) => {
-                    return json_result(
-                        json!({"kind":"change_transaction_error", "recovery":failure.recovery(), "failure":failure}),
-                        true,
-                        false,
+            if effect.requires_transaction() {
+                let Some(transaction_id) = input
+                    .get("transaction_id")
+                    .and_then(|value| value.as_str())
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .map(fabric::change_transaction::ChangeTransactionId)
+                else {
+                    return tool_error(
+                        "mutating exec_command requires a valid transaction_id from repo_inspect in the production runtime",
+                    );
+                };
+                match registry
+                    .reserve_command(
+                        transaction_id,
+                        &ctx.session_id,
+                        ctx.agent.clone(),
+                        &ctx.working_dir,
+                        command_session_id.clone(),
+                        "shell".into(),
                     )
+                    .await
+                {
+                    Ok(snapshot) => Some((transaction_id, snapshot.current.digest)),
+                    Err(failure) => {
+                        return json_result(
+                            json!({"kind":"change_transaction_error", "recovery":failure.recovery(), "failure":failure}),
+                            true,
+                            false,
+                        )
+                    }
                 }
+            } else {
+                None
             }
         } else {
             None
@@ -1153,6 +1159,28 @@ mod tests {
             value["change_transaction"]["current"]["digest"],
             transaction.baseline.digest
         );
+    }
+
+    #[tokio::test]
+    async fn production_read_only_exec_command_bypasses_change_transaction() {
+        let temp = tempfile::tempdir().unwrap();
+        let registry = ChangeTransactionRegistry::default();
+        let tool = ExecCommandTool::new(ManagedCommandSessions::with_change_transactions(registry));
+        let result = tool
+            .execute(
+                json!({"command":"which sh && sh --version", "yield_time_ms":1000}),
+                &context_at("observed-session", temp.path().to_path_buf()),
+            )
+            .await;
+
+        let value: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+        assert_ne!(
+            value.get("error").and_then(serde_json::Value::as_str),
+            Some(
+                "mutating exec_command requires a valid transaction_id from repo_inspect in the production runtime"
+            )
+        );
+        assert!(value["change_transaction"].is_null());
     }
 
     #[tokio::test]

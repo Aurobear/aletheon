@@ -1,0 +1,265 @@
+//! Host-owned classification for managed shell commands.
+//!
+//! Model-provided labels are intentionally ignored. Only commands that this
+//! module can prove read-only may bypass a repository change transaction.
+
+use fabric::security::RiskCategory;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandEffect {
+    ReadOnly,
+    ReadOnlyNetwork,
+    WorkspaceMutation,
+    NetworkEgress,
+    SystemChange,
+    Destructive,
+}
+
+impl CommandEffect {
+    pub(crate) fn requires_transaction(self) -> bool {
+        !matches!(self, Self::ReadOnly | Self::ReadOnlyNetwork)
+    }
+
+    pub(crate) fn risk_category(self) -> RiskCategory {
+        match self {
+            Self::ReadOnly => RiskCategory::ReadOnly,
+            Self::ReadOnlyNetwork => RiskCategory::SystemChange,
+            Self::WorkspaceMutation => RiskCategory::FileModification,
+            Self::NetworkEgress | Self::SystemChange => RiskCategory::SystemChange,
+            Self::Destructive => RiskCategory::Destructive,
+        }
+    }
+}
+
+pub(crate) fn classify_command(command: &str) -> CommandEffect {
+    let normalized = command.trim();
+    if normalized.is_empty() {
+        return CommandEffect::WorkspaceMutation;
+    }
+    let normalized = strip_safe_redirections(normalized);
+    let lower = normalized.to_ascii_lowercase();
+
+    if contains_program(&lower, &["rm", "rmdir", "mkfs", "shutdown", "reboot"])
+        || lower.contains("git reset --hard")
+        || lower.contains("git clean -f")
+    {
+        return CommandEffect::Destructive;
+    }
+    if contains_program(
+        &lower,
+        &[
+            "sudo",
+            "su",
+            "doas",
+            "apt",
+            "apt-get",
+            "dpkg",
+            "rpm",
+            "dnf",
+            "yum",
+            "pacman",
+            "systemctl",
+        ],
+    ) {
+        return CommandEffect::SystemChange;
+    }
+    if is_read_only_glab_command(&normalized) {
+        return CommandEffect::ReadOnlyNetwork;
+    }
+    if contains_program(&lower, &["curl", "wget", "ssh", "scp", "nc", "ncat"])
+        || lower.contains("glab api ")
+    {
+        return CommandEffect::NetworkEgress;
+    }
+    if has_mutating_shell_syntax(&lower) {
+        return CommandEffect::WorkspaceMutation;
+    }
+
+    let segments = split_shell_segments(&normalized);
+    if !segments.is_empty() && segments.iter().all(|segment| is_read_only_segment(segment)) {
+        CommandEffect::ReadOnly
+    } else {
+        CommandEffect::WorkspaceMutation
+    }
+}
+
+fn strip_safe_redirections(command: &str) -> String {
+    command
+        .replace("2>/dev/null", "")
+        .replace("1>/dev/null", "")
+        .replace(">/dev/null", "")
+        .replace("2>&1", "")
+}
+
+fn is_read_only_glab_command(command: &str) -> bool {
+    let segments = split_shell_segments(command);
+    segments.iter().any(|segment| segment.starts_with("glab "))
+        && segments.iter().all(|segment| is_read_only_segment(segment))
+        && !segments
+            .iter()
+            .any(|segment| matches!(segment, &"glab --version" | &"glab version"))
+}
+
+fn contains_program(command: &str, programs: &[&str]) -> bool {
+    command
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | '|' | '&' | '(' | ')'))
+        .any(|token| programs.contains(&token))
+}
+
+fn has_mutating_shell_syntax(command: &str) -> bool {
+    command.contains('>')
+        || command.contains("<<")
+        || command.contains("$(")
+        || command.contains('`')
+        || command.contains(" -delete")
+        || command.contains(" -exec")
+}
+
+fn split_shell_segments(command: &str) -> Vec<&str> {
+    command
+        .split([';', '|', '&'])
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+fn is_read_only_segment(segment: &str) -> bool {
+    let words = segment.split_whitespace().collect::<Vec<_>>();
+    let Some(program) = words.first().copied() else {
+        return false;
+    };
+    match program {
+        "cat" | "ls" | "pwd" | "echo" | "which" | "whoami" | "head" | "tail" | "wc" | "grep"
+        | "rg" | "stat" | "realpath" | "readlink" | "uname" | "date" | "id" | "env"
+        | "printenv" => true,
+        "command" => words.get(1) == Some(&"-v"),
+        "find" => !words
+            .iter()
+            .any(|word| matches!(*word, "-delete" | "-exec" | "-execdir")),
+        "git" => matches!(
+            words.get(1).copied(),
+            Some(
+                "status"
+                    | "diff"
+                    | "log"
+                    | "show"
+                    | "branch"
+                    | "rev-parse"
+                    | "remote"
+                    | "ls-files"
+                    | "ls-tree"
+            )
+        ),
+        "glab" => glab_is_read_only(&words[1..]),
+        other => {
+            words
+                .iter()
+                .skip(1)
+                .all(|arg| matches!(*arg, "--version" | "-V" | "--help" | "-h"))
+                && words.len() > 1
+                && !other.contains('=')
+        }
+    }
+}
+
+fn glab_is_read_only(args: &[&str]) -> bool {
+    match args {
+        ["version", ..] | ["--version", ..] | ["help", ..] => true,
+        [group, action, ..]
+            if matches!(
+                *group,
+                "mr" | "issue"
+                    | "repo"
+                    | "ci"
+                    | "release"
+                    | "variable"
+                    | "ssh-key"
+                    | "alias"
+                    | "label"
+                    | "milestone"
+                    | "epic"
+                    | "snippet"
+                    | "user"
+            ) && matches!(*action, "list" | "view" | "trace" | "status") =>
+        {
+            true
+        }
+        ["api", rest @ ..] => glab_api_is_get(rest),
+        _ => false,
+    }
+}
+
+fn glab_api_is_get(args: &[&str]) -> bool {
+    let mut index = 0;
+    while index < args.len() {
+        let argument = args[index];
+        let inline_method = argument
+            .strip_prefix("--method=")
+            .or_else(|| argument.strip_prefix("-X"));
+        if let Some(method) = inline_method {
+            if !method.eq_ignore_ascii_case("GET") {
+                return false;
+            }
+        } else if matches!(argument, "--method" | "-X") {
+            let Some(method) = args.get(index + 1) else {
+                return false;
+            };
+            if !method.eq_ignore_ascii_case("GET") {
+                return false;
+            }
+            index += 1;
+        }
+        index += 1;
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn observed_glab_probe_is_read_only() {
+        assert_eq!(
+            classify_command("which glab && glab --version"),
+            CommandEffect::ReadOnly
+        );
+        assert_eq!(
+            classify_command("which glab 2>/dev/null && glab --version"),
+            CommandEffect::ReadOnly
+        );
+        assert_eq!(
+            classify_command("glab mr view 22 --repo highlydynamic/leju_head_lab"),
+            CommandEffect::ReadOnlyNetwork
+        );
+        assert_eq!(
+            classify_command("glab api --method GET projects/1"),
+            CommandEffect::ReadOnlyNetwork
+        );
+    }
+
+    #[test]
+    fn install_network_and_mutation_fail_closed() {
+        assert_eq!(
+            classify_command("sudo apt-get install -y glab"),
+            CommandEffect::SystemChange
+        );
+        assert_eq!(
+            classify_command("curl -fsSL https://example.invalid/a -o /tmp/a"),
+            CommandEffect::NetworkEgress
+        );
+        assert_eq!(
+            classify_command("glab api -X POST projects/1/issues"),
+            CommandEffect::NetworkEgress
+        );
+        assert_eq!(
+            classify_command("glab api --method=DELETE projects/1"),
+            CommandEffect::NetworkEgress
+        );
+        assert_eq!(
+            classify_command("printf x > file"),
+            CommandEffect::WorkspaceMutation
+        );
+        assert_eq!(classify_command("rm -rf ."), CommandEffect::Destructive);
+    }
+}
