@@ -18,6 +18,10 @@ pub enum HostPermissionMode {
 }
 
 impl HostPermissionMode {
+    pub fn is_safe(&self) -> bool {
+        matches!(self, Self::Safe)
+    }
+
     pub fn is_full(self) -> bool {
         matches!(self, Self::Full)
     }
