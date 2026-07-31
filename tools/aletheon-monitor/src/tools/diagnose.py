@@ -265,6 +265,10 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
                 continue
             args = call.get("args", {})
             patterns = args.get("patterns", []) if isinstance(args, dict) else []
+            if isinstance(patterns, list) and len(patterns) > 6:
+                broad_globs.extend(
+                    pattern for pattern in patterns if isinstance(pattern, str)
+                )
             broad_globs.extend(
                 pattern
                 for pattern in patterns
@@ -279,6 +283,7 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
                     )
                 )
             )
+        broad_globs = list(dict.fromkeys(broad_globs))
         summary["assertions"].extend([
             {
                 "name": "repository_overview_starts_with_repo_inspect",

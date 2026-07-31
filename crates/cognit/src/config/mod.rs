@@ -806,7 +806,9 @@ mod tests {
              failure is currently occurring. A pre-1.0 version alone does not determine production maturity. Do \
              not infer maintainer count or staffing risk from an author line or commit history. Before claiming \
              that routing, failover, tests, or deployment support is absent, read its scoped implementation or \
-             authoritative architecture/status evidence. Base conclusions on returned file contents rather than \
+             authoritative architecture/status evidence. Never infer the effective production provider or route \
+             from examples or checked-in sample configuration; inspect typed host state and effective configuration, \
+             or label the production route unverified. Base conclusions on returned file contents rather than \
              filenames. Stop searching once the evidence needed to answer is sufficient. \
              Before stating any conclusion about your own runtime state, logs, or configuration, \
              you MUST read the actual logs and the actually-effective config file first — never guess \

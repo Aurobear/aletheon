@@ -20,7 +20,7 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "Discover an unknown path with bounded, specific globs after known files have been read. NEVER submit '**' or '**/*': those policy-rejected patterns do not execute. Do not use glob to begin a repository overview, and do not inventory language or file extensions. In a repository overview, recursive documentation inventories such as 'docs/**/*.md' and wildcard-scope inventories such as 'crates/*/tests/**/*.rs' are also broad and forbidden; read exact architecture/status paths returned by repo_inspect instead. Use `patterns` only to batch a small set of specific missing paths. Returns deduplicated relative paths from the root directory."
+        "Discover an unknown path with bounded, specific globs after known files have been read. NEVER submit '**' or '**/*': those policy-rejected patterns do not execute. Do not use glob to begin a repository overview, and do not inventory language or file extensions. In a repository overview, recursive documentation inventories such as 'docs/**/*.md', wildcard-scope inventories such as 'crates/*/tests/**/*.rs', and batches larger than 6 patterns are broad and forbidden; read exact architecture/status paths returned by repo_inspect instead. Use `patterns` only to batch a small set of specific missing paths. Returns deduplicated relative paths from the root directory."
     }
 
     fn input_schema(&self) -> serde_json::Value {
