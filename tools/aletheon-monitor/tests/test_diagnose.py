@@ -422,3 +422,64 @@ def test_event_acceptance_uses_terminal_snapshot_after_dropped_delta(tmp_path):
     assert result["text_source"] == "text_snapshot"
     assert result["delta_text_chars"] < result["text_chars"]
     assert all(item["passed"] for item in result["assertions"])
+
+
+def test_repository_overview_rejects_absence_claim_contradicted_by_entry_files(tmp_path):
+    path = tmp_path / "events.jsonl"
+    repo_output = json.dumps({
+        "entry_files": [
+            {"path": "README.md"},
+            {"path": "docs/design/architecture-overview.md"},
+        ],
+        "missing_candidates": ["README", "ARCHITECTURE.md", "docs/architecture.md"],
+    })
+    records = [
+        {"type": "tool_call_complete", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "args": {},
+        }},
+        {"type": "tool_call_result", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "is_error": False,
+            "output": repo_output,
+        }},
+        {"type": "text_snapshot", "params": {
+            "text": "项目文档不足：无 README、无 docs/ 目录。" + "A" * 80,
+        }},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_presence_claims_match_evidence"
+    )
+    assert assertion["passed"] is False
+    assert {item["evidence_path"] for item in assertion["conflicts"]} >= {
+        "README.md", "docs/",
+    }
+
+
+def test_repository_overview_accepts_exact_missing_candidate_without_conflict(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {"type": "tool_call_complete", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "args": {},
+        }},
+        {"type": "tool_call_result", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "is_error": False,
+            "output": json.dumps({
+                "entry_files": [{"path": "README.md"}],
+                "missing_candidates": ["ARCHITECTURE.md"],
+            }),
+        }},
+        {"type": "text_snapshot", "params": {
+            "text": "ARCHITECTURE.md is missing, while README.md is present." + "A" * 80 + ".",
+        }},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_presence_claims_match_evidence"
+    )
+    assert assertion["passed"] is True

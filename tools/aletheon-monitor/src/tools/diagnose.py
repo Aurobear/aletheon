@@ -83,6 +83,67 @@ def provider_metrics(daemon_logs: dict) -> dict:
     }
 
 
+def _repo_inspect_entry_paths(results: list[dict], call_id: str | None) -> list[str]:
+    """Extract exact files proved present by the authoritative tool result."""
+    if not call_id:
+        return []
+    record = next(
+        (item for item in results if item.get("params", {}).get("call_id") == call_id),
+        None,
+    )
+    output = record.get("params", {}).get("output") if record else None
+    if not isinstance(output, str):
+        return []
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return []
+    entry_files = payload.get("entry_files", []) if isinstance(payload, dict) else []
+    return [
+        item["path"]
+        for item in entry_files
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    ]
+
+
+def _contradicted_presence_claims(text: str, found_paths: list[str]) -> list[dict]:
+    """Find absence claims contradicted by repo_inspect presence evidence."""
+    aliases: dict[str, str] = {}
+    for path in found_paths:
+        normalized = path.replace("\\", "/").strip("/")
+        if not normalized:
+            continue
+        aliases[normalized.casefold()] = path
+        basename = normalized.rsplit("/", 1)[-1]
+        aliases[basename.casefold()] = path
+        if "." in basename:
+            aliases[basename.rsplit(".", 1)[0].casefold()] = path
+        if "/" in normalized:
+            root = normalized.split("/", 1)[0]
+            aliases[f"{root.casefold()}/"] = f"{root}/"
+    absence = re.compile(
+        r"(?:\b(?:no|without)\b|\b(?:is|are)\s+(?:missing|absent|not\s+found)\b|"
+        r"\bdoes\s+not\s+exist\b|无|没有|不存在|缺少)",
+        re.IGNORECASE,
+    )
+    conflicts = []
+    for clause in re.split(r"[\n。；;,，:：]+", text):
+        folded = clause.casefold()
+        if not absence.search(clause):
+            continue
+        for alias, evidence_path in aliases.items():
+            if alias in folded:
+                conflicts.append({
+                    "claimed_absent": alias,
+                    "evidence_path": evidence_path,
+                    "clause": clause.strip()[:240],
+                })
+    return list({
+        (item["claimed_absent"], item["evidence_path"], item["clause"]): item
+        for item in conflicts
+    }.values())
+
+
 def event_acceptance(path: str | None, require_repository_overview: bool = False) -> dict:
     """Check authoritative events for hidden tool and output failures."""
     summary = {
@@ -233,6 +294,8 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
         first_repo_call_id = (
             first_repo_call.get("call_id") if first_repo_call else None
         )
+        found_entry_paths = _repo_inspect_entry_paths(results, first_repo_call_id)
+        presence_conflicts = _contradicted_presence_claims(text, found_entry_paths)
         calls_before_repo = (
             completed_calls[:completed_calls.index(first_repo_call)]
             if first_repo_call in completed_calls
@@ -302,6 +365,12 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
                 "name": "repository_overview_avoids_broad_glob",
                 "passed": not broad_globs,
                 "patterns": broad_globs,
+            },
+            {
+                "name": "repository_overview_presence_claims_match_evidence",
+                "passed": not presence_conflicts,
+                "found_entry_paths": found_entry_paths,
+                "conflicts": presence_conflicts,
             },
         ])
     return summary

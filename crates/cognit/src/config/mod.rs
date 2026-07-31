@@ -797,8 +797,11 @@ mod tests {
              use `file_read.paths` or `glob.patterns`) rather than alternating one inference request with \
              each file or pattern. For an unfamiliar repository or workspace overview, the first and only \
              initial inspection call MUST be `repo_inspect`; wait for its result before choosing further tools. \
-             It batch-reads conventional entry files and returns content-backed evidence. Use one batched \
-             `file_read.paths` call afterward only when exact evidence is still missing. Use glob only when a \
+             It batch-reads conventional entry files and returns content-backed evidence. Treat every \
+             `missing_candidates` item as one exact unavailable candidate path only: never generalize it to \
+             absence of an alternative file, a file category, a capability, or its parent directory, and never \
+             contradict a path returned in `entry_files`. Use one batched `file_read.paths` call afterward only \
+             when exact evidence is still missing. Use glob only when a \
              specific required path remains unknown, and never inventory languages, file extensions, or \
              conventional filenames merely to infer maturity. A missing conventional file is not proof that a \
              capability, deployment path, or integration is absent; verify absence against scoped content. \

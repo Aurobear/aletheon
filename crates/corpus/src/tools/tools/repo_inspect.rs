@@ -47,7 +47,7 @@ impl Tool for RepoInspectTool {
     }
 
     fn description(&self) -> &str {
-        "Required first inspection for an unfamiliar repository or workspace overview. Call it alone and wait for the result before further discovery. Batch-reads bounded known entry files and returns a versioned, content-backed RepositoryContext with instruction/manifests, missing candidates, VCS state, and explicit evidence references."
+        "Required first inspection for an unfamiliar repository or workspace overview. Call it alone and wait for the result before further discovery. Batch-reads bounded known entry files and returns a versioned, content-backed RepositoryContext with instruction/manifests, missing candidates, VCS state, and explicit evidence references. Each missing_candidates item means only that exact candidate path was unavailable; it never proves that an alternative file, file category, capability, or parent directory is absent. entry_files is authoritative presence evidence."
     }
 
     fn input_schema(&self) -> serde_json::Value {
