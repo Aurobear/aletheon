@@ -1,10 +1,10 @@
 # 生产就绪缺口与路线图协调分析（E′/A/B/C/D 伴随文档）
 
 **Date:** 2026-07-30
-**Last reviewed:** 2026-07-31
-**Status:** 实现、部署与部分安装态复核记录；最新系统部署与真实 TUI 的机械门禁已通过，
-但连续三次真实 TUI、同会话多轮及其余 §9 门槛尚未全部关闭，因此不得标称整体
-production-ready
+**Last reviewed:** 2026-08-01
+**Status:** 实现、部署与部分安装态复核记录；最新系统部署、连续三次真实 TUI、
+同一未重启 TUI 的三轮 scoped 开发请求均已通过，但其余 §9 门槛尚未全部关闭，
+因此不得标称整体 production-ready
 **Scope:** 区分已经实现、已设计但未实现、部分覆盖和完全未覆盖的生产能力；
 给出启用门槛、依赖顺序和文件所有权约束。F1/F2 是本分析最初识别的新增
 workstream；当前分支已实现其代码闭环，但仍按下述安装态证据独立判定。
@@ -16,7 +16,7 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
 
 | 项 | 当前实现证据 | 当前验收状态 |
 |---|---|---|
-| F1 | machine core 持有 endpoint/model-keyed permit、主动 request-start pacing 与 cooldown；LLM canonical factory 直接消费，user-daemon embedding 经 core RPC 获取 socket-backed lease（`crates/cognit/src/adapters/inference/backpressure.rs:50-186`、`crates/cognit/src/composition/inference_factory.rs:117-185`、`crates/executive/src/host/core_rpc/server.rs:200-280`）；health 分开导出 core/user snapshot（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:138-179`） | 跨进程代码与 focused test 闭环；双客户端 pacing 及最新系统部署的 official-client smoke 已通过，仍待 child/embedding fan-out 和连续真实 TUI 质量门禁 |
+| F1 | machine core 持有 endpoint/model-keyed permit、主动 request-start pacing 与 cooldown；LLM canonical factory 直接消费，user-daemon embedding 经 core RPC 获取 socket-backed lease（`crates/cognit/src/adapters/inference/backpressure.rs:50-186`、`crates/cognit/src/composition/inference_factory.rs:117-185`、`crates/executive/src/host/core_rpc/server.rs:200-280`）；health 分开导出 core/user snapshot（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:138-179`） | 跨进程代码与 focused test 闭环；双客户端 pacing、最新系统部署的 official-client smoke 与连续真实 TUI 质量门禁已通过，仍待 child/embedding fan-out |
 | F2 | closure matrix 将已暴露操作绑定到 producer/resolver/receipt/replay，并将其余操作显式 deny（`config/approval-closure.toml:1-78`）；架构门禁执行 verifier（`tests/suites/architecture/architecture_check.sh` 末尾） | 代码闭环，待真实人工 resolve/restart 验收 |
 | #3 | Fabric 提供统一 trust/classification/scrub 契约（`crates/fabric/src/types/data_governance.rs:1-153`）；Memory projection、最终 context assembly 与 Dasein injection 均在模型可见边界再次 scrub（`crates/mnemosyne/src/projection.rs:260-267`、`crates/executive/src/application/context_assembler.rs`、`crates/cognit/src/harness/session.rs`） | 代码、focused 泄漏 fixture 和一次系统部署已完成；仍待安装态跨会话 secret fixture 与真实外部通道验收 |
 | #4 | health 导出 machine-core/user provider 与 Turn watchdog 指标和默认 SLO alerts（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:138-187`）；monitor 只调用 process-global health，并对 readiness/SLO alert fail closed；现又从 durable TUI events 检查 tool error、权威 `text_snapshot`、终态文本结构和 `turn_done`（`tools/aletheon-monitor/src/tools/health.py:31-132`、`tools/aletheon-monitor/src/tools/diagnose.py:72-198`） | 代码、focused monitor tests 和最新系统部署完成；仍待可控故障注入矩阵 |
@@ -25,6 +25,30 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
 | #7 | F1 关闭 machine provider 协调；Hardware 已由 production embodiment composition 调用（`crates/executive/src/host/daemon/bootstrap/request.rs:823-850`）；role runtime 先 prepare 后注册（`crates/executive/src/host/daemon/bootstrap/runtime.rs:322-364`） | 路由代码闭环，待逐 runtime 安装态矩阵 |
 | #8 | 版本化 coding harness 已存在（`tests/coding/README.md:1-31`），CI 验证 replay/契约（`.github/workflows/ci.yml:81-85`），release gate 执行 acceptance 与 installed-host drill（`scripts/libexec/aletheon/release-acceptance.sh:296-339`） | 确定性门禁闭环，真实模型 workflow 待本次运行 |
 | #9 | responsibility 位于 `config/architecture/module-boundaries.txt:21-25`；hotspot owner/line budget 位于 `config/architecture/hotspot-budgets.tsv:1-7` 并由 architecture fitness test 执行 | 持续治理项，不作一次性“完成”声明 |
+
+### 0.0 2026-08-01 当前安装态覆盖结论
+
+本节覆盖下方同日较早的失败历史，但不删除失败证据：
+
+- `sudo bash scripts/aletheon.sh deploy` 完整通过；release、`/usr/bin/aletheon` 与运行中
+  machine/user daemon 由 deploy provenance gate 证明一致，当前 release 与 installed
+  binary SHA-256 均为 `7c042699eeca1c3010450ac6c6cb9a9ab22105ff12d36283fff441eb3df247e8`。
+  两段 7 秒 restart 稳定窗口和 official user-socket 真实请求均通过。
+- 三个连续 fresh TUI repository-overview run 经当前安装 monitor 对 durable events
+  重放均为 PASS：`0031a58282ed4069a91e1b6c31c4b010.jsonl`、
+  `a058448f61594b2aae20a478866b393c.jsonl`、
+  `ded20f9d695641dfa95d65c41078b8e9.jsonl`。每轮均以 `repo_inspect` 开始，
+  无递归/wildcard inventory、无 tool/provider error、终态 snapshot 完整，并通过
+  presence contradiction 与 unsupported staffing inference 检查。
+- 同一未重启 TUI session 的三轮 scoped 请求也全部通过，权威事件文件为
+  `bd304371fad24055b7b401a6336d294a.jsonl`；三轮分别记录 4/2/2 个 inference rounds
+  和 3/1/1 个 tool calls，均有稳定 prompt、权威 `turn_done` 和完整 terminal snapshot。
+- workspace integration 首次运行暴露 `execute_script_hook_inject` 一次非确定性失败；
+  该 exact test 随即通过，随后完整 `corpus --lib` 561 项通过。该 flake 保留为验证
+  风险，不能把首次 workspace run 表述为全绿。
+- 上述证据关闭 §9.6 的最终 deploy/真实多轮请求部分和 repository-overview 的三次
+  模型参数质量门禁；它不关闭 §9.1–§9.5 的各专项安装态矩阵，整体仍未
+  production-ready。
 
 ### 0.1 2026-07-31 安装态复核结果
 

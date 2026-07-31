@@ -192,6 +192,94 @@ def test_repository_overview_requires_repo_inspect_before_scoped_discovery(tmp_p
     assert assertions["repository_overview_avoids_broad_glob"]["passed"] is False
 
 
+def test_repository_overview_rejects_recursive_docs_and_wildcard_scope_inventories(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {
+            "type": "tool_call_complete",
+            "params": {"call_id": "repo", "tool": "repo_inspect", "args": {}},
+        },
+        {
+            "type": "tool_call_result",
+            "params": {"call_id": "repo", "tool": "repo_inspect", "is_error": False},
+        },
+        {
+            "type": "tool_call_complete",
+            "params": {
+                "call_id": "glob",
+                "tool": "glob",
+                "args": {"patterns": ["docs/**/*.md", "crates/*/tests/**/*.rs"]},
+            },
+        },
+        {"type": "text_snapshot", "params": {"text": "A" * 80 + "."}},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_avoids_broad_glob"
+    )
+    assert assertion["passed"] is False
+    assert assertion["patterns"] == ["docs/**/*.md", "crates/*/tests/**/*.rs"]
+
+
+def test_repository_overview_rejects_recursive_and_wildcard_crate_scopes(tmp_path):
+    path = tmp_path / "events.jsonl"
+    patterns = ["crates/executive/tests/**/*.rs", "crates/*/Cargo.toml"]
+    records = [
+        {"type": "tool_call_complete", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "args": {},
+        }},
+        {"type": "tool_call_result", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "is_error": False,
+            "output": json.dumps({"entry_files": [{"path": "README.md"}]}),
+        }},
+        {"type": "tool_call_complete", "params": {
+            "call_id": "glob", "tool": "glob", "args": {"patterns": patterns},
+        }},
+        {"type": "text_snapshot", "params": {"text": "A" * 80 + "."}},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_avoids_broad_glob"
+    )
+    assert assertion["passed"] is False
+    assert assertion["patterns"] == patterns
+
+
+def test_repository_overview_rejects_large_batched_inventory(tmp_path):
+    path = tmp_path / "events.jsonl"
+    patterns = [f"crates/crate-{index}/src/**/*.rs" for index in range(7)]
+    records = [
+        {
+            "type": "tool_call_complete",
+            "params": {"call_id": "repo", "tool": "repo_inspect", "args": {}},
+        },
+        {
+            "type": "tool_call_result",
+            "params": {"call_id": "repo", "tool": "repo_inspect", "is_error": False},
+        },
+        {
+            "type": "tool_call_complete",
+            "params": {"call_id": "glob", "tool": "glob", "args": {"patterns": patterns}},
+        },
+        {"type": "text_snapshot", "params": {"text": "A" * 80 + "."}},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_avoids_broad_glob"
+    )
+    assert assertion["passed"] is False
+    assert assertion["patterns"] == patterns
+
+
 def test_repository_overview_waits_for_repo_inspect_result(tmp_path):
     path = tmp_path / "events.jsonl"
     records = [
@@ -361,3 +449,137 @@ def test_event_acceptance_uses_terminal_snapshot_after_dropped_delta(tmp_path):
     assert result["text_source"] == "text_snapshot"
     assert result["delta_text_chars"] < result["text_chars"]
     assert all(item["passed"] for item in result["assertions"])
+
+
+def test_repository_overview_rejects_absence_claim_contradicted_by_entry_files(tmp_path):
+    path = tmp_path / "events.jsonl"
+    repo_output = json.dumps({
+        "entry_files": [
+            {"path": "README.md"},
+            {"path": "docs/design/architecture-overview.md"},
+        ],
+        "missing_candidates": ["README", "ARCHITECTURE.md", "docs/architecture.md"],
+    })
+    records = [
+        {"type": "tool_call_complete", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "args": {},
+        }},
+        {"type": "tool_call_result", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "is_error": False,
+            "output": repo_output,
+        }},
+        {"type": "text_snapshot", "params": {
+            "text": "项目文档不足：README 均缺失、无 docs/ 目录。" + "A" * 80,
+        }},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_presence_claims_match_evidence"
+    )
+    assert assertion["passed"] is False
+    assert {item["evidence_path"] for item in assertion["conflicts"]} >= {
+        "README.md", "docs/",
+    }
+
+
+def test_repository_overview_accepts_exact_missing_candidate_without_conflict(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {"type": "tool_call_complete", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "args": {},
+        }},
+        {"type": "tool_call_result", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "is_error": False,
+            "output": json.dumps({
+                "entry_files": [{"path": "README.md"}],
+                "missing_candidates": ["ARCHITECTURE.md"],
+            }),
+        }},
+        {"type": "text_snapshot", "params": {
+            "text": "ARCHITECTURE.md is missing, while README.md is present." + "A" * 80 + ".",
+        }},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_presence_claims_match_evidence"
+    )
+    assert assertion["passed"] is True
+
+
+def test_repository_overview_does_not_confuse_claim_about_file_content_with_absence(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {"type": "tool_call_complete", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "args": {},
+        }},
+        {"type": "tool_call_result", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "is_error": False,
+            "output": json.dumps({"entry_files": [{"path": "README.md"}]}),
+        }},
+        {"type": "text_snapshot", "params": {
+            "text": "`README.md` Section 6 无任何非 Linux 平台的 stable 条目。" + "A" * 80,
+        }},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_presence_claims_match_evidence"
+    )
+    assert assertion["passed"] is True
+
+
+def test_repository_overview_does_not_attach_no_implementation_status_to_readme(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {"type": "tool_call_complete", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "args": {},
+        }},
+        {"type": "tool_call_result", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "is_error": False,
+            "output": json.dumps({"entry_files": [{"path": "README.md"}]}),
+        }},
+        {"type": "text_snapshot", "params": {
+            "text": 'feature is "planned (no implementation)" (`README.md` §6.4).' + "A" * 80,
+        }},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_presence_claims_match_evidence"
+    )
+    assert assertion["passed"] is True
+
+
+def test_repository_overview_rejects_staffing_count_inference(tmp_path):
+    path = tmp_path / "events.jsonl"
+    records = [
+        {"type": "tool_call_complete", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "args": {},
+        }},
+        {"type": "tool_call_result", "params": {
+            "call_id": "repo", "tool": "repo_inspect", "is_error": False,
+            "output": json.dumps({"entry_files": [{"path": "README.md"}]}),
+        }},
+        {"type": "text_snapshot", "params": {
+            "text": "作者字段只有一个名字，所以这是单人项目。" + "A" * 80,
+        }},
+        {"type": "turn_done", "params": {}},
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
+    accepted = event_acceptance(str(path), require_repository_overview=True)
+    assertion = next(
+        item for item in accepted["assertions"]
+        if item["name"] == "repository_overview_avoids_staffing_inference"
+    )
+    assert assertion["passed"] is False
+    assert assertion["claims"]

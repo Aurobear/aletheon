@@ -108,7 +108,7 @@ impl Tool for GitLogTool {
         "git_log"
     }
     fn description(&self) -> &str {
-        "Show recent commit history (oneline format)."
+        "Show recent commit activity (oneline format). Commit history is activity evidence only; it does not establish maintainer, contributor, team, or staffing count."
     }
     fn input_schema(&self) -> serde_json::Value {
         json!({"type":"object","properties":{"path":{"type":"string","description":"Repo path"},"count":{"type":"integer","description":"Number of commits (default: 10)"}},"required":[]})
@@ -132,7 +132,14 @@ impl Tool for GitLogTool {
             .current_dir(&ctx.working_dir)
             .output()
             .await;
-        git_command_result(ctx, start, "git_log", output)
+        let mut result = git_command_result(ctx, start, "git_log", output);
+        if !result.is_error {
+            result.content = format!(
+                "Evidence scope: commit activity only; do not infer maintainer, contributor, team, or staffing count.\n{}",
+                result.content
+            );
+        }
+        result
     }
 }
 

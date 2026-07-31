@@ -27,6 +27,26 @@ const ENTRY_CANDIDATES: &[&str] = &[
     "go.mod",
     "Makefile",
     ".aletheon-validation.toml",
+    "ARCHITECTURE.md",
+    "docs/architecture.md",
+    "docs/design/architecture-overview.md",
+    "docs/STATUS.md",
+    "docs/status.md",
+    "docs/roadmap.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    ".github/workflows/ci.yml",
+];
+const ENTRY_ALTERNATIVES: &[&[&str]] = &[
+    &["README.md", "README"],
+    &[
+        "ARCHITECTURE.md",
+        "docs/architecture.md",
+        "docs/design/architecture-overview.md",
+        "docs/STATUS.md",
+        "docs/status.md",
+        "docs/roadmap.md",
+    ],
 ];
 
 pub struct RepoInspectTool;
@@ -38,7 +58,7 @@ impl Tool for RepoInspectTool {
     }
 
     fn description(&self) -> &str {
-        "Inspect a repository by batch-reading bounded known entry files. Returns a versioned, content-backed RepositoryContext with instruction/manifests, missing candidates, VCS state, and explicit evidence references."
+        "Required first inspection for an unfamiliar repository or workspace overview. Call it alone and wait for the result before further discovery. Batch-reads bounded known entry files and returns a versioned, content-backed RepositoryContext with instructions/manifests, exact follow-up paths, missing candidates, VCS state, and explicit evidence references. Use exact_follow_up_paths with file_read instead of wildcard glob discovery. Each missing_candidates item means only that exact candidate path was unavailable; it never proves that an alternative file, file category, capability, or parent directory is absent. entry_files is authoritative presence evidence."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -65,17 +85,20 @@ impl Tool for RepoInspectTool {
     async fn execute(&self, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let start = ctx.clock.mono_now();
         match inspect(input, ctx) {
-            Ok(context) => ToolResult {
-                content: serde_json::to_string_pretty(&context).unwrap_or_else(|error| {
-                    format!("repository context serialization failed: {error}")
-                }),
-                is_error: false,
-                metadata: ToolResultMeta {
-                    execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
-                    truncated: false,
-                    patch_delta: None,
-                },
-            },
+            Ok(context) => {
+                super::overview_guard::mark(ctx);
+                ToolResult {
+                    content: serde_json::to_string_pretty(&context).unwrap_or_else(|error| {
+                        format!("repository context serialization failed: {error}")
+                    }),
+                    is_error: false,
+                    metadata: ToolResultMeta {
+                        execution_time_ms: ctx.clock.mono_now().0.saturating_sub(start.0),
+                        truncated: false,
+                        patch_delta: None,
+                    },
+                }
+            }
             Err(error) => ToolResult {
                 content: format!("repository inspection failed: {error}"),
                 is_error: true,
@@ -133,6 +156,18 @@ fn inspect(input: serde_json::Value, ctx: &ToolContext) -> anyhow::Result<Reposi
             Err(error) => missing_candidates.push(format!("{candidate} ({error})")),
         }
     }
+    let found_paths = found
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    missing_candidates.retain(|missing| {
+        let candidate = missing
+            .split_once(" (")
+            .map_or(missing.as_str(), |pair| pair.0);
+        !ENTRY_ALTERNATIVES.iter().any(|group| {
+            group.contains(&candidate) && group.iter().any(|path| found_paths.contains(path))
+        })
+    });
 
     let instructions = found
         .iter()
@@ -164,6 +199,7 @@ fn inspect(input: serde_json::Value, ctx: &ToolContext) -> anyhow::Result<Reposi
         None => None,
     };
     let vcs_state = vcs_snapshot(&root, &store);
+    let exact_follow_up_paths = workspace_follow_up_paths(&root);
     let entry_files = found.into_iter().map(|(_, file)| file).collect();
     let protected_paths = workspace
         .protected_paths()
@@ -177,6 +213,15 @@ fn inspect(input: serde_json::Value, ctx: &ToolContext) -> anyhow::Result<Reposi
         instructions,
         manifests,
         entry_files,
+        evidence_constraints: vec![
+            "Authorship metadata and commit history do not establish maintainer, contributor, or staffing count."
+                .into(),
+            "A version identifier alone does not establish production maturity or API stability."
+                .into(),
+            "Unavailable candidate paths are exact-path evidence only and cannot establish category or capability absence."
+                .into(),
+        ],
+        exact_follow_up_paths,
         missing_candidates,
         vcs_state,
         validation_commands,
@@ -187,6 +232,55 @@ fn inspect(input: serde_json::Value, ctx: &ToolContext) -> anyhow::Result<Reposi
     };
     context.version = digest_json(&context)?;
     Ok(context)
+}
+
+fn workspace_follow_up_paths(root: &Path) -> Vec<String> {
+    const MAX_PATHS: usize = 64;
+    let Ok(content) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+        return Vec::new();
+    };
+    let Ok(document) = content.parse::<toml::Value>() else {
+        return Vec::new();
+    };
+    let Some(members) = document
+        .get("workspace")
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(toml::Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let mut paths = std::collections::BTreeSet::new();
+    for member in members.iter().filter_map(toml::Value::as_str) {
+        let manifest_pattern = root.join(member).join("Cargo.toml");
+        let pattern = manifest_pattern.to_string_lossy();
+        let candidates = match glob::glob(&pattern) {
+            Ok(matches) => matches.filter_map(Result::ok).collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
+        };
+        for manifest in candidates {
+            let Ok(canonical) = std::fs::canonicalize(&manifest) else {
+                continue;
+            };
+            if !canonical.starts_with(root) {
+                continue;
+            }
+            let Some(package_dir) = canonical.parent() else {
+                continue;
+            };
+            for candidate in [
+                canonical.clone(),
+                package_dir.join("src/lib.rs"),
+                package_dir.join("src/main.rs"),
+            ] {
+                if candidate.is_file() {
+                    if let Ok(relative) = candidate.strip_prefix(root) {
+                        paths.insert(relative.to_string_lossy().replace('\\', "/"));
+                    }
+                }
+            }
+        }
+    }
+    paths.into_iter().take(MAX_PATHS).collect()
 }
 
 #[derive(serde::Deserialize)]
@@ -378,6 +472,84 @@ mod tests {
             .iter()
             .all(|file| file.artifact_ref.starts_with("artifact://sha256/")));
         assert!(result.missing_candidates.contains(&"README.md".into()));
+        assert!(result.exact_follow_up_paths.is_empty());
+        assert!(result
+            .evidence_constraints
+            .iter()
+            .any(|constraint| constraint.contains("staffing count")));
+    }
+
+    #[test]
+    fn inspection_returns_exact_workspace_follow_up_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("crates/demo/src")).unwrap();
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[workspace]\nmembers=['crates/*']\n",
+        )
+        .unwrap();
+        std::fs::write(
+            temp.path().join("crates/demo/Cargo.toml"),
+            "[package]\nname='demo'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            temp.path().join("crates/demo/src/lib.rs"),
+            "pub fn demo() {}\n",
+        )
+        .unwrap();
+        let context = ToolContext {
+            agent: None,
+            approval_authority: None,
+            working_dir: temp.path().to_path_buf(),
+            session_id: "repo-follow-up-test".into(),
+            clock: Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let result = inspect(json!({}), &context).unwrap();
+
+        assert_eq!(
+            result.exact_follow_up_paths,
+            ["crates/demo/Cargo.toml", "crates/demo/src/lib.rs"]
+        );
+    }
+
+    #[test]
+    fn inspection_does_not_report_missing_alternative_when_category_is_present() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("README.md"), "# Present\n").unwrap();
+        std::fs::create_dir_all(temp.path().join("docs/design")).unwrap();
+        std::fs::write(
+            temp.path().join("docs/design/architecture-overview.md"),
+            "# Architecture\n",
+        )
+        .unwrap();
+        let context = ToolContext {
+            agent: None,
+            approval_authority: None,
+            working_dir: temp.path().to_path_buf(),
+            session_id: "repo-alternative-test".into(),
+            clock: Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let result = inspect(json!({}), &context).unwrap();
+
+        assert!(!result
+            .missing_candidates
+            .iter()
+            .any(|path| path == "README"));
+        assert!(!result.missing_candidates.iter().any(|path| {
+            matches!(
+                path.as_str(),
+                "ARCHITECTURE.md"
+                    | "docs/architecture.md"
+                    | "docs/STATUS.md"
+                    | "docs/status.md"
+                    | "docs/roadmap.md"
+            )
+        }));
     }
 
     #[test]

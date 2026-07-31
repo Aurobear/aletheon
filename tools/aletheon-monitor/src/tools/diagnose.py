@@ -83,6 +83,95 @@ def provider_metrics(daemon_logs: dict) -> dict:
     }
 
 
+def _repo_inspect_entry_paths(results: list[dict], call_id: str | None) -> list[str]:
+    """Extract exact files proved present by the authoritative tool result."""
+    if not call_id:
+        return []
+    record = next(
+        (item for item in results if item.get("params", {}).get("call_id") == call_id),
+        None,
+    )
+    output = record.get("params", {}).get("output") if record else None
+    if not isinstance(output, str):
+        return []
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return []
+    entry_files = payload.get("entry_files", []) if isinstance(payload, dict) else []
+    return [
+        item["path"]
+        for item in entry_files
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    ]
+
+
+def _contradicted_presence_claims(text: str, found_paths: list[str]) -> list[dict]:
+    """Find absence claims contradicted by repo_inspect presence evidence."""
+    aliases: dict[str, str] = {}
+    for path in found_paths:
+        normalized = path.replace("\\", "/").strip("/")
+        if not normalized:
+            continue
+        aliases[normalized.casefold()] = path
+        basename = normalized.rsplit("/", 1)[-1]
+        aliases[basename.casefold()] = path
+        if "." in basename:
+            aliases[basename.rsplit(".", 1)[0].casefold()] = path
+        if "/" in normalized:
+            root = normalized.split("/", 1)[0]
+            aliases[f"{root.casefold()}/"] = f"{root}/"
+    strong_absence = re.compile(
+        r"(?:\b(?:is|are)\s+(?:missing|absent|not\s+found)\b|"
+        r"\bdoes\s+not\s+exist\b|不存在|缺少|缺失)",
+        re.IGNORECASE,
+    )
+    prefix_absence = re.compile(r"(?:\b(?:no|without)\b|无|没有)", re.IGNORECASE)
+    conflicts = []
+    for clause in re.split(r"[\n。；;,，:：]+", text):
+        folded = clause.casefold()
+        strong = strong_absence.search(clause)
+        prefixes = list(prefix_absence.finditer(clause))
+        if not strong and not prefixes:
+            continue
+        for alias, evidence_path in aliases.items():
+            alias_index = folded.find(alias)
+            prefix_targets_alias = any(
+                match.start() < alias_index and alias_index - match.end() <= 6
+                for match in prefixes
+            )
+            if alias_index >= 0 and (strong or prefix_targets_alias):
+                conflicts.append({
+                    "claimed_absent": alias,
+                    "evidence_path": evidence_path,
+                    "clause": clause.strip()[:240],
+                })
+    return list({
+        (item["claimed_absent"], item["evidence_path"], item["clause"]): item
+        for item in conflicts
+    }.values())
+
+
+def _unsupported_staffing_inferences(text: str) -> list[str]:
+    """Flag staffing-count conclusions that repository metadata cannot prove."""
+    subject = re.compile(
+        r"(?:maintainer|contributor|developer|team|staff(?:ing)?|"
+        r"维护者|贡献者|开发者|团队|作者|项目)",
+        re.IGNORECASE,
+    )
+    count = re.compile(
+        r"(?:\b(?:single|solo|one[- ]person|one[- ]developer)\b|"
+        r"单人|个人项目|一人|唯一(?:维护者|开发者)|只有一)",
+        re.IGNORECASE,
+    )
+    disclaimer = re.compile(r"(?:do not infer|cannot establish|无法推断|不能证明)", re.IGNORECASE)
+    return [
+        clause.strip()[:240]
+        for clause in re.split(r"[\n。；;]+", text)
+        if subject.search(clause) and count.search(clause) and not disclaimer.search(clause)
+    ]
+
+
 def event_acceptance(path: str | None, require_repository_overview: bool = False) -> dict:
     """Check authoritative events for hidden tool and output failures."""
     summary = {
@@ -233,6 +322,9 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
         first_repo_call_id = (
             first_repo_call.get("call_id") if first_repo_call else None
         )
+        found_entry_paths = _repo_inspect_entry_paths(results, first_repo_call_id)
+        presence_conflicts = _contradicted_presence_claims(text, found_entry_paths)
+        staffing_inferences = _unsupported_staffing_inferences(text)
         calls_before_repo = (
             completed_calls[:completed_calls.index(first_repo_call)]
             if first_repo_call in completed_calls
@@ -265,12 +357,23 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
                 continue
             args = call.get("args", {})
             patterns = args.get("patterns", []) if isinstance(args, dict) else []
+            if isinstance(patterns, list) and len(patterns) > 6:
+                broad_globs.extend(
+                    pattern for pattern in patterns if isinstance(pattern, str)
+                )
             broad_globs.extend(
                 pattern
                 for pattern in patterns
                 if isinstance(pattern, str)
-                and (pattern == "**" or pattern.startswith("**/"))
+                and (
+                    "**" in pattern
+                    or any(
+                        any(marker in segment for marker in ("*", "?", "["))
+                        for segment in pattern.replace("\\", "/").split("/")[:-1]
+                    )
+                )
             )
+        broad_globs = list(dict.fromkeys(broad_globs))
         summary["assertions"].extend([
             {
                 "name": "repository_overview_starts_with_repo_inspect",
@@ -289,6 +392,17 @@ def event_acceptance(path: str | None, require_repository_overview: bool = False
                 "name": "repository_overview_avoids_broad_glob",
                 "passed": not broad_globs,
                 "patterns": broad_globs,
+            },
+            {
+                "name": "repository_overview_presence_claims_match_evidence",
+                "passed": not presence_conflicts,
+                "found_entry_paths": found_entry_paths,
+                "conflicts": presence_conflicts,
+            },
+            {
+                "name": "repository_overview_avoids_staffing_inference",
+                "passed": not staffing_inferences,
+                "claims": staffing_inferences,
             },
         ])
     return summary
