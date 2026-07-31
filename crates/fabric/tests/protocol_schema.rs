@@ -74,6 +74,7 @@ fn versioned_mutations_round_trip_explicit_identity_tuples() {
             message: "hello".into(),
             working_dir: "/tmp".into(),
             additional_writable_roots: vec![],
+            permission_mode: fabric::permission::HostPermissionMode::Safe,
         }),
         ClientRequest::Approval(ApprovalRequest {
             thread_id: thread_id.clone(),
