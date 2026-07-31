@@ -62,7 +62,7 @@ with perception, memory, decision-making, and execution.
 | **Full-stack perception** | From kernel events to user behavior |
 | **Autonomous decision** | Self-directed planning and execution based on perception and memory |
 | **Security by default** | Tiered permissions, auditable, rollback-capable |
-| **Offline-first** | Local inference preferred, cloud fallback for complex tasks |
+| **Hybrid inference target** | Cloud is the shipped default; configured local Ollama can participate in provider failover |
 | **Cross-platform** | Linux / Android / Embedded with unified architecture |
 
 ---
@@ -279,7 +279,9 @@ These have code but are gated behind features, environment variables, or exist o
 - **io_uring backend** — High-performance IPC backend using Linux io_uring. Code exists but not yet the default transport.
 - **Self-evolution loop** — Example agent that modifies its own code/config. See `examples/evolution_loop/`. Requires explicit opt-in.
 - **eBPF probes** — Kernel-level perception via eBPF. Partial implementation in `kernel_bus.rs`.
-- **Local/Offline Model** — Support for locally-hosted inference engines (llama.cpp, Ollama). Experimental integration path.
+- **Local/Offline Model** — Configured Ollama is supported through the
+  OpenAI-compatible scheduler/failover path but is disabled in shipped
+  configuration. llama.cpp routing remains planned.
 
 ### 6.4 Planned (design only, no implementation)
 
@@ -544,7 +546,7 @@ See [Section 6 (Current Capabilities)](#6-current-capabilities) for detailed Sta
 | **Vector store (planned)** | LanceDB | Local, Rust-native |
 | **Relational store** | SQLite | Embedded, zero-config |
 | **IPC** | Unix Socket + serde_json | Low latency, simple |
-| **Sandbox** | bubblewrap + seccomp + landlock | Lightweight isolation |
+| **Sandbox** | bubblewrap namespaces | Filesystem/network isolation; seccomp and landlock remain planned hardening |
 | **FUSE (planned)** | fuse3 (libfuse 3.x) | Userland filesystem |
 | **eBPF (planned)** | libbpf + BPF CO-RE | Kernel-level perception |
 | **Build** | Cargo workspace | Rust ecosystem |
