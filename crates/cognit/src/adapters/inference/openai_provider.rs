@@ -575,7 +575,7 @@ impl LlmProvider for OpenAiProvider {
         let stream = futures::stream::unfold(
             (
                 Box::pin(byte_stream),
-                String::new(),
+                super::utf8_stream::Utf8StreamBuffer::default(),
                 ToolCallState::default(),
             ),
             move |(mut byte_stream, mut buffer, mut tool_state)| async move {
@@ -583,9 +583,19 @@ impl LlmProvider for OpenAiProvider {
 
                 loop {
                     // Try to extract a complete SSE line from the buffer
-                    if let Some(line_end) = buffer.find('\n') {
-                        let line = buffer[..line_end].trim().to_string();
-                        buffer = buffer[line_end + 1..].to_string();
+                    let line = match buffer.take_line() {
+                        Ok(line) => line,
+                        Err(error) => {
+                            return Some((
+                                Err(anyhow::anyhow!(
+                                    "provider stream contained invalid UTF-8: {error}"
+                                )),
+                                (byte_stream, buffer, tool_state),
+                            ));
+                        }
+                    };
+                    if let Some(line) = line {
+                        let line = line.trim();
 
                         if line.is_empty() || line.starts_with(':') {
                             continue;
@@ -711,8 +721,7 @@ impl LlmProvider for OpenAiProvider {
                                 ));
                             }
                             Ok(Some(Ok(bytes))) => {
-                                let text = String::from_utf8_lossy(&bytes);
-                                buffer.push_str(&text);
+                                buffer.push(&bytes);
                             }
                             Ok(Some(Err(e))) => {
                                 return Some((
@@ -722,8 +731,11 @@ impl LlmProvider for OpenAiProvider {
                             }
                             Ok(None) => {
                                 // Stream ended
-                                if !buffer.trim().is_empty() {
-                                    tracing::warn!("Stream ended with unprocessed data");
+                                if !buffer.is_empty() {
+                                    tracing::warn!(
+                                        remaining_bytes = buffer.len(),
+                                        "Stream ended with unprocessed data"
+                                    );
                                 }
                                 // Emit any completed tool calls
                                 if let Some(completed) = tool_state.take_completed() {
