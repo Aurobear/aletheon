@@ -7,14 +7,16 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use fabric::memory::{ProviderBackpressurePort, ProviderRequestPermit};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore};
 
 use crate::config::ProviderBackpressureConfig;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProviderBackpressureSnapshot {
     pub admitted: u64,
     pub queued: u64,
+    #[serde(default)]
+    pub paced: u64,
     pub rejected: u64,
     pub cooldown_updates: u64,
     pub active: usize,
@@ -22,6 +24,11 @@ pub struct ProviderBackpressureSnapshot {
 }
 
 #[derive(Debug, Clone)]
+/// Lightweight policy handle over the process-global provider-state registry.
+///
+/// Constructing another handle does not create an independent semaphore or
+/// cooldown. All handles in the machine-core process resolve the same
+/// `provider_key` through `state_for()` and therefore share admission state.
 pub struct MachineProviderBackpressure {
     config: ProviderBackpressureConfig,
 }
@@ -40,7 +47,7 @@ impl ProviderBackpressurePort for MachineProviderBackpressure {
         ))
     }
 
-    fn observe_retry_after(&self, provider_key: &str, retry_after_ms: Option<u64>) {
+    async fn observe_retry_after(&self, provider_key: &str, retry_after_ms: Option<u64>) {
         state_for(provider_key, self.config).observe_retry_after(retry_after_ms);
     }
 }
@@ -50,8 +57,10 @@ pub(crate) struct ProviderState {
     config: ProviderBackpressureConfig,
     permits: Arc<Semaphore>,
     cooldown_until: Mutex<Option<Instant>>,
+    next_admission_at: AsyncMutex<Instant>,
     admitted: AtomicU64,
     queued: AtomicU64,
+    paced: AtomicU64,
     rejected: AtomicU64,
     cooldown_updates: AtomicU64,
 }
@@ -62,8 +71,10 @@ impl ProviderState {
             permits: Arc::new(Semaphore::new(config.max_concurrent_requests.max(1))),
             config,
             cooldown_until: Mutex::new(None),
+            next_admission_at: AsyncMutex::new(Instant::now()),
             admitted: AtomicU64::new(0),
             queued: AtomicU64::new(0),
+            paced: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
             cooldown_updates: AtomicU64::new(0),
         }
@@ -71,6 +82,7 @@ impl ProviderState {
 
     async fn acquire(self: &Arc<Self>) -> anyhow::Result<OwnedSemaphorePermit> {
         let deadline = Instant::now() + Duration::from_millis(self.config.queue_timeout_ms);
+        let mut counted_as_queued = false;
         let cooling = self
             .cooldown_until
             .lock()
@@ -78,41 +90,70 @@ impl ProviderState {
             .is_some_and(|until| until > Instant::now());
         if cooling || self.permits.available_permits() == 0 {
             self.queued.fetch_add(1, Ordering::Relaxed);
+            counted_as_queued = true;
         }
 
+        let budget = deadline.saturating_duration_since(Instant::now());
+        let permit = match tokio::time::timeout(budget, self.permits.clone().acquire_owned()).await
+        {
+            Ok(result) => result.map_err(|_| anyhow::anyhow!("provider_backpressure_closed")),
+            Err(_) => Err(anyhow::anyhow!("provider_backpressure_timeout")),
+        };
+        let permit = match permit {
+            Ok(permit) => permit,
+            Err(error) => {
+                self.rejected.fetch_add(1, Ordering::Relaxed);
+                return Err(error);
+            }
+        };
+
+        let budget = deadline.saturating_duration_since(Instant::now());
+        let mut next_admission_at =
+            match tokio::time::timeout(budget, self.next_admission_at.lock()).await {
+                Ok(guard) => guard,
+                Err(_) => {
+                    self.rejected.fetch_add(1, Ordering::Relaxed);
+                    return Err(anyhow::anyhow!("provider_backpressure_timeout"));
+                }
+            };
+        let mut counted_as_paced = false;
         loop {
-            let cooldown = *self
+            let now = Instant::now();
+            let cooldown_until = self
                 .cooldown_until
                 .lock()
-                .expect("provider cooldown lock poisoned");
-            if let Some(until) = cooldown.filter(|until| *until > Instant::now()) {
-                let remaining = until.saturating_duration_since(Instant::now());
-                let budget = deadline.saturating_duration_since(Instant::now());
-                if remaining > budget {
-                    self.rejected.fetch_add(1, Ordering::Relaxed);
-                    anyhow::bail!("provider_backpressure_timeout");
-                }
-                tokio::time::sleep(remaining).await;
-                continue;
+                .expect("provider cooldown lock poisoned")
+                .filter(|until| *until > now);
+            let pacing_until = (*next_admission_at > now).then_some(*next_admission_at);
+            let ready_at = cooldown_until
+                .into_iter()
+                .chain(pacing_until)
+                .max()
+                .unwrap_or(now);
+
+            if ready_at <= now {
+                *next_admission_at =
+                    now + Duration::from_millis(self.config.min_request_interval_ms);
+                self.admitted.fetch_add(1, Ordering::Relaxed);
+                return Ok(permit);
             }
 
-            let budget = deadline.saturating_duration_since(Instant::now());
-            let permit = match tokio::time::timeout(budget, self.permits.clone().acquire_owned())
-                .await
-            {
-                Ok(result) => result.map_err(|_| anyhow::anyhow!("provider_backpressure_closed")),
-                Err(_) => Err(anyhow::anyhow!("provider_backpressure_timeout")),
-            };
-            match permit {
-                Ok(permit) => {
-                    self.admitted.fetch_add(1, Ordering::Relaxed);
-                    return Ok(permit);
-                }
-                Err(error) => {
-                    self.rejected.fetch_add(1, Ordering::Relaxed);
-                    return Err(error);
-                }
+            if !counted_as_queued {
+                self.queued.fetch_add(1, Ordering::Relaxed);
+                counted_as_queued = true;
             }
+            if pacing_until.is_some() && !counted_as_paced {
+                self.paced.fetch_add(1, Ordering::Relaxed);
+                counted_as_paced = true;
+            }
+
+            let remaining = ready_at.saturating_duration_since(now);
+            let budget = deadline.saturating_duration_since(now);
+            if remaining > budget || budget.is_zero() {
+                self.rejected.fetch_add(1, Ordering::Relaxed);
+                anyhow::bail!("provider_backpressure_timeout");
+            }
+            tokio::time::sleep(remaining).await;
         }
     }
 
@@ -137,6 +178,7 @@ impl ProviderState {
         ProviderBackpressureSnapshot {
             admitted: self.admitted.load(Ordering::Relaxed),
             queued: self.queued.load(Ordering::Relaxed),
+            paced: self.paced.load(Ordering::Relaxed),
             rejected: self.rejected.load(Ordering::Relaxed),
             cooldown_updates: self.cooldown_updates.load(Ordering::Relaxed),
             active: self
@@ -197,6 +239,7 @@ mod tests {
     fn config() -> ProviderBackpressureConfig {
         ProviderBackpressureConfig {
             max_concurrent_requests: 1,
+            min_request_interval_ms: 0,
             queue_timeout_ms: 40,
             max_cooldown_ms: 20,
         }
@@ -255,5 +298,59 @@ mod tests {
         let error = acquire(&state).await.unwrap_err();
         assert!(error.to_string().contains("provider_backpressure_timeout"));
         assert_eq!(provider_backpressure_snapshot(&key).unwrap().rejected, 1);
+    }
+
+    #[tokio::test]
+    async fn provider_key_paces_request_starts_across_instances() {
+        let key = format!("test-provider-{}", uuid::Uuid::new_v4());
+        let pacing = ProviderBackpressureConfig {
+            max_concurrent_requests: 2,
+            min_request_interval_ms: 30,
+            queue_timeout_ms: 100,
+            max_cooldown_ms: 80,
+        };
+        let first_state = state_for(&key, pacing);
+        let second_state = state_for(&key, pacing);
+
+        drop(acquire(&first_state).await.unwrap());
+        let started = Instant::now();
+        drop(acquire(&second_state).await.unwrap());
+
+        assert!(started.elapsed() >= Duration::from_millis(20));
+        let snapshot = provider_backpressure_snapshot(&key).unwrap();
+        assert_eq!(snapshot.admitted, 2);
+        assert_eq!(snapshot.queued, 1);
+        assert_eq!(snapshot.paced, 1);
+        assert_eq!(snapshot.rejected, 0);
+    }
+
+    #[tokio::test]
+    async fn shared_cooldown_extends_an_already_paced_waiter() {
+        let key = format!("test-provider-{}", uuid::Uuid::new_v4());
+        let pacing = ProviderBackpressureConfig {
+            max_concurrent_requests: 2,
+            min_request_interval_ms: 20,
+            queue_timeout_ms: 120,
+            max_cooldown_ms: 80,
+        };
+        let state = state_for(&key, pacing);
+        drop(acquire(&state).await.unwrap());
+
+        let waiter = tokio::spawn({
+            let state = state.clone();
+            async move {
+                let started = Instant::now();
+                drop(acquire(&state).await.unwrap());
+                started.elapsed()
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        observe_retry_after(&state, Some(45));
+
+        assert!(waiter.await.unwrap() >= Duration::from_millis(40));
+        let snapshot = provider_backpressure_snapshot(&key).unwrap();
+        assert_eq!(snapshot.cooldown_updates, 1);
+        assert_eq!(snapshot.paced, 1);
+        assert_eq!(snapshot.rejected, 0);
     }
 }

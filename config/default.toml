@@ -47,6 +47,12 @@ transport = "openai"
 models = ["deepseek/deepseek-v4-pro"]
 max_context_length = 1000000
 
+[providers.backpressure]
+# This account is governed by a rolling request-rate limit. Coordinate request
+# starts in the machine core so sessions, role children, and embedding work do
+# not independently burst the same endpoint/model.
+min_request_interval_ms = 15000
+
 # Optional local/offline fallback provider.
 # The LLM scheduler fails over to the next configured provider when the primary
 # is unavailable/terminal AND (since the context-overflow hardening) when a

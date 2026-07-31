@@ -617,19 +617,26 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub pricing: Option<ProviderPricing>,
     /// Machine/provider-scoped admission and cooldown policy. Every provider
-    /// instance built by the canonical factory shares this policy by `name`.
+    /// instance built by the canonical factory shares this policy by canonical
+    /// endpoint and model.
     #[serde(default)]
     pub backpressure: ProviderBackpressureConfig,
 }
 
 /// Provider-level backpressure. Unlike turn admission this coordinates all
-/// sessions and role children in the daemon process that use the same provider.
+/// sessions and role children through the machine-core process that use the
+/// same canonical provider endpoint and model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ProviderBackpressureConfig {
     /// Maximum simultaneous requests for one provider identity.
     pub max_concurrent_requests: usize,
-    /// Maximum time a caller may wait for cooldown and a fair permit.
+    /// Minimum spacing between request starts for one provider identity.
+    ///
+    /// This is a machine-wide pacing boundary, not a per-session retry delay.
+    /// Zero preserves providers that do not require proactive rate pacing.
+    pub min_request_interval_ms: u64,
+    /// Maximum time a caller may wait for cooldown, pacing, and a fair permit.
     pub queue_timeout_ms: u64,
     /// Upper bound applied to provider-advised shared cooldown.
     pub max_cooldown_ms: u64,
@@ -639,6 +646,7 @@ impl Default for ProviderBackpressureConfig {
     fn default() -> Self {
         Self {
             max_concurrent_requests: 2,
+            min_request_interval_ms: 0,
             queue_timeout_ms: 120_000,
             max_cooldown_ms: 60_000,
         }

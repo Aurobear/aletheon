@@ -234,6 +234,12 @@ fn checked_in_leju_deepseek_uses_the_openai_transport() {
             .iter()
             .any(|model| model == "deepseek/deepseek-v4-pro"));
         assert_eq!(provider.max_context_length, Some(1_000_000));
+        assert_eq!(
+            provider.backpressure.min_request_interval_ms,
+            15_000,
+            "checked-in LejuRobot provider must preserve machine-wide pacing: {}",
+            path.display()
+        );
         assert_eq!(config.agent.default_provider.as_deref(), Some("leju"));
         assert_eq!(
             config.agent.default_model.as_deref(),
