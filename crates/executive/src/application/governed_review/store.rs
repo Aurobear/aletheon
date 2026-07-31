@@ -196,6 +196,23 @@ impl GovernedReviewStore {
         Ok(stored)
     }
 
+    pub async fn find_by_idempotency(
+        &self,
+        principal_id: &str,
+        key: &str,
+    ) -> Result<Option<StoredReview>, ReviewStoreError> {
+        let index = self.index.lock().await;
+        let Some(record) = index.idempotency.get(&idempotency_key(principal_id, key)) else {
+            return Ok(None);
+        };
+        index
+            .jobs
+            .get(&job_key(principal_id, &record.job_id))
+            .cloned()
+            .map(Some)
+            .ok_or_else(|| ReviewStoreError::Corrupt("idempotency target missing".into()))
+    }
+
     pub async fn get(
         &self,
         principal_id: &str,
@@ -208,6 +225,17 @@ impl GovernedReviewStore {
             .get(&job_key(principal_id, job_id))
             .cloned()
             .ok_or(ReviewStoreError::NotFound)
+    }
+
+    pub async fn nonterminal(&self) -> Vec<StoredReview> {
+        self.index
+            .lock()
+            .await
+            .jobs
+            .values()
+            .filter(|stored| !stored.receipt.status.is_terminal())
+            .cloned()
+            .collect()
     }
 
     pub async fn update_receipt(
@@ -228,7 +256,12 @@ impl GovernedReviewStore {
                 "receipt identity does not match authoritative job".into(),
             ));
         }
-        if !allowed_transition(current.receipt.status, receipt.status) {
+        if current.receipt.status.is_terminal() && current.receipt == receipt {
+            return Ok(current.clone());
+        }
+        if current.receipt.status.is_terminal()
+            || !allowed_transition(current.receipt.status, receipt.status)
+        {
             return Err(ReviewStoreError::InvalidTransition {
                 from: current.receipt.status,
                 to: receipt.status,
