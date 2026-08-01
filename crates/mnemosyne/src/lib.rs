@@ -9,6 +9,7 @@ mod adapters;
 pub mod agent_scope;
 mod application;
 mod backends;
+pub mod binding;
 pub mod composite_service;
 pub mod consolidation;
 pub mod credential;
@@ -35,6 +36,11 @@ pub mod embedding {
     };
 }
 pub use agent_scope::{AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft};
+pub use binding::{
+    capability_digest, SupplementalCapabilityGrant, WorkspaceMemoryBinding,
+    WorkspaceMemoryBindingError, WorkspaceMemoryBindingPreview, WorkspaceMemoryBindingProposal,
+    WorkspaceMemoryBindingRegistry, WorkspaceMemoryBindingState,
+};
 pub use composite_service::{
     CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
 };
