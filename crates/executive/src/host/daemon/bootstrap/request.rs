@@ -1126,6 +1126,26 @@ impl RequestHandler {
                 )
             })
             .collect();
+        let mut memory_gateway = crate::application::memory_gateway::MemoryGatewayService::open(
+            &data_dir,
+            memory_group.local_memory_service.clone(),
+            clock.clone(),
+        )
+        .context("opening versioned memory gateway")?;
+        if let Some(manager) = retained_mcp.clone() {
+            let supplemental_router = Arc::new(
+                crate::adapters::gbrain::McpSupplementalBindingNegotiator::new(
+                    manager,
+                    std::time::Duration::from_millis(
+                        config.memory_policy.supplemental.request_timeout_ms,
+                    ),
+                ),
+            );
+            memory_gateway = memory_gateway
+                .with_binding_negotiator(supplemental_router.clone())
+                .with_supplemental_recall(supplemental_router);
+        }
+        let memory_gateway = Arc::new(memory_gateway);
         let agent_svc = super::services::build_agent_services(
             &data_dir,
             kernel.clone(),
@@ -1174,6 +1194,7 @@ impl RequestHandler {
             &domains,
             &security_group,
             &memory_group,
+            memory_gateway.clone(),
             &session_group,
             capability_resources,
             conscious_registry.clone(),
@@ -1514,26 +1535,6 @@ impl RequestHandler {
         } else {
             None
         };
-        let mut memory_gateway = crate::application::memory_gateway::MemoryGatewayService::open(
-            &data_dir,
-            memory_group.local_memory_service.clone(),
-            clock.clone(),
-        )
-        .context("opening versioned memory gateway")?;
-        if let Some(manager) = retained_mcp.clone() {
-            let supplemental_router = Arc::new(
-                crate::adapters::gbrain::McpSupplementalBindingNegotiator::new(
-                    manager,
-                    std::time::Duration::from_millis(
-                        config.memory_policy.supplemental.request_timeout_ms,
-                    ),
-                ),
-            );
-            memory_gateway = memory_gateway
-                .with_binding_negotiator(supplemental_router.clone())
-                .with_supplemental_recall(supplemental_router);
-        }
-        let memory_gateway = Arc::new(memory_gateway);
         let semantic_proposer = Arc::new(
             crate::application::memory_maintenance::AgentControlMemorySemanticProposal::new(
                 memory_agent_control,

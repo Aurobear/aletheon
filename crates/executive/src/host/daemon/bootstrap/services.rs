@@ -287,6 +287,7 @@ pub(super) async fn build_turn_services(
     domains: &DomainPorts,
     security_group: &SecurityGroup,
     memory_group: &MemoryGroup,
+    memory_gateway: Arc<crate::application::memory_gateway::MemoryGatewayService>,
     session_group: &SessionGroup,
     capability_resources: crate::host::daemon::handler::tool_executor::CapabilityResources,
     conscious_registry: Arc<crate::application::conscious_workspace::ConsciousWorkspaceRegistry>,
@@ -555,6 +556,7 @@ pub(super) async fn build_turn_services(
             event_bus: event_bus.clone(),
             role_workflow_factory,
             active_profile: active_profile_port.clone(),
+            memory_gateway,
         },
     ));
     let turn_orchestrator = Arc::new(crate::application::DaemonTurnOrchestrator::new(

@@ -68,6 +68,7 @@ pub struct TurnPipeline {
         Option<Arc<crate::application::cognitive_role_workflow::RoleWorkflowFactory>>,
     pub(crate) active_profile:
         Arc<dyn crate::application::turn_runtime_ports::ActiveAgentProfilePort>,
+    pub(crate) memory_gateway: Arc<crate::application::memory_gateway::MemoryGatewayService>,
 }
 
 pub(crate) struct TurnPipelineResources {
@@ -97,6 +98,7 @@ pub(crate) struct TurnPipelineResources {
         Option<Arc<crate::application::cognitive_role_workflow::RoleWorkflowFactory>>,
     pub(crate) active_profile:
         Arc<dyn crate::application::turn_runtime_ports::ActiveAgentProfilePort>,
+    pub(crate) memory_gateway: Arc<crate::application::memory_gateway::MemoryGatewayService>,
 }
 
 impl TurnPipeline {
@@ -123,6 +125,7 @@ impl TurnPipeline {
             event_bus: resources.event_bus,
             role_workflow_factory: resources.role_workflow_factory,
             active_profile: resources.active_profile,
+            memory_gateway: resources.memory_gateway,
         }
     }
 
@@ -573,6 +576,7 @@ impl TurnPipeline {
         let lifecycle_thread = turn_request.context.thread_id.clone();
         let lifecycle_turn = turn_request.context.turn_id;
         let lifecycle_session = session_id.clone();
+        let native_working_dir = turn_request.context.workspace.cwd().to_path_buf();
         let assistant_protocol_item = format!(
             "turn:{}:assistant",
             lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)).0
@@ -581,6 +585,8 @@ impl TurnPipeline {
         let turn_result: anyhow::Result<serde_json::Value> = async {
 
         pipeline_lifecycle.apply(TurnPipelineEvent::Admit)?;
+
+        let native_turn_id = lifecycle_turn.unwrap_or(fabric::TurnId(operation_id.0)).0.to_string();
 
         let lifecycle_start = self
             .dispatch_lifecycle(
@@ -743,6 +749,29 @@ impl TurnPipeline {
             .await?;
         let sess_id = begin.session_id;
         let turn_count = begin.turn_count;
+
+        if let Err(error) = self
+            .memory_gateway
+            .observe(
+                &lifecycle_principal,
+                "aletheon_native",
+                fabric::protocol::memory::MemoryObservationRequestV1 {
+                    observation_id: format!("native-{native_turn_id}-user"),
+                    client_session_id: lifecycle_session.clone(),
+                    client_turn_id: Some(native_turn_id.clone()),
+                    working_dir: native_working_dir.clone(),
+                    kind: fabric::protocol::memory::MemoryObservationKindV1::UserMessage,
+                    content: message.clone(),
+                    occurred_at: None,
+                    source_refs: vec![format!("turn:{native_turn_id}:user")],
+                    sensitivity_hint: fabric::protocol::memory::MemorySensitivityV1::Internal,
+                    explicit_user_action: false,
+                },
+            )
+            .await
+        {
+            warn!(%error, "native user memory observation degraded");
+        }
 
         if let Some(conscious) = &self.conscious_core {
             conscious
@@ -922,7 +951,7 @@ impl TurnPipeline {
                         fabric::permission::HostPermissionMode::Safe
                     },
                     session_id: sess_id.clone(),
-                    working_dir: turn_request.context.workspace.cwd().to_path_buf(),
+                    working_dir: native_working_dir.clone(),
                     sandbox: sandbox_requirement,
                     cancel: scope_token.clone(),
                     turn_count,
@@ -1385,6 +1414,29 @@ impl TurnPipeline {
                 &text,
             )
             .await?;
+
+        if let Err(error) = self
+            .memory_gateway
+            .observe(
+                &lifecycle_principal,
+                "aletheon_native",
+                fabric::protocol::memory::MemoryObservationRequestV1 {
+                    observation_id: format!("native-{native_turn_id}-assistant"),
+                    client_session_id: lifecycle_session.clone(),
+                    client_turn_id: Some(native_turn_id.clone()),
+                    working_dir: native_working_dir.clone(),
+                    kind: fabric::protocol::memory::MemoryObservationKindV1::AssistantMessage,
+                    content: text.clone(),
+                    occurred_at: None,
+                    source_refs: vec![assistant_protocol_item.clone()],
+                    sensitivity_hint: fabric::protocol::memory::MemorySensitivityV1::Internal,
+                    explicit_user_action: false,
+                },
+            )
+            .await
+        {
+            warn!(%error, "native assistant memory observation degraded");
+        }
 
         // -- PR-3: drain the per-turn OperationScope (guarantees no orphan tasks) --
         {
