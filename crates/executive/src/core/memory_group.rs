@@ -17,6 +17,9 @@ pub(crate) struct MemoryGroup {
     pub(crate) approval_repository: Arc<std::sync::Mutex<ApprovalRepository>>,
     /// Unified facade over the canonical memory stores (docs/arch §11).
     pub(crate) memory_service: Arc<dyn MemoryService>,
+    /// Local runtime authority without supplemental recall/projection. Gateway
+    /// routing starts here and adds only a verified workspace binding.
+    pub(crate) local_memory_service: Arc<dyn MemoryService>,
     /// Sanitized state of the optional supplemental-memory path.
     pub(crate) supplemental_memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
 }

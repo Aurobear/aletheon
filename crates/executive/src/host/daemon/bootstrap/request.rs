@@ -750,7 +750,7 @@ impl RequestHandler {
         let local_memory: Arc<dyn mnemosyne::MemoryService> = Arc::new(local_memory_service);
         let supplemental_runtime =
             crate::adapters::gbrain::build_supplemental_memory_runtime_with_retention(
-                local_memory,
+                local_memory.clone(),
                 retained_mcp.clone(),
                 &config.supplemental_memory,
                 clock.clone(),
@@ -878,6 +878,7 @@ impl RequestHandler {
             Arc::new(crate::application::context_assembler::ContextAssembler::new(context_source));
         let memory_group = crate::core::MemoryGroup {
             memory_service: supplemental_runtime.memory_service,
+            local_memory_service: local_memory,
             supplemental_memory_health: supplemental_runtime.health,
             episodic_memory,
             objective_store,
@@ -1514,19 +1515,22 @@ impl RequestHandler {
         };
         let mut memory_gateway = crate::application::memory_gateway::MemoryGatewayService::open(
             &data_dir,
-            memory_group.memory_service.clone(),
+            memory_group.local_memory_service.clone(),
             clock.clone(),
         )
         .context("opening versioned memory gateway")?;
         if let Some(manager) = retained_mcp.clone() {
-            memory_gateway = memory_gateway.with_binding_negotiator(Arc::new(
+            let supplemental_router = Arc::new(
                 crate::adapters::gbrain::McpSupplementalBindingNegotiator::new(
                     manager,
                     std::time::Duration::from_millis(
                         config.memory_policy.supplemental.request_timeout_ms,
                     ),
                 ),
-            ));
+            );
+            memory_gateway = memory_gateway
+                .with_binding_negotiator(supplemental_router.clone())
+                .with_supplemental_recall(supplemental_router);
         }
         let memory_gateway = Arc::new(memory_gateway);
         let semantic_proposer = Arc::new(
@@ -1539,7 +1543,7 @@ impl RequestHandler {
         let memory_maintenance = Arc::new(
             crate::application::memory_maintenance::MemoryMaintenanceController::new(
                 memory_gateway.intake_ledger(),
-                memory_group.memory_service.clone(),
+                memory_group.local_memory_service.clone(),
                 clock.clone(),
                 config.memory_policy.policy.clone(),
                 semantic_proposer,

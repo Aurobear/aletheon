@@ -1,10 +1,13 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
-use executive::application::memory_gateway::{MemoryGatewayService, SupplementalBindingNegotiator};
+use executive::application::memory_gateway::{
+    MemoryGatewayService, SupplementalBindingNegotiator, SupplementalBindingRecallPort,
+};
 use fabric::protocol::memory::{
     MemoryFeedbackRequestV1, MemoryFeedbackSignalV1, MemoryIntakeStatusV1, MemoryObservationKindV1,
     MemoryObservationRequestV1, MemoryRecallRequestV1, MemorySensitivityV1,
@@ -30,6 +33,23 @@ struct CapturingMemory {
 
 struct FixedNegotiator {
     grant: Mutex<SupplementalCapabilityGrant>,
+}
+
+#[derive(Default)]
+struct CountingSupplementalRecall {
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl SupplementalBindingRecallPort for CountingSupplementalRecall {
+    async fn recall(
+        &self,
+        _binding: &mnemosyne::WorkspaceMemoryBinding,
+        _request: &RecallRequest,
+    ) -> anyhow::Result<RecallSet> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(RecallSet::default())
+    }
 }
 
 #[async_trait]
@@ -160,6 +180,7 @@ fn service(
         installation_id,
         Arc::new(WorkspaceMemoryBindingRegistry::open(state.path().join("bindings.db")).unwrap()),
         None,
+        None,
     )
     .unwrap()
 }
@@ -220,6 +241,7 @@ async fn workspace_binding_requires_previewed_grants_and_controls_receipt_state(
     let negotiator = Arc::new(FixedNegotiator {
         grant: Mutex::new(binding_grant()),
     });
+    let supplemental_recall = Arc::new(CountingSupplementalRecall::default());
     let ledger = Arc::new(MemoryIntakeLedger::open(state.path().join("intake.db")).unwrap());
     let gateway = MemoryGatewayService::from_parts(
         ledger,
@@ -228,6 +250,7 @@ async fn workspace_binding_requires_previewed_grants_and_controls_receipt_state(
         "50e0337d-9c16-4d02-8b57-233ab7248759",
         Arc::new(WorkspaceMemoryBindingRegistry::open(state.path().join("bindings.db")).unwrap()),
         Some(negotiator.clone()),
+        Some(supplemental_recall.clone()),
     )
     .unwrap();
     let principal = PrincipalId("principal-a".into());
@@ -278,6 +301,24 @@ async fn workspace_binding_requires_previewed_grants_and_controls_receipt_state(
         .await
         .unwrap();
     assert_eq!(receipt.workspace_state, MemoryWorkspaceStateV1::Bound);
+    gateway
+        .recall(
+            &principal,
+            "test-client",
+            MemoryRecallRequestV1 {
+                request_id: "bound-recall".into(),
+                client_session_id: "client-session".into(),
+                working_dir: project.clone(),
+                query: "memory".into(),
+                max_items: 4,
+                max_content_bytes: 4096,
+                include_historical: false,
+                requested_kinds: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(supplemental_recall.calls.load(Ordering::SeqCst), 1);
 
     negotiator.grant.lock().unwrap().write_source = Some("drifted".into());
     assert!(gateway
@@ -306,11 +347,29 @@ async fn workspace_binding_requires_previewed_grants_and_controls_receipt_state(
         .observe(
             &principal,
             "test-client",
-            observation(project, "local-observation"),
+            observation(project.clone(), "local-observation"),
         )
         .await
         .unwrap();
     assert_eq!(receipt.workspace_state, MemoryWorkspaceStateV1::LocalOnly);
+    gateway
+        .recall(
+            &principal,
+            "test-client",
+            MemoryRecallRequestV1 {
+                request_id: "local-recall".into(),
+                client_session_id: "client-session".into(),
+                working_dir: project,
+                query: "memory".into(),
+                max_items: 4,
+                max_content_bytes: 4096,
+                include_historical: false,
+                requested_kinds: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(supplemental_recall.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

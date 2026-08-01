@@ -6,9 +6,13 @@ use std::time::Duration;
 use corpus::tools::mcp::manager::McpManager;
 use mnemosyne::supplemental::page::MAX_PAGE_BYTES;
 use mnemosyne::supplemental::{validate_tools_list, SupplementalDocument};
-use mnemosyne::SupplementalCapabilityGrant;
+use mnemosyne::{
+    MemoryAuthority, MemoryScope, MemorySensitivity, RecallSet, SupplementalCapabilityGrant,
+    TemporalState, WorkspaceMemoryBinding, WorkspaceMemoryBindingState,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 const MAX_TOOL_TEXT_BYTES: usize = 256 * 1024;
@@ -124,6 +128,136 @@ impl crate::application::memory_gateway::SupplementalBindingNegotiator
         .negotiate(backend_id, &CancellationToken::new())
         .await
         .map_err(anyhow::Error::from)
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::application::memory_gateway::SupplementalBindingRecallPort
+    for McpSupplementalBindingNegotiator
+{
+    async fn recall(
+        &self,
+        binding: &WorkspaceMemoryBinding,
+        request: &mnemosyne::RecallRequest,
+    ) -> anyhow::Result<RecallSet> {
+        anyhow::ensure!(
+            binding.state == WorkspaceMemoryBindingState::Active
+                && binding.verified_capability_digest.is_some(),
+            "supplemental workspace binding is not active"
+        );
+        let expected: std::collections::BTreeSet<_> = binding
+            .expected_read_sources
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let cancel = CancellationToken::new();
+        let mut items = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut degraded = false;
+        for handle in &binding.read_destination_handles {
+            let adapter =
+                SupplementalMcpAdapter::new(self.manager.clone(), handle.clone(), self.timeout);
+            let grant = match adapter.negotiate(&binding.backend_id, &cancel).await {
+                Ok(grant) => grant,
+                Err(_) => {
+                    degraded = true;
+                    continue;
+                }
+            };
+            for source in grant
+                .read_sources
+                .iter()
+                .filter(|source| expected.contains(source.as_str()))
+            {
+                let hits = match adapter
+                    .query(
+                        &request.query,
+                        source,
+                        request.max_items.min(MAX_RESULTS),
+                        &cancel,
+                    )
+                    .await
+                {
+                    Ok(hits) => hits,
+                    Err(_) => {
+                        degraded = true;
+                        continue;
+                    }
+                };
+                for hit in hits {
+                    if hit.source_id != *source
+                        || !seen.insert((hit.source_id.clone(), hit.slug.clone()))
+                    {
+                        continue;
+                    }
+                    let content = if hit.content.starts_with("---\n") {
+                        hit.content.clone()
+                    } else {
+                        match adapter.get_page(&hit.slug, &cancel).await {
+                            Ok(content) => content,
+                            Err(_) => {
+                                degraded = true;
+                                continue;
+                            }
+                        }
+                    };
+                    let page = SupplementalDocument {
+                        slug: hit.slug.clone(),
+                        content,
+                    };
+                    let Ok(mut item) = page.to_recall_item(request.current_at) else {
+                        degraded = true;
+                        continue;
+                    };
+                    if matches!(
+                        item.metadata.sensitivity,
+                        MemorySensitivity::Confidential | MemorySensitivity::Restricted
+                    ) || (!request.include_historical
+                        && matches!(
+                            item.temporal_state,
+                            TemporalState::Superseded | TemporalState::Expired
+                        ))
+                    {
+                        continue;
+                    }
+                    let mut hasher = Sha256::new();
+                    for value in [
+                        binding.backend_id.as_bytes(),
+                        hit.source_id.as_bytes(),
+                        hit.slug.as_bytes(),
+                        item.content.as_bytes(),
+                    ] {
+                        hasher.update((value.len() as u64).to_le_bytes());
+                        hasher.update(value);
+                    }
+                    let external_id = format!("supplemental:sha256:{:x}", hasher.finalize());
+                    item.metadata.record_id = external_id;
+                    item.metadata.provenance.source = "supplemental".into();
+                    item.metadata.provenance.source_id = format!("{}:{}", hit.source_id, hit.slug);
+                    item.metadata.provenance.principal = None;
+                    item.scope = MemoryScope::Workspace(binding.workspace_key.as_str().to_owned());
+                    item.authority = MemoryAuthority::ExternalReference;
+                    item.score = hit.score.clamp(0.0, 1.0) as f32;
+                    items.push(item);
+                    if items.len() >= request.max_items {
+                        break;
+                    }
+                }
+                if items.len() >= request.max_items {
+                    break;
+                }
+            }
+            if items.len() >= request.max_items {
+                break;
+            }
+        }
+        Ok(RecallSet {
+            items,
+            degraded_sources: degraded
+                .then(|| "supplemental".to_owned())
+                .into_iter()
+                .collect(),
+        })
     }
 }
 

@@ -6,8 +6,8 @@ use std::time::Duration;
 use corpus::tools::mcp::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use corpus::tools::mcp::manager::McpManager;
 use executive::testing::supplemental_memory::{
-    SupplementalAdapterErrorCategory, SupplementalHealthState, SupplementalMcpAdapter,
-    SupplementalSchemaStatus,
+    McpSupplementalBindingNegotiator, SupplementalAdapterErrorCategory, SupplementalHealthState,
+    SupplementalMcpAdapter, SupplementalSchemaStatus,
 };
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
@@ -16,6 +16,10 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use mnemosyne::supplemental::SupplementalDocument;
+use mnemosyne::{
+    MemoryAuthority, MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity,
+    RecallRequest, WorkspaceMemoryBinding, WorkspaceMemoryBindingState, WorkspaceMemoryKey,
+};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
@@ -184,6 +188,14 @@ fn response(status: StatusCode, body: Value) -> Response<Full<Bytes>> {
 }
 
 async fn build_adapter(state: FakeState, timeout: Duration) -> (SupplementalMcpAdapter, FakeState) {
+    let (manager, state) = build_manager(state).await;
+    (
+        SupplementalMcpAdapter::new(manager, "gbrain", timeout),
+        state,
+    )
+}
+
+async fn build_manager(state: FakeState) -> (Arc<McpManager>, FakeState) {
     let url = spawn_server(state.clone()).await;
     let mut manager = McpManager::new(McpConfig {
         servers: vec![McpServerConfig {
@@ -204,10 +216,7 @@ async fn build_adapter(state: FakeState, timeout: Duration) -> (SupplementalMcpA
         ..Default::default()
     });
     manager.connect_all().await.unwrap();
-    (
-        SupplementalMcpAdapter::new(Arc::new(manager), "gbrain", timeout),
-        state,
-    )
+    (Arc::new(manager), state)
 }
 
 #[tokio::test]
@@ -278,6 +287,88 @@ async fn negotiate_uses_effective_whoami_grants_and_fails_closed() {
             .category,
         SupplementalAdapterErrorCategory::Schema
     );
+}
+
+#[tokio::test]
+async fn bound_recall_uses_only_verified_sources_and_relabels_remote_authority() {
+    let state = FakeState::valid();
+    let now = chrono::Utc::now();
+    let page = SupplementalDocument::build(
+        "semantic_fact",
+        "Bound fact",
+        "Remote content remains an untrusted reference.",
+        &MemoryMetadata {
+            record_id: "remote-controlled-id".into(),
+            provenance: MemoryProvenance {
+                source: "remote-claim".into(),
+                source_id: "remote-source".into(),
+                principal: Some("remote-principal".into()),
+                source_commit: None,
+            },
+            source_time: Some(now),
+            observed_time: now,
+            valid_from: Some(now),
+            valid_until: None,
+            supersedes: None,
+            superseded_by: None,
+            confidence: 0.9,
+            sensitivity: MemorySensitivity::Internal,
+        },
+    )
+    .unwrap();
+    state.responses.lock().unwrap().insert(
+        "get_page".into(),
+        json!({"content":[{"type":"text","text":serde_json::to_string(&json!({"content":page.content})).unwrap()}]}),
+    );
+    let (manager, state) = build_manager(state).await;
+    let router = McpSupplementalBindingNegotiator::new(manager, Duration::from_secs(1));
+    let binding = WorkspaceMemoryBinding {
+        schema_version: 1,
+        workspace_key: WorkspaceMemoryKey::from_verified("ws:repo:0123456789abcdef").unwrap(),
+        principal_id: "uid:1000".into(),
+        backend_id: "supplemental/gbrain".into(),
+        write_destination_handle: "gbrain".into(),
+        read_destination_handles: vec!["gbrain".into()],
+        expected_write_source: "project".into(),
+        expected_read_sources: vec!["personal".into(), "project".into()],
+        credential_ref: "mcp-server:gbrain".into(),
+        state: WorkspaceMemoryBindingState::Active,
+        verified_capability_digest: Some("sha256:test".into()),
+        revision: 1,
+        updated_at_ms: 1,
+    };
+    let recalled = executive::application::memory_gateway::SupplementalBindingRecallPort::recall(
+        &router,
+        &binding,
+        &RecallRequest {
+            session: "session".into(),
+            query: "memory".into(),
+            max_items: 4,
+            max_content_bytes: 4096,
+            current_at: Some(now),
+            include_historical: false,
+            mode: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(recalled.items.len(), 1);
+    let item = &recalled.items[0];
+    assert!(item.metadata.record_id.starts_with("supplemental:sha256:"));
+    assert_eq!(item.metadata.provenance.source, "supplemental");
+    assert_eq!(item.metadata.provenance.principal, None);
+    assert_eq!(item.authority, MemoryAuthority::ExternalReference);
+    assert_eq!(
+        item.scope,
+        MemoryScope::Workspace(binding.workspace_key.as_str().into())
+    );
+    assert!(state
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(name, _)| name == "query")
+        .all(|(_, args)| args["source_id"] == "personal" || args["source_id"] == "project"));
 }
 
 #[tokio::test]

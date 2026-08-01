@@ -285,6 +285,32 @@ impl WorkspaceMemoryBindingRegistry {
         self.get(principal_id, workspace_key)
     }
 
+    pub fn mark_incompatible(
+        &self,
+        principal_id: &str,
+        workspace_key: &WorkspaceMemoryKey,
+        expected_revision: u64,
+        now_ms: i64,
+    ) -> Result<Option<WorkspaceMemoryBinding>, WorkspaceMemoryBindingError> {
+        validate_id(principal_id)?;
+        let connection = self.connection()?;
+        let changed = connection.execute(
+            "UPDATE workspace_memory_bindings SET state='incompatible',
+             verified_capability_digest=NULL,revision=revision+1,updated_at_ms=?4
+             WHERE principal_id=?1 AND workspace_key=?2 AND revision=?3",
+            params![
+                principal_id,
+                workspace_key.as_str(),
+                expected_revision,
+                now_ms
+            ],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get(principal_id, workspace_key)
+    }
+
     pub fn get(
         &self,
         principal_id: &str,

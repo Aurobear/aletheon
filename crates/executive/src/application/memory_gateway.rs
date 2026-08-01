@@ -40,6 +40,15 @@ pub trait SupplementalBindingNegotiator: Send + Sync {
     ) -> anyhow::Result<SupplementalCapabilityGrant>;
 }
 
+#[async_trait::async_trait]
+pub trait SupplementalBindingRecallPort: Send + Sync {
+    async fn recall(
+        &self,
+        binding: &WorkspaceMemoryBinding,
+        request: &RecallRequest,
+    ) -> anyhow::Result<mnemosyne::RecallSet>;
+}
+
 pub struct MemoryGatewayService {
     ledger: Arc<MemoryIntakeLedger>,
     memory: Arc<dyn mnemosyne::MemoryService>,
@@ -47,6 +56,7 @@ pub struct MemoryGatewayService {
     installation_id: String,
     bindings: Arc<WorkspaceMemoryBindingRegistry>,
     binding_negotiator: Option<Arc<dyn SupplementalBindingNegotiator>>,
+    supplemental_recall: Option<Arc<dyn SupplementalBindingRecallPort>>,
 }
 
 impl MemoryGatewayService {
@@ -72,7 +82,7 @@ impl MemoryGatewayService {
         let bindings = Arc::new(WorkspaceMemoryBindingRegistry::open(
             root.join(BINDINGS_DB_FILE),
         )?);
-        Self::from_parts(ledger, memory, clock, installation_id, bindings, None)
+        Self::from_parts(ledger, memory, clock, installation_id, bindings, None, None)
     }
 
     pub fn from_parts(
@@ -82,6 +92,7 @@ impl MemoryGatewayService {
         installation_id: impl Into<String>,
         bindings: Arc<WorkspaceMemoryBindingRegistry>,
         binding_negotiator: Option<Arc<dyn SupplementalBindingNegotiator>>,
+        supplemental_recall: Option<Arc<dyn SupplementalBindingRecallPort>>,
     ) -> anyhow::Result<Self> {
         let installation_id = installation_id.into();
         let installation_id = installation_id.trim().to_owned();
@@ -94,7 +105,16 @@ impl MemoryGatewayService {
             installation_id,
             bindings,
             binding_negotiator,
+            supplemental_recall,
         })
+    }
+
+    pub fn with_supplemental_recall(
+        mut self,
+        supplemental_recall: Arc<dyn SupplementalBindingRecallPort>,
+    ) -> Self {
+        self.supplemental_recall = Some(supplemental_recall);
+        self
     }
 
     pub fn with_binding_negotiator(
@@ -252,6 +272,9 @@ impl MemoryGatewayService {
     ) -> anyhow::Result<MemoryRecallResultV1> {
         request.validate()?;
         let workspace_key = self.resolve_workspace_key(&request.working_dir)?;
+        let binding = self
+            .ensure_binding(&principal_id.0, workspace_key.clone())
+            .await?;
         let session_scope =
             client_session_scope(&principal_id.0, connection_kind, &request.client_session_id);
         let requested_kinds = request.requested_kinds.clone();
@@ -276,10 +299,39 @@ impl MemoryGatewayService {
             max_sensitivity: MemorySensitivity::Restricted,
             allowed_authorities: all_authorities(),
         };
-        let recalled = self
+        let mut recalled = self
             .memory
-            .recall_with_prefilter(local_request, &prefilter)
+            .recall_with_prefilter(local_request.clone(), &prefilter)
             .await?;
+        if binding.state == WorkspaceMemoryBindingState::Active {
+            match self.verify_active_binding(&binding).await {
+                Ok(true) => {
+                    if let Some(port) = &self.supplemental_recall {
+                        match port.recall(&binding, &local_request).await {
+                            Ok(remote) => {
+                                recalled.items.extend(remote.items);
+                                recalled.degraded_sources.extend(remote.degraded_sources);
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, workspace = %binding.workspace_key, "bound supplemental recall degraded");
+                                recalled.degraded_sources.push("supplemental".into());
+                            }
+                        }
+                    } else {
+                        recalled.degraded_sources.push("supplemental".into());
+                    }
+                }
+                Ok(false) => recalled
+                    .degraded_sources
+                    .push("supplemental_incompatible".into()),
+                Err(error) => {
+                    tracing::warn!(%error, workspace = %binding.workspace_key, "supplemental grant revalidation unavailable");
+                    recalled.degraded_sources.push("supplemental".into());
+                }
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut used_bytes = 0usize;
         let items = recalled
             .items
             .into_iter()
@@ -288,6 +340,16 @@ impl MemoryGatewayService {
                     .as_ref()
                     .is_none_or(|kinds| kinds.contains(&record_kind(item.kind)))
             })
+            .filter(|item| seen.insert(item.metadata.record_id.clone()))
+            .filter(|item| {
+                let next = used_bytes.saturating_add(item.content.len());
+                if next > local_request.max_content_bytes {
+                    return false;
+                }
+                used_bytes = next;
+                true
+            })
+            .take(local_request.max_items)
             .map(memory_item)
             .collect::<Vec<_>>();
         let visible_record_ids = items
@@ -425,6 +487,47 @@ impl MemoryGatewayService {
             can_read,
             can_write: write.can_write,
         })
+    }
+
+    async fn verify_active_binding(
+        &self,
+        binding: &WorkspaceMemoryBinding,
+    ) -> anyhow::Result<bool> {
+        let proposal = WorkspaceMemoryBindingProposal {
+            backend_id: binding.backend_id.clone(),
+            write_destination_handle: binding.write_destination_handle.clone(),
+            read_destination_handles: binding.read_destination_handles.clone(),
+            expected_write_source: binding.expected_write_source.clone(),
+            expected_read_sources: binding.expected_read_sources.clone(),
+            credential_ref: binding.credential_ref.clone(),
+        };
+        let grant = self.negotiate_binding(&proposal).await?;
+        let registry = self.bindings.clone();
+        let binding = binding.clone();
+        let now_ms = self.clock.wall_now().0.max(0);
+        tokio::task::spawn_blocking(move || {
+            let preview = registry.preview(
+                &binding.principal_id,
+                &binding.workspace_key,
+                &proposal,
+                &grant,
+                now_ms,
+            )?;
+            let unchanged = preview.compatible
+                && preview.binding.verified_capability_digest == binding.verified_capability_digest;
+            if !unchanged {
+                let _ = registry.mark_incompatible(
+                    &binding.principal_id,
+                    &binding.workspace_key,
+                    binding.revision,
+                    now_ms,
+                )?;
+            }
+            Ok::<_, mnemosyne::WorkspaceMemoryBindingError>(unchanged)
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("memory binding verification task failed: {error}"))?
+        .map_err(anyhow::Error::from)
     }
 
     fn resolve_workspace_key(&self, working_dir: &Path) -> anyhow::Result<WorkspaceMemoryKey> {
