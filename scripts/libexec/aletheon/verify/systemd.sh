@@ -127,7 +127,7 @@ case "$mode" in
       '^Requires=aletheon.socket$' '^After=aletheon.socket$' \
       '^Restart=on-failure$' '^NoNewPrivileges=yes$' \
       '^ProtectSystem=strict$' '^ProtectHome=read-only$' \
-      '^PrivateTmp=yes$' '^PrivateDevices=yes$' \
+      '^PrivateTmp=yes$' \
       '^RestrictAddressFamilies=AF_UNIX$' '^LimitCORE=0$'; do
       require_contract "$staged_memory_agent" "$contract" 'Memory Agent unit verification'
     done

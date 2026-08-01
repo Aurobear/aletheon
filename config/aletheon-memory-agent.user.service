@@ -18,7 +18,10 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
-PrivateDevices=yes
+# PrivateDevices= requires capability manipulation that is unavailable in
+# unprivileged user managers on some production hosts. The agent already runs
+# as the owning user, receives no device capabilities, and has no state or
+# workspace paths; keep the portable user-service boundary fail-closed instead.
 RestrictAddressFamilies=AF_UNIX
 LockPersonality=yes
 LimitCORE=0

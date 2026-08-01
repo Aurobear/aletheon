@@ -24,6 +24,9 @@ grep -q 'ExecStart=.*aletheon memory-agent serve --official-user-socket' \
   config/aletheon-memory-agent.user.service
 grep -q '^ProtectSystem=strict$' config/aletheon-memory-agent.user.service
 grep -q '^ProtectHome=read-only$' config/aletheon-memory-agent.user.service
+if grep -q '^PrivateDevices=yes$' config/aletheon-memory-agent.user.service; then
+  echo 'Memory Agent user unit requests non-portable capability manipulation' >&2; exit 1
+fi
 if grep -Eq '^(EnvironmentFile|StateDirectory|CacheDirectory|ReadWritePaths|WorkingDirectory)=' \
     config/aletheon-memory-agent.user.service; then
   echo 'Memory Agent unit gained state, workspace, or credential authority' >&2; exit 1
