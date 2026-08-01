@@ -326,7 +326,7 @@ impl MemoryMaintenanceController {
                         reasons.push("score_below_candidate_threshold".into());
                     }
                     let receipt = self
-                        .settle(
+                        .settle_lifecycle(
                             &claim,
                             MemoryLifecycleStateV1::Rejected,
                             Vec::new(),
@@ -394,7 +394,7 @@ impl MemoryMaintenanceController {
                         }
                     }
                     let mut receipt = self
-                        .settle(
+                        .settle_lifecycle(
                             &claim,
                             MemoryLifecycleStateV1::PromotedLocal,
                             vec![record_id.clone()],
@@ -418,7 +418,7 @@ impl MemoryMaintenanceController {
         Ok(result)
     }
 
-    async fn settle(
+    async fn settle_lifecycle(
         &self,
         claim: &mnemosyne::MemoryMaintenanceClaim,
         state: MemoryLifecycleStateV1,

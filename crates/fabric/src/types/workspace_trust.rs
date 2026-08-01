@@ -176,6 +176,8 @@ pub fn decide(input: &TrustEvaluationInput) -> WorkspaceTrustDecision {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     fn ws() -> WorkspaceIdentity {

@@ -116,6 +116,10 @@ fn request_validation_enforces_all_bounds() {
 
     let mut invalid = spawn_request();
     invalid.budget.max_tool_calls = 0;
+    invalid.validate().unwrap();
+
+    let mut invalid = spawn_request();
+    invalid.budget.max_depth = 0;
     assert!(invalid.validate().is_err());
 
     let receipt = AgentBroadcastRef {

@@ -20,7 +20,6 @@ use crate::core::evolution_coordinator::EvolutionConfig;
 use crate::core::orchestrator::AletheonExecutive;
 use crate::host::daemon::handler::RequestHandler;
 use anyhow::Context;
-use cognit::core::reflector::Reflector;
 use corpus::hook::builtin::audit_hook;
 use corpus::security::socket_approval::SocketApprovalGate;
 use corpus::security::storm_breaker::StormBreaker;
@@ -32,10 +31,7 @@ use dasein::{SelfField, SelfFieldConfig};
 use fabric::CanonicalEventBus;
 use fabric::Clock;
 use fabric::Registry;
-use fabric::Version;
-use fabric::{Subsystem, SubsystemContext};
-use metacog::DefaultMetaRuntime;
-use mnemosyne::runtime::EpisodicMemory;
+use fabric::Subsystem;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
@@ -495,30 +491,10 @@ impl RequestHandler {
             runtime.seed_goal(desc, subs);
         }
 
-        // Pipeline, reflector, episodic memory
-        let meta_runtime = Arc::new(
-            DefaultMetaRuntime::new(Version::new(0, 1, 0), clock.clone())
-                .with_genome_path(data_dir.join("genome.yaml"))
-                .with_work_dir(data_dir.join("metacog-sandbox"), clock.clone())
-                .with_lineage_path(data_dir.join("lineage").join("genome.jsonl"), clock.clone())?,
-        );
-        let metacog: Arc<dyn metacog::MetacogService> =
-            Arc::new(metacog::DefaultMetacogService::with_state_path(
-                meta_runtime,
-                clock.clone(),
-                data_dir.join("metacog-mutations.json"),
-            )?);
-        let reflector = Reflector::new(clock.clone());
-        let episodic_db_path = data_dir.join("episodic.db");
-        let mut episodic_memory = EpisodicMemory::new(episodic_db_path, clock.clone());
-        let ctx = SubsystemContext {
-            name: "episodic_memory".into(),
-            working_dir: data_dir.clone(),
-            config: serde_json::Value::Null,
-            bus: None,
-        };
-        episodic_memory.init(&ctx).await?;
-        let episodic_memory = Arc::new(Mutex::new(episodic_memory));
+        let cognition = super::cognition::compose(&data_dir, clock.clone()).await?;
+        let metacog = cognition.metacog;
+        let reflector = cognition.reflector;
+        let episodic_memory = cognition.episodic_memory;
 
         // Skills
         let skills_dir = fabric::paths::skills_dir();
@@ -1126,28 +1102,13 @@ impl RequestHandler {
                 )
             })
             .collect();
-        let mut memory_gateway = crate::application::memory_gateway::MemoryGatewayService::open(
+        let memory_gateway = super::memory::compose_gateway(
             &data_dir,
-            memory_group.local_memory_service.clone(),
+            &memory_group,
             clock.clone(),
-        )
-        .context("opening versioned memory gateway")?;
-        if let Some(manager) = retained_mcp.clone() {
-            let supplemental_router = Arc::new(
-                crate::adapters::gbrain::McpSupplementalBindingNegotiator::new(
-                    manager,
-                    std::time::Duration::from_millis(
-                        config.memory_policy.supplemental.request_timeout_ms,
-                    ),
-                    &config.memory_policy.supplemental.destination_attestations,
-                )
-                .context("validating supplemental destination attestations")?,
-            );
-            memory_gateway = memory_gateway
-                .with_binding_negotiator(supplemental_router.clone())
-                .with_supplemental_recall(supplemental_router);
-        }
-        let memory_gateway = Arc::new(memory_gateway);
+            retained_mcp.clone(),
+            &config.memory_policy,
+        )?;
         let agent_svc = super::services::build_agent_services(
             &data_dir,
             kernel.clone(),
@@ -1537,27 +1498,13 @@ impl RequestHandler {
         } else {
             None
         };
-        let semantic_proposer = Arc::new(
-            crate::application::memory_maintenance::AgentControlMemorySemanticProposal::new(
-                memory_agent_control,
-                config.memory_policy.policy.clone(),
-            )
-            .context("constructing AgentRuntime memory semantic proposer")?,
-        );
-        let memory_maintenance = Arc::new(
-            crate::application::memory_maintenance::MemoryMaintenanceController::new(
-                memory_gateway.intake_ledger(),
-                memory_group.local_memory_service.clone(),
-                clock.clone(),
-                config.memory_policy.policy.clone(),
-                semantic_proposer,
-            )
-            .context("constructing memory maintenance controller")?
-            .with_projection(
-                memory_gateway.binding_registry(),
-                memory_group.supplemental_spool.clone(),
-            ),
-        );
+        let memory_maintenance = super::memory::compose_maintenance(
+            &memory_gateway,
+            &memory_group,
+            clock.clone(),
+            memory_agent_control,
+            &config.memory_policy,
+        )?;
         let handler_ports = Arc::new(crate::host::daemon::handler::ports::HandlerPorts::new(
             kernel.clone(),
             admin_pending_approvals.clone(),
