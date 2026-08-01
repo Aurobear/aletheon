@@ -487,6 +487,94 @@ async fn bound_recall_uses_only_verified_sources_and_relabels_remote_authority()
 }
 
 #[tokio::test]
+async fn bound_recall_skips_foreign_pages_without_degrading_the_source() {
+    let state = FakeState::valid();
+    let now = chrono::Utc::now();
+    let page = SupplementalDocument::build(
+        "semantic_fact",
+        "Bound fact",
+        "Only Aletheon memory projections enter governed recall.",
+        &MemoryMetadata {
+            record_id: "projected-memory".into(),
+            provenance: MemoryProvenance {
+                source: "aletheon".into(),
+                source_id: "intake:one".into(),
+                principal: Some("uid:1000".into()),
+                source_commit: None,
+            },
+            source_time: None,
+            observed_time: now,
+            valid_from: Some(now),
+            valid_until: None,
+            supersedes: None,
+            superseded_by: None,
+            confidence: 0.9,
+            sensitivity: MemorySensitivity::Internal,
+        },
+    )
+    .unwrap();
+    state.responses.lock().unwrap().insert(
+        "query".into(),
+        json!({"content":[{"type":"text","text":serde_json::to_string(&json!([
+            {
+                "source_id":"project",
+                "slug":page.slug,
+                "chunk_text":page.content,
+                "score":0.9
+            },
+            {
+                "source_id":"project",
+                "slug":"system/aletheon-source-attestation",
+                "chunk_text":"---\nschema: aletheon.source-attestation/v1\n---\nmarker",
+                "score":0.8
+            }
+        ])).unwrap()}]}),
+    );
+    let (manager, _) = build_manager(state).await;
+    let marker = "---\nschema: aletheon.memory/v1\n---\nbody";
+    let policy = attestation("gbrain", "project", marker);
+    let router =
+        McpSupplementalBindingNegotiator::new(manager, Duration::from_secs(1), &[policy]).unwrap();
+    let binding = WorkspaceMemoryBinding {
+        schema_version: 1,
+        workspace_key: WorkspaceMemoryKey::from_verified("ws:repo:0123456789abcdef").unwrap(),
+        principal_id: "uid:1000".into(),
+        backend_id: "supplemental/gbrain".into(),
+        write_destination_handle: "gbrain".into(),
+        read_destination_handles: vec!["gbrain".into()],
+        expected_write_source: "project".into(),
+        expected_read_sources: vec!["project".into()],
+        credential_ref: "mcp-server:gbrain".into(),
+        state: WorkspaceMemoryBindingState::Active,
+        verified_capability_digest: Some("sha256:test".into()),
+        revision: 1,
+        updated_at_ms: 1,
+    };
+
+    let recalled = executive::application::memory_gateway::SupplementalBindingRecallPort::recall(
+        &router,
+        &binding,
+        &RecallRequest {
+            session: "session".into(),
+            query: "memory".into(),
+            max_items: 4,
+            max_content_bytes: 4096,
+            current_at: Some(now),
+            include_historical: false,
+            mode: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(recalled.items.len(), 1);
+    assert!(recalled.degraded_sources.is_empty());
+    assert!(recalled.items[0]
+        .content
+        .contains("Only Aletheon memory projections"));
+}
+
+#[tokio::test]
 async fn schema_drift_degrades_without_calling_remote() {
     let mut state = FakeState::valid();
     state.tools["tools"]

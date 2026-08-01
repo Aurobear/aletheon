@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use corpus::tools::mcp::manager::McpManager;
-use mnemosyne::supplemental::page::MAX_PAGE_BYTES;
+use mnemosyne::supplemental::page::{MAX_PAGE_BYTES, PAGE_SCHEMA_VERSION};
 use mnemosyne::supplemental::{validate_tools_list, SupplementalDocument};
 use mnemosyne::{
     MemoryAuthority, MemoryScope, MemorySensitivity, RecallSet, SupplementalCapabilityGrant,
@@ -249,6 +249,14 @@ impl crate::application::memory_gateway::SupplementalBindingRecallPort
                         slug: hit.slug.clone(),
                         content,
                     };
+                    match is_supplemental_memory_document(&page.content) {
+                        Ok(true) => {}
+                        Ok(false) => continue,
+                        Err(()) => {
+                            degraded = true;
+                            continue;
+                        }
+                    }
                     let Ok(mut item) = page.to_recall_item(request.current_at) else {
                         degraded = true;
                         continue;
@@ -835,6 +843,26 @@ fn parse_page_content(text: &str) -> anyhow::Result<String> {
     }
     content.push('\n');
     Ok(content)
+}
+
+/// Distinguish Aletheon-owned memory projections from ordinary pages sharing
+/// the same source. A foreign schema is expected in a general-purpose GBrain
+/// source (for example the source-attestation marker) and is therefore skipped
+/// rather than reported as a backend outage. A page that claims the Aletheon
+/// memory schema but has malformed frontmatter remains degraded/fail-closed.
+fn is_supplemental_memory_document(content: &str) -> Result<bool, ()> {
+    let Some(remainder) = content.strip_prefix("---\n") else {
+        return Ok(false);
+    };
+    let Some((yaml, _)) = remainder.split_once("\n---\n") else {
+        return Err(());
+    };
+    let frontmatter = serde_yaml::from_str::<serde_yaml::Value>(yaml).map_err(|_| ())?;
+    let schema = frontmatter
+        .as_mapping()
+        .and_then(|mapping| mapping.get(serde_yaml::Value::String("schema".into())))
+        .and_then(serde_yaml::Value::as_str);
+    Ok(schema == Some(PAGE_SCHEMA_VERSION))
 }
 
 fn classify_error(error: &anyhow::Error) -> SupplementalAdapterErrorCategory {
