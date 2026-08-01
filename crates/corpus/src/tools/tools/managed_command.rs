@@ -1082,14 +1082,6 @@ mod tests {
             .await
             .unwrap();
         registry
-            .record_diff_review(
-                transaction.transaction_id,
-                "artifact://sha256/test-diff".into(),
-                Vec::new(),
-            )
-            .await
-            .unwrap();
-        registry
             .set_validation_plan(
                 transaction.transaction_id,
                 vec![fabric::change_transaction::ValidationPlanStep {
@@ -1102,6 +1094,14 @@ mod tests {
                 }],
             )
             .await;
+        registry
+            .record_diff_review(
+                transaction.transaction_id,
+                "artifact://sha256/test-diff".into(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
         let sessions = ManagedCommandSessions::with_change_transactions(registry.clone());
         let result = ValidationRunTool::new(sessions)
             .execute(
@@ -1249,14 +1249,6 @@ mod tests {
             .await
             .unwrap();
         registry
-            .record_diff_review(
-                transaction.transaction_id,
-                "artifact://sha256/test-diff".into(),
-                Vec::new(),
-            )
-            .await
-            .unwrap();
-        registry
             .set_validation_plan(
                 transaction.transaction_id,
                 vec![fabric::change_transaction::ValidationPlanStep {
@@ -1269,6 +1261,14 @@ mod tests {
                 }],
             )
             .await;
+        registry
+            .record_diff_review(
+                transaction.transaction_id,
+                "artifact://sha256/test-diff".into(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
         let sessions = ManagedCommandSessions::with_change_transactions(registry);
         let result = ValidationRunTool::new(sessions)
             .execute(
@@ -1296,14 +1296,6 @@ mod tests {
             .record_apply(transaction.transaction_id, transaction.current.clone())
             .await
             .unwrap();
-        registry
-            .record_diff_review(
-                transaction.transaction_id,
-                "artifact://sha256/test-diff".into(),
-                Vec::new(),
-            )
-            .await
-            .unwrap();
         let command = "printf mutated > input.txt";
         registry
             .set_validation_plan(
@@ -1318,6 +1310,14 @@ mod tests {
                 }],
             )
             .await;
+        registry
+            .record_diff_review(
+                transaction.transaction_id,
+                "artifact://sha256/test-diff".into(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
         let result = ValidationRunTool::new(ManagedCommandSessions::with_change_transactions(
             registry.clone(),
         ))
