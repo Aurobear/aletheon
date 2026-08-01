@@ -250,8 +250,8 @@ impl SqliteBroadcastStore {
         );
         let broadcast: WorkspaceBroadcast = serde_json::from_slice(&broadcast_json)?;
         anyhow::ensure!(
-            receipt.transition.previous_version == broadcast.dasein_version,
-            "integration starts from the wrong Dasein version"
+            receipt.transition.previous_version.0 >= broadcast.dasein_version.0,
+            "integration starts before the broadcast Dasein version"
         );
         insert_idempotent_blob(
             &connection,

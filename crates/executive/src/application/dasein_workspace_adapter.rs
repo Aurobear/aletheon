@@ -17,6 +17,7 @@ use super::conscious_core_ports::{DaseinIntegration, DaseinWorkspacePort};
 const MAX_LIVED_SEMANTIC_BYTES: usize = 24 * 1024;
 const MAX_GROUNDED_OUTCOME_BYTES: usize = 24 * 1024;
 const MAX_GROUNDED_OUTCOME_VERSION_RETRIES: usize = 3;
+const MAX_WORKSPACE_INTEGRATION_VERSION_RETRIES: usize = 3;
 const EVALUATION_DASEIN_EVENT_NAMESPACE: uuid::Uuid =
     uuid::Uuid::from_u128(0x91265e16_0709_45a0_a34d_0913240eef82);
 
@@ -278,11 +279,6 @@ impl DaseinWorkspacePort for DaseinWorkspaceAdapter {
         broadcast: &WorkspaceBroadcast,
     ) -> anyhow::Result<DaseinIntegration> {
         broadcast.validate()?;
-        let previous = self.dasein.self_version().await;
-        anyhow::ensure!(
-            previous == broadcast.dasein_version,
-            "broadcast Dasein version is stale"
-        );
         let checksum = broadcast.checksum()?;
         let event_id = SelfEventId(uuid::Uuid::new_v5(
             &uuid::Uuid::NAMESPACE_OID,
@@ -296,32 +292,55 @@ impl DaseinWorkspacePort for DaseinWorkspaceAdapter {
             ),
             MAX_LIVED_SEMANTIC_BYTES,
         );
-        let transition = self
-            .dasein
-            .transition(SelfTransitionRequest {
-                event_id,
-                source: ExperienceSource::Agora,
-                observed_at: self.clock.wall_now(),
-                content: InterpretedExperience::Lived {
-                    semantic,
-                    action: None,
-                    perception: Some(format!(
-                        "workspace broadcast {}:{}",
-                        broadcast.space.0, broadcast.epoch.0
-                    )),
-                },
-                provenance: ExperienceProvenance {
-                    producer: "conscious-core".into(),
-                    session_id: None,
-                    turn_id: None,
-                    source_ref: Some(format!(
-                        "broadcast:{}:{}",
-                        broadcast.space.0, broadcast.epoch.0
-                    )),
-                },
-                expected_version: previous,
-            })
-            .await?;
+        let mut transition = None;
+        for attempt in 0..MAX_WORKSPACE_INTEGRATION_VERSION_RETRIES {
+            // The broadcast records the self version used for competition. Other
+            // sessions may legitimately advance Dasein before this integration
+            // is committed, so integrate against the current canonical head and
+            // retry a bounded optimistic conflict rather than failing the turn.
+            let expected_version = self.dasein.self_version().await;
+            let result = self
+                .dasein
+                .transition(SelfTransitionRequest {
+                    event_id,
+                    source: ExperienceSource::Agora,
+                    observed_at: self.clock.wall_now(),
+                    content: InterpretedExperience::Lived {
+                        semantic: semantic.clone(),
+                        action: None,
+                        perception: Some(format!(
+                            "workspace broadcast {}:{}",
+                            broadcast.space.0, broadcast.epoch.0
+                        )),
+                    },
+                    provenance: ExperienceProvenance {
+                        producer: "conscious-core".into(),
+                        session_id: None,
+                        turn_id: None,
+                        source_ref: Some(format!(
+                            "broadcast:{}:{}",
+                            broadcast.space.0, broadcast.epoch.0
+                        )),
+                    },
+                    expected_version,
+                })
+                .await;
+            match result {
+                Ok(receipt) => {
+                    transition = Some(receipt);
+                    break;
+                }
+                Err(error)
+                    if attempt + 1 < MAX_WORKSPACE_INTEGRATION_VERSION_RETRIES
+                        && error.to_string().contains("version conflict") =>
+                {
+                    tokio::task::yield_now().await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        let transition =
+            transition.expect("bounded Dasein workspace integration retry loop always resolves");
         let self_view = self.snapshot_self_view(transition.current_version);
         self_view.validate()?;
         Ok(DaseinIntegration {
@@ -361,6 +380,11 @@ mod tests {
     use super::*;
     use cognit::core::GroundedOutcomeSink;
     use fabric::cognitive_workflow::GroundedCognitiveOutcome;
+    use fabric::{
+        AgoraSpaceId, BroadcastEpoch, ContentId, MonoTime, ProcessId, SelectionExplanation,
+        SelectionResult, VisibilityScope, WallTime, WorkspaceAttribution, WorkspaceCandidate,
+        WorkspaceContent, WorkspaceObservation, WorkspaceProvenance, WORKSPACE_SCHEMA_V1,
+    };
 
     #[tokio::test]
     async fn grounded_outcome_advances_the_canonical_dasein_ledger() {
@@ -375,5 +399,72 @@ mod tests {
         .unwrap();
 
         assert_eq!(dasein.self_version().await.0, 1);
+    }
+
+    #[tokio::test]
+    async fn workspace_integration_accepts_an_intervening_dasein_transition() {
+        let clock = Arc::new(kernel::chronos::TestClock::default());
+        let dasein = Arc::new(dasein::dasein::DaseinModule::new(clock.clone()).0);
+        let adapter = DaseinWorkspaceAdapter::new(dasein.clone(), clock);
+        let source = ProcessId::new();
+        let candidate = WorkspaceCandidate {
+            schema_version: WORKSPACE_SCHEMA_V1,
+            id: ContentId(uuid::Uuid::new_v4()),
+            space: AgoraSpaceId("concurrent-session".into()),
+            source,
+            turn: None,
+            content: WorkspaceContent::Observation(WorkspaceObservation {
+                what: "current input".into(),
+                source: "test".into(),
+                data: serde_json::json!({"kind": "input"}),
+                attribution: WorkspaceAttribution::User,
+            }),
+            confidence: 1.0,
+            salience: SalienceVector {
+                urgency: 1.0,
+                goal_relevance: 1.0,
+                self_relevance: 1.0,
+                novelty: 1.0,
+                confidence: 1.0,
+                prediction_error: 0.0,
+                affect_intensity: 0.0,
+                social_relevance: 0.0,
+            },
+            provenance: WorkspaceProvenance {
+                producer: source,
+                operation: None,
+                source_refs: vec!["test://input".into()],
+                observed_at: WallTime(1),
+            },
+            visibility: VisibilityScope::Session,
+            dependencies: vec![],
+            created_at: MonoTime(1),
+            expires_at: None,
+        };
+        let selection = SelectionResult {
+            selected: vec![candidate.clone()],
+            explanation: SelectionExplanation {
+                policy_version: 1,
+                evaluated: vec![],
+                selected_ids: vec![candidate.id],
+                rejected_below_ignition: vec![],
+            },
+        };
+        let broadcast = WorkspaceBroadcast::from_selection(
+            BroadcastEpoch(1),
+            selection,
+            fabric::dasein::SelfVersion(0),
+            1,
+        )
+        .unwrap();
+
+        dasein
+            .record_outcome("prior turn", OutcomeStatus::Succeeded, "test")
+            .await
+            .unwrap();
+        let integration = adapter.integrate_broadcast(&broadcast).await.unwrap();
+
+        assert_eq!(integration.transition.previous_version.0, 1);
+        assert_eq!(integration.transition.current_version.0, 2);
     }
 }
