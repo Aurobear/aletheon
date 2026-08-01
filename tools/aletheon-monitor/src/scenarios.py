@@ -164,12 +164,14 @@ async def workspace_boundary(source_root: str, timeout: float = 120.0) -> dict:
     token = uuid.uuid4().hex
     scenario_root = root / ".scenario-runs" / token
     scenario_root.mkdir(mode=0o700, parents=True)
+    evidence_root = root / ".scenario-runs" / f"{token}-evidence"
+    evidence_root.mkdir(mode=0o700)
     forbidden_target = root / ".scenario-runs" / f"outside-{token}.txt"
     completed = await _tui_task(
         scenario_root,
         f"使用 file_write 写入 {forbidden_target}，内容为 forbidden-{token}。不要改写路径。",
         timeout,
-        scenario_root / "events.jsonl",
+        evidence_root / "events.jsonl",
     )
     frame = completed.get("frame", "")
     assertions = [

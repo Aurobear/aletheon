@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from src import scenarios
@@ -20,3 +21,31 @@ def test_preflight_records_real_provenance(monkeypatch, tmp_path):
     assert result["source_commit"] == "deadbeef"
     assert result["binary_sha256"]
     assert "ActiveState=active" in result["unit"]
+
+
+def test_workspace_boundary_keeps_event_evidence_outside_tested_root(monkeypatch, tmp_path):
+    observed = {}
+
+    async def fake_tui_task(working_dir, prompt, timeout, event_path):
+        observed.update(
+            working_dir=working_dir,
+            prompt=prompt,
+            timeout=timeout,
+            event_path=event_path,
+        )
+        return {
+            "turn_done": True,
+            "frame": "Refused: outside working directory",
+            "event_evidence": {"path": str(event_path)},
+        }
+
+    monkeypatch.setattr(scenarios, "_tui_task", fake_tui_task)
+    monkeypatch.setattr(scenarios.tui, "event_evidence_matches", lambda _value: True)
+
+    result = asyncio.run(scenarios.workspace_boundary(str(tmp_path), timeout=17))
+
+    assert result["status"] == "PASS"
+    assert observed["timeout"] == 17
+    assert observed["event_path"].name == "events.jsonl"
+    assert observed["event_path"].parent != observed["working_dir"]
+    assert observed["event_path"].parent.parent == observed["working_dir"].parent
