@@ -225,11 +225,66 @@ enum MemoryAgentCommand {
 
 #[derive(Subcommand)]
 enum MemoryCommand {
+    /// Submit a bounded observation to the governed intake journal.
+    Observe {
+        #[arg(long, default_value = ".")]
+        working_dir: PathBuf,
+        #[arg(long, default_value = "explicit-note")]
+        kind: MemoryObservationKindArg,
+        /// Content value; when omitted, UTF-8 content is read from stdin.
+        #[arg(long)]
+        content: Option<String>,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long)]
+        turn_id: Option<String>,
+        #[arg(long)]
+        explicit_user_action: bool,
+        #[arg(long, default_value = "internal")]
+        sensitivity: MemorySensitivityArg,
+        #[arg(long = "source-ref")]
+        source_refs: Vec<String>,
+    },
+    /// Recall governed local and bound supplemental memory.
+    Recall {
+        query: String,
+        #[arg(long, default_value = ".")]
+        working_dir: PathBuf,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        max_items: usize,
+        #[arg(long, default_value_t = 65536)]
+        max_content_bytes: usize,
+        #[arg(long)]
+        include_historical: bool,
+    },
+    /// Read the authoritative lifecycle receipt for an observation.
+    Receipt { durable_intake_id: String },
     /// Administer the current workspace's supplemental-memory binding.
     Workspace {
         #[command(subcommand)]
         sub: MemoryWorkspaceCommand,
     },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum MemoryObservationKindArg {
+    UserMessage,
+    AssistantMessage,
+    ToolOutcome,
+    TaskOutcome,
+    ExplicitNote,
+    Correction,
+    Feedback,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum MemorySensitivityArg {
+    Public,
+    Internal,
+    Confidential,
+    Restricted,
 }
 
 #[derive(clap::Args)]
@@ -829,5 +884,43 @@ mod daemon_cli_tests {
     fn full_flag_is_a_shortcut_for_unrestricted_permissions() {
         let cli = Cli::try_parse_from(["aletheon", "--full"]).unwrap();
         assert_eq!(cli.permission_mode.effective(cli.full), "full");
+    }
+
+    #[test]
+    fn governed_memory_client_commands_parse_on_installed_entrypoint() {
+        let observe = Cli::try_parse_from([
+            "aletheon",
+            "memory",
+            "observe",
+            "--kind",
+            "task-outcome",
+            "--content",
+            "bounded result",
+            "--session-id",
+            "session-a",
+        ])
+        .unwrap();
+        assert!(matches!(
+            observe.command,
+            Some(Commands::Memory {
+                sub: MemoryCommand::Observe { .. }
+            })
+        ));
+
+        let recall = Cli::try_parse_from([
+            "aletheon",
+            "memory",
+            "recall",
+            "workspace architecture",
+            "--max-items",
+            "8",
+        ])
+        .unwrap();
+        assert!(matches!(
+            recall.command,
+            Some(Commands::Memory {
+                sub: MemoryCommand::Recall { max_items: 8, .. }
+            })
+        ));
     }
 }
