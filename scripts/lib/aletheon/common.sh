@@ -53,8 +53,9 @@ gbrain_endpoint() {
 import sys, tomllib
 with open(sys.argv[1], "rb") as source:
     config = tomllib.load(source)
+preferred = config.get("memory", {}).get("supplemental", {}).get("server_name", "gbrain")
 for server in config.get("mcp_servers", []):
-    if server.get("name") == "gbrain" and server.get("url"):
+    if server.get("name") == preferred and server.get("url"):
         print(server["url"])
         raise SystemExit(0)
 raise SystemExit(1)
