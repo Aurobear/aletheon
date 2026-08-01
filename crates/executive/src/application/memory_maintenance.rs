@@ -14,7 +14,8 @@ use fabric::protocol::memory_maintenance::{
 use mnemosyne::{
     GovernedMemoryObservation, MemoryAuthority, MemoryIntakeLedger, MemoryKind,
     MemoryLifecycleUpdate, MemoryMetadata, MemoryProvenance, MemoryRecord, MemoryRecordId,
-    MemoryScope, MemorySensitivity, MemoryStatus,
+    MemoryScope, MemorySensitivity, MemoryStatus, WorkspaceMemoryBindingRegistry,
+    WorkspaceMemoryBindingState,
 };
 
 use crate::application::memory_policy::{
@@ -170,6 +171,8 @@ pub struct MemoryMaintenanceController {
     clock: Arc<dyn fabric::Clock>,
     evaluator: MemoryPolicyEvaluator,
     semantic: Arc<dyn MemorySemanticProposalPort>,
+    bindings: Option<Arc<WorkspaceMemoryBindingRegistry>>,
+    projection_spool: Option<Arc<mnemosyne::supplemental::SupplementalSpool>>,
 }
 
 impl MemoryMaintenanceController {
@@ -186,7 +189,19 @@ impl MemoryMaintenanceController {
             clock,
             evaluator: MemoryPolicyEvaluator::new(config)?,
             semantic,
+            bindings: None,
+            projection_spool: None,
         })
+    }
+
+    pub fn with_projection(
+        mut self,
+        bindings: Arc<WorkspaceMemoryBindingRegistry>,
+        projection_spool: Option<Arc<mnemosyne::supplemental::SupplementalSpool>>,
+    ) -> Self {
+        self.bindings = Some(bindings);
+        self.projection_spool = projection_spool;
+        self
     }
 
     pub async fn status(
@@ -232,6 +247,8 @@ impl MemoryMaintenanceController {
 
         let policy = self.evaluator.config();
         let limit = usize::from(request.max_items).min(policy.max_items_per_run);
+        self.reconcile_projection_receipts(limit, &mut result)
+            .await?;
         let started_ms = self.now_ms();
         let deadline_ms = started_ms.saturating_add(policy.run_deadline_ms as i64);
         for _ in 0..limit {
@@ -250,7 +267,8 @@ impl MemoryMaintenanceController {
             let Some(claim) = claim else { break };
             result.claimed = result.claimed.saturating_add(1);
 
-            let base_facts = deterministic_facts(&claim.observation);
+            let binding = self.binding_for(&claim.observation).await?;
+            let base_facts = deterministic_facts(&claim.observation, binding.is_some());
             let axes = self.evaluator.derive_axes(&claim.observation, base_facts);
             let mut decision = self
                 .evaluator
@@ -327,21 +345,69 @@ impl MemoryMaintenanceController {
                         &decision,
                     )?;
                     let record_id = record.id.0.clone();
-                    self.memory.record_canonical(record).await?;
+                    self.memory.record_canonical(record.clone()).await?;
                     let mut reasons = decision.remote_block_reasons;
+                    let mut projection_queued = false;
                     if decision.remote_eligible {
-                        reasons.push("remote_projection_pending".into());
+                        if let (Some(binding), Some(spool)) =
+                            (binding.as_ref(), self.projection_spool.as_ref())
+                        {
+                            match mnemosyne::supplemental::SupplementalDocument::from_record(
+                                &record,
+                            ) {
+                                Ok(Some(page)) => match spool.enqueue_operation_to(
+                                    &binding.write_destination_handle,
+                                    &record_id,
+                                    &page.slug,
+                                    mnemosyne::supplemental::ReconcileOperationKind::Upsert,
+                                    1,
+                                    &page,
+                                    record.metadata.sensitivity,
+                                    now_ms,
+                                ) {
+                                    Ok(mnemosyne::supplemental::EnqueueOutcome::Inserted)
+                                    | Ok(mnemosyne::supplemental::EnqueueOutcome::AlreadyPresent) =>
+                                    {
+                                        projection_queued = true;
+                                        reasons.push("remote_projection_pending".into());
+                                    }
+                                    Ok(
+                                        mnemosyne::supplemental::EnqueueOutcome::ExcludedSensitive,
+                                    ) => {
+                                        reasons.push("remote_projection_sensitive".into());
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(%error, %record_id, "memory projection enqueue degraded");
+                                        reasons.push("remote_projection_enqueue_failed".into());
+                                    }
+                                },
+                                Ok(None) => {
+                                    reasons.push("remote_projection_record_excluded".into())
+                                }
+                                Err(error) => {
+                                    tracing::warn!(%error, %record_id, "memory projection document rejected");
+                                    reasons.push("remote_projection_document_invalid".into());
+                                }
+                            }
+                        } else {
+                            reasons.push("remote_projection_unavailable".into());
+                        }
                     }
-                    let receipt = self
+                    let mut receipt = self
                         .settle(
                             &claim,
                             MemoryLifecycleStateV1::PromotedLocal,
-                            vec![record_id],
+                            vec![record_id.clone()],
                             decision.scorecard,
                             reasons,
                             now_ms,
                         )
                         .await?;
+                    if projection_queued {
+                        receipt = self
+                            .mark_projection_queued(&claim, &receipt, now_ms)
+                            .await?;
+                    }
                     result.promoted_local = result.promoted_local.saturating_add(1);
                     result.receipts.push(receipt);
                 }
@@ -383,9 +449,121 @@ impl MemoryMaintenanceController {
     fn now_ms(&self) -> i64 {
         self.clock.wall_now().0.max(0)
     }
+
+    async fn binding_for(
+        &self,
+        observation: &GovernedMemoryObservation,
+    ) -> anyhow::Result<Option<mnemosyne::WorkspaceMemoryBinding>> {
+        if self.projection_spool.is_none() {
+            return Ok(None);
+        }
+        let Some(registry) = self.bindings.clone() else {
+            return Ok(None);
+        };
+        let principal = observation.principal_id.clone();
+        let workspace = observation.workspace_key.clone();
+        let binding =
+            tokio::task::spawn_blocking(move || registry.get(&principal, &workspace)).await??;
+        Ok(binding.filter(|value| {
+            value.state == WorkspaceMemoryBindingState::Active
+                && value.verified_capability_digest.is_some()
+        }))
+    }
+
+    async fn mark_projection_queued(
+        &self,
+        claim: &mnemosyne::MemoryMaintenanceClaim,
+        current: &MemoryLifecycleReceiptV1,
+        now_ms: i64,
+    ) -> anyhow::Result<MemoryLifecycleReceiptV1> {
+        let mut update =
+            MemoryLifecycleUpdate::new(current.revision, MemoryLifecycleStateV1::ProjectionQueued);
+        update.resulting_record_ids = current.resulting_record_ids.clone();
+        // The stable local record ID is also the spool key. Keep it in
+        // resulting_record_ids; remote_receipt_ids remains reserved for
+        // authoritative backend receipts.
+        update.remote_receipt_ids = Vec::new();
+        update.scorecard = current.scorecard.clone();
+        update.reason_codes = vec!["remote_projection_queued".into()];
+        update.created_at_ms = now_ms;
+        let ledger = self.ledger.clone();
+        let principal = claim.observation.principal_id.clone();
+        let workspace = claim.observation.workspace_key.as_str().to_owned();
+        let intake = claim.lease.durable_intake_id.clone();
+        tokio::task::spawn_blocking(move || {
+            ledger.transition(&principal, &workspace, &intake, update)
+        })
+        .await?
+        .map_err(Into::into)
+    }
+
+    async fn reconcile_projection_receipts(
+        &self,
+        limit: usize,
+        result: &mut MemoryMaintenanceRunReceiptV1,
+    ) -> anyhow::Result<()> {
+        let Some(spool) = self.projection_spool.clone() else {
+            return Ok(());
+        };
+        let ledger = self.ledger.clone();
+        let pending =
+            tokio::task::spawn_blocking(move || ledger.pending_projection_receipts(limit))
+                .await??;
+        for (observation, current) in pending {
+            let Some(queue_id) = current.resulting_record_ids.first().cloned() else {
+                continue;
+            };
+            let spool = spool.clone();
+            let queue_id_for_lookup = queue_id.clone();
+            let terminal = tokio::task::spawn_blocking(move || {
+                if let Some(receipt) = spool.receipt(&queue_id_for_lookup)? {
+                    Ok::<_, mnemosyne::supplemental::SpoolError>(Some((
+                        MemoryLifecycleStateV1::ProjectedRemote,
+                        receipt.remote_id,
+                        "remote_projection_delivered".to_owned(),
+                    )))
+                } else if spool.has_dead_letter(&queue_id_for_lookup)? {
+                    Ok(Some((
+                        MemoryLifecycleStateV1::ProjectionFailed,
+                        queue_id_for_lookup,
+                        "remote_projection_dead_lettered".to_owned(),
+                    )))
+                } else {
+                    Ok(None)
+                }
+            })
+            .await??;
+            let Some((state, remote_id, reason)) = terminal else {
+                continue;
+            };
+            let now_ms = self.now_ms();
+            let mut update = MemoryLifecycleUpdate::new(current.revision, state);
+            update.resulting_record_ids = current.resulting_record_ids.clone();
+            update.remote_receipt_ids = vec![remote_id];
+            update.scorecard = current.scorecard.clone();
+            update.reason_codes = vec![reason.clone()];
+            update.created_at_ms = now_ms;
+            update.terminal_at =
+                Some(fabric::wall_to_datetime(fabric::WallTime(now_ms)).to_rfc3339());
+            let ledger = self.ledger.clone();
+            let principal = observation.principal_id;
+            let workspace = observation.workspace_key.as_str().to_owned();
+            let intake = current.durable_intake_id.clone();
+            let receipt = tokio::task::spawn_blocking(move || {
+                ledger.transition(&principal, &workspace, &intake, update)
+            })
+            .await??;
+            result.reason_codes.push(reason);
+            result.receipts.push(receipt);
+        }
+        Ok(())
+    }
 }
 
-fn deterministic_facts(observation: &GovernedMemoryObservation) -> MemoryPolicyFacts {
+fn deterministic_facts(
+    observation: &GovernedMemoryObservation,
+    binding_verified: bool,
+) -> MemoryPolicyFacts {
     MemoryPolicyFacts {
         provenance_complete: !observation.principal_id.trim().is_empty()
             && !observation.connection_kind.trim().is_empty(),
@@ -394,7 +572,7 @@ fn deterministic_facts(observation: &GovernedMemoryObservation) -> MemoryPolicyF
         control_instruction_detected: false,
         model_only_claim: false,
         approved_core_conflict: false,
-        binding_verified: false,
+        binding_verified,
         verification_receipts: 0,
         novelty: MemoryNovelty::New,
         contradiction_unresolved: false,

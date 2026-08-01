@@ -64,6 +64,10 @@ impl MemoryGatewayService {
         self.ledger.clone()
     }
 
+    pub(crate) fn binding_registry(&self) -> Arc<WorkspaceMemoryBindingRegistry> {
+        self.bindings.clone()
+    }
+
     pub fn open(
         state_root: impl AsRef<Path>,
         memory: Arc<dyn mnemosyne::MemoryService>,

@@ -22,4 +22,5 @@ pub(crate) struct MemoryGroup {
     pub(crate) local_memory_service: Arc<dyn MemoryService>,
     /// Sanitized state of the optional supplemental-memory path.
     pub(crate) supplemental_memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
+    pub(crate) supplemental_spool: Option<Arc<mnemosyne::supplemental::SupplementalSpool>>,
 }

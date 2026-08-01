@@ -869,6 +869,49 @@ impl MemoryIntakeLedger {
         transaction.commit()?;
         Ok(receipt)
     }
+
+    pub fn pending_projection_receipts(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(GovernedMemoryObservation, MemoryLifecycleReceiptV1)>, MemoryIntakeError> {
+        if limit == 0 || limit > 1_000 {
+            return Err(
+                MemoryProtocolValidationError("projection query limit is invalid".into()).into(),
+            );
+        }
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut statement = connection.prepare(
+            "WITH latest AS (
+               SELECT durable_intake_id,MAX(revision) AS revision
+               FROM memory_lifecycle_receipts GROUP BY durable_intake_id
+             )
+             SELECT intake.observation_json,lifecycle.receipt_json
+             FROM memory_intakes AS intake
+             JOIN latest ON latest.durable_intake_id=intake.durable_intake_id
+             JOIN memory_lifecycle_receipts AS lifecycle
+               ON lifecycle.durable_intake_id=latest.durable_intake_id
+              AND lifecycle.revision=latest.revision
+             WHERE lifecycle.state='projection_queued'
+             ORDER BY intake.observed_at_ms,intake.durable_intake_id LIMIT ?1",
+        )?;
+        let values = statement
+            .query_map([limit as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        values
+            .into_iter()
+            .map(|(observation, receipt)| {
+                Ok((
+                    serde_json::from_str(&observation)?,
+                    serde_json::from_str(&receipt)?,
+                ))
+            })
+            .collect()
+    }
 }
 
 fn validate_lease(lease: &MemoryMaintenanceLease) -> Result<(), MemoryProtocolValidationError> {

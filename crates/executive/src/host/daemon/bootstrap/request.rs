@@ -880,6 +880,7 @@ impl RequestHandler {
             memory_service: supplemental_runtime.memory_service,
             local_memory_service: local_memory,
             supplemental_memory_health: supplemental_runtime.health,
+            supplemental_spool: supplemental_runtime.spool,
             episodic_memory,
             objective_store,
             approval_repository,
@@ -1548,7 +1549,11 @@ impl RequestHandler {
                 config.memory_policy.policy.clone(),
                 semantic_proposer,
             )
-            .context("constructing memory maintenance controller")?,
+            .context("constructing memory maintenance controller")?
+            .with_projection(
+                memory_gateway.binding_registry(),
+                memory_group.supplemental_spool.clone(),
+            ),
         );
         let handler_ports = Arc::new(crate::host::daemon::handler::ports::HandlerPorts::new(
             kernel.clone(),

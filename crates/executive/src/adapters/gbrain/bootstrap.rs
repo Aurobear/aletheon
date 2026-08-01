@@ -20,6 +20,7 @@ pub struct SupplementalMemoryRuntime {
     pub memory_service: Arc<dyn MemoryService>,
     pub health: Arc<Mutex<CompositeMemoryHealth>>,
     pub worker_task: Option<JoinHandle<()>>,
+    pub spool: Option<Arc<SupplementalSpool>>,
 }
 
 pub fn backend_config(config: &SupplementalMemoryConfig) -> SupplementalBackendConfig {
@@ -166,6 +167,7 @@ pub fn build_supplemental_memory_runtime_with_retention(
         memory_service,
         health,
         worker_task,
+        spool: config.projection_enabled.then(|| spool.clone()),
     }
 }
 
@@ -207,5 +209,6 @@ fn local_runtime(
         memory_service: Arc::new(composite),
         health,
         worker_task: None,
+        spool: None,
     }
 }

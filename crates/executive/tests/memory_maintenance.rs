@@ -16,7 +16,8 @@ use fabric::protocol::memory_maintenance::{
 use fabric::{Clock, MonoTime, WallTime};
 use mnemosyne::{
     ExperienceEvent, ForgetPolicy, ForgetReceipt, GovernedMemoryObservation, MemoryIntakeLedger,
-    MemoryRecord, MemoryService, RecallRequest, RecallSet, WorkspaceMemoryKey,
+    MemoryRecord, MemoryService, RecallRequest, RecallSet, SupplementalCapabilityGrant,
+    WorkspaceMemoryBindingProposal, WorkspaceMemoryBindingRegistry, WorkspaceMemoryKey,
 };
 
 struct FixedClock;
@@ -243,6 +244,108 @@ async fn host_promotes_verified_candidate_and_commits_terminal_receipt() {
             .unwrap()
             .state,
         MemoryLifecycleStateV1::PromotedLocal
+    );
+}
+
+#[tokio::test]
+async fn verified_binding_queues_projection_to_opaque_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = Arc::new(MemoryIntakeLedger::open_in_memory().unwrap());
+    let intake = ledger.observe(&observation("project", 3)).unwrap();
+    let registry =
+        Arc::new(WorkspaceMemoryBindingRegistry::open(dir.path().join("bindings.db")).unwrap());
+    let workspace = WorkspaceMemoryKey::from_verified("ws:repo:sha256:workspace-a").unwrap();
+    let proposal = WorkspaceMemoryBindingProposal {
+        backend_id: "supplemental/default".into(),
+        write_destination_handle: "gbrain-workspace-a".into(),
+        read_destination_handles: vec!["gbrain-workspace-a".into()],
+        expected_write_source: "workspace-a".into(),
+        expected_read_sources: vec!["workspace-a".into()],
+        credential_ref: "systemd:gbrain-workspace-a".into(),
+    };
+    let grant = SupplementalCapabilityGrant {
+        backend_id: proposal.backend_id.clone(),
+        write_source: Some("workspace-a".into()),
+        read_sources: vec!["workspace-a".into()],
+        can_read: true,
+        can_write: true,
+    };
+    let preview = registry
+        .preview("principal-a", &workspace, &proposal, &grant, 1)
+        .unwrap();
+    registry.apply(&preview).unwrap();
+    let spool = Arc::new(
+        mnemosyne::supplemental::SupplementalSpool::open(
+            dir.path().join("spool.db"),
+            mnemosyne::supplemental::SpoolLimits {
+                max_items: 8,
+                max_bytes: 32 * 1024,
+            },
+        )
+        .unwrap(),
+    );
+    let controller = MemoryMaintenanceController::new(
+        ledger.clone(),
+        Arc::new(CapturingMemory::default()),
+        Arc::new(FixedClock),
+        MemoryPolicyConfig::default(),
+        Arc::new(NoMemorySemanticProposal),
+    )
+    .unwrap()
+    .with_projection(registry, Some(spool.clone()));
+
+    let result = controller
+        .run("official-memory-agent", request("run-project", 1))
+        .await
+        .unwrap();
+    assert_eq!(
+        result.receipts[0].state,
+        MemoryLifecycleStateV1::ProjectionQueued
+    );
+    let claim = spool
+        .claim("delivery", 10_000, 1_000, 1)
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(claim.destination_handle, "gbrain-workspace-a");
+    assert_eq!(
+        ledger
+            .receipt(
+                "principal-a",
+                "ws:repo:sha256:workspace-a",
+                &intake.durable_intake_id,
+            )
+            .unwrap()
+            .unwrap()
+            .state,
+        MemoryLifecycleStateV1::ProjectionQueued
+    );
+    spool
+        .acknowledge(
+            &claim,
+            "delivery",
+            &mnemosyne::supplemental::RemoteMemoryReceipt {
+                record_id: claim.record_id.clone(),
+                logical_page_id: claim.logical_page_id.clone(),
+                remote_id: "gbrain-receipt-a".into(),
+                content_hash: claim.content_hash.clone(),
+                operation: claim.operation,
+                schema_version: claim.schema_version,
+                synced_at_ms: 10_001,
+            },
+        )
+        .unwrap();
+    let settled = controller
+        .run("official-memory-agent", request("run-settle", 1))
+        .await
+        .unwrap();
+    assert_eq!(
+        settled.receipts[0].state,
+        MemoryLifecycleStateV1::ProjectedRemote
+    );
+    assert_eq!(
+        settled.receipts[0].remote_receipt_ids,
+        vec!["gbrain-receipt-a"]
     );
 }
 

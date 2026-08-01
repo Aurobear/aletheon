@@ -720,6 +720,29 @@ impl mnemosyne::supplemental::SupplementalMemoryTransport for SupplementalMcpAda
             .map_err(supplemental_error)
     }
 
+    async fn put_page_to(
+        &self,
+        destination_handle: &str,
+        page: &SupplementalDocument,
+        cancel: &CancellationToken,
+    ) -> Result<Option<String>, mnemosyne::supplemental::SupplementalTransportError> {
+        if destination_handle.is_empty() || destination_handle == self.server_name {
+            return SupplementalMcpAdapter::put_page(self, page, cancel)
+                .await
+                .map(|()| None)
+                .map_err(supplemental_error);
+        }
+        SupplementalMcpAdapter::new(
+            self.manager.clone(),
+            destination_handle.to_owned(),
+            self.timeout,
+        )
+        .put_page(page, cancel)
+        .await
+        .map(|()| None)
+        .map_err(supplemental_error)
+    }
+
     async fn query(
         &self,
         query: &str,

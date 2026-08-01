@@ -559,6 +559,18 @@ impl SupplementalSpool {
             .is_some())
     }
 
+    pub fn has_dead_letter(&self, record_id: &str) -> Result<bool, SpoolError> {
+        Ok(self
+            .connection()?
+            .query_row(
+                "SELECT 1 FROM gbrain_dead_letters WHERE record_id=?1",
+                [record_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
     pub fn receipt(&self, record_id: &str) -> Result<Option<RemoteMemoryReceipt>, SpoolError> {
         self.connection()?
             .query_row(
