@@ -1,6 +1,7 @@
 use std::ffi::CString;
 use std::ffi::OsString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -203,20 +204,68 @@ fn socket_family(fd: &OwnedFd) -> Result<libc::c_int, ActivationError> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConnectionRole {
+    Ordinary,
+    OfficialMemoryAgent,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConnectionContext {
     pub principal_id: PrincipalId,
     pub os_principal: LocalOsPrincipal,
     pub connection_id: ConnectionId,
+    pub peer_pid: Option<u32>,
+    pub role: ConnectionRole,
 }
 
 impl ConnectionContext {
+    #[cfg(test)]
     pub(crate) fn from_peer(os_principal: LocalOsPrincipal) -> Self {
+        Self::from_authenticated_peer(os_principal, None)
+    }
+
+    fn from_authenticated_peer(os_principal: LocalOsPrincipal, peer_pid: Option<u32>) -> Self {
+        let role = peer_pid
+            .filter(|pid| is_official_memory_agent_process(*pid).unwrap_or(false))
+            .map_or(ConnectionRole::Ordinary, |_| {
+                ConnectionRole::OfficialMemoryAgent
+            });
         Self {
             principal_id: PrincipalId::local_uid(os_principal.uid),
             os_principal,
             connection_id: ConnectionId::new(),
+            peer_pid,
+            role,
         }
     }
+
+    pub(crate) fn is_official_memory_agent(&self) -> bool {
+        self.role == ConnectionRole::OfficialMemoryAgent
+    }
+}
+
+fn is_official_memory_agent_process(pid: u32) -> anyhow::Result<bool> {
+    let peer_exe = std::fs::metadata(format!("/proc/{pid}/exe"))?;
+    let self_exe = std::fs::metadata("/proc/self/exe")?;
+    if peer_exe.dev() != self_exe.dev() || peer_exe.ino() != self_exe.ino() {
+        return Ok(false);
+    }
+    let command = std::fs::read(format!("/proc/{pid}/cmdline"))?;
+    Ok(official_memory_agent_argv(&command))
+}
+
+fn official_memory_agent_argv(command: &[u8]) -> bool {
+    let args = command
+        .split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty())
+        .collect::<Vec<_>>();
+    matches!(
+        args.as_slice(),
+        [_, memory_agent, serve, official]
+            if *memory_agent == b"memory-agent"
+                && *serve == b"serve"
+                && *official == b"--official-user-socket"
+    )
 }
 
 /// Temporary M0-M2 bridge for the pre-versioned JSON-RPC client.
@@ -462,14 +511,23 @@ async fn dispatch_versioned_request(
             .memory_feedback(&connection, request)
             .await
             .map(ProtocolClientEvent::MemoryFeedbackReceipt),
-        ClientRequest::MemoryMaintenanceStatus(request) => handler
-            .memory_maintenance_status(request)
-            .await
-            .map(ProtocolClientEvent::MemoryMaintenanceStatus),
-        ClientRequest::MemoryMaintenanceRun(request) => handler
-            .memory_maintenance_run(&connection, request)
-            .await
-            .map(ProtocolClientEvent::MemoryMaintenanceRunReceipt),
+        ClientRequest::MemoryMaintenanceStatus(request)
+            if connection.is_official_memory_agent() =>
+        {
+            handler
+                .memory_maintenance_status(request)
+                .await
+                .map(ProtocolClientEvent::MemoryMaintenanceStatus)
+        }
+        ClientRequest::MemoryMaintenanceRun(request) if connection.is_official_memory_agent() => {
+            handler
+                .memory_maintenance_run(&connection, request)
+                .await
+                .map(ProtocolClientEvent::MemoryMaintenanceRunReceipt)
+        }
+        ClientRequest::MemoryMaintenanceStatus(_) | ClientRequest::MemoryMaintenanceRun(_) => Err(
+            anyhow::anyhow!("official Memory Agent connection is required"),
+        ),
         ClientRequest::Initialize(_) | ClientRequest::Initialized => {
             Err(anyhow::anyhow!("handshake request cannot be dispatched"))
         }
@@ -666,14 +724,14 @@ impl UnixServer {
                 accept_result = self.listener.accept() => {
                     let (stream, _addr) = accept_result?;
                     // Verify peer credentials before accepting the connection.
-                    let peer = match Self::check_peer_cred(&stream, self.owner_uid, self.group_gid) {
+                    let (peer, peer_pid) = match Self::check_peer_cred(&stream, self.owner_uid, self.group_gid) {
                         Ok(peer) => peer,
                         Err(e) => {
                             warn!(error = %e, "Connection rejected by peer credential check");
                             continue;
                         }
                     };
-                    let connection = ConnectionContext::from_peer(peer);
+                    let connection = ConnectionContext::from_authenticated_peer(peer, peer_pid);
                     let mut handler = self.handler.clone();
 
                     // Create a per-connection notify channel so each client receives
@@ -743,36 +801,46 @@ impl UnixServer {
         stream: &tokio::net::UnixStream,
         owner_uid: u32,
         group_gid: u32,
-    ) -> anyhow::Result<LocalOsPrincipal> {
+    ) -> anyhow::Result<(LocalOsPrincipal, Option<u32>)> {
         let cred = stream.peer_cred()?;
         let peer_uid = cred.uid();
         let peer_gid = cred.gid();
+        let peer_pid = cred.pid().and_then(|pid| u32::try_from(pid).ok());
 
         // Allow root and the daemon owner.
         if peer_uid == 0 || peer_uid == owner_uid {
-            return Ok(LocalOsPrincipal {
-                uid: peer_uid,
-                gid: peer_gid,
-            });
+            return Ok((
+                LocalOsPrincipal {
+                    uid: peer_uid,
+                    gid: peer_gid,
+                },
+                peer_pid,
+            ));
         }
 
         // Check if the peer belongs to the aletheon group.
         // First check primary group (fast path, no allocation).
         if peer_gid == group_gid {
-            return Ok(LocalOsPrincipal {
-                uid: peer_uid,
-                gid: peer_gid,
-            });
+            return Ok((
+                LocalOsPrincipal {
+                    uid: peer_uid,
+                    gid: peer_gid,
+                },
+                peer_pid,
+            ));
         }
         // Then check supplementary groups via nix.
         if let Some(user) = User::from_uid(Uid::from_raw(peer_uid))? {
             let c_name = CString::new(user.name)?;
             let groups = nix::unistd::getgrouplist(&c_name, Gid::from_raw(cred.gid()))?;
             if groups.contains(&Gid::from_raw(group_gid)) {
-                return Ok(LocalOsPrincipal {
-                    uid: peer_uid,
-                    gid: peer_gid,
-                });
+                return Ok((
+                    LocalOsPrincipal {
+                        uid: peer_uid,
+                        gid: peer_gid,
+                    },
+                    peer_pid,
+                ));
             }
         }
 
@@ -859,7 +927,10 @@ impl UnixServer {
                                 continue;
                             }
                         };
-                        let response = match protocol_state.accept(&versioned) {
+                        let response = match protocol_state.accept_with_capabilities(
+                            &versioned,
+                            connection.is_official_memory_agent(),
+                        ) {
                             Ok(ProtocolAction::InitializeResponse(negotiated)) => {
                                 initialize_response(request_id, &connection, negotiated)
                             }
@@ -1273,6 +1344,27 @@ mod tests {
             request["params"]["uid"].as_u64(),
             Some(u64::from(connection.os_principal.uid))
         );
+    }
+
+    #[test]
+    fn official_memory_agent_role_requires_exact_typed_argv() {
+        assert!(official_memory_agent_argv(
+            b"/usr/bin/aletheon\0memory-agent\0serve\0--official-user-socket\0"
+        ));
+        for command in [
+            b"/usr/bin/aletheon\0memory-agent\0run\0--official-user-socket\0".as_slice(),
+            b"/usr/bin/aletheon\0memory-agent\0serve\0".as_slice(),
+            b"/usr/bin/aletheon\0memory-agent\0serve\0--official-user-socket\0extra\0".as_slice(),
+            b"/usr/bin/other\0memory-agent\0serve\0--official-user-socket\0".as_slice(),
+        ] {
+            // argv alone cannot establish executable identity; these cases
+            // characterize the exact command-line half of the role proof.
+            if command.starts_with(b"/usr/bin/other") {
+                assert!(official_memory_agent_argv(command));
+            } else {
+                assert!(!official_memory_agent_argv(command));
+            }
+        }
     }
 
     #[test]

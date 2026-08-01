@@ -19,6 +19,7 @@ use tracing_subscriber::EnvFilter;
 
 #[cfg(feature = "acp")]
 mod acp;
+mod memory_agent;
 
 #[derive(Parser)]
 #[command(name = "aletheon", about = "AI agent with sandbox, multi-agent, IPC")]
@@ -191,6 +192,28 @@ enum Commands {
     Extension {
         #[command(subcommand)]
         sub: ExtensionCmd,
+    },
+    /// Run the Aletheon-managed memory maintenance client.
+    MemoryAgent {
+        #[command(subcommand)]
+        sub: MemoryAgentCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemoryAgentCommand {
+    /// Continuously maintain memory through the official user socket.
+    Serve {
+        /// Required marker for the supervised, authenticated service form.
+        #[arg(long, required = true)]
+        official_user_socket: bool,
+    },
+    /// Run one bounded maintenance cycle through an authenticated child.
+    Run {
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..=64))]
+        max_items: u16,
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -486,6 +509,20 @@ async fn main() -> Result<()> {
             handle_doctor(*json, config.as_deref(), project_dir.as_deref()).await
         }
         (Some(Commands::Extension { sub }), _) => handle_extension(sub).await,
+        (Some(Commands::MemoryAgent { sub }), _) => {
+            init_tracing("aletheon::memory_agent");
+            match sub {
+                MemoryAgentCommand::Serve {
+                    official_user_socket,
+                } => {
+                    anyhow::ensure!(*official_user_socket, "--official-user-socket is required");
+                    memory_agent::serve_official_user_socket().await
+                }
+                MemoryAgentCommand::Run { max_items, dry_run } => {
+                    memory_agent::run_once(*max_items, *dry_run).await
+                }
+            }
+        }
         (Some(Commands::RestoreTerminal), _) => {
             interact::tui::restore_terminal();
             println!("Terminal restored to normal state.");

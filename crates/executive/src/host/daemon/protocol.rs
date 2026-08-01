@@ -2,12 +2,12 @@
 
 use fabric::protocol::client::{negotiate_protocol_version, ClientCapabilities, ClientRequest};
 
-fn supported_capabilities() -> ClientCapabilities {
+fn supported_capabilities(memory_maintenance_v1: bool) -> ClientCapabilities {
     ClientCapabilities {
         item_events: true,
         cursors: true,
         memory_gateway_v1: true,
-        memory_maintenance_v1: false,
+        memory_maintenance_v1,
     }
 }
 
@@ -108,7 +108,16 @@ pub(crate) fn reduce_protocol(
 }
 
 impl ConnectionProtocolState {
+    #[cfg(test)]
     pub(crate) fn accept(&mut self, request: &ClientRequest) -> anyhow::Result<ProtocolAction> {
+        self.accept_with_capabilities(request, false)
+    }
+
+    pub(crate) fn accept_with_capabilities(
+        &mut self,
+        request: &ClientRequest,
+        official_memory_agent: bool,
+    ) -> anyhow::Result<ProtocolAction> {
         if request.requires_memory_gateway() {
             let enabled = matches!(
                 self,
@@ -130,7 +139,9 @@ impl ConnectionProtocolState {
         let event = match request {
             ClientRequest::Initialize(params) => ProtocolEvent::Initialize(NegotiatedProtocol {
                 protocol_version: negotiate_protocol_version(&params.protocol_versions)?,
-                capabilities: params.capabilities.intersect(&supported_capabilities()),
+                capabilities: params
+                    .capabilities
+                    .intersect(&supported_capabilities(official_memory_agent)),
             }),
             ClientRequest::Initialized => ProtocolEvent::Initialized,
             _ => ProtocolEvent::Request,
@@ -262,5 +273,38 @@ mod tests {
                 },
             ))
             .is_ok());
+    }
+
+    #[test]
+    fn maintenance_capability_is_connection_role_scoped() {
+        let initialize = ClientRequest::Initialize(fabric::protocol::client::InitializeParams {
+            client_version: "memory-agent".into(),
+            protocol_versions: vec![1],
+            capabilities: ClientCapabilities {
+                item_events: false,
+                cursors: false,
+                memory_gateway_v1: false,
+                memory_maintenance_v1: true,
+            },
+        });
+        let request = ClientRequest::MemoryMaintenanceStatus(
+            fabric::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1 {
+                request_id: "status-1".into(),
+            },
+        );
+
+        let mut ordinary = ConnectionProtocolState::New;
+        ordinary
+            .accept_with_capabilities(&initialize, false)
+            .unwrap();
+        ordinary.accept(&ClientRequest::Initialized).unwrap();
+        assert!(ordinary.accept(&request).is_err());
+
+        let mut official = ConnectionProtocolState::New;
+        official
+            .accept_with_capabilities(&initialize, true)
+            .unwrap();
+        official.accept(&ClientRequest::Initialized).unwrap();
+        assert!(official.accept(&request).is_ok());
     }
 }
