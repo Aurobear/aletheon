@@ -11,7 +11,7 @@ fn proposal() -> WorkspaceMemoryBindingProposal {
     WorkspaceMemoryBindingProposal {
         backend_id: "supplemental/gbrain".into(),
         write_destination_handle: "mcp/workspace".into(),
-        read_destination_handles: vec!["mcp/workspace".into(), "mcp/personal".into()],
+        read_destination_handles: vec!["mcp/workspace".into()],
         expected_write_source: "workspace-1".into(),
         expected_read_sources: vec!["workspace-1".into(), "personal".into()],
         credential_ref: "systemd:gbrain-workspace".into(),

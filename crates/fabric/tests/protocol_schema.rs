@@ -8,7 +8,9 @@ use fabric::protocol::client::{
 use fabric::protocol::memory::{
     MemoryFeedbackRequestV1, MemoryFeedbackSignalV1, MemoryObservationKindV1,
     MemoryObservationRequestV1, MemoryRecallRequestV1, MemoryReceiptGetRequestV1,
-    MemoryRecordKindV1, MemorySensitivityV1,
+    MemoryRecordKindV1, MemorySensitivityV1, MemoryWorkspaceBindRequestV1,
+    MemoryWorkspaceBindingSpecV1, MemoryWorkspacePreviewBindRequestV1,
+    MemoryWorkspaceUnbindRequestV1,
 };
 use fabric::protocol::memory_maintenance::{
     MemoryMaintenancePhaseV1, MemoryMaintenanceRunRequestV1, MemoryMaintenanceStatusRequestV1,
@@ -178,6 +180,48 @@ fn memory_maintenance_requests_are_strict_bounded_and_versioned() {
 }
 
 #[test]
+fn memory_workspace_admin_requests_are_strict_and_versioned() {
+    let spec = MemoryWorkspaceBindingSpecV1 {
+        backend_id: "supplemental/gbrain".into(),
+        write_destination_handle: "gbrain-workspace".into(),
+        read_destination_handles: vec!["gbrain-workspace".into()],
+        expected_write_source: "workspace-a".into(),
+        expected_read_sources: vec!["workspace-a".into(), "personal".into()],
+        credential_ref: "mcp-server:gbrain-workspace".into(),
+    };
+    let requests = [
+        (
+            ClientRequest::MemoryWorkspacePreviewBind(MemoryWorkspacePreviewBindRequestV1 {
+                working_dir: "/tmp".into(),
+                binding: spec.clone(),
+            }),
+            "memory.workspace.preview_bind/v1",
+        ),
+        (
+            ClientRequest::MemoryWorkspaceBind(MemoryWorkspaceBindRequestV1 {
+                working_dir: "/tmp".into(),
+                binding: spec,
+                expected_capability_digest: "sha256:verified".into(),
+            }),
+            "memory.workspace.bind/v1",
+        ),
+        (
+            ClientRequest::MemoryWorkspaceUnbind(MemoryWorkspaceUnbindRequestV1 {
+                working_dir: "/tmp".into(),
+            }),
+            "memory.workspace.unbind/v1",
+        ),
+    ];
+    for (request, method) in requests {
+        let wire = request.to_json_rpc(9).unwrap();
+        assert_eq!(wire["method"], method);
+        let decoded: ClientMessage<ClientRequest> =
+            serde_json::from_value(wire["params"].clone()).unwrap();
+        assert_eq!(decoded.into_v1().unwrap(), request);
+    }
+}
+
+#[test]
 fn older_initialize_payload_defaults_memory_gateway_capability_off() {
     let capabilities: ClientCapabilities = serde_json::from_value(serde_json::json!({
         "item_events": true,
@@ -185,6 +229,7 @@ fn older_initialize_payload_defaults_memory_gateway_capability_off() {
     }))
     .unwrap();
     assert!(!capabilities.memory_gateway_v1);
+    assert!(!capabilities.memory_admin_v1);
 }
 
 #[test]
@@ -261,6 +306,7 @@ fn initialize_has_version_and_capabilities_but_no_uid() {
             cursors: true,
             memory_gateway_v1: true,
             memory_maintenance_v1: false,
+            memory_admin_v1: false,
         },
     }))
     .unwrap();
@@ -286,6 +332,7 @@ fn initialize_response_contains_only_the_effective_server_identity() {
             cursors: true,
             memory_gateway_v1: true,
             memory_maintenance_v1: false,
+            memory_admin_v1: false,
         },
         connection_id: ConnectionId::new(),
         principal_id: PrincipalId::local_uid(1001),

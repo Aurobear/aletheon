@@ -11,13 +11,17 @@ use fabric::protocol::memory::{
     MemoryFeedbackSignalV1, MemoryLifecycleReceiptV1, MemoryObservationKindV1,
     MemoryObservationReceiptV1, MemoryRecallItemV1, MemoryRecallRequestV1, MemoryRecallResultV1,
     MemoryReceiptGetRequestV1, MemoryRecordKindV1, MemoryScopeKindV1, MemoryScopeViewV1,
-    MemorySensitivityV1, MemoryTemporalStateV1, MAX_MEMORY_RECALL_CONTENT_BYTES,
-    MAX_MEMORY_RECALL_ITEMS,
+    MemorySensitivityV1, MemoryTemporalStateV1, MemoryWorkspaceBindRequestV1,
+    MemoryWorkspaceBindingPreviewV1, MemoryWorkspaceBindingSpecV1, MemoryWorkspaceBindingStateV1,
+    MemoryWorkspaceBindingViewV1, MemoryWorkspacePreviewBindRequestV1, MemoryWorkspaceStateV1,
+    MemoryWorkspaceUnbindRequestV1, MAX_MEMORY_RECALL_CONTENT_BYTES, MAX_MEMORY_RECALL_ITEMS,
 };
 use fabric::{Clock, PermissionProfileId, PrincipalId, WorkspacePolicy, WorkspaceSelection};
 use mnemosyne::{
     GovernedMemoryObservation, MemoryAuthority, MemoryIntakeLedger, MemoryKind, MemoryScope,
-    MemorySensitivity, RecallPreFilter, RecallRequest, ScopeAncestry, TemporalState,
+    MemorySensitivity, RecallPreFilter, RecallRequest, ScopeAncestry, SupplementalCapabilityGrant,
+    TemporalState, WorkspaceMemoryBinding, WorkspaceMemoryBindingPreview,
+    WorkspaceMemoryBindingProposal, WorkspaceMemoryBindingRegistry, WorkspaceMemoryBindingState,
     WorkspaceMemoryKey,
 };
 use sha2::{Digest, Sha256};
@@ -25,12 +29,24 @@ use sha2::{Digest, Sha256};
 const MEMORY_GATEWAY_DIR: &str = "memory-gateway";
 const INSTALLATION_ID_FILE: &str = "installation-id";
 const INTAKE_DB_FILE: &str = "intake-v1.db";
+const BINDINGS_DB_FILE: &str = "workspace-bindings-v1.db";
+
+#[async_trait::async_trait]
+pub trait SupplementalBindingNegotiator: Send + Sync {
+    async fn negotiate(
+        &self,
+        destination_handle: &str,
+        backend_id: &str,
+    ) -> anyhow::Result<SupplementalCapabilityGrant>;
+}
 
 pub struct MemoryGatewayService {
     ledger: Arc<MemoryIntakeLedger>,
     memory: Arc<dyn mnemosyne::MemoryService>,
     clock: Arc<dyn Clock>,
     installation_id: String,
+    bindings: Arc<WorkspaceMemoryBindingRegistry>,
+    binding_negotiator: Option<Arc<dyn SupplementalBindingNegotiator>>,
 }
 
 impl MemoryGatewayService {
@@ -53,7 +69,10 @@ impl MemoryGatewayService {
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
         let installation_id = load_or_create_installation_id(&root)?;
         let ledger = Arc::new(MemoryIntakeLedger::open(root.join(INTAKE_DB_FILE))?);
-        Self::from_parts(ledger, memory, clock, installation_id)
+        let bindings = Arc::new(WorkspaceMemoryBindingRegistry::open(
+            root.join(BINDINGS_DB_FILE),
+        )?);
+        Self::from_parts(ledger, memory, clock, installation_id, bindings, None)
     }
 
     pub fn from_parts(
@@ -61,6 +80,8 @@ impl MemoryGatewayService {
         memory: Arc<dyn mnemosyne::MemoryService>,
         clock: Arc<dyn Clock>,
         installation_id: impl Into<String>,
+        bindings: Arc<WorkspaceMemoryBindingRegistry>,
+        binding_negotiator: Option<Arc<dyn SupplementalBindingNegotiator>>,
     ) -> anyhow::Result<Self> {
         let installation_id = installation_id.into();
         let installation_id = installation_id.trim().to_owned();
@@ -71,7 +92,17 @@ impl MemoryGatewayService {
             memory,
             clock,
             installation_id,
+            bindings,
+            binding_negotiator,
         })
+    }
+
+    pub fn with_binding_negotiator(
+        mut self,
+        binding_negotiator: Arc<dyn SupplementalBindingNegotiator>,
+    ) -> Self {
+        self.binding_negotiator = Some(binding_negotiator);
+        self
     }
 
     pub async fn observe(
@@ -93,6 +124,9 @@ impl MemoryGatewayService {
             ensure_identifier_has_no_sensitive_material(value)?;
         }
         let workspace_key = self.resolve_workspace_key(&request.working_dir)?;
+        let binding = self
+            .ensure_binding(&principal_id.0, workspace_key.clone())
+            .await?;
         let content_fingerprint = content_fingerprint(&self.installation_id, &request.content);
         let governed = fabric::types::data_governance::scrub_for_projection(
             &request.content,
@@ -121,10 +155,12 @@ impl MemoryGatewayService {
             observed_at_ms: self.clock.wall_now().0.max(0),
         };
         let ledger = self.ledger.clone();
-        tokio::task::spawn_blocking(move || ledger.observe(&observation))
+        let mut receipt = tokio::task::spawn_blocking(move || ledger.observe(&observation))
             .await
             .map_err(|error| anyhow::anyhow!("memory intake task failed: {error}"))?
-            .map_err(anyhow::Error::from)
+            .map_err(anyhow::Error::from)?;
+        receipt.workspace_state = wire_workspace_state(binding.state);
+        Ok(receipt)
     }
 
     pub async fn receipt(
@@ -274,10 +310,200 @@ impl MemoryGatewayService {
         })
     }
 
+    pub async fn preview_workspace_bind(
+        &self,
+        principal_id: &PrincipalId,
+        request: MemoryWorkspacePreviewBindRequestV1,
+    ) -> anyhow::Result<MemoryWorkspaceBindingPreviewV1> {
+        request.validate()?;
+        validate_binding_spec_safety(&request.binding)?;
+        let workspace_key = self.resolve_workspace_key(&request.working_dir)?;
+        let proposal = binding_proposal(request.binding);
+        let grant = self.negotiate_binding(&proposal).await?;
+        let registry = self.bindings.clone();
+        let principal = principal_id.0.clone();
+        let now_ms = self.clock.wall_now().0.max(0);
+        let preview = tokio::task::spawn_blocking(move || {
+            registry.preview(&principal, &workspace_key, &proposal, &grant, now_ms)
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("memory binding preview task failed: {error}"))??;
+        Ok(binding_preview_view(preview))
+    }
+
+    pub async fn bind_workspace(
+        &self,
+        principal_id: &PrincipalId,
+        request: MemoryWorkspaceBindRequestV1,
+    ) -> anyhow::Result<MemoryWorkspaceBindingViewV1> {
+        request.validate()?;
+        validate_binding_spec_safety(&request.binding)?;
+        let workspace_key = self.resolve_workspace_key(&request.working_dir)?;
+        let proposal = binding_proposal(request.binding);
+        let grant = self.negotiate_binding(&proposal).await?;
+        let registry = self.bindings.clone();
+        let principal = principal_id.0.clone();
+        let now_ms = self.clock.wall_now().0.max(0);
+        let expected_digest = request.expected_capability_digest;
+        let binding = tokio::task::spawn_blocking(move || {
+            let preview =
+                registry.preview(&principal, &workspace_key, &proposal, &grant, now_ms)?;
+            if !preview.compatible
+                || preview.binding.verified_capability_digest.as_deref()
+                    != Some(expected_digest.as_str())
+            {
+                return Err(mnemosyne::WorkspaceMemoryBindingError::Invalid);
+            }
+            registry.apply(&preview)
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("memory binding apply task failed: {error}"))??;
+        Ok(binding_view(binding))
+    }
+
+    pub async fn unbind_workspace(
+        &self,
+        principal_id: &PrincipalId,
+        request: MemoryWorkspaceUnbindRequestV1,
+    ) -> anyhow::Result<MemoryWorkspaceBindingViewV1> {
+        request.validate()?;
+        let workspace_key = self.resolve_workspace_key(&request.working_dir)?;
+        let registry = self.bindings.clone();
+        let principal = principal_id.0.clone();
+        let now_ms = self.clock.wall_now().0.max(0);
+        let binding = tokio::task::spawn_blocking(move || {
+            registry.local_only(&principal, &workspace_key, now_ms)?;
+            registry
+                .revoke(&principal, &workspace_key, now_ms)?
+                .ok_or(mnemosyne::WorkspaceMemoryBindingError::Corrupt)
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("memory binding revoke task failed: {error}"))??;
+        Ok(binding_view(binding))
+    }
+
+    async fn ensure_binding(
+        &self,
+        principal_id: &str,
+        workspace_key: WorkspaceMemoryKey,
+    ) -> anyhow::Result<WorkspaceMemoryBinding> {
+        let registry = self.bindings.clone();
+        let principal = principal_id.to_owned();
+        let now_ms = self.clock.wall_now().0.max(0);
+        tokio::task::spawn_blocking(move || registry.local_only(&principal, &workspace_key, now_ms))
+            .await
+            .map_err(|error| anyhow::anyhow!("memory binding lookup task failed: {error}"))?
+            .map_err(anyhow::Error::from)
+    }
+
+    async fn negotiate_binding(
+        &self,
+        proposal: &WorkspaceMemoryBindingProposal,
+    ) -> anyhow::Result<SupplementalCapabilityGrant> {
+        let negotiator = self
+            .binding_negotiator
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("supplemental binding adapter is unavailable"))?;
+        let write = negotiator
+            .negotiate(&proposal.write_destination_handle, &proposal.backend_id)
+            .await?;
+        let mut reads = std::collections::BTreeSet::new();
+        let mut can_read = true;
+        for handle in &proposal.read_destination_handles {
+            let grant = negotiator.negotiate(handle, &proposal.backend_id).await?;
+            anyhow::ensure!(
+                grant.backend_id == proposal.backend_id,
+                "supplemental binding backend identity changed during negotiation"
+            );
+            can_read &= grant.can_read;
+            reads.extend(grant.read_sources);
+        }
+        Ok(SupplementalCapabilityGrant {
+            backend_id: write.backend_id,
+            write_source: write.write_source,
+            read_sources: reads.into_iter().collect(),
+            can_read,
+            can_write: write.can_write,
+        })
+    }
+
     fn resolve_workspace_key(&self, working_dir: &Path) -> anyhow::Result<WorkspaceMemoryKey> {
         let workspace = resolve_memory_workspace(working_dir)?;
         let identity = crate::application::workspace_trust::workspace_identity(workspace.cwd());
         WorkspaceMemoryKey::derive(&identity, &self.installation_id)
+    }
+}
+
+fn binding_proposal(value: MemoryWorkspaceBindingSpecV1) -> WorkspaceMemoryBindingProposal {
+    WorkspaceMemoryBindingProposal {
+        backend_id: value.backend_id,
+        write_destination_handle: value.write_destination_handle,
+        read_destination_handles: value.read_destination_handles,
+        expected_write_source: value.expected_write_source,
+        expected_read_sources: value.expected_read_sources,
+        credential_ref: value.credential_ref,
+    }
+}
+
+fn validate_binding_spec_safety(value: &MemoryWorkspaceBindingSpecV1) -> anyhow::Result<()> {
+    for field in [
+        value.backend_id.as_str(),
+        value.write_destination_handle.as_str(),
+        value.expected_write_source.as_str(),
+        value.credential_ref.as_str(),
+    ]
+    .into_iter()
+    .chain(value.read_destination_handles.iter().map(String::as_str))
+    .chain(value.expected_read_sources.iter().map(String::as_str))
+    {
+        ensure_identifier_has_no_sensitive_material(field)?;
+    }
+    anyhow::ensure!(
+        ["mcp-server:", "systemd:", "secret-store:"]
+            .iter()
+            .any(|prefix| value.credential_ref.starts_with(prefix)),
+        "memory credential_ref must be an opaque supported secret-store reference"
+    );
+    Ok(())
+}
+
+fn binding_preview_view(value: WorkspaceMemoryBindingPreview) -> MemoryWorkspaceBindingPreviewV1 {
+    MemoryWorkspaceBindingPreviewV1 {
+        binding: binding_view(value.binding),
+        compatible: value.compatible,
+        reason_codes: value.reason_codes,
+    }
+}
+
+fn binding_view(value: WorkspaceMemoryBinding) -> MemoryWorkspaceBindingViewV1 {
+    MemoryWorkspaceBindingViewV1 {
+        workspace_key: value.workspace_key.as_str().to_owned(),
+        backend_id: value.backend_id,
+        write_destination_handle: value.write_destination_handle,
+        read_destination_handles: value.read_destination_handles,
+        expected_write_source: value.expected_write_source,
+        expected_read_sources: value.expected_read_sources,
+        credential_ref: value.credential_ref,
+        state: match value.state {
+            WorkspaceMemoryBindingState::Active => MemoryWorkspaceBindingStateV1::Active,
+            WorkspaceMemoryBindingState::LocalOnly => MemoryWorkspaceBindingStateV1::LocalOnly,
+            WorkspaceMemoryBindingState::Incompatible => {
+                MemoryWorkspaceBindingStateV1::Incompatible
+            }
+            WorkspaceMemoryBindingState::Revoked => MemoryWorkspaceBindingStateV1::Revoked,
+        },
+        verified_capability_digest: value.verified_capability_digest,
+        revision: value.revision,
+    }
+}
+
+fn wire_workspace_state(value: WorkspaceMemoryBindingState) -> MemoryWorkspaceStateV1 {
+    match value {
+        WorkspaceMemoryBindingState::Active => MemoryWorkspaceStateV1::Bound,
+        WorkspaceMemoryBindingState::Incompatible => MemoryWorkspaceStateV1::Incompatible,
+        WorkspaceMemoryBindingState::LocalOnly | WorkspaceMemoryBindingState::Revoked => {
+            MemoryWorkspaceStateV1::LocalOnly
+        }
     }
 }
 

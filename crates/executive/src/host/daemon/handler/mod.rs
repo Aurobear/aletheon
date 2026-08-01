@@ -81,6 +81,39 @@ impl RequestHandler {
             .await
     }
 
+    pub(crate) async fn memory_workspace_preview_bind(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryWorkspacePreviewBindRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryWorkspaceBindingPreviewV1> {
+        self.ports
+            .memory_gateway
+            .preview_workspace_bind(&connection.principal_id, request)
+            .await
+    }
+
+    pub(crate) async fn memory_workspace_bind(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryWorkspaceBindRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryWorkspaceBindingViewV1> {
+        self.ports
+            .memory_gateway
+            .bind_workspace(&connection.principal_id, request)
+            .await
+    }
+
+    pub(crate) async fn memory_workspace_unbind(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryWorkspaceUnbindRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryWorkspaceBindingViewV1> {
+        self.ports
+            .memory_gateway
+            .unbind_workspace(&connection.principal_id, request)
+            .await
+    }
+
     pub(crate) async fn memory_maintenance_status(
         &self,
         request: fabric::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1,

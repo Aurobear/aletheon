@@ -5,8 +5,8 @@ pub mod mcp_adapter;
 pub mod worker;
 
 pub use mcp_adapter::{
-    SupplementalAdapterError, SupplementalAdapterErrorCategory, SupplementalHealth,
-    SupplementalHealthState, SupplementalMcpAdapter, SupplementalSchemaStatus,
+    McpSupplementalBindingNegotiator, SupplementalAdapterError, SupplementalAdapterErrorCategory,
+    SupplementalHealth, SupplementalHealthState, SupplementalMcpAdapter, SupplementalSchemaStatus,
     SupplementalSearchHit,
 };
 

@@ -387,7 +387,6 @@ fn validate_proposal(
         || proposal.read_destination_handles.len() > MAX_READ_SOURCES
         || proposal.expected_read_sources.len() > MAX_READ_SOURCES
         || grant.read_sources.len() > MAX_READ_SOURCES
-        || proposal.read_destination_handles.len() != proposal.expected_read_sources.len()
     {
         return Err(WorkspaceMemoryBindingError::Invalid);
     }
@@ -400,8 +399,6 @@ fn validate_proposal(
         validate_id(value)?;
     }
     if normalized_set(&proposal.expected_read_sources).len() != proposal.expected_read_sources.len()
-        || normalized_set(&proposal.read_destination_handles).len()
-            != proposal.read_destination_handles.len()
     {
         return Err(WorkspaceMemoryBindingError::Invalid);
     }

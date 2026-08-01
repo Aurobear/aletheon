@@ -4,10 +4,12 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
-use executive::application::memory_gateway::MemoryGatewayService;
+use executive::application::memory_gateway::{MemoryGatewayService, SupplementalBindingNegotiator};
 use fabric::protocol::memory::{
     MemoryFeedbackRequestV1, MemoryFeedbackSignalV1, MemoryIntakeStatusV1, MemoryObservationKindV1,
     MemoryObservationRequestV1, MemoryRecallRequestV1, MemorySensitivityV1,
+    MemoryWorkspaceBindRequestV1, MemoryWorkspaceBindingSpecV1, MemoryWorkspaceBindingStateV1,
+    MemoryWorkspacePreviewBindRequestV1, MemoryWorkspaceStateV1, MemoryWorkspaceUnbindRequestV1,
     MAX_MEMORY_RECALL_CONTENT_BYTES, MAX_MEMORY_RECALL_ITEMS,
 };
 use fabric::PrincipalId;
@@ -15,7 +17,8 @@ use kernel::chronos::TestClock;
 use mnemosyne::{
     ExperienceEvent, ForgetPolicy, ForgetReceipt, MemoryAuthority, MemoryIntakeLedger, MemoryKind,
     MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity, MemoryService, RecallItem,
-    RecallRequest, RecallSet, TemporalState, WorkspaceMemoryKey,
+    RecallRequest, RecallSet, SupplementalCapabilityGrant, TemporalState,
+    WorkspaceMemoryBindingRegistry, WorkspaceMemoryKey,
 };
 use tempfile::TempDir;
 
@@ -23,6 +26,21 @@ use tempfile::TempDir;
 struct CapturingMemory {
     requests: Mutex<Vec<RecallRequest>>,
     result: Mutex<RecallSet>,
+}
+
+struct FixedNegotiator {
+    grant: Mutex<SupplementalCapabilityGrant>,
+}
+
+#[async_trait]
+impl SupplementalBindingNegotiator for FixedNegotiator {
+    async fn negotiate(
+        &self,
+        _destination_handle: &str,
+        _backend_id: &str,
+    ) -> anyhow::Result<SupplementalCapabilityGrant> {
+        Ok(self.grant.lock().unwrap().clone())
+    }
 }
 
 impl CapturingMemory {
@@ -34,6 +52,27 @@ impl CapturingMemory {
                 degraded_sources: Vec::new(),
             }),
         }
+    }
+}
+
+fn binding_spec() -> MemoryWorkspaceBindingSpecV1 {
+    MemoryWorkspaceBindingSpecV1 {
+        backend_id: "supplemental/gbrain".into(),
+        write_destination_handle: "gbrain-workspace".into(),
+        read_destination_handles: vec!["gbrain-workspace".into()],
+        expected_write_source: "workspace-a".into(),
+        expected_read_sources: vec!["workspace-a".into(), "personal".into()],
+        credential_ref: "mcp-server:gbrain-workspace".into(),
+    }
+}
+
+fn binding_grant() -> SupplementalCapabilityGrant {
+    SupplementalCapabilityGrant {
+        backend_id: "supplemental/gbrain".into(),
+        write_source: Some("workspace-a".into()),
+        read_sources: vec!["personal".into(), "workspace-a".into()],
+        can_read: true,
+        can_write: true,
     }
 }
 
@@ -119,6 +158,8 @@ fn service(
         memory,
         Arc::new(TestClock::new(1_700_000_000_000, 10)),
         installation_id,
+        Arc::new(WorkspaceMemoryBindingRegistry::open(state.path().join("bindings.db")).unwrap()),
+        None,
     )
     .unwrap()
 }
@@ -170,6 +211,106 @@ async fn observe_canonicalizes_aliases_and_scopes_idempotency_to_host_authority(
         )
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn workspace_binding_requires_previewed_grants_and_controls_receipt_state() {
+    let state = TempDir::new().unwrap();
+    let project = project(state.path());
+    let negotiator = Arc::new(FixedNegotiator {
+        grant: Mutex::new(binding_grant()),
+    });
+    let ledger = Arc::new(MemoryIntakeLedger::open(state.path().join("intake.db")).unwrap());
+    let gateway = MemoryGatewayService::from_parts(
+        ledger,
+        Arc::new(CapturingMemory::default()),
+        Arc::new(TestClock::new(1_700_000_000_000, 10)),
+        "50e0337d-9c16-4d02-8b57-233ab7248759",
+        Arc::new(WorkspaceMemoryBindingRegistry::open(state.path().join("bindings.db")).unwrap()),
+        Some(negotiator.clone()),
+    )
+    .unwrap();
+    let principal = PrincipalId("principal-a".into());
+    let mut unsafe_spec = binding_spec();
+    unsafe_spec.credential_ref = "sk-not-a-reference".into();
+    assert!(gateway
+        .preview_workspace_bind(
+            &principal,
+            MemoryWorkspacePreviewBindRequestV1 {
+                working_dir: project.clone(),
+                binding: unsafe_spec,
+            },
+        )
+        .await
+        .is_err());
+    let preview = gateway
+        .preview_workspace_bind(
+            &principal,
+            MemoryWorkspacePreviewBindRequestV1 {
+                working_dir: project.clone(),
+                binding: binding_spec(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(preview.compatible);
+    assert_eq!(preview.binding.state, MemoryWorkspaceBindingStateV1::Active);
+    let digest = preview.binding.verified_capability_digest.unwrap();
+
+    let bound = gateway
+        .bind_workspace(
+            &principal,
+            MemoryWorkspaceBindRequestV1 {
+                working_dir: project.clone(),
+                binding: binding_spec(),
+                expected_capability_digest: digest,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(bound.state, MemoryWorkspaceBindingStateV1::Active);
+    let receipt = gateway
+        .observe(
+            &principal,
+            "test-client",
+            observation(project.clone(), "bound-observation"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt.workspace_state, MemoryWorkspaceStateV1::Bound);
+
+    negotiator.grant.lock().unwrap().write_source = Some("drifted".into());
+    assert!(gateway
+        .bind_workspace(
+            &principal,
+            MemoryWorkspaceBindRequestV1 {
+                working_dir: project.clone(),
+                binding: binding_spec(),
+                expected_capability_digest: bound.verified_capability_digest.unwrap(),
+            },
+        )
+        .await
+        .is_err());
+
+    let revoked = gateway
+        .unbind_workspace(
+            &principal,
+            MemoryWorkspaceUnbindRequestV1 {
+                working_dir: project.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoked.state, MemoryWorkspaceBindingStateV1::Revoked);
+    let receipt = gateway
+        .observe(
+            &principal,
+            "test-client",
+            observation(project, "local-observation"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt.workspace_state, MemoryWorkspaceStateV1::LocalOnly);
 }
 
 #[tokio::test]

@@ -1512,14 +1512,23 @@ impl RequestHandler {
         } else {
             None
         };
-        let memory_gateway = Arc::new(
-            crate::application::memory_gateway::MemoryGatewayService::open(
-                &data_dir,
-                memory_group.memory_service.clone(),
-                clock.clone(),
-            )
-            .context("opening versioned memory gateway")?,
-        );
+        let mut memory_gateway = crate::application::memory_gateway::MemoryGatewayService::open(
+            &data_dir,
+            memory_group.memory_service.clone(),
+            clock.clone(),
+        )
+        .context("opening versioned memory gateway")?;
+        if let Some(manager) = retained_mcp.clone() {
+            memory_gateway = memory_gateway.with_binding_negotiator(Arc::new(
+                crate::adapters::gbrain::McpSupplementalBindingNegotiator::new(
+                    manager,
+                    std::time::Duration::from_millis(
+                        config.memory_policy.supplemental.request_timeout_ms,
+                    ),
+                ),
+            ));
+        }
+        let memory_gateway = Arc::new(memory_gateway);
         let semantic_proposer = Arc::new(
             crate::application::memory_maintenance::AgentControlMemorySemanticProposal::new(
                 memory_agent_control,

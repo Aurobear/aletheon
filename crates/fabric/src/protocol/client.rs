@@ -805,6 +805,8 @@ pub struct ClientCapabilities {
     pub memory_gateway_v1: bool,
     #[serde(default)]
     pub memory_maintenance_v1: bool,
+    #[serde(default)]
+    pub memory_admin_v1: bool,
 }
 
 impl ClientCapabilities {
@@ -814,6 +816,7 @@ impl ClientCapabilities {
             cursors: self.cursors && supported.cursors,
             memory_gateway_v1: self.memory_gateway_v1 && supported.memory_gateway_v1,
             memory_maintenance_v1: self.memory_maintenance_v1 && supported.memory_maintenance_v1,
+            memory_admin_v1: self.memory_admin_v1 && supported.memory_admin_v1,
         }
     }
 }
@@ -925,6 +928,9 @@ pub enum ClientRequest {
     MemoryReceiptGet(crate::protocol::memory::MemoryReceiptGetRequestV1),
     MemoryRecall(crate::protocol::memory::MemoryRecallRequestV1),
     MemoryFeedback(crate::protocol::memory::MemoryFeedbackRequestV1),
+    MemoryWorkspacePreviewBind(crate::protocol::memory::MemoryWorkspacePreviewBindRequestV1),
+    MemoryWorkspaceBind(crate::protocol::memory::MemoryWorkspaceBindRequestV1),
+    MemoryWorkspaceUnbind(crate::protocol::memory::MemoryWorkspaceUnbindRequestV1),
     MemoryMaintenanceStatus(crate::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1),
     MemoryMaintenanceRun(crate::protocol::memory_maintenance::MemoryMaintenanceRunRequestV1),
 }
@@ -947,6 +953,15 @@ impl ClientRequest {
         )
     }
 
+    pub fn requires_memory_admin(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryWorkspacePreviewBind(_)
+                | Self::MemoryWorkspaceBind(_)
+                | Self::MemoryWorkspaceUnbind(_)
+        )
+    }
+
     pub fn to_json_rpc(&self, id: u64) -> serde_json::Result<serde_json::Value> {
         let method = match self {
             Self::Initialize(_) => "initialize",
@@ -960,6 +975,9 @@ impl ClientRequest {
             Self::MemoryReceiptGet(_) => "memory.receipt.get/v1",
             Self::MemoryRecall(_) => "memory.recall/v1",
             Self::MemoryFeedback(_) => "memory.feedback/v1",
+            Self::MemoryWorkspacePreviewBind(_) => "memory.workspace.preview_bind/v1",
+            Self::MemoryWorkspaceBind(_) => "memory.workspace.bind/v1",
+            Self::MemoryWorkspaceUnbind(_) => "memory.workspace.unbind/v1",
             Self::MemoryMaintenanceStatus(_) => "memory.maintenance.status/v1",
             Self::MemoryMaintenanceRun(_) => "memory.maintenance.run/v1",
         };
@@ -1074,6 +1092,8 @@ pub enum ClientEvent {
     MemoryLifecycleReceipt(crate::protocol::memory::MemoryLifecycleReceiptV1),
     MemoryRecallResult(crate::protocol::memory::MemoryRecallResultV1),
     MemoryFeedbackReceipt(crate::protocol::memory::MemoryFeedbackReceiptV1),
+    MemoryWorkspaceBindingPreview(crate::protocol::memory::MemoryWorkspaceBindingPreviewV1),
+    MemoryWorkspaceBinding(crate::protocol::memory::MemoryWorkspaceBindingViewV1),
     MemoryMaintenanceStatus(crate::protocol::memory_maintenance::MemoryMaintenanceStatusV1),
     MemoryMaintenanceRunReceipt(crate::protocol::memory_maintenance::MemoryMaintenanceRunReceiptV1),
     CommandCompleted {

@@ -96,6 +96,37 @@ pub struct SupplementalMcpAdapter {
     health: Mutex<SupplementalHealth>,
 }
 
+pub struct McpSupplementalBindingNegotiator {
+    manager: Arc<McpManager>,
+    timeout: Duration,
+}
+
+impl McpSupplementalBindingNegotiator {
+    pub fn new(manager: Arc<McpManager>, timeout: Duration) -> Self {
+        Self { manager, timeout }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::application::memory_gateway::SupplementalBindingNegotiator
+    for McpSupplementalBindingNegotiator
+{
+    async fn negotiate(
+        &self,
+        destination_handle: &str,
+        backend_id: &str,
+    ) -> anyhow::Result<SupplementalCapabilityGrant> {
+        SupplementalMcpAdapter::new(
+            self.manager.clone(),
+            destination_handle.to_owned(),
+            self.timeout,
+        )
+        .negotiate(backend_id, &CancellationToken::new())
+        .await
+        .map_err(anyhow::Error::from)
+    }
+}
+
 impl SupplementalMcpAdapter {
     pub fn new(
         manager: Arc<McpManager>,

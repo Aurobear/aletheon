@@ -207,6 +207,7 @@ fn socket_family(fd: &OwnedFd) -> Result<libc::c_int, ActivationError> {
 pub enum ConnectionRole {
     Ordinary,
     OfficialMemoryAgent,
+    OfficialMemoryAdmin,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -226,10 +227,8 @@ impl ConnectionContext {
 
     fn from_authenticated_peer(os_principal: LocalOsPrincipal, peer_pid: Option<u32>) -> Self {
         let role = peer_pid
-            .filter(|pid| is_official_memory_agent_process(*pid).unwrap_or(false))
-            .map_or(ConnectionRole::Ordinary, |_| {
-                ConnectionRole::OfficialMemoryAgent
-            });
+            .and_then(|pid| official_memory_process_role(pid).ok())
+            .unwrap_or(ConnectionRole::Ordinary);
         Self {
             principal_id: PrincipalId::local_uid(os_principal.uid),
             os_principal,
@@ -242,16 +241,40 @@ impl ConnectionContext {
     pub(crate) fn is_official_memory_agent(&self) -> bool {
         self.role == ConnectionRole::OfficialMemoryAgent
     }
+
+    pub(crate) fn is_official_memory_admin(&self) -> bool {
+        self.role == ConnectionRole::OfficialMemoryAdmin
+    }
 }
 
-fn is_official_memory_agent_process(pid: u32) -> anyhow::Result<bool> {
+fn official_memory_process_role(pid: u32) -> anyhow::Result<ConnectionRole> {
     let peer_exe = std::fs::metadata(format!("/proc/{pid}/exe"))?;
     let self_exe = std::fs::metadata("/proc/self/exe")?;
     if peer_exe.dev() != self_exe.dev() || peer_exe.ino() != self_exe.ino() {
-        return Ok(false);
+        return Ok(ConnectionRole::Ordinary);
     }
     let command = std::fs::read(format!("/proc/{pid}/cmdline"))?;
-    Ok(official_memory_agent_argv(&command))
+    Ok(if official_memory_agent_argv(&command) {
+        ConnectionRole::OfficialMemoryAgent
+    } else if official_memory_admin_argv(&command) {
+        ConnectionRole::OfficialMemoryAdmin
+    } else {
+        ConnectionRole::Ordinary
+    })
+}
+
+fn official_memory_admin_argv(command: &[u8]) -> bool {
+    let args = command
+        .split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty())
+        .collect::<Vec<_>>();
+    matches!(
+        args.as_slice(),
+        [_, memory, workspace, action, ..]
+            if *memory == b"memory"
+                && *workspace == b"workspace"
+                && (*action == b"preview-bind" || *action == b"bind" || *action == b"unbind")
+    )
 }
 
 fn official_memory_agent_argv(command: &[u8]) -> bool {
@@ -511,6 +534,31 @@ async fn dispatch_versioned_request(
             .memory_feedback(&connection, request)
             .await
             .map(ProtocolClientEvent::MemoryFeedbackReceipt),
+        ClientRequest::MemoryWorkspacePreviewBind(request)
+            if connection.is_official_memory_admin() =>
+        {
+            handler
+                .memory_workspace_preview_bind(&connection, request)
+                .await
+                .map(ProtocolClientEvent::MemoryWorkspaceBindingPreview)
+        }
+        ClientRequest::MemoryWorkspaceBind(request) if connection.is_official_memory_admin() => {
+            handler
+                .memory_workspace_bind(&connection, request)
+                .await
+                .map(ProtocolClientEvent::MemoryWorkspaceBinding)
+        }
+        ClientRequest::MemoryWorkspaceUnbind(request) if connection.is_official_memory_admin() => {
+            handler
+                .memory_workspace_unbind(&connection, request)
+                .await
+                .map(ProtocolClientEvent::MemoryWorkspaceBinding)
+        }
+        ClientRequest::MemoryWorkspacePreviewBind(_)
+        | ClientRequest::MemoryWorkspaceBind(_)
+        | ClientRequest::MemoryWorkspaceUnbind(_) => Err(anyhow::anyhow!(
+            "official memory admin connection is required"
+        )),
         ClientRequest::MemoryMaintenanceStatus(request)
             if connection.is_official_memory_agent() =>
         {
@@ -930,6 +978,7 @@ impl UnixServer {
                         let response = match protocol_state.accept_with_capabilities(
                             &versioned,
                             connection.is_official_memory_agent(),
+                            connection.is_official_memory_admin(),
                         ) {
                             Ok(ProtocolAction::InitializeResponse(negotiated)) => {
                                 initialize_response(request_id, &connection, negotiated)
@@ -1306,6 +1355,7 @@ mod tests {
             cursors: true,
             memory_gateway_v1: false,
             memory_maintenance_v1: false,
+            memory_admin_v1: false,
         }
     }
 
@@ -1364,6 +1414,22 @@ mod tests {
             } else {
                 assert!(!official_memory_agent_argv(command));
             }
+        }
+    }
+
+    #[test]
+    fn official_memory_admin_role_requires_explicit_workspace_command() {
+        for action in ["preview-bind", "bind", "unbind"] {
+            let command =
+                format!("/usr/bin/aletheon\0memory\0workspace\0{action}\0--working-dir\0/tmp\0");
+            assert!(official_memory_admin_argv(command.as_bytes()));
+        }
+        for command in [
+            b"/usr/bin/aletheon\0memory\0recall\0".as_slice(),
+            b"/usr/bin/aletheon\0memory-agent\0serve\0--official-user-socket\0".as_slice(),
+            b"/usr/bin/aletheon\0memory\0workspace\0status\0".as_slice(),
+        ] {
+            assert!(!official_memory_admin_argv(command));
         }
     }
 

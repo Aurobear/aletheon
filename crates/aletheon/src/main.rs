@@ -20,6 +20,7 @@ use tracing_subscriber::EnvFilter;
 #[cfg(feature = "acp")]
 mod acp;
 mod memory_agent;
+mod memory_cli;
 
 #[derive(Parser)]
 #[command(name = "aletheon", about = "AI agent with sandbox, multi-agent, IPC")]
@@ -198,6 +199,11 @@ enum Commands {
         #[command(subcommand)]
         sub: MemoryAgentCommand,
     },
+    /// Use the governed Memory Gateway through the official user socket.
+    Memory {
+        #[command(subcommand)]
+        sub: MemoryCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -214,6 +220,54 @@ enum MemoryAgentCommand {
         max_items: u16,
         #[arg(long)]
         dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemoryCommand {
+    /// Administer the current workspace's supplemental-memory binding.
+    Workspace {
+        #[command(subcommand)]
+        sub: MemoryWorkspaceCommand,
+    },
+}
+
+#[derive(clap::Args)]
+struct MemoryBindingArgs {
+    #[arg(long, default_value = ".")]
+    working_dir: PathBuf,
+    #[arg(long, default_value = "supplemental/gbrain")]
+    backend: String,
+    #[arg(long, default_value = "gbrain")]
+    write_handle: String,
+    #[arg(long = "read-handle")]
+    read_handles: Vec<String>,
+    #[arg(long)]
+    write_source: String,
+    #[arg(long = "read-source", required = true)]
+    read_sources: Vec<String>,
+    #[arg(long)]
+    credential_ref: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum MemoryWorkspaceCommand {
+    /// Negotiate backend grants without changing durable authority.
+    PreviewBind {
+        #[command(flatten)]
+        binding: MemoryBindingArgs,
+    },
+    /// Repeat negotiation and activate a previewed binding.
+    Bind {
+        #[command(flatten)]
+        binding: MemoryBindingArgs,
+        #[arg(long)]
+        expected_capability_digest: String,
+    },
+    /// Revoke remote authority for this workspace.
+    Unbind {
+        #[arg(long, default_value = ".")]
+        working_dir: PathBuf,
     },
 }
 
@@ -522,6 +576,10 @@ async fn main() -> Result<()> {
                     memory_agent::run_once(*max_items, *dry_run).await
                 }
             }
+        }
+        (Some(Commands::Memory { sub }), _) => {
+            init_tracing("aletheon::memory");
+            memory_cli::run(sub, cli.socket.clone()).await
         }
         (Some(Commands::RestoreTerminal), _) => {
             interact::tui::restore_terminal();

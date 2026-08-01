@@ -14,6 +14,8 @@ pub const MAX_MEMORY_SOURCE_REF_BYTES: usize = 512;
 pub const MAX_MEMORY_RECALL_ITEMS: usize = 100;
 pub const MAX_MEMORY_RECALL_CONTENT_BYTES: usize = 256 * 1024;
 pub const MAX_MEMORY_REQUESTED_KINDS: usize = 32;
+pub const MAX_MEMORY_BINDING_SOURCES: usize = 32;
+pub const MAX_MEMORY_BINDING_VALUE_BYTES: usize = 512;
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 #[error("invalid memory gateway request: {0}")]
@@ -353,9 +355,140 @@ pub struct MemoryFeedbackReceiptV1 {
     pub lifecycle: MemoryLifecycleReceiptV1,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryWorkspaceBindingSpecV1 {
+    pub backend_id: String,
+    pub write_destination_handle: String,
+    pub read_destination_handles: Vec<String>,
+    pub expected_write_source: String,
+    pub expected_read_sources: Vec<String>,
+    /// Opaque host secret-store reference. This is never the credential value.
+    pub credential_ref: String,
+}
+
+impl MemoryWorkspaceBindingSpecV1 {
+    pub fn validate(&self) -> Result<(), MemoryProtocolValidationError> {
+        for (name, value) in [
+            ("backend_id", self.backend_id.as_str()),
+            (
+                "write_destination_handle",
+                self.write_destination_handle.as_str(),
+            ),
+            ("expected_write_source", self.expected_write_source.as_str()),
+            ("credential_ref", self.credential_ref.as_str()),
+        ] {
+            validate_binding_value(name, value)?;
+        }
+        if self.read_destination_handles.is_empty()
+            || self.expected_read_sources.is_empty()
+            || self.read_destination_handles.len() > MAX_MEMORY_BINDING_SOURCES
+            || self.expected_read_sources.len() > MAX_MEMORY_BINDING_SOURCES
+        {
+            return invalid("binding source collection is empty or exceeds item limit");
+        }
+        for value in self
+            .read_destination_handles
+            .iter()
+            .chain(self.expected_read_sources.iter())
+        {
+            validate_binding_value("binding source or handle", value)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryWorkspacePreviewBindRequestV1 {
+    pub working_dir: PathBuf,
+    pub binding: MemoryWorkspaceBindingSpecV1,
+}
+
+impl MemoryWorkspacePreviewBindRequestV1 {
+    pub fn validate(&self) -> Result<(), MemoryProtocolValidationError> {
+        validate_working_dir(&self.working_dir)?;
+        self.binding.validate()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryWorkspaceBindRequestV1 {
+    pub working_dir: PathBuf,
+    pub binding: MemoryWorkspaceBindingSpecV1,
+    /// Digest returned by preview. Bind repeats negotiation and rejects drift.
+    pub expected_capability_digest: String,
+}
+
+impl MemoryWorkspaceBindRequestV1 {
+    pub fn validate(&self) -> Result<(), MemoryProtocolValidationError> {
+        validate_working_dir(&self.working_dir)?;
+        self.binding.validate()?;
+        validate_binding_value(
+            "expected_capability_digest",
+            &self.expected_capability_digest,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryWorkspaceUnbindRequestV1 {
+    pub working_dir: PathBuf,
+}
+
+impl MemoryWorkspaceUnbindRequestV1 {
+    pub fn validate(&self) -> Result<(), MemoryProtocolValidationError> {
+        validate_working_dir(&self.working_dir)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryWorkspaceBindingStateV1 {
+    Active,
+    LocalOnly,
+    Incompatible,
+    Revoked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryWorkspaceBindingViewV1 {
+    pub workspace_key: String,
+    pub backend_id: String,
+    pub write_destination_handle: String,
+    pub read_destination_handles: Vec<String>,
+    pub expected_write_source: String,
+    pub expected_read_sources: Vec<String>,
+    pub credential_ref: String,
+    pub state: MemoryWorkspaceBindingStateV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_capability_digest: Option<String>,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MemoryWorkspaceBindingPreviewV1 {
+    pub binding: MemoryWorkspaceBindingViewV1,
+    pub compatible: bool,
+    #[serde(default)]
+    pub reason_codes: Vec<String>,
+}
+
 fn validate_id(name: &str, value: &str) -> Result<(), MemoryProtocolValidationError> {
     if value.trim().is_empty() || value.len() > MAX_MEMORY_ID_BYTES {
         return invalid(format!("{name} is empty or exceeds byte limit"));
+    }
+    Ok(())
+}
+
+fn validate_binding_value(name: &str, value: &str) -> Result<(), MemoryProtocolValidationError> {
+    if value.trim().is_empty()
+        || value.len() > MAX_MEMORY_BINDING_VALUE_BYTES
+        || value.chars().any(char::is_control)
+    {
+        return invalid(format!("{name} is empty, unsafe, or exceeds byte limit"));
     }
     Ok(())
 }

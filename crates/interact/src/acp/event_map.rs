@@ -52,6 +52,8 @@ pub fn map_client_event_to_acp(event: &ClientEvent) -> Option<Value> {
         | ClientEvent::MemoryFeedbackReceipt(_)
         | ClientEvent::MemoryMaintenanceStatus(_)
         | ClientEvent::MemoryMaintenanceRunReceipt(_)
+        | ClientEvent::MemoryWorkspaceBindingPreview(_)
+        | ClientEvent::MemoryWorkspaceBinding(_)
         | ClientEvent::Agent(_)
         | ClientEvent::CommandCompleted { .. }
         | ClientEvent::TurnStarted { .. } => None,

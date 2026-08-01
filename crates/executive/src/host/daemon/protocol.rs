@@ -2,12 +2,16 @@
 
 use fabric::protocol::client::{negotiate_protocol_version, ClientCapabilities, ClientRequest};
 
-fn supported_capabilities(memory_maintenance_v1: bool) -> ClientCapabilities {
+fn supported_capabilities(
+    memory_maintenance_v1: bool,
+    memory_admin_v1: bool,
+) -> ClientCapabilities {
     ClientCapabilities {
         item_events: true,
         cursors: true,
         memory_gateway_v1: true,
         memory_maintenance_v1,
+        memory_admin_v1,
     }
 }
 
@@ -110,13 +114,14 @@ pub(crate) fn reduce_protocol(
 impl ConnectionProtocolState {
     #[cfg(test)]
     pub(crate) fn accept(&mut self, request: &ClientRequest) -> anyhow::Result<ProtocolAction> {
-        self.accept_with_capabilities(request, false)
+        self.accept_with_capabilities(request, false, false)
     }
 
     pub(crate) fn accept_with_capabilities(
         &mut self,
         request: &ClientRequest,
         official_memory_agent: bool,
+        official_memory_admin: bool,
     ) -> anyhow::Result<ProtocolAction> {
         if request.requires_memory_gateway() {
             let enabled = matches!(
@@ -136,12 +141,22 @@ impl ConnectionProtocolState {
             );
             anyhow::ensure!(enabled, "memory_maintenance_v1 was not negotiated");
         }
+        if request.requires_memory_admin() {
+            let enabled = matches!(
+                self,
+                Self::Ready {
+                    negotiated: Some(NegotiatedProtocol { capabilities, .. })
+                } if capabilities.memory_admin_v1
+            );
+            anyhow::ensure!(enabled, "memory_admin_v1 was not negotiated");
+        }
         let event = match request {
             ClientRequest::Initialize(params) => ProtocolEvent::Initialize(NegotiatedProtocol {
                 protocol_version: negotiate_protocol_version(&params.protocol_versions)?,
-                capabilities: params
-                    .capabilities
-                    .intersect(&supported_capabilities(official_memory_agent)),
+                capabilities: params.capabilities.intersect(&supported_capabilities(
+                    official_memory_agent,
+                    official_memory_admin,
+                )),
             }),
             ClientRequest::Initialized => ProtocolEvent::Initialized,
             _ => ProtocolEvent::Request,
@@ -173,6 +188,7 @@ mod tests {
                 cursors: true,
                 memory_gateway_v1: false,
                 memory_maintenance_v1: false,
+                memory_admin_v1: false,
             },
         }
     }
@@ -225,6 +241,7 @@ mod tests {
                         cursors: true,
                         memory_gateway_v1: false,
                         memory_maintenance_v1: false,
+                        memory_admin_v1: false,
                     },
                 },
             ))
@@ -260,6 +277,7 @@ mod tests {
                         cursors: true,
                         memory_gateway_v1: true,
                         memory_maintenance_v1: false,
+                        memory_admin_v1: false,
                     },
                 },
             ))
@@ -285,6 +303,7 @@ mod tests {
                 cursors: false,
                 memory_gateway_v1: false,
                 memory_maintenance_v1: true,
+                memory_admin_v1: false,
             },
         });
         let request = ClientRequest::MemoryMaintenanceStatus(
@@ -295,16 +314,50 @@ mod tests {
 
         let mut ordinary = ConnectionProtocolState::New;
         ordinary
-            .accept_with_capabilities(&initialize, false)
+            .accept_with_capabilities(&initialize, false, false)
             .unwrap();
         ordinary.accept(&ClientRequest::Initialized).unwrap();
         assert!(ordinary.accept(&request).is_err());
 
         let mut official = ConnectionProtocolState::New;
         official
-            .accept_with_capabilities(&initialize, true)
+            .accept_with_capabilities(&initialize, true, false)
             .unwrap();
         official.accept(&ClientRequest::Initialized).unwrap();
         assert!(official.accept(&request).is_ok());
+    }
+
+    #[test]
+    fn memory_admin_capability_is_connection_role_scoped() {
+        let initialize = ClientRequest::Initialize(fabric::protocol::client::InitializeParams {
+            client_version: "memory-admin".into(),
+            protocol_versions: vec![1],
+            capabilities: ClientCapabilities {
+                item_events: false,
+                cursors: false,
+                memory_gateway_v1: false,
+                memory_maintenance_v1: false,
+                memory_admin_v1: true,
+            },
+        });
+        let request = ClientRequest::MemoryWorkspaceUnbind(
+            fabric::protocol::memory::MemoryWorkspaceUnbindRequestV1 {
+                working_dir: "/tmp".into(),
+            },
+        );
+
+        let mut ordinary = ConnectionProtocolState::New;
+        ordinary
+            .accept_with_capabilities(&initialize, false, false)
+            .unwrap();
+        ordinary.accept(&ClientRequest::Initialized).unwrap();
+        assert!(ordinary.accept(&request).is_err());
+
+        let mut admin = ConnectionProtocolState::New;
+        admin
+            .accept_with_capabilities(&initialize, false, true)
+            .unwrap();
+        admin.accept(&ClientRequest::Initialized).unwrap();
+        assert!(admin.accept(&request).is_ok());
     }
 }
