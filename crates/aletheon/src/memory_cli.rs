@@ -19,6 +19,7 @@ use crate::{
 pub async fn run(command: &MemoryCommand, socket: Option<PathBuf>) -> anyhow::Result<()> {
     let value = match command {
         MemoryCommand::Observe {
+            observation_id,
             working_dir,
             kind,
             content,
@@ -33,7 +34,9 @@ pub async fn run(command: &MemoryCommand, socket: Option<PathBuf>) -> anyhow::Re
             serde_json::to_value(
                 client
                     .observe(MemoryObservationRequestV1 {
-                        observation_id: uuid::Uuid::new_v4().to_string(),
+                        observation_id: observation_id
+                            .clone()
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                         client_session_id: client_session_id(session_id),
                         client_turn_id: turn_id.clone(),
                         working_dir: absolute_working_dir(working_dir)?,

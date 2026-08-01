@@ -227,6 +227,9 @@ enum MemoryAgentCommand {
 enum MemoryCommand {
     /// Submit a bounded observation to the governed intake journal.
     Observe {
+        /// Stable client idempotency key; generated when omitted.
+        #[arg(long)]
+        observation_id: Option<String>,
         #[arg(long, default_value = ".")]
         working_dir: PathBuf,
         #[arg(long, default_value = "explicit-note")]
