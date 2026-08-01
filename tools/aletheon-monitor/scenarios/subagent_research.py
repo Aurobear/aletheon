@@ -113,8 +113,8 @@ def _assistant_journal_promotes(journal: object, marker: str, marker_hash: str) 
     return any(
         isinstance(entry, dict)
         and entry.get("event_type") == "assistant_message"
-        and _contains(entry.get("event"), marker)
-        and _contains(entry.get("event"), marker_hash)
+        and _contains(entry.get("item"), marker)
+        and _contains(entry.get("item"), marker_hash)
         for entry in entries
     )
 
@@ -387,6 +387,30 @@ async def _session_ids(client: AletheonClient) -> set[str]:
     }
 
 
+async def _wait_for_new_session(
+    client: AletheonClient, previous: set[str], timeout: float = 15.0
+) -> str | None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        created = await _session_ids(client) - previous
+        if len(created) == 1:
+            return created.pop()
+        if len(created) > 1:
+            return None
+        await asyncio.sleep(0.1)
+    return None
+
+
+async def _wait_for_frame_text(expected: str, timeout: float = 15.0) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        captured = await tui.tui_capture(wait_stable=False)
+        if expected in captured.get("frame", ""):
+            return True
+        await asyncio.sleep(0.1)
+    return False
+
+
 async def run(source_root: str, timeout: float = 180.0) -> dict:
     root = Path(source_root).resolve()
     marker = f"ALETHEON_AGENT_{uuid.uuid4().hex}"
@@ -406,9 +430,7 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
         )
         if not started.get("ok"):
             return {"scenario": "subagent_research", "status": "FAIL", "failure": started}
-        new_sessions = await _session_ids(client) - sessions_before
-        if len(new_sessions) == 1:
-            session_id = new_sessions.pop()
+        session_id = await _wait_for_new_session(client, sessions_before)
         prompt = (
             "使用精确的 agent_spawn/agent_list/agent_send/agent_cancel/agent_wait 工具完成验证："
             f"先启动一个有界研究 Agent，任务要求结果原样包含 marker={marker} 和 marker_sha256={marker_hash}；"
@@ -445,6 +467,8 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
             for agent_id in lifecycle["spawn_agent_ids"]
             if isinstance(agent_id, str)
         ]
+        recovery_client = AletheonClient(timeout=20)
+        recovery_sessions_before = await _session_ids(recovery_client)
         recovery_tui = await tui.tui_start(
             working_dir=str(root),
             cols=110,
@@ -453,22 +477,34 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
         )
         try:
             if recovery_tui.get("ok") and len(agent_ids) == 2:
-                await tui.tui_send(f"/resume {session_id}", submit=True)
-                await tui.tui_capture(
-                    wait_stable=True, require_change=False, timeout=10
+                initialized_session = await _wait_for_new_session(
+                    recovery_client, recovery_sessions_before
                 )
-                query = (
-                    "只使用 agent_list（limit=100）重新读取持久化子 Agent；"
-                    f"必须在工具结果中核对这两个 agent_id：{agent_ids[0]} 和 {agent_ids[1]}，"
-                    "报告各自终态和结构化 result，不要 spawn、wait 或修改它们。"
-                )
-                sent = await tui.tui_send(query, submit=True)
-                if sent.get("ok"):
-                    recovery_completed = await tui.tui_wait_turn_done(
-                        recovery_tui.get("turn_done_count", 0), timeout
-                    )
+                if not initialized_session:
+                    recovery_completed = {
+                        "error": "recovery TUI session initialization was not observed"
+                    }
+                else:
+                    await tui.tui_send(f"/resume {session_id}", submit=True)
+                    resumed = await _wait_for_frame_text(f"已恢复会话：{session_id}")
+                    if not resumed:
+                        recovery_completed = {
+                            "error": "recovery TUI did not confirm the requested session"
+                        }
+                    else:
+                        query = (
+                            "只使用 agent_list（limit=100）重新读取持久化子 Agent；"
+                            f"必须在工具结果中核对这两个 agent_id：{agent_ids[0]} 和 {agent_ids[1]}，"
+                            "报告各自终态和结构化 result，不要 spawn、wait 或修改它们。"
+                        )
+                        sent = await tui.tui_send(query, submit=True)
+                        if sent.get("ok"):
+                            recovery_completed = await tui.tui_wait_turn_done(
+                                recovery_tui.get("turn_done_count", 0), timeout
+                            )
         finally:
             await tui.tui_stop()
+            await recovery_client.close()
 
         recovery_events = base._events(recovery_completed.get("event_path"))
         if len(agent_ids) == 2:

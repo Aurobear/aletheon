@@ -155,11 +155,13 @@ def test_subagent_wait_result_alone_is_not_parent_promotion():
 
 
 def test_subagent_requires_assistant_journal_marker_not_tool_result_marker():
-    tool_only = {"entries": [{"event_type": "tool_result_block",
-                              "event": {"content": f"{MARKER} {MARKER_HASH}"}}]}
+    tool_only = {"entries": [{"event_type": "tool_result",
+                              "item": {"payload": {"data": {
+                                  "content": f"{MARKER} {MARKER_HASH}"}}}}]}
     promoted = {"entries": [*tool_only["entries"],
                              {"event_type": "assistant_message",
-                              "event": {"content": f"final {MARKER} {MARKER_HASH}"}}]}
+                              "item": {"payload": {"data": {
+                                  "content": f"final {MARKER} {MARKER_HASH}"}}}}]}
     assert subagent_research._assistant_journal_promotes(
         tool_only, MARKER, MARKER_HASH
     ) is False
