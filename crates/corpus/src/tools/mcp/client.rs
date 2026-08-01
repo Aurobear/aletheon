@@ -224,7 +224,7 @@ async fn configured_oauth(
             resource_url,
             method,
             policy,
-            TokenStore::open_mcp_server(&server.name)?,
+            TokenStore::ephemeral(),
             Arc::new(kernel::chronos::SystemClock::new()),
         )?;
         let auth = McpHttpAuth::ClientCredentials(auth);
