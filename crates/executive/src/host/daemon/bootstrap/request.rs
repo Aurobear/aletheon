@@ -935,7 +935,8 @@ impl RequestHandler {
             data_dir: data_dir.clone(),
         };
         let turn_token = Arc::new(Mutex::new(None));
-        let main_agent_process_id = Arc::new(Mutex::new(None));
+        let main_agent_process_ids = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let approval_owner_process_id = Arc::new(Mutex::new(None));
         let capability_resources =
             crate::host::daemon::handler::tool_executor::CapabilityResources {
                 kernel: kernel.clone(),
@@ -1187,7 +1188,8 @@ impl RequestHandler {
             active_profile.clone(),
             runtime.clone(),
             turn_token.clone(),
-            main_agent_process_id.clone(),
+            main_agent_process_ids.clone(),
+            approval_owner_process_id.clone(),
         )
         .await?;
         let session_input = turn_svc.session_input;
@@ -1243,7 +1245,7 @@ impl RequestHandler {
                 memory_group.approval_repository.clone(),
                 approved_apply.clone(),
                 clock.clone(),
-                main_agent_process_id.clone(),
+                approval_owner_process_id.clone(),
             )
             .with_dasein_coordinator(Arc::new(
                 crate::application::metacog_approval::GovernedMetacogApplyCoordinator::new(

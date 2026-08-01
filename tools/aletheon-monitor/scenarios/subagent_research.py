@@ -373,10 +373,18 @@ async def _restart_daemon(timeout: float = 30.0) -> dict:
     }
 
 
-async def _current_session(client: AletheonClient) -> str | None:
-    response = await client.rpc("status")
-    value = response.get("result", {}).get("status", {}).get("session_id")
-    return value if isinstance(value, str) and value else None
+async def _session_ids(client: AletheonClient) -> set[str]:
+    response = await client.rpc("session.list")
+    rows = response.get("result", [])
+    if not isinstance(rows, list):
+        return set()
+    return {
+        value
+        for row in rows
+        if isinstance(row, dict)
+        and isinstance((value := row.get("session_id")), str)
+        and value
+    }
 
 
 async def run(source_root: str, timeout: float = 180.0) -> dict:
@@ -385,20 +393,22 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
     marker_hash = hashlib.sha256(marker.encode("utf-8")).hexdigest()
     receipt_root = root / ".scenario-runs" / uuid.uuid4().hex
     receipt_root.mkdir(mode=0o700, parents=True)
-    started = await tui.tui_start(
-        working_dir=str(root),
-        cols=110,
-        rows=45,
-        event_path=str(receipt_root / "initial-events.jsonl"),
-    )
-    if not started.get("ok"):
-        return {"scenario": "subagent_research", "status": "FAIL", "failure": started}
-
     client = AletheonClient(timeout=15)
     session_id = None
     completed: dict = {}
     try:
-        session_id = await _current_session(client)
+        sessions_before = await _session_ids(client)
+        started = await tui.tui_start(
+            working_dir=str(root),
+            cols=110,
+            rows=45,
+            event_path=str(receipt_root / "initial-events.jsonl"),
+        )
+        if not started.get("ok"):
+            return {"scenario": "subagent_research", "status": "FAIL", "failure": started}
+        new_sessions = await _session_ids(client) - sessions_before
+        if len(new_sessions) == 1:
+            session_id = new_sessions.pop()
         prompt = (
             "使用精确的 agent_spawn/agent_list/agent_send/agent_cancel/agent_wait 工具完成验证："
             f"先启动一个有界研究 Agent，任务要求结果原样包含 marker={marker} 和 marker_sha256={marker_hash}；"
@@ -471,7 +481,9 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
         recovery_client = AletheonClient(timeout=20)
         try:
             recovered = await recovery_client.rpc("resume", {"session_id": session_id})
-            journal = await recovery_client.rpc("session.journal", {"limit": 500})
+            journal = await recovery_client.rpc(
+                "session.journal", {"session_id": session_id, "limit": 500}
+            )
         finally:
             await recovery_client.close()
 

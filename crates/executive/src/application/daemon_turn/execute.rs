@@ -188,7 +188,10 @@ impl DaemonTurnOrchestrator {
         notify: Option<tokio::sync::mpsc::Sender<String>>,
     ) -> serde_json::Value {
         // -- Kernel: register main agent --
-        let main_pid = match self.ensure_main_agent().await {
+        let main_pid = match self
+            .ensure_main_agent(&context.principal_id, &context.thread_id)
+            .await
+        {
             Ok(pid) => pid,
             Err(e) => {
                 warn!(error = %e, "Failed to register main agent in process table");
@@ -368,10 +371,10 @@ mod tests {
         assert_eq!(harness.coordinator.active_turn_count().await, 0);
         assert!(harness
             .orchestrator
-            .main_agent_process_id
+            .main_agent_process_ids
             .lock()
             .await
-            .is_some());
+            .contains_key("test:daemon-success\0daemon-success"));
         let items = harness
             .store
             .load_items(&fabric::SessionId("daemon-success".into()), None)
@@ -442,10 +445,10 @@ mod tests {
         assert_eq!(harness.coordinator.active_turn_count().await, 0);
         assert!(harness
             .orchestrator
-            .main_agent_process_id
+            .main_agent_process_ids
             .lock()
             .await
-            .is_some());
+            .contains_key("test:daemon-error\0daemon-error"));
     }
 
     #[tokio::test]
