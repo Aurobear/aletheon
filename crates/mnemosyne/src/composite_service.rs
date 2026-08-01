@@ -284,6 +284,12 @@ impl MemoryService for CompositeMemoryService {
         Ok(())
     }
 
+    async fn record_canonical(&self, record: crate::MemoryRecord) -> anyhow::Result<()> {
+        // Remote projection has its own governed lifecycle. A canonical local
+        // write must not implicitly enqueue supplemental data.
+        self.local.record_canonical(record).await
+    }
+
     async fn recall(&self, request: RecallRequest) -> anyhow::Result<RecallSet> {
         self.recall_internal(request, None).await
     }

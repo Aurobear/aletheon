@@ -377,6 +377,11 @@ pub trait SynthesisModel: Send + Sync {
 #[async_trait]
 pub trait MemoryService: Send + Sync {
     async fn record(&self, event: ExperienceEvent) -> anyhow::Result<()>;
+    /// Persist an already host-governed canonical record while preserving its
+    /// exact ID, scope, authority, sensitivity, and provenance.
+    async fn record_canonical(&self, _record: MemoryRecord) -> anyhow::Result<()> {
+        anyhow::bail!("canonical memory writes are unavailable")
+    }
     async fn recall(&self, req: RecallRequest) -> anyhow::Result<RecallSet>;
     /// Recall with host-verified authority ancestry. Production implementations
     /// override this to push the predicate into retrieval; the default keeps
@@ -701,12 +706,28 @@ impl DefaultMemoryService {
         };
         let facts = async {
             let started = Instant::now();
-            let result = self
-                .fact_store
-                .lock()
-                .await
-                .search_facts_prefiltered(&req.query, &req.session, 0.0, fetch_limit, &predicate)
-                .map(|rows| crate::recall::local::facts(rows, &req, now));
+            let store = self.fact_store.lock().await;
+            let result = (|| {
+                let mut items = crate::recall::local::facts(
+                    store.search_facts_prefiltered(
+                        &req.query,
+                        &req.session,
+                        0.0,
+                        fetch_limit,
+                        &predicate,
+                    )?,
+                    &req,
+                    now,
+                );
+                for record in store.search_canonical_records_prefiltered(
+                    &req.query,
+                    fetch_limit,
+                    &predicate,
+                )? {
+                    items.push(RecallItem::from_record(record)?);
+                }
+                Ok::<_, anyhow::Error>(items)
+            })();
             (started.elapsed(), result)
         };
         let reflections = async {
@@ -960,6 +981,20 @@ impl MemoryService for DefaultMemoryService {
                 Ok(())
             }
         }
+    }
+
+    async fn record_canonical(&self, record: MemoryRecord) -> anyhow::Result<()> {
+        record.validate()?;
+        let now_ms = self.clock.wall_now().0.max(0);
+        self.fact_store
+            .lock()
+            .await
+            .store_canonical_record(&record, now_ms)?;
+        if let Some(retention) = &self.retention {
+            retention.register(&record, now_ms)?;
+        }
+        self.metrics.record_stored(record.kind, &record.scope);
+        Ok(())
     }
 
     async fn recall(&self, req: RecallRequest) -> anyhow::Result<RecallSet> {
