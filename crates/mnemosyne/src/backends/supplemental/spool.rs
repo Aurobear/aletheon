@@ -32,6 +32,7 @@ pub enum EnqueueOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimedPage {
     pub record_id: String,
+    pub destination_handle: String,
     pub logical_page_id: String,
     pub operation: ReconcileOperationKind,
     pub schema_version: u32,
@@ -54,6 +55,7 @@ pub struct DeadLetter {
 }
 
 struct RequeuePayload {
+    destination_handle: String,
     slug: String,
     content: String,
     hash: String,
@@ -158,7 +160,8 @@ impl SupplementalSpool {
         sensitivity: MemorySensitivity,
         now_ms: i64,
     ) -> Result<EnqueueOutcome, SpoolError> {
-        self.enqueue_operation(
+        self.enqueue_operation_to(
+            "",
             record_id,
             &page.slug,
             ReconcileOperationKind::Upsert,
@@ -180,6 +183,33 @@ impl SupplementalSpool {
         sensitivity: MemorySensitivity,
         now_ms: i64,
     ) -> Result<EnqueueOutcome, SpoolError> {
+        self.enqueue_operation_to(
+            "",
+            record_id,
+            logical_page_id,
+            operation,
+            schema_version,
+            page,
+            sensitivity,
+            now_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn enqueue_operation_to(
+        &self,
+        destination_handle: &str,
+        record_id: &str,
+        logical_page_id: &str,
+        operation: ReconcileOperationKind,
+        schema_version: u32,
+        page: &SupplementalDocument,
+        sensitivity: MemorySensitivity,
+        now_ms: i64,
+    ) -> Result<EnqueueOutcome, SpoolError> {
+        if destination_handle.len() > 512 || destination_handle.chars().any(char::is_whitespace) {
+            return Err(SpoolError::Invalid("destination handle is invalid"));
+        }
         if matches!(
             sensitivity,
             MemorySensitivity::Confidential | MemorySensitivity::Restricted
@@ -223,8 +253,8 @@ impl SupplementalSpool {
             )));
         }
         tx.execute(
-            "INSERT INTO gbrain_pages(record_id,slug,content,content_hash,payload_bytes,created_ms,logical_page_id,operation_kind,schema_version)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            "INSERT INTO gbrain_pages(record_id,slug,content,content_hash,payload_bytes,created_ms,logical_page_id,operation_kind,schema_version,destination_handle)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
             params![
                 record_id,
                 page.slug,
@@ -234,7 +264,8 @@ impl SupplementalSpool {
                 now_ms,
                 logical_page_id,
                 operation.as_str(),
-                schema_version
+                schema_version,
+                destination_handle
             ],
         )?;
         tx.execute(
@@ -259,7 +290,7 @@ impl SupplementalSpool {
         let mut connection = self.connection()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut statement = tx.prepare(
-            "SELECT p.record_id,p.logical_page_id,p.operation_kind,p.schema_version,p.slug,p.content,p.content_hash,q.attempts
+            "SELECT p.record_id,p.destination_handle,p.logical_page_id,p.operation_kind,p.schema_version,p.slug,p.content,p.content_hash,q.attempts
              FROM gbrain_queue q JOIN gbrain_pages p ON p.record_id=q.record_id
              WHERE (q.state='pending' AND q.next_attempt_ms<=?1)
                 OR (q.state='leased' AND q.lease_until_ms<=?1)
@@ -271,11 +302,12 @@ impl SupplementalSpool {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, u32>(3)?,
-                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, u32>(4)?,
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
-                    row.get::<_, u32>(7)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, u32>(8)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -283,7 +315,7 @@ impl SupplementalSpool {
         if let Some((record_id, ..)) =
             candidates
                 .iter()
-                .find(|(_, _, _, _, slug, content, expected_hash, _)| {
+                .find(|(_, _, _, _, _, slug, content, expected_hash, _)| {
                     payload_hash(slug, content) != *expected_hash
                 })
         {
@@ -295,6 +327,7 @@ impl SupplementalSpool {
         let mut claimed = Vec::with_capacity(candidates.len());
         for (
             record_id,
+            destination_handle,
             logical_page_id,
             operation,
             schema_version,
@@ -323,6 +356,7 @@ impl SupplementalSpool {
             )?;
             claimed.push(ClaimedPage {
                 record_id,
+                destination_handle,
                 logical_page_id,
                 operation: ReconcileOperationKind::parse(&operation).ok_or(SpoolError::Corrupt)?,
                 schema_version,
@@ -357,13 +391,15 @@ impl SupplementalSpool {
         }
         let mut connection = self.connection()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let row: Option<(String, String, String, u32, String)> = tx.query_row(
-            "SELECT p.slug,p.logical_page_id,p.operation_kind,p.schema_version,p.content_hash FROM gbrain_queue q JOIN gbrain_pages p USING(record_id)
+        let row: Option<(String, String, String, String, u32, String)> = tx.query_row(
+            "SELECT p.destination_handle,p.slug,p.logical_page_id,p.operation_kind,p.schema_version,p.content_hash FROM gbrain_queue q JOIN gbrain_pages p USING(record_id)
              WHERE q.record_id=?1 AND q.state='leased' AND q.lease_owner=?2",
             params![claim.record_id, owner],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, u32>(3)?, row.get::<_, String>(4)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
         ).optional()?;
-        let Some((slug, logical_page_id, operation, schema_version, hash)) = row else {
+        let Some((destination_handle, slug, logical_page_id, operation, schema_version, hash)) =
+            row
+        else {
             if tx
                 .query_row(
                     "SELECT 1 FROM gbrain_delivery_receipts WHERE record_id=?1",
@@ -378,7 +414,8 @@ impl SupplementalSpool {
             }
             return Err(SpoolError::LeaseMismatch);
         };
-        if logical_page_id != receipt.logical_page_id
+        if destination_handle != claim.destination_handle
+            || logical_page_id != receipt.logical_page_id
             || operation != receipt.operation.as_str()
             || schema_version != receipt.schema_version
             || hash != receipt.content_hash
@@ -386,9 +423,9 @@ impl SupplementalSpool {
             return Err(SpoolError::Conflict);
         }
         tx.execute(
-            "INSERT OR REPLACE INTO gbrain_delivery_receipts(record_id,slug,content_hash,delivered_ms,remote_receipt,logical_page_id,remote_id,operation_kind,schema_version,synced_at_ms)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?4)",
-            params![claim.record_id, slug, hash, receipt.synced_at_ms, receipt.remote_id, receipt.logical_page_id, receipt.remote_id, receipt.operation.as_str(), receipt.schema_version],
+            "INSERT OR REPLACE INTO gbrain_delivery_receipts(record_id,slug,content_hash,delivered_ms,remote_receipt,logical_page_id,remote_id,operation_kind,schema_version,synced_at_ms,destination_handle)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?4,?10)",
+            params![claim.record_id, slug, hash, receipt.synced_at_ms, receipt.remote_id, receipt.logical_page_id, receipt.remote_id, receipt.operation.as_str(), receipt.schema_version, claim.destination_handle],
         )?;
         tx.execute(
             "UPDATE gbrain_attempts SET completed_ms=?2,outcome='delivered'
@@ -479,11 +516,11 @@ impl SupplementalSpool {
         let mut connection = self.connection()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let row: Option<RequeuePayload> = tx.query_row(
-            "SELECT slug,content,content_hash,payload_bytes,created_ms,logical_page_id,operation_kind,schema_version FROM gbrain_dead_letters WHERE record_id=?1",
+            "SELECT destination_handle,slug,content,content_hash,payload_bytes,created_ms,logical_page_id,operation_kind,schema_version FROM gbrain_dead_letters WHERE record_id=?1",
             [record_id], |row| Ok(RequeuePayload {
-                slug: row.get(0)?, content: row.get(1)?, hash: row.get(2)?, bytes: row.get(3)?,
-                created_ms: row.get(4)?, logical_page_id: row.get(5)?, operation: row.get(6)?,
-                schema_version: row.get(7)?,
+                destination_handle: row.get(0)?, slug: row.get(1)?, content: row.get(2)?, hash: row.get(3)?, bytes: row.get(4)?,
+                created_ms: row.get(5)?, logical_page_id: row.get(6)?, operation: row.get(7)?,
+                schema_version: row.get(8)?,
             }),
         ).optional()?;
         let Some(payload) = row else {
@@ -491,9 +528,9 @@ impl SupplementalSpool {
         };
         self.ensure_quota(&tx, payload.bytes)?;
         tx.execute(
-            "INSERT INTO gbrain_pages(record_id,slug,content,content_hash,payload_bytes,created_ms,logical_page_id,operation_kind,schema_version)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-            params![record_id, payload.slug, payload.content, payload.hash, payload.bytes, payload.created_ms, payload.logical_page_id, payload.operation, payload.schema_version],
+            "INSERT INTO gbrain_pages(record_id,slug,content,content_hash,payload_bytes,created_ms,logical_page_id,operation_kind,schema_version,destination_handle)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![record_id, payload.slug, payload.content, payload.hash, payload.bytes, payload.created_ms, payload.logical_page_id, payload.operation, payload.schema_version, payload.destination_handle],
         )?;
         tx.execute("INSERT INTO gbrain_queue(record_id,state,attempts,next_attempt_ms,updated_ms) VALUES(?1,'pending',0,?2,?2)", params![record_id,now_ms])?;
         tx.execute(
@@ -726,8 +763,8 @@ fn move_to_dead(
     category: &str,
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT OR REPLACE INTO gbrain_dead_letters(record_id,slug,content,content_hash,payload_bytes,attempts,created_ms,failed_ms,reason_category,logical_page_id,operation_kind,schema_version)
-         SELECT p.record_id,p.slug,p.content,p.content_hash,p.payload_bytes,q.attempts,p.created_ms,?2,?3,p.logical_page_id,p.operation_kind,p.schema_version
+        "INSERT OR REPLACE INTO gbrain_dead_letters(record_id,slug,content,content_hash,payload_bytes,attempts,created_ms,failed_ms,reason_category,logical_page_id,operation_kind,schema_version,destination_handle)
+         SELECT p.record_id,p.slug,p.content,p.content_hash,p.payload_bytes,q.attempts,p.created_ms,?2,?3,p.logical_page_id,p.operation_kind,p.schema_version,p.destination_handle
          FROM gbrain_pages p JOIN gbrain_queue q USING(record_id) WHERE p.record_id=?1",
         params![record_id,now_ms,category],
     )?;

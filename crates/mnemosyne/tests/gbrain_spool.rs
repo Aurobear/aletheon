@@ -3,8 +3,8 @@ use std::sync::{Arc, Barrier};
 
 use mnemosyne::supplemental::config::RetryPolicy;
 use mnemosyne::supplemental::{
-    EnqueueOutcome, RemoteMemoryReceipt, RetryOutcome, SpoolError, SpoolLimits,
-    SupplementalDocument, SupplementalSpool,
+    EnqueueOutcome, ReconcileOperationKind, RemoteMemoryReceipt, RetryOutcome, SpoolError,
+    SpoolLimits, SupplementalDocument, SupplementalSpool,
 };
 use mnemosyne::MemorySensitivity;
 use rusqlite::{Connection, ErrorCode};
@@ -18,6 +18,28 @@ fn open(dir: &tempfile::TempDir, max_items: usize, max_bytes: u64) -> Supplement
         },
     )
     .unwrap()
+}
+
+#[test]
+fn opaque_destination_is_durable_and_claimed_without_credentials() {
+    let dir = tempfile::tempdir().unwrap();
+    let spool = open(&dir, 4, 4096);
+    spool
+        .enqueue_operation_to(
+            "gbrain-workspace-a",
+            "bound-1",
+            "logical-1",
+            ReconcileOperationKind::Upsert,
+            1,
+            &page(1),
+            MemorySensitivity::Internal,
+            10,
+        )
+        .unwrap();
+    drop(spool);
+    let reopened = open(&dir, 4, 4096);
+    let claim = reopened.claim("worker", 10, 100, 1).unwrap().pop().unwrap();
+    assert_eq!(claim.destination_handle, "gbrain-workspace-a");
 }
 
 fn page(id: usize) -> SupplementalDocument {

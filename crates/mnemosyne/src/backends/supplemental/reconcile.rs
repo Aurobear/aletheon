@@ -210,7 +210,11 @@ impl<T: SupplementalMemoryTransport> SupplementalReconciliationService<T> {
                 slug: item.slug.clone(),
                 content: item.content.clone(),
             };
-            match self.transport.put_page(&page, cancel).await {
+            match self
+                .transport
+                .put_page_to(&item.destination_handle, &page, cancel)
+                .await
+            {
                 Ok(remote_id) => {
                     let receipt = RemoteMemoryReceipt {
                         record_id: item.record_id.clone(),
