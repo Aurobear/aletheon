@@ -255,6 +255,22 @@ async fn validates_schema_and_supports_put_query_search_and_get() {
         .await
         .unwrap()
         .contains("body"));
+    state.responses.lock().unwrap().insert(
+        "get_page".into(),
+        json!({"content":[{"type":"text","text":serde_json::to_string(&json!({
+            "slug":"decisions/one",
+            "frontmatter":{"schema":"aletheon.memory/v1"},
+            "compiled_truth":"canonical body",
+            "timeline":"",
+            "type":"architecture_decision",
+            "title":"Decision one",
+            "tags":[]
+        })).unwrap()}]}),
+    );
+    let canonical = adapter.get_page("decisions/one", &cancel).await.unwrap();
+    assert!(canonical.starts_with("---\n"));
+    assert!(canonical.contains("schema: aletheon.memory/v1"));
+    assert!(canonical.ends_with("canonical body\n"));
 
     let calls = state.calls.lock().unwrap();
     let puts: Vec<_> = calls

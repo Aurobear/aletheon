@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use corpus::tools::mcp::manager::McpManager;
 use mnemosyne::supplemental::page::MAX_PAGE_BYTES;
 use mnemosyne::supplemental::{validate_tools_list, SupplementalDocument};
@@ -486,16 +487,12 @@ impl SupplementalMcpAdapter {
             .invoke("get_page", json!({"slug": slug}), cancel)
             .await?;
         let text = extract_text(&value)?;
-        let content = serde_json::from_str::<Value>(&text)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("content")
-                    .or_else(|| value.get("body"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            })
-            .unwrap_or(text);
+        let content = parse_page_content(&text).map_err(|_| {
+            self.fail(
+                SupplementalAdapterErrorCategory::MalformedResponse,
+                "page response is malformed",
+            )
+        })?;
         if content.len() > MAX_TOOL_TEXT_BYTES {
             return Err(self.fail(
                 SupplementalAdapterErrorCategory::OversizedResponse,
@@ -760,6 +757,47 @@ fn extract_text(value: &Value) -> Result<String, SupplementalAdapterError> {
         ));
     }
     Ok(text)
+}
+
+fn parse_page_content(text: &str) -> anyhow::Result<String> {
+    let Ok(value) = serde_json::from_str::<Value>(text) else {
+        return Ok(text.to_owned());
+    };
+    if let Some(content) = value
+        .get("content")
+        .or_else(|| value.get("body"))
+        .and_then(Value::as_str)
+    {
+        return Ok(content.to_owned());
+    }
+    let compiled_truth = value
+        .get("compiled_truth")
+        .and_then(Value::as_str)
+        .context("page response has no content")?;
+    let mut frontmatter = value
+        .get("frontmatter")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for field in ["type", "title", "tags"] {
+        if let Some(value) = value.get(field).filter(|value| !value.is_null()) {
+            frontmatter.insert(field.to_owned(), value.clone());
+        }
+    }
+    let yaml = serde_yaml::to_string(&frontmatter).context("serializing page frontmatter")?;
+    let mut content = format!(
+        "---\n{}---\n\n{}",
+        yaml.trim_start_matches("---\n"),
+        compiled_truth
+    );
+    if let Some(timeline) = value.get("timeline").and_then(Value::as_str) {
+        if !timeline.is_empty() {
+            content.push_str("\n\n<!-- timeline -->\n\n");
+            content.push_str(timeline);
+        }
+    }
+    content.push('\n');
+    Ok(content)
 }
 
 fn classify_error(error: &anyhow::Error) -> SupplementalAdapterErrorCategory {
