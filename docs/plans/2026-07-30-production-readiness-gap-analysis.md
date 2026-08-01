@@ -2,9 +2,11 @@
 
 **Date:** 2026-07-30
 **Last reviewed:** 2026-08-01
-**Status:** 实现、部署与部分安装态复核记录；最新系统部署、连续三次真实 TUI、
-同一未重启 TUI 的三轮 scoped 开发请求均已通过，但其余 §9 门槛尚未全部关闭，
-因此不得标称整体 production-ready
+**Status:** 实现、部署与部分安装态复核记录；最新系统部署、project-workspace、
+subagent restart/recovery、reconnect/resume、连续三次真实 TUI，以及同一未重启
+TUI 的三轮 scoped 开发请求均已有通过证据。但 Gmail 真实账号、人工审批矩阵、
+跨会话 secret、child/embedding fan-out、加密 backup/restore drill 等 §9 门槛尚未
+全部关闭，因此不得标称整体 production-ready
 **Scope:** 区分已经实现、已设计但未实现、部分覆盖和完全未覆盖的生产能力；
 给出启用门槛、依赖顺序和文件所有权约束。F1/F2 是本分析最初识别的新增
 workstream；当前分支已实现其代码闭环，但仍按下述安装态证据独立判定。
@@ -20,7 +22,7 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
 | F2 | closure matrix 将已暴露操作绑定到 producer/resolver/receipt/replay，并将其余操作显式 deny（`config/approval-closure.toml:1-78`）；架构门禁执行 verifier（`tests/suites/architecture/architecture_check.sh` 末尾） | 代码闭环，待真实人工 resolve/restart 验收 |
 | #3 | Fabric 提供统一 trust/classification/scrub 契约（`crates/fabric/src/types/data_governance.rs:1-153`）；Memory projection、最终 context assembly 与 Dasein injection 均在模型可见边界再次 scrub（`crates/mnemosyne/src/projection.rs:260-267`、`crates/executive/src/application/context_assembler.rs`、`crates/cognit/src/harness/session.rs`） | 代码、focused 泄漏 fixture 和一次系统部署已完成；仍待安装态跨会话 secret fixture 与真实外部通道验收 |
 | #4 | health 导出 machine-core/user provider 与 Turn watchdog 指标和默认 SLO alerts（`crates/executive/src/host/daemon/handler/rpc/rpc_health.rs:138-187`）；monitor 只调用 process-global health，并对 readiness/SLO alert fail closed；现又从 durable TUI events 检查 tool error、权威 `text_snapshot`、终态文本结构和 `turn_done`（`tools/aletheon-monitor/src/tools/health.py:31-132`、`tools/aletheon-monitor/src/tools/diagnose.py:72-198`） | 代码、focused monitor tests 和最新系统部署完成；仍待可控故障注入矩阵 |
-| #5 | backup 使用 SQLite online backup 并逐库检查（`scripts/libexec/aletheon/backup.sh:20-43`），restore 在复制前后校验（`scripts/libexec/aletheon/restore.sh:38-72`）；migration inventory 覆盖 12 个持久组件（`config/release/migration-matrix.toml`、`scripts/libexec/aletheon/verify/migration-matrix.sh:16-65`） | 代码闭环，待安装态 backup/restore drill |
+| #5 | backup 使用 SQLite online backup 并逐库检查（`scripts/libexec/aletheon/backup.sh:20-43`），restore 在复制前后校验（`scripts/libexec/aletheon/restore.sh:38-72`）；migration inventory 覆盖 12 个持久组件（`config/release/migration-matrix.toml`、`scripts/libexec/aletheon/verify/migration-matrix.sh:16-65`）。安装器现在创建 unit 声明的 cache root，并只在 Restic 与非空受保护凭证均存在时启用 timer（`scripts/libexec/aletheon/install-systemd.sh:20-24,91-102`） | staging consistency smoke 已通过；未配置主机的 backup timer 已正确 default-off，待真实加密 backup/restore drill |
 | #6 | 非本地 MCP 对 restricted-data egress fail closed，并将返回内容标为 untrusted 后 scrub（`crates/corpus/src/tools/mcp/wrapper.rs:91-127`） | 主要外部工具路径闭环，待真实 channel/MCP 验收 |
 | #7 | F1 关闭 machine provider 协调；Hardware 已由 production embodiment composition 调用（`crates/executive/src/host/daemon/bootstrap/request.rs:823-850`）；role runtime 先 prepare 后注册（`crates/executive/src/host/daemon/bootstrap/runtime.rs:322-364`） | 路由代码闭环，待逐 runtime 安装态矩阵 |
 | #8 | 版本化 coding harness 已存在（`tests/coding/README.md:1-31`），CI 验证 replay/契约（`.github/workflows/ci.yml:81-85`），release gate 执行 acceptance 与 installed-host drill（`scripts/libexec/aletheon/release-acceptance.sh:296-339`） | 确定性门禁闭环，真实模型 workflow 待本次运行 |
@@ -30,10 +32,35 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
 
 本节覆盖下方同日较早的失败历史，但不删除失败证据：
 
-- `sudo bash scripts/aletheon.sh deploy` 完整通过；release、`/usr/bin/aletheon` 与运行中
-  machine/user daemon 由 deploy provenance gate 证明一致，当前 release 与 installed
-  binary SHA-256 均为 `7c042699eeca1c3010450ac6c6cb9a9ab22105ff12d36283fff441eb3df247e8`。
-  两段 7 秒 restart 稳定窗口和 official user-socket 真实请求均通过。
+- 2026-08-01 最终 `sudo bash scripts/aletheon.sh deploy` 完整通过；release、
+  `/usr/bin/aletheon`、运行中 `aletheon-core.service` 与 user `aletheon.service`
+  可执行文件的 SHA-256 均为
+  `29e06dcac8c8150817c08d6154818ed5c782055c2ca986d19e1e9cd5f56a02db`。
+  两个 unit 在随后 8 秒窗口均保持 `NRestarts=0`、`active/running`，official
+  user socket 的安装态真实 LLM boundary 请求也再次 PASS。
+- 安装态 `project_workspace` 聚合场景在 commit
+  `4c7200843ae16dfa3bd73c31ce1c6e7255cb83d1` 上 PASS：Git root/head/status
+  前后相同，artifact delivery、repository analysis 与 authoritative outside-write
+  denial 全部通过，证据汇总为 `/tmp/aletheon-project-workspace-pass.json`。最终部署
+  只新增 default-off backup 安装修复，release binary 摘要未变化；部署后又单独重跑
+  authoritative boundary，证据为 `/tmp/aletheon-post-deploy-real-llm.json`。
+- workspace boundary 不再接受模型自述：monitor 要求 exact `file_write` 参数、非空
+  transaction、权威 terminal error receipt、host 上文件确实不存在，并验证相同 receipt
+  已呈现在 frame（`tools/aletheon-monitor/src/scenarios.py:162-231`）。
+- subagent restart/recovery 场景 24 项全部 PASS（session
+  `e2a1eed8-f6aa-4bee-9efc-aa9d37f8201a`，事件
+  `.scenario-runs/4a0ac02bbb96432dbc801ca07ef53bb8/{initial-events,post-restart-events}.jsonl`）；
+  reconnect/resume 场景 12 项全部 PASS（session
+  `bf802faa-cf67-4ed8-a704-baa06246eb90`，汇总
+  `/tmp/aletheon-reconnect-resume-fixed.json`）。这些证据关闭本轮 child lifecycle 与
+  session resume/restart 的具体回归，不自动替代 §9 其他专项矩阵。
+- 未配置 Restic 的当前主机现在呈现 `backup=disabled`：timer 为
+  `disabled/inactive`、service 为 `inactive/dead` 且 `Result=success`，cache root 为
+  `aletheon:aletheon 0700`；本地 staging consistency smoke 通过。真实 Restic、加密
+  repository 与 restore drill 仍未配置，因此 #5 不能关闭。
+- `ALETHEON_PRODUCTION_GMAIL_ACCOUNT` 当前为空，真实 Gmail 场景只能返回
+  `BLOCKED:gmail_test_account_not_configured`。这是明确外部验收前置条件，不得用 fixture
+  或其他已通过场景覆盖。
 - 三个连续 fresh TUI repository-overview run 经当前安装 monitor 对 durable events
   重放均为 PASS：`0031a58282ed4069a91e1b6c31c4b010.jsonl`、
   `a058448f61594b2aae20a478866b393c.jsonl`、
@@ -49,6 +76,11 @@ workstream；当前分支已实现其代码闭环，但仍按下述安装态证�
 - 上述证据关闭 §9.6 的最终 deploy/真实多轮请求部分和 repository-overview 的三次
   模型参数质量门禁；它不关闭 §9.1–§9.5 的各专项安装态矩阵，整体仍未
   production-ready。
+- `project_workspace` 的最终效果门禁虽通过，但其中一轮 artifact delivery 曾先后
+  触发 premature `change_accept` 与 `validation_run`，随后通过 `git_diff` →
+  `change_accept` 自恢复。该 PASS 只证明最终 artifact/transaction 正确，不证明最优
+  provider 使用量或零错误工作流；性能/效率评分必须继续把 inference rounds、retries
+  与 tool errors 分开记录。
 
 ### 0.1 2026-07-31 安装态复核结果
 
