@@ -1,41 +1,118 @@
-# Coding production harness
+# Engineering coding benchmark
 
-`fixtures/` contains independent miniature repositories; they are not workspace crates.
-`tasks/` defines prompts, timeouts, path scopes, and independent acceptance commands.
-`harness/run.py` launches the real `aletheon exec` binary in an isolated copied workspace.
-`receipts/` stores bounded replay records. `harness/replay.py` validates correlation,
-integrity, diff evidence, acceptance commands, verification, and terminal status.
+This directory contains a black-box engineering benchmark for the real
+`aletheon exec` client:
 
-Build without bypassing the shared Cargo lock, then run a task:
+```text
+strict task catalog
+  -> isolated fixture + typed setup
+  -> real client terminal snapshot
+  -> independent acceptance + Git/resource checks
+  -> sealed per-task receipt
+  -> sealed deterministic suite report
+```
+
+- `fixtures/` contains ten independent miniature repositories; they are not
+  workspace crates.
+- `tasks/` contains strict version-1 TOML contracts for ten distinct scenario
+  categories.
+- `acceptance/` contains overlays copied only after client execution.
+- `harness/run.py` executes one task and always attempts to emit a version-2
+  receipt.
+- `harness/replay.py` checks receipt integrity, terminal/evidence correlation,
+  failure classification, and false-success rejection.
+- `harness/suite.py` runs tasks sequentially and writes a sealed version-1 suite
+  report.
+
+Natural-language model output is bounded diagnostic evidence only. The host
+verdict comes from the authoritative stop, operation correlation, Git scope,
+independent commands, resource cleanup, and the declared expected terminal.
+
+## Deterministic checks
+
+Run the secret-free contract suite with:
+
+```sh
+bash tests/coding/static_test.sh
+```
+
+It validates all ten task documents plus runner, receipt, aggregation, and
+workflow contracts. Fixture Cargo commands are always routed through
+`scripts/cargo-agent.sh`; do not invoke Cargo directly.
+
+## Diagnostic execution
+
+Build through the shared lock and run one task:
 
 ```sh
 bash scripts/cargo-agent.sh build -p aletheon
 ALETHEON_BIN="$PWD/target/debug/aletheon" \
-  python3 tests/coding/harness/run.py tests/coding/tasks/rust_bugfix.toml
+  python3 tests/coding/harness/run.py \
+  tests/coding/tasks/rust_bugfix.toml \
+  --receipt tests/coding/receipts/current/rust_bugfix.json
 ```
 
-A provider/core suitable for real work must be configured. Missing inference, timeout,
-failed acceptance, out-of-scope edits, and false success all produce a failed receipt.
+Run the catalog sequentially:
 
-## Manual real-model evaluation
+```sh
+ALETHEON_BIN="$PWD/target/debug/aletheon" \
+  python3 tests/coding/harness/suite.py \
+  --catalog tests/coding/tasks \
+  --receipts tests/coding/receipts/current \
+  --report tests/coding/receipts/current/suite.json
+```
 
-The GitHub Actions workflow **Real Coding Evaluation** is intentionally available only
-through manual dispatch. It uses the repository secret `LEJU_API_KEY` with the pinned
-`leju` provider and `deepseek/deepseek-v4-pro` model, starts one inference core, and runs
-`rust_bugfix`, `rust_multifile`, and `rust_diagnosis` sequentially.
+The client needs a reachable configured inference core. Sandbox mode defaults
+to `auto` and may be set with `ALETHEON_CODING_SANDBOX=auto|require|forbid`.
+Each command and client process runs in a separate process group, captured text
+is bounded, and the receipt retains SHA-256 digests of the complete streams.
 
-The manual workflow sets `ALETHEON_CODING_SANDBOX=forbid` because GitHub-hosted
-runners can expose a bubblewrap binary while denying the namespace operations it
-requires. This exception applies only to disposable fixture copies inside the ephemeral
-runner; local harness runs remain `auto`, and independent acceptance still decides the
-result.
+Suite exit codes are stable:
 
-Every run uploads one receipt per fixture and `core.log` as the
-`coding-e2e-<run-id>` artifact, including when the evaluation fails. The generated
-credential-bearing configuration and temporary HOME are never uploaded and are removed
-when the evaluation step exits.
+| Exit | Meaning |
+|---:|---|
+| `0` | Every task matched its expected terminal and all independent gates passed |
+| `1` | At least one correlated task failed execution, policy, or verification |
+| `2` | Catalog, binary, core, transport, runner, or receipt infrastructure failed |
 
-Failures before a correlated operation receipt exists (missing secret, core readiness,
-or provider/core transport) are infrastructure failures. A correlated operation that
-finishes but violates fixture acceptance is an agent verification failure. Both fail the
-manual workflow, but the preserved receipts and log keep the distinction auditable.
+`blocked` and `budget_exhausted` are valid benchmark outcomes only for tasks
+that explicitly expect them and prove their side-effect invariants. They are not
+counted as completed engineering tasks in the normal success numerator.
+
+## Manual real-model workflow
+
+The GitHub Actions workflow **Real Coding Evaluation** is manual-only. It uses
+the owner-provided `LEJU_API_KEY`, pins the `leju` provider and
+`deepseek/deepseek-v4-pro`, starts one inference core, then runs the ten tasks
+sequentially through `harness/suite.py`.
+
+GitHub-hosted runners use `ALETHEON_CODING_SANDBOX=forbid` because they may
+expose bubblewrap while denying its namespace operations. This exception is
+limited to disposable fixture copies. The workflow always uploads:
+
+```text
+coding-artifacts/
+├── core.log
+├── receipts/
+│   └── <task>.json
+└── suite.json
+```
+
+The credential-bearing core configuration and temporary HOME are outside that
+artifact directory and are removed on exit.
+
+## Acceptance boundary
+
+A run using `target/debug/aletheon`, a temporary HOME, an alternative socket, or
+a directly started core is **diagnostic evidence only**. It is not installed
+runtime acceptance.
+
+Changes that affect client behavior, tools, configuration, persistence, IPC, or
+daemon bootstrap are complete only after all repository deployment checks pass:
+
+1. `sudo bash scripts/aletheon.sh deploy` succeeds;
+2. `target/release/aletheon`, `/usr/bin/aletheon`, and both running daemon
+   executables have identical SHA-256 digests;
+3. systemd restart counters remain stable; and
+4. `/usr/bin/aletheon` completes a real request through the official user
+   socket.
