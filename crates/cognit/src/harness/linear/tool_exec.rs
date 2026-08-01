@@ -785,11 +785,13 @@ enum ChangeTransactionObservation {
     Applied {
         transaction_id: String,
         workspace_version: String,
+        requires_validation: bool,
     },
     DiffReviewed {
         transaction_id: String,
         workspace_version: String,
         artifact_ref: String,
+        validated_without_command: bool,
     },
     Validated {
         transaction_id: String,
@@ -967,6 +969,7 @@ impl ReActLoop {
             ChangeTransactionObservation::Applied {
                 transaction_id,
                 workspace_version,
+                requires_validation,
             } => {
                 if self.cognitive_state.is_none() {
                     self.cognitive_state =
@@ -984,10 +987,12 @@ impl ReActLoop {
                         transaction_id: transaction_id.clone(),
                         workspace_version: workspace_version.clone(),
                     });
-                    state.require_action(RequiredAction::ValidateChange {
-                        transaction_id: transaction_id.clone(),
-                        workspace_version: workspace_version.clone(),
-                    });
+                    if requires_validation {
+                        state.require_action(RequiredAction::ValidateChange {
+                            transaction_id: transaction_id.clone(),
+                            workspace_version: workspace_version.clone(),
+                        });
+                    }
                     state.require_action(RequiredAction::AcceptChange {
                         transaction_id,
                         workspace_version,
@@ -999,11 +1004,12 @@ impl ReActLoop {
                 transaction_id,
                 workspace_version,
                 artifact_ref,
+                validated_without_command,
             } => {
                 self.evidence_ledger.record(EvidenceRecord {
                     id: EvidenceId(format!("change-diff:{call_id}")),
                     subject: EvidenceSubject::ChangeDiffReview {
-                        transaction_id,
+                        transaction_id: transaction_id.clone(),
                         workspace_version: workspace_version.clone(),
                     },
                     source: EvidenceSource::Tool {
@@ -1014,10 +1020,26 @@ impl ReActLoop {
                     locator: EvidenceLocator::Artifact {
                         artifact_id: artifact_ref,
                     },
-                    digest: Some(workspace_version),
+                    digest: Some(workspace_version.clone()),
                 });
                 if let Some(state) = self.cognitive_state.as_mut() {
                     state.phase = CognitiveWorkPhase::Verify;
+                }
+                if validated_without_command {
+                    self.evidence_ledger.record(EvidenceRecord {
+                        id: EvidenceId(format!("change-validation:{call_id}")),
+                        subject: EvidenceSubject::ChangeValidation {
+                            transaction_id,
+                            workspace_version: workspace_version.clone(),
+                        },
+                        source: EvidenceSource::HostRuntime,
+                        level: EvidenceLevel::DeterministicallyVerified,
+                        terminal_status: TerminalStatus::Succeeded,
+                        locator: EvidenceLocator::DurableReceipt {
+                            receipt_id: call_id.into(),
+                        },
+                        digest: Some(workspace_version),
+                    });
                 }
             }
             ChangeTransactionObservation::Validated {
@@ -1089,6 +1111,17 @@ fn change_transaction_observation(
         return Some(ChangeTransactionObservation::Applied {
             transaction_id: payload.get("transaction_id")?.as_str()?.into(),
             workspace_version: payload.get("resulting_workspace_version")?.as_str()?.into(),
+            requires_validation: payload
+                .get("validation_plan")
+                .and_then(|value| value.as_array())
+                .map(|steps| {
+                    steps.iter().any(|step| {
+                        step.get("required")
+                            .and_then(|value| value.as_bool())
+                            .unwrap_or(true)
+                    })
+                })
+                .unwrap_or(true),
         });
     }
     if capability == "change_accept"
@@ -1104,6 +1137,10 @@ fn change_transaction_observation(
             transaction_id: payload.get("transaction_id")?.as_str()?.into(),
             workspace_version: payload.get("workspace_version")?.as_str()?.into(),
             artifact_ref: payload.get("diff_artifact_ref")?.as_str()?.into(),
+            validated_without_command: payload
+                .get("transaction_phase")
+                .and_then(|value| value.as_str())
+                == Some("validated"),
         });
     }
     if matches!(capability, "exec_command" | "write_stdin") {
@@ -1112,6 +1149,17 @@ fn change_transaction_observation(
                 return Some(ChangeTransactionObservation::Applied {
                     transaction_id: transaction.get("transaction_id")?.as_str()?.into(),
                     workspace_version: transaction.get("current")?.get("digest")?.as_str()?.into(),
+                    requires_validation: transaction
+                        .get("validation_plan")
+                        .and_then(|value| value.as_array())
+                        .map(|steps| {
+                            steps.iter().any(|step| {
+                                step.get("required")
+                                    .and_then(|value| value.as_bool())
+                                    .unwrap_or(true)
+                            })
+                        })
+                        .unwrap_or(true),
                 });
             }
         }
@@ -1195,6 +1243,52 @@ mod change_transaction_tests {
             "validation_run",
             "validation",
             r#"{"change_transaction":{"transaction_id":"tx","phase":"validated","validation_receipts":[{"workspace_version":"v1","output_ref":"artifact://sha256/test"}]}}"#,
+            false,
+        );
+        assert!(matches!(
+            ProgressAuditor.audit(
+                loop_state.cognitive_state.as_ref().unwrap(),
+                &loop_state.evidence_ledger
+            ),
+            ProgressDecision::Continue { ref missing } if missing.len() == 1
+        ));
+
+        loop_state.observe_change_transaction(
+            "change_accept",
+            "accept",
+            r#"{"kind":"change_acceptance_receipt","transaction_id":"tx","workspace_version":"v1","transaction_phase":"accepted"}"#,
+            false,
+        );
+        assert_eq!(
+            ProgressAuditor.audit(
+                loop_state.cognitive_state.as_ref().unwrap(),
+                &loop_state.evidence_ledger
+            ),
+            ProgressDecision::Complete
+        );
+    }
+
+    #[test]
+    fn validation_free_change_completes_after_review_and_acceptance() {
+        let mut loop_state = ReActLoop::new(HarnessConfig::default(), Box::new(NoopCompressor));
+        loop_state.observe_change_transaction(
+            "file_write",
+            "write",
+            r#"{"kind":"file_write_receipt","transaction_id":"tx","resulting_workspace_version":"v1","validation_plan":[]}"#,
+            false,
+        );
+        assert!(matches!(
+            ProgressAuditor.audit(
+                loop_state.cognitive_state.as_ref().unwrap(),
+                &loop_state.evidence_ledger
+            ),
+            ProgressDecision::Continue { ref missing } if missing.len() == 2
+        ));
+
+        loop_state.observe_change_transaction(
+            "git_diff",
+            "diff",
+            r#"{"kind":"change_diff_receipt","transaction_id":"tx","workspace_version":"v1","diff_artifact_ref":"artifact://sha256/diff","transaction_phase":"validated"}"#,
             false,
         );
         assert!(matches!(
