@@ -41,6 +41,13 @@ CREATE TABLE IF NOT EXISTS memory_lifecycle_receipts(
 );
 CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_latest
   ON memory_lifecycle_receipts(durable_intake_id, revision DESC);
+CREATE TABLE IF NOT EXISTS visible_memory_records(
+  principal_id TEXT NOT NULL,
+  workspace_key TEXT NOT NULL,
+  record_id TEXT NOT NULL,
+  last_seen_at_ms INTEGER NOT NULL,
+  PRIMARY KEY(principal_id, workspace_key, record_id)
+);
 "#;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -283,6 +290,105 @@ impl MemoryIntakeLedger {
             .transpose()
     }
 
+    /// Read an authoritative receipt by host principal when the wire contract
+    /// carries only the durable intake ID. The opaque random ID remains scoped
+    /// to its authenticated principal; workspace authority is never accepted
+    /// from the client.
+    pub fn receipt_for_principal(
+        &self,
+        principal_id: &str,
+        durable_intake_id: &str,
+    ) -> Result<Option<MemoryLifecycleReceiptV1>, MemoryIntakeError> {
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let json = connection
+            .query_row(
+                "SELECT lifecycle.receipt_json
+                 FROM memory_intakes AS intake
+                 JOIN memory_lifecycle_receipts AS lifecycle
+                   ON lifecycle.durable_intake_id=intake.durable_intake_id
+                 WHERE intake.principal_id=?1 AND intake.durable_intake_id=?2
+                 ORDER BY lifecycle.revision DESC LIMIT 1",
+                params![principal_id, durable_intake_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        json.map(|value| serde_json::from_str(&value).map_err(MemoryIntakeError::from))
+            .transpose()
+    }
+
+    /// Persist the exact record IDs exposed by an authorized gateway recall so
+    /// later feedback can prove the target was visible in the caller's host-
+    /// derived principal/workspace ancestry. Client content never grants this
+    /// visibility.
+    pub fn remember_visible_records(
+        &self,
+        principal_id: &str,
+        workspace_key: &str,
+        record_ids: &[String],
+        seen_at_ms: i64,
+    ) -> Result<(), MemoryIntakeError> {
+        validate_authority_key("principal_id", principal_id)?;
+        WorkspaceMemoryKey::from_verified(workspace_key.to_owned())
+            .map_err(|error| MemoryProtocolValidationError(error.to_string()))?;
+        if record_ids.len() > fabric::protocol::memory::MAX_MEMORY_RECALL_ITEMS
+            || record_ids.iter().any(|id| {
+                id.trim().is_empty() || id.len() > fabric::protocol::memory::MAX_MEMORY_ID_BYTES
+            })
+            || seen_at_ms < 0
+        {
+            return Err(MemoryProtocolValidationError(
+                "visible record grant is invalid or exceeds its limit".into(),
+            )
+            .into());
+        }
+        let mut connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for record_id in record_ids {
+            transaction.execute(
+                "INSERT INTO visible_memory_records(
+                   principal_id,workspace_key,record_id,last_seen_at_ms
+                 ) VALUES(?1,?2,?3,?4)
+                 ON CONFLICT(principal_id,workspace_key,record_id)
+                 DO UPDATE SET last_seen_at_ms=excluded.last_seen_at_ms",
+                params![principal_id, workspace_key, record_id, seen_at_ms],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn is_record_visible(
+        &self,
+        principal_id: &str,
+        workspace_key: &str,
+        record_id: &str,
+    ) -> Result<bool, MemoryIntakeError> {
+        validate_authority_key("principal_id", principal_id)?;
+        WorkspaceMemoryKey::from_verified(workspace_key.to_owned())
+            .map_err(|error| MemoryProtocolValidationError(error.to_string()))?;
+        validate_authority_key("record_id", record_id)?;
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let exists = connection
+            .query_row(
+                "SELECT 1 FROM visible_memory_records
+                 WHERE principal_id=?1 AND workspace_key=?2 AND record_id=?3",
+                params![principal_id, workspace_key, record_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        Ok(exists)
+    }
+
     pub fn transition(
         &self,
         principal_id: &str,
@@ -431,6 +537,15 @@ fn validate_update(update: &MemoryLifecycleUpdate) -> Result<(), MemoryProtocolV
                 "lifecycle identifier list is invalid or exceeds its limit".into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_authority_key(name: &str, value: &str) -> Result<(), MemoryProtocolValidationError> {
+    if value.trim().is_empty() || value.len() > MAX_MEMORY_ID_BYTES {
+        return Err(MemoryProtocolValidationError(format!(
+            "{name} is empty or exceeds byte limit"
+        )));
     }
     Ok(())
 }

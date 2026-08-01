@@ -121,6 +121,11 @@ impl RecallRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecallItem {
     pub content: String,
+    /// Record kind used by versioned callers. Legacy persisted recall rows did
+    /// not carry this field, so they deserialize conservatively as semantic
+    /// facts instead of making an existing cache unreadable after upgrade.
+    #[serde(default = "default_recall_item_kind")]
+    pub kind: MemoryKind,
     pub metadata: MemoryMetadata,
     pub temporal_state: TemporalState,
     #[serde(default)]
@@ -158,6 +163,10 @@ impl RecallSet {
 
 impl RecallItem {
     pub fn into_record(self, kind: MemoryKind, scope: MemoryScope) -> anyhow::Result<MemoryRecord> {
+        anyhow::ensure!(
+            self.kind == kind,
+            "recall item kind does not match requested record kind"
+        );
         let status = match self.temporal_state {
             TemporalState::Current | TemporalState::Unknown => MemoryStatus::Current,
             TemporalState::Superseded => MemoryStatus::Superseded,
@@ -189,6 +198,7 @@ impl RecallItem {
         };
         Ok(Self {
             content: record.content,
+            kind: record.kind,
             metadata: record.metadata,
             temporal_state,
             authority: record.authority,
@@ -197,6 +207,10 @@ impl RecallItem {
             evidence: None,
         })
     }
+}
+
+fn default_recall_item_kind() -> MemoryKind {
+    MemoryKind::SemanticFact
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -364,6 +378,29 @@ pub trait SynthesisModel: Send + Sync {
 pub trait MemoryService: Send + Sync {
     async fn record(&self, event: ExperienceEvent) -> anyhow::Result<()>;
     async fn recall(&self, req: RecallRequest) -> anyhow::Result<RecallSet>;
+    /// Recall with host-verified authority ancestry. Production implementations
+    /// override this to push the predicate into retrieval; the default keeps
+    /// lightweight test adapters source-compatible and applies defense-in-depth
+    /// filtering before returning any item.
+    async fn recall_with_prefilter(
+        &self,
+        req: RecallRequest,
+        prefilter: &crate::RecallPreFilter,
+    ) -> anyhow::Result<RecallSet> {
+        let mut result = self.recall(req.clone()).await?;
+        let predicate = prefilter.to_scope_predicate();
+        result.items.retain(|item| predicate.allows(item));
+        let mut bytes = 0usize;
+        result.items.retain(|item| {
+            if bytes.saturating_add(item.content.len()) > req.max_content_bytes {
+                return false;
+            }
+            bytes = bytes.saturating_add(item.content.len());
+            true
+        });
+        result.items.truncate(req.max_items);
+        Ok(result)
+    }
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()>;
     async fn preview_forget(&self, _policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
         anyhow::bail!("forget preview is unavailable")
@@ -978,6 +1015,14 @@ impl MemoryService for DefaultMemoryService {
             items,
             degraded_sources,
         })
+    }
+
+    async fn recall_with_prefilter(
+        &self,
+        req: RecallRequest,
+        prefilter: &crate::RecallPreFilter,
+    ) -> anyhow::Result<RecallSet> {
+        DefaultMemoryService::recall_with_prefilter(self, req, prefilter).await
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {

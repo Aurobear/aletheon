@@ -446,12 +446,22 @@ async fn dispatch_versioned_request(
                     detail: serde_json::json!({"status":"cancelled"}),
                 })
         }
-        ClientRequest::MemoryObserve(_)
-        | ClientRequest::MemoryReceiptGet(_)
-        | ClientRequest::MemoryRecall(_)
-        | ClientRequest::MemoryFeedback(_) => {
-            Err(anyhow::anyhow!("memory gateway is not composed"))
-        }
+        ClientRequest::MemoryObserve(request) => handler
+            .memory_observe(&connection, request)
+            .await
+            .map(ProtocolClientEvent::MemoryObservationReceipt),
+        ClientRequest::MemoryReceiptGet(request) => handler
+            .memory_receipt(&connection, request)
+            .await
+            .map(ProtocolClientEvent::MemoryLifecycleReceipt),
+        ClientRequest::MemoryRecall(request) => handler
+            .memory_recall(&connection, request)
+            .await
+            .map(ProtocolClientEvent::MemoryRecallResult),
+        ClientRequest::MemoryFeedback(request) => handler
+            .memory_feedback(&connection, request)
+            .await
+            .map(ProtocolClientEvent::MemoryFeedbackReceipt),
         ClientRequest::Initialize(_) | ClientRequest::Initialized => {
             Err(anyhow::anyhow!("handshake request cannot be dispatched"))
         }

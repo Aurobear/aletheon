@@ -763,6 +763,7 @@ impl ConsolidationRepository {
                     metadata.confidence = row.3.unwrap_or(0.0);
                     Some(crate::RecallItem {
                         content,
+                        kind: crate::MemoryKind::SemanticFact,
                         metadata,
                         temporal_state: crate::TemporalState::Current,
                         authority: crate::MemoryAuthority::VerifiedLocalSemantic,

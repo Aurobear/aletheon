@@ -6,8 +6,7 @@ fn supported_capabilities() -> ClientCapabilities {
     ClientCapabilities {
         item_events: true,
         cursors: true,
-        // Enabled only after the durable gateway is composed.
-        memory_gateway_v1: false,
+        memory_gateway_v1: true,
     }
 }
 
@@ -202,7 +201,7 @@ mod tests {
                     capabilities: ClientCapabilities {
                         item_events: true,
                         cursors: true,
-                        memory_gateway_v1: true,
+                        memory_gateway_v1: false,
                     },
                 },
             ))
@@ -220,6 +219,33 @@ mod tests {
             .accept(&ClientRequest::Snapshot(
                 fabric::protocol::client::SnapshotRequest {
                     session_id: fabric::SessionId("session-1".into()),
+                },
+            ))
+            .is_ok());
+    }
+
+    #[test]
+    fn accepts_memory_requests_when_gateway_capability_was_negotiated() {
+        let mut state = ConnectionProtocolState::New;
+        state
+            .accept(&ClientRequest::Initialize(
+                fabric::protocol::client::InitializeParams {
+                    client_version: "memory-client".into(),
+                    protocol_versions: vec![1],
+                    capabilities: ClientCapabilities {
+                        item_events: true,
+                        cursors: true,
+                        memory_gateway_v1: true,
+                    },
+                },
+            ))
+            .unwrap();
+        state.accept(&ClientRequest::Initialized).unwrap();
+
+        assert!(state
+            .accept(&ClientRequest::MemoryReceiptGet(
+                fabric::protocol::memory::MemoryReceiptGetRequestV1 {
+                    durable_intake_id: "intake-1".into(),
                 },
             ))
             .is_ok());

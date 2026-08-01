@@ -328,6 +328,7 @@ mod tests {
 
     fn item(id: &str, content: &str, scope: MemoryScope) -> RecallItem {
         RecallItem {
+            kind: crate::MemoryKind::SemanticFact,
             content: content.into(),
             metadata: crate::MemoryMetadata::local(id, id, Utc::now()),
             temporal_state: crate::TemporalState::Current,

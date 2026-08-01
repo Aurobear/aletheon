@@ -18,6 +18,7 @@ fn item(
 ) -> RecallItem {
     let observed = Utc.timestamp_opt(observed_second, 0).single().unwrap();
     RecallItem {
+        kind: mnemosyne::MemoryKind::SemanticFact,
         content: content.into(),
         metadata: MemoryMetadata {
             record_id: id.into(),

@@ -127,11 +127,11 @@ impl MemoryRecallRequestV1 {
         if self.query.trim().is_empty() || self.query.len() > MAX_MEMORY_QUERY_BYTES {
             return invalid("query is empty or exceeds byte limit");
         }
-        if self.max_items == 0 || self.max_items > MAX_MEMORY_RECALL_ITEMS {
-            return invalid("max_items is outside the supported range");
+        if self.max_items == 0 {
+            return invalid("max_items must be positive");
         }
-        if self.max_content_bytes == 0 || self.max_content_bytes > MAX_MEMORY_RECALL_CONTENT_BYTES {
-            return invalid("max_content_bytes is outside the supported range");
+        if self.max_content_bytes == 0 {
+            return invalid("max_content_bytes must be positive");
         }
         if self
             .requested_kinds
@@ -355,8 +355,8 @@ fn validate_id(name: &str, value: &str) -> Result<(), MemoryProtocolValidationEr
 }
 
 fn validate_working_dir(path: &std::path::Path) -> Result<(), MemoryProtocolValidationError> {
-    if path.as_os_str().is_empty() {
-        return invalid("working_dir is required");
+    if path.as_os_str().is_empty() || !path.is_absolute() {
+        return invalid("working_dir must be an absolute path");
     }
     Ok(())
 }

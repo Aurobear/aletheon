@@ -84,6 +84,7 @@ fn recalled() -> RecallSet {
     let observed = Utc.timestamp_opt(1_700_000_000, 0).single().unwrap();
     RecallSet {
         items: vec![RecallItem {
+            kind: mnemosyne::MemoryKind::SemanticFact,
             content: "selected memory marker".into(),
             metadata: MemoryMetadata {
                 record_id: "memory-1".into(),

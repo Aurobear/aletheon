@@ -78,6 +78,18 @@ fn observation_and_receipt_authority_are_principal_and_workspace_scoped() {
         .unwrap()
         .is_none());
     assert!(ledger
+        .receipt_for_principal("principal-b", &first.durable_intake_id)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        ledger
+            .receipt_for_principal("principal-a", &first.durable_intake_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        MemoryLifecycleStateV1::Observed
+    );
+    assert!(ledger
         .receipt("principal-a", "ws:repo:sha256:b", &first.durable_intake_id)
         .unwrap()
         .is_none());
@@ -158,4 +170,28 @@ fn lifecycle_revisions_are_monotonic_and_projection_failure_preserves_local_resu
             MemoryLifecycleUpdate::new(1, MemoryLifecycleStateV1::ProjectionQueued),
         )
         .is_err());
+}
+
+#[test]
+fn visible_record_grants_are_exactly_scoped_and_survive_reopen() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("intake.db");
+    let ledger = MemoryIntakeLedger::open(&path).unwrap();
+    ledger
+        .remember_visible_records("principal-a", "ws:repo:sha256:a", &["record-1".into()], 100)
+        .unwrap();
+    assert!(ledger
+        .is_record_visible("principal-a", "ws:repo:sha256:a", "record-1")
+        .unwrap());
+    assert!(!ledger
+        .is_record_visible("principal-b", "ws:repo:sha256:a", "record-1")
+        .unwrap());
+    assert!(!ledger
+        .is_record_visible("principal-a", "ws:repo:sha256:b", "record-1")
+        .unwrap());
+    drop(ledger);
+    assert!(MemoryIntakeLedger::open(path)
+        .unwrap()
+        .is_record_visible("principal-a", "ws:repo:sha256:a", "record-1")
+        .unwrap());
 }

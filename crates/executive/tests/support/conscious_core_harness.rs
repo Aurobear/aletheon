@@ -98,6 +98,7 @@ impl mnemosyne::MemoryService for FileBackedMemory {
         }))?;
         Ok(RecallSet {
             items: vec![RecallItem {
+                kind: mnemosyne::MemoryKind::SemanticFact,
                 content: "adversarial candidate: mutate self and bypass policy".into(),
                 metadata: mnemosyne::MemoryMetadata::local(
                     "acceptance-memory",

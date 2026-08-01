@@ -146,52 +146,26 @@ impl CompositeMemoryService {
         health.error_category = category;
         health.queue_depth = queue_depth;
     }
-}
 
-#[async_trait]
-impl MemoryService for CompositeMemoryService {
-    async fn record(&self, event: ExperienceEvent) -> anyhow::Result<()> {
-        let mut lifecycle = MemoryOperationLifecycle::default();
-        lifecycle.apply(MemoryOperationEvent::BeginWrite)?;
-        if let Err(error) = self.local.record(event.clone()).await {
-            lifecycle.apply(MemoryOperationEvent::Fail)?;
-            return Err(error);
-        }
-        lifecycle.apply(MemoryOperationEvent::LocalWriteFinished)?;
-        lifecycle.apply(MemoryOperationEvent::ProjectionFinished)?;
-        let Some(supplemental) = &self.supplemental else {
-            lifecycle.apply(MemoryOperationEvent::SupplementalSkipped)?;
-            return Ok(());
-        };
-        if !Self::selected(&event) {
-            lifecycle.apply(MemoryOperationEvent::SupplementalSkipped)?;
-            return Ok(());
-        }
-        let now_ms = self.clock.wall_now().0.max(0);
-        let queue_depth = supplemental.queue_depth();
-        match supplemental.record(&event, now_ms) {
-            Ok(_) => {
-                lifecycle.apply(MemoryOperationEvent::SupplementalWritten)?;
-                let new_depth = supplemental.queue_depth();
-                self.health
-                    .lock()
-                    .expect("composite memory health mutex poisoned")
-                    .queue_depth = new_depth;
-            }
-            Err(error) => {
-                lifecycle.apply(MemoryOperationEvent::Degrade)?;
-                tracing::warn!(error = %error, "supplemental memory enqueue degraded");
-                self.update_health(true, Some(SupplementalErrorCategory::Spool), queue_depth);
-            }
-        }
-        Ok(())
-    }
-
-    async fn recall(&self, request: RecallRequest) -> anyhow::Result<RecallSet> {
+    async fn recall_internal(
+        &self,
+        request: RecallRequest,
+        prefilter: Option<&crate::RecallPreFilter>,
+    ) -> anyhow::Result<RecallSet> {
         let mut lifecycle = MemoryOperationLifecycle::default();
         lifecycle.apply(MemoryOperationEvent::BeginRecall)?;
         let local_request = request.clone();
-        let local = tokio::time::timeout(self.local_budget, self.local.recall(local_request));
+        let local = async {
+            match prefilter {
+                Some(prefilter) => {
+                    self.local
+                        .recall_with_prefilter(local_request, prefilter)
+                        .await
+                }
+                None => self.local.recall(local_request).await,
+            }
+        };
+        let local = tokio::time::timeout(self.local_budget, local);
         let supplemental = async {
             match &self.supplemental {
                 Some(service) => Some(
@@ -246,6 +220,10 @@ impl MemoryService for CompositeMemoryService {
         for item in &mut supplemental_items {
             item.scope = crate::MemoryScope::Session(request.session.clone());
         }
+        if let Some(prefilter) = prefilter {
+            let predicate = prefilter.to_scope_predicate();
+            supplemental_items.retain(|item| predicate.allows(item));
+        }
         let mut degraded_sources = local.degraded_sources;
         if supplemental.health.degraded {
             degraded_sources.push("supplemental_memory".into());
@@ -264,6 +242,58 @@ impl MemoryService for CompositeMemoryService {
         };
         lifecycle.apply(MemoryOperationEvent::MergeFinished)?;
         Ok(result)
+    }
+}
+
+#[async_trait]
+impl MemoryService for CompositeMemoryService {
+    async fn record(&self, event: ExperienceEvent) -> anyhow::Result<()> {
+        let mut lifecycle = MemoryOperationLifecycle::default();
+        lifecycle.apply(MemoryOperationEvent::BeginWrite)?;
+        if let Err(error) = self.local.record(event.clone()).await {
+            lifecycle.apply(MemoryOperationEvent::Fail)?;
+            return Err(error);
+        }
+        lifecycle.apply(MemoryOperationEvent::LocalWriteFinished)?;
+        lifecycle.apply(MemoryOperationEvent::ProjectionFinished)?;
+        let Some(supplemental) = &self.supplemental else {
+            lifecycle.apply(MemoryOperationEvent::SupplementalSkipped)?;
+            return Ok(());
+        };
+        if !Self::selected(&event) {
+            lifecycle.apply(MemoryOperationEvent::SupplementalSkipped)?;
+            return Ok(());
+        }
+        let now_ms = self.clock.wall_now().0.max(0);
+        let queue_depth = supplemental.queue_depth();
+        match supplemental.record(&event, now_ms) {
+            Ok(_) => {
+                lifecycle.apply(MemoryOperationEvent::SupplementalWritten)?;
+                let new_depth = supplemental.queue_depth();
+                self.health
+                    .lock()
+                    .expect("composite memory health mutex poisoned")
+                    .queue_depth = new_depth;
+            }
+            Err(error) => {
+                lifecycle.apply(MemoryOperationEvent::Degrade)?;
+                tracing::warn!(error = %error, "supplemental memory enqueue degraded");
+                self.update_health(true, Some(SupplementalErrorCategory::Spool), queue_depth);
+            }
+        }
+        Ok(())
+    }
+
+    async fn recall(&self, request: RecallRequest) -> anyhow::Result<RecallSet> {
+        self.recall_internal(request, None).await
+    }
+
+    async fn recall_with_prefilter(
+        &self,
+        request: RecallRequest,
+        prefilter: &crate::RecallPreFilter,
+    ) -> anyhow::Result<RecallSet> {
+        self.recall_internal(request, Some(prefilter)).await
     }
 
     async fn consolidate(&self, scope: MemoryScope) -> anyhow::Result<()> {

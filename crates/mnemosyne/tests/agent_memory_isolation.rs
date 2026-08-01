@@ -84,6 +84,7 @@ fn parent_projection_is_bounded_receipted_and_read_only() {
     let recall = RecallSet {
         items: (0..4)
             .map(|index| RecallItem {
+                kind: mnemosyne::MemoryKind::SemanticFact,
                 content: format!("parent selected fact {index}"),
                 metadata: MemoryMetadata::local(format!("parent-{index}"), "parent", now),
                 temporal_state: TemporalState::Current,

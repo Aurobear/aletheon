@@ -1511,6 +1511,14 @@ impl RequestHandler {
         } else {
             None
         };
+        let memory_gateway = Arc::new(
+            crate::application::memory_gateway::MemoryGatewayService::open(
+                &data_dir,
+                memory_group.memory_service.clone(),
+                clock.clone(),
+            )
+            .context("opening versioned memory gateway")?,
+        );
         let handler_ports = Arc::new(crate::host::daemon::handler::ports::HandlerPorts::new(
             kernel.clone(),
             admin_pending_approvals.clone(),
@@ -1531,6 +1539,7 @@ impl RequestHandler {
             debug_handler,
             session_gateway,
             memory_group.memory_service.clone(),
+            memory_gateway,
             memory_group.supplemental_memory_health.clone(),
             inference.clone(),
             review,

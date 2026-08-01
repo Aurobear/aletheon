@@ -120,6 +120,7 @@ fn metadata(record_id: &str, source_id: &str, observed_seconds: i64) -> MemoryMe
 
 fn item(record_id: &str, source_id: &str, content: &str, observed: i64) -> RecallItem {
     RecallItem {
+        kind: mnemosyne::MemoryKind::SemanticFact,
         content: content.into(),
         metadata: metadata(record_id, source_id, observed),
         temporal_state: TemporalState::Current,
