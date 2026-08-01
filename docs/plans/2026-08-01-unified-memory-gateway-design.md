@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-01
 
-**Status:** Self-reviewed proposal awaiting user approval; architecture decisions are resolved, implementation plan pending
+**Status:** Approved and partially implemented; external Source provisioning and installed-runtime acceptance remain pending
 
 **Scope:** 完善 Aletheon 自身 Mnemosyne 记忆；让 Claude Code、Codex、Aletheon 通过同一套受治理接口使用 GBrain；由 Aletheon 托管服务端 Memory Agent，周期性检查、评分、整理、冲突处理和遗忘。
 **Repositories:**
@@ -11,7 +11,8 @@
 - Aurb: `/home/aurobear/Workspace/agent/aurb`
 - GBrain: `/home/aurobear/Workspace/agent/gbrain`
 
-> 本文是设计规格，不宣称功能已经部署。实施前必须先由用户验收本文，再另写文件级 implementation plan。
+> 本文是设计规格与实施状态锚点，不宣称功能已经部署。只有 §11 hard gates
+> 和系统安装验收全部通过后，才能标记 production-wired。
 
 ## 0. 已锁定决策
 
@@ -29,6 +30,7 @@
 | D10 | **升级兼容优先于自动修复**。Aletheon/GBrain schema 或 capability 不兼容时，Memory Agent 保留 backlog、停止远端写入、继续本地 recall，并给出可操作健康状态。 |
 | D11 | **不增加任何按自然语言短语、语言、仓库名或固定路径触发的生产逻辑**。显式“保存记忆”必须由客户端转换成 typed user action，不由服务端匹配 prompt 文本。 |
 | D12 | **不保留两套自动长期记忆决策链**。Aurb 现有 Claude/Codex 直连 GBrain capture 在迁移验收后退出自动写路径；可保留只读人工 MCP。 |
+| D13 | **GBrain 是不修改源码的外部服务**。Aletheon 只能依赖已发布的标准 MCP/OAuth/CLI 契约；兼容、凭证续期、能力证明和降级均由 Aletheon 通用接口与 supplemental adapter 承担。 |
 
 ## 1. 当前代码事实与缺口
 
@@ -45,26 +47,29 @@ Mnemosyne 已有 10 类记录、生命周期状态、authority、sensitivity、p
 
 因此本设计不是重写 Mnemosyne，而是补齐统一入口、workspace scope、候选评分、跨客户端桥接、服务端维护循环和真正的 source routing。
 
-### 1.2 Aletheon 当前缺口
+### 1.2 Aletheon 初始缺口与当前闭环状态
 
-1. `MemoryScope` 只有 Global/Principal/Session/Goal/Agent/Task，没有 repository workspace（`crates/mnemosyne/src/model/scope.rs:3-12`）；`RecallRequest` 也只有 `session + query`，没有 host-verified workspace context（`crates/mnemosyne/src/service.rs:68-81`）。
-2. `CompositeMemoryService::selected` 目前只把 ArchitectureDecision 与 GoalOutcome 送入 supplemental（`crates/mnemosyne/src/composite_service.rs:128-133`），没有统一候选/评分/投影策略。
-3. versioned client protocol 目前只含 initialize/snapshot/subscribe/chat/approval/cancel（`crates/fabric/src/protocol/client.rs:901-909`）；没有供 Claude/Codex 使用的 versioned observe/recall/receipt API。
-4. 旧 admin surface 有 `memory.forget`，但它不是新的跨客户端 Memory Gateway；forget/tombstone 的受认证 use case 已存在，应复用而不是再造无治理删除路径（`crates/executive/src/application/request_use_cases.rs:848-933`）。
-5. supplemental config 仍是进程级 `read_sources + write_source` 标量（`crates/executive/src/composition/config/supplemental_memory.rs:59-100`），无法按 workspace 选择不同 source/credential。
-6. `SupplementalMemoryTransport::put_page` 不携带 destination，而 query 才携带 source（`crates/mnemosyne/src/backends/supplemental/backend.rs:68-91`）。对 GBrain 而言写 source 由认证身份决定，单改 page frontmatter 或 slug 不会改变真实 Source。
-7. Fabric 中 checkpoint 和 trust 各有一份结构相同但类型独立的 `WorkspaceIdentity`（`crates/fabric/src/types/workspace_checkpoint.rs:34-39`、`crates/fabric/src/types/workspace_trust.rs:53-62`），继续复制会产生身份漂移。
+| 初始缺口 | 当前代码事实 | 状态 |
+|---|---|---|
+| 无 workspace memory scope | `MemoryScope::Workspace` 与 `ScopeAncestry.workspace_id` 已进入统一 scope filter（`crates/mnemosyne/src/model/scope.rs:3-54`）。 | 已闭环 |
+| 旧 `CompositeMemoryService::selected` 是第二条自动投影链 | 库类型仍保留兼容，但 daemon production composition 使用 `CompositeMemoryService::local_only`，由 governed maintenance controller 独占新投影（`crates/executive/src/adapters/gbrain/bootstrap.rs:150-165`）。 | 代码闭环；installed 验收待做 |
+| client protocol 无 observe/recall/receipt | capability negotiation 与 observe/receipt/recall/feedback/binding/maintenance requests 已加入 versioned protocol（`crates/fabric/src/protocol/client.rs:800-820`、`crates/fabric/src/protocol/client.rs:917-936`）。 | 已闭环 |
+| forget/tombstone 尚未统一到新跨客户端 admin UX | 现有 preview/forget admin use case 仍是可复用底座（`crates/executive/src/application/request_use_cases.rs:849-918`）；本轮没有新增无治理删除路径。 | 部分闭环；installed admin acceptance 待做 |
+| 进程级 source 标量不能按 workspace 选 credential | workspace binding registry 与 destination attestation policy 已把 opaque handle 映射到 expected Source（`crates/executive/src/composition/config/supplemental_memory.rs:64-124`、`crates/executive/src/application/memory_gateway.rs:466-508`）。 | 已闭环 |
+| write transport 无 destination | `SupplementalMemoryTransport::put_page_to` 已成为 destination-aware contract（`crates/mnemosyne/src/backends/supplemental/backend.rs:70-97`），GBrain adapter 对缺少证明的 destination fail-closed（`crates/executive/src/adapters/gbrain/mcp_adapter.rs:843-878`）。 | 已闭环 |
+| WorkspaceIdentity 重复定义 | canonical `WorkspaceIdentity` 在单一模块定义，checkpoint/trust 仅 re-export（`crates/fabric/src/types/workspace_identity.rs:1-20`、`crates/fabric/src/types/workspace_checkpoint.rs:19`、`crates/fabric/src/types/workspace_trust.rs:19`）。 | 已闭环 |
 
-### 1.3 Aurb 当前造成双轨
+### 1.3 Aurb 客户端迁移现状
 
-Aurb 已经有很好的客户端安全积木，但自动链路绕过 Aletheon：
+Aurb 的自动路径已经切到 Aletheon，但旧实现资产尚未全部删除：
 
-- prompt hook 直接调用 GBrain recall，并从全局 `GBRAIN_SOURCE` 取 source（`/home/aurobear/Workspace/agent/aurb/src/hooks/recall.sh:7-60`）。
-- Stop hook 读取 transcript 后进入 Aurb capture pipeline（`/home/aurobear/Workspace/agent/aurb/src/hooks/session-end.sh:1-41`）。
-- pipeline 把 `GBRAIN_SOURCE` 或静态 config 写入 envelope（`/home/aurobear/Workspace/agent/aurb/src/lib/gbrain/session_pipeline.py:321-348`），writer 调 `put_page` 时没有 source 参数（`/home/aurobear/Workspace/agent/aurb/src/lib/gbrain/session_pipeline.py:313-319`）。
-- Aurb 会给 Codex 注册直接 GBrain MCP 和 bearer token（`/home/aurobear/Workspace/agent/aurb/scripts/lib/config/generate_provider_env.py:526-551`）。
+- prompt hook 调用 `/usr/bin/aletheon memory recall`，并把结果标成 governed local 或 untrusted supplemental reference（`/home/aurobear/Workspace/agent/aurb/src/hooks/recall.sh:13-54`）。
+- Stop hook 仍负责 provider payload normalization 和安全 transcript 提取入口（`/home/aurobear/Workspace/agent/aurb/src/hooks/session-end.sh:10-40`）。
+- pipeline 现在只把 observation 写入有界 Aletheon outbox 并 replay，不再在自动路径调用 `put_page`（`/home/aurobear/Workspace/agent/aurb/src/lib/gbrain/session_pipeline.py:321-358`）。
+- Codex 仍可注册使用 `GBRAIN_READ_TOKEN` 的 GBrain MCP（`/home/aurobear/Workspace/agent/aurb/scripts/lib/config/generate_provider_env.py:526-541`）。配置命名本身不能证明远端 scope；最终验收必须以 `whoami` 为准，且只允许 D12 的人工只读用途。
+- 旧 maintenance controller 源文件仍在 Aurb tree；其部署已退出自动服务路径，但删除源码要等 installed parity gate 后完成（assumption：最终部署验收尚未执行）。
 
-这意味着客户端、Aurb session-capture service、Aletheon Mnemosyne 各自可能做判断，无法形成单一审计链。迁移后 Aurb 仍负责**客户端 payload 适配、transcript 所有权校验、首轮 scrub、插件部署**，但不再负责长期记忆语义裁决。
+因此自动 observation/recall 已单轨，剩余风险是旧 server-side 资产清理与 installed parity，不能据此宣称迁移完成。Aurb 最终只负责**客户端 payload 适配、transcript 所有权校验、首轮 scrub、插件部署和有界 outbox**，不负责长期记忆语义裁决。
 
 ### 1.4 GBrain 的真实 source 边界
 
@@ -218,21 +223,31 @@ WorkspaceMemoryBinding/v1
 2. 绑定必须由本地 authenticated admin 对 canonical cwd 执行；不能由模型或 repo 文件自动授权。
 3. 标准读集合为 `[workspace-source, personal]`；shared source 逐项显式增加。
 4. credential 只存在 host secret store/systemd credential 中，不进入 config dump、memory record、Agent prompt 或 receipt。
-5. Aletheon adapter 握手必须验证 GBrain 返回的 write source/read sources 与 binding 一致；不一致即 `incompatible`，停止远端写入。
+5. Aletheon adapter 握手必须用标准 OAuth identity 和 Source marker 证明 effective
+   source authority 与 binding 一致；只比较本地配置不算证明。不一致即 `incompatible`，停止远端写入。
 
-为支持第 5 条，GBrain `whoami` 需要在不暴露 token 的前提下返回：
+上游 GBrain `whoami` 只返回 transport/client/scopes，不返回 Source grant；Aletheon
+不得因此维护 GBrain fork，也不得把配置中声明的 Source 当成远端事实。绑定采用
+**标准 OAuth + Source attestation marker**：
 
-```json
-{
-  "transport": "oauth",
-  "client_id": "...",
-  "scopes": ["read", "write"],
-  "write_source": "aletheon",
-  "read_sources": ["aletheon", "personal"]
-}
+```text
+authenticated local admin
+  ├─ 用上游 gbrain CLI 在目标 Source 写入随机 attestation marker
+  ├─ 注册标准 OAuth client_credentials（一个 handle 只证明一个 Source）
+  └─ 把非秘密 marker slug + SHA-256 写入 Aletheon destination policy
+
+Aletheon adapter preview/revalidate
+  ├─ 标准 whoami：验证 remote transport + read/write scopes
+  ├─ 标准 get_page：读取 marker 并验证内容摘要
+  ├─ policy Source 必须与 binding expected Source 精确相等
+  └─ 任一失败：incompatible/local_only，禁止远端写入
 ```
 
-在该字段部署前，旧 credential 只能用于显式 legacy binding；不允许把“配置宣称的 source”当成已验证事实。
+每个 `read_destination_handle` 与 `expected_read_sources` **按相同索引一一对应**；
+标准集合仍为 workspace + personal，但使用两个独立 source-bound handle，而不是要求
+GBrain 增加 federated grant introspection。marker 只证明外部授权边界，不进入模型上下文、
+记忆召回或业务评分。运行时按 TTL 复验；credential/source/marker 任一漂移都会使 binding
+失效。legacy bearer 不能产生新 binding，只允许迁移期只读诊断。
 
 ## 5. Versioned Memory Gateway contracts
 
@@ -467,7 +482,7 @@ SupplementalMemoryPort
 GBrain-specific adapter 负责：
 
 - MCP tools/list schema negotiation；
-- `whoami` grant verification；
+- 标准 `whoami` scope/identity verification + Source attestation marker；
 - `WorkspaceMemoryKey -> source-bound credential handle`；
 - Aletheon record ↔ GBrain page schema；
 - query/search/get_page/put_page；
@@ -482,7 +497,7 @@ GBrain-specific adapter 负责：
 不再只用单一 release string 推断兼容。启动握手至少验证：
 
 1. required base tools：query/search/get_page/put_page/whoami；
-2. `whoami` 包含 verified write/read source grants；
+2. `whoami` 提供 transport/client/scopes，Source authority 由 marker 证明；
 3. Aletheon page schema read/write capability；
 4. maintenance capabilities逐项发现，缺一项只降级对应 phase；
 5. source grant 与 binding 完全相符。
@@ -554,8 +569,10 @@ Aurb 不再拥有 server model、memory scoring、semantic dedup、GBrain write 
 ### Phase M1 — Source provisioning 与 binding
 
 1. 显式创建 `personal` 和每个目标 workspace Source。
-2. 为每个 Aletheon binding 注册 source-bound write + federated-read credential。
-3. 部署扩展后的 `whoami`，由 Aletheon 验证 grants。
+2. 使用上游 CLI 为每个 Source 创建 attestation marker，并注册标准
+   `client_credentials`；workspace 与 personal 使用独立 handle。
+3. Aletheon 用标准 `whoami` + `get_page` 验证 scopes、marker digest 与 handle policy，
+   不修改 GBrain 源码。
 4. 未验证 workspace 保持 `local_only`。
 
 ### Phase M2 — Legacy `default` 隔离
@@ -645,7 +662,21 @@ Aletheon aggregator 只能汇总 verdict，不能改写 GBrain doctor 的原始�
 
 ## 13. 实施波次与预期文件
 
-> 下面是设计级 change map，不替代批准后生成的文件级 implementation plan。
+> 下面是设计级 change map；已落地部分以 §13 的当前代码锚点为准，未通过
+> installed-runtime 验收的部分仍不得标称 production-wired。
+
+### 13.0 当前实施状态（2026-08-01）
+
+| 能力 | 当前代码事实 | 状态 |
+|---|---|---|
+| 通用 MCP 非交互认证 | MCP config 已支持 `client_credentials` 与 env-only client secret（`crates/corpus/src/tools/mcp/config.rs:50-88`）；token exchange、精确 endpoint scope、加密 TokenStore 续期已接入请求准备路径（`crates/corpus/src/tools/mcp/auth.rs:335-483`、`crates/corpus/src/tools/mcp/auth.rs:504-564`）。 | 已实现并完成 focused tests；未做 installed acceptance |
+| 外部 Source 证明 | 非秘密 destination policy 包含 handle/source/marker digest/复验周期（`crates/executive/src/composition/config/supplemental_memory.rs:64-124`）；adapter 用标准 `whoami` + `get_page` 做 OAuth、least-privilege scope 与 marker digest 验证（`crates/executive/src/adapters/gbrain/mcp_adapter.rs:368-415`）。 | 已实现并完成 focused tests；外部 marker/OAuth 尚未 provision |
+| 绑定与读隔离 | binding negotiation 强制 read handle 与 expected source 一一配对（`crates/executive/src/application/memory_gateway.rs:466-508`、`crates/executive/src/application/memory_gateway.rs:570-584`）；recall 只查询已证明 handle 对应的单一 Source（`crates/executive/src/adapters/gbrain/mcp_adapter.rs:170-235`）。 | 已实现并完成 focused tests |
+| 写入 fail-closed | destination-less write 或缺少 attestation policy 的 write 被拒绝；写前按 TTL 复验 marker（`crates/executive/src/adapters/gbrain/mcp_adapter.rs:843-878`）。 | 已实现并完成 focused tests |
+| 单一自动裁决链 | daemon supplemental runtime 只保留 governed spool worker；runtime record/recall 使用 local-only composite，不再从旧 `CompositeMemoryService::selected` 自动投影（`crates/executive/src/adapters/gbrain/bootstrap.rs:69-165`）。旧 JSON outbox 不再无 source proof 自动迁移。 | 已实现并完成 focused tests |
+| GBrain 外部服务边界 | adapter 只消费 upstream `whoami` 已有的 transport/client/scopes 字段；上游实现不返回 Source grants（`/home/aurobear/Workspace/agent/gbrain/src/core/operations.ts:3676-3724`），Source 证明由 Aletheon marker policy 补足。 | 源码依赖边界已收敛；installed executable/credential cleanup 尚未验收 |
+
+因此当前整体状态仍是 **DEGRADED / deployment pending**，不是 PASS。
 
 ### Wave 1 — Aletheon identity、scope、wire contracts
 
@@ -674,8 +705,9 @@ Aletheon aggregator 只能汇总 verdict，不能改写 GBrain doctor 的原始�
 
 - `crates/mnemosyne/src/backends/supplemental/{backend,spool,reconcile,page,config}.rs`
 - `crates/executive/src/adapters/gbrain/mcp_adapter.rs`
-- GBrain `src/core/operations.ts` (`whoami` grants) and contract tests
-- source-bound credential deployment/config
+- Aletheon generic MCP OAuth client-credentials lifecycle and contract tests
+- supplemental destination policy / Source attestation verifier
+- unmodified GBrain source/OAuth provisioning and deployment checks
 
 ### Wave 5 — Aurb client migration
 
@@ -693,7 +725,7 @@ Aletheon aggregator 只能汇总 verdict，不能改写 GBrain doctor 的原始�
 
 ## 14. 设计验收标准
 
-本文获批后，implementation plan 必须把以下条件逐项映射到测试和文件：
+剩余实施与验收必须把以下条件逐项映射到测试和文件：
 
 1. 单一 authority/data-flow，无 Claude/Codex direct auto-write bypass。
 2. WorkspaceMemoryKey 由 host identity 派生，GBrain Source 显式绑定且 grant 可验证。
