@@ -116,6 +116,21 @@ def run_bounded(
             except ProcessLookupError:
                 pass
             stdout, stderr = process.communicate()
+    except BaseException:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.communicate(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate()
+        _reap_process_group(process.pid)
+        raise
     process_group_reaped = _reap_process_group(process.pid)
     return {
         "argv": list(argv),
@@ -295,6 +310,23 @@ def rewrite_acceptance_command(argv: tuple[str, ...], root: pathlib.Path) -> lis
     return list(argv)
 
 
+def default_binary(environ: Mapping[str, str]) -> pathlib.Path:
+    target = environ.get("CARGO_TARGET_DIR")
+    if target:
+        return pathlib.Path(target) / "debug/aletheon"
+    cache_root = environ.get("ALETHEON_CARGO_CACHE_ROOT")
+    if not cache_root:
+        cache_home = environ.get("XDG_CACHE_HOME")
+        if cache_home:
+            cache_root = str(pathlib.Path(cache_home) / "aletheon-cargo")
+        else:
+            cache_root = str(
+                pathlib.Path(environ.get("HOME", str(pathlib.Path.home())))
+                / ".cache/aletheon-cargo"
+            )
+    return pathlib.Path(cache_root) / "target/debug/aletheon"
+
+
 def _check_resources(
     task: BenchmarkTask, results: list[Mapping[str, object]]
 ) -> dict[str, object]:
@@ -443,7 +475,7 @@ def run_task(
     task = load_task(task_path.resolve(), root)
     environment = dict(os.environ if environ is None else environ)
     binary = pathlib.Path(
-        environment.get("ALETHEON_BIN", str(root / "target/debug/aletheon"))
+        environment.get("ALETHEON_BIN", str(default_binary(environment)))
     ).resolve()
     binary_available = binary.is_file() and os.access(binary, os.X_OK)
     binary_digest = digest(binary.read_bytes()) if binary_available else digest(b"")
@@ -465,6 +497,11 @@ def run_task(
         home.mkdir()
         runtime_dir.mkdir()
         config.mkdir()
+        original_home = pathlib.Path(
+            environment.get("HOME", str(pathlib.Path.home()))
+        )
+        environment.setdefault("RUSTUP_HOME", str(original_home / ".rustup"))
+        environment.setdefault("CARGO_HOME", str(original_home / ".cargo"))
         environment.update(
             {
                 "HOME": str(home),

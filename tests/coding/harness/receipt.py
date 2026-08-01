@@ -374,7 +374,11 @@ def classify_failure(value: Mapping[str, Any]) -> tuple[str, list[str]]:
         return "policy_scope_failure", policy
 
     runtime: list[str] = []
-    if execution.get("exit_code") not in (0, None):
+    matched_expected_non_success = (
+        value.get("expected_terminal") != "verified"
+        and value.get("observed_terminal") == value.get("expected_terminal")
+    )
+    if execution.get("exit_code") not in (0, None) and not matched_expected_non_success:
         runtime.append("client_exit_nonzero")
     if value.get("observed_stop") == "failed":
         runtime.append("authoritative_stop_failed")

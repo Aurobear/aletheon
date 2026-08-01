@@ -246,6 +246,7 @@ class ReplayTest(unittest.TestCase):
             observed_terminal="budget_exhausted",
             expected_terminal="budget_exhausted",
         )
+        value["execution"]["exit_code"] = 1
         value["evidence"] = [
             {"operation_id": "op", "kind": "terminal_snapshot", "exit_code": 0},
             {"operation_id": "op", "kind": "acceptance_command", "exit_code": 0},

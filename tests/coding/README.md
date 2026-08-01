@@ -46,8 +46,7 @@ Build through the shared lock and run one task:
 
 ```sh
 bash scripts/cargo-agent.sh build -p aletheon
-ALETHEON_BIN="$PWD/target/debug/aletheon" \
-  python3 tests/coding/harness/run.py \
+python3 tests/coding/harness/run.py \
   tests/coding/tasks/rust_bugfix.toml \
   --receipt tests/coding/receipts/current/rust_bugfix.json
 ```
@@ -55,14 +54,16 @@ ALETHEON_BIN="$PWD/target/debug/aletheon" \
 Run the catalog sequentially:
 
 ```sh
-ALETHEON_BIN="$PWD/target/debug/aletheon" \
-  python3 tests/coding/harness/suite.py \
+python3 tests/coding/harness/suite.py \
   --catalog tests/coding/tasks \
   --receipts tests/coding/receipts/current \
   --report tests/coding/receipts/current/suite.json
 ```
 
-The client needs a reachable configured inference core. Sandbox mode defaults
+Without `ALETHEON_BIN`, the harness resolves the same shared target directory as
+`scripts/cargo-agent.sh`, including `CARGO_TARGET_DIR`,
+`ALETHEON_CARGO_CACHE_ROOT`, and `XDG_CACHE_HOME` overrides. The client needs a
+reachable configured inference core. Sandbox mode defaults
 to `auto` and may be set with `ALETHEON_CODING_SANDBOX=auto|require|forbid`.
 Each command and client process runs in a separate process group, captured text
 is bounded, and the receipt retains SHA-256 digests of the complete streams.

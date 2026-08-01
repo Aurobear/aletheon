@@ -7,10 +7,13 @@ import importlib.util
 import json
 import os
 import pathlib
+import signal
 import stat
 import sys
 import tempfile
 import textwrap
+import threading
+import time
 import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -180,6 +183,49 @@ class RunnerTest(unittest.TestCase):
         self.assertIsNone(value["metrics"]["inference_rounds"])
         self.assertIsNone(value["metrics"]["active_context_tokens"])
 
+    def test_default_binary_matches_the_shared_cargo_agent_target(self):
+        self.assertEqual(
+            runner.default_binary({"HOME": "/tmp/test-home"}),
+            pathlib.Path(
+                "/tmp/test-home/.cache/aletheon-cargo/target/debug/aletheon"
+            ),
+        )
+        self.assertEqual(
+            runner.default_binary({"CARGO_TARGET_DIR": "/tmp/custom-target"}),
+            pathlib.Path("/tmp/custom-target/debug/aletheon"),
+        )
+
+    def test_caller_interrupt_reaps_the_active_process_group(self):
+        child_pid_file = self.root / "active-child.pid"
+
+        def interrupt_after_child_starts():
+            deadline = time.monotonic() + 2
+            while not child_pid_file.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            os.kill(os.getpid(), signal.SIGINT)
+
+        interrupter = threading.Thread(target=interrupt_after_child_starts)
+        interrupter.start()
+        with self.assertRaises(KeyboardInterrupt):
+            runner.run_bounded(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import os,pathlib,time;"
+                        f"pathlib.Path({str(child_pid_file)!r}).write_text(str(os.getpid()));"
+                        "time.sleep(30)"
+                    ),
+                ],
+                self.root,
+                os.environ,
+                30,
+            )
+        interrupter.join()
+        process_group = int(child_pid_file.read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(process_group, 0)
+
     def test_terminal_and_transport_failures_always_write_receipts(self):
         cases = {
             "blocked": "execution_failure",
@@ -255,7 +301,8 @@ class RunnerTest(unittest.TestCase):
             textwrap.dedent(
                 """\
                 #!/usr/bin/env bash
-                printf '%s\\n' "$*" > "$WRAP_LOG"
+                printf '%s\\n%s\\n%s\\n%s\\n' \
+                  "$*" "$RUSTUP_HOME" "$CARGO_HOME" "$HOME" > "$WRAP_LOG"
                 """
             )
         )
@@ -264,11 +311,18 @@ class RunnerTest(unittest.TestCase):
             "leak",
             self.task(acceptance=[["cargo", "test", "--quiet"]]),
             WRAP_LOG=str(wrapper_log),
+            HOME=str(self.root / "outer-home"),
         )
         self.assertTrue(value["execution"]["process_group_reaped"])
         self.assertTrue(value["resources"]["passed"])
         self.assertEqual(value["acceptance"][0]["argv"][:2], ["bash", str(wrapper)])
-        self.assertEqual(wrapper_log.read_text(), "test --quiet\n")
+        wrapper_lines = wrapper_log.read_text().splitlines()
+        self.assertEqual(wrapper_lines[:3], [
+            "test --quiet",
+            str(self.root / "outer-home/.rustup"),
+            str(self.root / "outer-home/.cargo"),
+        ])
+        self.assertNotEqual(wrapper_lines[3], str(self.root / "outer-home"))
 
 
 if __name__ == "__main__":
