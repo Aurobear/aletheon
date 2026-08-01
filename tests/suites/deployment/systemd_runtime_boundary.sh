@@ -20,6 +20,14 @@ fi
 grep -q 'ExecStart=.*aletheon core' config/aletheon-core.service
 grep -q 'ExecStart=.*aletheon core .*--socket /run/aletheon/core.sock' config/aletheon-core.service
 grep -q 'ExecStart=.*aletheon daemon' config/aletheon.user.service
+grep -q 'ExecStart=.*aletheon memory-agent serve --official-user-socket' \
+  config/aletheon-memory-agent.user.service
+grep -q '^ProtectSystem=strict$' config/aletheon-memory-agent.user.service
+grep -q '^ProtectHome=read-only$' config/aletheon-memory-agent.user.service
+if grep -Eq '^(EnvironmentFile|StateDirectory|CacheDirectory|ReadWritePaths|WorkingDirectory)=' \
+    config/aletheon-memory-agent.user.service; then
+  echo 'Memory Agent unit gained state, workspace, or credential authority' >&2; exit 1
+fi
 grep -q '^EnvironmentFile=-/etc/aletheon/credentials/provider.env$' config/aletheon-core.service
 if grep -q '^EnvironmentFile=-%d/provider.env$' config/aletheon-core.service; then
   echo 'core provider environment depends on a credential path unavailable during environment loading' >&2; exit 1
@@ -32,6 +40,7 @@ scripts/libexec/aletheon/verify/systemd.sh --core-unit config/aletheon-core.serv
   --binary tests/suites/deployment/systemd_runtime_boundary.sh
 scripts/libexec/aletheon/verify/systemd.sh --user-units \
   config/aletheon.user.service config/aletheon.user.socket \
+  config/aletheon-memory-agent.user.service \
   --binary tests/suites/deployment/systemd_runtime_boundary.sh
 negative_units=$(mktemp -d)
 trap 'rm -rf "$negative_units"' EXIT
@@ -40,6 +49,7 @@ sed 's/^SocketMode=0600$/SocketMode=0666/' config/aletheon.user.socket \
   >"$negative_units/aletheon.socket"
 if scripts/libexec/aletheon/verify/systemd.sh --user-units \
   "$negative_units/aletheon.service" "$negative_units/aletheon.socket" \
+  config/aletheon-memory-agent.user.service \
   --binary tests/suites/deployment/systemd_runtime_boundary.sh >/dev/null 2>&1; then
   echo 'typed user verifier accepted a cross-user socket mode' >&2; exit 1
 fi
@@ -60,6 +70,7 @@ grep -q 'config/aletheon-core.service' scripts/libexec/aletheon/install-systemd.
 grep -q 'systemctl disable --now aletheon.service' scripts/libexec/aletheon/install-systemd.sh
 grep -q 'systemctl restart aletheon-core.service' scripts/libexec/aletheon/install-systemd.sh
 grep -q 'systemctl --global enable aletheon.socket' scripts/libexec/aletheon/install-systemd.sh
+grep -q 'aletheon-memory-agent.service' scripts/libexec/aletheon/install-systemd.sh
 grep -q 'verify-systemd.sh --core-unit' scripts/libexec/aletheon/install-systemd.sh
 grep -q 'verify-systemd.sh --user-units' scripts/libexec/aletheon/install-systemd.sh
 if grep -q 'systemd-analyze --user verify' scripts/libexec/aletheon/install-systemd.sh; then

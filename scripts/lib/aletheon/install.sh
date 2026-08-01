@@ -104,11 +104,16 @@ cmd_install_user() {
   # install directory so the running executable path matches provenance checks.
   sed "s|ExecStart=%h/.local/bin/aletheon daemon|ExecStart=$bin_dir/aletheon daemon|" \
     "$ALETHEON_ROOT/config/aletheon.user.service" > "$unit_dir/aletheon.service"
+  sed "s|ExecStart=%h/.local/bin/aletheon memory-agent serve --official-user-socket|ExecStart=$bin_dir/aletheon memory-agent serve --official-user-socket|" \
+    "$ALETHEON_ROOT/config/aletheon-memory-agent.user.service" \
+    > "$unit_dir/aletheon-memory-agent.service"
   install -m 0644 "$ALETHEON_ROOT/config/aletheon.user.socket" "$unit_dir/aletheon.socket"
-  systemd-analyze --user verify "$unit_dir/aletheon.service" "$unit_dir/aletheon.socket"
+  systemd-analyze --user verify "$unit_dir/aletheon.service" \
+    "$unit_dir/aletheon.socket" "$unit_dir/aletheon-memory-agent.service"
   systemctl --user daemon-reload
   if ((enable)); then
     systemctl --user enable --now aletheon.socket
+    systemctl --user enable --now aletheon-memory-agent.service
   fi
   [[ -f "$ALETHEON_CONFIG_FILE" ]] ||
     aletheon_warn "no user config at $ALETHEON_CONFIG_FILE; run ./setup.sh --user or create it before first turn"

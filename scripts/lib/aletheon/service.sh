@@ -21,28 +21,33 @@ cmd_configure() {
 
 cmd_status() {
   systemctl --no-pager --full status aletheon-core.service || true
-  systemctl --user --no-pager --full status aletheon.service aletheon.socket || true
+  systemctl --user --no-pager --full status aletheon.service aletheon.socket \
+    "$ALETHEON_MEMORY_AGENT_UNIT" || true
   systemctl --user --no-pager --full status aletheon-pi-closure.timer || true
   systemctl --user is-active --quiet aletheon.service
+  systemctl --user is-active --quiet "$ALETHEON_MEMORY_AGENT_UNIT"
   systemctl is-active --quiet aletheon-core.service
   systemctl --user is-active --quiet aletheon-pi-closure.timer
 }
 
 cmd_restart() {
-  aletheon_info "restarting machine core and user daemon"
+  aletheon_info "restarting machine core, user daemon, and Memory Agent"
   # The installer may have just restarted the core while replacing units.
   # Clear systemd's rate-limit accounting before the deliberate deploy restart.
   sudo systemctl reset-failed aletheon-core.service
   systemctl --user reset-failed aletheon.service 2>/dev/null || true
+  systemctl --user reset-failed "$ALETHEON_MEMORY_AGENT_UNIT" 2>/dev/null || true
   sudo systemctl restart aletheon-core.service
   systemctl --user restart aletheon.service
+  systemctl --user restart "$ALETHEON_MEMORY_AGENT_UNIT"
   aletheon_ok "services restarted"
 }
 
 cmd_restart_user() {
-  aletheon_info "restarting user daemon (rootless, no core)"
+  aletheon_info "restarting user daemon and Memory Agent (rootless, no core)"
   systemctl --user reset-failed aletheon.service 2>/dev/null || true
   systemctl --user restart aletheon.service
+  systemctl --user restart "$ALETHEON_MEMORY_AGENT_UNIT"
   aletheon_ok "user daemon restarted"
 }
 
@@ -50,8 +55,9 @@ cmd_logs() {
   case "${1:-user}" in
     core) journalctl -u aletheon-core.service -n "${ALETHEON_LOG_LINES:-100}" --no-pager ;;
     user) journalctl --user -u aletheon.service -n "${ALETHEON_LOG_LINES:-100}" --no-pager ;;
+    memory) journalctl --user -u "$ALETHEON_MEMORY_AGENT_UNIT" -n "${ALETHEON_LOG_LINES:-100}" --no-pager ;;
     closure) journalctl --user -u aletheon-pi-closure.service -n "${ALETHEON_LOG_LINES:-100}" --no-pager ;;
-    *) aletheon_die "usage: aletheon.sh logs [core|user|closure]" ;;
+    *) aletheon_die "usage: aletheon.sh logs [core|user|memory|closure]" ;;
   esac
 }
 
