@@ -88,6 +88,7 @@ pub use types::session;
 pub use types::tool;
 pub use types::vision;
 pub use types::workspace;
+pub use types::workspace_identity;
 pub use types::workspace_trust;
 
 pub use protocol::conscious_core::{
@@ -125,6 +126,7 @@ pub use types::workspace::{
     WorkspaceProvenance, WorkspaceReflection, MAX_BROADCAST_RESPONSES, MAX_BROADCAST_WINNERS,
     WORKSPACE_SCHEMA_V1,
 };
+pub use types::workspace_identity::WorkspaceIdentity;
 
 // Event modules
 pub use events::evolution;

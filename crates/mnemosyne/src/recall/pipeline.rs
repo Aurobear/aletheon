@@ -32,6 +32,10 @@ impl RecallPreFilter {
                 .as_ref()
                 .map(|id| MemoryScope::Principal(id.clone())),
             self.ancestry
+                .workspace_id
+                .as_ref()
+                .map(|id| MemoryScope::Workspace(id.clone())),
+            self.ancestry
                 .session_id
                 .as_ref()
                 .map(|id| MemoryScope::Session(id.clone())),
@@ -564,6 +568,7 @@ fn scope_key(scope: &MemoryScope) -> String {
     match scope {
         MemoryScope::Global => "global".to_string(),
         MemoryScope::Principal(id) => format!("principal:{id}"),
+        MemoryScope::Workspace(id) => format!("workspace:{id}"),
         MemoryScope::Session(id) => format!("session:{id}"),
         MemoryScope::Goal(id) => format!("goal:{id}"),
         MemoryScope::Agent(id) => format!("agent:{id}"),

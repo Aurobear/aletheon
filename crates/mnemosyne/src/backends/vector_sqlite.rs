@@ -283,6 +283,7 @@ fn scope_key(scope: &MemoryScope) -> String {
     match scope {
         MemoryScope::Global => "global".into(),
         MemoryScope::Principal(id) => format!("principal:{id}"),
+        MemoryScope::Workspace(id) => format!("workspace:{id}"),
         MemoryScope::Session(id) => format!("session:{id}"),
         MemoryScope::Goal(id) => format!("goal:{id}"),
         MemoryScope::Agent(id) => format!("agent:{id}"),

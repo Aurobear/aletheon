@@ -68,6 +68,8 @@ pub mod time;
 
 pub mod workspace;
 
+pub mod workspace_identity;
+
 pub mod workspace_checkpoint;
 
 pub mod workspace_trust;

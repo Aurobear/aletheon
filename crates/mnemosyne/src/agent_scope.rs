@@ -87,6 +87,7 @@ impl AgentMemoryContext {
         self.validate()?;
         Ok(ScopeAncestry {
             principal_id: None,
+            workspace_id: None,
             session_id: None,
             goal_id: None,
             agent_id: Some(self.agent_id.0.to_string()),

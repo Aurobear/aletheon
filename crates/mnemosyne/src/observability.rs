@@ -48,6 +48,7 @@ impl From<MemoryKind> for MemoryKindLabel {
 pub enum MemoryScopeLabel {
     Global,
     Principal,
+    Workspace,
     Session,
     Goal,
     Agent,
@@ -59,6 +60,7 @@ impl From<&MemoryScope> for MemoryScopeLabel {
         match value {
             MemoryScope::Global => Self::Global,
             MemoryScope::Principal(_) => Self::Principal,
+            MemoryScope::Workspace(_) => Self::Workspace,
             MemoryScope::Session(_) => Self::Session,
             MemoryScope::Goal(_) => Self::Goal,
             MemoryScope::Agent(_) => Self::Agent,

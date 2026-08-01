@@ -11,11 +11,12 @@
 //! See `docs/plans/grok/exec/G1-folder-trust.md`.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 use crate::types::admission::PrincipalId;
+
+pub use crate::types::workspace_identity::WorkspaceIdentity;
 
 /// Categories of repo-provided execution entry points gated by trust.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -49,16 +50,6 @@ impl ExecutableConfigSource {
 pub enum ClientMode {
     Interactive,
     Headless,
-}
-
-/// Canonical identity of a workspace, resisting path-alias / symlink bypass.
-/// `canonical_path` comes from the already-canonicalized cwd of a
-/// [`crate::WorkspacePolicy`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkspaceIdentity {
-    pub canonical_path: PathBuf,
-    /// Normalized git remote fingerprint when available, else `None`.
-    pub repo_fingerprint: Option<String>,
 }
 
 /// Digest of discovered executable config, keyed by category. Config change ->

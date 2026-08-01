@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum MemoryScope {
     Global,
     Principal(String),
+    Workspace(String),
     Session(String),
     Goal(String),
     Agent(String),
@@ -14,6 +15,7 @@ pub enum MemoryScope {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ScopeAncestry {
     pub principal_id: Option<String>,
+    pub workspace_id: Option<String>,
     pub session_id: Option<String>,
     pub goal_id: Option<String>,
     pub agent_id: Option<String>,
@@ -33,6 +35,7 @@ impl MemoryScope {
         match self {
             Self::Global => None,
             Self::Principal(id)
+            | Self::Workspace(id)
             | Self::Session(id)
             | Self::Goal(id)
             | Self::Agent(id)
@@ -44,6 +47,7 @@ impl MemoryScope {
         match self {
             Self::Global => true,
             Self::Principal(id) => ancestry.principal_id.as_deref() == Some(id),
+            Self::Workspace(id) => ancestry.workspace_id.as_deref() == Some(id),
             Self::Session(id) => ancestry.session_id.as_deref() == Some(id),
             Self::Goal(id) => ancestry.goal_id.as_deref() == Some(id),
             Self::Agent(id) => ancestry.agent_id.as_deref() == Some(id),

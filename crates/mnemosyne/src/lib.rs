@@ -26,6 +26,7 @@ pub mod promotion;
 mod recall;
 pub mod retention;
 pub mod service;
+pub mod workspace;
 
 pub mod embedding {
     pub use crate::adapters::embedding::{
@@ -76,6 +77,7 @@ pub use service::{
     ForgetSelector, MemoryService, RecallItem, RecallRequest, RecallSet, SynthesisCitation,
     SynthesisContextBlock, SynthesisGap, SynthesisRequest, SynthesisResult,
 };
+pub use workspace::WorkspaceMemoryKey;
 
 // Wave 1: Recall pipeline enhancements
 pub use recall::autocut::{apply_autocut, AutocutDecision};
