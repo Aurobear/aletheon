@@ -6,6 +6,7 @@ use std::time::Duration;
 use corpus::tools::mcp::manager::McpManager;
 use mnemosyne::supplemental::page::MAX_PAGE_BYTES;
 use mnemosyne::supplemental::{validate_tools_list, SupplementalDocument};
+use mnemosyne::SupplementalCapabilityGrant;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
@@ -144,6 +145,57 @@ impl SupplementalMcpAdapter {
             .lock()
             .expect("supplemental health mutex poisoned")
             .queue_depth = queue_depth;
+    }
+
+    /// Observe effective source authority from the backend. Configured source
+    /// names are never treated as evidence of remote write authority.
+    pub async fn negotiate(
+        &self,
+        backend_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<SupplementalCapabilityGrant, SupplementalAdapterError> {
+        if backend_id.trim().is_empty() || backend_id.len() > MAX_SLUG_BYTES {
+            return Err(self.fail(
+                SupplementalAdapterErrorCategory::RejectedArguments,
+                "backend identity is invalid",
+            ));
+        }
+        let value = self.invoke("whoami", json!({}), cancel).await?;
+        let text =
+            extract_text(&value).map_err(|error| self.fail(error.category, error.message))?;
+        let identity: WhoAmI = serde_json::from_str(&text).map_err(|_| {
+            self.fail(
+                SupplementalAdapterErrorCategory::MalformedResponse,
+                "capability response is malformed",
+            )
+        })?;
+        if identity.source_scope_schema != 1
+            || identity.transport == "local"
+            || !matches!(identity.transport.as_str(), "oauth" | "legacy")
+            || identity.read_sources.len() > 32
+            || identity
+                .read_sources
+                .iter()
+                .any(|source| source.trim().is_empty() || source.len() > MAX_SLUG_BYTES)
+            || identity
+                .write_source
+                .as_ref()
+                .is_some_and(|source| source.trim().is_empty() || source.len() > MAX_SLUG_BYTES)
+        {
+            return Err(self.fail(
+                SupplementalAdapterErrorCategory::Schema,
+                "capability response is incompatible",
+            ));
+        }
+        let scopes: std::collections::BTreeSet<_> =
+            identity.scopes.iter().map(String::as_str).collect();
+        Ok(SupplementalCapabilityGrant {
+            backend_id: backend_id.to_owned(),
+            write_source: identity.write_source,
+            read_sources: identity.read_sources,
+            can_read: scopes.contains("read"),
+            can_write: scopes.contains("write"),
+        })
     }
 
     pub async fn put_page(
@@ -367,6 +419,24 @@ impl SupplementalMcpAdapter {
         health.consecutive_failures = health.consecutive_failures.saturating_add(1);
         SupplementalAdapterError::new(category, message)
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WhoAmI {
+    transport: String,
+    scopes: Vec<String>,
+    source_scope_schema: u16,
+    write_source: Option<String>,
+    read_sources: Vec<String>,
+    #[serde(default, rename = "client_id")]
+    _client_id: Option<String>,
+    #[serde(default, rename = "client_name")]
+    _client_name: Option<String>,
+    #[serde(default, rename = "token_name")]
+    _token_name: Option<String>,
+    #[serde(default, rename = "expires_at")]
+    _expires_at: Option<Value>,
 }
 
 fn extract_text(value: &Value) -> Result<String, SupplementalAdapterError> {

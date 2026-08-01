@@ -49,6 +49,19 @@ impl FakeState {
                     "get_page".into(),
                     json!({"content":[{"type":"text","text":"{\"content\":\"---\\nschema: aletheon.memory/v1\\n---\\nbody\"}"}]}),
                 ),
+                (
+                    "whoami".into(),
+                    json!({"content":[{"type":"text","text":serde_json::to_string(&json!({
+                        "transport":"oauth",
+                        "client_id":"gbrain_cl_test",
+                        "client_name":"test",
+                        "scopes":["read","write"],
+                        "expires_at":null,
+                        "source_scope_schema":1,
+                        "write_source":"project",
+                        "read_sources":["personal","project"]
+                    })).unwrap()}]}),
+                ),
             ]))),
             calls: Arc::new(Mutex::new(Vec::new())),
             tool_status: Arc::new(Mutex::new(StatusCode::OK)),
@@ -238,6 +251,33 @@ async fn validates_schema_and_supports_put_query_search_and_get() {
         .filter(|(name, _)| name == "get_page" || name == "put_page")
         .all(|(_, args)| args.get("source_id").is_none()));
     assert_eq!(adapter.health().state, SupplementalHealthState::Healthy);
+}
+
+#[tokio::test]
+async fn negotiate_uses_effective_whoami_grants_and_fails_closed() {
+    let (adapter, _) = build_adapter(FakeState::valid(), Duration::from_secs(1)).await;
+    let grant = adapter
+        .negotiate("supplemental/gbrain", &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(grant.write_source.as_deref(), Some("project"));
+    assert_eq!(grant.read_sources, ["personal", "project"]);
+    assert!(grant.can_read && grant.can_write);
+
+    let state = FakeState::valid();
+    state.responses.lock().unwrap().insert(
+        "whoami".into(),
+        json!({"content":[{"type":"text","text":"{\"transport\":\"local\",\"scopes\":[],\"source_scope_schema\":1,\"write_source\":null,\"read_sources\":[]}"}]}),
+    );
+    let (adapter, _) = build_adapter(state, Duration::from_secs(1)).await;
+    assert_eq!(
+        adapter
+            .negotiate("supplemental/gbrain", &CancellationToken::new())
+            .await
+            .unwrap_err()
+            .category,
+        SupplementalAdapterErrorCategory::Schema
+    );
 }
 
 #[tokio::test]

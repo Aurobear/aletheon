@@ -8,7 +8,7 @@ use serde_json::Value;
 
 pub const PINNED_RELEASE: &str = "v0.42.59.0";
 pub const PINNED_COMMIT: &str = "5008b287e47bf791132eedfebf66bdef11e9398c";
-pub const REQUIRED_TOOLS: [&str; 4] = ["query", "search", "get_page", "put_page"];
+pub const REQUIRED_TOOLS: [&str; 5] = ["query", "search", "get_page", "put_page", "whoami"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetryPolicy {
@@ -97,6 +97,7 @@ pub fn validate_tools_list(document: &Value) -> anyhow::Result<()> {
             &["slug", "content"][..],
             &["slug", "content"][..],
         ),
+        ("whoami", &[][..], &[][..]),
     ] {
         let tool = tools
             .iter()
