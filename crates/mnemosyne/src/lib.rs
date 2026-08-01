@@ -16,6 +16,7 @@ mod domain;
 pub mod embodied_episode;
 pub mod fact_service;
 mod host;
+pub mod intake;
 pub mod knowledge_graph;
 pub mod lifecycle;
 pub mod model;
@@ -41,6 +42,9 @@ pub use embedding::{EmbeddingAdapterError, EmbeddingTransport, RemoteEmbeddingPr
 pub use fact_service::{
     AddFactRequest, DefaultFactUseCases, FactServiceError, FactUseCases, FactView,
     ListFactsRequest, SearchFactsRequest,
+};
+pub use intake::{
+    GovernedMemoryObservation, MemoryIntakeError, MemoryIntakeLedger, MemoryLifecycleUpdate,
 };
 pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDecision};
 

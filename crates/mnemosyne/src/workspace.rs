@@ -53,6 +53,20 @@ impl WorkspaceMemoryKey {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Rehydrate a key already derived and verified by the host or durable store.
+    pub fn from_verified(value: impl Into<String>) -> anyhow::Result<Self> {
+        let value = value.into();
+        anyhow::ensure!(
+            value.starts_with("ws:repo:") || value.starts_with("ws:local:"),
+            "workspace memory key has an unsupported prefix"
+        );
+        anyhow::ensure!(
+            value.len() > "ws:repo:".len() && value.len() <= Self::MAX_IDENTITY_BYTES + 16,
+            "workspace memory key is empty or exceeds byte limit"
+        );
+        Ok(Self(value))
+    }
 }
 
 fn update_bounded_component(hasher: &mut Sha256, bytes: &[u8]) {

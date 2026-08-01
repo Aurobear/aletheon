@@ -53,6 +53,7 @@ fn workspace_memory_key_is_deterministic_machine_local_and_opaque_without_repo()
 fn workspace_memory_key_rejects_missing_identity_material() {
     assert!(WorkspaceMemoryKey::derive(&identity("/project", None), " ").is_err());
     assert!(WorkspaceMemoryKey::derive(&identity("/project", Some(" ")), "machine").is_err());
+    assert!(WorkspaceMemoryKey::from_verified("client-controlled").is_err());
 }
 
 #[test]
