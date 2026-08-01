@@ -76,6 +76,25 @@ pub trait SupplementalMemoryTransport: Send + Sync {
         page: &SupplementalDocument,
         cancel: &CancellationToken,
     ) -> Result<Option<String>, SupplementalTransportError>;
+
+    /// Deliver to an opaque, host-verified destination. Legacy transports only
+    /// accept the empty handle; adapters that support workspace bindings must
+    /// override this method and resolve the handle without exposing credentials.
+    async fn put_page_to(
+        &self,
+        destination_handle: &str,
+        page: &SupplementalDocument,
+        cancel: &CancellationToken,
+    ) -> Result<Option<String>, SupplementalTransportError> {
+        if destination_handle.is_empty() {
+            self.put_page(page, cancel).await
+        } else {
+            Err(SupplementalTransportError::new(
+                SupplementalErrorCategory::Unsupported,
+                "destination-aware delivery is unsupported",
+            ))
+        }
+    }
     async fn query(
         &self,
         query: &str,

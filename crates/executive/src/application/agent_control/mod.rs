@@ -21,15 +21,6 @@ use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
 use tracing::info;
 
-#[async_trait]
-pub trait CognitiveTaskAdmissionPort: Send + Sync {
-    async fn bind_before_launch(
-        &self,
-        binding: fabric::cognitive_workflow::CognitiveTaskRuntimeBinding,
-        allocated_process: ProcessId,
-    ) -> Result<(), AgentControlError>;
-}
-
 pub mod admission;
 pub mod candidate_projection;
 pub mod cleanup;
@@ -73,7 +64,8 @@ pub use context_fork::{
 pub use execution::{
     AgentEventSink, AgentRecoveryRuntimeInput, AgentRuntimeEvent, AgentRuntimeInput,
     AgentRuntimeLauncher, AgentRuntimeRegistry, BackgroundResourceRegistration,
-    CompatibilityRuntimeLauncher, NoopAgentEventSink, SpineAgentEventSink,
+    CognitiveTaskAdmissionPort, CompatibilityRuntimeLauncher, NoopAgentEventSink,
+    SpineAgentEventSink,
 };
 use identity::{runtime_capability, ValidatedAgentIdentity};
 pub use lifecycle::{
@@ -784,7 +776,8 @@ impl AgentControlPort for AgentControlService {
             Some(workspace) if !workspace.writable_roots().is_empty() => {
                 AgentWorkspaceMode::SharedWritable
             }
-            _ => AgentWorkspaceMode::SharedReadOnly,
+            Some(_) => AgentWorkspaceMode::SharedReadOnly,
+            None => AgentWorkspaceMode::WorkspaceLess,
         };
         let history_runtime = if intent.runtime_override.is_none() {
             self.capability_history.as_ref().and_then(|history| {
@@ -814,11 +807,18 @@ impl AgentControlPort for AgentControlService {
                 .collect(),
             interaction_mode: runtime::InteractionMode::Resident,
             workspace_mode: match workspace_mode {
+                AgentWorkspaceMode::WorkspaceLess => runtime::WorkspaceMode::WorkspaceLess,
                 AgentWorkspaceMode::SharedReadOnly => runtime::WorkspaceMode::SharedReadOnly,
                 AgentWorkspaceMode::SharedWritable => runtime::WorkspaceMode::SharedWritable,
                 AgentWorkspaceMode::IsolatedWorktree => runtime::WorkspaceMode::IsolatedWorktree,
             },
-            task_encoding: runtime::TaskEncoding::NaturalLanguage,
+            task_encoding: if required_capabilities
+                .contains(&AgentRuntimeCapability::MemoryProposal)
+            {
+                runtime::TaskEncoding::StructuredJson
+            } else {
+                runtime::TaskEncoding::NaturalLanguage
+            },
             max_input_tokens: intent.budget.max_input_tokens,
         };
         let runtime_id = match self.runtimes.select(&selection) {

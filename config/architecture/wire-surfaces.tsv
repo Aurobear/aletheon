@@ -3,6 +3,8 @@
 wire-exposed	ClientRpcRequest/ClientRpcResponse	crates/fabric/src/protocol/client.rs	aletheon,interact,executive	fabric	CLIENT_PROTOCOL_VERSION and JSON_RPC_VERSION	reject unsupported protocol versions; additive fields only within v1	1,9
 wire-exposed	ConsciousCore protocol	crates/fabric/src/protocol/conscious_core.rs	executive,interact	fabric	type-level serde contract	additive evolution; version before incompatible field changes	1
 wire-exposed	Fabric protocol module	crates/fabric/src/protocol/mod.rs	fabric consumers	fabric	module exports	compatibility exports only decrease	1,9
+wire-exposed	Memory Gateway v1 contracts	crates/fabric/src/protocol/memory.rs	aletheon clients,executive,fabric	fabric	MEMORY_GATEWAY_SCHEMA_V1	additive fields only within v1; incompatible change uses v2	1,9
+wire-exposed	Memory maintenance v1 contracts	crates/fabric/src/protocol/memory_maintenance.rs	aletheon Memory Agent,executive,fabric	fabric	MEMORY_MAINTENANCE_SCHEMA_V1	additive fields only within v1; incompatible change uses v2	1,9
 wire-exposed	execd Request/Response/Handshake	crates/execd/src/protocol.rs	executive,execd	execd	handshake protocol_version	fail closed on version mismatch; preserve JSON-RPC error codes	2,8e
 wire-exposed	Core RPC protocol	crates/executive/src/host/core_rpc/protocol.rs	executive core,host	executive	request schema	version before incompatible request changes	2,8e
 wire-exposed	PolicyGateway service	crates/cognit/proto/aletheon/policy/gateway/v1/policy.proto	cognit,policy gateway	cognit	protobuf package v1	new fields/services additive; incompatible change uses v2	7

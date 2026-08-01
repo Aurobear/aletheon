@@ -5,8 +5,95 @@ use super::{
     KnowledgeRow, DEFAULT_MIN_TRUST, HELPFUL_DELTA, STALE_DAYS, STALE_DECAY_DELTA, TRUST_MAX,
     TRUST_MIN, UNHELPFUL_DELTA,
 };
+use crate::{MemoryAuthority, MemoryRecord, MemoryScope, MemorySensitivity, MemoryStatus};
 
 impl FactStore {
+    /// Persist a complete canonical record without allowing an existing ID to
+    /// be rebound. Exact retries are idempotent; conflicting retries fail.
+    pub fn store_canonical_record(&self, record: &MemoryRecord, updated_ms: i64) -> Result<()> {
+        record.validate()?;
+        let record_json = serde_json::to_string(record)?;
+        self.db.execute(
+            "INSERT OR IGNORE INTO canonical_memory_records
+               (record_id,content,record_json,scope_key,authority,sensitivity_ord,status,updated_ms)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            rusqlite::params![
+                record.id.0,
+                record.content,
+                record_json,
+                canonical_scope_key(&record.scope),
+                canonical_authority(record.authority),
+                canonical_sensitivity(record.metadata.sensitivity),
+                canonical_status(record.status),
+                updated_ms,
+            ],
+        )?;
+        let stored: String = self.db.query_row(
+            "SELECT record_json FROM canonical_memory_records WHERE record_id=?1",
+            [&record.id.0],
+            |row| row.get(0),
+        )?;
+        anyhow::ensure!(
+            stored == record_json,
+            "canonical memory record ID was reused with different content"
+        );
+        Ok(())
+    }
+
+    /// Search canonical records with authorization predicates pushed into SQL
+    /// before any record payload is materialized.
+    pub fn search_canonical_records_prefiltered(
+        &self,
+        query: &str,
+        limit: usize,
+        predicate: &crate::ScopePredicate,
+    ) -> Result<Vec<MemoryRecord>> {
+        if query.trim().is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let authorities = predicate
+            .allowed_authorities
+            .iter()
+            .copied()
+            .map(canonical_authority)
+            .collect::<Vec<_>>();
+        if authorities.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut statement = self.db.prepare(
+            "SELECT r.record_json
+               FROM canonical_memory_records r
+               JOIN canonical_memory_fts fts ON r.row_id=fts.rowid
+              WHERE canonical_memory_fts MATCH ?1
+                AND r.scope_key IN (SELECT value FROM json_each(?2))
+                AND r.sensitivity_ord <= ?3
+                AND r.authority IN (SELECT value FROM json_each(?4))
+                AND r.status='current'
+              ORDER BY rank, r.record_id
+              LIMIT ?5",
+        )?;
+        let values = statement
+            .query_map(
+                rusqlite::params![
+                    sanitize_fts_query(query),
+                    serde_json::to_string(&predicate.scope_keys)?,
+                    i64::from(predicate.max_sensitivity_ord),
+                    serde_json::to_string(&authorities)?,
+                    limit as i64,
+                ],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        values
+            .into_iter()
+            .map(|json| {
+                let record: MemoryRecord = serde_json::from_str(&json)?;
+                record.validate()?;
+                Ok(record)
+            })
+            .collect()
+    }
+
     // ── Core Fact CRUD ───────────────────────────────────────────────────────
 
     /// Add a fact. INSERT OR IGNORE on duplicate content.
@@ -628,5 +715,48 @@ impl FactStore {
             Some(row) => Ok(Some(row?)),
             None => Ok(None),
         }
+    }
+}
+
+fn canonical_scope_key(scope: &MemoryScope) -> String {
+    match scope {
+        MemoryScope::Global => "global".to_owned(),
+        MemoryScope::Principal(id) => format!("principal:{id}"),
+        MemoryScope::Workspace(id) => format!("workspace:{id}"),
+        MemoryScope::Session(id) => format!("session:{id}"),
+        MemoryScope::Goal(id) => format!("goal:{id}"),
+        MemoryScope::Agent(id) => format!("agent:{id}"),
+        MemoryScope::Task(id) => format!("task:{id}"),
+    }
+}
+
+const fn canonical_authority(authority: MemoryAuthority) -> &'static str {
+    match authority {
+        MemoryAuthority::ApprovedCore => "approved_core",
+        MemoryAuthority::VerifiedLocalSemantic => "verified_local_semantic",
+        MemoryAuthority::LocalEpisode => "local_episode",
+        MemoryAuthority::AletheonExternal => "aletheon_external",
+        MemoryAuthority::ExternalReference => "external_reference",
+        MemoryAuthority::RawExperience => "raw_experience",
+    }
+}
+
+const fn canonical_sensitivity(sensitivity: MemorySensitivity) -> i64 {
+    match sensitivity {
+        MemorySensitivity::Public => 0,
+        MemorySensitivity::Internal => 1,
+        MemorySensitivity::Confidential => 2,
+        MemorySensitivity::Restricted => 3,
+    }
+}
+
+const fn canonical_status(status: MemoryStatus) -> &'static str {
+    match status {
+        MemoryStatus::Candidate => "candidate",
+        MemoryStatus::Current => "current",
+        MemoryStatus::Superseded => "superseded",
+        MemoryStatus::Expired => "expired",
+        MemoryStatus::Rejected => "rejected",
+        MemoryStatus::Tombstoned => "tombstoned",
     }
 }

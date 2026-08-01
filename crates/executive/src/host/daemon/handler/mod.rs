@@ -37,6 +37,99 @@ pub struct RequestHandler {
 }
 
 impl RequestHandler {
+    pub(crate) async fn memory_observe(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryObservationRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryObservationReceiptV1> {
+        self.ports
+            .memory_gateway
+            .observe(&connection.principal_id, "versioned_local_rpc", request)
+            .await
+    }
+
+    pub(crate) async fn memory_receipt(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryReceiptGetRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryLifecycleReceiptV1> {
+        self.ports
+            .memory_gateway
+            .receipt(&connection.principal_id, request)
+            .await
+    }
+
+    pub(crate) async fn memory_recall(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryRecallRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryRecallResultV1> {
+        self.ports
+            .memory_gateway
+            .recall(&connection.principal_id, "versioned_local_rpc", request)
+            .await
+    }
+
+    pub(crate) async fn memory_feedback(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryFeedbackRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryFeedbackReceiptV1> {
+        self.ports
+            .memory_gateway
+            .feedback(&connection.principal_id, "versioned_local_rpc", request)
+            .await
+    }
+
+    pub(crate) async fn memory_workspace_preview_bind(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryWorkspacePreviewBindRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryWorkspaceBindingPreviewV1> {
+        self.ports
+            .memory_gateway
+            .preview_workspace_bind(&connection.principal_id, request)
+            .await
+    }
+
+    pub(crate) async fn memory_workspace_bind(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryWorkspaceBindRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryWorkspaceBindingViewV1> {
+        self.ports
+            .memory_gateway
+            .bind_workspace(&connection.principal_id, request)
+            .await
+    }
+
+    pub(crate) async fn memory_workspace_unbind(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory::MemoryWorkspaceUnbindRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory::MemoryWorkspaceBindingViewV1> {
+        self.ports
+            .memory_gateway
+            .unbind_workspace(&connection.principal_id, request)
+            .await
+    }
+
+    pub(crate) async fn memory_maintenance_status(
+        &self,
+        request: fabric::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory_maintenance::MemoryMaintenanceStatusV1> {
+        self.ports.memory_maintenance.status(request).await
+    }
+
+    pub(crate) async fn memory_maintenance_run(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory_maintenance::MemoryMaintenanceRunRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory_maintenance::MemoryMaintenanceRunReceiptV1> {
+        let owner = format!("memory-agent:{}", connection.connection_id.0);
+        self.ports.memory_maintenance.run(&owner, request).await
+    }
+
     pub(crate) async fn resolve_versioned_approval(
         &self,
         connection: &super::server::ConnectionContext,

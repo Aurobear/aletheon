@@ -181,6 +181,7 @@ impl NativeCognitRuntime {
                 runtime::RuntimeCapability::Git,
                 runtime::RuntimeCapability::Diagnostics,
                 runtime::RuntimeCapability::Browser,
+                runtime::RuntimeCapability::MemoryProposal,
             ]),
             interaction_modes: BTreeSet::from([
                 runtime::InteractionMode::Resident,
@@ -188,10 +189,14 @@ impl NativeCognitRuntime {
                 runtime::InteractionMode::FollowUp,
             ]),
             workspace_modes: BTreeSet::from([
+                runtime::WorkspaceMode::WorkspaceLess,
                 runtime::WorkspaceMode::SharedReadOnly,
                 runtime::WorkspaceMode::SharedWritable,
             ]),
-            task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
+            task_encodings: BTreeSet::from([
+                runtime::TaskEncoding::NaturalLanguage,
+                runtime::TaskEncoding::StructuredJson,
+            ]),
             supported_profiles: Some(supported_profiles.into_iter().collect()),
             tool_governance: runtime::ToolGovernance::Intercepted,
             priority: 20,

@@ -53,6 +53,7 @@ cmd_verify() {
   cmd_configure check
   systemctl is-active --quiet aletheon-core.service
   systemctl --user is-active --quiet aletheon.service
+  systemctl --user is-active --quiet "$ALETHEON_MEMORY_AGENT_UNIT"
   systemctl --user is-active --quiet aletheon-pi-closure.timer
   _wait_for_health --core-socket "$ALETHEON_CORE_SOCKET"
   _wait_for_health --user-socket "$ALETHEON_USER_SOCKET"
@@ -77,6 +78,7 @@ cmd_verify_user() {
   local unit_dir=${ALETHEON_USER_UNIT_DIR:-$HOME/.config/systemd/user}
   cmd_configure check
   systemctl --user is-active --quiet aletheon.service
+  systemctl --user is-active --quiet "$ALETHEON_MEMORY_AGENT_UNIT"
   systemctl --user is-active --quiet aletheon-pi-closure.timer
   _wait_for_health --user-socket "$ALETHEON_USER_SOCKET"
   _verify_gbrain_health

@@ -51,6 +51,10 @@ impl UserRuntimeConfig {
         // CLI activation is additive: an absent flag preserves the layered
         // config value, while `--execd` can only enable the backend.
         apply_execd_override(&mut app.grok_hardening, enable_execd);
+        app.memory
+            .policy
+            .validate()
+            .context("validating memory judgment policy")?;
         let crate::composition::config::AppConfig {
             memory: crate::composition::config::MemoryConfig { supplemental, .. },
             ..

@@ -14,6 +14,7 @@ mod governed_review;
 mod grok_hardening;
 mod infra;
 mod integrations;
+pub mod memory_policy;
 mod provenance;
 mod provider;
 pub mod schema;
@@ -43,9 +44,12 @@ pub use integrations::{
     ResolvedIntegrations, ResolvedSearchIntegration, RuntimeBootstrapConfig, SecretRef,
     SecretValue,
 };
+pub use memory_policy::MemoryPolicyConfig;
 pub use provenance::{ConfigProvenance, ConfigSource, ConfigSourceKind, Provenanced};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
-pub use supplemental_memory::{MemoryConfig, SupplementalMemoryConfig};
+pub use supplemental_memory::{
+    MemoryConfig, SupplementalDestinationAttestationConfig, SupplementalMemoryConfig,
+};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

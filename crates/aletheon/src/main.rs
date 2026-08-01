@@ -19,6 +19,8 @@ use tracing_subscriber::EnvFilter;
 
 #[cfg(feature = "acp")]
 mod acp;
+mod memory_agent;
+mod memory_cli;
 
 #[derive(Parser)]
 #[command(name = "aletheon", about = "AI agent with sandbox, multi-agent, IPC")]
@@ -191,6 +193,139 @@ enum Commands {
     Extension {
         #[command(subcommand)]
         sub: ExtensionCmd,
+    },
+    /// Run the Aletheon-managed memory maintenance client.
+    MemoryAgent {
+        #[command(subcommand)]
+        sub: MemoryAgentCommand,
+    },
+    /// Use the governed Memory Gateway through the official user socket.
+    Memory {
+        #[command(subcommand)]
+        sub: MemoryCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemoryAgentCommand {
+    /// Continuously maintain memory through the official user socket.
+    Serve {
+        /// Required marker for the supervised, authenticated service form.
+        #[arg(long, required = true)]
+        official_user_socket: bool,
+    },
+    /// Run one bounded maintenance cycle through an authenticated child.
+    Run {
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u16).range(1..=64))]
+        max_items: u16,
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemoryCommand {
+    /// Submit a bounded observation to the governed intake journal.
+    Observe {
+        /// Stable client idempotency key; generated when omitted.
+        #[arg(long)]
+        observation_id: Option<String>,
+        #[arg(long, default_value = ".")]
+        working_dir: PathBuf,
+        #[arg(long, default_value = "explicit-note")]
+        kind: MemoryObservationKindArg,
+        /// Content value; when omitted, UTF-8 content is read from stdin.
+        #[arg(long)]
+        content: Option<String>,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long)]
+        turn_id: Option<String>,
+        #[arg(long)]
+        explicit_user_action: bool,
+        #[arg(long, default_value = "internal")]
+        sensitivity: MemorySensitivityArg,
+        #[arg(long = "source-ref")]
+        source_refs: Vec<String>,
+    },
+    /// Recall governed local and bound supplemental memory.
+    Recall {
+        query: String,
+        #[arg(long, default_value = ".")]
+        working_dir: PathBuf,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        max_items: usize,
+        #[arg(long, default_value_t = 65536)]
+        max_content_bytes: usize,
+        #[arg(long)]
+        include_historical: bool,
+    },
+    /// Read the authoritative lifecycle receipt for an observation.
+    Receipt { durable_intake_id: String },
+    /// Administer the current workspace's supplemental-memory binding.
+    Workspace {
+        #[command(subcommand)]
+        sub: MemoryWorkspaceCommand,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum MemoryObservationKindArg {
+    UserMessage,
+    AssistantMessage,
+    ToolOutcome,
+    TaskOutcome,
+    ExplicitNote,
+    Correction,
+    Feedback,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum MemorySensitivityArg {
+    Public,
+    Internal,
+    Confidential,
+    Restricted,
+}
+
+#[derive(clap::Args)]
+struct MemoryBindingArgs {
+    #[arg(long, default_value = ".")]
+    working_dir: PathBuf,
+    #[arg(long, default_value = "supplemental/gbrain")]
+    backend: String,
+    #[arg(long, default_value = "gbrain")]
+    write_handle: String,
+    #[arg(long = "read-handle")]
+    read_handles: Vec<String>,
+    #[arg(long)]
+    write_source: String,
+    #[arg(long = "read-source", required = true)]
+    read_sources: Vec<String>,
+    #[arg(long)]
+    credential_ref: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum MemoryWorkspaceCommand {
+    /// Negotiate backend grants without changing durable authority.
+    PreviewBind {
+        #[command(flatten)]
+        binding: MemoryBindingArgs,
+    },
+    /// Repeat negotiation and activate a previewed binding.
+    Bind {
+        #[command(flatten)]
+        binding: MemoryBindingArgs,
+        #[arg(long)]
+        expected_capability_digest: String,
+    },
+    /// Revoke remote authority for this workspace.
+    Unbind {
+        #[arg(long, default_value = ".")]
+        working_dir: PathBuf,
     },
 }
 
@@ -486,6 +621,24 @@ async fn main() -> Result<()> {
             handle_doctor(*json, config.as_deref(), project_dir.as_deref()).await
         }
         (Some(Commands::Extension { sub }), _) => handle_extension(sub).await,
+        (Some(Commands::MemoryAgent { sub }), _) => {
+            init_tracing("aletheon::memory_agent");
+            match sub {
+                MemoryAgentCommand::Serve {
+                    official_user_socket,
+                } => {
+                    anyhow::ensure!(*official_user_socket, "--official-user-socket is required");
+                    memory_agent::serve_official_user_socket().await
+                }
+                MemoryAgentCommand::Run { max_items, dry_run } => {
+                    memory_agent::run_once(*max_items, *dry_run).await
+                }
+            }
+        }
+        (Some(Commands::Memory { sub }), _) => {
+            init_tracing("aletheon::memory");
+            memory_cli::run(sub, cli.socket.clone()).await
+        }
         (Some(Commands::RestoreTerminal), _) => {
             interact::tui::restore_terminal();
             println!("Terminal restored to normal state.");
@@ -734,5 +887,43 @@ mod daemon_cli_tests {
     fn full_flag_is_a_shortcut_for_unrestricted_permissions() {
         let cli = Cli::try_parse_from(["aletheon", "--full"]).unwrap();
         assert_eq!(cli.permission_mode.effective(cli.full), "full");
+    }
+
+    #[test]
+    fn governed_memory_client_commands_parse_on_installed_entrypoint() {
+        let observe = Cli::try_parse_from([
+            "aletheon",
+            "memory",
+            "observe",
+            "--kind",
+            "task-outcome",
+            "--content",
+            "bounded result",
+            "--session-id",
+            "session-a",
+        ])
+        .unwrap();
+        assert!(matches!(
+            observe.command,
+            Some(Commands::Memory {
+                sub: MemoryCommand::Observe { .. }
+            })
+        ));
+
+        let recall = Cli::try_parse_from([
+            "aletheon",
+            "memory",
+            "recall",
+            "workspace architecture",
+            "--max-items",
+            "8",
+        ])
+        .unwrap();
+        assert!(matches!(
+            recall.command,
+            Some(Commands::Memory {
+                sub: MemoryCommand::Recall { max_items: 8, .. }
+            })
+        ));
     }
 }

@@ -2,7 +2,7 @@
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
-pub(crate) const SCHEMA_VERSION: i64 = 2;
+pub(crate) const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MigrationStep {
@@ -18,6 +18,9 @@ enum MigrationStep {
     DeadLetterLogicalId,
     DeadLetterOperationKind,
     DeadLetterSchemaVersion,
+    PageDestinationHandle,
+    ReceiptDestinationHandle,
+    DeadLetterDestinationHandle,
     Backfill,
     Version,
 }
@@ -168,6 +171,27 @@ fn migrate_with_step_hook(
         "INTEGER NOT NULL DEFAULT 1",
     )?;
     after_step(MigrationStep::DeadLetterSchemaVersion)?;
+    add_column(
+        &tx,
+        "gbrain_pages",
+        "destination_handle",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    after_step(MigrationStep::PageDestinationHandle)?;
+    add_column(
+        &tx,
+        "gbrain_delivery_receipts",
+        "destination_handle",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    after_step(MigrationStep::ReceiptDestinationHandle)?;
+    add_column(
+        &tx,
+        "gbrain_dead_letters",
+        "destination_handle",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    after_step(MigrationStep::DeadLetterDestinationHandle)?;
 
     tx.execute_batch(
         "UPDATE gbrain_pages SET logical_page_id=slug WHERE logical_page_id='';
@@ -206,7 +230,7 @@ fn add_column(
 mod tests {
     use super::*;
 
-    const STEPS: [MigrationStep; 14] = [
+    const STEPS: [MigrationStep; 17] = [
         MigrationStep::BaseSchema,
         MigrationStep::PageLogicalId,
         MigrationStep::PageOperationKind,
@@ -219,6 +243,9 @@ mod tests {
         MigrationStep::DeadLetterLogicalId,
         MigrationStep::DeadLetterOperationKind,
         MigrationStep::DeadLetterSchemaVersion,
+        MigrationStep::PageDestinationHandle,
+        MigrationStep::ReceiptDestinationHandle,
+        MigrationStep::DeadLetterDestinationHandle,
         MigrationStep::Backfill,
         MigrationStep::Version,
     ];

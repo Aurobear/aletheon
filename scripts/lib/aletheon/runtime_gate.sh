@@ -44,29 +44,31 @@ _sha256() {
 }
 
 cmd_verify_runtime_provenance() {
-  local candidate installed installed_path core_path user_path
-  local candidate_hash installed_hash core_hash user_hash
+  local candidate installed installed_path core_path user_path memory_agent_path
+  local candidate_hash installed_hash core_hash user_hash memory_agent_hash
   candidate=$ALETHEON_RELEASE_BINARY
   installed=$ALETHEON_INSTALLED_BINARY
   installed_path=$(readlink -f "$installed") ||
     { aletheon_die "cannot resolve installed binary: $installed"; return; }
   core_path=$(_runtime_executable system "$ALETHEON_CORE_UNIT") || return
   user_path=$(_runtime_executable user "$ALETHEON_USER_UNIT") || return
+  memory_agent_path=$(_runtime_executable user "$ALETHEON_MEMORY_AGENT_UNIT") || return
   candidate_hash=$(_sha256 "$candidate") || return
   installed_hash=$(_sha256 "$installed") || return
   core_hash=$(_sha256 "$core_path") || return
   user_hash=$(_sha256 "$user_path") || return
+  memory_agent_hash=$(_sha256 "$memory_agent_path") || return
 
   if [[ "$installed_hash" != "$candidate_hash" ]]; then
     aletheon_die "installed binary hash differs from release candidate: candidate=$candidate_hash installed=$installed_hash"
     return
   fi
-  if [[ "$core_hash" != "$candidate_hash" || "$user_hash" != "$candidate_hash" ]]; then
-    aletheon_die "running executable hash differs from release candidate: candidate=$candidate_hash core=$core_hash user=$user_hash"
+  if [[ "$core_hash" != "$candidate_hash" || "$user_hash" != "$candidate_hash" || "$memory_agent_hash" != "$candidate_hash" ]]; then
+    aletheon_die "running executable hash differs from release candidate: candidate=$candidate_hash core=$core_hash user=$user_hash memory_agent=$memory_agent_hash"
     return
   fi
-  if [[ "$core_path" != "$installed_path" || "$user_path" != "$installed_path" ]]; then
-    aletheon_die "running executable path differs from installed binary: installed=$installed_path core=$core_path user=$user_path"
+  if [[ "$core_path" != "$installed_path" || "$user_path" != "$installed_path" || "$memory_agent_path" != "$installed_path" ]]; then
+    aletheon_die "running executable path differs from installed binary: installed=$installed_path core=$core_path user=$user_path memory_agent=$memory_agent_path"
     return
   fi
   aletheon_ok "installed runtime provenance verified: sha256=$candidate_hash"
@@ -95,25 +97,53 @@ _service_has_fatal_log() {
 cmd_verify_runtime_stability() {
   [[ "$ALETHEON_STABILITY_SECONDS" =~ ^[0-9]+$ ]] ||
     { aletheon_die "ALETHEON_STABILITY_SECONDS must be a non-negative integer"; return; }
-  local core_before user_before core_after user_after core_pid user_pid
+  local core_before user_before memory_before core_after user_after memory_after core_pid user_pid memory_pid
   core_before=$(_service_snapshot system "$ALETHEON_CORE_UNIT") || return
   user_before=$(_service_snapshot user "$ALETHEON_USER_UNIT") || return
+  memory_before=$(_service_snapshot user "$ALETHEON_MEMORY_AGENT_UNIT") || return
   sleep "$ALETHEON_STABILITY_SECONDS"
   core_after=$(_service_snapshot system "$ALETHEON_CORE_UNIT") || return
   user_after=$(_service_snapshot user "$ALETHEON_USER_UNIT") || return
+  memory_after=$(_service_snapshot user "$ALETHEON_MEMORY_AGENT_UNIT") || return
 
-  if [[ "$core_before" != "$core_after" || "$user_before" != "$user_after" ]]; then
-    aletheon_die "service restart count increased during stability window: core=$core_before->$core_after user=$user_before->$user_after"
+  if [[ "$core_before" != "$core_after" || "$user_before" != "$user_after" || "$memory_before" != "$memory_after" ]]; then
+    aletheon_die "service restart count increased during stability window: core=$core_before->$core_after user=$user_before->$user_after memory_agent=$memory_before->$memory_after"
     return
   fi
   core_pid=${core_after%%:*}
   user_pid=${user_after%%:*}
+  memory_pid=${memory_after%%:*}
   if _service_has_fatal_log system "$ALETHEON_CORE_UNIT" "$core_pid" ||
-     _service_has_fatal_log user "$ALETHEON_USER_UNIT" "$user_pid"; then
+     _service_has_fatal_log user "$ALETHEON_USER_UNIT" "$user_pid" ||
+     _service_has_fatal_log user "$ALETHEON_MEMORY_AGENT_UNIT" "$memory_pid"; then
     aletheon_die "fatal startup validation error detected for current runtime process"
     return
   fi
   aletheon_ok "runtime stability verified: interval=${ALETHEON_STABILITY_SECONDS}s"
+}
+
+cmd_verify_memory_agent() {
+  local binary=${1:-$ALETHEON_INSTALLED_BINARY} output status=0
+  output=$(mktemp "${TMPDIR:-/tmp}/aletheon-memory-agent-smoke.XXXXXX") || return
+  chmod 0600 "$output"
+  if timeout "$ALETHEON_SMOKE_TIMEOUT_SECONDS" \
+      "$binary" memory-agent run --max-items 1 --dry-run >"$output" 2>&1; then
+    :
+  else
+    status=$?
+    cat "$output" >&2
+    rm -f -- "$output"
+    aletheon_die "official Memory Agent protocol smoke failed (status=$status)"
+    return
+  fi
+  grep -Eq '"dry_run"[[:space:]]*:[[:space:]]*true' "$output" || {
+    cat "$output" >&2
+    rm -f -- "$output"
+    aletheon_die "official Memory Agent protocol smoke returned no dry-run receipt"
+    return
+  }
+  rm -f -- "$output"
+  aletheon_ok "official Memory Agent protocol smoke passed"
 }
 
 cmd_verify_official_client() {
@@ -156,6 +186,7 @@ cmd_verify_official_client() {
 cmd_installed_runtime_gate() {
   cmd_verify_runtime_provenance || return
   cmd_verify_runtime_stability || return
+  cmd_verify_memory_agent || return
   cmd_verify_official_client || return
   cmd_verify_runtime_provenance || return
   cmd_verify_runtime_stability || return
@@ -165,26 +196,28 @@ cmd_installed_runtime_gate() {
 # lives under $HOME instead of /usr/bin. Provenance therefore compares only the
 # release candidate, the user-installed binary, and the running user process.
 _verify_user_provenance() {
-  local bin=$1 candidate installed_path user_path
-  local candidate_hash installed_hash user_hash
+  local bin=$1 candidate installed_path user_path memory_agent_path
+  local candidate_hash installed_hash user_hash memory_agent_hash
   candidate=$ALETHEON_RELEASE_BINARY
   [[ -x "$bin" ]] || { aletheon_die "installed user binary is unavailable: $bin"; return; }
   installed_path=$(readlink -f "$bin") ||
     { aletheon_die "cannot resolve installed user binary: $bin"; return; }
   user_path=$(_runtime_executable user "$ALETHEON_USER_UNIT") || return
+  memory_agent_path=$(_runtime_executable user "$ALETHEON_MEMORY_AGENT_UNIT") || return
   candidate_hash=$(_sha256 "$candidate") || return
   installed_hash=$(_sha256 "$bin") || return
   user_hash=$(_sha256 "$user_path") || return
+  memory_agent_hash=$(_sha256 "$memory_agent_path") || return
   if [[ "$installed_hash" != "$candidate_hash" ]]; then
     aletheon_die "installed user binary hash differs from release candidate: candidate=$candidate_hash installed=$installed_hash"
     return
   fi
-  if [[ "$user_hash" != "$candidate_hash" ]]; then
-    aletheon_die "running user executable hash differs from release candidate: candidate=$candidate_hash user=$user_hash"
+  if [[ "$user_hash" != "$candidate_hash" || "$memory_agent_hash" != "$candidate_hash" ]]; then
+    aletheon_die "running user executable hash differs from release candidate: candidate=$candidate_hash user=$user_hash memory_agent=$memory_agent_hash"
     return
   fi
-  if [[ "$user_path" != "$installed_path" ]]; then
-    aletheon_die "running user executable path differs from installed binary: installed=$installed_path user=$user_path"
+  if [[ "$user_path" != "$installed_path" || "$memory_agent_path" != "$installed_path" ]]; then
+    aletheon_die "running user executable path differs from installed binary: installed=$installed_path user=$user_path memory_agent=$memory_agent_path"
     return
   fi
   aletheon_ok "installed user runtime provenance verified: sha256=$candidate_hash"
@@ -193,16 +226,20 @@ _verify_user_provenance() {
 _verify_user_stability() {
   [[ "$ALETHEON_STABILITY_SECONDS" =~ ^[0-9]+$ ]] ||
     { aletheon_die "ALETHEON_STABILITY_SECONDS must be a non-negative integer"; return; }
-  local before after pid
+  local before memory_before after memory_after pid memory_pid
   before=$(_service_snapshot user "$ALETHEON_USER_UNIT") || return
+  memory_before=$(_service_snapshot user "$ALETHEON_MEMORY_AGENT_UNIT") || return
   sleep "$ALETHEON_STABILITY_SECONDS"
   after=$(_service_snapshot user "$ALETHEON_USER_UNIT") || return
-  if [[ "$before" != "$after" ]]; then
-    aletheon_die "user service restart count increased during stability window: $before->$after"
+  memory_after=$(_service_snapshot user "$ALETHEON_MEMORY_AGENT_UNIT") || return
+  if [[ "$before" != "$after" || "$memory_before" != "$memory_after" ]]; then
+    aletheon_die "user service restart count increased during stability window: user=$before->$after memory_agent=$memory_before->$memory_after"
     return
   fi
   pid=${after%%:*}
-  if _service_has_fatal_log user "$ALETHEON_USER_UNIT" "$pid"; then
+  memory_pid=${memory_after%%:*}
+  if _service_has_fatal_log user "$ALETHEON_USER_UNIT" "$pid" ||
+     _service_has_fatal_log user "$ALETHEON_MEMORY_AGENT_UNIT" "$memory_pid"; then
     aletheon_die "fatal startup validation error detected for current user runtime process"
     return
   fi
@@ -213,6 +250,7 @@ cmd_installed_runtime_gate_user() {
   local bin=${1:-${ALETHEON_USER_BIN_DIR:-$HOME/.local/bin}/aletheon}
   _verify_user_provenance "$bin" || return
   _verify_user_stability || return
+  cmd_verify_memory_agent "$bin" || return
   cmd_verify_official_client "$bin" || return
   _verify_user_provenance "$bin" || return
   _verify_user_stability || return

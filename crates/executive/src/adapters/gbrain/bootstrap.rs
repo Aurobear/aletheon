@@ -1,6 +1,5 @@
 //! Daemon bootstrap for optional composite supplemental memory.
 
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -8,7 +7,7 @@ use crate::composition::config::SupplementalMemoryConfig;
 use corpus::tools::mcp::manager::McpManager;
 use mnemosyne::supplemental::{
     RetryPolicy, SpoolLimits, SupplementalBackendConfig, SupplementalErrorCategory,
-    SupplementalMemoryBackend, SupplementalSpool,
+    SupplementalSpool,
 };
 use mnemosyne::{CompositeMemoryHealth, CompositeMemoryService, MemoryService};
 use tokio::task::JoinHandle;
@@ -20,6 +19,7 @@ pub struct SupplementalMemoryRuntime {
     pub memory_service: Arc<dyn MemoryService>,
     pub health: Arc<Mutex<CompositeMemoryHealth>>,
     pub worker_task: Option<JoinHandle<()>>,
+    pub spool: Option<Arc<SupplementalSpool>>,
 }
 
 pub fn backend_config(config: &SupplementalMemoryConfig) -> SupplementalBackendConfig {
@@ -81,6 +81,12 @@ pub fn build_supplemental_memory_runtime_with_retention(
         tracing::warn!("Supplemental memory configuration invalid; using local memory only");
         return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Schema));
     }
+    if config.projection_enabled && config.destination_attestations.is_empty() {
+        tracing::warn!(
+            "Supplemental projection has no destination attestations; using local memory only"
+        );
+        return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Auth));
+    }
     let Some(manager) = manager else {
         return local_runtime(
             local,
@@ -89,11 +95,19 @@ pub fn build_supplemental_memory_runtime_with_retention(
             Some(SupplementalErrorCategory::Transport),
         );
     };
-    let adapter = Arc::new(SupplementalMcpAdapter::new(
+    let adapter = match SupplementalMcpAdapter::new(
         manager,
         config.server_name.clone(),
         Duration::from_millis(config.request_timeout_ms),
-    ));
+    )
+    .with_destination_attestations(&config.destination_attestations)
+    {
+        Ok(adapter) => Arc::new(adapter),
+        Err(error) => {
+            tracing::warn!(error = %error, "Supplemental destination attestation configuration invalid; using local memory only");
+            return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Auth));
+        }
+    };
     if adapter.health().schema != SupplementalSchemaStatus::Valid {
         return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Schema));
     }
@@ -110,15 +124,6 @@ pub fn build_supplemental_memory_runtime_with_retention(
             return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Spool));
         }
     };
-    if config.projection_enabled {
-        let now_ms = clock.wall_now().0.max(0);
-        if let Err(error) =
-            spool.migrate_legacy_outbox(Path::new(&config.legacy_outbox_dir), 1_000, now_ms)
-        {
-            tracing::warn!(error = %error, "Supplemental memory legacy outbox migration failed; using local memory only");
-            return local_runtime(local, clock, true, Some(SupplementalErrorCategory::Spool));
-        }
-    }
     adapter.set_queue_depth(spool.queue_depth().unwrap_or_default());
     let backend_config = backend_config(config);
     let worker = if config.projection_enabled {
@@ -142,19 +147,16 @@ pub fn build_supplemental_memory_runtime_with_retention(
     } else {
         None
     };
-    let backend = Arc::new(SupplementalMemoryBackend::new(
-        spool.clone(),
-        adapter.clone(),
-        backend_config.clone(),
-    ));
-    let composite = CompositeMemoryService::new(
-        local,
-        Some(backend),
-        clock.clone(),
-        Duration::from_millis(500),
-        Duration::from_millis(config.request_timeout_ms),
-    );
+    // Keep local Mnemosyne as the only automatic record/recall chain. The
+    // destination-aware maintenance controller owns all new supplemental
+    // projection and recall; this runtime only drains its governed spool.
+    let composite = CompositeMemoryService::local_only(local, clock.clone());
     let health = composite.health_handle();
+    {
+        let mut value = health.lock().expect("composite health mutex poisoned");
+        value.supplemental_enabled = true;
+        value.queue_depth = spool.queue_depth().unwrap_or_default();
+    }
     let memory_service: Arc<dyn MemoryService> = Arc::new(composite);
     let worker_task = worker.map(|worker| {
         let cancel = daemon_cancel.child_token();
@@ -166,6 +168,7 @@ pub fn build_supplemental_memory_runtime_with_retention(
         memory_service,
         health,
         worker_task,
+        spool: config.projection_enabled.then(|| spool.clone()),
     }
 }
 
@@ -207,5 +210,6 @@ fn local_runtime(
         memory_service: Arc::new(composite),
         health,
         worker_task: None,
+        spool: None,
     }
 }

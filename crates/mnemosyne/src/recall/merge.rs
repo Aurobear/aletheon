@@ -94,6 +94,7 @@ mod tests {
 
     fn item(id: &str, source_id: &str, content: &str) -> RecallItem {
         RecallItem {
+            kind: crate::MemoryKind::SemanticFact,
             content: content.into(),
             metadata: MemoryMetadata {
                 record_id: id.into(),

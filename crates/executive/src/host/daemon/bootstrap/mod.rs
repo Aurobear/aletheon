@@ -7,6 +7,7 @@ mod agents;
 mod approval_gate;
 mod bundled_profiles;
 mod channels;
+mod cognition;
 pub(crate) mod embodiment;
 mod extensions;
 mod google;

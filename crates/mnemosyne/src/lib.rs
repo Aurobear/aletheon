@@ -9,6 +9,7 @@ mod adapters;
 pub mod agent_scope;
 mod application;
 mod backends;
+pub mod binding;
 pub mod composite_service;
 pub mod consolidation;
 pub mod credential;
@@ -16,6 +17,7 @@ mod domain;
 pub mod embodied_episode;
 pub mod fact_service;
 mod host;
+pub mod intake;
 pub mod knowledge_graph;
 pub mod lifecycle;
 pub mod model;
@@ -26,6 +28,7 @@ pub mod promotion;
 mod recall;
 pub mod retention;
 pub mod service;
+pub mod workspace;
 
 pub mod embedding {
     pub use crate::adapters::embedding::{
@@ -33,6 +36,11 @@ pub mod embedding {
     };
 }
 pub use agent_scope::{AgentMemoryContext, AgentMemoryVault, ChildMemoryDraft};
+pub use binding::{
+    capability_digest, SupplementalCapabilityGrant, WorkspaceMemoryBinding,
+    WorkspaceMemoryBindingError, WorkspaceMemoryBindingPreview, WorkspaceMemoryBindingProposal,
+    WorkspaceMemoryBindingRegistry, WorkspaceMemoryBindingState,
+};
 pub use composite_service::{
     CompositeMemoryHealth, CompositeMemoryService, SupplementalMemoryService,
 };
@@ -40,6 +48,11 @@ pub use embedding::{EmbeddingAdapterError, EmbeddingTransport, RemoteEmbeddingPr
 pub use fact_service::{
     AddFactRequest, DefaultFactUseCases, FactServiceError, FactUseCases, FactView,
     ListFactsRequest, SearchFactsRequest,
+};
+pub use intake::{
+    GovernedMemoryObservation, MemoryIntakeError, MemoryIntakeLedger, MemoryIntakeLimits,
+    MemoryLifecycleUpdate, MemoryMaintenanceClaim, MemoryMaintenanceLease, MemoryMaintenancePhase,
+    MemoryMaintenanceStatus,
 };
 pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDecision};
 
@@ -76,6 +89,7 @@ pub use service::{
     ForgetSelector, MemoryService, RecallItem, RecallRequest, RecallSet, SynthesisCitation,
     SynthesisContextBlock, SynthesisGap, SynthesisRequest, SynthesisResult,
 };
+pub use workspace::WorkspaceMemoryKey;
 
 // Wave 1: Recall pipeline enhancements
 pub use recall::autocut::{apply_autocut, AutocutDecision};

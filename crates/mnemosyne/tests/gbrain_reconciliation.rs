@@ -221,7 +221,7 @@ fn opens_and_upgrades_previous_schema_fixture_forward_only() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
             .unwrap(),
-        2
+        3
     );
     assert_eq!(RECONCILIATION_SCHEMA_VERSION, 1);
 }

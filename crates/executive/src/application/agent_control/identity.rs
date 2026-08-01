@@ -14,6 +14,7 @@ pub(super) fn runtime_capability(value: &AgentRuntimeCapability) -> runtime::Run
         AgentRuntimeCapability::Browser => runtime::RuntimeCapability::Browser,
         AgentRuntimeCapability::DeviceObserve => runtime::RuntimeCapability::DeviceObserve,
         AgentRuntimeCapability::DeviceCommand => runtime::RuntimeCapability::DeviceCommand,
+        AgentRuntimeCapability::MemoryProposal => runtime::RuntimeCapability::MemoryProposal,
     }
 }
 

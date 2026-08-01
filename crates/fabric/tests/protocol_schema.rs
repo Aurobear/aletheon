@@ -5,6 +5,16 @@ use fabric::protocol::client::{
     SnapshotRequest, TransientApprovalDecision, TurnCompletionError, TurnCompletionUsage,
     CLIENT_PROTOCOL_VERSION,
 };
+use fabric::protocol::memory::{
+    MemoryFeedbackRequestV1, MemoryFeedbackSignalV1, MemoryObservationKindV1,
+    MemoryObservationRequestV1, MemoryRecallRequestV1, MemoryReceiptGetRequestV1,
+    MemoryRecordKindV1, MemorySensitivityV1, MemoryWorkspaceBindRequestV1,
+    MemoryWorkspaceBindingSpecV1, MemoryWorkspacePreviewBindRequestV1,
+    MemoryWorkspaceUnbindRequestV1,
+};
+use fabric::protocol::memory_maintenance::{
+    MemoryMaintenancePhaseV1, MemoryMaintenanceRunRequestV1, MemoryMaintenanceStatusRequestV1,
+};
 use fabric::{
     ConnectionId, LocalOsPrincipal, OperationId, PrincipalId, SessionId, ThreadId, TurnId,
     TurnStop, TurnTerminalStatus,
@@ -64,6 +74,194 @@ fn typed_requests_round_trip_at_the_supported_version() {
 }
 
 #[test]
+fn memory_gateway_requests_round_trip_with_stable_method_names() {
+    let requests = vec![
+        (
+            ClientRequest::MemoryObserve(MemoryObservationRequestV1 {
+                observation_id: "obs-1".into(),
+                client_session_id: "client-session-1".into(),
+                client_turn_id: Some("turn-1".into()),
+                working_dir: "/tmp".into(),
+                kind: MemoryObservationKindV1::TaskOutcome,
+                content: "tests passed".into(),
+                occurred_at: Some("2026-08-01T00:00:00Z".into()),
+                source_refs: vec!["receipt:1".into()],
+                sensitivity_hint: MemorySensitivityV1::Internal,
+                explicit_user_action: false,
+            }),
+            "memory.observe/v1",
+        ),
+        (
+            ClientRequest::MemoryReceiptGet(MemoryReceiptGetRequestV1 {
+                durable_intake_id: "intake-1".into(),
+            }),
+            "memory.receipt.get/v1",
+        ),
+        (
+            ClientRequest::MemoryRecall(MemoryRecallRequestV1 {
+                request_id: "recall-1".into(),
+                client_session_id: "client-session-1".into(),
+                working_dir: "/tmp".into(),
+                query: "deployment decision".into(),
+                max_items: 10,
+                max_content_bytes: 32 * 1024,
+                include_historical: false,
+                requested_kinds: Some(vec![MemoryRecordKindV1::ArchitectureDecision]),
+            }),
+            "memory.recall/v1",
+        ),
+        (
+            ClientRequest::MemoryFeedback(MemoryFeedbackRequestV1 {
+                observation_id: "feedback-1".into(),
+                client_session_id: "client-session-1".into(),
+                target_record_id: "record-1".into(),
+                signal: MemoryFeedbackSignalV1::Incorrect,
+                correction_text: Some("corrected evidence".into()),
+                working_dir: "/tmp".into(),
+            }),
+            "memory.feedback/v1",
+        ),
+    ];
+
+    for (request, method) in requests {
+        let encoded = request.to_json_rpc(17).unwrap();
+        assert_eq!(encoded["method"], method);
+        let decoded: ClientMessage<ClientRequest> =
+            serde_json::from_value(encoded["params"].clone()).unwrap();
+        assert_eq!(decoded.into_v1().unwrap(), request);
+    }
+}
+
+#[test]
+fn memory_maintenance_requests_are_strict_bounded_and_versioned() {
+    let requests = [
+        (
+            ClientRequest::MemoryMaintenanceStatus(MemoryMaintenanceStatusRequestV1 {
+                request_id: "status-1".into(),
+            }),
+            "memory.maintenance.status/v1",
+        ),
+        (
+            ClientRequest::MemoryMaintenanceRun(MemoryMaintenanceRunRequestV1 {
+                request_id: "run-1".into(),
+                phase: MemoryMaintenancePhaseV1::IntakeEvaluation,
+                max_items: 8,
+                dry_run: false,
+            }),
+            "memory.maintenance.run/v1",
+        ),
+    ];
+    for (request, method) in requests {
+        let wire = request.to_json_rpc(7).unwrap();
+        assert_eq!(wire["method"], method);
+        let decoded: ClientMessage<ClientRequest> =
+            serde_json::from_value(wire["params"].clone()).unwrap();
+        assert_eq!(decoded.into_v1().unwrap(), request);
+    }
+
+    assert!(
+        serde_json::from_value::<MemoryMaintenanceRunRequestV1>(serde_json::json!({
+            "request_id":"run-1",
+            "phase":"intake_evaluation",
+            "max_items":1,
+            "dry_run":false,
+            "unexpected":true
+        }))
+        .is_err()
+    );
+    assert!(MemoryMaintenanceRunRequestV1 {
+        request_id: "run-1".into(),
+        phase: MemoryMaintenancePhaseV1::IntakeEvaluation,
+        max_items: 0,
+        dry_run: false,
+    }
+    .validate()
+    .is_err());
+}
+
+#[test]
+fn memory_workspace_admin_requests_are_strict_and_versioned() {
+    let spec = MemoryWorkspaceBindingSpecV1 {
+        backend_id: "supplemental/gbrain".into(),
+        write_destination_handle: "gbrain-workspace".into(),
+        read_destination_handles: vec!["gbrain-workspace".into()],
+        expected_write_source: "workspace-a".into(),
+        expected_read_sources: vec!["workspace-a".into(), "personal".into()],
+        credential_ref: "mcp-server:gbrain-workspace".into(),
+    };
+    let requests = [
+        (
+            ClientRequest::MemoryWorkspacePreviewBind(MemoryWorkspacePreviewBindRequestV1 {
+                working_dir: "/tmp".into(),
+                binding: spec.clone(),
+            }),
+            "memory.workspace.preview_bind/v1",
+        ),
+        (
+            ClientRequest::MemoryWorkspaceBind(MemoryWorkspaceBindRequestV1 {
+                working_dir: "/tmp".into(),
+                binding: spec,
+                expected_capability_digest: "sha256:verified".into(),
+            }),
+            "memory.workspace.bind/v1",
+        ),
+        (
+            ClientRequest::MemoryWorkspaceUnbind(MemoryWorkspaceUnbindRequestV1 {
+                working_dir: "/tmp".into(),
+            }),
+            "memory.workspace.unbind/v1",
+        ),
+    ];
+    for (request, method) in requests {
+        let wire = request.to_json_rpc(9).unwrap();
+        assert_eq!(wire["method"], method);
+        let decoded: ClientMessage<ClientRequest> =
+            serde_json::from_value(wire["params"].clone()).unwrap();
+        assert_eq!(decoded.into_v1().unwrap(), request);
+    }
+}
+
+#[test]
+fn older_initialize_payload_defaults_memory_gateway_capability_off() {
+    let capabilities: ClientCapabilities = serde_json::from_value(serde_json::json!({
+        "item_events": true,
+        "cursors": true
+    }))
+    .unwrap();
+    assert!(!capabilities.memory_gateway_v1);
+    assert!(!capabilities.memory_admin_v1);
+}
+
+#[test]
+fn memory_gateway_request_validation_is_bounded_and_typed() {
+    let mut observation = MemoryObservationRequestV1 {
+        observation_id: "obs-1".into(),
+        client_session_id: "client-session-1".into(),
+        client_turn_id: None,
+        working_dir: "/tmp".into(),
+        kind: MemoryObservationKindV1::ExplicitNote,
+        content: "durable constraint".into(),
+        occurred_at: None,
+        source_refs: Vec::new(),
+        sensitivity_hint: MemorySensitivityV1::Internal,
+        explicit_user_action: true,
+    };
+    observation.validate().unwrap();
+    observation.content = "x".repeat(fabric::protocol::memory::MAX_MEMORY_CONTENT_BYTES + 1);
+    assert!(observation.validate().is_err());
+
+    let corrected_without_text = MemoryFeedbackRequestV1 {
+        observation_id: "feedback-1".into(),
+        client_session_id: "client-session-1".into(),
+        target_record_id: "record-1".into(),
+        signal: MemoryFeedbackSignalV1::Corrected,
+        correction_text: None,
+        working_dir: "/tmp".into(),
+    };
+    assert!(corrected_without_text.validate().is_err());
+}
+
+#[test]
 fn versioned_mutations_round_trip_explicit_identity_tuples() {
     let thread_id = ThreadId("thread-explicit".into());
     let turn_id = TurnId::new();
@@ -106,6 +304,9 @@ fn initialize_has_version_and_capabilities_but_no_uid() {
         capabilities: ClientCapabilities {
             item_events: true,
             cursors: true,
+            memory_gateway_v1: true,
+            memory_maintenance_v1: false,
+            memory_admin_v1: false,
         },
     }))
     .unwrap();
@@ -129,6 +330,9 @@ fn initialize_response_contains_only_the_effective_server_identity() {
         server_capabilities: ClientCapabilities {
             item_events: true,
             cursors: true,
+            memory_gateway_v1: true,
+            memory_maintenance_v1: false,
+            memory_admin_v1: false,
         },
         connection_id: ConnectionId::new(),
         principal_id: PrincipalId::local_uid(1001),

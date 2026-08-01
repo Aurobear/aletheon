@@ -26,6 +26,7 @@ use crate::host::daemon::DaemonConfig;
 // ── Stage 1: agent control service ──────────────────────────────────────
 
 pub(super) struct AgentServices {
+    pub agent_control: Arc<dyn fabric::AgentControlPort>,
     pub agent_recovery: crate::application::agent_control::AgentRecoveryReport,
     pub agent_repository: Arc<SqliteAgentRunRepository>,
     pub canonical_event_spine: Arc<crate::adapters::events::SqliteEventSpine>,
@@ -223,8 +224,12 @@ pub(super) async fn build_agent_services(
         agent_control_service.shutdown().await;
     });
 
-    super::runtime::register_agent_tools(tools.clone(), agent_control, agent_profiles_for_tools)
-        .await;
+    super::runtime::register_agent_tools(
+        tools.clone(),
+        agent_control.clone(),
+        agent_profiles_for_tools,
+    )
+    .await;
     *granted_capabilities.write().await = corpus::discover_tool_extensions(&tools)
         .await?
         .into_iter()
@@ -232,6 +237,7 @@ pub(super) async fn build_agent_services(
         .collect();
 
     Ok(AgentServices {
+        agent_control,
         agent_recovery,
         agent_repository,
         canonical_event_spine,
@@ -281,6 +287,7 @@ pub(super) async fn build_turn_services(
     domains: &DomainPorts,
     security_group: &SecurityGroup,
     memory_group: &MemoryGroup,
+    memory_gateway: Arc<crate::application::memory_gateway::MemoryGatewayService>,
     session_group: &SessionGroup,
     capability_resources: crate::host::daemon::handler::tool_executor::CapabilityResources,
     conscious_registry: Arc<crate::application::conscious_workspace::ConsciousWorkspaceRegistry>,
@@ -550,6 +557,7 @@ pub(super) async fn build_turn_services(
             event_bus: event_bus.clone(),
             role_workflow_factory,
             active_profile: active_profile_port.clone(),
+            memory_gateway,
         },
     ));
     let turn_orchestrator = Arc::new(crate::application::DaemonTurnOrchestrator::new(

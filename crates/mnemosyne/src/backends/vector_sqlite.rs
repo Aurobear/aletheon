@@ -283,6 +283,7 @@ fn scope_key(scope: &MemoryScope) -> String {
     match scope {
         MemoryScope::Global => "global".into(),
         MemoryScope::Principal(id) => format!("principal:{id}"),
+        MemoryScope::Workspace(id) => format!("workspace:{id}"),
         MemoryScope::Session(id) => format!("session:{id}"),
         MemoryScope::Goal(id) => format!("goal:{id}"),
         MemoryScope::Agent(id) => format!("agent:{id}"),
@@ -327,6 +328,7 @@ mod tests {
 
     fn item(id: &str, content: &str, scope: MemoryScope) -> RecallItem {
         RecallItem {
+            kind: crate::MemoryKind::SemanticFact,
             content: content.into(),
             metadata: crate::MemoryMetadata::local(id, id, Utc::now()),
             temporal_state: crate::TemporalState::Current,

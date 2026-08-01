@@ -219,8 +219,19 @@ impl SupplementalDocument {
         // Unknown control fields are rejected by `deny_unknown_fields`; page
         // content is returned strictly as untrusted reference text.
         let temporal_state = metadata.temporal_state(current_at);
+        let kind = match parsed.record_kind.as_str() {
+            "architecture_decision" => MemoryKind::ArchitectureDecision,
+            "goal_outcome" => MemoryKind::GoalOutcome,
+            "semantic_fact" => MemoryKind::SemanticFact,
+            "procedure" => MemoryKind::Procedure,
+            "core_state" => MemoryKind::CoreState,
+            "episodic" => MemoryKind::Episodic,
+            "supersession" | "tombstone" => MemoryKind::ExternalReference,
+            _ => bail!("unsupported supplemental memory record kind"),
+        };
         Ok(RecallItem {
             content: body.trim().to_string(),
+            kind,
             metadata,
             temporal_state,
             authority: crate::model::MemoryAuthority::AletheonExternal,

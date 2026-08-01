@@ -4,8 +4,8 @@ use fabric::ReflectionEntry;
 use crate::adapters::storage::fact_store::FactRow;
 use crate::adapters::storage::recall_memory::MemoryEntry as RecallEntry;
 use crate::{
-    MemoryAuthority, MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity, RecallItem,
-    RecallRequest, TemporalState,
+    MemoryAuthority, MemoryKind, MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity,
+    RecallItem, RecallRequest, TemporalState,
 };
 
 pub(crate) fn messages(rows: Vec<RecallEntry>, request: &RecallRequest) -> Vec<RecallItem> {
@@ -35,6 +35,7 @@ pub(crate) fn messages(rows: Vec<RecallEntry>, request: &RecallRequest) -> Vec<R
                 });
             RecallItem {
                 content: row.content,
+                kind: MemoryKind::Message,
                 metadata,
                 temporal_state: TemporalState::Current,
                 authority: MemoryAuthority::RawExperience,
@@ -103,6 +104,7 @@ pub(crate) fn facts(
                 ))
             .then_some(RecallItem {
                 content: row.content,
+                kind: MemoryKind::SemanticFact,
                 metadata,
                 temporal_state,
                 authority: MemoryAuthority::VerifiedLocalSemantic,
@@ -128,6 +130,7 @@ pub(crate) fn reflections(rows: Vec<ReflectionEntry>, request: &RecallRequest) -
         })
         .map(|row| RecallItem {
             content: row.task_summary,
+            kind: MemoryKind::Reflection,
             metadata: MemoryMetadata {
                 record_id: row.id.clone(),
                 provenance: MemoryProvenance {
@@ -189,6 +192,7 @@ pub(crate) fn core(
                 sensitivity: MemorySensitivity::Internal,
             },
             content,
+            kind: MemoryKind::CoreState,
             temporal_state: TemporalState::Current,
             authority: MemoryAuthority::ApprovedCore,
             scope: MemoryScope::Global,

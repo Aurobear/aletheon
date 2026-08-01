@@ -801,6 +801,24 @@ fn empty_params(
 pub struct ClientCapabilities {
     pub item_events: bool,
     pub cursors: bool,
+    #[serde(default)]
+    pub memory_gateway_v1: bool,
+    #[serde(default)]
+    pub memory_maintenance_v1: bool,
+    #[serde(default)]
+    pub memory_admin_v1: bool,
+}
+
+impl ClientCapabilities {
+    pub fn intersect(&self, supported: &Self) -> Self {
+        Self {
+            item_events: self.item_events && supported.item_events,
+            cursors: self.cursors && supported.cursors,
+            memory_gateway_v1: self.memory_gateway_v1 && supported.memory_gateway_v1,
+            memory_maintenance_v1: self.memory_maintenance_v1 && supported.memory_maintenance_v1,
+            memory_admin_v1: self.memory_admin_v1 && supported.memory_admin_v1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -906,9 +924,44 @@ pub enum ClientRequest {
     Chat(ChatRequest),
     Approval(ApprovalRequest),
     Cancel(CancelRequest),
+    MemoryObserve(crate::protocol::memory::MemoryObservationRequestV1),
+    MemoryReceiptGet(crate::protocol::memory::MemoryReceiptGetRequestV1),
+    MemoryRecall(crate::protocol::memory::MemoryRecallRequestV1),
+    MemoryFeedback(crate::protocol::memory::MemoryFeedbackRequestV1),
+    MemoryWorkspacePreviewBind(crate::protocol::memory::MemoryWorkspacePreviewBindRequestV1),
+    MemoryWorkspaceBind(crate::protocol::memory::MemoryWorkspaceBindRequestV1),
+    MemoryWorkspaceUnbind(crate::protocol::memory::MemoryWorkspaceUnbindRequestV1),
+    MemoryMaintenanceStatus(crate::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1),
+    MemoryMaintenanceRun(crate::protocol::memory_maintenance::MemoryMaintenanceRunRequestV1),
 }
 
 impl ClientRequest {
+    pub fn requires_memory_gateway(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryObserve(_)
+                | Self::MemoryReceiptGet(_)
+                | Self::MemoryRecall(_)
+                | Self::MemoryFeedback(_)
+        )
+    }
+
+    pub fn requires_memory_maintenance(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryMaintenanceStatus(_) | Self::MemoryMaintenanceRun(_)
+        )
+    }
+
+    pub fn requires_memory_admin(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryWorkspacePreviewBind(_)
+                | Self::MemoryWorkspaceBind(_)
+                | Self::MemoryWorkspaceUnbind(_)
+        )
+    }
+
     pub fn to_json_rpc(&self, id: u64) -> serde_json::Result<serde_json::Value> {
         let method = match self {
             Self::Initialize(_) => "initialize",
@@ -918,6 +971,15 @@ impl ClientRequest {
             Self::Chat(_) => "thread.chat",
             Self::Approval(_) => "turn.approval",
             Self::Cancel(_) => "turn.cancel",
+            Self::MemoryObserve(_) => "memory.observe/v1",
+            Self::MemoryReceiptGet(_) => "memory.receipt.get/v1",
+            Self::MemoryRecall(_) => "memory.recall/v1",
+            Self::MemoryFeedback(_) => "memory.feedback/v1",
+            Self::MemoryWorkspacePreviewBind(_) => "memory.workspace.preview_bind/v1",
+            Self::MemoryWorkspaceBind(_) => "memory.workspace.bind/v1",
+            Self::MemoryWorkspaceUnbind(_) => "memory.workspace.unbind/v1",
+            Self::MemoryMaintenanceStatus(_) => "memory.maintenance.status/v1",
+            Self::MemoryMaintenanceRun(_) => "memory.maintenance.run/v1",
         };
         serde_json::to_value(JsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION,
@@ -1026,6 +1088,14 @@ pub enum ClientEvent {
     Approval(ApprovalEvent),
     Agent(AgentEvent),
     Reconnected(EventCursor),
+    MemoryObservationReceipt(crate::protocol::memory::MemoryObservationReceiptV1),
+    MemoryLifecycleReceipt(crate::protocol::memory::MemoryLifecycleReceiptV1),
+    MemoryRecallResult(crate::protocol::memory::MemoryRecallResultV1),
+    MemoryFeedbackReceipt(crate::protocol::memory::MemoryFeedbackReceiptV1),
+    MemoryWorkspaceBindingPreview(crate::protocol::memory::MemoryWorkspaceBindingPreviewV1),
+    MemoryWorkspaceBinding(crate::protocol::memory::MemoryWorkspaceBindingViewV1),
+    MemoryMaintenanceStatus(crate::protocol::memory_maintenance::MemoryMaintenanceStatusV1),
+    MemoryMaintenanceRunReceipt(crate::protocol::memory_maintenance::MemoryMaintenanceRunReceiptV1),
     CommandCompleted {
         command: String,
         thread_id: ThreadId,

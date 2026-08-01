@@ -211,7 +211,8 @@
         "diagnostics",
         "browser",
         "device_observe",
-        "device_command"
+        "device_command",
+        "memory_proposal"
       ],
       "type": "string"
     },
@@ -1274,6 +1275,11 @@
           "default": false,
           "type": "boolean"
         },
+        "grant_type": {
+          "$ref": "#/$defs/McpOAuthGrantType",
+          "default": "authorization_code",
+          "description": "OAuth grant used by this non-interactive or interactive MCP client."
+        },
         "issuer": {
           "default": null,
           "description": "RFC 8414 issuer/base URL. Discovery is authoritative when supplied.",
@@ -1283,6 +1289,7 @@
           ]
         },
         "redirect_uri": {
+          "default": "",
           "type": "string"
         },
         "scopes": {
@@ -1305,10 +1312,16 @@
         }
       },
       "required": [
-        "client_id_env",
-        "redirect_uri"
+        "client_id_env"
       ],
       "type": "object"
+    },
+    "McpOAuthGrantType": {
+      "enum": [
+        "authorization_code",
+        "client_credentials"
+      ],
+      "type": "string"
     },
     "McpPermissionLevel": {
       "enum": [
@@ -1539,6 +1552,40 @@
             "mode": "local"
           }
         },
+        "policy": {
+          "$ref": "#/$defs/MemoryPolicyConfig",
+          "default": {
+            "candidate_threshold": 55,
+            "contradiction_risk_max_penalty": 20,
+            "evidence_provenance_weight": 25,
+            "future_utility_weight": 20,
+            "lease_duration_ms": 30000,
+            "max_input_bytes": 65536,
+            "max_items_per_run": 20,
+            "max_output_bytes": 16384,
+            "max_projected_writes": 10,
+            "max_provider_retries": 1,
+            "max_provider_rounds": 1,
+            "max_tool_calls": 0,
+            "novelty_dedup_weight": 15,
+            "privacy_risk_max_penalty": 25,
+            "promote_local_threshold": 75,
+            "remote_allowed_kinds": [
+              "goal_outcome",
+              "semantic_fact",
+              "procedure",
+              "architecture_decision"
+            ],
+            "remote_projection_threshold": 80,
+            "run_deadline_ms": 120000,
+            "scope_fit_weight": 10,
+            "semantic_profile": "safe-agent",
+            "semantic_retry_delay_ms": 900000,
+            "stability_weight": 15,
+            "verification_weight": 15,
+            "version": "memory-policy-v1"
+          }
+        },
         "promotion": {
           "$ref": "#/$defs/MemoryPromotionConfig",
           "default": {
@@ -1561,6 +1608,7 @@
           "$ref": "#/$defs/SupplementalMemoryConfig",
           "default": {
             "delivery_batch_size": 20,
+            "destination_attestations": [],
             "enabled": false,
             "legacy_outbox_dir": "~/.aletheon/memory-outbox",
             "max_content_bytes": 6000,
@@ -1652,6 +1700,169 @@
       },
       "type": "object"
     },
+    "MemoryPolicyConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_threshold": {
+          "default": 55,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "contradiction_risk_max_penalty": {
+          "default": 20,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "evidence_provenance_weight": {
+          "default": 25,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "future_utility_weight": {
+          "default": 20,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "lease_duration_ms": {
+          "default": 30000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_input_bytes": {
+          "default": 65536,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_items_per_run": {
+          "default": 20,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_output_bytes": {
+          "default": 16384,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_projected_writes": {
+          "default": 10,
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_provider_retries": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_provider_rounds": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "novelty_dedup_weight": {
+          "default": 15,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "privacy_risk_max_penalty": {
+          "default": 25,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "promote_local_threshold": {
+          "default": 75,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "remote_allowed_kinds": {
+          "default": [
+            "goal_outcome",
+            "semantic_fact",
+            "procedure",
+            "architecture_decision"
+          ],
+          "items": {
+            "$ref": "#/$defs/MemoryRecordKindV1"
+          },
+          "type": "array"
+        },
+        "remote_projection_threshold": {
+          "default": 80,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "run_deadline_ms": {
+          "default": 120000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scope_fit_weight": {
+          "default": 10,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "semantic_profile": {
+          "default": "safe-agent",
+          "type": "string"
+        },
+        "semantic_retry_delay_ms": {
+          "default": 900000,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stability_weight": {
+          "default": 15,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "verification_weight": {
+          "default": 15,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "version": {
+          "default": "memory-policy-v1",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "MemoryPromotionConfig": {
       "additionalProperties": false,
       "properties": {
@@ -1704,6 +1915,21 @@
         }
       },
       "type": "object"
+    },
+    "MemoryRecordKindV1": {
+      "enum": [
+        "message",
+        "tool_outcome",
+        "goal_outcome",
+        "reflection",
+        "episodic",
+        "semantic_fact",
+        "procedure",
+        "core_state",
+        "architecture_decision",
+        "external_reference"
+      ],
+      "type": "string"
     },
     "ModelRoutingConfig": {
       "additionalProperties": false,
@@ -2281,6 +2507,36 @@
       ],
       "type": "object"
     },
+    "SupplementalDestinationAttestationConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "destination_handle": {
+          "type": "string"
+        },
+        "marker_sha256": {
+          "type": "string"
+        },
+        "marker_slug": {
+          "type": "string"
+        },
+        "revalidate_after_secs": {
+          "default": 300,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "destination_handle",
+        "source_id",
+        "marker_slug",
+        "marker_sha256"
+      ],
+      "type": "object"
+    },
     "SupplementalMemoryConfig": {
       "additionalProperties": false,
       "properties": {
@@ -2289,6 +2545,14 @@
           "format": "uint",
           "minimum": 0,
           "type": "integer"
+        },
+        "destination_attestations": {
+          "default": [],
+          "description": "Non-secret proofs binding opaque MCP destinations to external sources.\nOAuth client credentials remain exclusively in the MCP secret config.",
+          "items": {
+            "$ref": "#/$defs/SupplementalDestinationAttestationConfig"
+          },
+          "type": "array"
         },
         "enabled": {
           "default": false,
@@ -2690,6 +2954,37 @@
           "max_facts_per_turn": 5,
           "mode": "local"
         },
+        "policy": {
+          "candidate_threshold": 55,
+          "contradiction_risk_max_penalty": 20,
+          "evidence_provenance_weight": 25,
+          "future_utility_weight": 20,
+          "lease_duration_ms": 30000,
+          "max_input_bytes": 65536,
+          "max_items_per_run": 20,
+          "max_output_bytes": 16384,
+          "max_projected_writes": 10,
+          "max_provider_retries": 1,
+          "max_provider_rounds": 1,
+          "max_tool_calls": 0,
+          "novelty_dedup_weight": 15,
+          "privacy_risk_max_penalty": 25,
+          "promote_local_threshold": 75,
+          "remote_allowed_kinds": [
+            "goal_outcome",
+            "semantic_fact",
+            "procedure",
+            "architecture_decision"
+          ],
+          "remote_projection_threshold": 80,
+          "run_deadline_ms": 120000,
+          "scope_fit_weight": 10,
+          "semantic_profile": "safe-agent",
+          "semantic_retry_delay_ms": 900000,
+          "stability_weight": 15,
+          "verification_weight": 15,
+          "version": "memory-policy-v1"
+        },
         "promotion": {
           "enabled": true,
           "max_promoted_facts": 20,
@@ -2704,6 +2999,7 @@
         },
         "supplemental": {
           "delivery_batch_size": 20,
+          "destination_attestations": [],
           "enabled": false,
           "legacy_outbox_dir": "~/.aletheon/memory-outbox",
           "max_content_bytes": 6000,

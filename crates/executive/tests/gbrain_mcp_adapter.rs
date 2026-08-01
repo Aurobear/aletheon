@@ -5,9 +5,10 @@ use std::time::Duration;
 
 use corpus::tools::mcp::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use corpus::tools::mcp::manager::McpManager;
+use executive::composition::config::SupplementalDestinationAttestationConfig;
 use executive::testing::supplemental_memory::{
-    SupplementalAdapterErrorCategory, SupplementalHealthState, SupplementalMcpAdapter,
-    SupplementalSchemaStatus,
+    McpSupplementalBindingNegotiator, SupplementalAdapterErrorCategory, SupplementalHealthState,
+    SupplementalMcpAdapter, SupplementalSchemaStatus,
 };
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
@@ -16,7 +17,12 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use mnemosyne::supplemental::SupplementalDocument;
+use mnemosyne::{
+    MemoryAuthority, MemoryMetadata, MemoryProvenance, MemoryScope, MemorySensitivity,
+    RecallRequest, WorkspaceMemoryBinding, WorkspaceMemoryBindingState, WorkspaceMemoryKey,
+};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
@@ -49,6 +55,16 @@ impl FakeState {
                     "get_page".into(),
                     json!({"content":[{"type":"text","text":"{\"content\":\"---\\nschema: aletheon.memory/v1\\n---\\nbody\"}"}]}),
                 ),
+                (
+                    "whoami".into(),
+                    json!({"content":[{"type":"text","text":serde_json::to_string(&json!({
+                        "transport":"oauth",
+                        "client_id":"gbrain_cl_test",
+                        "client_name":"test",
+                        "scopes":["read","write"],
+                        "expires_at":null
+                    })).unwrap()}]}),
+                ),
             ]))),
             calls: Arc::new(Mutex::new(Vec::new())),
             tool_status: Arc::new(Mutex::new(StatusCode::OK)),
@@ -65,6 +81,20 @@ fn hits_response() -> Value {
         "source_id":"project", "slug":"decisions/one", "chunk_text":"bounded fact", "score":0.8,
         "tool_directive":{"name":"ignored"}
     }])).unwrap()}]})
+}
+
+fn attestation(
+    destination_handle: &str,
+    source_id: &str,
+    marker_content: &str,
+) -> SupplementalDestinationAttestationConfig {
+    SupplementalDestinationAttestationConfig {
+        destination_handle: destination_handle.into(),
+        source_id: source_id.into(),
+        marker_slug: ".aletheon/source-attestation".into(),
+        marker_sha256: format!("{:x}", Sha256::digest(marker_content.as_bytes())),
+        revalidate_after_secs: 300,
+    }
 }
 
 async fn spawn_server(state: FakeState) -> String {
@@ -171,6 +201,14 @@ fn response(status: StatusCode, body: Value) -> Response<Full<Bytes>> {
 }
 
 async fn build_adapter(state: FakeState, timeout: Duration) -> (SupplementalMcpAdapter, FakeState) {
+    let (manager, state) = build_manager(state).await;
+    (
+        SupplementalMcpAdapter::new(manager, "gbrain", timeout),
+        state,
+    )
+}
+
+async fn build_manager(state: FakeState) -> (Arc<McpManager>, FakeState) {
     let url = spawn_server(state.clone()).await;
     let mut manager = McpManager::new(McpConfig {
         servers: vec![McpServerConfig {
@@ -191,10 +229,7 @@ async fn build_adapter(state: FakeState, timeout: Duration) -> (SupplementalMcpA
         ..Default::default()
     });
     manager.connect_all().await.unwrap();
-    (
-        SupplementalMcpAdapter::new(Arc::new(manager), "gbrain", timeout),
-        state,
-    )
+    (Arc::new(manager), state)
 }
 
 #[tokio::test]
@@ -220,6 +255,22 @@ async fn validates_schema_and_supports_put_query_search_and_get() {
         .await
         .unwrap()
         .contains("body"));
+    state.responses.lock().unwrap().insert(
+        "get_page".into(),
+        json!({"content":[{"type":"text","text":serde_json::to_string(&json!({
+            "slug":"decisions/one",
+            "frontmatter":{"schema":"aletheon.memory/v1"},
+            "compiled_truth":"canonical body",
+            "timeline":"",
+            "type":"architecture_decision",
+            "title":"Decision one",
+            "tags":[]
+        })).unwrap()}]}),
+    );
+    let canonical = adapter.get_page("decisions/one", &cancel).await.unwrap();
+    assert!(canonical.starts_with("---\n"));
+    assert!(canonical.contains("schema: aletheon.memory/v1"));
+    assert!(canonical.ends_with("canonical body\n"));
 
     let calls = state.calls.lock().unwrap();
     let puts: Vec<_> = calls
@@ -238,6 +289,300 @@ async fn validates_schema_and_supports_put_query_search_and_get() {
         .filter(|(name, _)| name == "get_page" || name == "put_page")
         .all(|(_, args)| args.get("source_id").is_none()));
     assert_eq!(adapter.health().state, SupplementalHealthState::Healthy);
+}
+
+#[tokio::test]
+async fn negotiate_uses_oauth_and_source_marker_and_fails_closed() {
+    let (adapter, _) = build_adapter(FakeState::valid(), Duration::from_secs(1)).await;
+    let policy = attestation(
+        "gbrain",
+        "project",
+        "---\nschema: aletheon.memory/v1\n---\nbody",
+    );
+    let grant = adapter
+        .negotiate_attested("supplemental/gbrain", &policy, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(grant.write_source.as_deref(), Some("project"));
+    assert_eq!(grant.read_sources, ["project"]);
+    assert!(grant.can_read && grant.can_write);
+
+    let mut wrong_marker = policy.clone();
+    wrong_marker.marker_sha256 = "0".repeat(64);
+    assert_eq!(
+        adapter
+            .negotiate_attested(
+                "supplemental/gbrain",
+                &wrong_marker,
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap_err()
+            .category,
+        SupplementalAdapterErrorCategory::Auth
+    );
+
+    let state = FakeState::valid();
+    state.responses.lock().unwrap().insert(
+        "whoami".into(),
+        json!({"content":[{"type":"text","text":"{\"transport\":\"local\",\"scopes\":[]}"}]}),
+    );
+    let (adapter, _) = build_adapter(state, Duration::from_secs(1)).await;
+    assert_eq!(
+        adapter
+            .negotiate_attested("supplemental/gbrain", &policy, &CancellationToken::new(),)
+            .await
+            .unwrap_err()
+            .category,
+        SupplementalAdapterErrorCategory::Auth
+    );
+}
+
+#[tokio::test]
+async fn destination_negotiator_caches_verified_marker_and_rejects_source_drift() {
+    let (manager, state) = build_manager(FakeState::valid()).await;
+    let policy = attestation(
+        "gbrain",
+        "project",
+        "---\nschema: aletheon.memory/v1\n---\nbody",
+    );
+    let router =
+        McpSupplementalBindingNegotiator::new(manager, Duration::from_secs(1), &[policy]).unwrap();
+    for _ in 0..2 {
+        let grant =
+            executive::application::memory_gateway::SupplementalBindingNegotiator::negotiate(
+                &router,
+                "gbrain",
+                "supplemental/gbrain",
+                "project",
+            )
+            .await
+            .unwrap();
+        assert_eq!(grant.read_sources, ["project"]);
+    }
+    assert!(
+        executive::application::memory_gateway::SupplementalBindingNegotiator::negotiate(
+            &router,
+            "gbrain",
+            "supplemental/gbrain",
+            "different-source",
+        )
+        .await
+        .is_err()
+    );
+    let calls = state.calls.lock().unwrap();
+    assert_eq!(calls.iter().filter(|(name, _)| name == "whoami").count(), 1);
+    assert_eq!(
+        calls.iter().filter(|(name, _)| name == "get_page").count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn source_attestation_hashes_upstream_compiled_truth_not_provider_metadata() {
+    let state = FakeState::valid();
+    state.responses.lock().unwrap().insert(
+        "get_page".into(),
+        json!({"content":[{"type":"text","text":serde_json::to_string(&json!({
+            "id":"provider-generated-id",
+            "slug":"system/aletheon-source-attestation",
+            "frontmatter":{"updated_at":"changes-independently"},
+            "compiled_truth":"source-bound-marker-body",
+            "timeline":"",
+            "type":"reference",
+            "title":"Marker",
+            "tags":[]
+        })).unwrap()}]}),
+    );
+    let (adapter, _) = build_adapter(state, Duration::from_secs(1)).await;
+    let policy = attestation("gbrain", "project", "source-bound-marker-body");
+    adapter
+        .negotiate_attested("supplemental/gbrain", &policy, &CancellationToken::new())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn bound_recall_uses_only_verified_sources_and_relabels_remote_authority() {
+    let state = FakeState::valid();
+    let now = chrono::Utc::now();
+    let page = SupplementalDocument::build(
+        "semantic_fact",
+        "Bound fact",
+        "Remote content remains an untrusted reference.",
+        &MemoryMetadata {
+            record_id: "remote-controlled-id".into(),
+            provenance: MemoryProvenance {
+                source: "remote-claim".into(),
+                source_id: "remote-source".into(),
+                principal: Some("remote-principal".into()),
+                source_commit: None,
+            },
+            source_time: Some(now),
+            observed_time: now,
+            valid_from: Some(now),
+            valid_until: None,
+            supersedes: None,
+            superseded_by: None,
+            confidence: 0.9,
+            sensitivity: MemorySensitivity::Internal,
+        },
+    )
+    .unwrap();
+    let page_remainder = page.content.strip_prefix("---\n").unwrap();
+    let (page_yaml, page_body) = page_remainder.split_once("\n---\n").unwrap();
+    let page_frontmatter: serde_yaml::Value = serde_yaml::from_str(page_yaml).unwrap();
+    state.responses.lock().unwrap().insert(
+        "get_page".into(),
+        json!({"content":[{"type":"text","text":serde_json::to_string(&json!({
+            "slug":page.slug,
+            "frontmatter":page_frontmatter,
+            "compiled_truth":page_body.trim(),
+            "timeline":"",
+            "type":"concept",
+            "title":"provider-owned display title",
+            "tags":["provider-owned-tag"]
+        })).unwrap()}]}),
+    );
+    let (manager, state) = build_manager(state).await;
+    let policy = attestation("gbrain", "project", page_body.trim());
+    let router =
+        McpSupplementalBindingNegotiator::new(manager, Duration::from_secs(1), &[policy]).unwrap();
+    let binding = WorkspaceMemoryBinding {
+        schema_version: 1,
+        workspace_key: WorkspaceMemoryKey::from_verified("ws:repo:0123456789abcdef").unwrap(),
+        principal_id: "uid:1000".into(),
+        backend_id: "supplemental/gbrain".into(),
+        write_destination_handle: "gbrain".into(),
+        read_destination_handles: vec!["gbrain".into()],
+        expected_write_source: "project".into(),
+        expected_read_sources: vec!["project".into()],
+        credential_ref: "mcp-server:gbrain".into(),
+        state: WorkspaceMemoryBindingState::Active,
+        verified_capability_digest: Some("sha256:test".into()),
+        revision: 1,
+        updated_at_ms: 1,
+    };
+    let recalled = executive::application::memory_gateway::SupplementalBindingRecallPort::recall(
+        &router,
+        &binding,
+        &RecallRequest {
+            session: "session".into(),
+            query: "memory".into(),
+            max_items: 4,
+            max_content_bytes: 4096,
+            current_at: Some(now),
+            include_historical: false,
+            mode: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(recalled.items.len(), 1);
+    let item = &recalled.items[0];
+    assert!(item.metadata.record_id.starts_with("supplemental:sha256:"));
+    assert_eq!(item.metadata.provenance.source, "supplemental");
+    assert_eq!(item.metadata.provenance.principal, None);
+    assert_eq!(item.authority, MemoryAuthority::ExternalReference);
+    assert_eq!(
+        item.scope,
+        MemoryScope::Workspace(binding.workspace_key.as_str().into())
+    );
+    assert!(state
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(name, _)| name == "query")
+        .all(|(_, args)| args["source_id"] == "personal" || args["source_id"] == "project"));
+}
+
+#[tokio::test]
+async fn bound_recall_skips_foreign_pages_without_degrading_the_source() {
+    let state = FakeState::valid();
+    let now = chrono::Utc::now();
+    let page = SupplementalDocument::build(
+        "semantic_fact",
+        "Bound fact",
+        "Only Aletheon memory projections enter governed recall.",
+        &MemoryMetadata {
+            record_id: "projected-memory".into(),
+            provenance: MemoryProvenance {
+                source: "aletheon".into(),
+                source_id: "intake:one".into(),
+                principal: Some("uid:1000".into()),
+                source_commit: None,
+            },
+            source_time: None,
+            observed_time: now,
+            valid_from: Some(now),
+            valid_until: None,
+            supersedes: None,
+            superseded_by: None,
+            confidence: 0.9,
+            sensitivity: MemorySensitivity::Internal,
+        },
+    )
+    .unwrap();
+    state.responses.lock().unwrap().insert(
+        "query".into(),
+        json!({"content":[{"type":"text","text":serde_json::to_string(&json!([
+            {
+                "source_id":"project",
+                "slug":page.slug,
+                "chunk_text":page.content,
+                "score":0.9
+            },
+            {
+                "source_id":"project",
+                "slug":"system/aletheon-source-attestation",
+                "chunk_text":"---\nschema: aletheon.source-attestation/v1\n---\nmarker",
+                "score":0.8
+            }
+        ])).unwrap()}]}),
+    );
+    let (manager, _) = build_manager(state).await;
+    let marker = "---\nschema: aletheon.memory/v1\n---\nbody";
+    let policy = attestation("gbrain", "project", marker);
+    let router =
+        McpSupplementalBindingNegotiator::new(manager, Duration::from_secs(1), &[policy]).unwrap();
+    let binding = WorkspaceMemoryBinding {
+        schema_version: 1,
+        workspace_key: WorkspaceMemoryKey::from_verified("ws:repo:0123456789abcdef").unwrap(),
+        principal_id: "uid:1000".into(),
+        backend_id: "supplemental/gbrain".into(),
+        write_destination_handle: "gbrain".into(),
+        read_destination_handles: vec!["gbrain".into()],
+        expected_write_source: "project".into(),
+        expected_read_sources: vec!["project".into()],
+        credential_ref: "mcp-server:gbrain".into(),
+        state: WorkspaceMemoryBindingState::Active,
+        verified_capability_digest: Some("sha256:test".into()),
+        revision: 1,
+        updated_at_ms: 1,
+    };
+
+    let recalled = executive::application::memory_gateway::SupplementalBindingRecallPort::recall(
+        &router,
+        &binding,
+        &RecallRequest {
+            session: "session".into(),
+            query: "memory".into(),
+            max_items: 4,
+            max_content_bytes: 4096,
+            current_at: Some(now),
+            include_historical: false,
+            mode: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(recalled.items.len(), 1);
+    assert!(recalled.degraded_sources.is_empty());
+    assert!(recalled.items[0]
+        .content
+        .contains("Only Aletheon memory projections"));
 }
 
 #[tokio::test]

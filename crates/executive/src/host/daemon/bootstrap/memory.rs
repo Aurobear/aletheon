@@ -8,6 +8,13 @@ use fabric::Clock;
 use mnemosyne::runtime::{CoreMemory, FactStore, RecallMemory};
 use tokio::sync::Mutex;
 
+use crate::application::memory_gateway::MemoryGatewayService;
+use crate::application::memory_maintenance::{
+    AgentControlMemorySemanticProposal, MemoryMaintenanceController,
+};
+use crate::composition::config::MemoryConfig;
+use crate::core::MemoryGroup;
+
 pub(super) struct MemoryCompositionInput<'a> {
     pub(super) data_dir: &'a Path,
     pub(super) clock: Arc<dyn Clock>,
@@ -38,6 +45,59 @@ pub(super) fn compose(input: MemoryCompositionInput<'_>) -> anyhow::Result<Memor
         recall,
         facts,
     })
+}
+
+pub(super) fn compose_gateway(
+    data_dir: &Path,
+    memory: &MemoryGroup,
+    clock: Arc<dyn Clock>,
+    mcp: Option<Arc<corpus::tools::mcp::manager::McpManager>>,
+    config: &MemoryConfig,
+) -> anyhow::Result<Arc<MemoryGatewayService>> {
+    let mut gateway =
+        MemoryGatewayService::open(data_dir, memory.local_memory_service.clone(), clock)
+            .context("opening versioned memory gateway")?;
+    if let Some(manager) = mcp {
+        let supplemental_router = Arc::new(
+            crate::adapters::gbrain::McpSupplementalBindingNegotiator::new(
+                manager,
+                std::time::Duration::from_millis(config.supplemental.request_timeout_ms),
+                &config.supplemental.destination_attestations,
+            )
+            .context("validating supplemental destination attestations")?,
+        );
+        gateway = gateway
+            .with_binding_negotiator(supplemental_router.clone())
+            .with_supplemental_recall(supplemental_router);
+    }
+    Ok(Arc::new(gateway))
+}
+
+pub(super) fn compose_maintenance(
+    gateway: &Arc<MemoryGatewayService>,
+    memory: &MemoryGroup,
+    clock: Arc<dyn Clock>,
+    control: Arc<dyn fabric::AgentControlPort>,
+    config: &MemoryConfig,
+) -> anyhow::Result<Arc<MemoryMaintenanceController>> {
+    let semantic = Arc::new(
+        AgentControlMemorySemanticProposal::new(control, config.policy.clone())
+            .context("constructing AgentRuntime memory semantic proposer")?,
+    );
+    Ok(Arc::new(
+        MemoryMaintenanceController::new(
+            gateway.intake_ledger(),
+            memory.local_memory_service.clone(),
+            clock,
+            config.policy.clone(),
+            semantic,
+        )
+        .context("constructing memory maintenance controller")?
+        .with_projection(
+            gateway.binding_registry(),
+            memory.supplemental_spool.clone(),
+        ),
+    ))
 }
 
 #[cfg(test)]

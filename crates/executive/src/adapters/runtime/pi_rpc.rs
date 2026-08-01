@@ -623,6 +623,7 @@ pub fn pi_manifest() -> &'static runtime::RuntimeManifest {
             runtime::RuntimeCapability::CodeEdit,
             runtime::RuntimeCapability::Shell,
             runtime::RuntimeCapability::Test,
+            runtime::RuntimeCapability::MemoryProposal,
         ]),
         interaction_modes: BTreeSet::from([
             runtime::InteractionMode::Resident,
@@ -633,7 +634,10 @@ pub fn pi_manifest() -> &'static runtime::RuntimeManifest {
             runtime::WorkspaceMode::SharedReadOnly,
             runtime::WorkspaceMode::SharedWritable,
         ]),
-        task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
+        task_encodings: BTreeSet::from([
+            runtime::TaskEncoding::NaturalLanguage,
+            runtime::TaskEncoding::StructuredJson,
+        ]),
         supported_profiles: None,
         tool_governance: runtime::ToolGovernance::Observed,
         priority: 10,

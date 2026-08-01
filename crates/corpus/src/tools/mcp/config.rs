@@ -58,6 +58,10 @@ pub struct McpOAuthConfig {
     /// client authentication is selected. Raw secrets are never configured.
     #[serde(default)]
     pub client_secret_env: Option<String>,
+    /// OAuth grant used by this non-interactive or interactive MCP client.
+    #[serde(default)]
+    pub grant_type: McpOAuthGrantType,
+    #[serde(default)]
     pub redirect_uri: String,
     #[serde(default)]
     pub scopes: Vec<String>,
@@ -71,6 +75,16 @@ pub struct McpOAuthConfig {
     pub authorization_endpoint: Option<String>,
     #[serde(default)]
     pub token_endpoint: Option<String>,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum McpOAuthGrantType {
+    #[default]
+    AuthorizationCode,
+    ClientCredentials,
 }
 
 #[derive(
@@ -277,6 +291,7 @@ issuer = "https://issuer.example.test"
             oauth.token_endpoint_auth_method,
             McpOAuthClientAuthMethod::None
         );
+        assert_eq!(oauth.grant_type, McpOAuthGrantType::AuthorizationCode);
     }
 
     #[test]
@@ -292,6 +307,34 @@ redirect_uri = "http://127.0.0.1:8765/callback"
 client_secret = "must-not-be-inline"
 "#;
         assert!(toml::from_str::<McpServerConfig>(unknown).is_err());
+    }
+
+    #[test]
+    fn client_credentials_oauth_needs_no_redirect_and_keeps_secrets_indirect() {
+        let configured: McpServerConfig = toml::from_str(
+            r#"
+name = "memory-source"
+transport = "http"
+url = "http://127.0.0.1:3131/mcp"
+
+[oauth]
+enabled = true
+grant_type = "client_credentials"
+client_id_env = "GBRAIN_CLIENT_ID"
+client_secret_env = "GBRAIN_CLIENT_SECRET"
+token_endpoint = "http://127.0.0.1:3131/token"
+token_endpoint_auth_method = "client_secret_post"
+scopes = ["read", "write"]
+"#,
+        )
+        .unwrap();
+        let oauth = configured.oauth.unwrap();
+        assert_eq!(oauth.grant_type, McpOAuthGrantType::ClientCredentials);
+        assert!(oauth.redirect_uri.is_empty());
+        assert_eq!(
+            oauth.client_secret_env.as_deref(),
+            Some("GBRAIN_CLIENT_SECRET")
+        );
     }
 
     #[test]

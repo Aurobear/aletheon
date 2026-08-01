@@ -138,6 +138,9 @@ crates/executive/src/application/hook_lifecycle/session_distiller.rs	application
 crates/executive/src/application/inference_port.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/lifecycle_contributors.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/memory_consolidation_worker.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/memory_policy.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/memory_maintenance.rs	application	executive	use-case orchestration and ports
+crates/executive/src/application/memory_gateway.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/memory_projection.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/mod.rs	application	executive	use-case orchestration and ports
 crates/executive/src/application/orchestration/agent.rs	application	executive	use-case orchestration and ports
@@ -202,6 +205,7 @@ crates/executive/src/composition/config/genome.rs	composition	executive	configur
 crates/executive/src/composition/config/grok_hardening.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/infra.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/integrations.rs	composition	executive	configuration and dependency construction
+crates/executive/src/composition/config/memory_policy.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/mod.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/provenance.rs	composition	executive	configuration and dependency construction
 crates/executive/src/composition/config/provider.rs	composition	executive	configuration and dependency construction
@@ -249,6 +253,7 @@ crates/executive/src/host/daemon/bootstrap/agents.rs	host	executive	daemon, tran
 crates/executive/src/host/daemon/bootstrap/approval_gate.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/bundled_profiles.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/channels.rs	host	executive	daemon, transport, or process lifecycle
+crates/executive/src/host/daemon/bootstrap/cognition.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/embodiment.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/extensions.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/google.rs	host	executive	daemon, transport, or process lifecycle

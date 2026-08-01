@@ -57,6 +57,10 @@ install -o root -g root -m 0644 "$repo_root/config/aletheon.user.service" \
   /usr/lib/systemd/user/aletheon.service
 sed -i 's|ExecStart=%h/.local/bin/aletheon daemon|ExecStart=/usr/bin/aletheon daemon|' \
   /usr/lib/systemd/user/aletheon.service
+install -o root -g root -m 0644 "$repo_root/config/aletheon-memory-agent.user.service" \
+  /usr/lib/systemd/user/aletheon-memory-agent.service
+sed -i 's|ExecStart=%h/.local/bin/aletheon memory-agent serve --official-user-socket|ExecStart=/usr/bin/aletheon memory-agent serve --official-user-socket|' \
+  /usr/lib/systemd/user/aletheon-memory-agent.service
 install -o root -g root -m 0644 "$repo_root/config/aletheon.user.socket" \
   /usr/lib/systemd/user/aletheon.socket
 for unit in aletheon-backup.service aletheon-backup.timer \
@@ -81,6 +85,7 @@ systemd-analyze verify /etc/systemd/system/aletheon-backup.service
 systemd-analyze verify /etc/systemd/system/aletheon-cleanup.service
 /usr/libexec/aletheon/verify-systemd.sh --user-units \
   /usr/lib/systemd/user/aletheon.service /usr/lib/systemd/user/aletheon.socket \
+  /usr/lib/systemd/user/aletheon-memory-agent.service \
   --binary /usr/bin/aletheon
 systemctl daemon-reload
 if ((enable)); then
@@ -88,7 +93,7 @@ if ((enable)); then
   systemctl enable aletheon-core.service
   systemctl reset-failed aletheon-core.service
   systemctl restart aletheon-core.service
-  systemctl --global enable aletheon.socket
+  systemctl --global enable aletheon.socket aletheon-memory-agent.service
   systemctl enable --now aletheon-cleanup.timer
   if command -v restic >/dev/null \
     && [[ -s /etc/aletheon/credentials/restic-password ]] \
