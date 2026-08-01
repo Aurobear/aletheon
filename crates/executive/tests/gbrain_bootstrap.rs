@@ -6,7 +6,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use corpus::tools::mcp::config::{McpConfig, McpServerConfig, McpTransportConfig, McpTrustLevel};
 use corpus::tools::mcp::manager::McpManager;
-use executive::composition::config::SupplementalMemoryConfig;
+use executive::composition::config::{
+    SupplementalDestinationAttestationConfig, SupplementalMemoryConfig,
+};
 use executive::testing::supplemental_memory::build_supplemental_memory_runtime;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
@@ -365,7 +367,7 @@ async fn schema_drift_is_local_only_and_marked_degraded() {
 }
 
 #[tokio::test]
-async fn healthy_http_bootstrap_and_shutdown_leave_committed_queue_durable() {
+async fn governed_runtime_does_not_enqueue_through_legacy_composite_chain() {
     let state = HttpState::valid();
     let manager = connected_manager(state).await;
     let dir = tempfile::tempdir().unwrap();
@@ -376,6 +378,13 @@ async fn healthy_http_bootstrap_and_shutdown_leave_committed_queue_durable() {
         projection_enabled: true,
         spool_path: dir.path().join("spool.db").to_string_lossy().into_owned(),
         legacy_outbox_dir: dir.path().join("legacy").to_string_lossy().into_owned(),
+        destination_attestations: vec![SupplementalDestinationAttestationConfig {
+            destination_handle: "supplemental".into(),
+            source_id: "aletheon".into(),
+            marker_slug: ".aletheon/source-attestation".into(),
+            marker_sha256: "0".repeat(64),
+            revalidate_after_secs: 300,
+        }],
         ..Default::default()
     };
     let runtime = build_supplemental_memory_runtime(
@@ -404,11 +413,11 @@ async fn healthy_http_bootstrap_and_shutdown_leave_committed_queue_durable() {
         },
     )
     .unwrap();
-    assert_eq!(spool.queue_depth().unwrap(), 1);
+    assert_eq!(spool.queue_depth().unwrap(), 0);
 }
 
 #[tokio::test]
-async fn legacy_config_and_json_outbox_migrate_before_worker_start() {
+async fn legacy_outbox_is_not_automatically_migrated_without_source_attestation() {
     let parsed: SupplementalMemoryConfig = toml::from_str(
         r#"
 enabled = true
@@ -454,17 +463,12 @@ outbox_dir = "/tmp/overridden-below"
         Arc::new(kernel::chronos::TestClock::default()),
         &cancel,
     );
-    assert!(legacy.join("one.json.migrated").exists());
-    runtime.worker_task.unwrap().await.unwrap();
-    let spool = mnemosyne::supplemental::SupplementalSpool::open(
-        &config.spool_path,
-        mnemosyne::supplemental::SpoolLimits {
-            max_items: config.spool_max_items,
-            max_bytes: config.spool_max_bytes,
-        },
-    )
-    .unwrap();
-    assert_eq!(spool.queue_depth().unwrap(), 1);
+    assert!(legacy.join("one.json").exists());
+    assert!(!legacy.join("one.json.migrated").exists());
+    assert!(runtime.worker_task.is_none());
+    let health = runtime.health.lock().unwrap();
+    assert!(health.degraded);
+    assert_eq!(health.error_category, Some(SupplementalErrorCategory::Auth));
 }
 
 fn healthy() -> SupplementalRecallHealth {

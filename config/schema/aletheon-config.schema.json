@@ -1275,6 +1275,11 @@
           "default": false,
           "type": "boolean"
         },
+        "grant_type": {
+          "$ref": "#/$defs/McpOAuthGrantType",
+          "default": "authorization_code",
+          "description": "OAuth grant used by this non-interactive or interactive MCP client."
+        },
         "issuer": {
           "default": null,
           "description": "RFC 8414 issuer/base URL. Discovery is authoritative when supplied.",
@@ -1284,6 +1289,7 @@
           ]
         },
         "redirect_uri": {
+          "default": "",
           "type": "string"
         },
         "scopes": {
@@ -1306,10 +1312,16 @@
         }
       },
       "required": [
-        "client_id_env",
-        "redirect_uri"
+        "client_id_env"
       ],
       "type": "object"
+    },
+    "McpOAuthGrantType": {
+      "enum": [
+        "authorization_code",
+        "client_credentials"
+      ],
+      "type": "string"
     },
     "McpPermissionLevel": {
       "enum": [
@@ -1596,6 +1608,7 @@
           "$ref": "#/$defs/SupplementalMemoryConfig",
           "default": {
             "delivery_batch_size": 20,
+            "destination_attestations": [],
             "enabled": false,
             "legacy_outbox_dir": "~/.aletheon/memory-outbox",
             "max_content_bytes": 6000,
@@ -2494,6 +2507,36 @@
       ],
       "type": "object"
     },
+    "SupplementalDestinationAttestationConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "destination_handle": {
+          "type": "string"
+        },
+        "marker_sha256": {
+          "type": "string"
+        },
+        "marker_slug": {
+          "type": "string"
+        },
+        "revalidate_after_secs": {
+          "default": 300,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "destination_handle",
+        "source_id",
+        "marker_slug",
+        "marker_sha256"
+      ],
+      "type": "object"
+    },
     "SupplementalMemoryConfig": {
       "additionalProperties": false,
       "properties": {
@@ -2502,6 +2545,14 @@
           "format": "uint",
           "minimum": 0,
           "type": "integer"
+        },
+        "destination_attestations": {
+          "default": [],
+          "description": "Non-secret proofs binding opaque MCP destinations to external sources.\nOAuth client credentials remain exclusively in the MCP secret config.",
+          "items": {
+            "$ref": "#/$defs/SupplementalDestinationAttestationConfig"
+          },
+          "type": "array"
         },
         "enabled": {
           "default": false,
@@ -2948,6 +2999,7 @@
         },
         "supplemental": {
           "delivery_batch_size": 20,
+          "destination_attestations": [],
           "enabled": false,
           "legacy_outbox_dir": "~/.aletheon/memory-outbox",
           "max_content_bytes": 6000,

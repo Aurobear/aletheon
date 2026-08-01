@@ -58,6 +58,7 @@ impl SupplementalBindingNegotiator for FixedNegotiator {
         &self,
         _destination_handle: &str,
         _backend_id: &str,
+        _expected_source: &str,
     ) -> anyhow::Result<SupplementalCapabilityGrant> {
         Ok(self.grant.lock().unwrap().clone())
     }
@@ -79,7 +80,7 @@ fn binding_spec() -> MemoryWorkspaceBindingSpecV1 {
     MemoryWorkspaceBindingSpecV1 {
         backend_id: "supplemental/gbrain".into(),
         write_destination_handle: "gbrain-workspace".into(),
-        read_destination_handles: vec!["gbrain-workspace".into()],
+        read_destination_handles: vec!["gbrain-workspace".into(), "gbrain-personal".into()],
         expected_write_source: "workspace-a".into(),
         expected_read_sources: vec!["workspace-a".into(), "personal".into()],
         credential_ref: "mcp-server:gbrain-workspace".into(),

@@ -1139,7 +1139,9 @@ impl RequestHandler {
                     std::time::Duration::from_millis(
                         config.memory_policy.supplemental.request_timeout_ms,
                     ),
-                ),
+                    &config.memory_policy.supplemental.destination_attestations,
+                )
+                .context("validating supplemental destination attestations")?,
             );
             memory_gateway = memory_gateway
                 .with_binding_negotiator(supplemental_router.clone())

@@ -1,7 +1,8 @@
 //! Bounded adapter over the retained Corpus MCP manager.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use corpus::tools::mcp::manager::McpManager;
 use mnemosyne::supplemental::page::MAX_PAGE_BYTES;
@@ -14,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
+
+use crate::composition::config::SupplementalDestinationAttestationConfig;
 
 const MAX_TOOL_TEXT_BYTES: usize = 256 * 1024;
 const MAX_SLUG_BYTES: usize = 512;
@@ -98,16 +101,29 @@ pub struct SupplementalMcpAdapter {
     server_name: String,
     timeout: Duration,
     health: Mutex<SupplementalHealth>,
+    destination_attestations: Arc<BTreeMap<String, SupplementalDestinationAttestationConfig>>,
+    destination_verified_at: Arc<Mutex<BTreeMap<String, Instant>>>,
 }
 
 pub struct McpSupplementalBindingNegotiator {
     manager: Arc<McpManager>,
     timeout: Duration,
+    destination_attestations: Arc<BTreeMap<String, SupplementalDestinationAttestationConfig>>,
+    destination_verified_at: Mutex<BTreeMap<String, Instant>>,
 }
 
 impl McpSupplementalBindingNegotiator {
-    pub fn new(manager: Arc<McpManager>, timeout: Duration) -> Self {
-        Self { manager, timeout }
+    pub fn new(
+        manager: Arc<McpManager>,
+        timeout: Duration,
+        destination_attestations: &[SupplementalDestinationAttestationConfig],
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            manager,
+            timeout,
+            destination_attestations: Arc::new(attestation_map(destination_attestations)?),
+            destination_verified_at: Mutex::new(BTreeMap::new()),
+        })
     }
 }
 
@@ -119,15 +135,35 @@ impl crate::application::memory_gateway::SupplementalBindingNegotiator
         &self,
         destination_handle: &str,
         backend_id: &str,
+        expected_source: &str,
     ) -> anyhow::Result<SupplementalCapabilityGrant> {
+        let policy = self
+            .destination_attestations
+            .get(destination_handle)
+            .ok_or_else(|| anyhow::anyhow!("supplemental destination has no attestation policy"))?;
+        anyhow::ensure!(
+            policy.source_id == expected_source,
+            "supplemental destination source policy does not match binding"
+        );
+        if recently_verified(
+            &self.destination_verified_at,
+            destination_handle,
+            policy.revalidate_after_secs,
+        ) {
+            return Ok(attested_grant(backend_id, expected_source));
+        }
         SupplementalMcpAdapter::new(
             self.manager.clone(),
             destination_handle.to_owned(),
             self.timeout,
         )
-        .negotiate(backend_id, &CancellationToken::new())
+        .negotiate_attested(backend_id, policy, &CancellationToken::new())
         .await
         .map_err(anyhow::Error::from)
+        .map(|grant| {
+            mark_verified(&self.destination_verified_at, destination_handle);
+            grant
+        })
     }
 }
 
@@ -145,30 +181,37 @@ impl crate::application::memory_gateway::SupplementalBindingRecallPort
                 && binding.verified_capability_digest.is_some(),
             "supplemental workspace binding is not active"
         );
-        let expected: std::collections::BTreeSet<_> = binding
-            .expected_read_sources
-            .iter()
-            .map(String::as_str)
-            .collect();
+        anyhow::ensure!(
+            binding.read_destination_handles.len() == binding.expected_read_sources.len(),
+            "supplemental read destinations are not paired with expected sources"
+        );
         let cancel = CancellationToken::new();
         let mut items = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let mut degraded = false;
-        for handle in &binding.read_destination_handles {
+        for (handle, expected_source) in binding
+            .read_destination_handles
+            .iter()
+            .zip(&binding.expected_read_sources)
+        {
+            let grant =
+                match crate::application::memory_gateway::SupplementalBindingNegotiator::negotiate(
+                    self,
+                    handle,
+                    &binding.backend_id,
+                    expected_source,
+                )
+                .await
+                {
+                    Ok(grant) => grant,
+                    Err(_) => {
+                        degraded = true;
+                        continue;
+                    }
+                };
             let adapter =
                 SupplementalMcpAdapter::new(self.manager.clone(), handle.clone(), self.timeout);
-            let grant = match adapter.negotiate(&binding.backend_id, &cancel).await {
-                Ok(grant) => grant,
-                Err(_) => {
-                    degraded = true;
-                    continue;
-                }
-            };
-            for source in grant
-                .read_sources
-                .iter()
-                .filter(|source| expected.contains(source.as_str()))
-            {
+            for source in grant.read_sources.iter() {
                 let hits = match adapter
                     .query(
                         &request.query,
@@ -295,7 +338,17 @@ impl SupplementalMcpAdapter {
                 last_success_unix_ms: None,
                 queue_depth: 0,
             }),
+            destination_attestations: Arc::new(BTreeMap::new()),
+            destination_verified_at: Arc::new(Mutex::new(BTreeMap::new())),
         }
+    }
+
+    pub fn with_destination_attestations(
+        mut self,
+        values: &[SupplementalDestinationAttestationConfig],
+    ) -> anyhow::Result<Self> {
+        self.destination_attestations = Arc::new(attestation_map(values)?);
+        Ok(self)
     }
 
     pub fn health(&self) -> SupplementalHealth {
@@ -312,11 +365,13 @@ impl SupplementalMcpAdapter {
             .queue_depth = queue_depth;
     }
 
-    /// Observe effective source authority from the backend. Configured source
-    /// names are never treated as evidence of remote write authority.
-    pub async fn negotiate(
+    /// Verify a standard OAuth identity and a marker that is readable only
+    /// through the source-bound destination credential. A configured source
+    /// name alone is never treated as evidence of remote authority.
+    pub async fn negotiate_attested(
         &self,
         backend_id: &str,
+        attestation: &SupplementalDestinationAttestationConfig,
         cancel: &CancellationToken,
     ) -> Result<SupplementalCapabilityGrant, SupplementalAdapterError> {
         if backend_id.trim().is_empty() || backend_id.len() > MAX_SLUG_BYTES {
@@ -334,33 +389,29 @@ impl SupplementalMcpAdapter {
                 "capability response is malformed",
             )
         })?;
-        if identity.source_scope_schema != 1
-            || identity.transport == "local"
-            || !matches!(identity.transport.as_str(), "oauth" | "legacy")
-            || identity.read_sources.len() > 32
-            || identity
-                .read_sources
-                .iter()
-                .any(|source| source.trim().is_empty() || source.len() > MAX_SLUG_BYTES)
-            || identity
-                .write_source
-                .as_ref()
-                .is_some_and(|source| source.trim().is_empty() || source.len() > MAX_SLUG_BYTES)
-        {
+        if identity.transport != "oauth" {
             return Err(self.fail(
-                SupplementalAdapterErrorCategory::Schema,
-                "capability response is incompatible",
+                SupplementalAdapterErrorCategory::Auth,
+                "capability identity is not OAuth",
             ));
         }
         let scopes: std::collections::BTreeSet<_> =
             identity.scopes.iter().map(String::as_str).collect();
-        Ok(SupplementalCapabilityGrant {
-            backend_id: backend_id.to_owned(),
-            write_source: identity.write_source,
-            read_sources: identity.read_sources,
-            can_read: scopes.contains("read"),
-            can_write: scopes.contains("write"),
-        })
+        if scopes != std::collections::BTreeSet::from(["read", "write"]) {
+            return Err(self.fail(
+                SupplementalAdapterErrorCategory::Auth,
+                "capability identity does not have least-privilege memory scopes",
+            ));
+        }
+        let marker = self.get_page(&attestation.marker_slug, cancel).await?;
+        let marker_sha256 = format!("{:x}", Sha256::digest(marker.as_bytes()));
+        if marker_sha256 != attestation.marker_sha256 {
+            return Err(self.fail(
+                SupplementalAdapterErrorCategory::Auth,
+                "destination source attestation failed",
+            ));
+        }
+        Ok(attested_grant(backend_id, &attestation.source_id))
     }
 
     pub async fn put_page(
@@ -591,9 +642,6 @@ impl SupplementalMcpAdapter {
 struct WhoAmI {
     transport: String,
     scopes: Vec<String>,
-    source_scope_schema: u16,
-    write_source: Option<String>,
-    read_sources: Vec<String>,
     #[serde(default, rename = "client_id")]
     _client_id: Option<String>,
     #[serde(default, rename = "client_name")]
@@ -602,6 +650,78 @@ struct WhoAmI {
     _token_name: Option<String>,
     #[serde(default, rename = "expires_at")]
     _expires_at: Option<Value>,
+}
+
+fn attestation_map(
+    values: &[SupplementalDestinationAttestationConfig],
+) -> anyhow::Result<BTreeMap<String, SupplementalDestinationAttestationConfig>> {
+    let mut result = BTreeMap::new();
+    for value in values {
+        anyhow::ensure!(
+            !value.destination_handle.trim().is_empty()
+                && value.destination_handle.len() <= MAX_SLUG_BYTES
+                && !value.destination_handle.chars().any(char::is_whitespace),
+            "supplemental attestation destination handle is invalid"
+        );
+        anyhow::ensure!(
+            !value.source_id.trim().is_empty()
+                && value.source_id.len() <= MAX_SLUG_BYTES
+                && !value.source_id.chars().any(char::is_whitespace),
+            "supplemental attestation source is invalid"
+        );
+        anyhow::ensure!(
+            !value.marker_slug.trim().is_empty() && value.marker_slug.len() <= MAX_SLUG_BYTES,
+            "supplemental attestation marker slug is invalid"
+        );
+        anyhow::ensure!(
+            value.marker_sha256.len() == 64
+                && value
+                    .marker_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "supplemental attestation marker digest is invalid"
+        );
+        anyhow::ensure!(
+            (1..=86_400).contains(&value.revalidate_after_secs),
+            "supplemental attestation revalidation interval is invalid"
+        );
+        anyhow::ensure!(
+            result
+                .insert(value.destination_handle.clone(), value.clone())
+                .is_none(),
+            "supplemental attestation destination handle is duplicated"
+        );
+    }
+    Ok(result)
+}
+
+fn attested_grant(backend_id: &str, source_id: &str) -> SupplementalCapabilityGrant {
+    SupplementalCapabilityGrant {
+        backend_id: backend_id.to_owned(),
+        write_source: Some(source_id.to_owned()),
+        read_sources: vec![source_id.to_owned()],
+        can_read: true,
+        can_write: true,
+    }
+}
+
+fn recently_verified(
+    cache: &Mutex<BTreeMap<String, Instant>>,
+    destination_handle: &str,
+    revalidate_after_secs: u64,
+) -> bool {
+    cache
+        .lock()
+        .expect("supplemental attestation cache mutex poisoned")
+        .get(destination_handle)
+        .is_some_and(|verified| verified.elapsed() < Duration::from_secs(revalidate_after_secs))
+}
+
+fn mark_verified(cache: &Mutex<BTreeMap<String, Instant>>, destination_handle: &str) {
+    cache
+        .lock()
+        .expect("supplemental attestation cache mutex poisoned")
+        .insert(destination_handle.to_owned(), Instant::now());
 }
 
 fn extract_text(value: &Value) -> Result<String, SupplementalAdapterError> {
@@ -726,21 +846,36 @@ impl mnemosyne::supplemental::SupplementalMemoryTransport for SupplementalMcpAda
         page: &SupplementalDocument,
         cancel: &CancellationToken,
     ) -> Result<Option<String>, mnemosyne::supplemental::SupplementalTransportError> {
-        if destination_handle.is_empty() || destination_handle == self.server_name {
-            return SupplementalMcpAdapter::put_page(self, page, cancel)
-                .await
-                .map(|()| None)
-                .map_err(supplemental_error);
-        }
-        SupplementalMcpAdapter::new(
+        let policy = self
+            .destination_attestations
+            .get(destination_handle)
+            .ok_or_else(|| {
+                mnemosyne::supplemental::SupplementalTransportError::new(
+                    mnemosyne::supplemental::SupplementalErrorCategory::Auth,
+                    "destination write lacks a source attestation policy",
+                )
+            })?;
+        let destination = SupplementalMcpAdapter::new(
             self.manager.clone(),
             destination_handle.to_owned(),
             self.timeout,
-        )
-        .put_page(page, cancel)
-        .await
-        .map(|()| None)
-        .map_err(supplemental_error)
+        );
+        if !recently_verified(
+            &self.destination_verified_at,
+            destination_handle,
+            policy.revalidate_after_secs,
+        ) {
+            destination
+                .negotiate_attested("supplemental", policy, cancel)
+                .await
+                .map_err(supplemental_error)?;
+            mark_verified(&self.destination_verified_at, destination_handle);
+        }
+        destination
+            .put_page(page, cancel)
+            .await
+            .map(|()| None)
+            .map_err(supplemental_error)
     }
 
     async fn query(

@@ -37,6 +37,7 @@ pub trait SupplementalBindingNegotiator: Send + Sync {
         &self,
         destination_handle: &str,
         backend_id: &str,
+        expected_source: &str,
     ) -> anyhow::Result<SupplementalCapabilityGrant>;
 }
 
@@ -471,12 +472,26 @@ impl MemoryGatewayService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("supplemental binding adapter is unavailable"))?;
         let write = negotiator
-            .negotiate(&proposal.write_destination_handle, &proposal.backend_id)
+            .negotiate(
+                &proposal.write_destination_handle,
+                &proposal.backend_id,
+                &proposal.expected_write_source,
+            )
             .await?;
+        anyhow::ensure!(
+            proposal.read_destination_handles.len() == proposal.expected_read_sources.len(),
+            "supplemental read destinations must pair one-to-one with expected sources"
+        );
         let mut reads = std::collections::BTreeSet::new();
         let mut can_read = true;
-        for handle in &proposal.read_destination_handles {
-            let grant = negotiator.negotiate(handle, &proposal.backend_id).await?;
+        for (handle, expected_source) in proposal
+            .read_destination_handles
+            .iter()
+            .zip(&proposal.expected_read_sources)
+        {
+            let grant = negotiator
+                .negotiate(handle, &proposal.backend_id, expected_source)
+                .await?;
             anyhow::ensure!(
                 grant.backend_id == proposal.backend_id,
                 "supplemental binding backend identity changed during negotiation"
@@ -553,6 +568,10 @@ fn binding_proposal(value: MemoryWorkspaceBindingSpecV1) -> WorkspaceMemoryBindi
 }
 
 fn validate_binding_spec_safety(value: &MemoryWorkspaceBindingSpecV1) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        value.read_destination_handles.len() == value.expected_read_sources.len(),
+        "memory read destinations must pair one-to-one with expected sources"
+    );
     for field in [
         value.backend_id.as_str(),
         value.write_destination_handle.as_str(),

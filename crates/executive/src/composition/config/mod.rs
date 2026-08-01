@@ -47,7 +47,9 @@ pub use integrations::{
 pub use memory_policy::MemoryPolicyConfig;
 pub use provenance::{ConfigProvenance, ConfigSource, ConfigSourceKind, Provenanced};
 pub use provider::{ModelRoutingConfig, ProviderConfig, Transport};
-pub use supplemental_memory::{MemoryConfig, SupplementalMemoryConfig};
+pub use supplemental_memory::{
+    MemoryConfig, SupplementalDestinationAttestationConfig, SupplementalMemoryConfig,
+};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
