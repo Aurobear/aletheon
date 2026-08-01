@@ -819,16 +819,11 @@ fn parse_page_content(text: &str) -> anyhow::Result<String> {
         .get("compiled_truth")
         .and_then(Value::as_str)
         .context("page response has no content")?;
-    let mut frontmatter = value
+    let frontmatter = value
         .get("frontmatter")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    for field in ["type", "title", "tags"] {
-        if let Some(value) = value.get(field).filter(|value| !value.is_null()) {
-            frontmatter.insert(field.to_owned(), value.clone());
-        }
-    }
     let yaml = serde_yaml::to_string(&frontmatter).context("serializing page frontmatter")?;
     let mut content = format!(
         "---\n{}---\n\n{}",

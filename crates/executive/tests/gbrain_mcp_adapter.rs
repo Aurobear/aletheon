@@ -429,12 +429,23 @@ async fn bound_recall_uses_only_verified_sources_and_relabels_remote_authority()
         },
     )
     .unwrap();
+    let page_remainder = page.content.strip_prefix("---\n").unwrap();
+    let (page_yaml, page_body) = page_remainder.split_once("\n---\n").unwrap();
+    let page_frontmatter: serde_yaml::Value = serde_yaml::from_str(page_yaml).unwrap();
     state.responses.lock().unwrap().insert(
         "get_page".into(),
-        json!({"content":[{"type":"text","text":serde_json::to_string(&json!({"content":page.content})).unwrap()}]}),
+        json!({"content":[{"type":"text","text":serde_json::to_string(&json!({
+            "slug":page.slug,
+            "frontmatter":page_frontmatter,
+            "compiled_truth":page_body.trim(),
+            "timeline":"",
+            "type":"concept",
+            "title":"provider-owned display title",
+            "tags":["provider-owned-tag"]
+        })).unwrap()}]}),
     );
     let (manager, state) = build_manager(state).await;
-    let policy = attestation("gbrain", "project", &page.content);
+    let policy = attestation("gbrain", "project", page_body.trim());
     let router =
         McpSupplementalBindingNegotiator::new(manager, Duration::from_secs(1), &[policy]).unwrap();
     let binding = WorkspaceMemoryBinding {
