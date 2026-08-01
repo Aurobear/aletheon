@@ -10,6 +10,9 @@ use fabric::protocol::memory::{
     MemoryObservationRequestV1, MemoryRecallRequestV1, MemoryReceiptGetRequestV1,
     MemoryRecordKindV1, MemorySensitivityV1,
 };
+use fabric::protocol::memory_maintenance::{
+    MemoryMaintenancePhaseV1, MemoryMaintenanceRunRequestV1, MemoryMaintenanceStatusRequestV1,
+};
 use fabric::{
     ConnectionId, LocalOsPrincipal, OperationId, PrincipalId, SessionId, ThreadId, TurnId,
     TurnStop, TurnTerminalStatus,
@@ -128,6 +131,53 @@ fn memory_gateway_requests_round_trip_with_stable_method_names() {
 }
 
 #[test]
+fn memory_maintenance_requests_are_strict_bounded_and_versioned() {
+    let requests = [
+        (
+            ClientRequest::MemoryMaintenanceStatus(MemoryMaintenanceStatusRequestV1 {
+                request_id: "status-1".into(),
+            }),
+            "memory.maintenance.status/v1",
+        ),
+        (
+            ClientRequest::MemoryMaintenanceRun(MemoryMaintenanceRunRequestV1 {
+                request_id: "run-1".into(),
+                phase: MemoryMaintenancePhaseV1::IntakeEvaluation,
+                max_items: 8,
+                dry_run: false,
+            }),
+            "memory.maintenance.run/v1",
+        ),
+    ];
+    for (request, method) in requests {
+        let wire = request.to_json_rpc(7).unwrap();
+        assert_eq!(wire["method"], method);
+        let decoded: ClientMessage<ClientRequest> =
+            serde_json::from_value(wire["params"].clone()).unwrap();
+        assert_eq!(decoded.into_v1().unwrap(), request);
+    }
+
+    assert!(
+        serde_json::from_value::<MemoryMaintenanceRunRequestV1>(serde_json::json!({
+            "request_id":"run-1",
+            "phase":"intake_evaluation",
+            "max_items":1,
+            "dry_run":false,
+            "unexpected":true
+        }))
+        .is_err()
+    );
+    assert!(MemoryMaintenanceRunRequestV1 {
+        request_id: "run-1".into(),
+        phase: MemoryMaintenancePhaseV1::IntakeEvaluation,
+        max_items: 0,
+        dry_run: false,
+    }
+    .validate()
+    .is_err());
+}
+
+#[test]
 fn older_initialize_payload_defaults_memory_gateway_capability_off() {
     let capabilities: ClientCapabilities = serde_json::from_value(serde_json::json!({
         "item_events": true,
@@ -210,6 +260,7 @@ fn initialize_has_version_and_capabilities_but_no_uid() {
             item_events: true,
             cursors: true,
             memory_gateway_v1: true,
+            memory_maintenance_v1: false,
         },
     }))
     .unwrap();
@@ -234,6 +285,7 @@ fn initialize_response_contains_only_the_effective_server_identity() {
             item_events: true,
             cursors: true,
             memory_gateway_v1: true,
+            memory_maintenance_v1: false,
         },
         connection_id: ConnectionId::new(),
         principal_id: PrincipalId::local_uid(1001),

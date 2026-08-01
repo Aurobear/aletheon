@@ -41,6 +41,8 @@ pub(crate) struct HandlerPorts {
     pub(crate) session_gateway: Arc<crate::core::session_gateway::SessionGateway>,
     pub(crate) recall_service: Arc<dyn mnemosyne::MemoryService>,
     pub(crate) memory_gateway: Arc<crate::application::memory_gateway::MemoryGatewayService>,
+    pub(crate) memory_maintenance:
+        Arc<crate::application::memory_maintenance::MemoryMaintenanceController>,
     pub(crate) memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
     pub(crate) inference: Arc<dyn crate::application::inference_port::InferencePort>,
     pub(crate) review: Option<Arc<crate::application::governed_review::GovernedReviewService>>,
@@ -78,6 +80,9 @@ impl HandlerPorts {
         session_gateway: Arc<crate::core::session_gateway::SessionGateway>,
         recall_service: Arc<dyn mnemosyne::MemoryService>,
         memory_gateway: Arc<crate::application::memory_gateway::MemoryGatewayService>,
+        memory_maintenance: Arc<
+            crate::application::memory_maintenance::MemoryMaintenanceController,
+        >,
         memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
         inference: Arc<dyn crate::application::inference_port::InferencePort>,
         review: Option<Arc<crate::application::governed_review::GovernedReviewService>>,
@@ -104,6 +109,7 @@ impl HandlerPorts {
             session_gateway,
             recall_service,
             memory_gateway,
+            memory_maintenance,
             memory_health,
             inference,
             review,

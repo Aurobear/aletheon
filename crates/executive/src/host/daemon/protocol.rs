@@ -7,6 +7,7 @@ fn supported_capabilities() -> ClientCapabilities {
         item_events: true,
         cursors: true,
         memory_gateway_v1: true,
+        memory_maintenance_v1: false,
     }
 }
 
@@ -117,6 +118,15 @@ impl ConnectionProtocolState {
             );
             anyhow::ensure!(enabled, "memory_gateway_v1 was not negotiated");
         }
+        if request.requires_memory_maintenance() {
+            let enabled = matches!(
+                self,
+                Self::Ready {
+                    negotiated: Some(NegotiatedProtocol { capabilities, .. })
+                } if capabilities.memory_maintenance_v1
+            );
+            anyhow::ensure!(enabled, "memory_maintenance_v1 was not negotiated");
+        }
         let event = match request {
             ClientRequest::Initialize(params) => ProtocolEvent::Initialize(NegotiatedProtocol {
                 protocol_version: negotiate_protocol_version(&params.protocol_versions)?,
@@ -151,6 +161,7 @@ mod tests {
                 item_events: true,
                 cursors: true,
                 memory_gateway_v1: false,
+                memory_maintenance_v1: false,
             },
         }
     }
@@ -202,6 +213,7 @@ mod tests {
                         item_events: true,
                         cursors: true,
                         memory_gateway_v1: false,
+                        memory_maintenance_v1: false,
                     },
                 },
             ))
@@ -236,6 +248,7 @@ mod tests {
                         item_events: true,
                         cursors: true,
                         memory_gateway_v1: true,
+                        memory_maintenance_v1: false,
                     },
                 },
             ))

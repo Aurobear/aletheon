@@ -41,6 +41,7 @@ pub enum RuntimeCapability {
     Browser,
     DeviceObserve,
     DeviceCommand,
+    MemoryProposal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

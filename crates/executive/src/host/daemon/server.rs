@@ -462,6 +462,14 @@ async fn dispatch_versioned_request(
             .memory_feedback(&connection, request)
             .await
             .map(ProtocolClientEvent::MemoryFeedbackReceipt),
+        ClientRequest::MemoryMaintenanceStatus(request) => handler
+            .memory_maintenance_status(request)
+            .await
+            .map(ProtocolClientEvent::MemoryMaintenanceStatus),
+        ClientRequest::MemoryMaintenanceRun(request) => handler
+            .memory_maintenance_run(&connection, request)
+            .await
+            .map(ProtocolClientEvent::MemoryMaintenanceRunReceipt),
         ClientRequest::Initialize(_) | ClientRequest::Initialized => {
             Err(anyhow::anyhow!("handshake request cannot be dispatched"))
         }
@@ -1226,6 +1234,7 @@ mod tests {
             item_events: true,
             cursors: true,
             memory_gateway_v1: false,
+            memory_maintenance_v1: false,
         }
     }
 

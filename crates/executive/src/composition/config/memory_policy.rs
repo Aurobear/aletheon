@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[serde(default, deny_unknown_fields)]
 pub struct MemoryPolicyConfig {
     pub version: String,
+    pub semantic_profile: String,
     pub evidence_provenance_weight: i16,
     pub future_utility_weight: i16,
     pub stability_weight: i16,
@@ -36,6 +37,7 @@ impl Default for MemoryPolicyConfig {
     fn default() -> Self {
         Self {
             version: "memory-policy-v1".into(),
+            semantic_profile: "safe-agent".into(),
             evidence_provenance_weight: 25,
             future_utility_weight: 20,
             stability_weight: 15,
@@ -72,6 +74,10 @@ impl MemoryPolicyConfig {
         anyhow::ensure!(
             !self.version.trim().is_empty() && self.version.len() <= 128,
             "memory policy version is empty or exceeds byte limit"
+        );
+        anyhow::ensure!(
+            !self.semantic_profile.trim().is_empty() && self.semantic_profile.len() <= 512,
+            "memory semantic profile is empty or exceeds byte limit"
         );
         let positive_weights = [
             self.evidence_provenance_weight,

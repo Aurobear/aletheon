@@ -803,6 +803,8 @@ pub struct ClientCapabilities {
     pub cursors: bool,
     #[serde(default)]
     pub memory_gateway_v1: bool,
+    #[serde(default)]
+    pub memory_maintenance_v1: bool,
 }
 
 impl ClientCapabilities {
@@ -811,6 +813,7 @@ impl ClientCapabilities {
             item_events: self.item_events && supported.item_events,
             cursors: self.cursors && supported.cursors,
             memory_gateway_v1: self.memory_gateway_v1 && supported.memory_gateway_v1,
+            memory_maintenance_v1: self.memory_maintenance_v1 && supported.memory_maintenance_v1,
         }
     }
 }
@@ -922,6 +925,8 @@ pub enum ClientRequest {
     MemoryReceiptGet(crate::protocol::memory::MemoryReceiptGetRequestV1),
     MemoryRecall(crate::protocol::memory::MemoryRecallRequestV1),
     MemoryFeedback(crate::protocol::memory::MemoryFeedbackRequestV1),
+    MemoryMaintenanceStatus(crate::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1),
+    MemoryMaintenanceRun(crate::protocol::memory_maintenance::MemoryMaintenanceRunRequestV1),
 }
 
 impl ClientRequest {
@@ -932,6 +937,13 @@ impl ClientRequest {
                 | Self::MemoryReceiptGet(_)
                 | Self::MemoryRecall(_)
                 | Self::MemoryFeedback(_)
+        )
+    }
+
+    pub fn requires_memory_maintenance(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryMaintenanceStatus(_) | Self::MemoryMaintenanceRun(_)
         )
     }
 
@@ -948,6 +960,8 @@ impl ClientRequest {
             Self::MemoryReceiptGet(_) => "memory.receipt.get/v1",
             Self::MemoryRecall(_) => "memory.recall/v1",
             Self::MemoryFeedback(_) => "memory.feedback/v1",
+            Self::MemoryMaintenanceStatus(_) => "memory.maintenance.status/v1",
+            Self::MemoryMaintenanceRun(_) => "memory.maintenance.run/v1",
         };
         serde_json::to_value(JsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION,
@@ -1060,6 +1074,8 @@ pub enum ClientEvent {
     MemoryLifecycleReceipt(crate::protocol::memory::MemoryLifecycleReceiptV1),
     MemoryRecallResult(crate::protocol::memory::MemoryRecallResultV1),
     MemoryFeedbackReceipt(crate::protocol::memory::MemoryFeedbackReceiptV1),
+    MemoryMaintenanceStatus(crate::protocol::memory_maintenance::MemoryMaintenanceStatusV1),
+    MemoryMaintenanceRunReceipt(crate::protocol::memory_maintenance::MemoryMaintenanceRunReceiptV1),
     CommandCompleted {
         command: String,
         thread_id: ThreadId,

@@ -93,6 +93,7 @@ data_dir = "~/.aletheon/memory"
 
 [memory.policy]
 version = "memory-policy-v1"
+semantic_profile = "safe-agent"
 evidence_provenance_weight = 25
 future_utility_weight = 20
 stability_weight = 15

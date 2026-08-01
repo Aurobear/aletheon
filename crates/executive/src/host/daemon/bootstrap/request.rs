@@ -1141,6 +1141,7 @@ impl RequestHandler {
             agora_service.clone(),
         )
         .await?;
+        let memory_agent_control = agent_svc.agent_control.clone();
         let canonical_event_spine = agent_svc.canonical_event_spine;
         let agent_recovery = agent_svc.agent_recovery;
         let agent_repository = agent_svc.agent_repository;
@@ -1519,6 +1520,23 @@ impl RequestHandler {
             )
             .context("opening versioned memory gateway")?,
         );
+        let semantic_proposer = Arc::new(
+            crate::application::memory_maintenance::AgentControlMemorySemanticProposal::new(
+                memory_agent_control,
+                config.memory_policy.policy.clone(),
+            )
+            .context("constructing AgentRuntime memory semantic proposer")?,
+        );
+        let memory_maintenance = Arc::new(
+            crate::application::memory_maintenance::MemoryMaintenanceController::new(
+                memory_gateway.intake_ledger(),
+                memory_group.memory_service.clone(),
+                clock.clone(),
+                config.memory_policy.policy.clone(),
+                semantic_proposer,
+            )
+            .context("constructing memory maintenance controller")?,
+        );
         let handler_ports = Arc::new(crate::host::daemon::handler::ports::HandlerPorts::new(
             kernel.clone(),
             admin_pending_approvals.clone(),
@@ -1540,6 +1558,7 @@ impl RequestHandler {
             session_gateway,
             memory_group.memory_service.clone(),
             memory_gateway,
+            memory_maintenance,
             memory_group.supplemental_memory_health.clone(),
             inference.clone(),
             review,

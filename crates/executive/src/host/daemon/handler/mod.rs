@@ -81,6 +81,22 @@ impl RequestHandler {
             .await
     }
 
+    pub(crate) async fn memory_maintenance_status(
+        &self,
+        request: fabric::protocol::memory_maintenance::MemoryMaintenanceStatusRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory_maintenance::MemoryMaintenanceStatusV1> {
+        self.ports.memory_maintenance.status(request).await
+    }
+
+    pub(crate) async fn memory_maintenance_run(
+        &self,
+        connection: &super::server::ConnectionContext,
+        request: fabric::protocol::memory_maintenance::MemoryMaintenanceRunRequestV1,
+    ) -> anyhow::Result<fabric::protocol::memory_maintenance::MemoryMaintenanceRunReceiptV1> {
+        let owner = format!("memory-agent:{}", connection.connection_id.0);
+        self.ports.memory_maintenance.run(&owner, request).await
+    }
+
     pub(crate) async fn resolve_versioned_approval(
         &self,
         connection: &super::server::ConnectionContext,

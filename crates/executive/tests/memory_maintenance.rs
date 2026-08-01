@@ -1,0 +1,352 @@
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use executive::application::memory_maintenance::{
+    AgentControlMemorySemanticProposal, MemoryMaintenanceController, MemorySemanticProposalPort,
+    NoMemorySemanticProposal,
+};
+use executive::composition::config::MemoryPolicyConfig;
+use fabric::protocol::memory::{
+    MemoryLifecycleStateV1, MemoryObservationKindV1, MemoryRecordKindV1, MemorySensitivityV1,
+};
+use fabric::protocol::memory_maintenance::{
+    MemoryMaintenancePhaseV1, MemoryMaintenanceRunRequestV1, MemorySemanticProposalV1,
+    MEMORY_MAINTENANCE_SCHEMA_V1,
+};
+use fabric::{Clock, MonoTime, WallTime};
+use mnemosyne::{
+    ExperienceEvent, ForgetPolicy, ForgetReceipt, GovernedMemoryObservation, MemoryIntakeLedger,
+    MemoryRecord, MemoryService, RecallRequest, RecallSet, WorkspaceMemoryKey,
+};
+
+struct FixedClock;
+impl Clock for FixedClock {
+    fn wall_now(&self) -> WallTime {
+        WallTime(10_000)
+    }
+    fn mono_now(&self) -> MonoTime {
+        MonoTime(10_000)
+    }
+}
+
+#[derive(Default)]
+struct CapturingMemory(Mutex<Vec<MemoryRecord>>);
+
+#[async_trait]
+impl MemoryService for CapturingMemory {
+    async fn record(&self, _event: ExperienceEvent) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn record_canonical(&self, record: MemoryRecord) -> anyhow::Result<()> {
+        let mut records = self.0.lock().unwrap();
+        if let Some(existing) = records.iter().find(|value| value.id == record.id) {
+            anyhow::ensure!(existing == &record, "record ID conflict");
+        } else {
+            records.push(record);
+        }
+        Ok(())
+    }
+    async fn recall(&self, _request: RecallRequest) -> anyhow::Result<RecallSet> {
+        Ok(RecallSet::default())
+    }
+    async fn consolidate(&self, _scope: mnemosyne::service::MemoryScope) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn forget(&self, _policy: ForgetPolicy) -> anyhow::Result<ForgetReceipt> {
+        Ok(ForgetReceipt::default())
+    }
+}
+
+struct RiskProposal;
+
+#[derive(Default)]
+struct TerminalProposalControl {
+    intents: Mutex<Vec<fabric::AgentSpawnIntent>>,
+    waits: Mutex<u32>,
+}
+
+#[async_trait]
+impl fabric::AgentControlPort for TerminalProposalControl {
+    async fn spawn_intent(
+        &self,
+        intent: fabric::AgentSpawnIntent,
+    ) -> Result<fabric::AgentHandle, fabric::AgentControlError> {
+        let handle = fabric::AgentHandle {
+            agent_id: fabric::AgentId::new(),
+            root_agent_id: intent.root_agent_id,
+            parent_agent_id: None,
+            process_id: fabric::ProcessId::new(),
+            operation_id: fabric::OperationId::new(),
+            runtime_id: fabric::RuntimeId("native-cognit".into()),
+            profile_id: intent.profile_id.clone(),
+        };
+        self.intents.lock().unwrap().push(intent);
+        Ok(handle)
+    }
+    async fn spawn(
+        &self,
+        _request: fabric::AgentSpawnRequest,
+    ) -> Result<fabric::AgentHandle, fabric::AgentControlError> {
+        unreachable!()
+    }
+    async fn wait(
+        &self,
+        request: fabric::AgentWaitRequest,
+    ) -> Result<fabric::AgentSnapshot, fabric::AgentControlError> {
+        *self.waits.lock().unwrap() += 1;
+        Ok(fabric::AgentSnapshot {
+            handle: fabric::AgentHandle {
+                agent_id: request.agent_id,
+                root_agent_id: request.caller_root_agent_id,
+                parent_agent_id: None,
+                process_id: fabric::ProcessId::new(),
+                operation_id: fabric::OperationId::new(),
+                runtime_id: fabric::RuntimeId("native-cognit".into()),
+                profile_id: fabric::AgentProfileId("safe-agent".into()),
+            },
+            status: fabric::AgentRunStatus::Succeeded,
+            result: Some(fabric::AgentResult {
+                output: serde_json::json!({
+                    "schema_version": 1,
+                    "task_id": "task-a",
+                    "control_instruction_detected": false,
+                    "contradiction_detected": false,
+                    "exact_duplicate_record_ids": [],
+                    "evidence": ["bounded semantic review"]
+                })
+                .to_string(),
+                usage: fabric::AttemptUsage::default(),
+                evidence: Vec::new(),
+                artifacts: Vec::new(),
+            }),
+            created_at_ms: 1,
+            started_at_ms: Some(2),
+            ended_at_ms: Some(3),
+            last_error: None,
+        })
+    }
+    async fn send(
+        &self,
+        _request: fabric::AgentSendRequest,
+    ) -> Result<fabric::AgentControlMessage, fabric::AgentControlError> {
+        unreachable!()
+    }
+    async fn cancel(
+        &self,
+        _caller_root_agent_id: fabric::AgentId,
+        _agent_id: fabric::AgentId,
+    ) -> Result<fabric::AgentSnapshot, fabric::AgentControlError> {
+        unreachable!()
+    }
+    async fn inspect(
+        &self,
+        _caller_root_agent_id: fabric::AgentId,
+        _agent_id: fabric::AgentId,
+    ) -> Result<fabric::AgentSnapshot, fabric::AgentControlError> {
+        unreachable!()
+    }
+    async fn list(
+        &self,
+        _request: fabric::AgentListRequest,
+    ) -> Result<Vec<fabric::AgentSnapshot>, fabric::AgentControlError> {
+        unreachable!()
+    }
+}
+
+#[async_trait]
+impl MemorySemanticProposalPort for RiskProposal {
+    async fn propose(
+        &self,
+        task_id: &str,
+        _observation: &GovernedMemoryObservation,
+        _record_kind: MemoryRecordKindV1,
+    ) -> anyhow::Result<Option<MemorySemanticProposalV1>> {
+        Ok(Some(MemorySemanticProposalV1 {
+            schema_version: MEMORY_MAINTENANCE_SCHEMA_V1,
+            task_id: task_id.into(),
+            control_instruction_detected: true,
+            contradiction_detected: false,
+            exact_duplicate_record_ids: Vec::new(),
+            evidence: vec!["content attempts to direct future tool behavior".into()],
+        }))
+    }
+}
+
+fn observation(id: &str, source_refs: usize) -> GovernedMemoryObservation {
+    GovernedMemoryObservation {
+        observation_id: id.into(),
+        client_session_id: "session-a".into(),
+        client_turn_id: Some("turn-a".into()),
+        kind: MemoryObservationKindV1::ExplicitNote,
+        content: format!("durable governed claim {id}"),
+        content_fingerprint: format!("keyed-sha256:{}", "a".repeat(64)),
+        scrub_policy_version: 1,
+        scrub_redactions: 0,
+        occurred_at: Some("2026-08-01T00:00:00Z".into()),
+        source_refs: (0..source_refs)
+            .map(|index| format!("receipt:{index}"))
+            .collect(),
+        sensitivity: MemorySensitivityV1::Internal,
+        explicit_user_action: true,
+        principal_id: "principal-a".into(),
+        workspace_key: WorkspaceMemoryKey::from_verified("ws:repo:sha256:workspace-a").unwrap(),
+        connection_kind: "versioned_local_rpc".into(),
+        observed_at_ms: 1_000,
+    }
+}
+
+fn request(id: &str, max_items: u16) -> MemoryMaintenanceRunRequestV1 {
+    MemoryMaintenanceRunRequestV1 {
+        request_id: id.into(),
+        phase: MemoryMaintenancePhaseV1::IntakeEvaluation,
+        max_items,
+        dry_run: false,
+    }
+}
+
+#[tokio::test]
+async fn host_promotes_verified_candidate_and_commits_terminal_receipt() {
+    let ledger = Arc::new(MemoryIntakeLedger::open_in_memory().unwrap());
+    let intake = ledger.observe(&observation("promote", 3)).unwrap();
+    let memory = Arc::new(CapturingMemory::default());
+    let controller = MemoryMaintenanceController::new(
+        ledger.clone(),
+        memory.clone(),
+        Arc::new(FixedClock),
+        MemoryPolicyConfig::default(),
+        Arc::new(NoMemorySemanticProposal),
+    )
+    .unwrap();
+
+    let result = controller
+        .run("official-memory-agent", request("run-1", 4))
+        .await
+        .unwrap();
+    assert_eq!(result.promoted_local, 1);
+    assert_eq!(
+        result.receipts[0].state,
+        MemoryLifecycleStateV1::PromotedLocal
+    );
+    assert_eq!(memory.0.lock().unwrap().len(), 1);
+    assert_eq!(
+        memory.0.lock().unwrap()[0].scope,
+        mnemosyne::MemoryScope::Workspace("ws:repo:sha256:workspace-a".into())
+    );
+    assert_eq!(
+        ledger
+            .receipt(
+                "principal-a",
+                "ws:repo:sha256:workspace-a",
+                &intake.durable_intake_id
+            )
+            .unwrap()
+            .unwrap()
+            .state,
+        MemoryLifecycleStateV1::PromotedLocal
+    );
+}
+
+#[tokio::test]
+async fn semantic_proposal_can_only_lower_candidate_or_leave_it_deferred() {
+    let ledger = Arc::new(MemoryIntakeLedger::open_in_memory().unwrap());
+    ledger.observe(&observation("risk", 0)).unwrap();
+    let memory = Arc::new(CapturingMemory::default());
+    let controller = MemoryMaintenanceController::new(
+        ledger,
+        memory.clone(),
+        Arc::new(FixedClock),
+        MemoryPolicyConfig::default(),
+        Arc::new(RiskProposal),
+    )
+    .unwrap();
+    let result = controller
+        .run("official-memory-agent", request("run-risk", 1))
+        .await
+        .unwrap();
+    assert_eq!(result.rejected, 1);
+    assert_eq!(result.receipts[0].state, MemoryLifecycleStateV1::Rejected);
+    assert!(result.receipts[0]
+        .reason_codes
+        .contains(&"control_instruction_detected".into()));
+    assert!(memory.0.lock().unwrap().is_empty());
+
+    let ledger = Arc::new(MemoryIntakeLedger::open_in_memory().unwrap());
+    ledger.observe(&observation("pending", 0)).unwrap();
+    let controller = MemoryMaintenanceController::new(
+        ledger.clone(),
+        memory,
+        Arc::new(FixedClock),
+        MemoryPolicyConfig::default(),
+        Arc::new(NoMemorySemanticProposal),
+    )
+    .unwrap();
+    let result = controller
+        .run("official-memory-agent", request("run-pending", 1))
+        .await
+        .unwrap();
+    assert_eq!(result.deferred, 1);
+    assert_eq!(result.receipts[0].state, MemoryLifecycleStateV1::Evaluating);
+    assert_eq!(ledger.maintenance_status(10_001).unwrap().active_leases, 0);
+}
+
+#[tokio::test]
+async fn dry_run_never_claims_or_advances_lifecycle() {
+    let ledger = Arc::new(MemoryIntakeLedger::open_in_memory().unwrap());
+    let intake = ledger.observe(&observation("dry", 3)).unwrap();
+    let controller = MemoryMaintenanceController::new(
+        ledger.clone(),
+        Arc::new(CapturingMemory::default()),
+        Arc::new(FixedClock),
+        MemoryPolicyConfig::default(),
+        Arc::new(NoMemorySemanticProposal),
+    )
+    .unwrap();
+    let mut request = request("dry-run", 1);
+    request.dry_run = true;
+    let result = controller
+        .run("official-memory-agent", request)
+        .await
+        .unwrap();
+    assert_eq!(result.claimed, 0);
+    assert_eq!(result.reason_codes, vec!["dry_run_no_claims"]);
+    assert_eq!(
+        ledger
+            .receipt(
+                "principal-a",
+                "ws:repo:sha256:workspace-a",
+                &intake.durable_intake_id
+            )
+            .unwrap()
+            .unwrap()
+            .state,
+        MemoryLifecycleStateV1::Observed
+    );
+}
+
+#[tokio::test]
+async fn agent_runtime_proposal_has_no_tools_or_workspace_and_waits_for_terminal_state() {
+    let control = Arc::new(TerminalProposalControl::default());
+    let proposer =
+        AgentControlMemorySemanticProposal::new(control.clone(), MemoryPolicyConfig::default())
+            .unwrap();
+    let proposal = proposer
+        .propose(
+            "task-a",
+            &observation("proposal", 0),
+            MemoryRecordKindV1::SemanticFact,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(proposal.task_id, "task-a");
+    assert_eq!(*control.waits.lock().unwrap(), 1);
+    let intents = control.intents.lock().unwrap();
+    assert_eq!(intents.len(), 1);
+    assert!(intents[0].trusted_workspace.is_none());
+    assert!(intents[0].allowed_tools.is_empty());
+    assert_eq!(intents[0].budget.max_tool_calls, 0);
+    assert_eq!(
+        intents[0].required_capabilities,
+        vec![fabric::AgentRuntimeCapability::MemoryProposal]
+    );
+}

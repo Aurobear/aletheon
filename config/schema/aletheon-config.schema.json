@@ -211,7 +211,8 @@
         "diagnostics",
         "browser",
         "device_observe",
-        "device_command"
+        "device_command",
+        "memory_proposal"
       ],
       "type": "string"
     },
@@ -1566,6 +1567,7 @@
             "remote_projection_threshold": 80,
             "run_deadline_ms": 120000,
             "scope_fit_weight": 10,
+            "semantic_profile": "safe-agent",
             "semantic_retry_delay_ms": 900000,
             "stability_weight": 15,
             "verification_weight": 15,
@@ -1816,6 +1818,10 @@
           "maximum": 32767,
           "minimum": -32768,
           "type": "integer"
+        },
+        "semantic_profile": {
+          "default": "safe-agent",
+          "type": "string"
         },
         "semantic_retry_delay_ms": {
           "default": 900000,
@@ -2922,6 +2928,7 @@
           "remote_projection_threshold": 80,
           "run_deadline_ms": 120000,
           "scope_fit_weight": 10,
+          "semantic_profile": "safe-agent",
           "semantic_retry_delay_ms": 900000,
           "stability_weight": 15,
           "verification_weight": 15,

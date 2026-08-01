@@ -26,6 +26,7 @@ use crate::host::daemon::DaemonConfig;
 // ── Stage 1: agent control service ──────────────────────────────────────
 
 pub(super) struct AgentServices {
+    pub agent_control: Arc<dyn fabric::AgentControlPort>,
     pub agent_recovery: crate::application::agent_control::AgentRecoveryReport,
     pub agent_repository: Arc<SqliteAgentRunRepository>,
     pub canonical_event_spine: Arc<crate::adapters::events::SqliteEventSpine>,
@@ -223,8 +224,12 @@ pub(super) async fn build_agent_services(
         agent_control_service.shutdown().await;
     });
 
-    super::runtime::register_agent_tools(tools.clone(), agent_control, agent_profiles_for_tools)
-        .await;
+    super::runtime::register_agent_tools(
+        tools.clone(),
+        agent_control.clone(),
+        agent_profiles_for_tools,
+    )
+    .await;
     *granted_capabilities.write().await = corpus::discover_tool_extensions(&tools)
         .await?
         .into_iter()
@@ -232,6 +237,7 @@ pub(super) async fn build_agent_services(
         .collect();
 
     Ok(AgentServices {
+        agent_control,
         agent_recovery,
         agent_repository,
         canonical_event_spine,

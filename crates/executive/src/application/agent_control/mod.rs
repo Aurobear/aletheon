@@ -818,7 +818,13 @@ impl AgentControlPort for AgentControlService {
                 AgentWorkspaceMode::SharedWritable => runtime::WorkspaceMode::SharedWritable,
                 AgentWorkspaceMode::IsolatedWorktree => runtime::WorkspaceMode::IsolatedWorktree,
             },
-            task_encoding: runtime::TaskEncoding::NaturalLanguage,
+            task_encoding: if required_capabilities
+                .contains(&AgentRuntimeCapability::MemoryProposal)
+            {
+                runtime::TaskEncoding::StructuredJson
+            } else {
+                runtime::TaskEncoding::NaturalLanguage
+            },
             max_input_tokens: intent.budget.max_input_tokens,
         };
         let runtime_id = match self.runtimes.select(&selection) {

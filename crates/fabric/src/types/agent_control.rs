@@ -34,6 +34,7 @@ pub enum AgentRuntimeCapability {
     Browser,
     DeviceObserve,
     DeviceCommand,
+    MemoryProposal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -289,7 +290,6 @@ impl AgentBudget {
     pub fn validate(&self) -> Result<(), AgentControlError> {
         if self.max_input_tokens == 0
             || self.max_output_tokens == 0
-            || self.max_tool_calls == 0
             || self.max_elapsed_ms == 0
             || self.max_depth == 0
         {

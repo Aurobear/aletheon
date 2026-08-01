@@ -47,6 +47,7 @@ pub mod inference_port;
 pub mod lifecycle_contributors;
 pub mod memory_consolidation_worker;
 pub mod memory_gateway;
+pub mod memory_maintenance;
 pub mod memory_policy;
 pub mod memory_projection;
 pub mod metacog_approval;

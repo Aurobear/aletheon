@@ -34,6 +34,10 @@ pub struct MemoryGatewayService {
 }
 
 impl MemoryGatewayService {
+    pub(crate) fn intake_ledger(&self) -> Arc<MemoryIntakeLedger> {
+        self.ledger.clone()
+    }
+
     pub fn open(
         state_root: impl AsRef<Path>,
         memory: Arc<dyn mnemosyne::MemoryService>,
