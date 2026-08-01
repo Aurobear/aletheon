@@ -36,21 +36,47 @@ TOP_LEVEL_KEYS = frozenset(
 BINARY_KEYS = frozenset({"path", "sha256"})
 EXECUTION_KEYS = frozenset(
     {
+        "argv",
         "exit_code",
         "timed_out",
+        "elapsed_ms",
+        "stdout",
+        "stderr",
+        "stdout_digest",
+        "stderr_digest",
+        "stdout_truncated",
+        "stderr_truncated",
         "json_valid",
         "terminal_snapshot",
+        "reported_success",
         "process_group_reaped",
         "infrastructure_error",
     }
 )
+COMMAND_KEYS = frozenset(
+    {
+        "argv",
+        "exit_code",
+        "timed_out",
+        "elapsed_ms",
+        "stdout",
+        "stderr",
+        "stdout_digest",
+        "stderr_digest",
+        "stdout_truncated",
+        "stderr_truncated",
+        "process_group_reaped",
+    }
+)
 WORKSPACE_KEYS = frozenset(
     {
+        "base_tree_digest",
         "diff",
         "diff_digest",
         "changed_files",
         "forbidden_paths_unchanged",
         "required_scope_satisfied",
+        "dirty_patch_digest",
         "dirty_patch_preserved",
     }
 )
@@ -82,7 +108,7 @@ TERMINAL_STOPS = {
     "verified": frozenset({"completed"}),
     "blocked": frozenset({"blocked"}),
     "budget_exhausted": frozenset({"blocked"}),
-    "cancelled": frozenset({"cancelled"}),
+    "cancelled": frozenset({"cancelled", "unavailable"}),
     "failed": frozenset({"failed"}),
     "unavailable": frozenset({"unavailable"}),
 }
@@ -97,6 +123,7 @@ FAILURE_CLASSES = frozenset(
     }
 )
 _SHA256 = re.compile(r"sha256:[0-9a-f]{64}\Z")
+MAX_CAPTURE = 64 * 1024
 
 
 def digest(data: bytes) -> str:
@@ -134,6 +161,36 @@ def _exact_keys(value: Any, expected: frozenset[str], name: str) -> str | None:
 
 def _non_negative_optional_integer(value: Any) -> bool:
     return value is None or (isinstance(value, int) and not isinstance(value, bool) and value >= 0)
+
+
+def _validate_command(value: Any, name: str, expected_keys: frozenset[str]) -> str | None:
+    error = _exact_keys(value, expected_keys, name)
+    if error:
+        return error
+    if not isinstance(value["argv"], list) or not value["argv"] or any(
+        not isinstance(argument, str) or not argument for argument in value["argv"]
+    ):
+        return f"{name}.argv must be a non-empty string list"
+    if value["exit_code"] is not None and (
+        not isinstance(value["exit_code"], int) or isinstance(value["exit_code"], bool)
+    ):
+        return f"{name}.exit_code must be an integer or null"
+    if not isinstance(value["timed_out"], bool):
+        return f"{name}.timed_out must be boolean"
+    if not _non_negative_optional_integer(value["elapsed_ms"]):
+        return f"{name}.elapsed_ms must be a non-negative integer"
+    for stream in ("stdout", "stderr"):
+        if not isinstance(value[stream], str) or len(value[stream].encode()) > MAX_CAPTURE:
+            return f"{name}.{stream} must be bounded text"
+        if not isinstance(value[f"{stream}_digest"], str) or not _SHA256.fullmatch(
+            value[f"{stream}_digest"]
+        ):
+            return f"{name}.{stream}_digest must be a SHA-256 digest"
+        if not isinstance(value[f"{stream}_truncated"], bool):
+            return f"{name}.{stream}_truncated must be boolean"
+    if not isinstance(value["process_group_reaped"], bool):
+        return f"{name}.process_group_reaped must be boolean"
+    return None
 
 
 def _validate_v2(value: Any) -> str | None:
@@ -174,14 +231,16 @@ def _validate_v2(value: Any) -> str | None:
     if error:
         return error
     execution = value["execution"]
-    if execution["exit_code"] is not None and (
-        not isinstance(execution["exit_code"], int)
-        or isinstance(execution["exit_code"], bool)
-    ):
-        return "execution.exit_code must be an integer or null"
-    for field in ("timed_out", "json_valid", "terminal_snapshot", "process_group_reaped"):
+    error = _validate_command(execution, "execution", EXECUTION_KEYS)
+    if error:
+        return error
+    for field in ("json_valid", "terminal_snapshot"):
         if not isinstance(execution[field], bool):
             return f"execution.{field} must be boolean"
+    if execution["reported_success"] is not None and not isinstance(
+        execution["reported_success"], bool
+    ):
+        return "execution.reported_success must be boolean or null"
     if execution["infrastructure_error"] is not None and (
         not isinstance(execution["infrastructure_error"], str)
         or not execution["infrastructure_error"].strip()
@@ -192,12 +251,21 @@ def _validate_v2(value: Any) -> str | None:
     if error:
         return error
     workspace = value["workspace"]
+    if not isinstance(workspace["base_tree_digest"], str) or not _SHA256.fullmatch(
+        workspace["base_tree_digest"]
+    ):
+        return "workspace.base_tree_digest must be a SHA-256 digest"
     if not isinstance(workspace["diff"], str):
         return "workspace.diff must be a string"
     if not isinstance(workspace["diff_digest"], str) or not _SHA256.fullmatch(
         workspace["diff_digest"]
     ):
         return "workspace.diff_digest must be a SHA-256 digest"
+    if workspace["dirty_patch_digest"] is not None and (
+        not isinstance(workspace["dirty_patch_digest"], str)
+        or not _SHA256.fullmatch(workspace["dirty_patch_digest"])
+    ):
+        return "workspace.dirty_patch_digest must be a SHA-256 digest or null"
     if not isinstance(workspace["changed_files"], list) or any(
         not isinstance(path, str) or not path for path in workspace["changed_files"]
     ):
@@ -210,10 +278,12 @@ def _validate_v2(value: Any) -> str | None:
         if not isinstance(workspace[field], bool):
             return f"workspace.{field} must be boolean"
 
-    if not isinstance(value["acceptance"], list) or any(
-        not isinstance(item, dict) for item in value["acceptance"]
-    ):
+    if not isinstance(value["acceptance"], list):
         return "acceptance must be a list of objects"
+    for index, item in enumerate(value["acceptance"]):
+        error = _validate_command(item, f"acceptance[{index}]", COMMAND_KEYS)
+        if error:
+            return error
     if not isinstance(value["evidence"], list) or any(
         not isinstance(item, dict) for item in value["evidence"]
     ):
@@ -224,7 +294,13 @@ def _validate_v2(value: Any) -> str | None:
         return error
     if not isinstance(value["resources"]["passed"], bool):
         return "resources.passed must be boolean"
-    if not isinstance(value["resources"]["checks"], list):
+    if not isinstance(value["resources"]["checks"], list) or any(
+        not isinstance(check, dict)
+        or set(check) != {"name", "passed"}
+        or not isinstance(check["name"], str)
+        or not isinstance(check["passed"], bool)
+        for check in value["resources"]["checks"]
+    ):
         return "resources.checks must be a list"
 
     error = _exact_keys(value["metrics"], METRIC_KEYS, "metrics")
@@ -267,12 +343,13 @@ def classify_failure(value: Mapping[str, Any]) -> tuple[str, list[str]]:
     explicit = execution.get("infrastructure_error")
     if explicit:
         infrastructure.append(str(explicit))
-    if not value.get("operation_id"):
-        infrastructure.append("operation_id_missing")
-    if execution.get("json_valid") is False:
-        infrastructure.append("client_json_invalid")
-    if execution.get("terminal_snapshot") is False:
-        infrastructure.append("terminal_snapshot_missing")
+    if not execution.get("timed_out"):
+        if not value.get("operation_id"):
+            infrastructure.append("operation_id_missing")
+        if execution.get("json_valid") is False:
+            infrastructure.append("client_json_invalid")
+        if execution.get("terminal_snapshot") is False:
+            infrastructure.append("terminal_snapshot_missing")
     if infrastructure:
         return "infrastructure_failure", sorted(set(infrastructure))
 
@@ -301,6 +378,11 @@ def classify_failure(value: Mapping[str, Any]) -> tuple[str, list[str]]:
         runtime.append("client_exit_nonzero")
     if value.get("observed_stop") == "failed":
         runtime.append("authoritative_stop_failed")
+    if (
+        value.get("observed_stop") == "completed"
+        and execution.get("reported_success") is not True
+    ):
+        runtime.append("client_reported_failure")
     tool_errors = metrics.get("tool_errors")
     if isinstance(tool_errors, int) and tool_errors > 0:
         runtime.append("tool_error_observed")
@@ -320,22 +402,23 @@ def classify_failure(value: Mapping[str, Any]) -> tuple[str, list[str]]:
     if not resources.get("passed"):
         verification.append("resource_check_failed")
 
+    acceptance = value.get("acceptance", [])
+    if not acceptance or any(
+        item.get("exit_code") != 0 or item.get("timed_out") is not False
+        for item in acceptance
+    ):
+        verification.append("acceptance_failed")
+    if not any(
+        item.get("kind") == "acceptance_command" and item.get("exit_code") == 0
+        for item in evidence
+    ):
+        verification.append("acceptance_evidence_missing")
+    if not any(item.get("kind") == "terminal_snapshot" for item in evidence):
+        verification.append("terminal_evidence_missing")
+
     if value.get("expected_terminal") == "verified":
-        acceptance = value.get("acceptance", [])
-        if not acceptance or any(
-            item.get("exit_code") != 0 or item.get("timed_out") is not False
-            for item in acceptance
-        ):
-            verification.append("acceptance_failed")
-        if not any(
-            item.get("kind") == "acceptance_command" and item.get("exit_code") == 0
-            for item in evidence
-        ):
-            verification.append("acceptance_evidence_missing")
         if not str(workspace.get("diff", "")).strip():
             verification.append("workspace_diff_missing")
-    elif not any(item.get("kind") == "terminal_snapshot" for item in evidence):
-        verification.append("terminal_evidence_missing")
 
     if verification:
         return "verification_failure", verification

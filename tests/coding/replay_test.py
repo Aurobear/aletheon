@@ -40,23 +40,53 @@ class ReplayTest(unittest.TestCase):
             "observed_terminal": "verified",
             "expected_terminal": "verified",
             "execution": {
+                "argv": ["/tmp/aletheon", "exec"],
                 "exit_code": 0,
                 "timed_out": False,
+                "elapsed_ms": 10,
+                "stdout": "{}",
+                "stderr": "",
+                "stdout_digest": "sha256:" + "c" * 64,
+                "stderr_digest": "sha256:" + "d" * 64,
+                "stdout_truncated": False,
+                "stderr_truncated": False,
                 "json_valid": True,
                 "terminal_snapshot": True,
+                "reported_success": True,
                 "process_group_reaped": True,
                 "infrastructure_error": None,
             },
             "workspace": {
+                "base_tree_digest": "sha256:" + "1" * 64,
                 "diff": "diff --git a/src/lib.rs b/src/lib.rs\n",
                 "diff_digest": "sha256:" + "b" * 64,
                 "changed_files": ["src/lib.rs"],
                 "forbidden_paths_unchanged": True,
                 "required_scope_satisfied": True,
+                "dirty_patch_digest": None,
                 "dirty_patch_preserved": True,
             },
-            "acceptance": [{"exit_code": 0, "timed_out": False}],
+            "acceptance": [
+                {
+                    "argv": ["python3", "-c", "pass"],
+                    "exit_code": 0,
+                    "timed_out": False,
+                    "elapsed_ms": 1,
+                    "stdout": "",
+                    "stderr": "",
+                    "stdout_digest": "sha256:" + "e" * 64,
+                    "stderr_digest": "sha256:" + "f" * 64,
+                    "stdout_truncated": False,
+                    "stderr_truncated": False,
+                    "process_group_reaped": True,
+                }
+            ],
             "evidence": [
+                {
+                    "operation_id": "op",
+                    "kind": "terminal_snapshot",
+                    "observed_stop": "completed",
+                },
                 {
                     "operation_id": "op",
                     "kind": "acceptance_command",
@@ -192,6 +222,12 @@ class ReplayTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("contradicts authoritative stop", message)
 
+        missing_success = self.base_v2()
+        missing_success["execution"]["reported_success"] = None
+        failure_class, reasons = receipt.classify_failure(missing_success)
+        self.assertEqual(failure_class, "execution_failure")
+        self.assertIn("client_reported_failure", reasons)
+
     def test_missing_metrics_remain_null(self):
         value = self.base_v2()
         self.assertIsNone(value["metrics"]["inference_rounds"])
@@ -210,9 +246,9 @@ class ReplayTest(unittest.TestCase):
             observed_terminal="budget_exhausted",
             expected_terminal="budget_exhausted",
         )
-        value["acceptance"] = []
         value["evidence"] = [
-            {"operation_id": "op", "kind": "terminal_snapshot", "exit_code": 0}
+            {"operation_id": "op", "kind": "terminal_snapshot", "exit_code": 0},
+            {"operation_id": "op", "kind": "acceptance_command", "exit_code": 0},
         ]
         value["metrics"]["iterations"] = 1
         receipt.seal(value)
