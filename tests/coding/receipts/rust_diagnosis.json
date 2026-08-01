@@ -46,7 +46,7 @@
       "workspace_before": "sha256:8f74af0a842e86380711baf778382fe9133d465b3d1c2e3b2c09d7114f1d8b33"
     }
   ],
-  "integrity_sha256": "sha256:89a55e44d5555252daddef3d8bd99b20b7fde718389250cc30653ca0e30d1b83",
+  "integrity_sha256": "sha256:8f3871147f85da3c205d16ae21ca6d058e812effdb29a3b46001494f3d0b2722",
   "operation_id": "61a5666f-7a78-421e-ac70-2dbb33391fca",
   "schema_version": 1,
   "task_id": "rust_diagnosis",

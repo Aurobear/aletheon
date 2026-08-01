@@ -46,7 +46,7 @@
       "workspace_before": "sha256:21ca36e5670f16a1acc50364118e54c564aa8b155b17cf0779e8b9f30dd10a8f"
     }
   ],
-  "integrity_sha256": "sha256:b6be6db4936f67d2089ae92e7db186a854f641b83f511554baf16306a3a7b7ca",
+  "integrity_sha256": "sha256:6e6c4af12bf1268138eb5ce2cf28c875391def5960da651f8f29b07d73438ef0",
   "operation_id": "ba53b8a2-590d-46fa-87af-2613c165c32c",
   "schema_version": 1,
   "task_id": "rust_bugfix",
