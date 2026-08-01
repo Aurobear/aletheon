@@ -2,6 +2,15 @@
 
 use fabric::protocol::client::{negotiate_protocol_version, ClientCapabilities, ClientRequest};
 
+fn supported_capabilities() -> ClientCapabilities {
+    ClientCapabilities {
+        item_events: true,
+        cursors: true,
+        // Enabled only after the durable gateway is composed.
+        memory_gateway_v1: false,
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NegotiatedProtocol {
     pub(crate) protocol_version: u16,
@@ -100,10 +109,19 @@ pub(crate) fn reduce_protocol(
 
 impl ConnectionProtocolState {
     pub(crate) fn accept(&mut self, request: &ClientRequest) -> anyhow::Result<ProtocolAction> {
+        if request.requires_memory_gateway() {
+            let enabled = matches!(
+                self,
+                Self::Ready {
+                    negotiated: Some(NegotiatedProtocol { capabilities, .. })
+                } if capabilities.memory_gateway_v1
+            );
+            anyhow::ensure!(enabled, "memory_gateway_v1 was not negotiated");
+        }
         let event = match request {
             ClientRequest::Initialize(params) => ProtocolEvent::Initialize(NegotiatedProtocol {
                 protocol_version: negotiate_protocol_version(&params.protocol_versions)?,
-                capabilities: params.capabilities.clone(),
+                capabilities: params.capabilities.intersect(&supported_capabilities()),
             }),
             ClientRequest::Initialized => ProtocolEvent::Initialized,
             _ => ProtocolEvent::Request,
@@ -133,6 +151,7 @@ mod tests {
             capabilities: ClientCapabilities {
                 item_events: true,
                 cursors: true,
+                memory_gateway_v1: false,
             },
         }
     }
@@ -170,5 +189,39 @@ mod tests {
         assert!(reduce_protocol(&versioned, ProtocolEvent::Initialized).is_err());
         assert!(reduce_protocol(&versioned, ProtocolEvent::LegacyRequest).is_err());
         assert!(reduce_protocol(&legacy, ProtocolEvent::Request).is_err());
+    }
+
+    #[test]
+    fn rejects_memory_requests_when_gateway_capability_was_not_negotiated() {
+        let mut state = ConnectionProtocolState::New;
+        state
+            .accept(&ClientRequest::Initialize(
+                fabric::protocol::client::InitializeParams {
+                    client_version: "memory-client".into(),
+                    protocol_versions: vec![1],
+                    capabilities: ClientCapabilities {
+                        item_events: true,
+                        cursors: true,
+                        memory_gateway_v1: true,
+                    },
+                },
+            ))
+            .unwrap();
+        state.accept(&ClientRequest::Initialized).unwrap();
+
+        assert!(state
+            .accept(&ClientRequest::MemoryReceiptGet(
+                fabric::protocol::memory::MemoryReceiptGetRequestV1 {
+                    durable_intake_id: "intake-1".into(),
+                },
+            ))
+            .is_err());
+        assert!(state
+            .accept(&ClientRequest::Snapshot(
+                fabric::protocol::client::SnapshotRequest {
+                    session_id: fabric::SessionId("session-1".into()),
+                },
+            ))
+            .is_ok());
     }
 }

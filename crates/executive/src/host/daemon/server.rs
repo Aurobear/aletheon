@@ -446,6 +446,12 @@ async fn dispatch_versioned_request(
                     detail: serde_json::json!({"status":"cancelled"}),
                 })
         }
+        ClientRequest::MemoryObserve(_)
+        | ClientRequest::MemoryReceiptGet(_)
+        | ClientRequest::MemoryRecall(_)
+        | ClientRequest::MemoryFeedback(_) => {
+            Err(anyhow::anyhow!("memory gateway is not composed"))
+        }
         ClientRequest::Initialize(_) | ClientRequest::Initialized => {
             Err(anyhow::anyhow!("handshake request cannot be dispatched"))
         }
@@ -1209,6 +1215,7 @@ mod tests {
         fabric::protocol::client::ClientCapabilities {
             item_events: true,
             cursors: true,
+            memory_gateway_v1: false,
         }
     }
 

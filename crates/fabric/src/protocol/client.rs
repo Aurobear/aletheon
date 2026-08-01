@@ -801,6 +801,18 @@ fn empty_params(
 pub struct ClientCapabilities {
     pub item_events: bool,
     pub cursors: bool,
+    #[serde(default)]
+    pub memory_gateway_v1: bool,
+}
+
+impl ClientCapabilities {
+    pub fn intersect(&self, supported: &Self) -> Self {
+        Self {
+            item_events: self.item_events && supported.item_events,
+            cursors: self.cursors && supported.cursors,
+            memory_gateway_v1: self.memory_gateway_v1 && supported.memory_gateway_v1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -906,9 +918,23 @@ pub enum ClientRequest {
     Chat(ChatRequest),
     Approval(ApprovalRequest),
     Cancel(CancelRequest),
+    MemoryObserve(crate::protocol::memory::MemoryObservationRequestV1),
+    MemoryReceiptGet(crate::protocol::memory::MemoryReceiptGetRequestV1),
+    MemoryRecall(crate::protocol::memory::MemoryRecallRequestV1),
+    MemoryFeedback(crate::protocol::memory::MemoryFeedbackRequestV1),
 }
 
 impl ClientRequest {
+    pub fn requires_memory_gateway(&self) -> bool {
+        matches!(
+            self,
+            Self::MemoryObserve(_)
+                | Self::MemoryReceiptGet(_)
+                | Self::MemoryRecall(_)
+                | Self::MemoryFeedback(_)
+        )
+    }
+
     pub fn to_json_rpc(&self, id: u64) -> serde_json::Result<serde_json::Value> {
         let method = match self {
             Self::Initialize(_) => "initialize",
@@ -918,6 +944,10 @@ impl ClientRequest {
             Self::Chat(_) => "thread.chat",
             Self::Approval(_) => "turn.approval",
             Self::Cancel(_) => "turn.cancel",
+            Self::MemoryObserve(_) => "memory.observe/v1",
+            Self::MemoryReceiptGet(_) => "memory.receipt.get/v1",
+            Self::MemoryRecall(_) => "memory.recall/v1",
+            Self::MemoryFeedback(_) => "memory.feedback/v1",
         };
         serde_json::to_value(JsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION,
@@ -1026,6 +1056,10 @@ pub enum ClientEvent {
     Approval(ApprovalEvent),
     Agent(AgentEvent),
     Reconnected(EventCursor),
+    MemoryObservationReceipt(crate::protocol::memory::MemoryObservationReceiptV1),
+    MemoryLifecycleReceipt(crate::protocol::memory::MemoryLifecycleReceiptV1),
+    MemoryRecallResult(crate::protocol::memory::MemoryRecallResultV1),
+    MemoryFeedbackReceipt(crate::protocol::memory::MemoryFeedbackReceiptV1),
     CommandCompleted {
         command: String,
         thread_id: ThreadId,

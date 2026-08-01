@@ -2,3 +2,4 @@
 
 pub mod client;
 pub mod conscious_core;
+pub mod memory;
