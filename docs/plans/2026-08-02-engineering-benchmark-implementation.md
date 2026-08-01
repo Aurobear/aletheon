@@ -31,7 +31,7 @@
 - Modify: `crates/executive/src/host/launcher.rs:170-189`
 - Test: `crates/executive/src/host/launcher.rs`
 
-- [ ] **Step 1: Add a failing serialization test**
+- [x] **Step 1: Add a failing serialization test**
 
 Extract JSON rendering to a private helper and add this focused test:
 
@@ -58,7 +58,7 @@ fn exec_json_preserves_authoritative_stop_and_separate_metrics() {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and confirm it fails**
+- [x] **Step 2: Run the focused test and confirm it fails**
 
 Run:
 
@@ -68,7 +68,7 @@ bash scripts/cargo-agent.sh test -p executive host::launcher::tests::exec_json_p
 
 Expected: FAIL because `render_exec_json` and the `stop` field do not exist.
 
-- [ ] **Step 3: Implement the additive JSON field**
+- [x] **Step 3: Implement the additive JSON field**
 
 Use the actual `TurnResult.stop` without deriving it from `success`:
 
@@ -93,11 +93,11 @@ fn render_exec_json(operation_id: OperationId, result: &fabric::TurnResult) -> s
 }
 ```
 
-- [ ] **Step 4: Run the focused test**
+- [x] **Step 4: Run the focused test**
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the client diagnostic stage**
+- [x] **Step 5: Commit the client diagnostic stage**
 
 Commit subject: `feat(exec): expose authoritative terminal stop`
 
@@ -110,7 +110,7 @@ Commit subject: `feat(exec): expose authoritative terminal stop`
 - Modify: `tests/coding/tasks/rust_diagnosis.toml`
 - Modify: `tests/coding/tasks/rust_multifile.toml`
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Cover exact-key validation, unknown fields, traversal/absolute paths, duplicate IDs,
 terminal/category enums, required/forbidden overlap, empty argv, and positive timeouts.
@@ -133,7 +133,7 @@ VALID = {
 }
 ```
 
-- [ ] **Step 2: Run and confirm import failure**
+- [x] **Step 2: Run and confirm import failure**
 
 ```bash
 python3 tests/coding/contracts_test.py
@@ -141,7 +141,7 @@ python3 tests/coding/contracts_test.py
 
 Expected: FAIL because `harness/contracts.py` does not exist.
 
-- [ ] **Step 3: Implement immutable `BenchmarkTask` and `load_catalog`**
+- [x] **Step 3: Implement immutable `BenchmarkTask` and `load_catalog`**
 
 Use `dataclasses.dataclass(frozen=True)`, `tomllib`, and `PurePosixPath`. Accept
 only these top-level keys:
@@ -163,16 +163,16 @@ CATEGORIES = frozenset({
 `load_catalog(paths, root)` validates every task and rejects duplicate IDs before
 returning tasks sorted by ID.
 
-- [ ] **Step 4: Migrate the existing task TOML files**
+- [x] **Step 4: Migrate the existing task TOML files**
 
 Add the missing schema/category/required/terminal/setup/resource fields without
 changing prompts or acceptance semantics.
 
-- [ ] **Step 5: Run contract tests**
+- [x] **Step 5: Run contract tests**
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Commit subject: `test(coding): define strict benchmark task contracts`
 
@@ -183,7 +183,7 @@ Commit subject: `test(coding): define strict benchmark task contracts`
 - Modify: `tests/coding/harness/replay.py`
 - Modify: `tests/coding/replay_test.py`
 
-- [ ] **Step 1: Add failing receipt tests**
+- [x] **Step 1: Add failing receipt tests**
 
 Test canonical sealing, v1 compatibility, v2 required fields, mutually exclusive
 failure classification, operation/evidence correlation, false-success rejection,
@@ -210,7 +210,7 @@ Use this v2 terminal envelope:
 }
 ```
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 ```bash
 python3 tests/coding/replay_test.py
@@ -218,7 +218,7 @@ python3 tests/coding/replay_test.py
 
 Expected: FAIL until v2 replay exists.
 
-- [ ] **Step 3: Implement receipt helpers**
+- [x] **Step 3: Implement receipt helpers**
 
 `seal`, `verify_integrity`, `classify_failure`, and `verify_receipt` own all
 verdict precedence. Use this precedence:
@@ -234,11 +234,11 @@ all gates                     → none
 
 Retain a v1 verifier so the three checked-in historical receipts remain replayable.
 
-- [ ] **Step 4: Run replay tests**
+- [x] **Step 4: Run replay tests**
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `test(coding): classify and replay benchmark receipts`
 
@@ -248,7 +248,7 @@ Commit subject: `test(coding): classify and replay benchmark receipts`
 - Modify: `tests/coding/harness/run.py`
 - Create: `tests/coding/runner_test.py`
 
-- [ ] **Step 1: Write fake-client runner tests**
+- [x] **Step 1: Write fake-client runner tests**
 
 Generate executable Python clients for completed, blocked, failed, malformed JSON,
 missing operation, timeout, and false-success responses. Assert the runner writes
@@ -256,13 +256,13 @@ a v2 receipt for every case, preserves full-output digests, bounds inline output
 wraps Cargo, preserves dirty setup, rejects scope changes, and reaps the process
 group.
 
-- [ ] **Step 2: Run and confirm failures**
+- [x] **Step 2: Run and confirm failures**
 
 ```bash
 python3 tests/coding/runner_test.py
 ```
 
-- [ ] **Step 3: Implement the phased runner**
+- [x] **Step 3: Implement the phased runner**
 
 Import `BenchmarkTask` and receipt helpers. Add:
 
@@ -342,7 +342,7 @@ def build_receipt(task, binary, execution, executive, workspace_evidence):
 Pass `--max-turns` from `setup.exec_max_turns` when present and `--config` from a
 setup-provided isolated config. Never place secret values in the receipt.
 
-- [ ] **Step 4: Run runner and replay tests**
+- [x] **Step 4: Run runner and replay tests**
 
 ```bash
 python3 tests/coding/runner_test.py
@@ -351,7 +351,7 @@ python3 tests/coding/replay_test.py
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `test(coding): make task execution fail closed`
 
@@ -361,20 +361,20 @@ Commit subject: `test(coding): make task execution fail closed`
 - Create: `tests/coding/harness/suite.py`
 - Create: `tests/coding/suite_test.py`
 
-- [ ] **Step 1: Write failing aggregation tests**
+- [x] **Step 1: Write failing aggregation tests**
 
 Create sealed receipt fixtures proving deterministic task ordering, per-category
 and failure counts, false-success counting, null metric availability, percentile
 calculation, integrity propagation, and nonzero exits for infrastructure versus
 verification failures.
 
-- [ ] **Step 2: Run and confirm import failure**
+- [x] **Step 2: Run and confirm import failure**
 
 ```bash
 python3 tests/coding/suite_test.py
 ```
 
-- [ ] **Step 3: Implement sequential suite execution and report sealing**
+- [x] **Step 3: Implement sequential suite execution and report sealing**
 
 The CLI is:
 
@@ -389,11 +389,11 @@ Exit `2` for any infrastructure failure, `1` for other unmet expected outcomes,
 and `0` only when every scenario matches its declared expected terminal and all
 receipt integrity checks pass.
 
-- [ ] **Step 4: Run suite tests**
+- [x] **Step 4: Run suite tests**
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `test(coding): aggregate authoritative suite results`
 
@@ -410,7 +410,7 @@ Commit subject: `test(coding): aggregate authoritative suite results`
 - Create: `tests/coding/acceptance/rustdoc_contract/**`
 - Create: four matching `tests/coding/tasks/*.toml`
 
-- [ ] **Step 1: Create failing minimal repositories**
+- [x] **Step 1: Create failing minimal repositories**
 
 Each repository is a standalone Rust workspace fixture with no external crates:
 
@@ -423,7 +423,7 @@ Each repository is a standalone Rust workspace fixture with no external crates:
 - rustdoc: a documented public error contract enforced by `#![deny(rustdoc::broken_intra_doc_links)]`
   plus hidden behavior acceptance.
 
-- [ ] **Step 2: Prove every initial fixture fails its acceptance**
+- [x] **Step 2: Prove every initial fixture fails its acceptance**
 
 For each fixture run its declared command through:
 
@@ -433,16 +433,16 @@ bash scripts/cargo-agent.sh test --manifest-path tests/coding/fixtures/<id>/Carg
 
 Expected: at least one declared pre-repair check fails for each fixture.
 
-- [ ] **Step 3: Add strict task documents and hidden acceptance overlays**
+- [x] **Step 3: Add strict task documents and hidden acceptance overlays**
 
 Every task uses schema version 1, expected terminal `verified`, required `src/`
 or schema paths, and protects its manifest/irrelevant files.
 
-- [ ] **Step 4: Run catalog/static tests**
+- [x] **Step 4: Run catalog/static tests**
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `test(coding): add positive engineering scenarios`
 
@@ -455,7 +455,7 @@ Commit subject: `test(coding): add positive engineering scenarios`
 - Create: three matching task files and hidden acceptance overlays
 - Modify: `tests/coding/runner_test.py`
 
-- [ ] **Step 1: Add dirty setup and terminal tests**
+- [x] **Step 1: Add dirty setup and terminal tests**
 
 The dirty task setup writes a user-owned change after the fixture base commit and
 requires its exact binary patch digest to survive. The budget task sets
@@ -463,21 +463,21 @@ requires its exact binary patch digest to survive. The budget task sets
 safe policy with an intentionally guarded mutation and expects `blocked` without
 the target diff appearing.
 
-- [ ] **Step 2: Confirm old runner cannot represent the scenarios**
+- [x] **Step 2: Confirm old runner cannot represent the scenarios**
 
 Run runner tests and expect failures for setup and expected-terminal mapping.
 
-- [ ] **Step 3: Complete scenario support without prompt-specific verdicts**
+- [x] **Step 3: Complete scenario support without prompt-specific verdicts**
 
 Verdicts derive only from task typed state, authoritative `stop`, process exit,
 Git evidence, and acceptance results. No code may inspect prompt text, fixture ID,
 language, or expected answer.
 
-- [ ] **Step 4: Run contract, runner, and static tests**
+- [x] **Step 4: Run contract, runner, and static tests**
 
 Expected: PASS with exactly ten catalog entries.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit subject: `test(coding): cover dirty and bounded terminal behavior`
 
@@ -489,34 +489,34 @@ Commit subject: `test(coding): cover dirty and bounded terminal behavior`
 - Modify: `.github/workflows/coding-e2e.yml`
 - Modify: `tests/coding/README.md`
 
-- [ ] **Step 1: Update failing workflow/static expectations**
+- [x] **Step 1: Update failing workflow/static expectations**
 
 Require all ten tasks in the catalog, suite aggregation instead of a shell loop,
 always-uploaded per-task receipts/report/core log, and explicit infrastructure
 versus benchmark failure exit codes.
 
-- [ ] **Step 2: Run static tests and confirm failure before workflow edits**
+- [x] **Step 2: Run static tests and confirm failure before workflow edits**
 
 ```bash
 python3 tests/coding/workflow_static_test.py
 bash tests/coding/static_test.sh
 ```
 
-- [ ] **Step 3: Replace the manual workflow task loop with `suite.py`**
+- [x] **Step 3: Replace the manual workflow task loop with `suite.py`**
 
 Keep provider credentials in the existing owner-only core config. Upload the
 sealed suite report and receipts, never the generated config or temporary HOME.
 
-- [ ] **Step 4: Document diagnostic versus installed acceptance**
+- [x] **Step 4: Document diagnostic versus installed acceptance**
 
 Document deterministic checks, suite invocation, failure exit codes, receipt
 locations, and the rule that target/debug plus isolated homes are diagnostic only.
 
-- [ ] **Step 5: Run static tests**
+- [x] **Step 5: Run static tests**
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Commit subject: `ci(coding): run the versioned engineering suite`
 
@@ -525,7 +525,7 @@ Commit subject: `ci(coding): run the versioned engineering suite`
 **Files:**
 - Verify all files above
 
-- [ ] **Step 1: Run deterministic Python validation**
+- [x] **Step 1: Run deterministic Python validation**
 
 ```bash
 python3 tests/coding/contracts_test.py
@@ -538,7 +538,7 @@ bash tests/coding/static_test.sh
 
 Expected: PASS.
 
-- [ ] **Step 2: Run the focused Rust test and formatting**
+- [x] **Step 2: Run the focused Rust test and formatting**
 
 ```bash
 bash scripts/cargo-agent.sh test -p executive host::launcher::tests::exec_json_preserves_authoritative_stop_and_separate_metrics -- --exact
@@ -547,7 +547,7 @@ bash scripts/cargo-agent.sh fmt --all -- --check
 
 Expected: PASS.
 
-- [ ] **Step 3: Run repository diff validation**
+- [x] **Step 3: Run repository diff validation**
 
 ```bash
 git diff --check
@@ -556,13 +556,13 @@ git status --short
 
 Expected: no whitespace errors; only intended files changed.
 
-- [ ] **Step 4: Run the real-model suite using the actual client**
+- [x] **Step 4: Run the real-model suite using the actual client**
 
 Build through the shared lock, start the configured core, then run `suite.py`.
 Record the real outcome without converting provider/infrastructure/verification
 failures into success.
 
-- [ ] **Step 5: Perform system-installed acceptance**
+- [x] **Step 5: Perform system-installed acceptance**
 
 Because Task 1 changes client JSON behavior, run:
 
@@ -574,6 +574,24 @@ The gate must prove equal SHA-256 digests for `target/release/aletheon`,
 `/usr/bin/aletheon`, and running machine/user daemons, stable restart counters,
 and a real request through `/usr/bin/aletheon` plus the official user socket.
 
-- [ ] **Step 6: Commit validation evidence changes if any**
+- [x] **Step 6: Commit validation evidence changes if any**
 
 Commit subject: `test(coding): validate engineering benchmark acceptance`
+
+## Validation evidence — 2026-08-02
+
+- Deterministic contract, replay, runner, suite, workflow, and static checks:
+  PASS. The three historical v1 receipts also replay as `verified` through the
+  explicit compatibility path.
+- Focused Executive serialization test and `fmt --all -- --check`: PASS through
+  `scripts/cargo-agent.sh`.
+- Real-client diagnostic suite: completed all 10 scenarios and exited 1 with
+  the actual result (1 passed, 9 failed, 0 infrastructure failures, 0 leaked
+  resources, and 2 false-success detections). Sealed report SHA-256:
+  `905153458f13381018adfe423bf0cfba3ec3f4edb5827c01bea99f92b7c6ca07`.
+- `sudo bash scripts/aletheon.sh deploy`: PASS. Release, installed, machine
+  daemon, and user daemon executables all had SHA-256
+  `d0ada4d1a3850c63b94db445c6eaacd994f460dd21f8d9f21fab36f1a5471a12`;
+  both services remained active with unchanged PID and `NRestarts=0`, and the
+  deployment gate completed a real request through the installed client and
+  official user socket.
