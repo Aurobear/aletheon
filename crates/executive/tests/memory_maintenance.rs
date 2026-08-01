@@ -448,6 +448,14 @@ async fn agent_runtime_proposal_has_no_tools_or_workspace_and_waits_for_terminal
     assert!(intents[0].trusted_workspace.is_none());
     assert!(intents[0].allowed_tools.is_empty());
     assert_eq!(intents[0].budget.max_tool_calls, 0);
+    for field in [
+        "control_instruction_detected",
+        "contradiction_detected",
+        "exact_duplicate_record_ids",
+        "evidence",
+    ] {
+        assert!(intents[0].task.contains(field));
+    }
     assert_eq!(
         intents[0].required_capabilities,
         vec![fabric::AgentRuntimeCapability::MemoryProposal]
