@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-01
 
-**Status:** Proposed for user review; architecture decisions are resolved, implementation plan pending
+**Status:** Self-reviewed proposal awaiting user approval; architecture decisions are resolved, implementation plan pending
 
 **Scope:** 完善 Aletheon 自身 Mnemosyne 记忆；让 Claude Code、Codex、Aletheon 通过同一套受治理接口使用 GBrain；由 Aletheon 托管服务端 Memory Agent，周期性检查、评分、整理、冲突处理和遗忘。
 **Repositories:**
@@ -34,7 +34,7 @@
 
 ### 1.1 Aletheon 已有真底座
 
-Mnemosyne 已有 10 类记录、生命周期状态、authority、sensitivity、provenance 与硬上限（`crates/mnemosyne/src/model/record.rs:12-23`、`:27-46`、`:50-77`、`:153-203`）。它不是空壳：
+Mnemosyne 已有 10 类记录、生命周期状态、authority、sensitivity、provenance 与硬上限（`crates/mnemosyne/src/model/record.rs:12-23`、`crates/mnemosyne/src/model/record.rs:27-46`、`crates/mnemosyne/src/model/record.rs:50-77`、`crates/mnemosyne/src/model/record.rs:153-203`）。它不是空壳：
 
 - 本地 recall 已合并 RecallMemory、FactStore、EpisodicMemory 与 CoreMemory，并应用 scope/authority/sensitivity 过滤（`crates/mnemosyne/src/service.rs:639-768`）。
 - CompositeMemoryService 先提交本地，再把选中事件放进 supplemental spool；远端降级不反转本地成功（`crates/mnemosyne/src/composite_service.rs:151-187`）。
@@ -61,7 +61,7 @@ Aurb 已经有很好的客户端安全积木，但自动链路绕过 Aletheon：
 
 - prompt hook 直接调用 GBrain recall，并从全局 `GBRAIN_SOURCE` 取 source（`/home/aurobear/Workspace/agent/aurb/src/hooks/recall.sh:7-60`）。
 - Stop hook 读取 transcript 后进入 Aurb capture pipeline（`/home/aurobear/Workspace/agent/aurb/src/hooks/session-end.sh:1-41`）。
-- pipeline 把 `GBRAIN_SOURCE` 或静态 config 写入 envelope（`/home/aurobear/Workspace/agent/aurb/src/lib/gbrain/session_pipeline.py:321-348`），writer 调 `put_page` 时没有 source 参数（同文件 `:313-319`）。
+- pipeline 把 `GBRAIN_SOURCE` 或静态 config 写入 envelope（`/home/aurobear/Workspace/agent/aurb/src/lib/gbrain/session_pipeline.py:321-348`），writer 调 `put_page` 时没有 source 参数（`/home/aurobear/Workspace/agent/aurb/src/lib/gbrain/session_pipeline.py:313-319`）。
 - Aurb 会给 Codex 注册直接 GBrain MCP 和 bearer token（`/home/aurobear/Workspace/agent/aurb/scripts/lib/config/generate_provider_env.py:526-551`）。
 
 这意味着客户端、Aurb session-capture service、Aletheon Mnemosyne 各自可能做判断，无法形成单一审计链。迁移后 Aurb 仍负责**客户端 payload 适配、transcript 所有权校验、首轮 scrub、插件部署**，但不再负责长期记忆语义裁决。
@@ -188,7 +188,7 @@ no repository fingerprint:
 
 - raw turn observation → Session
 - child draft → Agent/Task
--项目长期知识 → Workspace
+- 项目长期知识 → Workspace
 - 跨项目个人偏好 → Principal
 - approved behavior/core → 现有 CoreState 路径
 
@@ -534,7 +534,7 @@ Aurb 不再拥有 server model、memory scoring、semantic dedup、GBrain write 
 3. deploy 顺序：preflight → schema backup → install binary → restart daemon → digest gate → protocol smoke → restart Memory Agent → backlog/lease recovery → real request。
 4. daemon 升级期间 Agent 收到 incompatible/shutdown，停止 claim 新任务，当前任务只在 terminal receipt 后结束。
 5. 若新 binary rollback，旧 schema 必须有兼容窗口或 migration rollback；否则 deploy fail-closed，不启动写 worker。
-6. 最终安装验收遵守仓库政策：`sudo bash scripts/aletheon.sh deploy`，并证明 release、`/usr/bin/aletheon`、running system/user daemons SHA-256 一致、restart counters 稳定、official socket 真 LLM 请求成功。
+6. 最终安装验收遵守仓库政策：`sudo bash scripts/aletheon.sh deploy`，并证明 release、`/usr/bin/aletheon`、running system/user daemons 以及 Memory Agent PID 的 executable SHA-256 一致、所有相关 restart counters 稳定、official socket 真 LLM 请求成功。
 
 ### 9.2 GBrain/provider 不可用
 
@@ -630,7 +630,7 @@ Aletheon aggregator 只能汇总 verdict，不能改写 GBrain doctor 的原始�
 7. Runtime proposal 含伪造 scope/authority/control instruction，host 拒绝。
 8. `incorrect` feedback 生成 conflict/tombstone 流程，旧远端页最终 superseded/tombstoned。
 9. 同一个不重启的 Claude/Codex session 多 turn recall，active context 与 cumulative usage 分开。
-10. installed `/usr/bin/aletheon` + official socket 真 LLM 请求完成，且无 provider rendered error。
+10. installed `/usr/bin/aletheon`、daemon 与 Memory Agent executable digest 一致；official socket 真 LLM 请求完成，且无 provider rendered error。
 
 ## 12. 安全与隐私
 
