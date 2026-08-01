@@ -1,6 +1,7 @@
 """TUI long-output, real scrolling, same-session reconnect and persistence."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
 from pathlib import Path
@@ -33,10 +34,42 @@ def _contains(value: object, needle: str) -> bool:
     return isinstance(value, str) and needle in value
 
 
-async def _current_session(client: AletheonClient) -> str | None:
-    response = await client.rpc("status")
-    value = response.get("result", {}).get("status", {}).get("session_id")
-    return value if isinstance(value, str) and value else None
+async def _session_ids(client: AletheonClient) -> set[str]:
+    response = await client.rpc("session.list")
+    rows = response.get("result", [])
+    if not isinstance(rows, list):
+        return set()
+    return {
+        value
+        for row in rows
+        if isinstance(row, dict)
+        and isinstance((value := row.get("session_id")), str)
+        and value
+    }
+
+
+async def _wait_for_new_session(
+    client: AletheonClient, previous: set[str], timeout: float = 15.0
+) -> str | None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        created = await _session_ids(client) - previous
+        if len(created) == 1:
+            return created.pop()
+        if len(created) > 1:
+            return None
+        await asyncio.sleep(0.1)
+    return None
+
+
+async def _wait_for_frame_text(expected: str, timeout: float = 15.0) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        captured = await tui.tui_capture(wait_stable=False)
+        if expected in captured.get("frame", ""):
+            return True
+        await asyncio.sleep(0.1)
+    return False
 
 
 async def _send_key(key: str) -> bool:
@@ -55,6 +88,7 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
     before_scroll = after_scroll = returned_bottom = ""
     page_up = page_down = False
 
+    sessions_before = await _session_ids(client)
     started = await tui.tui_start(
         working_dir=str(root), cols=110, rows=35,
         event_path=str(receipt_root / "initial-events.jsonl"),
@@ -63,7 +97,7 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
         await client.close()
         return {"scenario": "reconnect_resume", "status": "FAIL", "failure": started}
     try:
-        session_id = await _current_session(client)
+        session_id = await _wait_for_new_session(client, sessions_before)
         prompt = f"输出至少 60 行 workspace crate 说明；最后一行必须严格为 {marker}"
         sent = await tui.tui_send(prompt, submit=True)
         if sent.get("ok"):
@@ -86,6 +120,7 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
     final_text = _final_text(first_events)
     final_hash = hashlib.sha256(final_text.encode()).hexdigest() if final_text else None
 
+    reconnect_sessions_before = await _session_ids(client)
     reconnected = await tui.tui_start(
         working_dir=str(root), cols=110, rows=35,
         event_path=str(receipt_root / "reconnect-events.jsonl"),
@@ -93,22 +128,30 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
     resumed_session = None
     reconnect_frame = ""
     reconnect_completed: dict = {}
+    followup_marker = f"ALETHEON_RECONNECT_{uuid.uuid4().hex}"
     try:
         if reconnected.get("ok") and session_id:
-            await tui.tui_send(f"/resume {session_id}", submit=True)
-            await tui.tui_capture(wait_stable=True, require_change=False, timeout=10)
-            resumed_session = await _current_session(client)
-            sent = await tui.tui_send("用一句话确认重连后的会话可以继续响应。", submit=True)
-            if sent.get("ok"):
-                reconnect_completed = await tui.tui_wait_turn_done(
-                    reconnected.get("turn_done_count", 0), timeout
-                )
-                reconnect_frame = reconnect_completed.get("frame", "")
+            initialized = await _wait_for_new_session(client, reconnect_sessions_before)
+            if initialized:
+                await tui.tui_send(f"/resume {session_id}", submit=True)
+                if await _wait_for_frame_text(f"已恢复会话：{session_id}"):
+                    resumed_session = session_id
+                    sent = await tui.tui_send(
+                        f"用一句话确认重连后的会话可以继续响应，并原样写出 {followup_marker}。",
+                        submit=True,
+                    )
+                    if sent.get("ok"):
+                        reconnect_completed = await tui.tui_wait_turn_done(
+                            reconnected.get("turn_done_count", 0), timeout
+                        )
+                        reconnect_frame = reconnect_completed.get("frame", "")
     finally:
         await tui.tui_stop()
 
     resume_rpc = await client.rpc("resume", {"session_id": session_id}) if session_id else {}
-    journal = await client.rpc("session.journal", {"limit": 500}) if session_id else {}
+    journal = await client.rpc(
+        "session.journal", {"session_id": session_id, "limit": 500}
+    ) if session_id else {}
     await client.close()
     persisted = _contains(journal.get("result", {}), marker)
     assertions = [
@@ -126,7 +169,9 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
          "passed": tui.event_evidence_matches(
              reconnect_completed.get("event_evidence")
          )},
-        {"name": "same_session_id", "passed": bool(session_id) and resumed_session == session_id},
+        {"name": "same_session_id", "passed": bool(session_id)
+         and resumed_session == session_id
+         and _contains(journal.get("result", {}), followup_marker)},
         {"name": "resume_record_count", "passed": resume_rpc.get("result", {}).get("recovered_messages", 0) >= 2},
         {"name": "final_answer_persisted", "passed": persisted},
     ]
