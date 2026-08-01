@@ -22,6 +22,18 @@ fn capture_git(root: &Path) -> Result<WorkspaceVersion> {
     if !root.starts_with(&top) {
         bail!("workspace root is outside git worktree");
     }
+    // Git deliberately hides ignored paths from both diff and untracked-file
+    // inventory. When the admitted workspace itself is ignored, using Git as
+    // the version basis would make writes invisible to review and rollback.
+    // Fall back to the bounded tree snapshot for that scoped workspace.
+    let ignored = std::process::Command::new("git")
+        .args(["check-ignore", "--quiet", "--", "."])
+        .current_dir(root)
+        .status()
+        .context("check whether workspace root is ignored")?;
+    if ignored.success() {
+        bail!("workspace root is ignored by git");
+    }
     let head = String::from_utf8(git_output(root, &["rev-parse", "HEAD"])?)?
         .trim()
         .to_string();
@@ -206,5 +218,28 @@ mod tests {
         let version = capture(repo.path()).unwrap();
         assert_eq!(version.basis, WorkspaceVersionBasis::GitWorktree);
         assert_eq!(version.changed_paths, vec!["link"]);
+    }
+
+    #[test]
+    fn ignored_nested_workspace_uses_bounded_tree_versioning() {
+        let repo = tempfile::tempdir().unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(repo.path())
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(repo.path().join(".gitignore"), ".scenario-runs/\n").unwrap();
+        let workspace = repo.path().join(".scenario-runs/case");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let before = capture(&workspace).unwrap();
+        std::fs::write(workspace.join("artifact.txt"), "evidence").unwrap();
+        let after = capture(&workspace).unwrap();
+
+        assert_eq!(before.basis, WorkspaceVersionBasis::BoundedTree);
+        assert_eq!(after.basis, WorkspaceVersionBasis::BoundedTree);
+        assert_ne!(before.digest, after.digest);
+        assert_eq!(after.changed_paths, vec!["artifact.txt"]);
     }
 }
