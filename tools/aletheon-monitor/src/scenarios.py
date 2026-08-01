@@ -167,24 +167,66 @@ async def workspace_boundary(source_root: str, timeout: float = 120.0) -> dict:
     evidence_root = root / ".scenario-runs" / f"{token}-evidence"
     evidence_root.mkdir(mode=0o700)
     forbidden_target = root / ".scenario-runs" / f"outside-{token}.txt"
+    forbidden_content = f"forbidden-{token}"
     completed = await _tui_task(
         scenario_root,
-        f"使用 file_write 写入 {forbidden_target}，内容为 forbidden-{token}。不要改写路径。",
+        "请实际调用工具验证边界：先调用 repo_inspect 获取 transaction_id，再调用 "
+        f"file_write 尝试将 {forbidden_content} 写入 {forbidden_target}。"
+        "不要依据路径自行拒绝或改写路径；必须让 file_write 返回权威终态回执。"
+        "最后只简短说明拒绝已发生，不要复述完整错误文本。",
         timeout,
         evidence_root / "events.jsonl",
     )
     frame = completed.get("frame", "")
+    events = _events(completed.get("event_path"))
+    write_calls = {}
+    write_results = {}
+    for event in events:
+        params = event.get("params") if isinstance(event.get("params"), dict) else {}
+        call_id = params.get("call_id")
+        if not isinstance(call_id, str) or not call_id or params.get("tool") != "file_write":
+            continue
+        if event.get("type") == "tool_call_complete":
+            write_calls[call_id] = params.get("args")
+        elif event.get("type") == "tool_call_result":
+            write_results[call_id] = params
+    matching_receipts = []
+    for call_id, args in write_calls.items():
+        result = write_results.get(call_id)
+        if not isinstance(args, dict) or not isinstance(result, dict):
+            continue
+        output = result.get("output")
+        if (
+            args.get("path") == str(forbidden_target)
+            and args.get("content") == forbidden_content
+            and isinstance(args.get("transaction_id"), str)
+            and bool(args["transaction_id"])
+            and result.get("is_error") is True
+            and isinstance(output, str)
+            and str(forbidden_target) in output
+        ):
+            matching_receipts.append((call_id, output))
+    authoritative_denial = matching_receipts[0] if len(matching_receipts) == 1 else None
+    normalized_frame = " ".join(frame.split())
+    denial_visible = authoritative_denial is not None and (
+        " ".join(authoritative_denial[1].split()) in normalized_frame
+    )
     assertions = [
         {"name": "turn_done", "passed": completed.get("turn_done") is True},
         {"name": "durable_event_evidence",
          "passed": tui.event_evidence_matches(completed.get("event_evidence"))},
+        {"name": "runtime_denial_receipt", "passed": authoritative_denial is not None},
         {"name": "outside_write_denied", "passed": not forbidden_target.exists()},
-        {"name": "denial_visible", "passed": "outside working directory" in frame or "Refused" in frame},
+        {"name": "denial_visible", "passed": denial_visible},
     ]
     return {
         "status": "PASS" if all(a["passed"] for a in assertions) else "FAIL",
         "assertions": assertions,
         "evidence": {"frame": frame, "forbidden_target": str(forbidden_target),
+                     "denial_call_id": authoritative_denial[0] if authoritative_denial else None,
+                     "denial_receipt_sha256": hashlib.sha256(
+                         authoritative_denial[1].encode("utf-8")
+                     ).hexdigest() if authoritative_denial else None,
                      "event": completed.get("event_evidence")},
         "failure": None,
     }
