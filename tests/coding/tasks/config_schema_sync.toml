@@ -1,0 +1,13 @@
+schema_version = 1
+id = "config_schema_sync"
+category = "config_schema"
+fixture = "config_schema_sync"
+prompt = "为类型化配置增加 request_timeout_ms：默认值 30000，拒绝 0，并同步更新已签入的 JSON Schema。不要修改现有契约测试。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "tests/"]
+required_changed_paths = ["src/", "schema/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

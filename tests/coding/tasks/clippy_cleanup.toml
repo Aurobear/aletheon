@@ -1,0 +1,13 @@
+schema_version = 1
+id = "clippy_cleanup"
+category = "lint"
+fixture = "clippy_cleanup"
+prompt = "在不改变端口范围边界行为的前提下修复 Clippy 错误；不要通过 allow 属性压制告警。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "clippy", "--all-targets", "--quiet", "--", "-D", "warnings"], ["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "tests/"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]
