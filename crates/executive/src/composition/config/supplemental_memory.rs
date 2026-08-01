@@ -3,6 +3,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::MemoryPolicyConfig;
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryConfig {
@@ -20,6 +22,8 @@ pub struct MemoryConfig {
     pub promotion: MemoryPromotionConfig,
     #[serde(default)]
     pub embedding: MemoryEmbeddingConfig,
+    #[serde(default)]
+    pub policy: MemoryPolicyConfig,
 }
 
 impl Default for MemoryConfig {
@@ -32,6 +36,7 @@ impl Default for MemoryConfig {
             extraction: Default::default(),
             promotion: Default::default(),
             embedding: Default::default(),
+            policy: Default::default(),
         }
     }
 }

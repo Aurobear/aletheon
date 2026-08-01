@@ -91,6 +91,31 @@ max_evaluation_ms = 5000
 backend = "sqlite"
 data_dir = "~/.aletheon/memory"
 
+[memory.policy]
+version = "memory-policy-v1"
+evidence_provenance_weight = 25
+future_utility_weight = 20
+stability_weight = 15
+novelty_dedup_weight = 15
+scope_fit_weight = 10
+verification_weight = 15
+privacy_risk_max_penalty = 25
+contradiction_risk_max_penalty = 20
+candidate_threshold = 55
+promote_local_threshold = 75
+remote_projection_threshold = 80
+lease_duration_ms = 30000
+max_items_per_run = 20
+run_deadline_ms = 120000
+semantic_retry_delay_ms = 900000
+max_provider_rounds = 1
+max_provider_retries = 1
+max_tool_calls = 0
+max_input_bytes = 65536
+max_output_bytes = 16384
+max_projected_writes = 10
+remote_allowed_kinds = ["goal_outcome", "semantic_fact", "procedure", "architecture_decision"]
+
 # Optional supplemental memory. Fail-open: a missing or unreachable gbrain
 # MCP server degrades gracefully (empty pre-turn recall, logged at WARN).
 # Authentication and transport are configured in the matching [[mcp_servers]]
