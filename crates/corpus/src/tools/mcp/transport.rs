@@ -333,6 +333,7 @@ impl McpTransport {
         let sse_url = format!("{}/sse", base_url.trim_end_matches('/'));
         let mut req_builder = client.get(&sse_url);
         if let Some(ref a) = auth {
+            a.prepare_for_request(Some(&sse_url)).await?;
             if let Some(hv) = a.header_value_for(Some(&sse_url)) {
                 req_builder = req_builder.header("Authorization", hv);
             }
@@ -719,6 +720,7 @@ impl McpTransport {
             .json(body);
 
         if let Some(a) = auth {
+            a.prepare_for_request(Some(url)).await?;
             if let Some(hv) = a.header_value_for(Some(url)) {
                 req = req.header("Authorization", hv);
             }
@@ -792,6 +794,7 @@ impl McpTransport {
             .json(body);
 
         if let Some(a) = auth {
+            a.prepare_for_request(Some(url)).await?;
             if let Some(hv) = a.header_value_for(Some(url)) {
                 req = req.header("Authorization", hv);
             }
