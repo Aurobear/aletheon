@@ -177,7 +177,7 @@ impl MemorySemanticProposalPort for AgentControlMemorySemanticProposal {
 
 pub struct MemoryMaintenanceController {
     ledger: Arc<MemoryIntakeLedger>,
-    memory: Arc<dyn mnemosyne::MemoryService>,
+    memory_service: Arc<dyn mnemosyne::MemoryService>,
     clock: Arc<dyn fabric::Clock>,
     evaluator: MemoryPolicyEvaluator,
     semantic: Arc<dyn MemorySemanticProposalPort>,
@@ -195,7 +195,7 @@ impl MemoryMaintenanceController {
     ) -> anyhow::Result<Self> {
         Ok(Self {
             ledger,
-            memory,
+            memory_service: memory,
             clock,
             evaluator: MemoryPolicyEvaluator::new(config)?,
             semantic,
@@ -355,7 +355,7 @@ impl MemoryMaintenanceController {
                         &decision,
                     )?;
                     let record_id = record.id.0.clone();
-                    self.memory.record_canonical(record.clone()).await?;
+                    self.memory_service.record_canonical(record.clone()).await?;
                     let mut reasons = decision.remote_block_reasons;
                     let mut projection_queued = false;
                     if decision.remote_eligible {

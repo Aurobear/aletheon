@@ -15,6 +15,7 @@ use fabric::protocol::memory::{
     MemoryWorkspaceBindingPreviewV1, MemoryWorkspaceBindingSpecV1, MemoryWorkspaceBindingStateV1,
     MemoryWorkspaceBindingViewV1, MemoryWorkspacePreviewBindRequestV1, MemoryWorkspaceStateV1,
     MemoryWorkspaceUnbindRequestV1, MAX_MEMORY_RECALL_CONTENT_BYTES, MAX_MEMORY_RECALL_ITEMS,
+    MEMORY_FEEDBACK_RECORD_SCHEMA_V1,
 };
 use fabric::{Clock, PermissionProfileId, PrincipalId, WorkspacePolicy, WorkspaceSelection};
 use mnemosyne::{
@@ -52,7 +53,7 @@ pub trait SupplementalBindingRecallPort: Send + Sync {
 
 pub struct MemoryGatewayService {
     ledger: Arc<MemoryIntakeLedger>,
-    memory: Arc<dyn mnemosyne::MemoryService>,
+    memory_service: Arc<dyn mnemosyne::MemoryService>,
     clock: Arc<dyn Clock>,
     installation_id: String,
     bindings: Arc<WorkspaceMemoryBindingRegistry>,
@@ -105,7 +106,7 @@ impl MemoryGatewayService {
             .map_err(|_| anyhow::anyhow!("invalid memory gateway installation ID"))?;
         Ok(Self {
             ledger,
-            memory,
+            memory_service: memory,
             clock,
             installation_id,
             bindings,
@@ -227,7 +228,7 @@ impl MemoryGatewayService {
             "feedback target is not visible in this principal and workspace ancestry"
         );
         let content = serde_json::to_string(&serde_json::json!({
-            "schema": "aletheon.memory.feedback/v1",
+            "schema": MEMORY_FEEDBACK_RECORD_SCHEMA_V1,
             "target_record_id": request.target_record_id,
             "signal": request.signal,
             "correction_text": request.correction_text,
@@ -305,7 +306,7 @@ impl MemoryGatewayService {
             allowed_authorities: all_authorities(),
         };
         let mut recalled = self
-            .memory
+            .memory_service
             .recall_with_prefilter(local_request.clone(), &prefilter)
             .await?;
         if binding.state == WorkspaceMemoryBindingState::Active {

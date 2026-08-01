@@ -6,6 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub const MEMORY_GATEWAY_SCHEMA_V1: u16 = 1;
+pub const MEMORY_FEEDBACK_RECORD_SCHEMA_V1: &str = "aletheon.memory.feedback/v1";
 pub const MAX_MEMORY_ID_BYTES: usize = 256;
 pub const MAX_MEMORY_QUERY_BYTES: usize = 4 * 1024;
 pub const MAX_MEMORY_CONTENT_BYTES: usize = 256 * 1024;
