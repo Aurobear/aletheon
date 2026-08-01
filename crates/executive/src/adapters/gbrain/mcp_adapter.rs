@@ -404,7 +404,9 @@ impl SupplementalMcpAdapter {
                 "capability identity does not have least-privilege memory scopes",
             ));
         }
-        let marker = self.get_page(&attestation.marker_slug, cancel).await?;
+        let marker = self
+            .get_attestation_payload(&attestation.marker_slug, cancel)
+            .await?;
         let marker_sha256 = format!("{:x}", Sha256::digest(marker.as_bytes()));
         if marker_sha256 != attestation.marker_sha256 {
             return Err(self.fail(
@@ -500,6 +502,41 @@ impl SupplementalMcpAdapter {
             ));
         }
         Ok(content)
+    }
+
+    async fn get_attestation_payload(
+        &self,
+        slug: &str,
+        cancel: &CancellationToken,
+    ) -> Result<String, SupplementalAdapterError> {
+        if slug.trim().is_empty() || slug.len() > MAX_SLUG_BYTES {
+            return Err(self.fail(
+                SupplementalAdapterErrorCategory::RejectedArguments,
+                "page slug is invalid",
+            ));
+        }
+        let value = self
+            .invoke("get_page", json!({"slug": slug}), cancel)
+            .await?;
+        let text = extract_text(&value)?;
+        let payload = serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("compiled_truth")
+                    .or_else(|| value.get("content"))
+                    .or_else(|| value.get("body"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or(text);
+        if payload.len() > MAX_TOOL_TEXT_BYTES {
+            return Err(self.fail(
+                SupplementalAdapterErrorCategory::OversizedResponse,
+                "tool response exceeds byte limit",
+            ));
+        }
+        Ok(payload)
     }
 
     fn validate_query(&self, query: &str, limit: usize) -> Result<(), SupplementalAdapterError> {

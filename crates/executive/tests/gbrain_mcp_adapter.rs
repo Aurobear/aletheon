@@ -379,6 +379,30 @@ async fn destination_negotiator_caches_verified_marker_and_rejects_source_drift(
 }
 
 #[tokio::test]
+async fn source_attestation_hashes_upstream_compiled_truth_not_provider_metadata() {
+    let state = FakeState::valid();
+    state.responses.lock().unwrap().insert(
+        "get_page".into(),
+        json!({"content":[{"type":"text","text":serde_json::to_string(&json!({
+            "id":"provider-generated-id",
+            "slug":"system/aletheon-source-attestation",
+            "frontmatter":{"updated_at":"changes-independently"},
+            "compiled_truth":"source-bound-marker-body",
+            "timeline":"",
+            "type":"reference",
+            "title":"Marker",
+            "tags":[]
+        })).unwrap()}]}),
+    );
+    let (adapter, _) = build_adapter(state, Duration::from_secs(1)).await;
+    let policy = attestation("gbrain", "project", "source-bound-marker-body");
+    adapter
+        .negotiate_attested("supplemental/gbrain", &policy, &CancellationToken::new())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn bound_recall_uses_only_verified_sources_and_relabels_remote_authority() {
     let state = FakeState::valid();
     let now = chrono::Utc::now();
