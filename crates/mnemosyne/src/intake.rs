@@ -15,6 +15,39 @@ use sha2::{Digest, Sha256};
 
 use crate::WorkspaceMemoryKey;
 
+pub const DEFAULT_MAX_MEMORY_INTAKES: usize = 10_000;
+pub const DEFAULT_MAX_MEMORY_INTAKE_BYTES: usize = 512 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryIntakeLimits {
+    pub max_rows: usize,
+    pub max_payload_bytes: usize,
+}
+
+impl Default for MemoryIntakeLimits {
+    fn default() -> Self {
+        Self {
+            max_rows: DEFAULT_MAX_MEMORY_INTAKES,
+            max_payload_bytes: DEFAULT_MAX_MEMORY_INTAKE_BYTES,
+        }
+    }
+}
+
+impl MemoryIntakeLimits {
+    fn validate(self) -> Result<Self, MemoryProtocolValidationError> {
+        if self.max_rows == 0
+            || self.max_rows > 100_000
+            || self.max_payload_bytes < fabric::protocol::memory::MAX_MEMORY_CONTENT_BYTES
+            || self.max_payload_bytes > 2 * 1024 * 1024 * 1024
+        {
+            return Err(MemoryProtocolValidationError(
+                "memory intake limits are invalid".into(),
+            ));
+        }
+        Ok(self)
+    }
+}
+
 const INTAKE_SCHEMA: &str = r#"
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=FULL;
@@ -57,6 +90,12 @@ pub struct GovernedMemoryObservation {
     pub client_turn_id: Option<String>,
     pub kind: MemoryObservationKindV1,
     pub content: String,
+    /// Installation-keyed fingerprint of the original client payload. The raw
+    /// payload is never persisted, while conflicting idempotency reuse remains
+    /// distinguishable after two values scrub to the same redaction marker.
+    pub content_fingerprint: String,
+    pub scrub_policy_version: u32,
+    pub scrub_redactions: u32,
     pub occurred_at: Option<String>,
     pub source_refs: Vec<String>,
     pub sensitivity: MemorySensitivityV1,
@@ -95,6 +134,18 @@ impl GovernedMemoryObservation {
         {
             return Err(MemoryProtocolValidationError(
                 "content is empty or exceeds byte limit".into(),
+            ));
+        }
+        if self.content_fingerprint.len() != 77
+            || !self.content_fingerprint.starts_with("keyed-sha256:")
+            || !self.content_fingerprint[13..]
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || self.scrub_policy_version == 0
+            || self.scrub_redactions as usize > fabric::protocol::memory::MAX_MEMORY_CONTENT_BYTES
+        {
+            return Err(MemoryProtocolValidationError(
+                "memory scrub evidence is invalid".into(),
             ));
         }
         if self.source_refs.len() > MAX_MEMORY_SOURCE_REFS
@@ -153,6 +204,8 @@ pub enum MemoryIntakeError {
     NotFound,
     #[error("memory lifecycle revision conflict")]
     RevisionConflict,
+    #[error("memory intake capacity exceeded")]
+    Capacity,
     #[error("invalid memory lifecycle transition from {from:?} to {to:?}")]
     InvalidTransition {
         from: MemoryLifecycleStateV1,
@@ -166,22 +219,35 @@ pub enum MemoryIntakeError {
 
 pub struct MemoryIntakeLedger {
     connection: Mutex<Connection>,
+    limits: MemoryIntakeLimits,
 }
 
 impl MemoryIntakeLedger {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, MemoryIntakeError> {
-        Self::from_connection(Connection::open(path)?)
+        Self::open_with_limits(path, MemoryIntakeLimits::default())
+    }
+
+    pub fn open_with_limits(
+        path: impl AsRef<Path>,
+        limits: MemoryIntakeLimits,
+    ) -> Result<Self, MemoryIntakeError> {
+        Self::from_connection(Connection::open(path)?, limits)
     }
 
     pub fn open_in_memory() -> Result<Self, MemoryIntakeError> {
-        Self::from_connection(Connection::open_in_memory()?)
+        Self::from_connection(Connection::open_in_memory()?, MemoryIntakeLimits::default())
     }
 
-    fn from_connection(connection: Connection) -> Result<Self, MemoryIntakeError> {
+    fn from_connection(
+        connection: Connection,
+        limits: MemoryIntakeLimits,
+    ) -> Result<Self, MemoryIntakeError> {
+        let limits = limits.validate()?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.execute_batch(INTAKE_SCHEMA)?;
         Ok(Self {
             connection: Mutex::new(connection),
+            limits,
         })
     }
 
@@ -219,6 +285,21 @@ impl MemoryIntakeLedger {
             ));
         }
 
+        let observation_json = serde_json::to_string(observation)?;
+        let (row_count, payload_bytes): (i64, i64) = transaction.query_row(
+            "SELECT COUNT(*),COALESCE(SUM(length(observation_json)),0) FROM memory_intakes",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if usize::try_from(row_count).unwrap_or(usize::MAX) >= self.limits.max_rows
+            || usize::try_from(payload_bytes)
+                .unwrap_or(usize::MAX)
+                .saturating_add(observation_json.len())
+                > self.limits.max_payload_bytes
+        {
+            return Err(MemoryIntakeError::Capacity);
+        }
+
         let durable_intake_id = format!("intake:{}", uuid::Uuid::new_v4());
         transaction.execute(
             "INSERT INTO memory_intakes(
@@ -231,7 +312,7 @@ impl MemoryIntakeLedger {
                 observation.workspace_key.as_str(),
                 observation.observation_id,
                 request_hash,
-                serde_json::to_string(observation)?,
+                observation_json,
                 observation.observed_at_ms
             ],
         )?;
@@ -469,6 +550,9 @@ fn observation_hash(observation: &GovernedMemoryObservation) -> Result<String, s
         client_turn_id: &'a Option<String>,
         kind: MemoryObservationKindV1,
         content: &'a str,
+        content_fingerprint: &'a str,
+        scrub_policy_version: u32,
+        scrub_redactions: u32,
         occurred_at: &'a Option<String>,
         source_refs: &'a [String],
         sensitivity: MemorySensitivityV1,
@@ -483,6 +567,9 @@ fn observation_hash(observation: &GovernedMemoryObservation) -> Result<String, s
         client_turn_id: &observation.client_turn_id,
         kind: observation.kind,
         content: &observation.content,
+        content_fingerprint: &observation.content_fingerprint,
+        scrub_policy_version: observation.scrub_policy_version,
+        scrub_redactions: observation.scrub_redactions,
         occurred_at: &observation.occurred_at,
         source_refs: &observation.source_refs,
         sensitivity: observation.sensitivity,

@@ -77,16 +77,39 @@ impl MemoryGatewayService {
         request: fabric::protocol::memory::MemoryObservationRequestV1,
     ) -> anyhow::Result<MemoryObservationReceiptV1> {
         request.validate()?;
+        for value in [
+            request.observation_id.as_str(),
+            request.client_session_id.as_str(),
+        ]
+        .into_iter()
+        .chain(request.client_turn_id.iter().map(String::as_str))
+        .chain(request.occurred_at.iter().map(String::as_str))
+        .chain(request.source_refs.iter().map(String::as_str))
+        {
+            ensure_identifier_has_no_sensitive_material(value)?;
+        }
         let workspace_key = self.resolve_workspace_key(&request.working_dir)?;
+        let content_fingerprint = content_fingerprint(&self.installation_id, &request.content);
+        let governed = fabric::types::data_governance::scrub_for_projection(
+            &request.content,
+            fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+        );
+        let sensitivity = max_sensitivity(
+            request.sensitivity_hint,
+            classification_sensitivity(governed.classification),
+        );
         let observation = GovernedMemoryObservation {
             observation_id: request.observation_id,
             client_session_id: request.client_session_id,
             client_turn_id: request.client_turn_id,
             kind: request.kind,
-            content: request.content,
+            content: governed.content,
+            content_fingerprint,
+            scrub_policy_version: governed.scrub_policy_version,
+            scrub_redactions: governed.redactions.try_into().unwrap_or(u32::MAX),
             occurred_at: request.occurred_at,
             source_refs: request.source_refs,
-            sensitivity: request.sensitivity_hint,
+            sensitivity,
             explicit_user_action: request.explicit_user_action,
             principal_id: principal_id.0.clone(),
             workspace_key,
@@ -312,6 +335,54 @@ fn client_session_scope(
         hasher.update(value.as_bytes());
     }
     format!("memory-session:sha256:{:x}", hasher.finalize())
+}
+
+fn content_fingerprint(installation_id: &str, content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"aletheon.memory-content-fingerprint.v1\0");
+    for value in [installation_id.as_bytes(), content.as_bytes()] {
+        hasher.update((value.len() as u64).to_le_bytes());
+        hasher.update(value);
+    }
+    format!("keyed-sha256:{:x}", hasher.finalize())
+}
+
+fn ensure_identifier_has_no_sensitive_material(value: &str) -> anyhow::Result<()> {
+    let governed = fabric::types::data_governance::scrub_for_projection(
+        value,
+        fabric::types::data_governance::ContentTrust::ExternalUntrusted,
+    );
+    anyhow::ensure!(
+        governed.redactions == 0,
+        "memory identifier contains sensitive material"
+    );
+    Ok(())
+}
+
+fn classification_sensitivity(
+    value: fabric::types::data_governance::DataClassification,
+) -> MemorySensitivityV1 {
+    use fabric::types::data_governance::DataClassification;
+    match value {
+        DataClassification::Public => MemorySensitivityV1::Public,
+        DataClassification::Internal => MemorySensitivityV1::Internal,
+        DataClassification::Confidential => MemorySensitivityV1::Confidential,
+        DataClassification::Restricted => MemorySensitivityV1::Restricted,
+    }
+}
+
+fn max_sensitivity(left: MemorySensitivityV1, right: MemorySensitivityV1) -> MemorySensitivityV1 {
+    let rank = |value| match value {
+        MemorySensitivityV1::Public => 0,
+        MemorySensitivityV1::Internal => 1,
+        MemorySensitivityV1::Confidential => 2,
+        MemorySensitivityV1::Restricted => 3,
+    };
+    if rank(left) >= rank(right) {
+        left
+    } else {
+        right
+    }
 }
 
 fn all_authorities() -> Vec<MemoryAuthority> {

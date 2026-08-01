@@ -67,6 +67,12 @@ impl MemoryObservationRequestV1 {
         }
         validate_working_dir(&self.working_dir)?;
         validate_content("content", &self.content, false)?;
+        if self.occurred_at.as_ref().is_some_and(|value| {
+            value.len() > MAX_MEMORY_ID_BYTES
+                || chrono::DateTime::parse_from_rfc3339(value).is_err()
+        }) {
+            return invalid("occurred_at must be a bounded RFC3339 timestamp");
+        }
         if self.source_refs.len() > MAX_MEMORY_SOURCE_REFS {
             return invalid("source_refs exceeds item limit");
         }

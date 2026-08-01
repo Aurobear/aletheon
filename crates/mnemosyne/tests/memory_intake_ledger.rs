@@ -2,7 +2,8 @@ use fabric::protocol::memory::{
     MemoryIntakeStatusV1, MemoryLifecycleStateV1, MemoryObservationKindV1, MemorySensitivityV1,
 };
 use mnemosyne::{
-    GovernedMemoryObservation, MemoryIntakeLedger, MemoryLifecycleUpdate, WorkspaceMemoryKey,
+    GovernedMemoryObservation, MemoryIntakeLedger, MemoryIntakeLimits, MemoryLifecycleUpdate,
+    WorkspaceMemoryKey,
 };
 
 fn observation(principal: &str, workspace: &str, content: &str) -> GovernedMemoryObservation {
@@ -12,6 +13,9 @@ fn observation(principal: &str, workspace: &str, content: &str) -> GovernedMemor
         client_turn_id: Some("turn-1".into()),
         kind: MemoryObservationKindV1::TaskOutcome,
         content: content.into(),
+        content_fingerprint: format!("keyed-sha256:{}", "a".repeat(64)),
+        scrub_policy_version: 1,
+        scrub_redactions: 0,
         occurred_at: Some("2026-08-01T00:00:00Z".into()),
         source_refs: vec!["terminal-receipt:1".into()],
         sensitivity: MemorySensitivityV1::Internal,
@@ -194,4 +198,29 @@ fn visible_record_grants_are_exactly_scoped_and_survive_reopen() {
         .unwrap()
         .is_record_visible("principal-a", "ws:repo:sha256:a", "record-1")
         .unwrap());
+}
+
+#[test]
+fn intake_capacity_rejects_new_rows_but_preserves_idempotent_retries() {
+    let temp = tempfile::tempdir().unwrap();
+    let ledger = MemoryIntakeLedger::open_with_limits(
+        temp.path().join("intake.db"),
+        MemoryIntakeLimits {
+            max_rows: 1,
+            max_payload_bytes: fabric::protocol::memory::MAX_MEMORY_CONTENT_BYTES,
+        },
+    )
+    .unwrap();
+    let first = observation("principal-a", "ws:repo:sha256:a", "first payload");
+    ledger.observe(&first).unwrap();
+    assert_eq!(
+        ledger.observe(&first).unwrap().intake_status,
+        MemoryIntakeStatusV1::Duplicate
+    );
+    let mut second = observation("principal-a", "ws:repo:sha256:a", "second payload");
+    second.observation_id = "obs-2".into();
+    assert!(matches!(
+        ledger.observe(&second),
+        Err(mnemosyne::MemoryIntakeError::Capacity)
+    ));
 }

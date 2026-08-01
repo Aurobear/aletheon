@@ -44,7 +44,8 @@ pub use fact_service::{
     ListFactsRequest, SearchFactsRequest,
 };
 pub use intake::{
-    GovernedMemoryObservation, MemoryIntakeError, MemoryIntakeLedger, MemoryLifecycleUpdate,
+    GovernedMemoryObservation, MemoryIntakeError, MemoryIntakeLedger, MemoryIntakeLimits,
+    MemoryLifecycleUpdate,
 };
 pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDecision};
 

@@ -324,3 +324,73 @@ async fn installation_identity_is_private_durable_and_reused_after_reopen() {
         0o600
     );
 }
+
+#[tokio::test]
+async fn observe_scrubs_secret_and_pii_before_any_durable_intake_write() {
+    let state = TempDir::new().unwrap();
+    let project = project(state.path());
+    let memory: Arc<dyn MemoryService> = Arc::new(CapturingMemory::default());
+    let gateway = MemoryGatewayService::open(
+        state.path(),
+        memory,
+        Arc::new(TestClock::new(1_700_000_000_000, 10)),
+    )
+    .unwrap();
+    let mut request = observation(project, "secret-observation");
+    request.content = "api_key=do-not-persist user=person@example.com".into();
+    request.sensitivity_hint = MemorySensitivityV1::Public;
+    gateway
+        .observe(&PrincipalId("principal-a".into()), "test-client", request)
+        .await
+        .unwrap();
+    drop(gateway);
+
+    let database = state.path().join("memory-gateway/intake-v1.db");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
+    let json: String = connection
+        .query_row(
+            "SELECT observation_json FROM memory_intakes LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let stored: mnemosyne::GovernedMemoryObservation = serde_json::from_str(&json).unwrap();
+    assert_eq!(stored.content, "[REDACTED] user=[REDACTED]");
+    assert_eq!(stored.scrub_redactions, 2);
+    assert_eq!(stored.sensitivity, MemorySensitivityV1::Restricted);
+    assert!(stored.content_fingerprint.starts_with("keyed-sha256:"));
+    drop(connection);
+    let bytes = std::fs::read(database).unwrap();
+    let durable = String::from_utf8_lossy(&bytes);
+    assert!(!durable.contains("do-not-persist"));
+    assert!(!durable.contains("person@example.com"));
+}
+
+#[tokio::test]
+async fn observe_rejects_secret_bearing_identifier_fields_before_persistence() {
+    let state = TempDir::new().unwrap();
+    let project = project(state.path());
+    let gateway = MemoryGatewayService::open(
+        state.path(),
+        Arc::new(CapturingMemory::default()),
+        Arc::new(TestClock::default()),
+    )
+    .unwrap();
+    let mut request = observation(project, "identifier-secret");
+    request.source_refs = vec!["api_key=must-not-persist".into()];
+    assert!(gateway
+        .observe(&PrincipalId("principal-a".into()), "test-client", request)
+        .await
+        .is_err());
+    drop(gateway);
+
+    let connection =
+        rusqlite::Connection::open(state.path().join("memory-gateway/intake-v1.db")).unwrap();
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM memory_intakes", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+}
