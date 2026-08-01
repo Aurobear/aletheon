@@ -49,6 +49,7 @@ pub enum AgentInteractionMode {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentWorkspaceMode {
+    WorkspaceLess,
     SharedReadOnly,
     SharedWritable,
     IsolatedWorktree,

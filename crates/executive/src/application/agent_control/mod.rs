@@ -784,7 +784,8 @@ impl AgentControlPort for AgentControlService {
             Some(workspace) if !workspace.writable_roots().is_empty() => {
                 AgentWorkspaceMode::SharedWritable
             }
-            _ => AgentWorkspaceMode::SharedReadOnly,
+            Some(_) => AgentWorkspaceMode::SharedReadOnly,
+            None => AgentWorkspaceMode::WorkspaceLess,
         };
         let history_runtime = if intent.runtime_override.is_none() {
             self.capability_history.as_ref().and_then(|history| {
@@ -814,6 +815,7 @@ impl AgentControlPort for AgentControlService {
                 .collect(),
             interaction_mode: runtime::InteractionMode::Resident,
             workspace_mode: match workspace_mode {
+                AgentWorkspaceMode::WorkspaceLess => runtime::WorkspaceMode::WorkspaceLess,
                 AgentWorkspaceMode::SharedReadOnly => runtime::WorkspaceMode::SharedReadOnly,
                 AgentWorkspaceMode::SharedWritable => runtime::WorkspaceMode::SharedWritable,
                 AgentWorkspaceMode::IsolatedWorktree => runtime::WorkspaceMode::IsolatedWorktree,

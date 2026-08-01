@@ -189,6 +189,7 @@ impl NativeCognitRuntime {
                 runtime::InteractionMode::FollowUp,
             ]),
             workspace_modes: BTreeSet::from([
+                runtime::WorkspaceMode::WorkspaceLess,
                 runtime::WorkspaceMode::SharedReadOnly,
                 runtime::WorkspaceMode::SharedWritable,
             ]),

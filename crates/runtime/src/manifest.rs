@@ -56,6 +56,7 @@ pub enum InteractionMode {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceMode {
+    WorkspaceLess,
     SharedReadOnly,
     SharedWritable,
     IsolatedWorktree,

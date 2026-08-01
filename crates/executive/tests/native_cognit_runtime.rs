@@ -9,7 +9,8 @@ use executive::application::agent_control::{
 use executive::application::harness_factory::LinearCognitiveSessionFactory;
 use executive::application::{CapabilityExecutionContext, CapabilityService};
 use executive::testing::coding_runtime::{
-    AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources, ResolvedAgentProfile,
+    pi_manifest, AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources,
+    ResolvedAgentProfile,
 };
 use fabric::{
     AgentApprovalPolicy, AgentBudget, AgentContextFork, AgentControlErrorKind, AgentHandle,
@@ -20,6 +21,24 @@ use fabric::{
 };
 use kernel::chronos::TestClock;
 use tokio_util::sync::CancellationToken;
+
+#[test]
+fn workspace_less_memory_proposals_select_the_native_runtime_not_pi() {
+    let native = NativeCognitRuntime::manifest(["safe-agent".to_owned()]);
+    let decision = runtime::RuntimeSelectionRequest {
+        selector: runtime::RuntimeSelector::Auto,
+        profile_id: "safe-agent".into(),
+        required_capabilities: vec![runtime::RuntimeCapability::MemoryProposal],
+        interaction_mode: runtime::InteractionMode::Resident,
+        workspace_mode: runtime::WorkspaceMode::WorkspaceLess,
+        task_encoding: runtime::TaskEncoding::StructuredJson,
+        max_input_tokens: 1024,
+    }
+    .select([pi_manifest(), &native])
+    .unwrap();
+
+    assert_eq!(decision.selected_runtime_id, "native-cognit");
+}
 
 struct ScriptedLlm {
     responses: Mutex<VecDeque<anyhow::Result<LlmResponse>>>,

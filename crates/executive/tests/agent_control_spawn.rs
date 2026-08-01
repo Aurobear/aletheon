@@ -142,7 +142,7 @@ async fn generic_spawn_selects_only_a_compatible_manifested_runtime() {
                     runtime::RuntimeCapability::CodeSearch,
                 ]),
                 interaction_modes: BTreeSet::from([runtime::InteractionMode::Resident]),
-                workspace_modes: BTreeSet::from([runtime::WorkspaceMode::SharedReadOnly]),
+                workspace_modes: BTreeSet::from([runtime::WorkspaceMode::WorkspaceLess]),
                 task_encodings: BTreeSet::from([runtime::TaskEncoding::NaturalLanguage]),
                 supported_profiles: None,
                 tool_governance: runtime::ToolGovernance::Observed,
