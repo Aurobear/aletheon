@@ -339,7 +339,14 @@ impl ChangeTransactionRegistry {
         }
         snapshot.diff_artifact_ref = Some(artifact_ref);
         snapshot.changed_ranges = changed_ranges;
-        snapshot.phase = ChangeTransactionPhase::DiffReviewed;
+        snapshot.phase = if snapshot.validation_plan.iter().any(|step| step.required) {
+            ChangeTransactionPhase::DiffReviewed
+        } else {
+            // A host-derived plan with no required steps is a complete
+            // validation decision, not an impossible state that forces the
+            // model to invent an unapproved command.
+            ChangeTransactionPhase::Validated
+        };
         Ok(snapshot.clone())
     }
 
@@ -1432,7 +1439,7 @@ mod tests {
                 .await
                 .unwrap()
                 .phase,
-            ChangeTransactionPhase::DiffReviewed
+            ChangeTransactionPhase::Validated
         );
     }
 
@@ -1526,17 +1533,6 @@ mod tests {
             .unwrap()
             .to_string();
 
-        let reviewed = TransactionalGitDiffTool::new(registry.clone())
-            .execute(
-                json!({"transaction_id": transaction.transaction_id.0}),
-                &context,
-            )
-            .await;
-        assert!(!reviewed.is_error, "{}", reviewed.content);
-        let reviewed: serde_json::Value = serde_json::from_str(&reviewed.content).unwrap();
-        assert!(!reviewed["empty"].as_bool().unwrap());
-        assert_eq!(reviewed["workspace_version"], version);
-
         registry
             .set_validation_plan(
                 transaction.transaction_id,
@@ -1550,6 +1546,17 @@ mod tests {
                 }],
             )
             .await;
+        let reviewed = TransactionalGitDiffTool::new(registry.clone())
+            .execute(
+                json!({"transaction_id": transaction.transaction_id.0}),
+                &context,
+            )
+            .await;
+        assert!(!reviewed.is_error, "{}", reviewed.content);
+        let reviewed: serde_json::Value = serde_json::from_str(&reviewed.content).unwrap();
+        assert!(!reviewed["empty"].as_bool().unwrap());
+        assert_eq!(reviewed["workspace_version"], version);
+
         let observed = workspace_version::capture(repo.path()).unwrap();
         registry
             .reserve_command(
@@ -1601,14 +1608,6 @@ mod tests {
             .await
             .unwrap();
         registry
-            .record_diff_review(
-                transaction.transaction_id,
-                "artifact://sha256/diff".into(),
-                Vec::new(),
-            )
-            .await
-            .unwrap();
-        registry
             .set_validation_plan(
                 transaction.transaction_id,
                 vec![ValidationPlanStep {
@@ -1621,6 +1620,14 @@ mod tests {
                 }],
             )
             .await;
+        registry
+            .record_diff_review(
+                transaction.transaction_id,
+                "artifact://sha256/diff".into(),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
         registry
             .reserve_command(
                 transaction.transaction_id,

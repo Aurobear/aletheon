@@ -436,7 +436,8 @@ jq -n --arg completed_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg commit "$(git -C "$repo_root" rev-parse HEAD)" \
   '{schema_version:1,status:"PASS",completed_utc:$completed_utc,command:"scripts/aletheon.sh acceptance architecture",commit:$commit}' \
   >"$architecture_receipt"
-cargo tree --workspace --edges normal >"$artifacts/dependency-tree.txt"
+bash "$repo_root/scripts/cargo-agent.sh" tree --workspace --edges normal \
+  >"$artifacts/dependency-tree.txt"
 
 monitor_report="$artifacts/production-scenarios.json"
 failure_receipt="$guest_artifacts/failure-matrix/operator-receipt.json"

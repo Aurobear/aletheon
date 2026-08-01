@@ -47,6 +47,8 @@ pub struct TurnEngineContext {
     pub workspace: Arc<fabric::WorkspacePolicy>,
     pub profile: ResolvedTurnProfile,
     pub cancel_token: CancellationToken,
+    /// Notification stream owned by the connection that admitted this Turn.
+    pub notification_sender: Option<tokio::sync::mpsc::Sender<String>>,
     /// Exact host-authenticated context when the caller already resolved one.
     /// CLI callers may omit it and use the compatibility construction below.
     pub principal_context: Option<fabric::PrincipalContext>,

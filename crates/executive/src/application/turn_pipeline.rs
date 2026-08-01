@@ -519,6 +519,7 @@ impl TurnPipeline {
         main_pid: ProcessId,
         scope_token: CancellationToken,
         principal: PrincipalId,
+        notification_sender: Option<mpsc::Sender<String>>,
     ) -> anyhow::Result<serde_json::Value> {
         // Resolve the authoritative runtime session before policy review. The
         // read is non-mutating; denied turns still never call `begin_user`.
@@ -1040,7 +1041,12 @@ impl TurnPipeline {
         };
 
         // -- Event + approval pumping loop --
-        let notify_tx = self.notify_tx.clone();
+        // Snapshot the exact request connection once. A concurrent status or
+        // monitor connection must not steal an active Turn's event stream.
+        let notify_tx = match notification_sender {
+            Some(sender) => Some(sender),
+            None => self.notify_tx.lock().await.clone(),
+        };
 
         let mut tool_calls_for_session: Vec<(String, String, serde_json::Value)> = Vec::new();
         let mut tool_results_for_session: Vec<(String, String, bool)> = Vec::new();
@@ -1200,8 +1206,7 @@ impl TurnPipeline {
                     }
                     // Forward event to TUI client
                     if !is_terminal {
-                        let sender = notify_tx.lock().await.clone();
-                        if let Some(tx) = sender {
+                        if let Some(tx) = notify_tx.as_ref() {
                             if let Some(client_event) = turn_event_to_client_event(&event) {
                                 if let Ok(json_str) = event_to_json(&client_event) {
                                     if tx.send(json_str).await.is_err() {
@@ -1226,8 +1231,7 @@ impl TurnPipeline {
                         }
                     });
                     {
-                        let sender = notify_tx.lock().await.clone();
-                        if let Some(tx) = sender {
+                        if let Some(tx) = notify_tx.as_ref() {
                             if tx.send(notification.to_string()).await.is_err() {
                                 warn!("Failed to send approval_request notification — client disconnected?");
                             }
@@ -1270,8 +1274,7 @@ impl TurnPipeline {
                         _ => {}
                     }
                     if !is_terminal {
-                        let sender = notify_tx.lock().await.clone();
-                        if let Some(tx) = sender {
+                        if let Some(tx) = notify_tx.as_ref() {
                             if let Some(client_event) = turn_event_to_client_event(&event) {
                                 if let Ok(json_str) = event_to_json(&client_event) {
                                     if tx.send(json_str).await.is_err() {

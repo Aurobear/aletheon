@@ -66,7 +66,9 @@ if [[ "$mode" == staging ]]; then
 fi
 
 command -v restic >/dev/null || { echo "missing command: restic" >&2; exit 1; }
-[[ -r "$password_file" && -r "$repository_file" ]] || { echo "backup credential files are unreadable" >&2; exit 1; }
+[[ -r "$password_file" && -s "$password_file" \
+  && -r "$repository_file" && -s "$repository_file" ]] \
+  || { echo "backup credential files are unreadable or empty" >&2; exit 1; }
 export RESTIC_PASSWORD_FILE="$password_file"
 snapshot=$(restic --repository-file "$repository_file" backup --json --tag aletheon-data "$stage" \
   | jq -r 'select(.message_type=="summary") | .snapshot_id' | tail -n1)

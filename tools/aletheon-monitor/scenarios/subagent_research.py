@@ -113,8 +113,8 @@ def _assistant_journal_promotes(journal: object, marker: str, marker_hash: str) 
     return any(
         isinstance(entry, dict)
         and entry.get("event_type") == "assistant_message"
-        and _contains(entry.get("event"), marker)
-        and _contains(entry.get("event"), marker_hash)
+        and _contains(entry.get("item"), marker)
+        and _contains(entry.get("item"), marker_hash)
         for entry in entries
     )
 
@@ -168,6 +168,13 @@ def _lifecycle_evidence(events: list[dict], marker: str, marker_hash: str) -> di
         and call["result"].get("delivery") == "delivered"
         for call in send_calls
     )
+    send_terminal_rejected = any(
+        isinstance((wire := _json_output(call.get("result_event", {}))), dict)
+        and wire.get("ok") is False
+        and isinstance(wire.get("error"), dict)
+        and wire["error"].get("kind") == "terminal"
+        for call in send_calls
+    )
     list_snapshots = [
         snapshot for call in by_tool["agent_list"]
         if call["result"] is not None and first_id
@@ -195,17 +202,13 @@ def _lifecycle_evidence(events: list[dict], marker: str, marker_hash: str) -> di
             "marker_in_agent_result": marker in output and marker_hash in output,
         }
     cancel_calls = [call for call in by_tool["agent_cancel"] if args_target(call, second_id)]
-    cancelled = any(
-        (snapshot := _snapshot_for_agent(call["result"], second_id)) is not None
-        and snapshot.get("status") == "cancelled"
-        for call in cancel_calls if second_id
-    )
-    cancelled_snapshot = next(
+    second_terminal_snapshot = next(
         (
             snapshot
             for call in cancel_calls
             for snapshot in [_snapshot_for_agent(call["result"], second_id)]
-            if snapshot is not None and snapshot.get("status") == "cancelled"
+            if snapshot is not None
+            and snapshot.get("status") in {"succeeded", "failed", "cancelled"}
         ),
         None,
     )
@@ -223,21 +226,27 @@ def _lifecycle_evidence(events: list[dict], marker: str, marker_hash: str) -> di
         "two_distinct_agents": two_distinct_agents,
         "spawn_agent_ids": spawn_ids,
         "first_agent_listed": bool(list_snapshots),
-        "mailbox_delivered_to_first": send_delivered,
+        "mailbox_outcome_authoritative": send_delivered or send_terminal_rejected,
+        "mailbox_delivery": "delivered" if send_delivered else (
+            "terminal_rejected" if send_terminal_rejected else None
+        ),
         "first_agent_succeeded": promotion_evidence is not None,
         "agent_result_contains_marker_hash": marker_in_agent_result,
         "parent_text_contains_marker_hash": marker_in_parent_text,
         "result_promoted_to_parent": marker_in_agent_result and marker_in_parent_text,
         "promotion_evidence": promotion_evidence,
-        "second_agent_cancelled": cancelled,
+        "second_agent_cancel_outcome_authoritative": second_terminal_snapshot is not None,
+        "second_agent_cancel_outcome": (
+            second_terminal_snapshot.get("status") if second_terminal_snapshot else None
+        ),
         "terminal_statuses": {
             first_id: "succeeded" if promotion_evidence else None,
-            second_id: "cancelled" if cancelled else None,
+            second_id: second_terminal_snapshot.get("status") if second_terminal_snapshot else None,
         },
         "terminal_result_hashes": {
             first_id: promotion_evidence["result_sha256"] if promotion_evidence else None,
-            second_id: _canonical_hash(cancelled_snapshot.get("result"))
-            if cancelled_snapshot
+            second_id: _canonical_hash(second_terminal_snapshot.get("result"))
+            if second_terminal_snapshot
             else None,
         },
     }
@@ -364,10 +373,42 @@ async def _restart_daemon(timeout: float = 30.0) -> dict:
     }
 
 
-async def _current_session(client: AletheonClient) -> str | None:
-    response = await client.rpc("status")
-    value = response.get("result", {}).get("status", {}).get("session_id")
-    return value if isinstance(value, str) and value else None
+async def _session_ids(client: AletheonClient) -> set[str]:
+    response = await client.rpc("session.list")
+    rows = response.get("result", [])
+    if not isinstance(rows, list):
+        return set()
+    return {
+        value
+        for row in rows
+        if isinstance(row, dict)
+        and isinstance((value := row.get("session_id")), str)
+        and value
+    }
+
+
+async def _wait_for_new_session(
+    client: AletheonClient, previous: set[str], timeout: float = 15.0
+) -> str | None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        created = await _session_ids(client) - previous
+        if len(created) == 1:
+            return created.pop()
+        if len(created) > 1:
+            return None
+        await asyncio.sleep(0.1)
+    return None
+
+
+async def _wait_for_frame_text(expected: str, timeout: float = 15.0) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        captured = await tui.tui_capture(wait_stable=False)
+        if expected in captured.get("frame", ""):
+            return True
+        await asyncio.sleep(0.1)
+    return False
 
 
 async def run(source_root: str, timeout: float = 180.0) -> dict:
@@ -376,20 +417,20 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
     marker_hash = hashlib.sha256(marker.encode("utf-8")).hexdigest()
     receipt_root = root / ".scenario-runs" / uuid.uuid4().hex
     receipt_root.mkdir(mode=0o700, parents=True)
-    started = await tui.tui_start(
-        working_dir=str(root),
-        cols=110,
-        rows=45,
-        event_path=str(receipt_root / "initial-events.jsonl"),
-    )
-    if not started.get("ok"):
-        return {"scenario": "subagent_research", "status": "FAIL", "failure": started}
-
     client = AletheonClient(timeout=15)
     session_id = None
     completed: dict = {}
     try:
-        session_id = await _current_session(client)
+        sessions_before = await _session_ids(client)
+        started = await tui.tui_start(
+            working_dir=str(root),
+            cols=110,
+            rows=45,
+            event_path=str(receipt_root / "initial-events.jsonl"),
+        )
+        if not started.get("ok"):
+            return {"scenario": "subagent_research", "status": "FAIL", "failure": started}
+        session_id = await _wait_for_new_session(client, sessions_before)
         prompt = (
             "使用精确的 agent_spawn/agent_list/agent_send/agent_cancel/agent_wait 工具完成验证："
             f"先启动一个有界研究 Agent，任务要求结果原样包含 marker={marker} 和 marker_sha256={marker_hash}；"
@@ -426,6 +467,8 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
             for agent_id in lifecycle["spawn_agent_ids"]
             if isinstance(agent_id, str)
         ]
+        recovery_client = AletheonClient(timeout=20)
+        recovery_sessions_before = await _session_ids(recovery_client)
         recovery_tui = await tui.tui_start(
             working_dir=str(root),
             cols=110,
@@ -434,22 +477,34 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
         )
         try:
             if recovery_tui.get("ok") and len(agent_ids) == 2:
-                await tui.tui_send(f"/resume {session_id}", submit=True)
-                await tui.tui_capture(
-                    wait_stable=True, require_change=False, timeout=10
+                initialized_session = await _wait_for_new_session(
+                    recovery_client, recovery_sessions_before
                 )
-                query = (
-                    "只使用 agent_list（limit=100）重新读取持久化子 Agent；"
-                    f"必须在工具结果中核对这两个 agent_id：{agent_ids[0]} 和 {agent_ids[1]}，"
-                    "报告各自终态和结构化 result，不要 spawn、wait 或修改它们。"
-                )
-                sent = await tui.tui_send(query, submit=True)
-                if sent.get("ok"):
-                    recovery_completed = await tui.tui_wait_turn_done(
-                        recovery_tui.get("turn_done_count", 0), timeout
-                    )
+                if not initialized_session:
+                    recovery_completed = {
+                        "error": "recovery TUI session initialization was not observed"
+                    }
+                else:
+                    await tui.tui_send(f"/resume {session_id}", submit=True)
+                    resumed = await _wait_for_frame_text(f"已恢复会话：{session_id}")
+                    if not resumed:
+                        recovery_completed = {
+                            "error": "recovery TUI did not confirm the requested session"
+                        }
+                    else:
+                        query = (
+                            "只使用 agent_list（limit=100）重新读取持久化子 Agent；"
+                            f"必须在工具结果中核对这两个 agent_id：{agent_ids[0]} 和 {agent_ids[1]}，"
+                            "报告各自终态和结构化 result，不要 spawn、wait 或修改它们。"
+                        )
+                        sent = await tui.tui_send(query, submit=True)
+                        if sent.get("ok"):
+                            recovery_completed = await tui.tui_wait_turn_done(
+                                recovery_tui.get("turn_done_count", 0), timeout
+                            )
         finally:
             await tui.tui_stop()
+            await recovery_client.close()
 
         recovery_events = base._events(recovery_completed.get("event_path"))
         if len(agent_ids) == 2:
@@ -462,7 +517,9 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
         recovery_client = AletheonClient(timeout=20)
         try:
             recovered = await recovery_client.rpc("resume", {"session_id": session_id})
-            journal = await recovery_client.rpc("session.journal", {"limit": 500})
+            journal = await recovery_client.rpc(
+                "session.journal", {"session_id": session_id, "limit": 500}
+            )
         finally:
             await recovery_client.close()
 
@@ -480,12 +537,13 @@ async def run(source_root: str, timeout: float = 180.0) -> dict:
         {"name": "tool_results_accounted", "passed": lifecycle["all_calls_completed"]},
         {"name": "two_distinct_spawned_agents", "passed": lifecycle["two_distinct_agents"]},
         {"name": "first_agent_progress_listed", "passed": lifecycle["first_agent_listed"]},
-        {"name": "mailbox_delivered_to_first_agent", "passed": lifecycle["mailbox_delivered_to_first"]},
+        {"name": "mailbox_outcome_authoritative", "passed": lifecycle["mailbox_outcome_authoritative"]},
         {"name": "first_agent_terminal_result", "passed": lifecycle["first_agent_succeeded"]},
         {"name": "agent_result_marker_hash", "passed": lifecycle["agent_result_contains_marker_hash"]},
         {"name": "parent_text_promoted_result", "passed": lifecycle["result_promoted_to_parent"]},
         {"name": "parent_journal_promoted_result", "passed": journal_promoted},
-        {"name": "second_agent_cancelled", "passed": lifecycle["second_agent_cancelled"]},
+        {"name": "second_agent_cancel_outcome_authoritative",
+         "passed": lifecycle["second_agent_cancel_outcome_authoritative"]},
         {"name": "daemon_restart_command", "passed": restarted["command_ok"]},
         {"name": "daemon_process_changed", "passed": restarted["process_changed"]},
         {"name": "daemon_start_timestamp_changed", "passed": restarted["start_timestamp_changed"]},

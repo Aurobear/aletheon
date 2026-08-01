@@ -90,7 +90,7 @@ impl SpineAgentEventSink {
     fn append(&self, event: &AgentRuntimeEvent) -> anyhow::Result<()> {
         let (schema, kind, extra) = match event {
             AgentRuntimeEvent::CapabilityAttenuated { report, .. } => (
-                "aletheon.agent.capability_attenuated.v1",
+                fabric::SchemaId::EVENT_AGENT_CAPABILITY_ATTENUATED_V1,
                 "capability_attenuated",
                 serde_json::to_value(report).unwrap_or(serde_json::Value::Null),
             ),

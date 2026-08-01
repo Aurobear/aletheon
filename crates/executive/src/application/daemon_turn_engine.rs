@@ -103,6 +103,7 @@ impl TurnEngine for DaemonTurnEngine {
                 context.process_id,
                 context.cancel_token,
                 principal,
+                context.notification_sender,
             )
             .await?;
         if let Some(error) = response.get("error") {
