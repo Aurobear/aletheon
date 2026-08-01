@@ -76,6 +76,10 @@ grep -q 'systemctl --global enable aletheon.socket' scripts/libexec/aletheon/ins
 grep -q 'aletheon-memory-agent.service' scripts/libexec/aletheon/install-systemd.sh
 grep -q 'verify-systemd.sh --core-unit' scripts/libexec/aletheon/install-systemd.sh
 grep -q 'verify-systemd.sh --user-units' scripts/libexec/aletheon/install-systemd.sh
+grep -q '/var/cache/aletheon/backup' scripts/libexec/aletheon/install-systemd.sh
+grep -q 'command -v restic' scripts/libexec/aletheon/install-systemd.sh
+grep -q '\[\[ -s /etc/aletheon/credentials/restic-password \]\]' scripts/libexec/aletheon/install-systemd.sh
+grep -q 'systemctl disable --now aletheon-backup.timer' scripts/libexec/aletheon/install-systemd.sh
 if grep -q 'systemd-analyze --user verify' scripts/libexec/aletheon/install-systemd.sh; then
   echo 'root installer depends on an unavailable user systemd manager' >&2; exit 1
 fi

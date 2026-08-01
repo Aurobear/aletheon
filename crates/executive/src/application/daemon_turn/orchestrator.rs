@@ -6,7 +6,7 @@ use crate::application::TurnPipeline;
 use crate::composition::config::GrokHardeningConfig;
 use fabric::{OperationId, PrincipalId, ProcessId, ProcessSignal, ThreadId, TurnId};
 use kernel::KernelRuntime;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -25,7 +25,8 @@ pub(crate) type TestTurnRunner = Arc<
 pub(crate) struct DaemonTurnResources {
     pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) notify: Arc<Mutex<Option<mpsc::Sender<String>>>>,
-    pub(crate) main_agent_process_id: Arc<Mutex<Option<ProcessId>>>,
+    pub(crate) main_agent_process_ids: Arc<Mutex<HashMap<String, ProcessId>>>,
+    pub(crate) approval_owner_process_id: Arc<Mutex<Option<ProcessId>>>,
     pub(crate) turn_token: Arc<Mutex<Option<CancellationToken>>>,
     pub(crate) pipeline: Arc<TurnPipeline>,
     pub(crate) coordinator: Arc<TurnCoordinator>,
@@ -37,7 +38,8 @@ pub(crate) struct DaemonTurnResources {
 pub struct DaemonTurnOrchestrator {
     pub(crate) kernel: Arc<KernelRuntime>,
     pub(crate) notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
-    pub(crate) main_agent_process_id: Arc<Mutex<Option<ProcessId>>>,
+    pub(crate) main_agent_process_ids: Arc<Mutex<HashMap<String, ProcessId>>>,
+    pub(crate) approval_owner_process_id: Arc<Mutex<Option<ProcessId>>>,
     pub(crate) turn_token: Arc<Mutex<Option<CancellationToken>>>,
     pub(crate) pipeline: Option<Arc<TurnPipeline>>,
     pub(crate) turn_engine: Option<Arc<dyn crate::application::turn_engine::TurnEngine>>,
@@ -60,7 +62,8 @@ impl DaemonTurnOrchestrator {
         Self {
             kernel: resources.kernel,
             notify_tx: resources.notify,
-            main_agent_process_id: resources.main_agent_process_id,
+            main_agent_process_ids: resources.main_agent_process_ids,
+            approval_owner_process_id: resources.approval_owner_process_id,
             turn_token: resources.turn_token,
             pipeline: Some(resources.pipeline),
             turn_engine: Some(turn_engine),

@@ -94,7 +94,8 @@ impl DaemonTurnTestBuilder {
         let orchestrator = DaemonTurnOrchestrator {
             kernel: kernel.clone(),
             notify_tx: Arc::new(Mutex::new(None::<mpsc::Sender<String>>)),
-            main_agent_process_id: Arc::new(Mutex::new(None)),
+            main_agent_process_ids: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            approval_owner_process_id: Arc::new(Mutex::new(None)),
             turn_token: Arc::new(Mutex::new(None)),
             pipeline: None,
             turn_engine: None,

@@ -510,7 +510,14 @@ impl RequestHandler {
         tracing::info!(message = %message, thread_id = %context.thread_id.0, "Chat request received");
         self.ports
             .turn
-            .execute(id, message, context, requirements, task_kind)
+            .execute(
+                id,
+                message,
+                context,
+                requirements,
+                task_kind,
+                self.notify_tx.clone(),
+            )
             .await
     }
 

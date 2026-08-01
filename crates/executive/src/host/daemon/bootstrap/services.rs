@@ -308,7 +308,8 @@ pub(super) async fn build_turn_services(
     active_profile: Arc<Mutex<String>>,
     runtime: Arc<Mutex<crate::core::orchestrator::AletheonExecutive>>,
     turn_token: Arc<Mutex<Option<CancellationToken>>>,
-    main_agent_process_id: Arc<Mutex<Option<fabric::ProcessId>>>,
+    main_agent_process_ids: Arc<Mutex<std::collections::HashMap<String, fabric::ProcessId>>>,
+    approval_owner_process_id: Arc<Mutex<Option<fabric::ProcessId>>>,
 ) -> anyhow::Result<TurnServices> {
     let shared_notify_tx: Arc<Mutex<Option<mpsc::Sender<String>>>> = Arc::new(Mutex::new(None));
     let session_id = session_id.to_owned();
@@ -563,7 +564,8 @@ pub(super) async fn build_turn_services(
         crate::application::daemon_turn::DaemonTurnResources {
             kernel: kernel.clone(),
             notify: shared_notify_tx.clone(),
-            main_agent_process_id: main_agent_process_id.clone(),
+            main_agent_process_ids: main_agent_process_ids.clone(),
+            approval_owner_process_id: approval_owner_process_id.clone(),
             turn_token: turn_token.clone(),
             pipeline,
             coordinator,
