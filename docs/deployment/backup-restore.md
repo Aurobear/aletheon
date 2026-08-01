@@ -33,9 +33,13 @@ state; rotate provider credentials and rebuild the repository.
 
 ## Schedule and retention
 
-Enable `aletheon-backup.timer` for daily local snapshots. Configure the Restic
-repository to replicate weekly to a separately administered remote target. Run
-weekly:
+The system installer enables `aletheon-backup.timer` only when `restic` is
+installed and both protected Restic credential files are non-empty. Otherwise
+it leaves the timer disabled and clears stale unit failures; an unconfigured
+backup must not generate a daily failed service. After configuring those
+prerequisites, enable the timer for daily encrypted snapshots. Configure the
+Restic repository to replicate weekly to a separately administered remote
+target. Run weekly:
 
 ```sh
 restic --repository-file /etc/aletheon/credentials/restic-repository \

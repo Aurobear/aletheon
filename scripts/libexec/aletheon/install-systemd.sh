@@ -21,6 +21,7 @@ install -d -o root -g aletheon -m 0750 /etc/aletheon /etc/aletheon/policy /etc/a
 install -d -o aletheon -g aletheon -m 0750 \
   /var/lib/aletheon/{state,goals,sessions,mnemosyne,artifacts,worktrees,audit} \
   /var/cache/aletheon /run/aletheon
+install -d -o aletheon -g aletheon -m 0700 /var/cache/aletheon/backup
 for secret in provider.env telegram.env gbrain.env; do
   if [[ ! -e /etc/aletheon/credentials/$secret ]]; then
     install -o aletheon -g aletheon -m 0600 /dev/null "/etc/aletheon/credentials/$secret"
@@ -88,5 +89,14 @@ if ((enable)); then
   systemctl reset-failed aletheon-core.service
   systemctl restart aletheon-core.service
   systemctl --global enable aletheon.socket
-  systemctl enable --now aletheon-backup.timer aletheon-cleanup.timer
+  systemctl enable --now aletheon-cleanup.timer
+  if command -v restic >/dev/null \
+    && [[ -s /etc/aletheon/credentials/restic-password ]] \
+    && [[ -s /etc/aletheon/credentials/restic-repository ]]; then
+    systemctl enable --now aletheon-backup.timer
+  else
+    systemctl disable --now aletheon-backup.timer
+    systemctl reset-failed aletheon-backup.service || true
+    echo "backup timer disabled: configure restic and non-empty protected credentials to enable it" >&2
+  fi
 fi
