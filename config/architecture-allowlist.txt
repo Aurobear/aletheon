@@ -1,5 +1,7 @@
 core_systems_field|crates/executive/src/adapters/plugin/manager.rs| let result = self.runtime.execute(&self.name, &input).await;
 core_systems_field|crates/executive/src/adapters/plugin/manager.rs| runtime: self.runtime.clone(),
+core_systems_field|crates/executive/src/application/memory_gateway.rs| "schema": "aletheon.memory.feedback/v1",
+core_systems_field|crates/executive/src/application/memory_maintenance.rs| self.memory.record_canonical(record.clone()).await?;
 core_systems_field|crates/executive/src/core/runtime_core.rs| supplemental_memory: app_config.memory.supplemental.clone(),
 executive_store_import|crates/executive/src/application/hook_lifecycle/session_distiller.rs|use mnemosyne::runtime::FactStore;
 executive_store_import|crates/executive/src/application/verification/command.rs| ) -> Result<CommandOutput, corpus::tools::subagent::CommandRunnerError> {

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use fabric::WorkspaceIdentity;
+use fabric::types::workspace_identity::WorkspaceIdentity;
 use mnemosyne::{
     MemoryAuthority, MemoryScope, MemorySensitivity, RecallPreFilter, ScopeAncestry,
     WorkspaceMemoryKey,

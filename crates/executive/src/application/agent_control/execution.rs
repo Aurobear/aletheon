@@ -57,6 +57,15 @@ pub trait AgentEventSink: Send + Sync {
     async fn emit(&self, event: AgentRuntimeEvent);
 }
 
+#[async_trait]
+pub trait CognitiveTaskAdmissionPort: Send + Sync {
+    async fn bind_before_launch(
+        &self,
+        binding: fabric::cognitive_workflow::CognitiveTaskRuntimeBinding,
+        allocated_process: ProcessId,
+    ) -> Result<(), AgentControlError>;
+}
+
 #[derive(Debug, Default)]
 pub struct NoopAgentEventSink;
 

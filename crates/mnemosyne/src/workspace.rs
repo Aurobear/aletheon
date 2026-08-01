@@ -1,6 +1,6 @@
 //! Host-derived workspace memory identity.
 
-use fabric::WorkspaceIdentity;
+use fabric::types::workspace_identity::WorkspaceIdentity;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
