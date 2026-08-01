@@ -9,7 +9,7 @@ use fabric::protocol::memory::{
     MemoryProtocolValidationError, MemoryScorecardV1, MemorySensitivityV1, MemoryWorkspaceStateV1,
     MAX_MEMORY_ID_BYTES, MAX_MEMORY_SOURCE_REFS, MAX_MEMORY_SOURCE_REF_BYTES,
 };
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -80,6 +80,31 @@ CREATE TABLE IF NOT EXISTS visible_memory_records(
   record_id TEXT NOT NULL,
   last_seen_at_ms INTEGER NOT NULL,
   PRIMARY KEY(principal_id, workspace_key, record_id)
+);
+CREATE TABLE IF NOT EXISTS memory_maintenance_leases(
+  phase TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  watermark TEXT NOT NULL,
+  durable_intake_id TEXT NOT NULL UNIQUE REFERENCES memory_intakes(durable_intake_id) ON DELETE CASCADE,
+  lease_token TEXT NOT NULL UNIQUE,
+  owner_id TEXT NOT NULL,
+  claimed_revision INTEGER NOT NULL,
+  lease_expires_at_ms INTEGER NOT NULL,
+  PRIMARY KEY(phase, scope_key, watermark)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_maintenance_lease_expiry
+  ON memory_maintenance_leases(lease_expires_at_ms);
+CREATE TABLE IF NOT EXISTS memory_maintenance_deferrals(
+  durable_intake_id TEXT PRIMARY KEY REFERENCES memory_intakes(durable_intake_id) ON DELETE CASCADE,
+  retry_not_before_ms INTEGER NOT NULL,
+  reason_code TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_maintenance_settlements(
+  settlement_id TEXT PRIMARY KEY,
+  durable_intake_id TEXT NOT NULL REFERENCES memory_intakes(durable_intake_id) ON DELETE CASCADE,
+  request_hash TEXT NOT NULL,
+  receipt_json TEXT NOT NULL,
+  settled_at_ms INTEGER NOT NULL
 );
 "#;
 
@@ -167,7 +192,7 @@ impl GovernedMemoryObservation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryLifecycleUpdate {
     pub expected_revision: u64,
     pub state: MemoryLifecycleStateV1,
@@ -177,6 +202,39 @@ pub struct MemoryLifecycleUpdate {
     pub reason_codes: Vec<String>,
     pub terminal_at: Option<String>,
     pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryMaintenancePhase {
+    IntakeEvaluation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryMaintenanceLease {
+    pub phase: MemoryMaintenancePhase,
+    pub scope_key: String,
+    pub watermark: String,
+    pub durable_intake_id: String,
+    pub lease_token: String,
+    pub owner_id: String,
+    pub claimed_revision: u64,
+    pub lease_expires_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryMaintenanceClaim {
+    pub lease: MemoryMaintenanceLease,
+    pub observation: GovernedMemoryObservation,
+    pub lifecycle: MemoryLifecycleReceiptV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryMaintenanceStatus {
+    pub pending_items: u64,
+    pub active_leases: u64,
+    pub expired_leases: u64,
+    pub oldest_pending_age_ms: Option<u64>,
 }
 
 impl MemoryLifecycleUpdate {
@@ -206,6 +264,10 @@ pub enum MemoryIntakeError {
     RevisionConflict,
     #[error("memory intake capacity exceeded")]
     Capacity,
+    #[error("memory maintenance lease is unavailable or no longer authoritative")]
+    LeaseUnavailable,
+    #[error("memory maintenance settlement id was reused with different content")]
+    SettlementConflict,
     #[error("invalid memory lifecycle transition from {from:?} to {to:?}")]
     InvalidTransition {
         from: MemoryLifecycleStateV1,
@@ -470,6 +532,297 @@ impl MemoryIntakeLedger {
         Ok(exists)
     }
 
+    /// Atomically claim the oldest eligible intake. The transition from
+    /// `observed` to `evaluating` and the lease insert share one transaction,
+    /// so no worker can observe an evaluating row without recoverable lease
+    /// authority.
+    pub fn claim_next_maintenance(
+        &self,
+        owner_id: &str,
+        now_ms: i64,
+        lease_ms: i64,
+    ) -> Result<Option<MemoryMaintenanceClaim>, MemoryIntakeError> {
+        validate_authority_key("owner_id", owner_id)?;
+        if now_ms < 0 || !(1_000..=300_000).contains(&lease_ms) {
+            return Err(MemoryProtocolValidationError(
+                "memory maintenance lease timing is invalid".into(),
+            )
+            .into());
+        }
+        let mut connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let candidate: Option<(String, String)> = transaction
+            .query_row(
+                "WITH latest AS (
+                   SELECT durable_intake_id,MAX(revision) AS revision
+                   FROM memory_lifecycle_receipts GROUP BY durable_intake_id
+                 )
+                 SELECT intake.observation_json,lifecycle.receipt_json
+                 FROM memory_intakes AS intake
+                 JOIN latest ON latest.durable_intake_id=intake.durable_intake_id
+                 JOIN memory_lifecycle_receipts AS lifecycle
+                   ON lifecycle.durable_intake_id=latest.durable_intake_id
+                  AND lifecycle.revision=latest.revision
+                 LEFT JOIN memory_maintenance_leases AS lease
+                   ON lease.durable_intake_id=intake.durable_intake_id
+                 LEFT JOIN memory_maintenance_deferrals AS deferred
+                   ON deferred.durable_intake_id=intake.durable_intake_id
+                 WHERE lifecycle.state IN ('observed','evaluating')
+                   AND (lease.durable_intake_id IS NULL OR lease.lease_expires_at_ms<=?1)
+                   AND (deferred.durable_intake_id IS NULL OR deferred.retry_not_before_ms<=?1)
+                 ORDER BY
+                   CASE WHEN json_extract(intake.observation_json,'$.kind')='feedback'
+                        THEN 0 ELSE 1 END,
+                   intake.observed_at_ms,intake.durable_intake_id
+                 LIMIT 1",
+                params![now_ms],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((observation_json, lifecycle_json)) = candidate else {
+            transaction.commit()?;
+            return Ok(None);
+        };
+        let observation: GovernedMemoryObservation = serde_json::from_str(&observation_json)?;
+        observation.validate()?;
+        let current: MemoryLifecycleReceiptV1 = serde_json::from_str(&lifecycle_json)?;
+        let lifecycle = if current.state == MemoryLifecycleStateV1::Observed {
+            let lifecycle = MemoryLifecycleReceiptV1 {
+                durable_intake_id: current.durable_intake_id.clone(),
+                revision: current.revision + 1,
+                state: MemoryLifecycleStateV1::Evaluating,
+                resulting_record_ids: current.resulting_record_ids,
+                remote_receipt_ids: current.remote_receipt_ids,
+                scorecard: current.scorecard,
+                reason_codes: Vec::new(),
+                terminal_at: None,
+            };
+            transaction.execute(
+                "INSERT INTO memory_lifecycle_receipts(
+                   durable_intake_id,revision,state,receipt_json,created_at_ms
+                 ) VALUES(?1,?2,'evaluating',?3,?4)",
+                params![
+                    lifecycle.durable_intake_id,
+                    lifecycle.revision,
+                    serde_json::to_string(&lifecycle)?,
+                    now_ms
+                ],
+            )?;
+            lifecycle
+        } else {
+            current
+        };
+        transaction.execute(
+            "DELETE FROM memory_maintenance_leases
+             WHERE durable_intake_id=?1 AND lease_expires_at_ms<=?2",
+            params![lifecycle.durable_intake_id, now_ms],
+        )?;
+        transaction.execute(
+            "DELETE FROM memory_maintenance_deferrals WHERE durable_intake_id=?1",
+            params![lifecycle.durable_intake_id],
+        )?;
+        let lease = MemoryMaintenanceLease {
+            phase: MemoryMaintenancePhase::IntakeEvaluation,
+            scope_key: observation.workspace_key.as_str().to_owned(),
+            watermark: lifecycle.durable_intake_id.clone(),
+            durable_intake_id: lifecycle.durable_intake_id.clone(),
+            lease_token: format!("memory-lease:{}", uuid::Uuid::new_v4()),
+            owner_id: owner_id.to_owned(),
+            claimed_revision: lifecycle.revision,
+            lease_expires_at_ms: now_ms.saturating_add(lease_ms),
+        };
+        transaction.execute(
+            "INSERT INTO memory_maintenance_leases(
+               phase,scope_key,watermark,durable_intake_id,lease_token,
+               owner_id,claimed_revision,lease_expires_at_ms
+             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![
+                maintenance_phase_name(lease.phase),
+                lease.scope_key,
+                lease.watermark,
+                lease.durable_intake_id,
+                lease.lease_token,
+                lease.owner_id,
+                lease.claimed_revision,
+                lease.lease_expires_at_ms
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(Some(MemoryMaintenanceClaim {
+            lease,
+            observation,
+            lifecycle,
+        }))
+    }
+
+    pub fn defer_maintenance(
+        &self,
+        lease: &MemoryMaintenanceLease,
+        retry_not_before_ms: i64,
+        reason_code: &str,
+        now_ms: i64,
+    ) -> Result<MemoryLifecycleReceiptV1, MemoryIntakeError> {
+        validate_lease(lease)?;
+        validate_authority_key("reason_code", reason_code)?;
+        if now_ms < 0 || retry_not_before_ms <= now_ms {
+            return Err(MemoryProtocolValidationError(
+                "memory maintenance deferral timing is invalid".into(),
+            )
+            .into());
+        }
+        let mut connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current = authoritative_lease_receipt(&transaction, lease, now_ms)?;
+        transaction.execute(
+            "INSERT INTO memory_maintenance_deferrals(
+               durable_intake_id,retry_not_before_ms,reason_code
+             ) VALUES(?1,?2,?3)
+             ON CONFLICT(durable_intake_id) DO UPDATE SET
+               retry_not_before_ms=excluded.retry_not_before_ms,
+               reason_code=excluded.reason_code",
+            params![lease.durable_intake_id, retry_not_before_ms, reason_code],
+        )?;
+        transaction.execute(
+            "DELETE FROM memory_maintenance_leases WHERE lease_token=?1",
+            params![lease.lease_token],
+        )?;
+        transaction.commit()?;
+        Ok(current)
+    }
+
+    pub fn settle_maintenance(
+        &self,
+        lease: &MemoryMaintenanceLease,
+        settlement_id: &str,
+        update: MemoryLifecycleUpdate,
+        now_ms: i64,
+    ) -> Result<MemoryLifecycleReceiptV1, MemoryIntakeError> {
+        validate_lease(lease)?;
+        validate_authority_key("settlement_id", settlement_id)?;
+        validate_update(&update)?;
+        if now_ms < 0
+            || !matches!(
+                update.state,
+                MemoryLifecycleStateV1::Rejected | MemoryLifecycleStateV1::PromotedLocal
+            )
+        {
+            return Err(MemoryProtocolValidationError(
+                "memory maintenance settlement is not terminal local evaluation".into(),
+            )
+            .into());
+        }
+        let request_hash = settlement_hash(lease, &update)?;
+        let mut connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let prior: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT request_hash,receipt_json FROM memory_maintenance_settlements
+                 WHERE settlement_id=?1",
+                params![settlement_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((prior_hash, receipt_json)) = prior {
+            if prior_hash != request_hash {
+                return Err(MemoryIntakeError::SettlementConflict);
+            }
+            return serde_json::from_str(&receipt_json).map_err(MemoryIntakeError::from);
+        }
+        let current = authoritative_lease_receipt(&transaction, lease, now_ms)?;
+        if current.revision != update.expected_revision {
+            return Err(MemoryIntakeError::RevisionConflict);
+        }
+        let receipt = next_lifecycle_receipt(&lease.durable_intake_id, current, update.clone())?;
+        transaction.execute(
+            "INSERT INTO memory_lifecycle_receipts(
+               durable_intake_id,revision,state,receipt_json,created_at_ms
+             ) VALUES(?1,?2,?3,?4,?5)",
+            params![
+                lease.durable_intake_id,
+                receipt.revision,
+                lifecycle_state_name(receipt.state),
+                serde_json::to_string(&receipt)?,
+                update.created_at_ms
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO memory_maintenance_settlements(
+               settlement_id,durable_intake_id,request_hash,receipt_json,settled_at_ms
+             ) VALUES(?1,?2,?3,?4,?5)",
+            params![
+                settlement_id,
+                lease.durable_intake_id,
+                request_hash,
+                serde_json::to_string(&receipt)?,
+                now_ms
+            ],
+        )?;
+        transaction.execute(
+            "DELETE FROM memory_maintenance_leases WHERE lease_token=?1",
+            params![lease.lease_token],
+        )?;
+        transaction.execute(
+            "DELETE FROM memory_maintenance_deferrals WHERE durable_intake_id=?1",
+            params![lease.durable_intake_id],
+        )?;
+        transaction.commit()?;
+        Ok(receipt)
+    }
+
+    pub fn maintenance_status(
+        &self,
+        now_ms: i64,
+    ) -> Result<MemoryMaintenanceStatus, MemoryIntakeError> {
+        if now_ms < 0 {
+            return Err(MemoryProtocolValidationError(
+                "memory maintenance status time is invalid".into(),
+            )
+            .into());
+        }
+        let connection = self
+            .connection
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (pending, oldest): (i64, Option<i64>) = connection.query_row(
+            "WITH latest AS (
+               SELECT durable_intake_id,MAX(revision) AS revision
+               FROM memory_lifecycle_receipts GROUP BY durable_intake_id
+             )
+             SELECT COUNT(*),MIN(intake.observed_at_ms)
+             FROM memory_intakes AS intake
+             JOIN latest ON latest.durable_intake_id=intake.durable_intake_id
+             JOIN memory_lifecycle_receipts AS lifecycle
+               ON lifecycle.durable_intake_id=latest.durable_intake_id
+              AND lifecycle.revision=latest.revision
+             WHERE lifecycle.state IN ('observed','evaluating')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let (active, expired): (i64, i64) = connection.query_row(
+            "SELECT
+               COALESCE(SUM(CASE WHEN lease_expires_at_ms>?1 THEN 1 ELSE 0 END),0),
+               COALESCE(SUM(CASE WHEN lease_expires_at_ms<=?1 THEN 1 ELSE 0 END),0)
+             FROM memory_maintenance_leases",
+            params![now_ms],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok(MemoryMaintenanceStatus {
+            pending_items: pending.try_into().unwrap_or(u64::MAX),
+            active_leases: active.try_into().unwrap_or(u64::MAX),
+            expired_leases: expired.try_into().unwrap_or(u64::MAX),
+            oldest_pending_age_ms: oldest.map(|value| now_ms.saturating_sub(value) as u64),
+        })
+    }
+
     pub fn transition(
         &self,
         principal_id: &str,
@@ -500,31 +853,7 @@ impl MemoryIntakeLedger {
             return Err(MemoryIntakeError::NotFound);
         };
         let current: MemoryLifecycleReceiptV1 = serde_json::from_str(&current_json)?;
-        if current.revision != update.expected_revision {
-            return Err(MemoryIntakeError::RevisionConflict);
-        }
-        if !allows_transition(current.state, update.state) {
-            return Err(MemoryIntakeError::InvalidTransition {
-                from: current.state,
-                to: update.state,
-            });
-        }
-        let mut resulting_record_ids = current.resulting_record_ids;
-        resulting_record_ids.extend(update.resulting_record_ids);
-        normalize_ids(&mut resulting_record_ids);
-        let mut remote_receipt_ids = current.remote_receipt_ids;
-        remote_receipt_ids.extend(update.remote_receipt_ids);
-        normalize_ids(&mut remote_receipt_ids);
-        let receipt = MemoryLifecycleReceiptV1 {
-            durable_intake_id: durable_intake_id.to_owned(),
-            revision: current.revision + 1,
-            state: update.state,
-            resulting_record_ids,
-            remote_receipt_ids,
-            scorecard: update.scorecard.or(current.scorecard),
-            reason_codes: update.reason_codes,
-            terminal_at: update.terminal_at,
-        };
+        let receipt = next_lifecycle_receipt(durable_intake_id, current, update.clone())?;
         transaction.execute(
             "INSERT INTO memory_lifecycle_receipts(
                durable_intake_id,revision,state,receipt_json,created_at_ms
@@ -539,6 +868,102 @@ impl MemoryIntakeLedger {
         )?;
         transaction.commit()?;
         Ok(receipt)
+    }
+}
+
+fn validate_lease(lease: &MemoryMaintenanceLease) -> Result<(), MemoryProtocolValidationError> {
+    WorkspaceMemoryKey::from_verified(lease.scope_key.clone())
+        .map_err(|error| MemoryProtocolValidationError(error.to_string()))?;
+    validate_authority_key("watermark", &lease.watermark)?;
+    validate_authority_key("durable_intake_id", &lease.durable_intake_id)?;
+    validate_authority_key("lease_token", &lease.lease_token)?;
+    validate_authority_key("owner_id", &lease.owner_id)?;
+    if lease.claimed_revision == 0 || lease.lease_expires_at_ms < 0 {
+        return Err(MemoryProtocolValidationError(
+            "memory maintenance lease is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn authoritative_lease_receipt(
+    transaction: &Transaction<'_>,
+    lease: &MemoryMaintenanceLease,
+    now_ms: i64,
+) -> Result<MemoryLifecycleReceiptV1, MemoryIntakeError> {
+    let receipt_json = transaction
+        .query_row(
+            "SELECT lifecycle.receipt_json
+             FROM memory_maintenance_leases AS lease
+             JOIN memory_lifecycle_receipts AS lifecycle
+               ON lifecycle.durable_intake_id=lease.durable_intake_id
+              AND lifecycle.revision=lease.claimed_revision
+             WHERE lease.phase=?1 AND lease.scope_key=?2 AND lease.watermark=?3
+               AND lease.durable_intake_id=?4 AND lease.lease_token=?5
+               AND lease.owner_id=?6 AND lease.claimed_revision=?7
+               AND lease.lease_expires_at_ms>?8",
+            params![
+                maintenance_phase_name(lease.phase),
+                lease.scope_key,
+                lease.watermark,
+                lease.durable_intake_id,
+                lease.lease_token,
+                lease.owner_id,
+                lease.claimed_revision,
+                now_ms
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or(MemoryIntakeError::LeaseUnavailable)?;
+    serde_json::from_str(&receipt_json).map_err(MemoryIntakeError::from)
+}
+
+fn next_lifecycle_receipt(
+    durable_intake_id: &str,
+    current: MemoryLifecycleReceiptV1,
+    update: MemoryLifecycleUpdate,
+) -> Result<MemoryLifecycleReceiptV1, MemoryIntakeError> {
+    if current.revision != update.expected_revision {
+        return Err(MemoryIntakeError::RevisionConflict);
+    }
+    if !allows_transition(current.state, update.state) {
+        return Err(MemoryIntakeError::InvalidTransition {
+            from: current.state,
+            to: update.state,
+        });
+    }
+    let mut resulting_record_ids = current.resulting_record_ids;
+    resulting_record_ids.extend(update.resulting_record_ids);
+    normalize_ids(&mut resulting_record_ids);
+    let mut remote_receipt_ids = current.remote_receipt_ids;
+    remote_receipt_ids.extend(update.remote_receipt_ids);
+    normalize_ids(&mut remote_receipt_ids);
+    Ok(MemoryLifecycleReceiptV1 {
+        durable_intake_id: durable_intake_id.to_owned(),
+        revision: current.revision + 1,
+        state: update.state,
+        resulting_record_ids,
+        remote_receipt_ids,
+        scorecard: update.scorecard.or(current.scorecard),
+        reason_codes: update.reason_codes,
+        terminal_at: update.terminal_at,
+    })
+}
+
+fn settlement_hash(
+    lease: &MemoryMaintenanceLease,
+    update: &MemoryLifecycleUpdate,
+) -> Result<String, serde_json::Error> {
+    Ok(format!(
+        "sha256:{:x}",
+        Sha256::digest(serde_json::to_vec(&(&lease.durable_intake_id, update))?)
+    ))
+}
+
+fn maintenance_phase_name(phase: MemoryMaintenancePhase) -> &'static str {
+    match phase {
+        MemoryMaintenancePhase::IntakeEvaluation => "intake_evaluation",
     }
 }
 

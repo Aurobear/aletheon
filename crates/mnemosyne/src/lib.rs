@@ -45,7 +45,8 @@ pub use fact_service::{
 };
 pub use intake::{
     GovernedMemoryObservation, MemoryIntakeError, MemoryIntakeLedger, MemoryIntakeLimits,
-    MemoryLifecycleUpdate,
+    MemoryLifecycleUpdate, MemoryMaintenanceClaim, MemoryMaintenanceLease, MemoryMaintenancePhase,
+    MemoryMaintenanceStatus,
 };
 pub use promotion::{MemoryPromotionReceipt, MemoryPromotionRequest, PromotionDecision};
 
