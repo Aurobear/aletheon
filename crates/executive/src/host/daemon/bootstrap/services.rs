@@ -175,45 +175,21 @@ pub(super) async fn build_agent_services(
         .iter()
         .any(|manifest| manifest.id == crate::adapters::runtime::NATIVE_COGNIT_RUNTIME_ID)
     {
-        let base_profile = agent_profiles_for_tools
-            .get("code-agent")
-            .or_else(|| {
-                agent_profiles_for_tools
-                    .values()
-                    .min_by_key(|profile| &profile.id.0)
-            })
-            .cloned();
-        base_profile
-            .map(|profile| {
-                let launch = crate::application::cognitive_role_workflow::RoleLaunchProfile {
-                    profile_id: profile.id,
-                    allowed_tools: profile.allowed_tools,
-                };
-                let profiles = [
-                    fabric::cognitive_workflow::CognitiveRole::Planner,
-                    fabric::cognitive_workflow::CognitiveRole::Explorer,
-                    fabric::cognitive_workflow::CognitiveRole::Executor,
-                    fabric::cognitive_workflow::CognitiveRole::Tester,
-                    fabric::cognitive_workflow::CognitiveRole::Reviewer,
-                    fabric::cognitive_workflow::CognitiveRole::Fixer,
-                ]
-                .into_iter()
-                .map(|role| (role, launch.clone()))
-                .collect();
-                crate::application::cognitive_role_workflow::RoleWorkflowFactory::new(
-                    agent_control.clone(),
-                    Arc::new(
-                        crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(
-                            agora.clone(),
-                        ),
+        let profiles =
+            super::role_profiles::resolve_role_launch_profiles(&agent_profiles_for_tools)?;
+        Some(Arc::new(
+            crate::application::cognitive_role_workflow::RoleWorkflowFactory::new(
+                agent_control.clone(),
+                Arc::new(
+                    crate::application::cognitive_workspace::CognitiveWorkspaceCoordinator::new(
+                        agora.clone(),
                     ),
-                    fabric::RuntimeId(crate::adapters::runtime::NATIVE_COGNIT_RUNTIME_ID.into()),
-                    profiles,
-                    10 * 60 * 1_000,
-                )
-                .map(Arc::new)
-            })
-            .transpose()?
+                ),
+                fabric::RuntimeId(crate::adapters::runtime::NATIVE_COGNIT_RUNTIME_ID.into()),
+                profiles,
+                10 * 60 * 1_000,
+            )?,
+        ))
     } else {
         None
     };
