@@ -537,7 +537,7 @@ impl CognitiveRoleWorkflow {
         let mut resolved_finding_ids = Vec::new();
 
         let mut validation = self
-            .invoke_acceptance_role(&request, version, owner, CognitiveRole::Tester)
+            .invoke_acceptance_role(&request, version, owner, CognitiveRole::Tester, None)
             .await?;
         version = validation.bound_version;
         let validation_record =
@@ -558,6 +558,7 @@ impl CognitiveRoleWorkflow {
         validation_artifact_ids.push(validation_id.clone());
 
         if !validation_passed {
+            let repair_scope = latest_change_set(&validation.packet)?.changed_paths.clone();
             let finding = format!("validation:{}", validation_id.0);
             version = self
                 .set_unresolved_findings(&request, version, owner, vec![finding.clone()])
@@ -574,7 +575,13 @@ impl CognitiveRoleWorkflow {
                 )
                 .await?;
             let repair = self
-                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Fixer)
+                .invoke_acceptance_role(
+                    &request,
+                    version,
+                    owner,
+                    CognitiveRole::Fixer,
+                    Some(repair_scope),
+                )
                 .await?;
             version = repair.bound_version;
             validate_fixer_artifact(&repair.packet, &repair.envelope, &[finding.clone()])?;
@@ -603,7 +610,7 @@ impl CognitiveRoleWorkflow {
                 )
                 .await?;
             validation = self
-                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Tester)
+                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Tester, None)
                 .await?;
             version = validation.bound_version;
             let record = validate_validation_artifact(&validation.packet, &validation.envelope)?;
@@ -651,13 +658,22 @@ impl CognitiveRoleWorkflow {
         }
 
         let review = self
-            .invoke_acceptance_role(&request, version, owner, CognitiveRole::Reviewer)
+            .invoke_acceptance_role(&request, version, owner, CognitiveRole::Reviewer, None)
             .await?;
         version = review.bound_version;
-        let findings = validate_review_artifact(&review.packet, &review.envelope, None)?;
-        let unresolved = findings
+        let findings = validate_review_artifact(
+            &review.packet,
+            &review.envelope,
+            &request.workspace_scope,
+            None,
+        )?;
+        let unresolved_findings = findings
             .iter()
             .filter(|finding| !finding.resolved)
+            .cloned()
+            .collect::<Vec<_>>();
+        let unresolved = unresolved_findings
+            .iter()
             .map(|finding| finding.id.clone())
             .collect::<Vec<_>>();
         let review_id = review.envelope.id.clone();
@@ -689,6 +705,8 @@ impl CognitiveRoleWorkflow {
                 )
                 .await?;
         } else {
+            let repair_scope =
+                unresolved_finding_scope(&unresolved_findings, &request.workspace_scope)?;
             version = self
                 .set_unresolved_findings(&request, version, owner, unresolved.clone())
                 .await?;
@@ -704,7 +722,13 @@ impl CognitiveRoleWorkflow {
                 )
                 .await?;
             let repair = self
-                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Fixer)
+                .invoke_acceptance_role(
+                    &request,
+                    version,
+                    owner,
+                    CognitiveRole::Fixer,
+                    Some(repair_scope),
+                )
                 .await?;
             version = repair.bound_version;
             validate_fixer_artifact(&repair.packet, &repair.envelope, &unresolved)?;
@@ -734,7 +758,7 @@ impl CognitiveRoleWorkflow {
                 .await?;
 
             let validation = self
-                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Tester)
+                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Tester, None)
                 .await?;
             version = validation.bound_version;
             let validation_record =
@@ -769,11 +793,15 @@ impl CognitiveRoleWorkflow {
                 .await?;
 
             let rereview = self
-                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Reviewer)
+                .invoke_acceptance_role(&request, version, owner, CognitiveRole::Reviewer, None)
                 .await?;
             version = rereview.bound_version;
-            let rereview_findings =
-                validate_review_artifact(&rereview.packet, &rereview.envelope, Some(&unresolved))?;
+            let rereview_findings = validate_review_artifact(
+                &rereview.packet,
+                &rereview.envelope,
+                &request.workspace_scope,
+                Some(&unresolved_findings),
+            )?;
             anyhow::ensure!(
                 rereview_findings.iter().all(|finding| finding.resolved),
                 "re-review did not resolve every preserved finding"
@@ -824,7 +852,22 @@ impl CognitiveRoleWorkflow {
         version: u64,
         owner: ProcessId,
         role: CognitiveRole,
+        write_scope: Option<Vec<String>>,
     ) -> anyhow::Result<PreparedRole> {
+        let mut role_scope = match (role.can_write_workspace(), write_scope) {
+            (false, None) => Vec::new(),
+            (false, Some(_)) => anyhow::bail!("read-only role received a write scope"),
+            (true, Some(scope)) if !scope.is_empty() => scope,
+            (true, _) => anyhow::bail!("writable role received no bounded write scope"),
+        };
+        anyhow::ensure!(
+            role_scope
+                .iter()
+                .all(|path| path_is_within_roots(path, &request.workspace_scope)),
+            "role write scope exceeds the owned task scope"
+        );
+        role_scope.sort();
+        role_scope.dedup();
         let profile = CognitiveRoleProfile::canonical(role);
         let projection = self
             .workspace
@@ -844,17 +887,13 @@ impl CognitiveRoleWorkflow {
         task.role = role;
         task.role_profile = profile.reference.clone();
         task.budget = profile.budget.clone();
-        task.workspace_scope = if role.can_write_workspace() {
-            request.workspace_scope.clone()
-        } else {
-            Vec::new()
-        };
+        task.workspace_scope = role_scope.clone();
         let packet = AgentTaskPacket {
             schema_version: 1,
             task,
             role_profile: profile.clone(),
             project_instructions: request.project_instructions.clone(),
-            workspace_roots: request.workspace_scope.clone(),
+            workspace_roots: role_scope.clone(),
             allowed_capabilities: request.allowed_capabilities.clone(),
             expected_evidence: request.expected_evidence.clone(),
             acceptance_criteria: projection.task.acceptance_criteria.clone(),
@@ -874,11 +913,7 @@ impl CognitiveRoleWorkflow {
                     role,
                     role_profile: profile.reference,
                     budget: profile.budget,
-                    workspace_scope: if role.can_write_workspace() {
-                        request.workspace_scope.clone()
-                    } else {
-                        Vec::new()
-                    },
+                    workspace_scope: role_scope,
                 },
             )
             .await?;
@@ -1082,7 +1117,8 @@ fn validate_validation_artifact<'a>(
 fn validate_review_artifact<'a>(
     packet: &AgentTaskPacket,
     envelope: &'a CognitiveArtifactEnvelope,
-    expected_finding_ids: Option<&[String]>,
+    task_roots: &[String],
+    expected_findings: Option<&[fabric::cognitive_workflow::ReviewFinding]>,
 ) -> anyhow::Result<&'a [fabric::cognitive_workflow::ReviewFinding]> {
     let change = latest_change_set(packet)?;
     let CognitiveArtifact::Review(review) = &envelope.artifact else {
@@ -1096,29 +1132,79 @@ fn validate_review_artifact<'a>(
     let mut ids = std::collections::HashSet::new();
     anyhow::ensure!(
         review.findings.iter().all(|finding| {
+            let unique_paths = finding
+                .affected_paths
+                .iter()
+                .collect::<std::collections::HashSet<_>>();
             !finding.id.trim().is_empty()
                 && !finding.summary.trim().is_empty()
                 && !finding.evidence_refs.is_empty()
                 && ids.insert(finding.id.clone())
+                && (finding.resolved || !finding.affected_paths.is_empty())
+                && unique_paths.len() == finding.affected_paths.len()
+                && finding
+                    .affected_paths
+                    .iter()
+                    .all(|path| path_is_within_roots(path, task_roots))
         }),
-        "review contains invalid or duplicate typed findings"
+        "review contains invalid, duplicate, or out-of-scope typed findings"
     );
-    if let Some(expected) = expected_finding_ids {
+    if let Some(expected_findings) = expected_findings {
         let actual = review
             .findings
             .iter()
             .map(|finding| finding.id.clone())
             .collect::<std::collections::HashSet<_>>();
-        let expected = expected
+        let expected = expected_findings
             .iter()
-            .cloned()
+            .map(|finding| finding.id.clone())
             .collect::<std::collections::HashSet<_>>();
         anyhow::ensure!(
             actual == expected,
             "re-review lost or duplicated preserved finding identities"
         );
+        for previous in expected_findings {
+            let current = review
+                .findings
+                .iter()
+                .find(|finding| finding.id == previous.id)
+                .expect("finding identity sets were already checked");
+            anyhow::ensure!(
+                current.affected_paths == previous.affected_paths,
+                "re-review changed preserved finding paths"
+            );
+        }
     }
     Ok(&review.findings)
+}
+
+fn unresolved_finding_scope(
+    findings: &[fabric::cognitive_workflow::ReviewFinding],
+    task_roots: &[String],
+) -> anyhow::Result<Vec<String>> {
+    let mut scope = Vec::new();
+    for finding in findings.iter().filter(|finding| !finding.resolved) {
+        anyhow::ensure!(
+            !finding.affected_paths.is_empty(),
+            "unresolved finding has no affected paths: {}",
+            finding.id
+        );
+        for path in &finding.affected_paths {
+            anyhow::ensure!(
+                path_is_within_roots(path, task_roots),
+                "finding path is outside the owned task scope: {path}"
+            );
+            if !scope.contains(path) {
+                scope.push(path.clone());
+            }
+        }
+    }
+    scope.sort();
+    anyhow::ensure!(
+        !scope.is_empty(),
+        "unresolved findings have no repair scope"
+    );
+    Ok(scope)
 }
 
 fn validate_fixer_artifact(
@@ -1143,11 +1229,12 @@ fn validate_fixer_artifact(
         "fixer output is not bound to every rejected finding"
     );
     anyhow::ensure!(
-        repair
-            .changed_paths
+        repair.changed_paths.iter().all(|path| packet
+            .task
+            .workspace_scope
             .iter()
-            .all(|path| path_is_within_roots(path, &packet.workspace_roots)),
-        "fixer changed a path outside the owned scope"
+            .any(|allowed| path == allowed)),
+        "fixer changed a path outside the finding scope"
     );
     Ok(())
 }
@@ -1183,8 +1270,12 @@ mod tests {
     struct AcceptanceInvoker {
         workspace: Arc<CognitiveWorkspaceCoordinator>,
         roles: Mutex<Vec<CognitiveRole>>,
+        bindings: Mutex<Vec<CognitiveTaskRuntimeBinding>>,
         reject_first_review: bool,
         fail_first_validation: bool,
+        review_finding_paths: Vec<String>,
+        rereview_finding_paths: Option<Vec<String>>,
+        fixer_changed_paths: Vec<String>,
         review_calls: Mutex<usize>,
         validation_calls: Mutex<usize>,
         repair_calls: Mutex<usize>,
@@ -1198,6 +1289,7 @@ mod tests {
             binding: CognitiveTaskRuntimeBinding,
         ) -> anyhow::Result<RoleInvocationTerminal> {
             let process_id = ProcessId::new();
+            self.bindings.lock().await.push(binding.clone());
             crate::application::agent_control::CognitiveTaskAdmissionPort::bind_before_launch(
                 self.workspace.as_ref(),
                 binding,
@@ -1240,6 +1332,7 @@ mod tests {
                             severity: "high".into(),
                             summary: "missing boundary validation".into(),
                             evidence_refs: vec!["artifact://diff/line-1".into()],
+                            affected_paths: self.review_finding_paths.clone(),
                             resolved: false,
                         }]
                     } else {
@@ -1252,6 +1345,10 @@ mod tests {
                                 severity: "high".into(),
                                 summary: "verified repaired boundary".into(),
                                 evidence_refs: vec!["receipt://rereview".into()],
+                                affected_paths: self
+                                    .rereview_finding_paths
+                                    .clone()
+                                    .unwrap_or_else(|| self.review_finding_paths.clone()),
                                 resolved: true,
                             })
                             .collect()
@@ -1278,7 +1375,7 @@ mod tests {
                         CognitiveArtifact::ChangeSet(CognitiveChangeSetReceipt {
                             transaction_id: format!("repair-{calls}"),
                             workspace_version: format!("tree-repair-{calls}"),
-                            changed_paths: vec!["crates/a/src/lib.rs".into()],
+                            changed_paths: self.fixer_changed_paths.clone(),
                             diff_artifact_ref: format!("artifact://repair/{calls}"),
                         }),
                         evidence_refs,
@@ -1543,8 +1640,12 @@ mod tests {
         let invoker = Arc::new(AcceptanceInvoker {
             workspace: workspace.clone(),
             roles: Mutex::new(Vec::new()),
+            bindings: Mutex::new(Vec::new()),
             reject_first_review: true,
             fail_first_validation: false,
+            review_finding_paths: vec!["crates/a/src/lib.rs".into()],
+            rereview_finding_paths: None,
+            fixer_changed_paths: vec!["crates/a/src/lib.rs".into()],
             review_calls: Mutex::new(0),
             validation_calls: Mutex::new(0),
             repair_calls: Mutex::new(0),
@@ -1569,6 +1670,21 @@ mod tests {
                 CognitiveRole::Reviewer,
             ]
         );
+        let bindings = invoker.bindings.lock().await;
+        assert!(bindings
+            .iter()
+            .filter(|binding| !binding.role.can_write_workspace())
+            .all(|binding| binding.workspace_scope.is_empty()));
+        let fixer_scopes = bindings
+            .iter()
+            .filter(|binding| binding.role == CognitiveRole::Fixer)
+            .map(|binding| binding.workspace_scope.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            fixer_scopes,
+            vec![vec![String::from("crates/a/src/lib.rs")]]
+        );
+        drop(bindings);
         let projection = workspace
             .project_role(
                 AgoraSpaceId("workflow".into()),
@@ -1592,8 +1708,12 @@ mod tests {
         let invoker = Arc::new(AcceptanceInvoker {
             workspace: workspace.clone(),
             roles: Mutex::new(Vec::new()),
+            bindings: Mutex::new(Vec::new()),
             reject_first_review: false,
             fail_first_validation: true,
+            review_finding_paths: vec!["crates/a/src/lib.rs".into()],
+            rereview_finding_paths: None,
+            fixer_changed_paths: vec!["crates/a/src/lib.rs".into()],
             review_calls: Mutex::new(0),
             validation_calls: Mutex::new(0),
             repair_calls: Mutex::new(0),
@@ -1616,5 +1736,153 @@ mod tests {
                 CognitiveRole::Reviewer,
             ]
         );
+        let fixer_scopes = invoker
+            .bindings
+            .lock()
+            .await
+            .iter()
+            .filter(|binding| binding.role == CognitiveRole::Fixer)
+            .map(|binding| binding.workspace_scope.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            fixer_scopes,
+            vec![vec![String::from("crates/a/src/lib.rs")]]
+        );
+    }
+
+    #[tokio::test]
+    async fn unresolved_review_finding_requires_admitted_paths() {
+        let (coding, workspace, _, owner) = fixture(false).await;
+        let coding_receipt = coding
+            .run_planner_explorer_executor(request(owner))
+            .await
+            .unwrap();
+        let invoker = Arc::new(AcceptanceInvoker {
+            workspace: workspace.clone(),
+            roles: Mutex::new(Vec::new()),
+            bindings: Mutex::new(Vec::new()),
+            reject_first_review: true,
+            fail_first_validation: false,
+            review_finding_paths: Vec::new(),
+            rereview_finding_paths: None,
+            fixer_changed_paths: vec!["crates/a/src/lib.rs".into()],
+            review_calls: Mutex::new(0),
+            validation_calls: Mutex::new(0),
+            repair_calls: Mutex::new(0),
+        });
+
+        let error = CognitiveRoleWorkflow::new(workspace, invoker.clone())
+            .run_reviewer_tester_fixer(acceptance_request(&coding_receipt))
+            .await
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("invalid, duplicate, or out-of-scope typed findings"));
+        assert_eq!(*invoker.repair_calls.lock().await, 0);
+    }
+
+    #[tokio::test]
+    async fn review_finding_path_must_stay_inside_task_scope() {
+        let (coding, workspace, _, owner) = fixture(false).await;
+        let coding_receipt = coding
+            .run_planner_explorer_executor(request(owner))
+            .await
+            .unwrap();
+        let invoker = Arc::new(AcceptanceInvoker {
+            workspace: workspace.clone(),
+            roles: Mutex::new(Vec::new()),
+            bindings: Mutex::new(Vec::new()),
+            reject_first_review: true,
+            fail_first_validation: false,
+            review_finding_paths: vec!["crates/b/src/lib.rs".into()],
+            rereview_finding_paths: None,
+            fixer_changed_paths: vec!["crates/a/src/lib.rs".into()],
+            review_calls: Mutex::new(0),
+            validation_calls: Mutex::new(0),
+            repair_calls: Mutex::new(0),
+        });
+
+        let error = CognitiveRoleWorkflow::new(workspace, invoker.clone())
+            .run_reviewer_tester_fixer(acceptance_request(&coding_receipt))
+            .await
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("invalid, duplicate, or out-of-scope typed findings"));
+        assert_eq!(*invoker.repair_calls.lock().await, 0);
+    }
+
+    #[tokio::test]
+    async fn fixer_change_set_must_stay_inside_finding_scope() {
+        let (coding, workspace, _, owner) = fixture(false).await;
+        let coding_receipt = coding
+            .run_planner_explorer_executor(request(owner))
+            .await
+            .unwrap();
+        let invoker = Arc::new(AcceptanceInvoker {
+            workspace: workspace.clone(),
+            roles: Mutex::new(Vec::new()),
+            bindings: Mutex::new(Vec::new()),
+            reject_first_review: true,
+            fail_first_validation: false,
+            review_finding_paths: vec!["crates/a/src/lib.rs".into()],
+            rereview_finding_paths: None,
+            fixer_changed_paths: vec!["crates/a/src/sibling.rs".into()],
+            review_calls: Mutex::new(0),
+            validation_calls: Mutex::new(0),
+            repair_calls: Mutex::new(0),
+        });
+
+        let error = CognitiveRoleWorkflow::new(workspace, invoker.clone())
+            .run_reviewer_tester_fixer(acceptance_request(&coding_receipt))
+            .await
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("fixer changed a path outside the finding scope"));
+        assert_eq!(*invoker.repair_calls.lock().await, 1);
+        let fixer = invoker
+            .bindings
+            .lock()
+            .await
+            .iter()
+            .find(|binding| binding.role == CognitiveRole::Fixer)
+            .cloned()
+            .unwrap();
+        assert_eq!(fixer.workspace_scope, vec!["crates/a/src/lib.rs"]);
+    }
+
+    #[tokio::test]
+    async fn rereview_cannot_widen_preserved_finding_paths() {
+        let (coding, workspace, _, owner) = fixture(false).await;
+        let coding_receipt = coding
+            .run_planner_explorer_executor(request(owner))
+            .await
+            .unwrap();
+        let invoker = Arc::new(AcceptanceInvoker {
+            workspace: workspace.clone(),
+            roles: Mutex::new(Vec::new()),
+            bindings: Mutex::new(Vec::new()),
+            reject_first_review: true,
+            fail_first_validation: false,
+            review_finding_paths: vec!["crates/a/src/lib.rs".into()],
+            rereview_finding_paths: Some(vec!["crates/a/src/sibling.rs".into()]),
+            fixer_changed_paths: vec!["crates/a/src/lib.rs".into()],
+            review_calls: Mutex::new(0),
+            validation_calls: Mutex::new(0),
+            repair_calls: Mutex::new(0),
+        });
+
+        let error = CognitiveRoleWorkflow::new(workspace, invoker)
+            .run_reviewer_tester_fixer(acceptance_request(&coding_receipt))
+            .await
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("re-review changed preserved finding paths"));
     }
 }
