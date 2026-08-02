@@ -11,7 +11,7 @@ use fabric::{
     AgentRuntimeCapability, AgentSendRequest, AgentSnapshot, AgentSpawnIntent, AgentSpawnRequest,
     AgentWaitRequest, AgentWorkspaceMode, AgoraVersion, CancelReason, Clock, ContextBinding,
     EventSpine, ExitReason, NamespaceId, OperationExitReason, OperationKind, OperationRequest,
-    ProcessId, ProcessSignal, SettlementTerminal, SpawnSpec, Timer,
+    ProcessSignal, SettlementTerminal, SpawnSpec, Timer,
 };
 use kernel::chronos::SystemTimer;
 use kernel::operation::OperationScope;
@@ -916,6 +916,8 @@ impl AgentControlPort for AgentControlService {
         } else {
             None
         };
+        constrain_cognitive_workspace(&mut request)?;
+        request.validate()?;
         let agent_id = identity.agent_id;
         let workspace_id = agent_workspace_id(agent_id);
         let request_hash = agent_spawn_request_hash(&request)?;
@@ -1836,6 +1838,45 @@ fn control_error(kind: AgentControlErrorKind, message: impl Into<String>) -> Age
         kind,
         message: message.into(),
     }
+}
+
+fn constrain_cognitive_workspace(
+    request: &mut AgentSpawnRequest,
+) -> Result<(), AgentControlError> {
+    let Some(binding) = request.cognitive_binding.as_ref() else {
+        return Ok(());
+    };
+    let role = binding.role;
+    let scope = binding.workspace_scope.clone();
+    if role.can_write_workspace() && scope.is_empty() {
+        return Err(control_error(
+            AgentControlErrorKind::Forbidden,
+            "writable cognitive role has an empty workspace scope",
+        ));
+    }
+    if !role.can_write_workspace() && !scope.is_empty() {
+        return Err(control_error(
+            AgentControlErrorKind::Forbidden,
+            "read-only cognitive role received a writable workspace scope",
+        ));
+    }
+    let workspace = request.trusted_workspace.clone().ok_or_else(|| {
+        control_error(
+            AgentControlErrorKind::Forbidden,
+            "cognitive Agent spawn has no trusted workspace authority",
+        )
+    })?;
+    let effective_scope = if role.can_write_workspace() {
+        scope.as_slice()
+    } else {
+        &[]
+    };
+    request.trusted_workspace = Some(
+        workspace
+            .narrow_to_declared_paths(effective_scope)
+            .map_err(AgentControlError::invalid)?,
+    );
+    Ok(())
 }
 
 fn runtime_error(error: impl std::fmt::Display) -> AgentControlError {
