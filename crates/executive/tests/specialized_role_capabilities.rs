@@ -194,6 +194,7 @@ impl CognitiveTaskAdmissionPort for AcceptBinding {
 
 struct BoundaryResult {
     snapshot: AgentSnapshot,
+    output: Option<CognitiveRoleOutput>,
     output_validation: anyhow::Result<()>,
     calls: Vec<(String, bool)>,
 }
@@ -372,6 +373,11 @@ async fn run_boundary(
     final_artifact: CognitiveArtifact,
 ) -> BoundaryResult {
     let (packet, binding) = packet_and_binding(role, scope);
+    let evidence_refs = if role == CognitiveRole::Fixer {
+        vec!["finding:F-1".into(), "receipt://role-boundary".into()]
+    } else {
+        vec!["receipt://role-boundary".into()]
+    };
     let output = CognitiveRoleOutput {
         schema_version: 1,
         projection_id: packet.projection_receipt.projection_id,
@@ -380,7 +386,7 @@ async fn run_boundary(
             "agora:{}",
             packet.projection_receipt.workspace_version
         )],
-        evidence_refs: vec!["receipt://role-boundary".into()],
+        evidence_refs,
         confidence: 1.0,
         artifact: final_artifact,
     };
@@ -483,7 +489,7 @@ async fn run_boundary(
         .result
         .as_ref()
         .and_then(|result| serde_json::from_str::<CognitiveRoleOutput>(&result.output).ok());
-    let output_validation = match parsed {
+    let output_validation = match parsed.as_ref() {
         Some(output) => output.validate_for(&packet),
         None => Err(anyhow::anyhow!(
             "terminal result did not contain CognitiveRoleOutput"
@@ -492,6 +498,7 @@ async fn run_boundary(
     let calls = capability.calls.lock().unwrap().clone();
     BoundaryResult {
         snapshot,
+        output: parsed,
         output_validation,
         calls,
     }
@@ -647,6 +654,12 @@ async fn fixer_can_modify_only_the_explicit_finding_path() {
     .await;
     assert_eq!(accepted.snapshot.status, AgentRunStatus::Succeeded);
     accepted.output_validation.unwrap();
+    assert!(accepted
+        .output
+        .as_ref()
+        .unwrap()
+        .evidence_refs
+        .contains(&"finding:F-1".into()));
     assert_eq!(accepted.calls, vec![("file_write".into(), false)]);
     assert_eq!(std::fs::read_to_string(&allowed).unwrap(), "fixed\n");
     assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "sibling\n");

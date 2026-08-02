@@ -1,6 +1,6 @@
 # Specialized Role Profiles Implementation Plan
 
-> **For agentic workers:** Use `flow-feature` or `plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Use `flow-feature` or `plans` to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Enforce six distinct native cognitive role profiles so read-only roles cannot mutate the workspace, Executor cannot forge review output, and Fixer can write only paths attached to explicit findings.
 
@@ -72,7 +72,7 @@ Although Planner, Explorer, and Reviewer share an explicit tool set, their profi
 - Modify: `crates/executive/src/host/daemon/bootstrap/bundled_profiles.rs`
 - Test: `crates/executive/src/host/daemon/bootstrap/bundled_profiles.rs`
 
-- [ ] **Step 1: Add a failing bundled-profile inventory test**
+- [x] **Step 1: Add a failing bundled-profile inventory test**
 
 Add a unit test beside the existing bundled asset tests:
 
@@ -99,7 +99,7 @@ fn specialized_role_profiles_are_bundled() {
 }
 ```
 
-- [ ] **Step 2: Run the narrow test and observe the missing assets**
+- [x] **Step 2: Run the narrow test and observe the missing assets**
 
 Run:
 
@@ -109,7 +109,7 @@ bash scripts/cargo-agent.sh test -p executive host::daemon::bootstrap::bundled_p
 
 Expected: FAIL because the `PROFILES` table has no `planner-agent.md` entry.
 
-- [ ] **Step 3: Add the six complete profile documents**
+- [x] **Step 3: Add the six complete profile documents**
 
 Use the existing agent-profile front matter schema. The Planner document is:
 
@@ -161,7 +161,7 @@ description: Repairs only paths bound to explicit unresolved findings.
 body: Return only a typed ChangeSet for every supplied unresolved finding. Modify only the bound finding paths and cite each finding ID.
 ```
 
-- [ ] **Step 4: Add every profile to the existing bundled asset table**
+- [x] **Step 4: Add every profile to the existing bundled asset table**
 
 Follow the existing `(filename, include_str!)` pattern in `crates/executive/src/host/daemon/bootstrap/bundled_profiles.rs`. Add these exact entries to `PROFILES`:
 
@@ -174,7 +174,7 @@ Follow the existing `(filename, include_str!)` pattern in `crates/executive/src/
 ("fixer-agent.md", include_str!("../../../../../../agents/fixer-agent.md")),
 ```
 
-- [ ] **Step 5: Re-run the inventory test**
+- [x] **Step 5: Re-run the inventory test**
 
 ```bash
 bash scripts/cargo-agent.sh test -p executive host::daemon::bootstrap::bundled_profiles::tests::specialized_role_profiles_are_bundled -- --exact
@@ -182,7 +182,7 @@ bash scripts/cargo-agent.sh test -p executive host::daemon::bootstrap::bundled_p
 
 Expected: PASS; all six bundled Markdown profiles are readable by exact ID.
 
-- [ ] **Step 6: Commit the bundled profile stage**
+- [x] **Step 6: Commit the bundled profile stage**
 
 ```bash
 git add agents/planner-agent.md agents/explorer-agent.md agents/executor-agent.md agents/tester-agent.md agents/reviewer-agent.md agents/fixer-agent.md crates/executive/src/host/daemon/bootstrap/bundled_profiles.rs
@@ -208,7 +208,7 @@ MSG
 - Modify: `crates/executive/src/host/daemon/bootstrap/runtime.rs:47-59`
 - Test: `crates/executive/src/host/daemon/bootstrap/role_profiles.rs`
 
-- [ ] **Step 1: Write resolver tests before implementation**
+- [x] **Step 1: Write resolver tests before implementation**
 
 ```rust
 #[cfg(test)]
@@ -235,7 +235,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the test and observe unresolved resolver symbols**
+- [x] **Step 2: Run the test and observe unresolved resolver symbols**
 
 Run:
 
@@ -245,7 +245,7 @@ bash scripts/cargo-agent.sh test -p executive host::daemon::bootstrap::role_prof
 
 Expected: FAIL to compile because `ROLE_PROFILE_IDS` and `permitted_tools` do not exist.
 
-- [ ] **Step 3: Implement the exact mapping and permitted sets**
+- [x] **Step 3: Implement the exact mapping and permitted sets**
 
 Create `role_profiles.rs` with constants for the read/write sets and this mapping:
 
@@ -275,7 +275,7 @@ fn permitted_tools(role: CognitiveRole) -> HashSet<&'static str> {
 
 Define `READ_TOOLS` and `WRITE_TOOLS` from the Tool contracts table. `explicit_tools` returns `READ_TOOLS` for Planner, Explorer, and Reviewer; `READ_TOOLS + validation_run` for Tester; and `READ_TOOLS + WRITE_TOOLS` for Executor and Fixer. Root is rejected because it is not a launchable native worker role.
 
-- [ ] **Step 4: Implement final effective-profile validation**
+- [x] **Step 4: Implement final effective-profile validation**
 
 ```rust
 pub(super) fn resolve_role_launch_profiles(
@@ -305,7 +305,7 @@ pub(super) fn resolve_role_launch_profiles(
 
 Use the existing `fabric::AgentProfile` and `RoleLaunchProfile` types; do not add a second profile or factory type.
 
-- [ ] **Step 5: Replace the shared fallback at bootstrap**
+- [x] **Step 5: Replace the shared fallback at bootstrap**
 
 Register `mod role_profiles;` in `bootstrap/mod.rs`. In `services.rs`, when Native Cognit is installed, call `resolve_role_launch_profiles(&agent_profiles_for_tools)?` and pass the returned map to the existing five-argument `RoleWorkflowFactory::new`; otherwise retain the current absence behavior. Delete the `code-agent` lookup, alphabetical fallback, profile cloning, and `Option::map` path entirely.
 
@@ -324,7 +324,7 @@ fn resolver_rejects_missing_or_overpowered_profile() {
 }
 ```
 
-- [ ] **Step 6: Run resolver and bootstrap tests**
+- [x] **Step 6: Run resolver and bootstrap tests**
 
 Run:
 
@@ -335,7 +335,7 @@ bash scripts/cargo-agent.sh test -p executive host::daemon::bootstrap --lib
 
 Expected: PASS; missing, renamed, underpowered, or overpowered role profiles fail closed and no code-agent fallback remains.
 
-- [ ] **Step 7: Commit the resolver stage**
+- [x] **Step 7: Commit the resolver stage**
 
 ```bash
 git add crates/executive/src/host/daemon/bootstrap/role_profiles.rs crates/executive/src/host/daemon/bootstrap/mod.rs crates/executive/src/host/daemon/bootstrap/services.rs crates/executive/src/host/daemon/bootstrap/runtime.rs
@@ -358,7 +358,7 @@ MSG
 - Modify: `crates/fabric/src/types/local_authority.rs:111-140`
 - Test: `crates/fabric/tests/local_authority_contract.rs`
 
-- [ ] **Step 1: Add failing contract tests**
+- [x] **Step 1: Add failing contract tests**
 
 ```rust
 #[test]
@@ -399,7 +399,7 @@ fn declared_paths_reject_symlink_escape() {
 }
 ```
 
-- [ ] **Step 2: Run the Fabric contract target**
+- [x] **Step 2: Run the Fabric contract target**
 
 Run:
 
@@ -409,7 +409,7 @@ bash scripts/cargo-agent.sh test -p fabric --test local_authority_contract
 
 Expected: FAIL to compile because `narrow_to_declared_paths` does not exist.
 
-- [ ] **Step 3: Implement canonical containment without creating files**
+- [x] **Step 3: Implement canonical containment without creating files**
 
 Add:
 
@@ -459,11 +459,11 @@ fn resolve_existing_ancestor(candidate: &std::path::Path) -> Result<PathBuf, Str
 
 Keep both methods in the existing `WorkspacePolicy` module. The public method rejects `..` before the helper runs; the helper preserves a non-existent target path while resolving every existing symlink before the containment check.
 
-- [ ] **Step 4: Add duplicate, absolute, and empty-scope assertions**
+- [x] **Step 4: Add duplicate, absolute, and empty-scope assertions**
 
 Extend the same tests to prove duplicate paths collapse, an admitted absolute path succeeds, an absolute outside path fails, and `narrow_to_declared_paths(&[])` produces a read-only policy with no writable roots.
 
-- [ ] **Step 5: Run Fabric tests**
+- [x] **Step 5: Run Fabric tests**
 
 Run:
 
@@ -474,7 +474,7 @@ bash scripts/cargo-agent.sh test -p fabric local_authority --lib
 
 Expected: PASS; relative and missing paths resolve safely while traversal and symlink escapes are rejected.
 
-- [ ] **Step 6: Commit workspace attenuation**
+- [x] **Step 6: Commit workspace attenuation**
 
 ```bash
 git add crates/fabric/src/types/local_authority.rs crates/fabric/tests/local_authority_contract.rs
@@ -499,7 +499,7 @@ MSG
 - Test: `crates/executive/tests/agent_cognitive_admission.rs`
 - Test: `crates/executive/tests/native_cognit_runtime.rs`
 
-- [ ] **Step 1: Add an AgentControl admission test that records runtime authority**
+- [x] **Step 1: Add an AgentControl admission test that records runtime authority**
 
 Extend the existing recording launcher fixture so the launched `AgentRuntimeInput.workspace` can be inspected, then add:
 
@@ -523,7 +523,7 @@ async fn cognitive_binding_attenuates_effective_runtime_workspace() {
 
 Add a second test with Planner and an empty `workspace_scope`; assert the launched workspace exists but has an empty `writable_roots()` list. Add negative tests for a writer with an empty scope, a scope outside the trusted workspace, and a cognitive request with no trusted workspace.
 
-- [ ] **Step 2: Run the admission test and observe whole-workspace authority**
+- [x] **Step 2: Run the admission test and observe whole-workspace authority**
 
 Run:
 
@@ -533,7 +533,7 @@ bash scripts/cargo-agent.sh test -p executive --test agent_cognitive_admission
 
 Expected: FAIL because `spawn` forwards the trusted whole workspace without narrowing it to the cognitive binding.
 
-- [ ] **Step 3: Add a host-only cognitive attenuation helper**
+- [x] **Step 3: Add a host-only cognitive attenuation helper**
 
 In `application/agent_control/mod.rs`, add:
 
@@ -570,7 +570,7 @@ fn constrain_cognitive_workspace(request: &mut AgentSpawnRequest) -> Result<(), 
 
 Call it after parent authority attenuation and its second `request.validate()`, but before `agent_spawn_request_hash`, admission reservation, persistence, or runtime launch. Run `request.validate()?` again after narrowing so the admitted request and its hash represent the final authority.
 
-- [ ] **Step 4: Add a failing Native Cognit workspace preservation test**
+- [x] **Step 4: Add a failing Native Cognit workspace preservation test**
 
 In `native_cognit_runtime.rs`, launch a cognitive runtime input whose `workspace` has only `src/allowed.rs` writable. Register the real scoped `file_write` tool and assert its `CapabilityExecutionContext.workspace.writable_roots()` is exactly the admitted file, not the process current directory. Also pass `workspace: None` with a cognitive binding and assert `AgentControlErrorKind::Forbidden`.
 
@@ -582,7 +582,7 @@ bash scripts/cargo-agent.sh test -p executive --test native_cognit_runtime
 
 Expected: FAIL because `agent_principal_context` reconstructs authority from `std::env::current_dir()`.
 
-- [ ] **Step 5: Preserve admitted workspace in Native Cognit**
+- [x] **Step 5: Preserve admitted workspace in Native Cognit**
 
 Change the helper to:
 
@@ -620,7 +620,7 @@ fn agent_principal_context(
 
 Call it with `input.workspace.clone()` and `input.request.cognitive_binding.as_ref()`. Continue copying `principal_context.workspace` into `CapabilityExecutionContext`; do not construct another policy later in the turn.
 
-- [ ] **Step 6: Run both runtime authority targets**
+- [x] **Step 6: Run both runtime authority targets**
 
 ```bash
 bash scripts/cargo-agent.sh test -p executive --test agent_cognitive_admission
@@ -629,7 +629,7 @@ bash scripts/cargo-agent.sh test -p executive --test native_cognit_runtime
 
 Expected: PASS; AgentControl admission and the actual capability context expose the same narrowed workspace.
 
-- [ ] **Step 7: Commit runtime authority preservation**
+- [x] **Step 7: Commit runtime authority preservation**
 
 ```bash
 git add crates/executive/src/application/agent_control/mod.rs crates/executive/src/adapters/runtime/native_cognit.rs crates/executive/tests/agent_cognitive_admission.rs crates/executive/tests/native_cognit_runtime.rs
@@ -653,7 +653,7 @@ MSG
 - Modify: `crates/executive/src/application/cognitive_role_workflow.rs:540-900,1124-1152`
 - Test: `crates/executive/src/application/cognitive_role_workflow.rs:1171-1300`
 
-- [ ] **Step 1: Add affected paths to the typed finding schema**
+- [x] **Step 1: Add affected paths to the typed finding schema**
 
 Change the type to:
 
@@ -672,7 +672,7 @@ pub struct ReviewFinding {
 
 Update the two existing `ReviewFinding` constructors in the workflow tests with explicit `affected_paths`. Use `vec!["src/allowed.rs".into()]` for unresolved findings and an empty vector only for already-resolved legacy fixtures.
 
-- [ ] **Step 2: Add failing finding-scope and artifact tests**
+- [x] **Step 2: Add failing finding-scope and artifact tests**
 
 Add workflow tests that assert:
 
@@ -697,7 +697,7 @@ async fn fixer_change_set_must_stay_inside_finding_scope() {
 
 Add a launch-recording assertion that the Fixer `AgentTaskPacket.task.workspace_scope`, `packet.workspace_roots`, and `CognitiveTaskRuntimeBinding.workspace_scope` are all exactly `src/allowed.rs`. Add an Executor test returning `CognitiveArtifact::Review` and assert `CognitiveRoleOutput::validate_for` rejects it with `role output kind is not authorized`.
 
-- [ ] **Step 3: Run the workflow tests and observe whole-task scope**
+- [x] **Step 3: Run the workflow tests and observe whole-task scope**
 
 Run:
 
@@ -707,7 +707,7 @@ bash scripts/cargo-agent.sh test -p executive application::cognitive_role_workfl
 
 Expected: FAIL because findings have no paths and `invoke_acceptance_role` assigns the request's whole task scope to every writer.
 
-- [ ] **Step 4: Validate and normalize unresolved finding paths**
+- [x] **Step 4: Validate and normalize unresolved finding paths**
 
 Add a helper in `cognitive_role_workflow.rs`:
 
@@ -740,7 +740,7 @@ fn unresolved_finding_scope(
 
 When re-reviewing, require matching finding IDs to preserve their `affected_paths`; a role cannot silently widen an existing finding. Reject duplicate finding IDs and empty IDs before computing scope.
 
-- [ ] **Step 5: Pass explicit write scope into acceptance role launches**
+- [x] **Step 5: Pass explicit write scope into acceptance role launches**
 
 Change the signature to:
 
@@ -772,7 +772,7 @@ Use `role_scope.clone()` for `task.workspace_scope`, `packet.workspace_roots`, a
 - Validation-failure Fixer: `Some(latest_change_set.changed_paths.clone())`.
 - Review-failure Fixer: `Some(unresolved_finding_scope(&unresolved, &request.workspace_scope)?)`.
 
-- [ ] **Step 6: Enforce Fixer output against the packet's exact scope**
+- [x] **Step 6: Enforce Fixer output against the packet's exact scope**
 
 Replace the current `packet.workspace_roots` comparison in `validate_fixer_artifact` with:
 
@@ -787,7 +787,7 @@ anyhow::ensure!(
 
 Keep the existing transaction, workspace version, diff reference, and `finding:{id}` evidence checks. Require every unresolved finding ID to be cited; a narrower output path list is valid, but no output path may be outside the exact binding.
 
-- [ ] **Step 7: Run Fabric and workflow targets**
+- [x] **Step 7: Run Fabric and workflow targets**
 
 ```bash
 bash scripts/cargo-agent.sh test -p fabric cognitive_workflow --lib
@@ -796,7 +796,7 @@ bash scripts/cargo-agent.sh test -p executive application::cognitive_role_workfl
 
 Expected: PASS; invalid finding paths and forged artifact kinds fail before candidate commit, and Fixer receives the exact typed path union.
 
-- [ ] **Step 8: Commit typed finding scope enforcement**
+- [x] **Step 8: Commit typed finding scope enforcement**
 
 ```bash
 git add crates/fabric/src/types/cognitive_workflow.rs crates/executive/src/application/cognitive_role_workflow.rs
@@ -818,7 +818,7 @@ MSG
 **Files:**
 - Create: `crates/executive/tests/specialized_role_capabilities.rs`
 
-- [ ] **Step 1: Build a deterministic fixture over the real boundaries**
+- [x] **Step 1: Build a deterministic fixture over the real boundaries**
 
 Create an integration fixture that uses:
 
@@ -865,7 +865,7 @@ assert!(terminal.status.is_terminal());
 
 Deserialize the durable result receipt into `CognitiveRoleOutput`, validate it against the original packet, and only then read both fixture files. Do not treat an asynchronous tool return or child prose as terminal success.
 
-- [ ] **Step 2: Add read-only role mutation cases**
+- [x] **Step 2: Add read-only role mutation cases**
 
 ```rust
 #[tokio::test]
@@ -885,7 +885,7 @@ async fn planner_reviewer_and_tester_cannot_write() {
 
 Implement `script_calling_file_write` as two deterministic `LlmResponse` values: the first contains one `ToolUse` block named `file_write` with JSON `{ "path": "src/allowed.rs", "content": "mutated\n" }`; the second contains the role's typed completion output. The test passes only when the tool is unavailable or authority rejects it and the file bytes remain unchanged. For Tester, add a separate successful `validation_run` script to prove governed validation remains exposed.
 
-- [ ] **Step 3: Add Executor artifact-forgery and task-scope cases**
+- [x] **Step 3: Add Executor artifact-forgery and task-scope cases**
 
 ```rust
 #[tokio::test]
@@ -912,7 +912,7 @@ async fn executor_cannot_commit_review_or_escape_task_scope() {
 
 The forged receipt must reach `CognitiveRoleOutput::validate_for`; assert the recorded terminal error contains `role output kind is not authorized`. The out-of-scope tool attempt must be present in runtime events and denied by the capability boundary, not removed from the scripted evidence.
 
-- [ ] **Step 4: Add exact Fixer finding-scope cases**
+- [x] **Step 4: Add exact Fixer finding-scope cases**
 
 ```rust
 #[tokio::test]
@@ -947,7 +947,7 @@ async fn fixer_can_change_only_the_explicit_finding_path() {
 
 The successful receipt cites `finding:F-1`, contains a new transaction ID, a nonempty diff artifact reference, and `changed_paths == ["src/allowed.rs"]`. The rejected run cannot produce a PASS terminal status even if its scripted second response claims success.
 
-- [ ] **Step 5: Run the boundary test three consecutive times**
+- [x] **Step 5: Run the boundary test three consecutive times**
 
 ```bash
 for run in 1 2 3; do
@@ -958,7 +958,7 @@ done
 
 Expected: all three runs PASS with identical role verdicts; terminal receipts are observed, Planner/Reviewer/Tester files remain unchanged, Executor Review is rejected, and only the Fixer finding path changes.
 
-- [ ] **Step 6: Commit the boundary fixture**
+- [x] **Step 6: Commit the boundary fixture**
 
 ```bash
 git add crates/executive/tests/specialized_role_capabilities.rs
@@ -980,7 +980,7 @@ MSG
 **Files:**
 - No repository file changes; deployment receipts remain in the existing external acceptance artifact locations.
 
-- [ ] **Step 1: Run the complete focused validation set**
+- [x] **Step 1: Run the complete focused validation set**
 
 Run sequentially; do not run Cargo commands concurrently:
 
@@ -997,7 +997,7 @@ bash scripts/cargo-agent.sh test -p executive --test specialized_role_capabiliti
 
 Expected: every command exits 0. A provider error, rejected request, non-terminal child, receipt mismatch, changed forbidden file, or rendered/runtime disagreement is a failure.
 
-- [ ] **Step 2: Run formatting and repository diff checks**
+- [x] **Step 2: Run formatting and repository diff checks**
 
 ```bash
 bash scripts/cargo-agent.sh fmt --all -- --check
@@ -1007,7 +1007,7 @@ git status --short
 
 Expected: formatting and diff checks exit 0; status contains only intended implementation files plus the two pre-existing untracked audit documents. Never stage or delete either audit document.
 
-- [ ] **Step 3: Perform mandatory system-installed deployment acceptance**
+- [x] **Step 3: Perform mandatory system-installed deployment acceptance**
 
 ```bash
 sudo bash scripts/aletheon.sh deploy
@@ -1015,7 +1015,7 @@ sudo bash scripts/aletheon.sh deploy
 
 Expected: PASS. This is the authoritative acceptance and must prove the candidate is installed through the production path, machine and user daemons are active, their restart counters stay stable, and a real governed LLM request completes through `/usr/bin/aletheon` and the official user socket. A development binary, isolated daemon, temporary home, direct provider call, or direct bridge test is diagnostic only.
 
-- [ ] **Step 4: Independently record executable provenance and stability**
+- [x] **Step 4: Independently record executable provenance and stability**
 
 ```bash
 core_pid=$(systemctl show aletheon-core.service -p MainPID --value)
@@ -1034,7 +1034,7 @@ systemctl --user is-active --quiet aletheon.service
 
 Expected: all four SHA-256 values are identical; both services remain active; both restart counters remain unchanged. Record the common digest, PIDs, counters, deployment receipt path, and governed-request receipt path in the implementation handoff.
 
-- [ ] **Step 5: Inspect the complete implementation diff**
+- [x] **Step 5: Inspect the complete implementation diff**
 
 ```bash
 git status --short
@@ -1044,13 +1044,36 @@ git diff --check origin/dev...HEAD
 
 Expected: the diff is limited to specialized profile assets, role resolution, workspace attenuation, typed finding scope, their tests, and generated acceptance receipts owned by the deployment workflow. No unrelated crate, state authority, prompt-specific runtime behavior, or audit input document is changed.
 
-- [ ] **Step 6: Preserve deployment evidence without inventing tracked files**
+- [x] **Step 6: Preserve deployment evidence without inventing tracked files**
 
 ```bash
 git status --short
 ```
 
 Expected: deployment creates no tracked repository changes. Reference the external receipt locations printed by `scripts/aletheon.sh deploy` in the implementation handoff and create no evidence-only file. Any unexpected tracked change fails this step and must be investigated before completion.
+
+## Validation evidence — 2026-08-02
+
+- Bundled profile inventory, strict resolver contracts, Fabric cognitive
+  contracts, workspace authority, scoped filesystem, AgentControl admission,
+  Native Cognit runtime, and cognitive workflow tests: PASS through
+  `scripts/cargo-agent.sh`.
+- `specialized_role_capabilities`: PASS in three consecutive deterministic
+  runs. Each run observed an authoritative AgentControl terminal snapshot and
+  checked final file bytes for Planner, Explorer, Reviewer, Tester, Executor,
+  and Fixer boundaries.
+- `bash scripts/cargo-agent.sh fmt --all -- --check`: PASS.
+- `git diff --check`: PASS for the complete implementation range.
+- `sudo bash scripts/aletheon.sh deploy`: PASS. The deploy gate seeded all six
+  shipped profiles, reported the profile registry ready, completed the official
+  Memory Agent smoke, and completed a real request through the installed client
+  and official user socket.
+- Release, `/usr/bin/aletheon`, machine daemon, and user daemon SHA-256:
+  `822d411f57116b114c281ca0e125c637ee92249ec5153a9e513e7a364928a002`.
+- Independent stability observation: machine PID `1739781`, user PID `1739800`,
+  both services active, and both `NRestarts` values remained `0` across the
+  observation interval.
+- The two external audit input documents remain untracked and unchanged.
 
 ## Completion audit
 
