@@ -12,6 +12,9 @@ use executive::testing::coding_runtime::{
     pi_manifest, AgentProfileRegistry, NativeCognitRuntime, NativeCognitRuntimeResources,
     ResolvedAgentProfile,
 };
+use fabric::cognitive_workflow::{
+    CognitiveRole, CognitiveRoleProfile, CognitiveTaskNodeId, CognitiveTaskRuntimeBinding,
+};
 use fabric::{
     AgentApprovalPolicy, AgentBudget, AgentContextFork, AgentControlErrorKind, AgentHandle,
     AgentId, AgentMessageKind, AgentMessagePayload, AgentProfile, AgentProfileId,
@@ -234,6 +237,23 @@ fn input(cancel: CancellationToken) -> AgentRuntimeInput {
     }
 }
 
+fn cognitive_binding(
+    role: CognitiveRole,
+    workspace_scope: Vec<String>,
+) -> CognitiveTaskRuntimeBinding {
+    let profile = CognitiveRoleProfile::canonical(role);
+    CognitiveTaskRuntimeBinding {
+        space: fabric::AgoraSpaceId("root-task".into()),
+        task_node_id: CognitiveTaskNodeId(format!("{role:?}")),
+        expected_workspace_version: 1,
+        expected_owner: ProcessId::new(),
+        role,
+        role_profile: profile.reference,
+        budget: profile.budget,
+        workspace_scope,
+    }
+}
+
 fn runtime(llm: Arc<ScriptedLlm>, capability: Arc<RecordingCapability>) -> NativeCognitRuntime {
     let clock = Arc::new(TestClock::default());
     let profiles = Arc::new(AgentProfileRegistry::default());
@@ -373,6 +393,73 @@ async fn tool_calls_use_persisted_lifecycle_context_and_evidence() {
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn cognitive_tool_calls_use_the_admitted_workspace_policy() {
+    let llm = ScriptedLlm::new(vec![
+        response(
+            vec![ContentBlock::ToolUse {
+                id: "call-1".into(),
+                name: "echo".into(),
+                input: serde_json::json!({"value": 1}),
+            }],
+            StopReason::ToolUse,
+        ),
+        response(
+            vec![ContentBlock::Text {
+                text: "after tool".into(),
+            }],
+            StopReason::EndTurn,
+        ),
+    ]);
+    let capability = Arc::new(RecordingCapability::default());
+    let temporary = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temporary.path().join("src")).unwrap();
+    let allowed = temporary.path().join("src/allowed.rs");
+    std::fs::write(&allowed, "allowed").unwrap();
+    let workspace =
+        fabric::WorkspacePolicy::from_resolved_roots(temporary.path().to_path_buf(), Vec::new())
+            .unwrap()
+            .narrow_to_declared_paths(&["src/allowed.rs".into()])
+            .unwrap();
+    let mut runtime_input = input(CancellationToken::new());
+    runtime_input.workspace = Some(workspace.clone());
+    runtime_input.request.trusted_workspace = Some(workspace);
+    runtime_input.request.cognitive_binding = Some(cognitive_binding(
+        CognitiveRole::Fixer,
+        vec!["src/allowed.rs".into()],
+    ));
+
+    runtime(llm, capability.clone())
+        .launch(runtime_input, Arc::new(RecordingEvents::default()))
+        .await
+        .unwrap();
+
+    let calls = capability.calls.lock().unwrap();
+    let context = calls[0].0.as_ref().unwrap();
+    assert_eq!(context.workspace.writable_roots(), &[allowed]);
+}
+
+#[tokio::test]
+async fn cognitive_runtime_without_admitted_workspace_fails_closed() {
+    let llm = ScriptedLlm::new(vec![response(
+        vec![ContentBlock::Text {
+            text: "must not run".into(),
+        }],
+        StopReason::EndTurn,
+    )]);
+    let mut runtime_input = input(CancellationToken::new());
+    runtime_input.request.cognitive_binding =
+        Some(cognitive_binding(CognitiveRole::Reviewer, Vec::new()));
+
+    let error = runtime(llm.clone(), Arc::new(RecordingCapability::default()))
+        .launch(runtime_input, Arc::new(RecordingEvents::default()))
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.kind, AgentControlErrorKind::Forbidden);
+    assert!(llm.seen.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

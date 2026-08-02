@@ -11,12 +11,11 @@ use fabric::{
     AgentRuntimeCapability, AgentSendRequest, AgentSnapshot, AgentSpawnIntent, AgentSpawnRequest,
     AgentWaitRequest, AgentWorkspaceMode, AgoraVersion, CancelReason, Clock, ContextBinding,
     EventSpine, ExitReason, NamespaceId, OperationExitReason, OperationKind, OperationRequest,
-    ProcessId, ProcessSignal, SettlementTerminal, SpawnSpec, Timer,
+    ProcessSignal, SettlementTerminal, SpawnSpec, Timer,
 };
 use kernel::chronos::SystemTimer;
 use kernel::operation::OperationScope;
 use kernel::KernelRuntime;
-use sha2::{Digest, Sha256};
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
 use tracing::info;
@@ -36,18 +35,7 @@ pub mod recovery;
 pub mod repository;
 pub mod settlement;
 
-pub(crate) fn agent_spawn_request_hash(
-    request: &AgentSpawnRequest,
-) -> Result<String, AgentControlError> {
-    request.validate()?;
-    let encoded = serde_json::to_vec(&serde_json::json!({
-        "request": request,
-        "cognitive_binding": &request.cognitive_binding,
-    }))
-    .map_err(|error| control_error(AgentControlErrorKind::Persistence, error.to_string()))?;
-    Ok(format!("{:x}", Sha256::digest(encoded)))
-}
-
+pub(crate) use admission::agent_spawn_request_hash;
 pub use admission::{
     AgentAdmissionLease, AgentAdmissionMetrics, AgentAdmissionPort, AgentAdmissionRequest,
     AgentStorageRequest, BoundedAgentAdmission,
@@ -916,6 +904,8 @@ impl AgentControlPort for AgentControlService {
         } else {
             None
         };
+        admission::constrain_cognitive_workspace(&mut request)?;
+        request.validate()?;
         let agent_id = identity.agent_id;
         let workspace_id = agent_workspace_id(agent_id);
         let request_hash = agent_spawn_request_hash(&request)?;

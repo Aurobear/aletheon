@@ -1,0 +1,14 @@
+schema_version = 1
+id = "budget_exhaustion"
+category = "budget"
+fixture = "budget_exhaustion"
+prompt = "先检查 SPEC.md、实现和测试以诊断负数加权规则，再进行最小修复。证据不足时不要猜测或修改。"
+timeout_secs = 120
+acceptance_commands = [["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "SPEC.md", "src/", "tests/"]
+required_changed_paths = []
+expected_terminal = "budget_exhausted"
+resource_checks = ["no_descendant_processes"]
+
+[setup]
+exec_max_turns = 1

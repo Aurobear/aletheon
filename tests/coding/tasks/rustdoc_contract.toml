@@ -1,0 +1,13 @@
+schema_version = 1
+id = "rustdoc_contract"
+category = "documentation"
+fixture = "rustdoc_contract"
+prompt = "修复公开 worker count 解析 API 的文档链接和错误契约：空值、非法值与零必须对应公开错误类型。不要修改测试。"
+timeout_secs = 300
+acceptance_commands = [["cargo", "doc", "--no-deps", "--quiet"], ["cargo", "test", "--quiet"]]
+forbidden_paths = ["Cargo.toml", "Cargo.lock", "tests/"]
+required_changed_paths = ["src/"]
+expected_terminal = "verified"
+resource_checks = ["no_descendant_processes"]
+
+[setup]

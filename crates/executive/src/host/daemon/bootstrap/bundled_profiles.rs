@@ -65,6 +65,30 @@ const PROFILES: &[(&str, &str)] = &[
         "robot-agent.md",
         include_str!("../../../../../../agents/robot-agent.md"),
     ),
+    (
+        "planner-agent.md",
+        include_str!("../../../../../../agents/planner-agent.md"),
+    ),
+    (
+        "explorer-agent.md",
+        include_str!("../../../../../../agents/explorer-agent.md"),
+    ),
+    (
+        "executor-agent.md",
+        include_str!("../../../../../../agents/executor-agent.md"),
+    ),
+    (
+        "tester-agent.md",
+        include_str!("../../../../../../agents/tester-agent.md"),
+    ),
+    (
+        "reviewer-agent.md",
+        include_str!("../../../../../../agents/reviewer-agent.md"),
+    ),
+    (
+        "fixer-agent.md",
+        include_str!("../../../../../../agents/fixer-agent.md"),
+    ),
 ];
 
 /// Write the bundled shipped profiles into `agents_dir`, creating it if needed.
@@ -104,6 +128,27 @@ pub(super) fn seed(agents_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn specialized_role_profiles_are_bundled() {
+        let expected = [
+            "planner-agent",
+            "explorer-agent",
+            "executor-agent",
+            "tester-agent",
+            "reviewer-agent",
+            "fixer-agent",
+        ];
+
+        for id in expected {
+            let filename = format!("{id}.md");
+            let (_, markdown) = PROFILES
+                .iter()
+                .find(|(name, _)| *name == filename)
+                .unwrap_or_else(|| panic!("missing bundled profile {id}"));
+            assert!(markdown.contains(&format!("name: {id}")));
+        }
+    }
 
     #[test]
     fn seed_refreshes_shipped_legacy_mirrors_without_touching_user_profiles() {

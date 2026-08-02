@@ -266,6 +266,7 @@ crates/executive/src/host/daemon/bootstrap/production_embodiment.rs	host	executi
 crates/executive/src/host/daemon/bootstrap/request.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/request_ports.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/request_tests.rs	host	executive	daemon, transport, or process lifecycle
+crates/executive/src/host/daemon/bootstrap/role_profiles.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/runtime.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/services.rs	host	executive	daemon, transport, or process lifecycle
 crates/executive/src/host/daemon/bootstrap/sessions.rs	host	executive	daemon, transport, or process lifecycle

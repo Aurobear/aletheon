@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cognit::harness::config::HarnessConfig;
+use fabric::cognitive_workflow::CognitiveTaskRuntimeBinding;
 use fabric::{
     AgentControlError, AgentControlErrorKind, AgentProfile, AgentProfileId, AgentResult,
     AgentRunStatus, ApprovalPolicy, AttemptEvidence, AttemptUsage, CapabilityCall,
@@ -248,7 +249,8 @@ impl NativeCognitRuntime {
         let evidence = Arc::new(Mutex::new(Vec::new()));
         let mut principal_context = agent_principal_context(
             input.handle.agent_id.0.to_string(),
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+            input.workspace.clone(),
+            input.request.cognitive_binding.as_ref(),
         )?;
         principal_context.turn_id = Some(fabric::TurnId::new());
         let mut services = NativeTurnServices {
@@ -807,10 +809,23 @@ fn harness_config(profile: &AgentProfile, budget: &fabric::AgentBudget) -> Harne
 
 fn agent_principal_context(
     agent_id: String,
-    working_dir: PathBuf,
+    admitted_workspace: Option<WorkspacePolicy>,
+    cognitive_binding: Option<&CognitiveTaskRuntimeBinding>,
 ) -> Result<PrincipalContext, AgentControlError> {
-    let workspace =
-        WorkspacePolicy::from_resolved_roots(working_dir, Vec::new()).map_err(runtime_failure)?;
+    let workspace = match (admitted_workspace, cognitive_binding) {
+        (Some(workspace), _) => workspace,
+        (None, Some(_)) => {
+            return Err(control_error(
+                AgentControlErrorKind::Forbidden,
+                "cognitive runtime has no admitted workspace authority",
+            ));
+        }
+        (None, None) => WorkspacePolicy::from_resolved_roots(
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")),
+            Vec::new(),
+        )
+        .map_err(runtime_failure)?,
+    };
     let uid = nix::unistd::Uid::effective().as_raw();
     Ok(PrincipalContext::new(
         PrincipalId::local_uid(uid),

@@ -510,6 +510,8 @@ pub struct ReviewFinding {
     pub severity: String,
     pub summary: String,
     pub evidence_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub affected_paths: Vec<String>,
     pub resolved: bool,
 }
 
@@ -873,6 +875,87 @@ mod tests {
             .required_output_artifacts
             .contains(&CognitiveArtifactKind::Review));
         assert!(!reviewer.context_projection.include_peer_history);
+    }
+
+    #[test]
+    fn legacy_review_finding_defaults_to_no_affected_paths() {
+        let finding: ReviewFinding = serde_json::from_value(serde_json::json!({
+            "id": "F-1",
+            "severity": "high",
+            "summary": "legacy finding",
+            "evidence_refs": ["artifact://diff/1"],
+            "resolved": true
+        }))
+        .unwrap();
+
+        assert!(finding.affected_paths.is_empty());
+        assert!(serde_json::to_value(finding)
+            .unwrap()
+            .get("affected_paths")
+            .is_none());
+    }
+
+    #[test]
+    fn executor_cannot_forge_a_review_output() {
+        let role = CognitiveRole::Executor;
+        let profile = CognitiveRoleProfile::canonical(role);
+        let task_id = CognitiveTaskNodeId("coding".into());
+        let projection_id = Uuid::new_v4();
+        let packet = AgentTaskPacket {
+            schema_version: 1,
+            task: CognitiveTaskNode {
+                id: task_id.clone(),
+                parent_id: None,
+                objective: "bounded change".into(),
+                role,
+                stage: CognitiveStage::Execution,
+                status: CognitiveTaskStatus::Running,
+                owner: Some(ProcessId::new()),
+                role_profile: profile.reference.clone(),
+                budget: profile.budget.clone(),
+                dependencies: Vec::new(),
+                acceptance_criteria: vec!["reviewed".into()],
+                workspace_scope: vec!["src/lib.rs".into()],
+                required_artifact_kinds: vec![CognitiveArtifactKind::ChangeSet],
+                artifact_refs: Vec::new(),
+                unresolved_finding_ids: Vec::new(),
+            },
+            role_profile: profile,
+            project_instructions: Vec::new(),
+            workspace_roots: vec!["src/lib.rs".into()],
+            allowed_capabilities: Vec::new(),
+            expected_evidence: Vec::new(),
+            acceptance_criteria: vec!["reviewed".into()],
+            selected_artifacts: Vec::new(),
+            projection_receipt: AgoraProjectionReceipt {
+                projection_id,
+                space: AgoraSpaceId("root-task".into()),
+                workspace_version: 1,
+                task_node_id: task_id,
+                role,
+                included_artifact_ids: Vec::new(),
+                omitted_artifact_ids: Vec::new(),
+            },
+        };
+        let output = CognitiveRoleOutput {
+            schema_version: 1,
+            projection_id,
+            workspace_version: 1,
+            source_versions: vec!["agora:1".into()],
+            evidence_refs: vec!["receipt://forged".into()],
+            confidence: 1.0,
+            artifact: CognitiveArtifact::Review(ReviewFindingSet {
+                transaction_id: "tx-1".into(),
+                workspace_version: "tree-1".into(),
+                findings: Vec::new(),
+            }),
+        };
+
+        assert!(output
+            .validate_for(&packet)
+            .unwrap_err()
+            .to_string()
+            .contains("role output kind is not authorized"));
     }
 
     #[test]

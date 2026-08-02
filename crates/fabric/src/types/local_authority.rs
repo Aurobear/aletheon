@@ -142,6 +142,46 @@ impl WorkspacePolicy {
         Ok(self)
     }
 
+    /// Resolve model-visible task paths and reduce this policy to exactly those
+    /// paths without allowing traversal or an existing symlink to escape the
+    /// current authority. Missing leaf paths are retained after their nearest
+    /// existing ancestor has been canonicalized.
+    pub fn narrow_to_declared_paths(mut self, declared: &[String]) -> Result<Self, String> {
+        let mut resolved_authority = Vec::with_capacity(self.writable_roots.len());
+        for root in &self.writable_roots {
+            resolved_authority.push(materialize_workspace_path(root)?);
+        }
+        self.writable_roots = resolved_authority.clone();
+
+        let mut resolved = Vec::with_capacity(declared.len());
+        for raw in declared {
+            let path = Path::new(raw);
+            if raw.trim().is_empty()
+                || path
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
+                return Err(format!("invalid declared workspace path: {raw}"));
+            }
+            let candidate = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                self.cwd.join(path)
+            };
+            let canonical = materialize_workspace_path(&candidate)?;
+            if !resolved_authority
+                .iter()
+                .any(|authority| canonical.starts_with(authority))
+            {
+                return Err(format!(
+                    "declared workspace path exceeds existing authority: {raw}"
+                ));
+            }
+            resolved.push(canonical);
+        }
+        self.narrow_writable_roots(resolved)
+    }
+
     pub fn with_protected_paths(mut self, protected_paths: ProtectedPathPolicy) -> Self {
         self.protected_paths = protected_paths;
         self
@@ -150,6 +190,36 @@ impl WorkspacePolicy {
     pub fn protected_paths(&self) -> &ProtectedPathPolicy {
         &self.protected_paths
     }
+}
+
+fn materialize_workspace_path(path: &Path) -> Result<PathBuf, String> {
+    let mut missing = Vec::new();
+    let mut ancestor = path;
+    while !ancestor.exists() {
+        let name = ancestor.file_name().ok_or_else(|| {
+            format!(
+                "declared workspace path has no existing ancestor: {}",
+                path.display()
+            )
+        })?;
+        missing.push(name.to_os_string());
+        ancestor = ancestor.parent().ok_or_else(|| {
+            format!(
+                "declared workspace path has no existing ancestor: {}",
+                path.display()
+            )
+        })?;
+    }
+    let mut resolved = std::fs::canonicalize(ancestor).map_err(|error| {
+        format!(
+            "cannot resolve declared workspace path '{}': {error}",
+            path.display()
+        )
+    })?;
+    for component in missing.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
 }
 
 /// Paths that remain read-only even inside a writable workspace root.
