@@ -63,8 +63,15 @@ pub(crate) fn open(
             "filesystem authority has no path admitted by both workspace and permit".into(),
         );
     }
+    let mut traversal_roots = Vec::new();
+    for root in roots {
+        let traversal = writable_traversal_root(&root)?;
+        if !traversal_roots.contains(&traversal) {
+            traversal_roots.push(traversal);
+        }
+    }
     let host = platform::open_filesystem(FilesystemScope {
-        roots: roots.into_iter().map(HostPath::new).collect(),
+        roots: traversal_roots.into_iter().map(HostPath::new).collect(),
         readable_paths: readable_paths.into_iter().map(HostPath::new).collect(),
         access,
         symlink_policy: SymlinkPolicy::WithinRoot,
@@ -73,6 +80,31 @@ pub(crate) fn open(
     Ok(ScopedFilesystem {
         host,
         path: HostPath::new(candidate),
+    })
+}
+
+fn writable_traversal_root(path: &Path) -> Result<PathBuf, String> {
+    let mut ancestor = path;
+    while !ancestor.exists() {
+        ancestor = ancestor.parent().ok_or_else(|| {
+            format!(
+                "writable path has no existing directory ancestor: {}",
+                path.display()
+            )
+        })?;
+    }
+    let directory = if ancestor.is_dir() {
+        ancestor
+    } else {
+        ancestor
+            .parent()
+            .ok_or_else(|| format!("writable file has no parent directory: {}", path.display()))?
+    };
+    std::fs::canonicalize(directory).map_err(|error| {
+        format!(
+            "writable traversal root '{}' cannot be resolved: {error}",
+            directory.display()
+        )
     })
 }
 
@@ -222,6 +254,54 @@ mod tests {
         assert!(write.is_error);
         assert!(write.content.contains("empty path scope"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing");
+    }
+
+    #[tokio::test]
+    async fn exact_writable_file_scope_allows_target_and_rejects_sibling() {
+        let workspace = tempfile::tempdir().unwrap();
+        let target = workspace.path().join("target.txt");
+        let sibling = workspace.path().join("sibling.txt");
+        std::fs::write(&target, "original").unwrap();
+        std::fs::write(&sibling, "sibling").unwrap();
+        let policy = fabric::WorkspacePolicy::from_resolved_roots(
+            workspace.path().to_path_buf(),
+            Vec::new(),
+        )
+        .unwrap()
+        .narrow_to_declared_paths(&["target.txt".into()])
+        .unwrap();
+        let context = ToolContext {
+            agent: None,
+            approval_authority: Some(fabric::ToolApprovalAuthority {
+                principal_id: fabric::PrincipalId("test".into()),
+                connection_id: fabric::ConnectionId::new(),
+                thread_id: fabric::ThreadId("test".into()),
+                turn_id: fabric::TurnId::new(),
+                call_id: "call".into(),
+                workspace: policy,
+                granted_scope: fabric::CapabilityScope {
+                    allowed_paths: vec![target.to_string_lossy().into_owned()],
+                    ..Default::default()
+                },
+                permission_mode: fabric::permission::HostPermissionMode::Safe,
+            }),
+            working_dir: workspace.path().to_path_buf(),
+            session_id: "test".into(),
+            clock: Arc::new(kernel::chronos::TestClock::default()),
+            turn_event_sender: None,
+        };
+
+        let accepted = FileWriteTool
+            .execute(json!({"path": target, "content": "changed"}), &context)
+            .await;
+        let rejected = FileWriteTool
+            .execute(json!({"path": sibling, "content": "escaped"}), &context)
+            .await;
+
+        assert!(!accepted.is_error, "{}", accepted.content);
+        assert!(rejected.is_error);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "changed");
+        assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "sibling");
     }
 
     #[tokio::test]
