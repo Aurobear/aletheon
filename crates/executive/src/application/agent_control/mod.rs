@@ -16,7 +16,6 @@ use fabric::{
 use kernel::chronos::SystemTimer;
 use kernel::operation::OperationScope;
 use kernel::KernelRuntime;
-use sha2::{Digest, Sha256};
 use tokio::sync::{watch, Mutex};
 use tokio::task::JoinSet;
 use tracing::info;
@@ -36,18 +35,7 @@ pub mod recovery;
 pub mod repository;
 pub mod settlement;
 
-pub(crate) fn agent_spawn_request_hash(
-    request: &AgentSpawnRequest,
-) -> Result<String, AgentControlError> {
-    request.validate()?;
-    let encoded = serde_json::to_vec(&serde_json::json!({
-        "request": request,
-        "cognitive_binding": &request.cognitive_binding,
-    }))
-    .map_err(|error| control_error(AgentControlErrorKind::Persistence, error.to_string()))?;
-    Ok(format!("{:x}", Sha256::digest(encoded)))
-}
-
+pub(crate) use admission::agent_spawn_request_hash;
 pub use admission::{
     AgentAdmissionLease, AgentAdmissionMetrics, AgentAdmissionPort, AgentAdmissionRequest,
     AgentStorageRequest, BoundedAgentAdmission,
@@ -916,7 +904,7 @@ impl AgentControlPort for AgentControlService {
         } else {
             None
         };
-        constrain_cognitive_workspace(&mut request)?;
+        admission::constrain_cognitive_workspace(&mut request)?;
         request.validate()?;
         let agent_id = identity.agent_id;
         let workspace_id = agent_workspace_id(agent_id);
@@ -1838,43 +1826,6 @@ fn control_error(kind: AgentControlErrorKind, message: impl Into<String>) -> Age
         kind,
         message: message.into(),
     }
-}
-
-fn constrain_cognitive_workspace(request: &mut AgentSpawnRequest) -> Result<(), AgentControlError> {
-    let Some(binding) = request.cognitive_binding.as_ref() else {
-        return Ok(());
-    };
-    let role = binding.role;
-    let scope = binding.workspace_scope.clone();
-    if role.can_write_workspace() && scope.is_empty() {
-        return Err(control_error(
-            AgentControlErrorKind::Forbidden,
-            "writable cognitive role has an empty workspace scope",
-        ));
-    }
-    if !role.can_write_workspace() && !scope.is_empty() {
-        return Err(control_error(
-            AgentControlErrorKind::Forbidden,
-            "read-only cognitive role received a writable workspace scope",
-        ));
-    }
-    let workspace = request.trusted_workspace.clone().ok_or_else(|| {
-        control_error(
-            AgentControlErrorKind::Forbidden,
-            "cognitive Agent spawn has no trusted workspace authority",
-        )
-    })?;
-    let effective_scope = if role.can_write_workspace() {
-        scope.as_slice()
-    } else {
-        &[]
-    };
-    request.trusted_workspace = Some(
-        workspace
-            .narrow_to_declared_paths(effective_scope)
-            .map_err(AgentControlError::invalid)?,
-    );
-    Ok(())
 }
 
 fn runtime_error(error: impl std::fmt::Display) -> AgentControlError {
