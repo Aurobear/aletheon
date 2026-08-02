@@ -418,13 +418,11 @@ async fn cognitive_tool_calls_use_the_admitted_workspace_policy() {
     std::fs::create_dir(temporary.path().join("src")).unwrap();
     let allowed = temporary.path().join("src/allowed.rs");
     std::fs::write(&allowed, "allowed").unwrap();
-    let workspace = fabric::WorkspacePolicy::from_resolved_roots(
-        temporary.path().to_path_buf(),
-        Vec::new(),
-    )
-    .unwrap()
-    .narrow_to_declared_paths(&["src/allowed.rs".into()])
-    .unwrap();
+    let workspace =
+        fabric::WorkspacePolicy::from_resolved_roots(temporary.path().to_path_buf(), Vec::new())
+            .unwrap()
+            .narrow_to_declared_paths(&["src/allowed.rs".into()])
+            .unwrap();
     let mut runtime_input = input(CancellationToken::new());
     runtime_input.workspace = Some(workspace.clone());
     runtime_input.request.trusted_workspace = Some(workspace);
@@ -452,10 +450,8 @@ async fn cognitive_runtime_without_admitted_workspace_fails_closed() {
         StopReason::EndTurn,
     )]);
     let mut runtime_input = input(CancellationToken::new());
-    runtime_input.request.cognitive_binding = Some(cognitive_binding(
-        CognitiveRole::Reviewer,
-        Vec::new(),
-    ));
+    runtime_input.request.cognitive_binding =
+        Some(cognitive_binding(CognitiveRole::Reviewer, Vec::new()));
 
     let error = runtime(llm.clone(), Arc::new(RecordingCapability::default()))
         .launch(runtime_input, Arc::new(RecordingEvents::default()))

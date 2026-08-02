@@ -11,8 +11,8 @@ use fabric::cognitive_workflow::{
     CognitiveRole, CognitiveRoleProfile, CognitiveTaskNodeId, CognitiveTaskRuntimeBinding,
 };
 use fabric::{
-    AgentControlError, AgentControlErrorKind, AgentId, AgentResult, AgentWaitRequest,
-    AgoraSpaceId, AttemptUsage, ProcessId, WorkspacePolicy,
+    AgentControlError, AgentControlErrorKind, AgentId, AgentResult, AgentWaitRequest, AgoraSpaceId,
+    AttemptUsage, ProcessId, WorkspacePolicy,
 };
 
 struct RecordingAdmission {
@@ -145,10 +145,7 @@ async fn cognitive_binding_attenuates_effective_runtime_workspace() {
     request.trusted_workspace = Some(
         WorkspacePolicy::from_resolved_roots(temporary.path().to_path_buf(), Vec::new()).unwrap(),
     );
-    request.cognitive_binding = Some(binding(
-        CognitiveRole::Fixer,
-        vec!["src/allowed.rs".into()],
-    ));
+    request.cognitive_binding = Some(binding(CognitiveRole::Fixer, vec!["src/allowed.rs".into()]));
 
     let handle = fixture.port.spawn(request).await.unwrap();
     let terminal = fixture
@@ -228,15 +225,15 @@ async fn invalid_cognitive_workspace_bindings_fail_closed() {
         let mut request = agent_control_support::spawn_request(AgentId::new(), None);
         request.trusted_workspace = trusted_workspace;
         request.cognitive_binding = Some(binding(role, scope));
-        assert_eq!(fixture.port.spawn(request).await.unwrap_err().kind, expected_kind);
+        assert_eq!(
+            fixture.port.spawn(request).await.unwrap_err().kind,
+            expected_kind
+        );
     }
 
     let temporary = tempfile::tempdir().unwrap();
-    let trusted = WorkspacePolicy::from_resolved_roots(
-        temporary.path().to_path_buf(),
-        Vec::new(),
-    )
-    .unwrap();
+    let trusted =
+        WorkspacePolicy::from_resolved_roots(temporary.path().to_path_buf(), Vec::new()).unwrap();
     assert_rejected(
         Some(trusted.clone()),
         CognitiveRole::Executor,

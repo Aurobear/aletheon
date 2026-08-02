@@ -164,7 +164,10 @@ mod tests {
                 "change_accept",
                 "change_rollback",
             ] {
-                assert!(!permitted.contains(forbidden), "{role:?} admitted {forbidden}");
+                assert!(
+                    !permitted.contains(forbidden),
+                    "{role:?} admitted {forbidden}"
+                );
             }
         }
         assert!(permitted_tools(CognitiveRole::Tester)

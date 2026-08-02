@@ -1840,9 +1840,7 @@ fn control_error(kind: AgentControlErrorKind, message: impl Into<String>) -> Age
     }
 }
 
-fn constrain_cognitive_workspace(
-    request: &mut AgentSpawnRequest,
-) -> Result<(), AgentControlError> {
+fn constrain_cognitive_workspace(request: &mut AgentSpawnRequest) -> Result<(), AgentControlError> {
     let Some(binding) = request.cognitive_binding.as_ref() else {
         return Ok(());
     };
