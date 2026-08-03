@@ -89,6 +89,7 @@ pub struct RegisteredHook {
 /// Registry of lifecycle hooks.
 pub struct HookRegistry {
     hooks: HashMap<HookPoint, Vec<RegisteredHook>>,
+    package_hook_owners: HashMap<String, String>,
     clock: Arc<dyn Clock>,
     event_bus: Option<Arc<fabric::CanonicalEventBus>>,
     execution_timeout: Duration,
@@ -108,6 +109,7 @@ impl HookRegistry {
     pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             hooks: HashMap::new(),
+            package_hook_owners: HashMap::new(),
             clock,
             event_bus: None,
             execution_timeout: Duration::from_secs(30),
@@ -126,6 +128,38 @@ impl HookRegistry {
         entry.sort_by_key(|h| h.priority);
     }
 
+    /// Replace only hooks owned by the named extension package.
+    pub fn replace_package_hooks(&mut self, owner: &str, mut hooks: Vec<RegisteredHook>) {
+        self.remove_package_hooks(owner);
+        for hook in &mut hooks {
+            hook.source = format!("package:{owner}");
+            self.package_hook_owners
+                .insert(hook.name.clone(), owner.to_owned());
+        }
+        for hook in hooks {
+            self.register(hook);
+        }
+    }
+
+    /// Remove package-owned hooks without affecting built-in, configured, or
+    /// legacy hooks that happen to share the same source conventions.
+    pub fn remove_package_hooks(&mut self, owner: &str) {
+        let names: std::collections::HashSet<_> = self
+            .package_hook_owners
+            .iter()
+            .filter(|(_, registered_owner)| registered_owner.as_str() == owner)
+            .map(|(name, _)| name.clone())
+            .collect();
+        if names.is_empty() {
+            return;
+        }
+        for hooks in self.hooks.values_mut() {
+            hooks.retain(|hook| !names.contains(&hook.name));
+        }
+        self.package_hook_owners
+            .retain(|_, registered_owner| registered_owner != owner);
+    }
+
     /// List all registered hooks.
     pub fn list(&self) -> Vec<&RegisteredHook> {
         self.hooks.values().flat_map(|v| v.iter()).collect()
@@ -140,6 +174,9 @@ impl HookRegistry {
             if hooks.len() < before {
                 removed = true;
             }
+        }
+        if removed {
+            self.package_hook_owners.remove(name);
         }
         removed
     }
@@ -800,6 +837,34 @@ mod tests {
 
         // Unregistering a non-existent name returns false.
         assert!(!reg.unregister("nonexistent"));
+    }
+
+    #[test]
+    fn package_hook_replacement_preserves_non_package_entries() {
+        let mut reg = HookRegistry::default();
+        reg.register(make_hook("builtin:audit", HookPoint::PostTurn, 10));
+        reg.replace_package_hooks(
+            "pkg.one",
+            vec![make_hook("pkg.one:audit", HookPoint::PostTurn, 20)],
+        );
+        assert_eq!(reg.total_count(), 2);
+
+        reg.replace_package_hooks(
+            "pkg.one",
+            vec![make_hook("pkg.one:review", HookPoint::PreTool, 5)],
+        );
+        let names: std::collections::HashSet<_> = reg
+            .list()
+            .into_iter()
+            .map(|hook| hook.name.as_str())
+            .collect();
+        assert!(names.contains("builtin:audit"));
+        assert!(names.contains("pkg.one:review"));
+        assert!(!names.contains("pkg.one:audit"));
+
+        reg.remove_package_hooks("pkg.one");
+        assert_eq!(reg.total_count(), 1);
+        assert_eq!(reg.list()[0].name, "builtin:audit");
     }
 
     #[tokio::test]

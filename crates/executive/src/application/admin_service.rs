@@ -594,11 +594,23 @@ pub type RuntimeShutdownFuture =
 
 pub struct AdminService {
     resources: AdminResources,
+    extension_runtime: Option<super::extension_snapshot::ExtensionRuntimeView>,
 }
 
 impl AdminService {
     pub fn new(resources: AdminResources) -> Self {
-        Self { resources }
+        Self {
+            resources,
+            extension_runtime: None,
+        }
+    }
+
+    pub fn with_extension_runtime(
+        mut self,
+        runtime: super::extension_snapshot::ExtensionRuntimeView,
+    ) -> Self {
+        self.extension_runtime = Some(runtime);
+        self
     }
 }
 
@@ -787,7 +799,24 @@ impl AdminUseCases for AdminService {
     }
 
     async fn list_skills(&self) -> Vec<SkillDescriptor> {
-        self.resources.skills.list().await
+        let mut skills = self.resources.skills.list().await;
+        if let Some(runtime) = &self.extension_runtime {
+            let snapshot = runtime.load().await;
+            skills.extend(snapshot.skills.iter().filter_map(|skill| {
+                let package_asset = skill.source.strip_prefix("package:")?;
+                let (package_id, _) = package_asset.rsplit_once(':')?;
+                Some(SkillDescriptor {
+                    id: format!("{package_id}:{}", skill.name),
+                    name: skill.name.clone(),
+                    description: skill.description.clone(),
+                    enabled: true,
+                    extension_id: package_id.to_owned(),
+                })
+            }));
+        }
+        skills.sort_by(|left, right| left.id.cmp(&right.id));
+        skills.truncate(MAX_ADMIN_ITEMS);
+        skills
     }
 
     async fn sub_agents(&self) -> Result<Vec<SubAgentSummary>, AdminServiceError> {
