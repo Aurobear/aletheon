@@ -1207,6 +1207,11 @@ impl RequestHandler {
         .await?;
         let memory_agent_control = agent_svc.agent_control.clone();
         let canonical_event_spine = agent_svc.canonical_event_spine;
+        corpus_group
+            .hook_registry
+            .lock()
+            .await
+            .set_event_spine(Some(canonical_event_spine.clone()));
         let agent_recovery = agent_svc.agent_recovery;
         let agent_repository = agent_svc.agent_repository;
         let turn_svc = super::services::build_turn_services(

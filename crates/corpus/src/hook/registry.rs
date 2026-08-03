@@ -92,6 +92,7 @@ pub struct HookRegistry {
     package_hook_owners: HashMap<String, String>,
     clock: Arc<dyn Clock>,
     event_bus: Option<Arc<fabric::CanonicalEventBus>>,
+    event_spine: Option<Arc<dyn fabric::EventSpine>>,
     execution_timeout: Duration,
 }
 
@@ -112,6 +113,7 @@ impl HookRegistry {
             package_hook_owners: HashMap::new(),
             clock,
             event_bus: None,
+            event_spine: None,
             execution_timeout: Duration::from_secs(30),
         }
     }
@@ -119,6 +121,17 @@ impl HookRegistry {
     pub fn with_event_bus(mut self, event_bus: Option<Arc<fabric::CanonicalEventBus>>) -> Self {
         self.event_bus = event_bus;
         self
+    }
+
+    /// Attach the durable event spine used for terminal Hook receipts.
+    pub fn with_event_spine(mut self, event_spine: Option<Arc<dyn fabric::EventSpine>>) -> Self {
+        self.event_spine = event_spine;
+        self
+    }
+
+    /// Attach or replace the durable event spine after composition completes.
+    pub fn set_event_spine(&mut self, event_spine: Option<Arc<dyn fabric::EventSpine>>) {
+        self.event_spine = event_spine;
     }
 
     /// Register a hook. Hooks are kept sorted by priority.
@@ -252,8 +265,12 @@ impl HookRegistry {
         let script = match hook.script_path {
             Some(ref s) => s,
             None => {
-                record_hook_metric(&hook.name, started.elapsed(), false, false);
-                return HookResult::Continue;
+                let elapsed = started.elapsed();
+                let result = HookResult::Continue;
+                record_hook_metric(&hook.name, elapsed, false, false);
+                self.publish_terminal_receipt(hook, ctx, "succeeded", &result, elapsed)
+                    .await;
+                return result;
             }
         };
 
@@ -276,8 +293,12 @@ impl HookRegistry {
                     )
                     .await;
             }
-            record_hook_metric(&hook.name, started.elapsed(), false, true);
-            return HookResult::Continue;
+            let elapsed = started.elapsed();
+            let result = HookResult::Continue;
+            record_hook_metric(&hook.name, elapsed, false, true);
+            self.publish_terminal_receipt(hook, ctx, "restricted", &result, elapsed)
+                .await;
+            return result;
         }
 
         let ctx_json = hook_envelope_json(ctx, self.clock.wall_now().0);
@@ -294,11 +315,15 @@ impl HookRegistry {
             Ok(c) => c,
             Err(e) => {
                 warn!(hook = %hook.name, error = %e, "Hook spawn failed");
-                record_hook_metric(&hook.name, started.elapsed(), true, false);
-                return Self::execution_failure(
+                let elapsed = started.elapsed();
+                let result = Self::execution_failure(
                     &ctx.point,
                     format!("hook '{}' could not start", hook.name),
                 );
+                record_hook_metric(&hook.name, elapsed, true, false);
+                self.publish_terminal_receipt(hook, ctx, "failed", &result, elapsed)
+                    .await;
+                return result;
             }
         };
 
@@ -324,25 +349,102 @@ impl HookRegistry {
                 if failed {
                     warn!(hook = %hook.name, status = ?output.status, "Hook exited unsuccessfully");
                 }
-                record_hook_metric(&hook.name, started.elapsed(), failed, false);
-                parse_hook_output(&output.stdout)
+                let elapsed = started.elapsed();
+                let result = parse_hook_output(&output.stdout);
+                record_hook_metric(&hook.name, elapsed, failed, false);
+                self.publish_terminal_receipt(
+                    hook,
+                    ctx,
+                    if failed { "failed" } else { "succeeded" },
+                    &result,
+                    elapsed,
+                )
+                .await;
+                result
             }
             Ok(Err(e)) => {
                 warn!(hook = %hook.name, error = %e, "Hook execution failed");
-                record_hook_metric(&hook.name, started.elapsed(), true, false);
-                Self::execution_failure(
+                let elapsed = started.elapsed();
+                let result = Self::execution_failure(
                     &ctx.point,
                     format!("hook '{}' execution failed", hook.name),
-                )
+                );
+                record_hook_metric(&hook.name, elapsed, true, false);
+                self.publish_terminal_receipt(hook, ctx, "failed", &result, elapsed)
+                    .await;
+                result
             }
             Err(_) => {
                 warn!(hook = %hook.name, timeout_ms = execution_timeout.as_millis(), "Hook execution timed out");
-                record_hook_metric(&hook.name, started.elapsed(), true, false);
-                Self::execution_failure(
+                let elapsed = started.elapsed();
+                let result = Self::execution_failure(
                     &ctx.point,
                     format!("hook '{}' execution timed out", hook.name),
-                )
+                );
+                record_hook_metric(&hook.name, elapsed, true, false);
+                self.publish_terminal_receipt(hook, ctx, "failed", &result, elapsed)
+                    .await;
+                result
             }
+        }
+    }
+
+    async fn publish_terminal_receipt(
+        &self,
+        hook: &RegisteredHook,
+        ctx: &HookContext,
+        status: &str,
+        result: &HookResult,
+        elapsed: Duration,
+    ) {
+        if self.event_bus.is_none() && self.event_spine.is_none() {
+            return;
+        }
+        let result_kind = match result {
+            HookResult::Continue => "continue",
+            HookResult::Block { .. } => "block",
+            HookResult::ModifyInput(_) => "modify_input",
+            HookResult::Inject(_) => "inject",
+        };
+        let payload = serde_json::json!({
+            "hook": hook.name,
+            "source": hook.source,
+            "hook_event_name": ctx.point.event_name(),
+            "session_id": ctx.session_id,
+            "turn_count": ctx.turn_count,
+            "status": status,
+            "result_kind": result_kind,
+            "elapsed_micros": elapsed.as_micros().try_into().unwrap_or(u64::MAX),
+        });
+        let event_id = fabric::EventId::new();
+        let mut envelope = fabric::EnvelopeV2::new(
+            fabric::SchemaId::from("aletheon.event.hook_completed/v1"),
+            fabric::EnvelopeV2Target(format!("session:{}", ctx.session_id)),
+            fabric::EnvelopeV2Target("broadcast".into()),
+            fabric::EnvelopeV2Delivery::FanOut,
+            fabric::NamespaceId("default".into()),
+            payload.clone(),
+        );
+        envelope.id = fabric::MessageId(event_id.0);
+        if let Some(spine) = &self.event_spine {
+            let _ = spine.append(fabric::UnsequencedEvent {
+                tree_id: fabric::EventTreeId::for_root_session(&ctx.session_id),
+                event_id,
+                parent: None,
+                identity: fabric::EventIdentity {
+                    root_session_id: ctx.session_id.clone(),
+                    session_id: ctx.session_id.clone(),
+                    agent_id: None,
+                },
+                envelope: envelope.clone(),
+                visibility: fabric::EventVisibility::Control,
+                payload: fabric::EventPayload::Inline {
+                    value: payload.clone(),
+                },
+            });
+        }
+        if let Some(bus) = &self.event_bus {
+            let _ = bus.publish(envelope).await;
         }
     }
 }
@@ -468,6 +570,36 @@ pub fn parse_hook_output(stdout: &[u8]) -> HookResult {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[derive(Default)]
+    struct RecordingSpine(Mutex<Vec<fabric::UnsequencedEvent>>);
+
+    impl fabric::EventSpine for RecordingSpine {
+        fn append(&self, event: fabric::UnsequencedEvent) -> anyhow::Result<fabric::SpineEvent> {
+            event.validate()?;
+            let sequence = {
+                let mut events = self
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                events.push(event.clone());
+                events.len() as u64
+            };
+            Ok(fabric::SpineEvent {
+                position: fabric::EventPosition {
+                    tree_id: event.tree_id,
+                    event_id: event.event_id,
+                    parent: event.parent,
+                    sequence: fabric::TreeSequence(sequence),
+                },
+                identity: event.identity,
+                schema: event.envelope.schema.clone(),
+                visibility: event.visibility,
+                envelope: event.envelope,
+                payload: event.payload,
+            })
+        }
+    }
 
     fn make_hook(name: &str, point: HookPoint, priority: i32) -> RegisteredHook {
         RegisteredHook {
@@ -606,6 +738,47 @@ mod tests {
         let receipt = receipts.recv().await.unwrap();
         assert_eq!(receipt.source.0, "session:session-a");
         assert_eq!(receipt.payload["reason"], "untrusted_repository_hook");
+    }
+
+    #[tokio::test]
+    async fn completed_hook_emits_broadcast_and_durable_terminal_receipt() {
+        let bus = Arc::new(fabric::CanonicalEventBus::new(8));
+        let mut receipts =
+            bus.subscribe_channel(fabric::SchemaId::from("aletheon.event.hook_completed/v1"));
+        let spine = Arc::new(RecordingSpine::default());
+        let mut registry = HookRegistry::default()
+            .with_event_bus(Some(bus))
+            .with_event_spine(Some(spine.clone()));
+        registry.register(make_hook("package:post-turn", HookPoint::PostTurn, 0));
+        let context = HookContext {
+            point: HookPoint::PostTurn,
+            session_id: "session-a".into(),
+            turn_count: 3,
+            tool_name: None,
+            tool_input: None,
+            tool_result: None,
+            message: None,
+            metadata: HashMap::new(),
+        };
+
+        assert!(matches!(
+            registry.execute(&context).await,
+            HookResult::Continue
+        ));
+        let receipt = receipts.recv().await.unwrap();
+        assert_eq!(receipt.payload["hook"], "package:post-turn");
+        assert_eq!(receipt.payload["status"], "succeeded");
+        assert_eq!(receipt.payload["result_kind"], "continue");
+        let events = spine
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].envelope.schema.0,
+            "aletheon.event.hook_completed/v1"
+        );
+        assert_eq!(events[0].identity.session_id, "session-a");
     }
 
     #[tokio::test]
