@@ -36,6 +36,7 @@ pub mod extension_install;
 pub mod extension_manage;
 pub mod extension_runtime_router;
 pub mod extension_service;
+pub mod extension_snapshot;
 pub mod goal;
 pub mod goal_service;
 pub mod governed_capability;
