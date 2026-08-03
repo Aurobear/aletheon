@@ -82,7 +82,11 @@ impl ToolRegistry {
             self.next_id += 1;
             self.id_map.insert(id, name.clone());
             self.package_tool_owners.insert(name.clone(), owner);
-            self.tools.insert(name, tool);
+            self.tools.insert(name.clone(), tool);
+            // Package tools are admitted by the host's extension validator, so
+            // they receive the same conservative host-authored planning baseline
+            // as built-ins. This metadata is never supplied by the package.
+            self.proposal_confidences.insert(name, 0.5);
         }
         self.refresh_search_catalog();
         Ok(())
@@ -747,12 +751,15 @@ mod tests {
             .unwrap();
         assert!(reg.contains("builtin"));
         assert!(reg.contains("pkg_tool"));
+        assert_eq!(reg.proposal_confidences()["pkg_tool"], 0.5);
 
         reg.replace_package_tools("pkg.one", vec![Arc::new(MockTool::new("replacement"))])
             .unwrap();
         assert!(reg.contains("builtin"));
         assert!(!reg.contains("pkg_tool"));
         assert!(reg.contains("replacement"));
+        assert!(!reg.proposal_confidences().contains_key("pkg_tool"));
+        assert_eq!(reg.proposal_confidences()["replacement"], 0.5);
 
         let collision =
             reg.replace_package_tools("pkg.one", vec![Arc::new(MockTool::new("builtin"))]);
