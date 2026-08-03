@@ -25,7 +25,7 @@
 | Status bar | ✅ Implemented | `crates/interact/src/tui/status.rs` | Connection status, model name |
 | Markdown renderer | ✅ Implemented | `crates/interact/src/tui/markdown.rs` | Styled text for ratatui |
 | Terminal compat | ✅ Implemented | `crates/interact/src/tui/term_compat.rs` | Unicode/color detection |
-| Computer view | 🔶 Partial | `crates/interact/src/tui/computer.rs` | Feature-gated (input+display+a11y) |
+| Computer view | ⬜ Removed | — | Retired from the governed TUI command surface |
 | Streaming display | ⬜ Planned | — | Response chunks not streamed to TUI |
 | History persistence | ⬜ Planned | — | No command history across sessions |
 | Multi-line editor | ⬜ Planned | — | Only Shift+Enter newline, no real editor |
