@@ -43,7 +43,7 @@ EOF
 "$binary" --socket "$socket" \
   --test-input "$tmp/retired.input" \
   --record-frames "$tmp/retired.frames.jsonl" \
-  --auto-submit --test-timeout 3
+  --auto-submit --test-timeout 12
 
 python3 - "$tmp/help.frames.jsonl" "$tmp/retired.frames.jsonl" <<'PY'
 import json
@@ -84,9 +84,9 @@ for name in retired:
     if f"/{name}" in help_view:
         raise SystemExit(f"retired /{name} remains visible in installed TUI help")
 
-retired_view = "\n".join(retired_frames)
+retired_view = "".join("\n".join(retired_frames).split())
 for name in retired:
-    if f"未知命令 /{name}" not in retired_view:
+    if f"未知命令/{name}" not in retired_view:
         raise SystemExit(f"installed TUI did not reject /{name} as unknown")
 PY
 

@@ -183,11 +183,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             // Use turn_active (set by turn_start, cleared by turn_done) instead
             // of streaming (which is also cleared by process_response and would
             // trigger premature auto-submit before the turn actually completes).
-            if !app.turn_active && !reader.is_exhausted() {
+            if !app.turn_active {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
                     ClientTimer.sleep(Duration::from_millis(100)).await;
                     submit_message(&mut app, next).await;
+                    needs_redraw = true;
                 }
             }
             // All inputs consumed and last turn done
