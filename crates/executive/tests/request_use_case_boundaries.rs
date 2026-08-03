@@ -80,7 +80,7 @@ fn handler_ports_cover_every_rpc_family() {
         "admin",
         "sessions",
         "health",
-        "reflection",
+        "_reflection",
         "google",
         "workflow",
         "turn",
