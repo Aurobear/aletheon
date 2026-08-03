@@ -45,6 +45,14 @@ impl ExtensionConnectorRuntime {
             .iter()
             .map(project_connector)
             .collect::<Result<Vec<_>>>()?;
+        let unique_server_ids = servers
+            .iter()
+            .map(|server| server.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        anyhow::ensure!(
+            unique_server_ids.len() == servers.len(),
+            "package MCP Connector ids collide after provider-safe normalization"
+        );
         let expected = servers.len();
         let mut manager = McpManager::new(McpConfig {
             servers,
@@ -57,24 +65,29 @@ impl ExtensionConnectorRuntime {
             manager.connected_count()
         );
         for connector in snapshot.connectors.iter() {
-            let id = connector.manifest.id.as_str();
-            let tools = manager
-                .server_tools(id)
-                .with_context(|| format!("package MCP Connector '{id}' did not enumerate tools"))?;
+            let runtime_id = provider_safe_connector_id(&connector.manifest.id);
+            let tools = manager.server_tools(&runtime_id).with_context(|| {
+                format!(
+                    "package MCP Connector '{}' did not enumerate tools",
+                    connector.manifest.id
+                )
+            })?;
             for allowed in &connector.manifest.allowed_tools {
                 anyhow::ensure!(
                     tools.iter().any(|tool| &tool.name == allowed),
-                    "package MCP Connector '{id}' did not enumerate allowed tool '{allowed}'"
+                    "package MCP Connector '{}' did not enumerate allowed tool '{allowed}'",
+                    connector.manifest.id
                 );
             }
             if !connector.manifest.allowed_resources.is_empty() {
-                let resources = manager.list_resources(id).await?;
+                let resources = manager.list_resources(&runtime_id).await?;
                 for allowed in &connector.manifest.allowed_resources {
                     anyhow::ensure!(
                         resources
                             .iter()
                             .any(|resource| &resource.name == allowed || &resource.uri == allowed),
-                        "package MCP Connector '{id}' did not enumerate allowed resource '{allowed}'"
+                        "package MCP Connector '{}' did not enumerate allowed resource '{allowed}'",
+                        connector.manifest.id
                     );
                 }
             }
@@ -149,6 +162,18 @@ pub fn connector_tool_owner(package_id: &str) -> String {
     format!("extension-mcp:{package_id}")
 }
 
+fn provider_safe_connector_id(id: &str) -> String {
+    id.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 fn project_connector(asset: &ExtensionConnectorAsset) -> Result<McpServerConfig> {
     if let Some(secret_name) = &asset.manifest.bearer_token_env {
         anyhow::ensure!(
@@ -178,7 +203,7 @@ fn project_connector(asset: &ExtensionConnectorAsset) -> Result<McpServerConfig>
         ),
     };
     Ok(McpServerConfig {
-        name: asset.manifest.id.clone(),
+        name: provider_safe_connector_id(&asset.manifest.id),
         transport,
         trust,
         enabled: true,
@@ -225,9 +250,21 @@ fn connector_for_wrapper<'a>(
         .connectors
         .iter()
         .filter(|connector| {
-            wrapper_name.starts_with(&format!("{}__", connector.manifest.id))
-                || wrapper_name.starts_with(&format!("mcp.{}.", connector.manifest.id))
+            let runtime_id = provider_safe_connector_id(&connector.manifest.id);
+            wrapper_name.starts_with(&format!("{runtime_id}__"))
+                || wrapper_name.starts_with(&format!("mcp.{runtime_id}."))
         })
         .max_by_key(|connector| connector.manifest.id.len())
         .with_context(|| format!("MCP wrapper '{wrapper_name}' has no package Connector owner"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::provider_safe_connector_id;
+
+    #[test]
+    fn connector_runtime_id_is_provider_safe_and_stable() {
+        assert_eq!(provider_safe_connector_id("aurb.gbrain"), "aurb_gbrain");
+        assert_eq!(provider_safe_connector_id("already-safe"), "already-safe");
+    }
 }
