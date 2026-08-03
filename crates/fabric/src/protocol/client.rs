@@ -6,6 +6,10 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::extension::{
+    ExtensionEnableRequestV1, ExtensionPackageIdRequestV1, ExtensionPackagePathRequestV1,
+};
+
 use crate::{
     ui_event::{CollaborationMode, InterruptReason},
     AgentSnapshot, ApprovalSnapshot, ConnectionId, ItemRecord, LocalOsPrincipal, OperationId,
@@ -87,6 +91,16 @@ pub enum ClientRpcRequest {
     SessionFork(SessionForkParams),
     SessionInterrupt(SessionInterruptParams),
     SessionReplay(SessionReplayParams),
+    ExtensionInstall(ExtensionPackagePathRequestV1),
+    ExtensionEnable(ExtensionEnableRequestV1),
+    ExtensionDisable(ExtensionPackageIdRequestV1),
+    ExtensionUpgrade(ExtensionPackagePathRequestV1),
+    ExtensionRollback(ExtensionPackageIdRequestV1),
+    ExtensionRemove(ExtensionPackageIdRequestV1),
+    ExtensionPurge(ExtensionPackageIdRequestV1),
+    ExtensionList,
+    ExtensionShow(ExtensionPackageIdRequestV1),
+    ExtensionDoctor(ExtensionPackageIdRequestV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -759,6 +773,32 @@ impl ClientRpcRequest {
                 ("session.interrupt", Some(serde_json::to_value(params)?))
             }
             Self::SessionReplay(params) => ("session.replay", Some(serde_json::to_value(params)?)),
+            Self::ExtensionInstall(params) => {
+                ("extension.install", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionEnable(params) => {
+                ("extension.enable", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionDisable(params) => {
+                ("extension.disable", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionUpgrade(params) => {
+                ("extension.upgrade", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionRollback(params) => {
+                ("extension.rollback", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionRemove(params) => {
+                ("extension.remove", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionPurge(params) => {
+                ("extension.purge", Some(serde_json::to_value(params)?))
+            }
+            Self::ExtensionList => empty_params("extension.list")?,
+            Self::ExtensionShow(params) => ("extension.show", Some(serde_json::to_value(params)?)),
+            Self::ExtensionDoctor(params) => {
+                ("extension.doctor", Some(serde_json::to_value(params)?))
+            }
         };
         serde_json::to_value(JsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION,
