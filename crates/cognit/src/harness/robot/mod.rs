@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use fabric::types::embodiment::{DeviceId, SkillDescriptor, SkillRequest, SkillResult};
 use fabric::types::expected_outcome::ExpectedOutcome;
 use fabric::types::outcome_verification::VerificationReport;
-use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
+use fabric::types::world_state::{WorldSnapshot, WorldStatePort, ANY_SCHEMA};
 use fabric::OperationId;
 use std::sync::Arc;
 
@@ -165,7 +165,7 @@ impl RobotHarness {
                 // Observation gate: without a fresh snapshot the harness must
                 // NOT proceed to Plan — a production policy must never receive
                 // empty snapshots.
-                let snap = self.world_state.latest(&harness_state.device).await;
+                let snap = self.world_state.latest(&harness_state.device, ANY_SCHEMA).await;
                 match &snap {
                     Some(snapshot) if !snapshot.stale => {
                         harness_state.latest_snapshot = snap;
@@ -310,7 +310,7 @@ impl RobotHarness {
                 }
             }
             RobotState::Verify => {
-                let after_snap = self.world_state.latest(&harness_state.device).await;
+                let after_snap = self.world_state.latest(&harness_state.device, ANY_SCHEMA).await;
                 let expected = match self.resolve_expected(&harness_state) {
                     Ok(e) => e,
                     Err(reason) => {

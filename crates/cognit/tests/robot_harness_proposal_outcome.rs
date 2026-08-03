@@ -37,12 +37,13 @@ impl FakeWorldState {
 }
 #[async_trait::async_trait]
 impl WorldStatePort for FakeWorldState {
-    async fn latest(&self, _device: &DeviceId) -> Option<WorldSnapshot> {
+    async fn latest(&self, _device: &DeviceId, _schema: &str) -> Option<WorldSnapshot> {
         Some(Self::snapshot())
     }
     async fn observe_until(
         &self,
         _device: &DeviceId,
+        _schema: &str,
         _after_sequence: u64,
         _deadline: MonoDeadline,
     ) -> Option<WorldSnapshot> {

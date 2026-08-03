@@ -130,7 +130,7 @@ struct DirectWorld {
 
 #[async_trait]
 impl WorldStatePort for DirectWorld {
-    async fn latest(&self, device: &DeviceId) -> Option<WorldSnapshot> {
+    async fn latest(&self, device: &DeviceId, _schema: &str) -> Option<WorldSnapshot> {
         let observation = self.executor.get_state(device).await.ok()??;
         Some(WorldSnapshot {
             device: device.clone(),
@@ -144,10 +144,12 @@ impl WorldStatePort for DirectWorld {
     async fn observe_until(
         &self,
         device: &DeviceId,
+        _schema: &str,
         _after_sequence: u64,
         _deadline: MonoDeadline,
     ) -> Option<WorldSnapshot> {
-        self.latest(device).await
+        self.latest(device, fabric::types::world_state::ANY_SCHEMA)
+            .await
     }
 }
 

@@ -9,16 +9,17 @@
 //! of truth for embodied verification — provider RPC success, a lone
 //! `SkillResult::Succeeded`, or LLM text never count as evidence here.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use cognit::harness::robot::OutcomeVerifierPort;
 use fabric::types::embodiment::DeviceId;
 use fabric::types::expected_outcome::{
-    evaluate_expected, evaluate_predicate, OutcomeMatch, OutcomePredicate,
+    evaluate_expected, evaluate_predicate, ExpectedOutcome, OutcomeMatch, OutcomePredicate,
 };
 use fabric::types::outcome_verification::{VerificationDecision, VerificationReport};
-use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
+use fabric::types::world_state::{WorldSnapshot, WorldStatePort, ANY_SCHEMA};
 use fabric::{Clock, MonoDeadline};
 
 /// Deterministic verifier implementing `cognit::harness::robot::OutcomeVerifierPort`.
@@ -57,6 +58,66 @@ impl DeterministicOutcomeVerifier {
             evidence: vec![],
         }
     }
+
+    /// Resolve which observation schema the expected outcome targets.
+    ///
+    /// A device can expose several schemas (e.g. `base_pose`, `base_twist`,
+    /// `ground_truth_pose`) with independent sequence counters, so the verifier
+    /// must observe the schema the outcome's predicate path names — the first
+    /// path segment of every leaf predicate. When all leaves agree on one
+    /// segment and the world actually holds that schema, it is selected;
+    /// otherwise the world is single-schema and `ANY_SCHEMA` preserves the
+    /// unqualified-path behavior.
+    async fn resolve_schema(&self, device: &DeviceId, expected: &ExpectedOutcome) -> String {
+        let mut segments = BTreeSet::new();
+        collect_first_segments(&expected.predicate, &mut segments);
+        let candidate = if segments.len() == 1 {
+            segments.iter().next().cloned().filter(|s| !s.is_empty())
+        } else {
+            None
+        };
+        match candidate {
+            Some(name) => match self.world.latest(device, &name).await {
+                Some(snap) if snap.schema == name => name,
+                _ => ANY_SCHEMA.to_string(),
+            },
+            None => ANY_SCHEMA.to_string(),
+        }
+    }
+}
+
+/// Collect the first dot-path segment of every leaf predicate. Empty segments
+/// are ignored; `All`/`Any` predicates are walked recursively.
+fn collect_first_segments(predicate: &OutcomePredicate, out: &mut BTreeSet<String>) {
+    match predicate {
+        OutcomePredicate::Equals { path, .. }
+        | OutcomePredicate::NotEquals { path, .. }
+        | OutcomePredicate::Range { path, .. }
+        | OutcomePredicate::Change { path, .. } => {
+            if let Some(segment) = path.split('.').next() {
+                if !segment.is_empty() {
+                    out.insert(segment.to_string());
+                }
+            }
+        }
+        OutcomePredicate::All { predicates } | OutcomePredicate::Any { predicates } => {
+            for child in predicates {
+                collect_first_segments(child, out);
+            }
+        }
+    }
+}
+
+/// Nest a snapshot's payload under its schema so schema-qualified predicate
+/// paths (e.g. `base_twist.linear_velocity.x`) resolve against it. `ANY_SCHEMA`
+/// worlds use unqualified paths and are passed through untouched.
+fn wrap_snapshot(snapshot: &WorldSnapshot, schema: &str) -> WorldSnapshot {
+    if schema == ANY_SCHEMA {
+        return snapshot.clone();
+    }
+    let mut wrapped = snapshot.clone();
+    wrapped.payload = serde_json::json!({ schema: snapshot.payload });
+    wrapped
 }
 
 #[async_trait]
@@ -71,11 +132,27 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
     ) -> VerificationReport {
         let start = self.clock.mono_now();
         let deadline = MonoDeadline::after(start, expected.timeout_ms);
-        let after_sequence = after
-            .as_ref()
-            .map(|snap| snap.sequence)
-            .or_else(|| before.as_ref().map(|snap| snap.sequence))
-            .unwrap_or(0);
+
+        // Resolve the observation schema this outcome targets. The harness's
+        // `after`/`before` snapshots are the device-freshest across schemas, so
+        // for a schema-qualified outcome the sequence seed must come from that
+        // schema's own latest — seeding from the freshest would wait forever on
+        // a slower schema whose counter trails a faster one.
+        let schema = self.resolve_schema(device, expected).await;
+        let after_sequence = if schema == ANY_SCHEMA {
+            after
+                .as_ref()
+                .map(|snap| snap.sequence)
+                .or_else(|| before.as_ref().map(|snap| snap.sequence))
+                .unwrap_or(0)
+        } else {
+            self.world
+                .latest(device, &schema)
+                .await
+                .map(|snap| snap.sequence)
+                .unwrap_or(0)
+        };
+        let before_wrapped = before.map(|snap| wrap_snapshot(snap, &schema));
 
         // Wait for post-execution observations and evaluate a CONTINUOUS stable
         // window: `stable_window_ms` of elapsed observation time with the
@@ -89,7 +166,7 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
             }
             let Some(snapshot) = self
                 .world
-                .observe_until(device, last_sequence, deadline)
+                .observe_until(device, &schema, last_sequence, deadline)
                 .await
             else {
                 break; // no new observation before the deadline
@@ -116,7 +193,8 @@ impl OutcomeVerifierPort for DeterministicOutcomeVerifier {
                 }
             }
 
-            match evaluate_expected(expected, &snapshot, before, now) {
+            let snapshot_wrapped = wrap_snapshot(&snapshot, &schema);
+            match evaluate_expected(expected, &snapshot_wrapped, before_wrapped.as_ref(), now) {
                 OutcomeMatch::Match => {
                     let window_start = *window_started_at.get_or_insert(snapshot.observed_at.0);
                     if snapshot.observed_at.0.saturating_sub(window_start) >= expected.stable_window_ms
@@ -168,9 +246,19 @@ mod tests {
     use std::sync::Mutex;
 
     fn snapshot(seq: u64, observed_at: u64, stale: bool, payload: serde_json::Value) -> WorldSnapshot {
+        schema_snapshot("robot.state/v1", seq, observed_at, stale, payload)
+    }
+
+    fn schema_snapshot(
+        schema: &str,
+        seq: u64,
+        observed_at: u64,
+        stale: bool,
+        payload: serde_json::Value,
+    ) -> WorldSnapshot {
         WorldSnapshot {
             device: DeviceId("bot".into()),
-            schema: "robot.state/v1".into(),
+            schema: schema.into(),
             sequence: seq,
             payload,
             observed_at: MonoTime(observed_at),
@@ -203,12 +291,13 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl WorldStatePort for QueueWorld {
-        async fn latest(&self, _device: &DeviceId) -> Option<WorldSnapshot> {
+        async fn latest(&self, _device: &DeviceId, _schema: &str) -> Option<WorldSnapshot> {
             self.queue.lock().unwrap().front().cloned()
         }
         async fn observe_until(
             &self,
             _device: &DeviceId,
+            _schema: &str,
             after_sequence: u64,
             _deadline: MonoDeadline,
         ) -> Option<WorldSnapshot> {
@@ -297,5 +386,58 @@ mod tests {
         let report = v.verify(&stance_expected(), &DeviceId("bot".into()), None, None, 1).await;
         // Window reset at t=50; only t=100 matches after reset -> 50ms < 100ms.
         assert_eq!(report.decision, VerificationDecision::RetryableMismatch);
+    }
+
+    #[tokio::test]
+    async fn schema_qualified_outcome_matches_on_target_schema() {
+        // A multi-schema world (the predicate path names the `base_twist`
+        // schema) must be verified against base_twist's own sequence counter,
+        // seeded from that schema's latest rather than a device-freshest
+        // snapshot from another schema.
+        let world = Arc::new(QueueWorld::new(vec![
+            schema_snapshot(
+                "base_twist",
+                1,
+                0,
+                false,
+                serde_json::json!({"linear_velocity": {"x": 0.0, "y": 0.0}}),
+            ),
+            schema_snapshot(
+                "base_twist",
+                2,
+                50,
+                false,
+                serde_json::json!({"linear_velocity": {"x": 0.0, "y": 0.0}}),
+            ),
+            schema_snapshot(
+                "base_twist",
+                3,
+                100,
+                false,
+                serde_json::json!({"linear_velocity": {"x": 0.0, "y": 0.0}}),
+            ),
+            schema_snapshot(
+                "base_twist",
+                4,
+                150,
+                false,
+                serde_json::json!({"linear_velocity": {"x": 0.0, "y": 0.0}}),
+            ),
+        ]));
+        let expected = ExpectedOutcome {
+            predicate: OutcomePredicate::Range {
+                path: "base_twist.linear_velocity.x".into(),
+                min: Some(-0.01),
+                max: Some(0.01),
+            },
+            freshness_ms: 5_000,
+            stable_window_ms: 100,
+            timeout_ms: 10_000,
+        };
+        let v = verifier(world, 1_000, vec![]);
+        let report = v
+            .verify(&expected, &DeviceId("bot".into()), None, None, 1)
+            .await;
+        assert_eq!(report.decision, VerificationDecision::Matched);
     }
 }

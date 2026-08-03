@@ -261,12 +261,13 @@ mod tests {
     struct NoopWorld;
     #[async_trait]
     impl WorldStatePort for NoopWorld {
-        async fn latest(&self, _d: &DeviceId) -> Option<WorldSnapshot> {
+        async fn latest(&self, _d: &DeviceId, _schema: &str) -> Option<WorldSnapshot> {
             None
         }
         async fn observe_until(
             &self,
             _d: &DeviceId,
+            _schema: &str,
             _after: u64,
             _deadline: MonoDeadline,
         ) -> Option<WorldSnapshot> {

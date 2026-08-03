@@ -6,13 +6,20 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use fabric::types::embodiment::{DeviceId, EmbodiedObservation, EmbodimentExecutionPort};
-use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
+use fabric::types::world_state::{WorldSnapshot, WorldStatePort, ANY_SCHEMA};
 use fabric::{Clock, MonoDeadline, MonoTime};
 use tokio::sync::Notify;
 
 /// Per-device cached state entry.
+///
+/// A device can expose several observation schemas (e.g. `base_pose`,
+/// `base_twist`, `ground_truth_pose`) whose sequences come from independent
+/// counters. Each schema keeps its own monotonic slot — the `ingest` gate is
+/// per schema, so a slower source can never evict a faster one.
 struct DeviceState {
-    latest: Option<WorldSnapshot>,
+    /// Latest snapshot per observation schema.
+    latest: HashMap<String, WorldSnapshot>,
+    /// Device-level wakeup: any schema ingest wakes waiters.
     notify: Arc<Notify>,
 }
 
@@ -42,21 +49,23 @@ impl EmbodimentWorldState {
             return Err(format!("device limit {} reached", self.max_devices));
         }
         let entry = devices.entry(device).or_insert_with(|| DeviceState {
-            latest: None,
+            latest: HashMap::new(),
             notify: Arc::new(Notify::new()),
         });
 
-        // Reject duplicate or lower sequence
-        if let Some(ref existing) = entry.latest {
+        // Reject duplicate or lower sequence *within the same schema*. Schemas
+        // carry independent counters, so a lower-sequenced schema must not be
+        // blocked by (or evict) a higher-sequenced one.
+        if let Some(existing) = entry.latest.get(&snapshot.schema) {
             if snapshot.sequence <= existing.sequence {
                 return Err(format!(
-                    "rejected sequence {} <= existing {} for device {:?}",
-                    snapshot.sequence, existing.sequence, snapshot.device
+                    "rejected sequence {} <= existing {} for device {:?} schema {}",
+                    snapshot.sequence, existing.sequence, snapshot.device, snapshot.schema
                 ));
             }
         }
 
-        entry.latest = Some(snapshot);
+        entry.latest.insert(snapshot.schema.clone(), snapshot);
         entry.notify.notify_waiters();
         Ok(())
     }
@@ -64,14 +73,24 @@ impl EmbodimentWorldState {
 
 #[async_trait]
 impl WorldStatePort for EmbodimentWorldState {
-    async fn latest(&self, device: &DeviceId) -> Option<WorldSnapshot> {
+    async fn latest(&self, device: &DeviceId, schema: &str) -> Option<WorldSnapshot> {
         let devices = self.devices.read().ok()?;
-        devices.get(device)?.latest.clone()
+        let entry = devices.get(device)?;
+        if schema == ANY_SCHEMA {
+            entry
+                .latest
+                .values()
+                .max_by(|a, b| a.observed_at.cmp(&b.observed_at).then(a.sequence.cmp(&b.sequence)))
+                .cloned()
+        } else {
+            entry.latest.get(schema).cloned()
+        }
     }
 
     async fn observe_until(
         &self,
         device: &DeviceId,
+        schema: &str,
         after_sequence: u64,
         deadline: MonoDeadline,
     ) -> Option<WorldSnapshot> {
@@ -85,10 +104,13 @@ impl WorldStatePort for EmbodimentWorldState {
             {
                 let devices = self.devices.read().ok()?;
                 if let Some(entry) = devices.get(device) {
-                    if let Some(ref snap) = entry.latest {
-                        if snap.sequence > after_sequence {
-                            return Some(snap.clone());
-                        }
+                    let candidates: Vec<WorldSnapshot> = if schema == ANY_SCHEMA {
+                        entry.latest.values().cloned().collect()
+                    } else {
+                        entry.latest.get(schema).cloned().into_iter().collect()
+                    };
+                    if let Some(snap) = candidates.into_iter().find(|s| s.sequence > after_sequence) {
+                        return Some(snap);
                     }
                 }
             }
@@ -224,13 +246,24 @@ mod tests {
         }
     }
 
+    fn schema_snapshot(device: &str, schema: &str, seq: u64, payload: serde_json::Value) -> WorldSnapshot {
+        WorldSnapshot {
+            device: DeviceId(device.into()),
+            schema: schema.into(),
+            sequence: seq,
+            payload,
+            observed_at: MonoTime(seq),
+            stale: false,
+        }
+    }
+
     #[tokio::test]
     async fn latest_returns_most_recent_ingested() {
         let ws = world_state(10);
         let dev = DeviceId("bot".into());
         ws.ingest(dev.clone(), snapshot("bot", 1, 1.0)).unwrap();
         ws.ingest(dev.clone(), snapshot("bot", 2, 2.0)).unwrap();
-        let snap = ws.latest(&dev).await.unwrap();
+        let snap = ws.latest(&dev, ANY_SCHEMA).await.unwrap();
         assert_eq!(snap.sequence, 2);
         assert_eq!(snap.payload["x"].as_f64().unwrap(), 2.0);
     }
@@ -252,10 +285,55 @@ mod tests {
         assert!(ws.ingest(dev.clone(), snapshot("bot", 1, 2.0)).is_err());
     }
 
+    /// The bridge returns multiple schemas (base_pose/base_twist/ground_truth_pose)
+    /// with independent sequence counters. Each must keep its own monotonic slot:
+    /// a slower schema must neither be evicted by nor rejected because of a
+    /// faster one's higher sequence.
+    #[tokio::test]
+    async fn distinct_schemas_keep_independent_monotonic_slots() {
+        let ws = world_state(10);
+        let dev = DeviceId("bot".into());
+
+        // Three schemas arrive in one pump cycle; the odom counter is far ahead
+        // of the ground-truth counter (independent counters).
+        ws.ingest(dev.clone(), schema_snapshot("bot", "base_pose", 100, serde_json::json!({"position": 1.0})))
+            .unwrap();
+        ws.ingest(dev.clone(), schema_snapshot("bot", "base_twist", 100, serde_json::json!({"v": 0.0})))
+            .unwrap();
+        ws.ingest(dev.clone(), schema_snapshot("bot", "ground_truth_pose", 5, serde_json::json!({"position": 1.0})))
+            .unwrap();
+
+        // All three survive, despite the gt sequence being below the odom one.
+        assert_eq!(ws.latest(&dev, "base_pose").await.unwrap().sequence, 100);
+        assert_eq!(ws.latest(&dev, "base_twist").await.unwrap().sequence, 100);
+        assert_eq!(ws.latest(&dev, "ground_truth_pose").await.unwrap().sequence, 5);
+
+        // Independent gates: a lower-sequence re-ingest of gt is still rejected
+        // within its own schema...
+        assert!(ws
+            .ingest(dev.clone(), schema_snapshot("bot", "ground_truth_pose", 4, serde_json::json!({})))
+            .is_err());
+        // ...but a new base_pose with seq 101 is accepted even though it is far
+        // above gt's counter.
+        ws.ingest(dev.clone(), schema_snapshot("bot", "base_pose", 101, serde_json::json!({"position": 2.0})))
+            .unwrap();
+        assert_eq!(ws.latest(&dev, "base_pose").await.unwrap().sequence, 101);
+
+        // ANY_SCHEMA returns the freshest across schemas.
+        assert_eq!(ws.latest(&dev, ANY_SCHEMA).await.unwrap().sequence, 101);
+    }
+
     #[tokio::test]
     async fn missing_device_returns_none() {
         let ws = world_state(10);
-        assert!(ws.latest(&DeviceId("nonexistent".into())).await.is_none());
+        assert!(ws
+            .latest(&DeviceId("nonexistent".into()), ANY_SCHEMA)
+            .await
+            .is_none());
+        assert!(ws
+            .latest(&DeviceId("nonexistent".into()), "base_pose")
+            .await
+            .is_none());
     }
 
     #[test]
@@ -373,10 +451,10 @@ mod tests {
         let device = DeviceId("bot".into());
 
         pump.poll_once(&device).await;
-        assert_eq!(ws.latest(&device).await.unwrap().sequence, 1);
+        assert_eq!(ws.latest(&device, ANY_SCHEMA).await.unwrap().sequence, 1);
 
         pump.poll_once(&device).await;
-        let latest = ws.latest(&device).await.unwrap();
+        let latest = ws.latest(&device, ANY_SCHEMA).await.unwrap();
         assert_eq!(latest.sequence, 2, "dup seq 1 rejected, seq 2 kept");
         assert!(!latest.stale);
     }
@@ -397,6 +475,6 @@ mod tests {
         );
         let device = DeviceId("bot".into());
         pump.poll_once(&device).await;
-        assert!(ws.latest(&device).await.is_none());
+        assert!(ws.latest(&device, ANY_SCHEMA).await.is_none());
     }
 }

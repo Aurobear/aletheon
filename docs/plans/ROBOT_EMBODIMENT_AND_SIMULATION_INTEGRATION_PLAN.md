@@ -1030,6 +1030,20 @@ activation 必须等待这些端口全部完成。
 > GetCapabilities 握手、skill manifest（read-only 阶段暴露 `kuavo.stop`/`kuavo.move_base_timed`）、
 > 新鲜单调 observation（base_pose/base_twist/ground_truth_pose）。
 > 修复 bridge 真实 bug：`rospy.init_node` 需在 `GaitCache` 服务查询**之前**（`366efe5`）。
+>
+> **单调性契约加固（2026-08-04）**：monotonic 断言从"两次瞬时读取严格递增"改为
+> **窗口采样**（5×50ms）+ 按 schema 分组 + **非递减** + 至少一次推进。原因：bridge 的
+> `sequence` 是 ROS 接收计数器（每次回调 +1），瞬时读取遇亚 tick 停顿会读到相等 → 旧断言
+> 天然 flaky（直接 RPC 实测当前单调新鲜，但两次背靠背读可随机相等）。
+>
+> **world-state 多 schema 缺陷（2026-08-04 发现并修复）**：`EmbodimentWorldState` 原按
+> `device` 单槽、跨 schema 比较 `sequence`，导致 base_twist（与 base_pose 共用 odom 计数器、
+> 同 seq）和 ground_truth_pose（独立计数器、seq 落后 ~10 万）每轮 pump 都被 `<=` 拒绝并吞掉
+> ——world state 永远只留 base_pose，`base_twist.*`/`ground_truth_pose.*` 的 `ExpectedOutcome`
+> 永远无法满足。已改为 **`(device, schema)` 独立单调槽位**；`WorldStatePort` 增加 schema 维度
+> （`ANY_SCHEMA="*"` 取各 schema 最新）；verifier 从 predicate 路径首段解析目标 schema
+> （如 `base_twist.linear_velocity.x` → 按 base_twist 独立序列播种/等待，payload 按 schema
+> 包装后求值）。单 schema 世界（路径未限定 schema）行为完全不变。
 
 
 
@@ -1061,8 +1075,10 @@ activation 必须等待这些端口全部完成。
 > - **observation schema**：`base_pose`（position/orientation，z≈0.81）、`base_twist`
 >   （velocity ~1e-05）、`ground_truth_pose`——**无 `mode` 字段**。
 >
-> **集成缺口**：harness 的 `StubRobotPolicy` 提议 `Equals("mode","stance")`，与 bridge 实际
-> schema 不匹配。真实 stance E2E 的 `ExpectedOutcome` 必须对齐 bridge 观察（如
+> **集成缺口（已部分解除）**：harness 的 `StubRobotPolicy` 提议 `Equals("mode","stance")`，
+> 与 bridge 实际 schema 不匹配。verifier 已支持 **schema-qualified predicate**
+> （`base_twist.linear_velocity.x` → 按 base_twist 独立序列验证），world-state 多 schema
+> 槽位也已修复——剩余的是 **policy 端**提议 schema 对齐的 `ExpectedOutcome`（如
 > `base_twist.linear_velocity` 趋零 + 稳定窗口），阈值来自 Kuavo 领域配置（§13），不能用
 > 通用 `mode` 假设。
 
