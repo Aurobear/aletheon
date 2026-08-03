@@ -195,7 +195,7 @@ impl CommandRegistry {
             CommandDescriptor::builtin(
                 "resume",
                 &[],
-                "恢复指定会话",
+                "选择历史会话，或按 ID 恢复",
                 "会话",
                 "/resume <id>",
                 Rpc,

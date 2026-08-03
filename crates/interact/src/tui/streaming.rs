@@ -348,7 +348,7 @@ mod tests {
 
         let rendered = stream.current_text();
         assert!(stream.thinking_collapsed());
-        assert!(rendered.contains("✻ Thought for 1.2s"));
+        assert!(rendered.contains("· Reasoning completed in 1.2s"));
         assert!(!rendered.contains("先分析问题"));
         assert!(rendered.ends_with("最终回答"));
     }
@@ -363,7 +363,7 @@ mod tests {
         clock.advance(500);
         stream.commit();
 
-        assert_eq!(stream.current_text(), "✻ Thought for 0.5s\n\n");
+        assert_eq!(stream.current_text(), "· Reasoning completed in 0.5s\n\n");
         assert!(stream.thinking_collapsed());
         assert!(!stream.is_thinking());
     }

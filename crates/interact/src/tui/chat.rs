@@ -1292,7 +1292,7 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect::<Vec<_>>()
             .join("");
-        assert_eq!(header2, "• Ran ls");
+        assert_eq!(header2, "• Ran ls ✓");
     }
 
     #[test]
@@ -1326,7 +1326,7 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
 
-        assert_eq!(text, "• Searched google_gmail_search");
+        assert_eq!(text, "• Searched google_gmail_search ✓");
         assert!(!text.contains(&"x".repeat(100)));
     }
 

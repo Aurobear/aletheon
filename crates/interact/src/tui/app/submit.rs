@@ -184,20 +184,18 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Resume { id })) => {
-                let request = if id.is_empty() {
-                    let Some(session_id) = app.app_state.session_id.clone() else {
-                        app.chat.add_text(
-                            ChatRole::System,
-                            "会话仍在初始化，请稍后重试 /resume".to_string(),
-                        );
-                        return;
-                    };
-                    ClientRpcRequest::SessionLoadPrevious(fabric::protocol::client::SessionParams {
-                        session_id,
-                    })
-                } else {
-                    ClientRpcRequest::resume(id.clone())
-                };
+                if id.is_empty() {
+                    let request_id = write_request(app, ClientRpcRequest::Sessions).await;
+                    app.pending_commands
+                        .insert(request_id, super::super::PendingCommand::OpenSessionPicker);
+                    app.pending_non_turn.insert(request_id);
+                    app.streaming = true;
+                    app.status.waiting = true;
+                    app.chat
+                        .add_text(ChatRole::System, "查询可恢复会话中...".to_string());
+                    return;
+                }
+                let request = ClientRpcRequest::resume(id.clone());
                 let request_id = write_request(app, request).await;
                 app.pending_commands.insert(
                     request_id,
@@ -205,14 +203,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                         previous_session_id: app.app_state.session_id.clone(),
                     },
                 );
-                app.chat.add_text(
-                    ChatRole::System,
-                    if id.is_empty() {
-                        "恢复最近的上一会话...".to_string()
-                    } else {
-                        format!("恢复会话 {id}...")
-                    },
-                );
+                app.chat
+                    .add_text(ChatRole::System, format!("恢复会话 {id}..."));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
