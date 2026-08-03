@@ -121,8 +121,8 @@ The real TUI then completed a sustained three-turn challenge without losing the
 host facts:
 
 ```text
-effective_model_id = leju/deepseek/deepseek-v4-pro
-display_name       = deepseek/deepseek-v4-pro
+effective_model_id = lejurobot_deepseek/deepseek/deepseek-v4-flash[1m]
+display_name       = deepseek/deepseek-v4-flash[1m]
 max_context_tokens = 1000000
 ```
 

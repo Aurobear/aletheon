@@ -1,8 +1,8 @@
 [agent]
 # Compiled defaults — override in /etc/aletheon, ~/.aletheon, or project config.
 # default_provider and default_model match the first configured provider below.
-default_provider = "leju"
-default_model = "deepseek/deepseek-v4-pro"
+default_provider = "lejurobot_deepseek"
+default_model = "deepseek/deepseek-v4-flash[1m]"
 # Bound cumulative provider/tool rounds for every top-level turn. Set 0 only in
 # an explicitly reviewed override when another authoritative budget is present.
 max_iterations = 50
@@ -40,11 +40,11 @@ default = "general-agent"
 # At least one provider is required for the daemon to start.
 # Fill in api_key (or set it via your local override config), then run the daemon.
 [[providers]]
-name = "leju"
+name = "lejurobot_deepseek"
 base_url = "https://aiapi.lejurobot.com"
 api_key = ""
 transport = "openai"
-models = ["deepseek/deepseek-v4-pro"]
+models = ["deepseek/deepseek-v4-flash[1m]"]
 max_context_length = 1000000
 
 [providers.backpressure]

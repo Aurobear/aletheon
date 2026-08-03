@@ -216,7 +216,7 @@ server_name = "deployment-instance"
 }
 
 #[test]
-fn checked_in_leju_deepseek_uses_the_openai_transport() {
+fn checked_in_lejurobot_deepseek_flash_uses_the_openai_transport() {
     for relative_path in [
         "../../config/default.toml",
         "../../config/production.toml.example",
@@ -226,13 +226,13 @@ fn checked_in_leju_deepseek_uses_the_openai_transport() {
         let provider = config
             .providers
             .iter()
-            .find(|provider| provider.name == "leju")
+            .find(|provider| provider.name == "lejurobot_deepseek")
             .unwrap_or_else(|| panic!("LejuRobot provider must exist in {}", path.display()));
         assert_eq!(provider.transport, Transport::Openai);
         assert!(provider
             .models
             .iter()
-            .any(|model| model == "deepseek/deepseek-v4-pro"));
+            .any(|model| model == "deepseek/deepseek-v4-flash[1m]"));
         assert_eq!(provider.max_context_length, Some(1_000_000));
         assert_eq!(
             provider.backpressure.min_request_interval_ms,
@@ -240,10 +240,13 @@ fn checked_in_leju_deepseek_uses_the_openai_transport() {
             "checked-in LejuRobot provider must preserve machine-wide pacing: {}",
             path.display()
         );
-        assert_eq!(config.agent.default_provider.as_deref(), Some("leju"));
+        assert_eq!(
+            config.agent.default_provider.as_deref(),
+            Some("lejurobot_deepseek")
+        );
         assert_eq!(
             config.agent.default_model.as_deref(),
-            Some("deepseek/deepseek-v4-pro")
+            Some("deepseek/deepseek-v4-flash[1m]")
         );
         assert!(
             config.evaluation.enabled,
