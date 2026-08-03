@@ -14,7 +14,6 @@ pub mod awareness;
 pub mod chat;
 pub mod command;
 pub mod completion;
-pub mod computer;
 pub mod conscious_core;
 pub mod diff_view;
 
@@ -428,11 +427,6 @@ impl App {
                 || (0x3040..=0x309F).contains(&cp)  // Hiragana
                 || (0x30A0..=0x30FF).contains(&cp) // Katakana
         });
-    }
-
-    #[cfg(test)]
-    fn requested_task_kind(&self) -> Option<fabric::TaskKind> {
-        self.requested_task_kind
     }
 }
 

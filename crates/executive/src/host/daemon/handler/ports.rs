@@ -29,7 +29,9 @@ pub(crate) struct HandlerPorts {
     pub(crate) sessions: Arc<dyn LegacySessionUseCases>,
     pub(crate) session_lifecycle: Arc<dyn SessionLifecycleUseCases>,
     pub(crate) health: Arc<dyn HealthUseCases>,
-    pub(crate) reflection: Arc<dyn ReflectionUseCases>,
+    // Retained for host-owned governance/diagnostics; no public RPC route may
+    // call this port directly.
+    pub(crate) _reflection: Arc<dyn ReflectionUseCases>,
     pub(crate) google: Arc<dyn ExternalSourceUseCases>,
     pub(crate) workflow: Arc<dyn WorkflowUseCases>,
     pub(crate) turn: Arc<dyn TurnUseCases>,
@@ -98,7 +100,7 @@ impl HandlerPorts {
             sessions,
             session_lifecycle,
             health,
-            reflection,
+            _reflection: reflection,
             google,
             workflow,
             turn,

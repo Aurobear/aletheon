@@ -13,8 +13,7 @@ use crate::tui::host_time::ClientTimer;
 use fabric::Timer;
 
 use super::super::response::{
-    format_evolution, format_genome, format_models, format_reflections, format_sessions,
-    format_status, try_read_socket_with_recorder,
+    format_models, format_sessions, format_status, try_read_socket_with_recorder,
 };
 use super::super::term_compat::TermCaps;
 use super::super::test_infra::{EventRecorder, FrameRecorder, TestConfig, TestInputReader};
@@ -411,12 +410,6 @@ pub async fn simple_line_mode(
                             // This is the actual JSON-RPC response — process it
                             if let Some(text) = msg["result"]["response"].as_str() {
                                 println!("\n{text}\n");
-                            } else if !msg["result"]["reflections"].is_null() {
-                                println!("\n{}\n", format_reflections(&msg["result"]["reflections"]));
-                            } else if !msg["result"]["genome"].is_null() {
-                                println!("\n{}\n", format_genome(&msg["result"]["genome"]));
-                            } else if !msg["result"]["evolution"].is_null() {
-                                println!("\n{}\n", format_evolution(&msg["result"]["evolution"]));
                             } else if !msg["result"]["status"].is_null() {
                                 println!("\n{}\n", format_status(&msg["result"]["status"]));
                             } else if !msg["result"]["sessions"].is_null() {

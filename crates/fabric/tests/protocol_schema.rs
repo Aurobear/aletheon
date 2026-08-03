@@ -493,16 +493,10 @@ fn daemon_compatibility_requests_own_method_and_parameter_names() {
     for (request, expected_method) in [
         (ClientRpcRequest::Clear, "clear"),
         (ClientRpcRequest::Status, "status"),
-        (ClientRpcRequest::Reflect, "reflect"),
-        (ClientRpcRequest::ReflectNow, "reflect_now"),
-        (ClientRpcRequest::Evolution, "evolution"),
-        (ClientRpcRequest::Genome, "genome"),
         (ClientRpcRequest::Sessions, "sessions"),
         (ClientRpcRequest::Compact, "compact"),
         (ClientRpcRequest::ModelList, "model_list"),
-        (ClientRpcRequest::PlanApprove, "plan_approve"),
         (ClientRpcRequest::Cancel, "cancel"),
-        (ClientRpcRequest::HooksList, "hooks_list"),
     ] {
         let request = request.to_json_rpc(Some(1)).unwrap();
         assert_eq!(request["method"], expected_method);

@@ -288,17 +288,6 @@ impl RequestHandler {
         }
     }
 
-    pub(super) async fn handle_hooks_list(
-        &self,
-        id: &serde_json::Value,
-        _request: &serde_json::Value,
-    ) -> serde_json::Value {
-        match self.ports.admin.hooks().await {
-            Ok(hooks) => json!({"jsonrpc":"2.0", "id":id, "result":{"hooks":hooks}}),
-            Err(error) => admin_error(id, error),
-        }
-    }
-
     pub(super) async fn handle_sub_agents(
         &self,
         id: &serde_json::Value,

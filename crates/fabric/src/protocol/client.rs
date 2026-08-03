@@ -28,11 +28,6 @@ pub enum ClientRpcRequest {
     EvaluationGet(EvaluationGetParams),
     EvaluationLatest(EvaluationLatestParams),
     EvaluationList(EvaluationListParams),
-    Reflect,
-    ReflectNow,
-    ReflectNowFor(SessionParams),
-    Evolution,
-    Genome,
     Sessions,
     Resume(ResumeParams),
     Compact,
@@ -43,10 +38,8 @@ pub enum ClientRpcRequest {
     SkillsList,
     SkillInvoke(SkillInvokeParams),
     ModeSwitch(ModeSwitchParams),
-    PlanApprove,
     Cancel,
     Interrupt(InterruptParams),
-    HooksList,
     DaemonShutdown,
     SessionNew,
     SessionNewFor(SessionParams),
@@ -94,7 +87,6 @@ pub enum ClientRpcRequest {
     SessionFork(SessionForkParams),
     SessionInterrupt(SessionInterruptParams),
     SessionReplay(SessionReplayParams),
-    HostComputer(ComputerHostParams),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -177,12 +169,6 @@ pub struct SessionReplayParams {
     #[schemars(with = "String")]
     pub session_id: SessionId,
     pub after_sequence: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ComputerHostParams {
-    pub operation: String,
-    pub arguments: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -691,11 +677,6 @@ impl ClientRpcRequest {
             Self::EvaluationList(params) => {
                 ("evaluation.list", Some(serde_json::to_value(params)?))
             }
-            Self::Reflect => ("reflect", None),
-            Self::ReflectNow => ("reflect_now", None),
-            Self::ReflectNowFor(params) => ("reflect_now", Some(serde_json::to_value(params)?)),
-            Self::Evolution => ("evolution", None),
-            Self::Genome => ("genome", None),
             Self::Sessions => ("sessions", None),
             Self::Resume(params) => ("resume", Some(serde_json::to_value(params)?)),
             Self::Compact => ("compact", None),
@@ -708,10 +689,8 @@ impl ClientRpcRequest {
             Self::SkillsList => ("skills.list", None),
             Self::SkillInvoke(params) => ("skill.invoke", Some(serde_json::to_value(params)?)),
             Self::ModeSwitch(params) => ("mode_switch", Some(serde_json::to_value(params)?)),
-            Self::PlanApprove => ("plan_approve", None),
             Self::Cancel => ("cancel", None),
             Self::Interrupt(params) => ("interrupt", Some(serde_json::to_value(params)?)),
-            Self::HooksList => ("hooks_list", None),
             Self::DaemonShutdown => (
                 "daemon.shutdown",
                 Some(serde_json::to_value(EmptyParams {})?),
@@ -780,7 +759,6 @@ impl ClientRpcRequest {
                 ("session.interrupt", Some(serde_json::to_value(params)?))
             }
             Self::SessionReplay(params) => ("session.replay", Some(serde_json::to_value(params)?)),
-            Self::HostComputer(params) => ("host.computer", Some(serde_json::to_value(params)?)),
         };
         serde_json::to_value(JsonRpcRequest {
             jsonrpc: JSON_RPC_VERSION,
