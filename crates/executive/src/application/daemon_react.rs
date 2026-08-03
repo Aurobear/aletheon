@@ -285,6 +285,7 @@ mod tests {
             thread_id: thread,
             receipt_prefix: "p3-turn".into(),
             capability_receipts: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            inference_items: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         let mut next_call_messages = services.request_messages.clone();
@@ -332,6 +333,7 @@ mod tests {
             thread_id: ThreadId("test".into()),
             receipt_prefix: "test".into(),
             capability_receipts: receipts.clone(),
+            inference_items: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
         let receipt = fabric::CapabilityTerminalReceipt {
             invocation_id: "validation-1".into(),

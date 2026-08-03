@@ -11,7 +11,7 @@ mod cognition;
 pub(crate) mod embodiment;
 pub mod extension_connectors;
 pub mod extension_publisher;
-mod extensions;
+pub mod extensions;
 mod google;
 mod inference;
 mod integrations;

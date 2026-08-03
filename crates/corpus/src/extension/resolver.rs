@@ -62,42 +62,9 @@ impl PackageAssetResolver {
             if !activation.enabled {
                 continue;
             }
-            anyhow::ensure!(
-                activation.schema_version == 1 && !activation.package_id.trim().is_empty(),
-                "enabled activation record is invalid"
-            );
-            let package_id = activation.package_id.clone();
-            let selected_hash = activation
-                .current
-                .as_deref()
-                .context("enabled activation has no selected package hash")?;
-            let installed = selected_installation(
-                self.store.get_installed(&package_id)?,
-                selected_hash,
-                &package_id,
-            )?;
-            let package_root = self
-                .store
-                .package_path(selected_hash)?
-                .canonicalize()
-                .with_context(|| {
-                    format!(
-                        "enabled package content is missing for '{package_id}' hash {selected_hash}"
-                    )
-                })?;
-
-            for asset in &installed.assets {
-                let absolute_path = resolve_contained_asset(&package_root, &asset.path)
-                    .with_context(|| format!("resolving asset '{}'", asset.id))?;
-                assets.push(ResolvedPackageAsset {
-                    package_id: installed.id.clone(),
-                    package_version: installed.version.clone(),
-                    package_hash: installed.hash.clone(),
-                    asset: asset.clone(),
-                    absolute_path,
-                });
-            }
-            activation_records.push(activation);
+            let resolved = self.resolve_activation(&activation)?;
+            assets.extend(resolved.assets);
+            activation_records.extend(resolved.activation_records);
         }
 
         assets.sort_by(|left, right| {
@@ -111,6 +78,52 @@ impl PackageAssetResolver {
         Ok(ResolvedPackageSet {
             assets,
             activation_records,
+        })
+    }
+
+    /// Resolve one explicit activation so bootstrap can quarantine a broken
+    /// package without discarding unrelated healthy packages.
+    pub fn resolve_activation(&self, activation: &ActivationRecord) -> Result<ResolvedPackageSet> {
+        anyhow::ensure!(
+            activation.enabled
+                && activation.schema_version == 1
+                && !activation.package_id.trim().is_empty(),
+            "enabled activation record is invalid"
+        );
+        let package_id = activation.package_id.clone();
+        let selected_hash = activation
+            .current
+            .as_deref()
+            .context("enabled activation has no selected package hash")?;
+        let installed = selected_installation(
+            self.store.get_installed(&package_id)?,
+            selected_hash,
+            &package_id,
+        )?;
+        let package_root = self
+            .store
+            .package_path(selected_hash)?
+            .canonicalize()
+            .with_context(|| {
+                format!(
+                    "enabled package content is missing for '{package_id}' hash {selected_hash}"
+                )
+            })?;
+        let mut assets = Vec::new();
+        for asset in &installed.assets {
+            let absolute_path = resolve_contained_asset(&package_root, &asset.path)
+                .with_context(|| format!("resolving asset '{}'", asset.id))?;
+            assets.push(ResolvedPackageAsset {
+                package_id: installed.id.clone(),
+                package_version: installed.version.clone(),
+                package_hash: installed.hash.clone(),
+                asset: asset.clone(),
+                absolute_path,
+            });
+        }
+        Ok(ResolvedPackageSet {
+            assets,
+            activation_records: vec![activation.clone()],
         })
     }
 }
