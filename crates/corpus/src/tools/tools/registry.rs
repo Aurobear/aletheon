@@ -37,7 +37,8 @@ impl ToolRegistry {
 
     /// Get tool definitions for LLM (name, description, schema).
     pub fn definitions(&self) -> Vec<fabric::ToolDefinition> {
-        self.tools
+        let mut definitions: Vec<_> = self
+            .tools
             .values()
             .filter(|tool| {
                 matches!(
@@ -50,14 +51,17 @@ impl ToolRegistry {
                 description: t.description().to_string(),
                 input_schema: t.input_schema(),
             })
-            .collect()
+            .collect();
+        definitions.sort_by(|left, right| left.name.cmp(&right.name));
+        definitions
     }
 
     /// Snapshot every executable tool for host-side authorization and profile
     /// validation. Unlike [`Self::definitions`], this includes deferred tools;
     /// callers must not pass this catalog wholesale to a model request.
     pub fn profile_definitions(&self) -> Vec<fabric::ToolDefinition> {
-        self.tools
+        let mut definitions: Vec<_> = self
+            .tools
             .values()
             .filter(|tool| tool.exposure() != ToolExposure::Hidden)
             .map(|tool| fabric::ToolDefinition {
@@ -65,7 +69,9 @@ impl ToolRegistry {
                 description: tool.description().to_string(),
                 input_schema: tool.input_schema(),
             })
-            .collect()
+            .collect();
+        definitions.sort_by(|left, right| left.name.cmp(&right.name));
+        definitions
     }
 
     /// Bind the existing BM25 catalog to this registry and expose its single
@@ -581,6 +587,26 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err.message.contains("dup_tool"));
         assert!(err.message.contains("already registered"));
+    }
+
+    #[test]
+    fn definition_snapshots_are_sorted_by_name() {
+        let mut reg = ToolRegistry::new();
+        for name in ["zeta", "alpha", "middle"] {
+            Registry::<Arc<dyn Tool>>::register(&mut reg, Arc::new(MockTool::new(name))).unwrap();
+        }
+
+        let names = |definitions: Vec<fabric::ToolDefinition>| {
+            definitions
+                .into_iter()
+                .map(|definition| definition.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(reg.definitions()), ["alpha", "middle", "zeta"]);
+        assert_eq!(
+            names(reg.profile_definitions()),
+            ["alpha", "middle", "zeta"]
+        );
     }
 
     #[test]
