@@ -1,5 +1,6 @@
 //! RobotHarness state machine — bounded retry/replan with deterministic verification.
 
+use fabric::types::expected_outcome::ExpectedOutcome;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -92,6 +93,9 @@ pub struct RobotHarnessConfig {
     pub max_retries: u32,
     /// Maximum replans (hard cap: 1 for P3).
     pub max_replans: u32,
+    /// Fallback expected outcome when the Plan state produces no valid proposal.
+    /// `None` means fail closed — never silently use a hardcoded predicate.
+    pub default_expected_outcome: Option<ExpectedOutcome>,
 }
 
 impl Default for RobotHarnessConfig {
@@ -99,6 +103,7 @@ impl Default for RobotHarnessConfig {
         Self {
             max_retries: 1,
             max_replans: 1,
+            default_expected_outcome: None,
         }
     }
 }

@@ -12,6 +12,7 @@ use fabric::types::embodiment::{DeviceId, SkillDescriptor, SkillId, SkillRequest
 use fabric::types::expected_outcome::ExpectedOutcome;
 use fabric::types::outcome_verification::VerificationReport;
 use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
+use fabric::OperationId;
 use std::sync::Arc;
 
 /// Port for executing an embodied skill. Injected by Executive.
@@ -82,6 +83,10 @@ pub struct RobotHarnessState {
     pub latest_skill_request: Option<SkillRequest>,
     pub latest_skill_result: Option<SkillResult>,
     pub latest_verification: Option<VerificationReport>,
+    /// Expected outcome carried from the validated policy proposal.
+    pub latest_expected_outcome: Option<ExpectedOutcome>,
+    /// Host/provider-issued operation id of the latest executed attempt.
+    pub latest_operation_id: Option<OperationId>,
     pub error: Option<String>,
 }
 
@@ -133,8 +138,20 @@ impl RobotHarness {
             latest_skill_request: None,
             latest_skill_result: None,
             latest_verification: None,
+            latest_expected_outcome: None,
+            latest_operation_id: None,
             error: None,
         }
+    }
+
+    /// Resolve the expected outcome for Execute/Verify: the validated proposal's
+    /// outcome first, then the configured default. Fail closed when neither exists —
+    /// never silently fall back to a hardcoded predicate.
+    fn resolve_expected(&self, s: &RobotHarnessState) -> Result<ExpectedOutcome, String> {
+        s.latest_expected_outcome
+            .clone()
+            .or(self.config.default_expected_outcome.clone())
+            .ok_or_else(|| "no expected outcome available (proposal carried none)".to_string())
     }
 
     pub async fn step(&self, mut harness_state: RobotHarnessState) -> RobotHarnessState {
@@ -162,6 +179,8 @@ impl RobotHarness {
                         let mut valid_request = None;
                         for proposal in &proposals {
                             if validate_proposal(proposal, &self.allowed_skills, 0, 0).is_ok() {
+                                harness_state.latest_expected_outcome =
+                                    Some(proposal.expected_outcome.clone());
                                 valid_request = Some(SkillRequest {
                                     skill: proposal.skill.clone(),
                                     device: proposal.device.clone(),
@@ -206,23 +225,24 @@ impl RobotHarness {
                 let before_snap = harness_state.latest_snapshot.clone();
                 match self.executor.execute(request).await {
                     Ok(result) => {
+                        let operation_id = result.operation_id.clone();
+                        harness_state.latest_operation_id = Some(operation_id.clone());
                         harness_state.latest_skill_result = Some(result);
+                        let expected = match self.resolve_expected(&harness_state) {
+                            Ok(e) => e,
+                            Err(reason) => {
+                                harness_state.error = Some(reason);
+                                harness_state.state = RobotState::Failed;
+                                return harness_state;
+                            }
+                        };
                         let _ = self
                             .episodes
                             .append_attempt(
                                 &harness_state.episode_id,
                                 harness_state.attempt,
-                                "op",
-                                &ExpectedOutcome {
-                                    predicate:
-                                        fabric::types::expected_outcome::OutcomePredicate::Equals {
-                                            path: "mode".into(),
-                                            value: serde_json::json!("stance"),
-                                        },
-                                    freshness_ms: 500,
-                                    stable_window_ms: 0,
-                                    timeout_ms: 5000,
-                                },
+                                &operation_id.0.to_string(),
+                                &expected,
                                 before_snap.as_ref(),
                                 None,
                                 harness_state.latest_skill_result.as_ref(),
@@ -234,21 +254,36 @@ impl RobotHarness {
                     }
                     Err(e) => {
                         harness_state.error = Some(e);
+                        // Operation was not created: keep latest_operation_id = None and record
+                        // the failed attempt under an independent attempt ID.
+                        if let Ok(expected) = self.resolve_expected(&harness_state) {
+                            let _ = self
+                                .episodes
+                                .append_attempt(
+                                    &harness_state.episode_id,
+                                    harness_state.attempt,
+                                    &fabric::OperationId::new().0.to_string(),
+                                    &expected,
+                                    before_snap.as_ref(),
+                                    None,
+                                    harness_state.latest_skill_result.as_ref(),
+                                    None,
+                                )
+                                .await;
+                        }
                         harness_state.state = RobotState::Failed;
                     }
                 }
             }
             RobotState::Verify => {
                 let after_snap = self.world_state.latest(&harness_state.device).await;
-                // Use a simple default expected outcome — in production this comes from the plan
-                let expected = ExpectedOutcome {
-                    predicate: fabric::types::expected_outcome::OutcomePredicate::Equals {
-                        path: "mode".into(),
-                        value: serde_json::json!("stance"),
-                    },
-                    freshness_ms: 500,
-                    stable_window_ms: 0,
-                    timeout_ms: 5000,
+                let expected = match self.resolve_expected(&harness_state) {
+                    Ok(e) => e,
+                    Err(reason) => {
+                        harness_state.error = Some(reason);
+                        harness_state.state = RobotState::Failed;
+                        return harness_state;
+                    }
                 };
                 let report = self
                     .verifier
