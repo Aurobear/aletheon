@@ -2,7 +2,7 @@
 # Compiled defaults — override in /etc/aletheon, ~/.aletheon, or project config.
 # default_provider and default_model match the first configured provider below.
 default_provider = "lejurobot_deepseek"
-default_model = "deepseek/deepseek-v4-flash"
+default_model = "deepseek/deepseek-v4-flash[1m]"
 # Bound cumulative provider/tool rounds for every top-level turn. Set 0 only in
 # an explicitly reviewed override when another authoritative budget is present.
 max_iterations = 50
@@ -44,13 +44,22 @@ name = "lejurobot_deepseek"
 base_url = "https://aiapi.lejurobot.com"
 api_key = ""
 transport = "openai"
-models = ["deepseek/deepseek-v4-flash"]
+models = ["deepseek/deepseek-v4-flash[1m]"]
 
 [providers.backpressure]
 # This account is governed by a rolling request-rate limit. Coordinate request
 # starts in the machine core so sessions, role children, and embedding work do
 # not independently burst the same endpoint/model.
 min_request_interval_ms = 15000
+
+# Official DeepSeek endpoint. Its unprefixed model IDs are distinct from the
+# LejuRobot proxy namespace above. Set DEEPSEEK_API_KEY to select this provider.
+[[providers]]
+name = "deepseek"
+base_url = "https://api.deepseek.com"
+api_key = ""
+transport = "openai"
+models = ["deepseek-v4-flash[1m]", "deepseek-v4-pro[1m]"]
 
 # Optional local/offline fallback provider.
 # The LLM scheduler fails over to the next configured provider when the primary

@@ -232,7 +232,7 @@ fn checked_in_lejurobot_deepseek_flash_uses_the_openai_transport() {
         assert!(provider
             .models
             .iter()
-            .any(|model| model == "deepseek/deepseek-v4-flash"));
+            .any(|model| model == "deepseek/deepseek-v4-flash[1m]"));
         assert_eq!(provider.max_context_length, None);
         assert_eq!(
             provider.backpressure.min_request_interval_ms,
@@ -246,7 +246,7 @@ fn checked_in_lejurobot_deepseek_flash_uses_the_openai_transport() {
         );
         assert_eq!(
             config.agent.default_model.as_deref(),
-            Some("deepseek/deepseek-v4-flash")
+            Some("deepseek/deepseek-v4-flash[1m]")
         );
         assert!(
             config.evaluation.enabled,
@@ -258,6 +258,24 @@ fn checked_in_lejurobot_deepseek_flash_uses_the_openai_transport() {
             fabric::EvaluationMode::Shadow
         );
         assert_eq!(config.evaluation.coding_rubric, "coding-v2");
+
+        let official = config
+            .providers
+            .iter()
+            .find(|provider| provider.name == "deepseek")
+            .unwrap_or_else(|| {
+                panic!(
+                    "official DeepSeek provider must exist in {}",
+                    path.display()
+                )
+            });
+        assert_eq!(official.base_url, "https://api.deepseek.com");
+        assert_eq!(official.transport, Transport::Openai);
+        assert_eq!(
+            official.models,
+            ["deepseek-v4-flash[1m]", "deepseek-v4-pro[1m]"]
+        );
+        assert_eq!(official.max_context_length, None);
     }
 }
 
