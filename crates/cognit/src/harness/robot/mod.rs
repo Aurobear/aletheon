@@ -2,6 +2,7 @@
 //! Cognit owns the state machine; it does NOT depend on Executive or Hardware.
 
 pub mod proposal_validator;
+pub mod session;
 pub mod state;
 
 use crate::harness::robot::proposal_validator::validate_proposal;

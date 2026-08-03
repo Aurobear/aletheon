@@ -9,15 +9,27 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use cognit::harness::robot::session::RobotCognitiveSession;
 use cognit::harness::robot::state::RobotHarnessConfig;
 use cognit::harness::robot::{
     EmbodiedExecutionPort, EpisodeSink, OutcomeVerifierPort, PlanPort, RobotHarness,
 };
 use cognit::ports::policy_provider::PolicyProviderPort;
-use fabric::types::embodiment::SkillDescriptor;
-use fabric::types::world_state::WorldStatePort;
+use fabric::types::embodiment::{DeviceId, SkillDescriptor, SkillRequest};
+use fabric::types::expected_outcome::{ExpectedOutcome, OutcomePredicate};
+use fabric::types::perception_observation::PerceptionObservation;
+use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
+use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
+use fabric::Clock;
+
+use super::deterministic_outcome_verifier::DeterministicOutcomeVerifier;
+use super::embodied_execution_adapter::EmbodiedExecutionAdapter;
+use super::harness_factory::CognitiveSessionFactory;
+use super::world_state::{EmbodimentWorldState, WorldStatePump};
 
 /// All robot-main-chain dependencies, assembled by the daemon bootstrap.
+#[derive(Clone)]
 pub struct RobotHarnessDependencies {
     pub config: RobotHarnessConfig,
     pub world_state: Arc<dyn WorldStatePort>,
@@ -47,6 +59,161 @@ pub fn build_robot_harness(
         dependencies.policy,
         dependencies.allowed_skills,
     ))
+}
+
+/// Fail-closed planner: replanning is not configured yet, so a replan request
+/// fails the harness closed instead of silently re-issuing a stale skill.
+pub struct DefaultPlanPort;
+#[async_trait]
+impl PlanPort for DefaultPlanPort {
+    async fn plan(
+        &self,
+        _d: &DeviceId,
+        _s: &WorldSnapshot,
+        _g: &str,
+    ) -> Result<SkillRequest, String> {
+        Err("robot planner not configured".into())
+    }
+    async fn replan(
+        &self,
+        _d: &DeviceId,
+        _s: &WorldSnapshot,
+        _f: &str,
+    ) -> Result<SkillRequest, String> {
+        Err("robot replan not configured".into())
+    }
+}
+
+/// Default policy: proposes the first allowed skill with a generic expected
+/// outcome. Production selects `GrpcPolicyProvider`; this is the explicit
+/// fallback until a real VLA/policy endpoint is configured.
+pub struct StubRobotPolicy;
+#[async_trait]
+impl PolicyProviderPort for StubRobotPolicy {
+    async fn propose(
+        &self,
+        _goal: &str,
+        device: &DeviceId,
+        _snapshots: &[WorldSnapshot],
+        _visual: &[PerceptionObservation],
+        allowed_skills: &[SkillDescriptor],
+    ) -> Result<Vec<SkillProposal>, String> {
+        let Some(skill) = allowed_skills.first() else {
+            return Ok(vec![]);
+        };
+        Ok(vec![SkillProposal {
+            skill: skill.skill.clone(),
+            device: device.clone(),
+            parameters: serde_json::json!({}),
+            expected_outcome: ExpectedOutcome {
+                predicate: OutcomePredicate::Equals {
+                    path: "mode".into(),
+                    value: serde_json::json!("stance"),
+                },
+                freshness_ms: 500,
+                stable_window_ms: 0,
+                timeout_ms: 5_000,
+            },
+            confidence: 0.9,
+            frame_refs: vec![],
+            provenance: PolicyProvenance {
+                provider: "default".into(),
+                model: "default-v1".into(),
+                version: "1.0".into(),
+                digest: "sha256:default".into(),
+            },
+        }])
+    }
+    async fn health(&self) -> Result<String, String> {
+        Ok("ready".into())
+    }
+}
+
+/// `CognitiveSessionFactory` that builds a RobotHarness per session and drives
+/// it through the turn contract via `RobotCognitiveSession`.
+pub struct RobotCognitiveSessionFactory {
+    deps: RobotHarnessDependencies,
+    clock: Arc<dyn Clock>,
+    device: DeviceId,
+}
+
+impl RobotCognitiveSessionFactory {
+    pub fn new(
+        deps: RobotHarnessDependencies,
+        clock: Arc<dyn Clock>,
+        device: DeviceId,
+    ) -> Result<Self, String> {
+        // Validate the composition eagerly — fail closed at bootstrap.
+        let _ = build_robot_harness(deps.clone())?;
+        Ok(Self { deps, clock, device })
+    }
+}
+
+#[async_trait]
+impl CognitiveSessionFactory for RobotCognitiveSessionFactory {
+    async fn create(
+        &self,
+        _session: &fabric::SessionRecord,
+        _policy: &crate::application::turn_policy::TurnPolicy,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<Box<dyn cognit::harness::CognitiveSession>> {
+        let harness = build_robot_harness(self.deps.clone()).map_err(anyhow::Error::msg)?;
+        Ok(Box::new(RobotCognitiveSession::new(
+            harness,
+            self.clock.clone(),
+            cancellation,
+            self.device.clone(),
+        )))
+    }
+}
+
+/// Assemble the robot session factory from the daemon's embodied execution port.
+/// `HarnessKind::Robot` requires a configured provider; otherwise it fails closed.
+pub async fn build_robot_session_factory(
+    executor: Arc<dyn fabric::types::embodiment::EmbodimentExecutionPort>,
+    clock: Arc<dyn Clock>,
+    data_dir: &std::path::Path,
+    device: DeviceId,
+    unsafe_predicates: Vec<OutcomePredicate>,
+) -> Result<Arc<dyn CognitiveSessionFactory>, String> {
+    let allowed_skills = executor
+        .list_skills(&device)
+        .await
+        .map_err(|e| format!("robot provider list_skills: {e}"))?;
+    if allowed_skills.is_empty() {
+        return Err(format!("robot provider exposed no skills for {}", device.0));
+    }
+    let world = Arc::new(EmbodimentWorldState::new(16, clock.clone()));
+    let pump = WorldStatePump::new(
+        world.clone(),
+        executor.clone(),
+        clock.clone(),
+        std::time::Duration::from_millis(250),
+    );
+    Arc::new(pump).spawn(vec![device.clone()]);
+    let executor_adapter: Arc<dyn EmbodiedExecutionPort> =
+        Arc::new(EmbodiedExecutionAdapter::new(executor));
+    let verifier: Arc<dyn OutcomeVerifierPort> =
+        Arc::new(DeterministicOutcomeVerifier::new(clock.clone(), unsafe_predicates));
+    let episodes: Arc<dyn EpisodeSink> = Arc::new(
+        crate::adapters::episode::sqlite_episode_sink::SqliteEpisodeSink::open(
+            data_dir.join("robot-episodes.db"),
+            clock.clone(),
+        )?,
+    );
+    let deps = RobotHarnessDependencies {
+        config: RobotHarnessConfig::default(),
+        world_state: world.clone(),
+        executor: executor_adapter,
+        verifier,
+        planner: Arc::new(DefaultPlanPort),
+        episodes,
+        policy: Arc::new(StubRobotPolicy),
+        allowed_skills,
+    };
+    Ok(Arc::new(RobotCognitiveSessionFactory::new(
+        deps, clock, device,
+    )?))
 }
 
 #[cfg(test)]

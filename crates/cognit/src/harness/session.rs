@@ -355,10 +355,17 @@ impl CognitError {
         }
     }
 
-    fn cancelled() -> Self {
+    pub fn cancelled() -> Self {
         Self {
             kind: CognitErrorKind::Cancelled,
             message: "turn cancellation requested".into(),
+        }
+    }
+
+    pub fn terminal(message: impl Into<String>) -> Self {
+        Self {
+            kind: CognitErrorKind::TerminalRuntime,
+            message: message.into(),
         }
     }
 

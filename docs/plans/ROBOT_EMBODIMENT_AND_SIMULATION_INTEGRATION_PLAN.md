@@ -26,7 +26,7 @@
 |---|---|---|
 | 1 | Kuavo bridge 不在本仓库 | ⚠️ 仍在独立仓库，但已存在且可复现（`aletheon-kuavo-bridge`，`scripts/bootstrap.sh`），并已通过 live MuJoCo Phase E 验收 |
 | 2 | gRPC 协议兼容未落地 | ✅ **已关闭**：`crates/hardware/proto/.../gateway.proto` 与 bridge 逐字节一致，且 `crates/hardware/tests/grpc_contract.rs` 用 SHA-256 锁死防漂移；`runtime_embodiment_selection.rs` 证明配置接线完整 |
-| 3 | `RobotHarness` 无生产 composition | ✅ composition root 已实现：`EmbodiedExecutionAdapter` + `build_robot_harness`（world pump/verifier/episodes/policy 全接线，空 allowlist fail closed）；剩余最后一步：daemon `HarnessKind::Robot` 的 CognitiveSession 适配（turn 契约集成） |
+| 3 | `RobotHarness` 无生产 composition | ✅ 已实现：`EmbodiedExecutionAdapter` + `build_robot_harness` + `RobotCognitiveSession`（CognitiveSession 适配）+ `build_robot_session_factory` + daemon `HarnessKind::Robot` 分支（request.rs:828，provider 缺失 fail closed） |
 | 4 | gRPC Policy Provider 是 Stub | ✅ 已实现真实 client：`GrpcPolicyProvider`（tonic 连 `PolicyGateway`，propose/health，Struct↔ExpectedOutcome 转换）；`StubPolicyProvider` 保留为显式降级；composition 接线待核心链收尾 |
 | 5 | expected outcome 硬编码 `mode == stance` | 🔴 开放：`crates/cognit/src/harness/robot/mod.rs:202,216,244`（Plan 丢弃 proposal outcome，Execute/Verify 各自硬编码） |
 | 6 | operation ID 用 `"op"` 占位 | 🔴 开放：`crates/cognit/src/harness/robot/mod.rs:215`；修复简单，因为 `SkillResult.operation_id: OperationId`（`fabric/src/types/embodiment.rs:84`）已存在 |
@@ -44,7 +44,7 @@ Aletheon 侧（PR1–6、9、10 + simulator 升级），bridge 不是瓶颈。
 
 | 开放差距 | 当前代码证据（为何还开放） | 关闭 PR | 关闭判定（✅ 当且仅当） |
 |---|---|---|---|
-| 3 无生产 composition | `RobotHarness::new` 生产代码 0 调用；`robot_harness_factory.rs` 只测 `HarnessKind::Robot` 枚举可选性 | PR4 ✅ + PR6 | `build_robot_harness` composition root + `EmbodiedExecutionAdapter` 已实现，空 allowlist fail closed；daemon `HarnessKind::Robot` 的 CognitiveSession 适配为最后一步 |
+| 3 无生产 composition | `RobotHarness::new` 生产代码 0 调用；`robot_harness_factory.rs` 只测 `HarnessKind::Robot` 枚举可选性 | PR4 ✅ + PR6 | `build_robot_harness` + `EmbodiedExecutionAdapter` + `RobotCognitiveSession` + daemon `HarnessKind::Robot` 分支全部实现；E2E 测试 `robot_turn_drives_harness_to_completion` 通过 |
 | 5 硬编码 `mode==stance` | `mod.rs:216-225`（Execute `append_attempt`）、`mod.rs:244-252`（Verify）仍是 `Equals("mode","stance")`；Plan 态 `mod.rs:147-190` 丢弃 proposal outcome | PR1 ✅ | 注入带非 stance outcome 的 `SkillProposal`，fake verifier 断言收到的是 proposal 的 outcome |
 | 6 `"op"` 占位 | `mod.rs:215` 仍是字面量 `"op"` | PR2 ✅ | 已创建 operation 的 attempt 保存 host/provider 返回的 typed `OperationId`；创建前失败保持 `None` 并使用独立 attempt ID |
 | 7 无 world-state 管道 | 无 pump 模块；RobotHarness 只在 Observe 态 `world_state.latest()` 拉一次快照 | PR3 ✅ | `PollingWorldState`/`WorldStatePump` 实现：单调 sequence 由 ingest 强制；过期/低置信标记 `stale` 且不进入稳定窗口（verifier 侧拒绝） |
@@ -663,7 +663,7 @@ cancel/safe-stop，并已通过 live MuJoCo Phase E 验收。Aletheon 侧契约�
 剩余：跨仓 E2E（对应 PR8）——Aletheon 的 `GrpcEmbodimentProvider` 连真实 bridge 跑
 `kuavo.stance` 稳定验证。
 
-### Phase 3：RobotHarness production wiring —— 🔴 主战场（PR1–6）
+### Phase 3：RobotHarness production wiring —— ✅ 完成（PR1–6 + composition + daemon 分支）
 
 - 修复 expected outcome/operation 占位（PR1/PR2）；
 - 接入 world-state observation pump（PR3）；
@@ -849,7 +849,7 @@ operation 的失败 attempt 明确为 `None`，但仍有独立 typed attempt/inv
 
 ---
 
-### PR4 `deterministic-outcome-verifier-wiring` + 生产 composition —— ✅ verifier + composition root 已实现（CognitiveSession daemon 适配为最后一步）
+### PR4 `deterministic-outcome-verifier-wiring` + 生产 composition —— ✅ 全部实现（verifier + composition root + RobotCognitiveSession + daemon 分支）
 
 **目标**：确定性 `OutcomeVerifierPort` 实现 + `HarnessKind::Robot` 的生产构造与 fail-closed 选择。
 

@@ -801,7 +801,7 @@ impl RequestHandler {
         tools
             .lock()
             .await
-            .register_robot_tools(embodiment_port)
+            .register_robot_tools(embodiment_port.clone())
             .context("registering governed robot tools")?;
         let fact_use_cases: Arc<dyn mnemosyne::FactUseCases> =
             Arc::new(mnemosyne::DefaultFactUseCases::new(fact_store.clone()));
@@ -825,12 +825,37 @@ impl RequestHandler {
             .await
             .dasein_handle()
             .context("Dasein must be enabled for the recurrent conscious workspace")?;
-        let cognitive_sessions = production_cognitive_session_factory(
-            &runtime_config_snapshot,
-            clock.clone(),
-            recall_memory.clone(),
-            dasein_handle.clone(),
-        );
+        let cognitive_sessions: Arc<
+            dyn crate::application::harness_factory::CognitiveSessionFactory,
+        > = match runtime_config_snapshot.harness_kind {
+            cognit::harness::HarnessKind::Linear => production_cognitive_session_factory(
+                &runtime_config_snapshot,
+                clock.clone(),
+                recall_memory.clone(),
+                dasein_handle.clone(),
+            ),
+            cognit::harness::HarnessKind::Robot => {
+                use crate::composition::config::EmbodimentProviderConfig;
+                let device = match &config.embodiment_provider {
+                    EmbodimentProviderConfig::Simulator { device_id } => {
+                        fabric::types::embodiment::DeviceId(device_id.clone())
+                    }
+                    EmbodimentProviderConfig::Grpc { device_id, .. } => {
+                        fabric::types::embodiment::DeviceId(device_id.clone())
+                    }
+                };
+                crate::application::robot_harness_composition::build_robot_session_factory(
+                    embodiment_port.clone(),
+                    clock.clone(),
+                    &data_dir,
+                    device,
+                    vec![],
+                )
+                .await
+                .map_err(anyhow::Error::msg)
+                .context("robot harness composition failed")?
+            }
+        };
         let conscious_registry = Arc::new(
             crate::application::conscious_workspace::ConsciousWorkspaceRegistry::production_with_mode_tools_and_agora(
                 data_dir.join("conscious_workspace.db"),
