@@ -150,6 +150,20 @@ impl EpisodeSink for RecordingEpisodes {
     async fn close_episode(&self, _episode_id: &str, _outcome: &str) -> Result<(), String> {
         Ok(())
     }
+    async fn update_verification(
+        &self,
+        _episode_id: &str,
+        _attempt_id: &str,
+        _verification: &VerificationReport,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    async fn load_attempts(
+        &self,
+        _episode_id: &str,
+    ) -> Result<Vec<fabric::types::episode_report::AttemptRecord>, String> {
+        Ok(vec![])
+    }
 }
 
 /// Policy returns a proposal whose expected outcome is `mode == "stance2"`.

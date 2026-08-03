@@ -6,7 +6,7 @@
 //! Verify — the pump itself is covered by `world_state` unit tests.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use cognit::harness::robot::session::RobotCognitiveSession;
@@ -187,7 +187,7 @@ async fn robot_turn_drives_harness_to_completion() {
     let adapter: Arc<dyn EmbodiedExecutionPort> = Arc::new(EmbodiedExecutionAdapter::new(executor));
     let verifier: Arc<dyn OutcomeVerifierPort> =
         Arc::new(DeterministicOutcomeVerifier::new(world.clone(), clock.clone(), vec![]));
-    let episodes: Arc<dyn EpisodeSink> = Arc::new(RecordingEpisodes);
+    let episodes: Arc<dyn EpisodeSink> = Arc::new(RecordingEpisodes::default());
     let allowed_skills = vec![SkillDescriptor {
         skill: SkillId("kuavo.stance".into()),
         device: device.clone(),
@@ -240,24 +240,58 @@ async fn robot_turn_drives_harness_to_completion() {
     assert!(result.metrics.completed_normally);
 }
 
-struct RecordingEpisodes;
+#[derive(Default)]
+struct RecordingEpisodes {
+    attempts: Mutex<Vec<fabric::types::episode_report::AttemptRecord>>,
+}
 #[async_trait]
 impl EpisodeSink for RecordingEpisodes {
     async fn append_attempt(
         &self,
         _episode_id: &str,
-        _attempt: u32,
-        _attempt_id: &str,
-        _operation_id: Option<&OperationId>,
-        _expected: &ExpectedOutcome,
+        attempt: u32,
+        attempt_id: &str,
+        operation_id: Option<&OperationId>,
+        expected: &ExpectedOutcome,
         _before: Option<&WorldSnapshot>,
         _after: Option<&WorldSnapshot>,
-        _result: Option<&SkillResult>,
-        _verification: Option<&VerificationReport>,
+        result: Option<&SkillResult>,
+        verification: Option<&VerificationReport>,
     ) -> Result<(), String> {
+        self.attempts
+            .lock()
+            .unwrap()
+            .push(fabric::types::episode_report::AttemptRecord::from_verification(
+                attempt,
+                attempt_id.to_string(),
+                operation_id.map(|op| op.0.to_string()),
+                expected.clone(),
+                result.map(|r| format!("{:?}", r.outcome)),
+                verification,
+                None,
+            ));
         Ok(())
     }
     async fn close_episode(&self, _episode_id: &str, _outcome: &str) -> Result<(), String> {
         Ok(())
+    }
+    async fn update_verification(
+        &self,
+        _episode_id: &str,
+        attempt_id: &str,
+        verification: &VerificationReport,
+    ) -> Result<(), String> {
+        let mut attempts = self.attempts.lock().unwrap();
+        if let Some(record) = attempts.iter_mut().find(|a| a.attempt_id == attempt_id) {
+            record.verification_decision = Some(verification.decision.clone());
+            record.verification_reasons = verification.reasons.clone();
+        }
+        Ok(())
+    }
+    async fn load_attempts(
+        &self,
+        _episode_id: &str,
+    ) -> Result<Vec<fabric::types::episode_report::AttemptRecord>, String> {
+        Ok(self.attempts.lock().unwrap().clone())
     }
 }

@@ -1,10 +1,7 @@
 //! Contract test verifying the hardware proto copy matches the Bridge canonical proto.
 
+use hardware::grpc::BRIDGE_PROTOCOL_DIGEST;
 use sha2::{Digest, Sha256};
-
-/// Expected SHA-256 of the canonical gateway.proto as of the last reviewed copy.
-const EXPECTED_PROTO_HASH: &str =
-    "4a205a75ac7643d7769fbd7bd52f32faba64b4cdf9d81f6908617da490a7d7ff";
 
 #[test]
 fn proto_copy_hash_matches_bridge_canonical() {
@@ -20,9 +17,9 @@ fn proto_copy_hash_matches_bridge_canonical() {
     let hash = format!("{:x}", hasher.finalize());
 
     assert_eq!(
-        hash, EXPECTED_PROTO_HASH,
+        hash, BRIDGE_PROTOCOL_DIGEST,
         "gateway.proto hash mismatch: the hardware copy must match the Bridge canonical.\n\
-         Copy the proto from aletheon-kuavo-bridge/proto/ and update EXPECTED_PROTO_HASH."
+         Copy the proto from aletheon-kuavo-bridge/proto/ and update BRIDGE_PROTOCOL_DIGEST."
     );
 }
 

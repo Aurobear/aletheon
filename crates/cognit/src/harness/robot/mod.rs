@@ -73,6 +73,23 @@ pub trait EpisodeSink: Send + Sync {
         verification: Option<&VerificationReport>,
     ) -> Result<(), String>;
     async fn close_episode(&self, episode_id: &str, outcome: &str) -> Result<(), String>;
+    /// Record the post-execution verification for a previously appended attempt.
+    /// Attempts are appended before execution completes; the verification lands
+    /// later (Verify step), so it is persisted as an update to keep the durable
+    /// record authoritative for report building and the promotion gate.
+    async fn update_verification(
+        &self,
+        episode_id: &str,
+        attempt_id: &str,
+        verification: &VerificationReport,
+    ) -> Result<(), String>;
+    /// Load an episode's recorded attempts in order for report building. The
+    /// durable sink is authoritative — the terminal harness state only carries
+    /// the latest attempt.
+    async fn load_attempts(
+        &self,
+        episode_id: &str,
+    ) -> Result<Vec<fabric::types::episode_report::AttemptRecord>, String>;
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +145,12 @@ impl RobotHarness {
             policy,
             allowed_skills,
         }
+    }
+
+    /// Durable episode sink accessor — used to rebuild the full attempt list
+    /// for report building (the terminal state only carries the latest one).
+    pub fn episodes(&self) -> Arc<dyn EpisodeSink> {
+        self.episodes.clone()
     }
 
     pub fn init(&self, device: DeviceId, goal: String, episode_id: String) -> RobotHarnessState {
@@ -330,6 +353,28 @@ impl RobotHarness {
                     )
                     .await;
                 harness_state.latest_verification = Some(report.clone());
+                // Persist the verification on the durable attempt — the attempt
+                // row is written before execution, so the verification lands as
+                // an update here. A failed write keeps the report non-promotable
+                // (fail closed) but does not abort the retry/replan flow.
+                let attempt_id = harness_state
+                    .latest_operation_id
+                    .as_ref()
+                    .map(|op| op.0.to_string())
+                    .unwrap_or_else(|| {
+                        format!("attempt:{}-{}", harness_state.episode_id, harness_state.attempt)
+                    });
+                if let Err(reason) = self
+                    .episodes
+                    .update_verification(&harness_state.episode_id, &attempt_id, &report)
+                    .await
+                {
+                    tracing::warn!(
+                        episode_id = %harness_state.episode_id,
+                        %reason,
+                        "failed to persist verification on durable attempt"
+                    );
+                }
 
                 let remaining_retries = self
                     .config

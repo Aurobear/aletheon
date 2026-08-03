@@ -331,6 +331,20 @@ mod tests {
         async fn close_episode(&self, _e: &str, _o: &str) -> Result<(), String> {
             Ok(())
         }
+        async fn update_verification(
+            &self,
+            _e: &str,
+            _ai: &str,
+            _v: &VerificationReport,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        async fn load_attempts(
+            &self,
+            _e: &str,
+        ) -> Result<Vec<fabric::types::episode_report::AttemptRecord>, String> {
+            Ok(vec![])
+        }
     }
     struct NoopPolicy;
     #[async_trait]

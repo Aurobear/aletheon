@@ -220,6 +220,31 @@ impl EpisodeSink for SqliteEpisodeSink {
             .map_err(|error| format!("close_episode: {error}"))?;
         Ok(())
     }
+
+    async fn update_verification(
+        &self,
+        episode_id: &str,
+        attempt_id: &str,
+        verification: &VerificationReport,
+    ) -> Result<(), String> {
+        let verification_json =
+            serde_json::to_string(verification).map_err(|e| format!("serialize verification: {e}"))?;
+        self.connection
+            .lock()
+            .execute(
+                "UPDATE episodes SET verification_json = ?3 WHERE episode_id = ?1 AND attempt_id = ?2",
+                params![episode_id, attempt_id, verification_json],
+            )
+            .map_err(|error| format!("update_verification: {error}"))?;
+        Ok(())
+    }
+
+    async fn load_attempts(
+        &self,
+        episode_id: &str,
+    ) -> Result<Vec<fabric::types::episode_report::AttemptRecord>, String> {
+        self.load_attempts(episode_id)
+    }
 }
 
 #[cfg(test)]

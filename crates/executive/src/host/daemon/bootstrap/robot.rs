@@ -98,6 +98,10 @@ pub async fn build_robot_cognitive_session_factory(
             "HarnessKind::Robot requires ALETHEON_POLICY_ENDPOINT for a production policy provider"
         ),
     };
+    let sim_scene_version = match provider_config {
+        EmbodimentProviderConfig::Simulator { device_id } => format!("simulator:{device_id}"),
+        EmbodimentProviderConfig::Grpc { device_id, .. } => format!("bridge:{device_id}"),
+    };
     crate::application::robot_harness_composition::build_robot_session_factory(
         embodiment_port,
         clock,
@@ -105,9 +109,9 @@ pub async fn build_robot_cognitive_session_factory(
         device,
         vec![],
         policy,
-        "",
+        sim_scene_version,
         option_env!("CARGO_PKG_VERSION").unwrap_or("unknown"),
-        "",
+        hardware::grpc::BRIDGE_PROTOCOL_DIGEST,
     )
     .await
     .map_err(anyhow::Error::msg)

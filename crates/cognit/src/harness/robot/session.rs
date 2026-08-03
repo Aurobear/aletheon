@@ -54,32 +54,51 @@ impl RobotCognitiveSession {
     }
 
     /// Build the authoritative episode report from the terminal harness state.
-    /// Attempts are included only when the plan produced an expected outcome
-    /// (i.e. an attempt was actually recorded).
-    fn build_report(&self, state: &RobotHarnessState) -> EpisodeReport {
+    ///
+    /// The durable episode sink is authoritative for the full attempt list — the
+    /// terminal state only carries the latest attempt, so attempts are rebuilt
+    /// from the sink and fall back to the in-memory latest when nothing is
+    /// durable yet. Large artifacts (rosbag/log/plot) are referenced by their
+    /// evidence refs from the executed skill and verification, never inlined.
+    async fn build_report(&self, state: &RobotHarnessState) -> EpisodeReport {
         let settlement = if matches!(state.state, RobotState::Completed) {
             "completed"
         } else {
             "failed"
         };
-        let attempts = state.latest_expected_outcome.as_ref().map(|expected| {
-            vec![AttemptRecord::from_verification(
-                state.attempt,
-                state
-                    .latest_operation_id
-                    .as_ref()
-                    .map(|op| op.0.to_string())
-                    .unwrap_or_else(|| format!("attempt:{}-{}", state.episode_id, state.attempt)),
-                state.latest_operation_id.as_ref().map(|op| op.0.to_string()),
-                expected.clone(),
-                state
-                    .latest_skill_result
-                    .as_ref()
-                    .map(|result| format!("{:?}", result.outcome)),
-                state.latest_verification.as_ref(),
-                None,
-            )]
-        }).unwrap_or_default();
+        let attempts = match self
+            .harness
+            .episodes()
+            .load_attempts(&state.episode_id)
+            .await
+        {
+            Ok(durable) if !durable.is_empty() => durable,
+            _ => state.latest_expected_outcome.as_ref().map(|expected| {
+                vec![AttemptRecord::from_verification(
+                    state.attempt,
+                    state
+                        .latest_operation_id
+                        .as_ref()
+                        .map(|op| op.0.to_string())
+                        .unwrap_or_else(|| format!("attempt:{}-{}", state.episode_id, state.attempt)),
+                    state.latest_operation_id.as_ref().map(|op| op.0.to_string()),
+                    expected.clone(),
+                    state
+                        .latest_skill_result
+                        .as_ref()
+                        .map(|result| format!("{:?}", result.outcome)),
+                    state.latest_verification.as_ref(),
+                    None,
+                )]
+            }).unwrap_or_default(),
+        };
+        let mut artifacts = Vec::new();
+        if let Some(result) = &state.latest_skill_result {
+            artifacts.extend(result.evidence.clone());
+        }
+        if let Some(verification) = &state.latest_verification {
+            artifacts.extend(verification.evidence.clone());
+        }
         build_report(
             &state.episode_id,
             &state.goal,
@@ -91,7 +110,7 @@ impl RobotCognitiveSession {
             state.latest_verification.as_ref().map(|v| v.evaluated_sequence),
             settlement,
             attempts,
-            vec![],
+            artifacts,
         )
     }
 }
@@ -135,7 +154,7 @@ impl CognitiveSession for RobotCognitiveSession {
             state = self.harness.step(state).await;
         }
 
-        let report = self.build_report(&state);
+        let report = self.build_report(&state).await;
         let output = serde_json::to_string(&report)
             .map_err(|e| CognitError::terminal(format!("report serialization: {e}")))?;
         let completed = matches!(state.state, RobotState::Completed);
