@@ -3,7 +3,7 @@
 
 [agent]
 default_provider = "lejurobot_deepseek"
-default_model = "deepseek/deepseek-v4-flash[1m]"
+default_model = "deepseek/deepseek-v4-flash"
 
 # The service loads LEJUROBOT_DEEPSEEK_API_KEY from provider.env through its
 # EnvironmentFile. Keep the credential out of this checked-in configuration.
@@ -12,7 +12,7 @@ name = "lejurobot_deepseek"
 base_url = "https://aiapi.lejurobot.com"
 api_key = ""
 transport = "openai"
-models = ["deepseek/deepseek-v4-flash[1m]"]
+models = ["deepseek/deepseek-v4-flash"]
 max_context_length = 1000000
 
 [providers.backpressure]

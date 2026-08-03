@@ -2,7 +2,7 @@
 # Compiled defaults — override in /etc/aletheon, ~/.aletheon, or project config.
 # default_provider and default_model match the first configured provider below.
 default_provider = "lejurobot_deepseek"
-default_model = "deepseek/deepseek-v4-flash[1m]"
+default_model = "deepseek/deepseek-v4-flash"
 # Bound cumulative provider/tool rounds for every top-level turn. Set 0 only in
 # an explicitly reviewed override when another authoritative budget is present.
 max_iterations = 50
@@ -44,7 +44,7 @@ name = "lejurobot_deepseek"
 base_url = "https://aiapi.lejurobot.com"
 api_key = ""
 transport = "openai"
-models = ["deepseek/deepseek-v4-flash[1m]"]
+models = ["deepseek/deepseek-v4-flash"]
 max_context_length = 1000000
 
 [providers.backpressure]
