@@ -608,3 +608,69 @@ Mark all plan steps complete, append exact commands/digests/PIDs/receipt IDs, ru
 Fetch `origin/dev`, merge it into the feature branch, push, open a PR to `dev`,
 wait for required CI, repair any failure without bypassing checks, merge, delete
 the feature branch, switch to `dev`, and verify a clean synchronized workspace.
+
+---
+
+## Execution evidence — 2026-08-03
+
+### Implemented
+
+- Fabric canonicalizes nested tool schemas, rejects duplicate/invalid names, and emits a domain-separated tool digest.
+- Corpus model/profile snapshots are name-sorted; Cognit repeats canonicalization at every provider dispatch boundary.
+- `InferenceUsage` is the only emitted usage schema across responses, streams, turn events, clients, metrics, and mocks.
+- Anthropic System messages use the provider `system` field; cache breakpoints terminate at stable System and tool blocks.
+- Model context projections and terminal inference receipts are distinct non-model-visible Session items linked by `inference_id`.
+- The root daemon TurnServices path persists both items; this gap was found and fixed during installed acceptance.
+
+### Deterministic validation
+
+All commands exited 0:
+
+```text
+bash scripts/cargo-agent.sh test -p fabric --test inference_contract
+bash scripts/cargo-agent.sh test -p fabric --test protocol_schema
+bash scripts/cargo-agent.sh test -p corpus tools::tools::registry::tests --lib
+bash scripts/cargo-agent.sh test -p corpus --test capability_executor
+bash scripts/cargo-agent.sh test -p cognit --tests
+bash scripts/cargo-agent.sh test -p executive composition::turn_service --lib
+bash scripts/cargo-agent.sh test -p executive --test native_cognit_runtime
+bash scripts/cargo-agent.sh test -p executive --test daemon_streaming_turn_e2e
+bash scripts/cargo-agent.sh test -p executive --test turn_pipeline_order
+bash scripts/cargo-agent.sh test -p executive --test turn_service_equivalence
+bash scripts/cargo-agent.sh test -p interact --lib
+bash scripts/aletheon.sh test architecture
+bash scripts/cargo-agent.sh fmt --all -- --check
+git diff --check
+```
+
+The reviewed architecture metric improved from `CORE_EXTERNAL_IDENTIFIER_HITS=26` to `25`; no architecture finding, dependency, or path was added.
+
+### Installed-runtime evidence
+
+`sudo bash scripts/aletheon.sh deploy` built and installed the release and restarted all services, but returned nonzero because the configured external GBrain OAuth client-credentials transport was unavailable. The daemon remained live with local authoritative memory ready and `supplemental_memory_spool=optional_degraded`. This external readiness failure is unresolved, so deployment acceptance is **not marked passed**.
+
+After installation:
+
+```text
+release/install/machine/user SHA-256:
+b1ea7f0be25e7c3653af8b1e827250cf2e701ed42895d0b4d185eab47cb92b23
+
+machine daemon: PID 1876071, NRestarts 0, active/running
+user daemon:    PID 1876090, NRestarts 0, active/running
+```
+
+Both PIDs and restart counters remained unchanged after ten seconds. Three fresh official-socket requests through `/usr/bin/aletheon` returned `cache-receipt-ok` without rendered/provider errors.
+
+Persisted receipt pairs:
+
+| Session | Inference ID | System digest | Tool digest | Status | Cache telemetry |
+|---|---|---|---|---|---|
+| `message-04300e1c-e979-4aaf-b78d-c91661b9599a` | `b95c5c83-3109-4408-a271-3495fe904d82` | `sha256:a91ba9a7a9b7542a1ac8dfd5a4fe6481d1e63b34b1f1df58274fce9fe0832a47` | `sha256:68d0b884af9ce799e107ecd7f8c11b4ead6969b3ffcaf0150de85440457bed8d` | succeeded | reported |
+| `message-228ded12-87e5-4e49-bc23-cd0222a39c66` | `1f48a8e6-eca3-41fd-adfc-d0a9657e0714` | same | same | succeeded | reported |
+| `message-fcea5ca1-b6e4-480b-890a-7dd17d211c2a` | `30d82920-3112-43ab-8ed1-72835399e582` | same | same | succeeded | reported |
+
+Each Session stored `model_context_projection` immediately before its distinct `inference_receipt`, and each pair shared the same inference ID and digests.
+
+### Remaining acceptance blocker
+
+The required system deployment command must exit 0 before this plan can be called fully accepted or merged to `dev`. Current blocker: configured external GBrain MCP OAuth client-credentials failures make overall health `degraded`, and the deployment script requires `ready`.
