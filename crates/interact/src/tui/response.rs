@@ -185,11 +185,9 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                     .to_owned(),
             );
         }
-        ClientEvent::Usage {
-            tokens_in,
-            tokens_out,
-            ..
-        } => {
+        ClientEvent::Usage { usage } => {
+            let tokens_in = usage.total_input_tokens.unwrap_or(0);
+            let tokens_out = usage.output_tokens.unwrap_or(0);
             app.turn_tokens = Some((tokens_in as u32, tokens_out as u32));
             app.total_tokens = app
                 .total_tokens

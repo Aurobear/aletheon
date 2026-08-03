@@ -54,8 +54,7 @@ impl<L: LlmProvider> LlmProvider for CompleteAsStream<'_, L> {
             }
         }
         chunks.push(Ok(StreamChunk::Usage {
-            input_tokens: response.usage.input_tokens,
-            output_tokens: response.usage.output_tokens,
+            usage: response.usage,
         }));
         chunks.push(Ok(StreamChunk::Done {
             stop_reason: response.stop_reason,

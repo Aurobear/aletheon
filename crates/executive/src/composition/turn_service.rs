@@ -217,6 +217,12 @@ impl TurnServices for RecordingTurnServices {
             });
         self.inner.record_model_context_projection(receipt).await;
     }
+    async fn record_inference_receipt(&self, receipt: fabric::InferenceTerminalReceipt) {
+        self.items.lock().await.push(ItemPayload::InferenceReceipt {
+            receipt: receipt.clone(),
+        });
+        self.inner.record_inference_receipt(receipt).await;
+    }
     fn llm_provider(&self) -> Option<&dyn fabric::LlmProvider> {
         self.inner.llm_provider()
     }
@@ -303,6 +309,8 @@ mod receipt_tests {
         let receipt = fabric::model_projection::ModelContextProjectionReceipt {
             inference_id: "inference-1".into(),
             operation_id: "operation-1".into(),
+            system_prefix_digest: "sha256:system".into(),
+            tool_schema_digest: "sha256:tools".into(),
             role: "worker".into(),
             stage: "execute".into(),
             task_node_id: Some("task-1".into()),

@@ -229,10 +229,8 @@ pub enum TurnEventV1 {
 
     // -- Bookkeeping --
     Usage {
-        tokens_in: u32,
-        tokens_out: u32,
-        cache_hit_tokens: u32,
-        cache_miss_tokens: u32,
+        #[serde(flatten)]
+        usage: crate::InferenceUsage,
     },
     ContextUpdate {
         used_tokens: u32,

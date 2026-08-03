@@ -572,7 +572,7 @@ pub async fn single_message_with_workspace_requirements_and_task_kind(
     let started_at = std::time::Instant::now();
     let mut tokens_in = 0u64;
     let mut tokens_out = 0u64;
-    let mut cache_hit_tokens = 0u64;
+    let mut cache_read_tokens = 0u64;
     let mut tool_calls = 0u64;
 
     // Use Timer::timeout to wrap the entire response reading loop.
@@ -643,16 +643,14 @@ pub async fn single_message_with_workspace_requirements_and_task_kind(
                                 tool_calls = tool_calls.saturating_add(1);
                                 eprintln!("[tool] {} {}", tool, serde_json::to_string(&args).unwrap_or_default());
                             }
-                            ClientEvent::Usage {
-                                tokens_in: event_tokens_in,
-                                tokens_out: event_tokens_out,
-                                cache_hit_tokens: event_cache_hit_tokens,
-                                ..
-                            } => {
+                            ClientEvent::Usage { usage } => {
+                                let event_tokens_in = usage.total_input_tokens.unwrap_or(0);
+                                let event_tokens_out = usage.output_tokens.unwrap_or(0);
+                                let event_cache_read_tokens = usage.cache_read_tokens.unwrap_or(0);
                                 tokens_in = tokens_in.saturating_add(event_tokens_in);
                                 tokens_out = tokens_out.saturating_add(event_tokens_out);
-                                cache_hit_tokens =
-                                    cache_hit_tokens.saturating_add(event_cache_hit_tokens);
+                                cache_read_tokens =
+                                    cache_read_tokens.saturating_add(event_cache_read_tokens);
                             }
                             ClientEvent::ToolProgress { tool, payload, .. } => {
                                 eprintln!("[tool:{tool}] {payload}");
@@ -700,9 +698,9 @@ pub async fn single_message_with_workspace_requirements_and_task_kind(
                 eprintln!(
                     "ALETHEON_BENCHMARK_METRICS={}",
                     serde_json::json!({
-                        "input_tokens": tokens_in,
+                        "total_input_tokens": tokens_in,
                         "output_tokens": tokens_out,
-                        "cache_hit_tokens": cache_hit_tokens,
+                        "cache_read_tokens": cache_read_tokens,
                         "latency_ms": started_at.elapsed().as_millis() as u64,
                         "tool_calls": tool_calls,
                     })

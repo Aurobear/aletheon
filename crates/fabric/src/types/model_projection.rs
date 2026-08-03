@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub struct ModelContextProjectionReceipt {
     pub inference_id: String,
     pub operation_id: String,
+    pub system_prefix_digest: String,
+    pub tool_schema_digest: String,
     pub role: String,
     pub stage: String,
     pub task_node_id: Option<String>,

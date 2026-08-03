@@ -237,21 +237,26 @@ impl ProviderWorkerRuntime {
                     evidence.clone(),
                 )
             })?;
-            observability.active_context_tokens = Some(response.usage.input_tokens.into());
-            observability.cache_read_tokens = Some(
-                observability
-                    .cache_read_tokens
-                    .unwrap_or_default()
-                    .saturating_add(response.cache_hit_tokens.into()),
-            );
-            observability.cache_write_tokens = Some(
-                observability
-                    .cache_write_tokens
-                    .unwrap_or_default()
-                    .saturating_add(response.cache_miss_tokens.into()),
-            );
-            input_tokens = input_tokens.saturating_add(response.usage.input_tokens.into());
-            output_tokens = output_tokens.saturating_add(response.usage.output_tokens.into());
+            observability.active_context_tokens = response.usage.total_input_tokens;
+            if let Some(read) = response.usage.cache_read_tokens {
+                observability.cache_read_tokens = Some(
+                    observability
+                        .cache_read_tokens
+                        .unwrap_or_default()
+                        .saturating_add(read),
+                );
+            }
+            if let Some(write) = response.usage.cache_write_tokens {
+                observability.cache_write_tokens = Some(
+                    observability
+                        .cache_write_tokens
+                        .unwrap_or_default()
+                        .saturating_add(write),
+                );
+            }
+            input_tokens =
+                input_tokens.saturating_add(response.usage.total_input_tokens.unwrap_or(0));
+            output_tokens = output_tokens.saturating_add(response.usage.output_tokens.unwrap_or(0));
 
             let mut text_parts = Vec::new();
             let mut tool_calls = Vec::new();
@@ -382,7 +387,7 @@ mod tests {
     use anyhow::anyhow;
     use corpus::tools::tools::ToolRegistry;
     use fabric::tool::{Tool, ToolContext, ToolResult, ToolResultMeta};
-    use fabric::{LlmResponse, LlmStream, Registry, StopReason, Usage};
+    use fabric::{InferenceUsage, LlmResponse, LlmStream, Registry, StopReason};
     use kernel::chronos::TestClock;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -497,12 +502,7 @@ mod tests {
         LlmResponse {
             content,
             stop_reason: StopReason::EndTurn,
-            usage: Usage {
-                input_tokens: input,
-                output_tokens: output,
-            },
-            cache_hit_tokens: 0,
-            cache_miss_tokens: 0,
+            usage: InferenceUsage::unsupported(Some(input.into()), Some(output.into())),
         }
     }
 

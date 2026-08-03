@@ -625,7 +625,7 @@ mod tests {
 ## Critical Context\nconstraints remain";
     use async_trait::async_trait;
     use fabric::ToolDefinition;
-    use fabric::{LlmProvider, LlmResponse, LlmStream, StopReason, Usage};
+    use fabric::{InferenceUsage, LlmProvider, LlmResponse, LlmStream, StopReason};
 
     #[test]
     fn test_new_compressor() {
@@ -680,9 +680,7 @@ mod tests {
                     text: VALID_CHECKPOINT.into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
         async fn complete_stream(
@@ -841,9 +839,7 @@ mod tests {
                         .into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
         async fn complete_stream(
@@ -874,9 +870,7 @@ mod tests {
                     text: "this is a summary".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
         async fn complete_stream(

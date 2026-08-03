@@ -7,7 +7,7 @@ use executive::application::governed_review::{
 };
 use executive::application::inference_port::{CoreInferenceRequest, InferenceError, InferencePort};
 use fabric::types::governed_review::*;
-use fabric::{ContentBlock, LlmResponse, LlmStream, StopReason, Usage};
+use fabric::{ContentBlock, InferenceUsage, LlmResponse, LlmStream, StopReason};
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -40,12 +40,7 @@ impl InferencePort for FakeInference {
                 Ok(LlmResponse {
                     content: vec![ContentBlock::Text { text: body }],
                     stop_reason: StopReason::EndTurn,
-                    usage: Usage {
-                        input_tokens: 12,
-                        output_tokens: 8,
-                    },
-                    cache_hit_tokens: 0,
-                    cache_miss_tokens: 12,
+                    usage: InferenceUsage::unsupported(Some(12), Some(8)),
                 })
             }
             Reply::Failure(message) => Err(anyhow::anyhow!(message).into()),

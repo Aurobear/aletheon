@@ -3,7 +3,7 @@
 //! All frontends observe the same event stream. Each frontend
 //! implements `EventSink` to receive events.
 
-use fabric::{ipc::TurnEventV1, tool::ToolResult};
+use fabric::{ipc::TurnEventV1, tool::ToolResult, InferenceUsage};
 
 /// Lifecycle events emitted by the agent.
 #[derive(Debug, Clone)]
@@ -36,12 +36,7 @@ pub enum Event {
         result: ToolResultEvent,
     },
     /// Token usage update.
-    Usage {
-        tokens_in: u32,
-        tokens_out: u32,
-        cache_hit_tokens: u32,
-        cache_miss_tokens: u32,
-    },
+    Usage { usage: InferenceUsage },
     /// An approval is needed from the user.
     ApprovalRequest {
         id: String,
@@ -161,17 +156,7 @@ impl From<Event> for TurnEventV1 {
                 execution_time_ms: result.execution_time_ms,
                 patch_delta: result.patch_delta,
             },
-            Event::Usage {
-                tokens_in,
-                tokens_out,
-                cache_hit_tokens,
-                cache_miss_tokens,
-            } => Self::Usage {
-                tokens_in,
-                tokens_out,
-                cache_hit_tokens,
-                cache_miss_tokens,
-            },
+            Event::Usage { usage } => Self::Usage { usage },
             Event::TurnDone { result } => Self::TurnDone {
                 result: Some(match result {
                     Ok(text) => text,
@@ -480,10 +465,7 @@ mod tests {
             },
         };
         let _ = Event::Usage {
-            tokens_in: 10,
-            tokens_out: 20,
-            cache_hit_tokens: 5,
-            cache_miss_tokens: 5,
+            usage: InferenceUsage::reported(10, 20, Some(5), Some(5), None),
         };
         let _ = Event::ApprovalRequest {
             id: "1".into(),

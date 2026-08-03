@@ -8,5 +8,5 @@ pub(crate) mod scheduler;
 mod utf8_stream;
 
 pub(crate) use provider::{
-    LlmProvider, LlmResponse, LlmStream, StopReason, StreamChunk, ToolDefinition, Usage,
+    InferenceUsage, LlmProvider, LlmResponse, LlmStream, StopReason, StreamChunk, ToolDefinition,
 };

@@ -1083,6 +1083,8 @@ impl TurnPipeline {
         let mut acc_tokens_in: u64 = 0;
         let mut acc_tokens_out: u64 = 0;
         let mut acc_cache_read_tokens: u64 = 0;
+        let mut cache_read_seen = false;
+        let mut cache_read_complete = true;
         let mut active_context_tokens: Option<u64> = None;
         let mut terminal_events = TerminalEventBuffer::default();
 
@@ -1217,16 +1219,16 @@ impl TurnPipeline {
                                 return Err(error);
                             }
                         }
-                        TurnEventV1::Usage {
-                            tokens_in,
-                            tokens_out,
-                            cache_hit_tokens,
-                            ..
-                        } => {
-                            acc_tokens_in = acc_tokens_in.saturating_add((*tokens_in).into());
-                            acc_tokens_out = acc_tokens_out.saturating_add((*tokens_out).into());
-                            acc_cache_read_tokens = acc_cache_read_tokens
-                                .saturating_add((*cache_hit_tokens).into());
+                        TurnEventV1::Usage { usage } => {
+                            acc_tokens_in = acc_tokens_in.saturating_add(usage.total_input_tokens.unwrap_or(0));
+                            acc_tokens_out = acc_tokens_out.saturating_add(usage.output_tokens.unwrap_or(0));
+                            match usage.cache_read_tokens {
+                                Some(value) => {
+                                    cache_read_seen = true;
+                                    acc_cache_read_tokens = acc_cache_read_tokens.saturating_add(value);
+                                }
+                                None => cache_read_complete = false,
+                            }
                         }
                         TurnEventV1::ContextUpdate { used_tokens, .. } => {
                             active_context_tokens = Some((*used_tokens).into());
@@ -1286,16 +1288,16 @@ impl TurnPipeline {
                     ).await?;
                     let is_terminal = terminal_events.observe(&event);
                     match &event {
-                        TurnEventV1::Usage {
-                            tokens_in,
-                            tokens_out,
-                            cache_hit_tokens,
-                            ..
-                        } => {
-                            acc_tokens_in = acc_tokens_in.saturating_add((*tokens_in).into());
-                            acc_tokens_out = acc_tokens_out.saturating_add((*tokens_out).into());
-                            acc_cache_read_tokens = acc_cache_read_tokens
-                                .saturating_add((*cache_hit_tokens).into());
+                        TurnEventV1::Usage { usage } => {
+                            acc_tokens_in = acc_tokens_in.saturating_add(usage.total_input_tokens.unwrap_or(0));
+                            acc_tokens_out = acc_tokens_out.saturating_add(usage.output_tokens.unwrap_or(0));
+                            match usage.cache_read_tokens {
+                                Some(value) => {
+                                    cache_read_seen = true;
+                                    acc_cache_read_tokens = acc_cache_read_tokens.saturating_add(value);
+                                }
+                                None => cache_read_complete = false,
+                            }
                         }
                         TurnEventV1::ContextUpdate { used_tokens, .. } => {
                             active_context_tokens = Some((*used_tokens).into());
@@ -1502,7 +1504,8 @@ impl TurnPipeline {
                         cumulative_input_tokens: Some(acc_tokens_in),
                         cumulative_output_tokens: Some(acc_tokens_out),
                         active_context_tokens,
-                        cache_read_tokens: Some(acc_cache_read_tokens),
+                        cache_read_tokens: (cache_read_seen && cache_read_complete)
+                            .then_some(acc_cache_read_tokens),
                         ..Default::default()
                     },
             };
@@ -1692,16 +1695,8 @@ pub fn turn_event_to_client_event(event: &TurnEventV1) -> Option<ClientEvent> {
             applied_count: *applied_count,
             failed_count: *failed_count,
         }),
-        TurnEventV1::Usage {
-            tokens_in,
-            tokens_out,
-            cache_hit_tokens,
-            cache_miss_tokens,
-        } => Some(ClientEvent::Usage {
-            tokens_in: *tokens_in as u64,
-            tokens_out: *tokens_out as u64,
-            cache_hit_tokens: *cache_hit_tokens as u64,
-            cache_miss_tokens: *cache_miss_tokens as u64,
+        TurnEventV1::Usage { usage } => Some(ClientEvent::Usage {
+            usage: usage.clone(),
         }),
         TurnEventV1::TurnDone { .. } => Some(ClientEvent::TurnDone),
         TurnEventV1::Error { message } => Some(ClientEvent::Error {

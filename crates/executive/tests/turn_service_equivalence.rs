@@ -57,8 +57,8 @@ async fn turn_service_submits_one_turn() {
 
 use async_trait::async_trait;
 use fabric::{
-    CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
-    RecallRequest, RecallSet, StopReason, ToolDefinition, TurnServices, Usage,
+    CapabilityCall, CapabilityResult, ContentBlock, InferenceUsage, LlmProvider, LlmResponse,
+    LlmStream, RecallRequest, RecallSet, StopReason, ToolDefinition, TurnServices,
 };
 use std::sync::Mutex;
 
@@ -83,9 +83,7 @@ impl LlmProvider for EquivalenceLlm {
                     input: serde_json::json!({"text": "same"}),
                 }],
                 stop_reason: StopReason::ToolUse,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         } else {
             Ok(LlmResponse {
@@ -93,9 +91,7 @@ impl LlmProvider for EquivalenceLlm {
                     text: "done: same".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
     }
@@ -246,9 +242,7 @@ impl LlmProvider for HangingLlm {
         Ok(LlmResponse {
             content: vec![ContentBlock::Text { text: "ok".into() }],
             stop_reason: StopReason::EndTurn,
-            usage: Usage::default(),
-            cache_hit_tokens: 0,
-            cache_miss_tokens: 0,
+            usage: InferenceUsage::default(),
         })
     }
 

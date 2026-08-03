@@ -107,7 +107,8 @@ pub use crate::composition::exec_session::ExecSessionBuilder;
 pub use fabric::types::admission::RiskLevel;
 pub use fabric::{
     AdmissionController, AdmissionRequest, CapabilityId, CapabilityRequest, CapabilityResult,
-    CapabilityScope, ContentBlock, LlmProvider, LlmResponse, LlmStream, LocalOsPrincipal, Message,
-    NoopTurnEventSink, OperationId, PrincipalId, ProcessId, RecallSet, SandboxRequirement,
-    StopReason, StreamChunk, ToolDefinition, TurnRequest, TurnServices, Usage, UsageReport,
+    CapabilityScope, ContentBlock, InferenceUsage, LlmProvider, LlmResponse, LlmStream,
+    LocalOsPrincipal, Message, NoopTurnEventSink, OperationId, PrincipalId, ProcessId, RecallSet,
+    SandboxRequirement, StopReason, StreamChunk, ToolDefinition, TurnRequest, TurnServices,
+    UsageReport,
 };

@@ -174,8 +174,8 @@ mod tests {
     use async_trait::async_trait;
     use corpus::tools::tools::structured_patch::{FileChangeSummary, StructuredPatchResult};
     use fabric::{
-        ConnectionId, ContentBlock, LlmResponse, LlmStream, PrincipalId, PromptKind, Role,
-        StopReason, ThreadId, Usage,
+        ConnectionId, ContentBlock, InferenceUsage, LlmResponse, LlmStream, PrincipalId,
+        PromptKind, Role, StopReason, ThreadId,
     };
     use std::sync::Mutex;
 
@@ -194,9 +194,7 @@ mod tests {
                     text: "done".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
 

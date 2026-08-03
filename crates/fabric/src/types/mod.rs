@@ -34,6 +34,7 @@ pub mod governed_review;
 pub mod grounding;
 pub mod hook;
 pub mod hook_ext;
+pub mod inference_receipt;
 pub mod lifecycle;
 pub mod llm_types;
 pub mod local_authority;

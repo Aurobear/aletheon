@@ -13,8 +13,8 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use fabric::{
-    ContentBlock, LlmProvider, LlmResponse, LlmStream, Message, StopReason, StreamChunk,
-    ToolDefinition, Usage,
+    ContentBlock, InferenceUsage, LlmProvider, LlmResponse, LlmStream, Message, StopReason,
+    StreamChunk, ToolDefinition,
 };
 use futures::stream;
 
@@ -32,7 +32,7 @@ pub enum MockTurnResponse {
     Complete {
         content: Vec<ContentBlock>,
         stop_reason: StopReason,
-        usage: Usage,
+        usage: InferenceUsage,
     },
     /// A streamed response: chunks delivered sequentially.
     Stream { chunks: Vec<StreamChunk> },
@@ -85,7 +85,7 @@ impl MockLlmProvider {
                     text: text.to_string(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
+                usage: InferenceUsage::default(),
             }],
         }])
     }
@@ -180,14 +180,12 @@ impl LlmProvider for MockLlmProvider {
                 content,
                 stop_reason,
                 usage,
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
             }),
             MockTurnResponse::Stream { chunks } => {
                 // For complete(), concatenate text chunks and collect tool calls into content
                 let mut content = Vec::new();
                 let mut stop_reason = StopReason::EndTurn;
-                let mut usage = Usage::default();
+                let mut usage = InferenceUsage::default();
                 let mut text_buf = String::new();
                 let mut thinking_buf = String::new();
 
@@ -196,15 +194,7 @@ impl LlmProvider for MockLlmProvider {
                         StreamChunk::TextDelta { text } => text_buf.push_str(&text),
                         StreamChunk::ThinkingDelta { text } => thinking_buf.push_str(&text),
                         StreamChunk::Done { stop_reason: sr } => stop_reason = sr,
-                        StreamChunk::Usage {
-                            input_tokens,
-                            output_tokens,
-                        } => {
-                            usage = Usage {
-                                input_tokens,
-                                output_tokens,
-                            };
-                        }
+                        StreamChunk::InferenceUsage { usage: observed } => usage = observed,
                         StreamChunk::ToolUseStart { .. }
                         | StreamChunk::ToolUseDelta { .. }
                         | StreamChunk::ToolUseComplete { .. } => {
@@ -228,8 +218,6 @@ impl LlmProvider for MockLlmProvider {
                     content,
                     stop_reason,
                     usage,
-                    cache_hit_tokens: 0,
-                    cache_miss_tokens: 0,
                 })
             }
             MockTurnResponse::Error { message } => {
@@ -288,10 +276,7 @@ impl LlmProvider for MockLlmProvider {
                         _ => {}
                     }
                 }
-                chunks.push(Ok(StreamChunk::Usage {
-                    input_tokens: usage.input_tokens,
-                    output_tokens: usage.output_tokens,
-                }));
+                chunks.push(Ok(StreamChunk::InferenceUsage { usage }));
                 chunks.push(Ok(StreamChunk::Done {
                     stop_reason: stop_reason.clone(),
                 }));

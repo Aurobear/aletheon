@@ -5,8 +5,8 @@
 //! Cognit uses the shared contract internally and exposes it through the stable
 //! `cognit::inference::provider` facade. Provider transports stay private.
 pub use fabric::{
-    InferenceCapabilities, LlmProvider, LlmResponse, LlmStream, ModelInfo, StopReason, StreamChunk,
-    Usage,
+    canonicalize_tool_definitions, CacheTelemetry, InferenceCapabilities, InferenceUsage,
+    LlmProvider, LlmResponse, LlmStream, ModelInfo, StopReason, StreamChunk,
 };
 
 /// Tool definition sent to the LLM.

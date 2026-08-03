@@ -348,8 +348,8 @@ impl SessionGateway {
             Ok(response) => {
                 // Record token usage from the introspection LLM call
                 self.debug_handler.perf_counter().record_tokens(
-                    response.usage.input_tokens as u64,
-                    response.usage.output_tokens as u64,
+                    response.usage.total_input_tokens.unwrap_or(0),
+                    response.usage.output_tokens.unwrap_or(0),
                 );
 
                 let answer = response

@@ -245,10 +245,11 @@ impl LlmProvider for OllamaProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmResponse> {
+        let tools = canonicalize_tool_definitions(tools)?;
         let request = ChatRequest {
             model: self.model.clone(),
             messages: messages_to_ollama(messages),
-            tools: tools_to_ollama(tools),
+            tools: tools_to_ollama(&tools),
             stream: false,
             options: ChatOptions {
                 num_predict: self.max_tokens,
@@ -292,10 +293,10 @@ impl LlmProvider for OllamaProvider {
             }
         }
 
-        let usage = Usage {
-            input_tokens: api_resp.prompt_eval_count.unwrap_or(0),
-            output_tokens: api_resp.eval_count.unwrap_or(0),
-        };
+        let usage = InferenceUsage::unsupported(
+            api_resp.prompt_eval_count.map(u64::from),
+            api_resp.eval_count.map(u64::from),
+        );
 
         let has_tool_use = content
             .iter()
@@ -309,8 +310,6 @@ impl LlmProvider for OllamaProvider {
                 StopReason::EndTurn
             },
             usage,
-            cache_hit_tokens: 0,
-            cache_miss_tokens: 0,
         })
     }
 
@@ -319,10 +318,11 @@ impl LlmProvider for OllamaProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmStream> {
+        let tools = canonicalize_tool_definitions(tools)?;
         let request = ChatRequest {
             model: self.model.clone(),
             messages: messages_to_ollama(messages),
-            tools: tools_to_ollama(tools),
+            tools: tools_to_ollama(&tools),
             stream: true,
             options: ChatOptions {
                 num_predict: self.max_tokens,
@@ -351,7 +351,7 @@ impl LlmProvider for OllamaProvider {
                 byte_stream: Box::pin(byte_stream),
                 buffer: super::utf8_stream::Utf8StreamBuffer::default(),
                 tool_state: OllamaToolState::default(),
-                usage: Usage::default(),
+                usage: InferenceUsage::unsupported(None, None),
             },
             |mut state| async move {
                 loop {
@@ -378,10 +378,12 @@ impl LlmProvider for OllamaProvider {
                             Ok(chunk) => {
                                 // Final chunk with usage stats
                                 if chunk.done {
-                                    state.usage.input_tokens =
-                                        chunk.prompt_eval_count.unwrap_or(state.usage.input_tokens);
-                                    state.usage.output_tokens =
-                                        chunk.eval_count.unwrap_or(state.usage.output_tokens);
+                                    if let Some(input) = chunk.prompt_eval_count {
+                                        state.usage.total_input_tokens = Some(u64::from(input));
+                                    }
+                                    if let Some(output) = chunk.eval_count {
+                                        state.usage.output_tokens = Some(u64::from(output));
+                                    }
 
                                     // Emit any pending tool completions first
                                     if let Some(completed) = state.tool_state.take_completed() {
@@ -393,8 +395,7 @@ impl LlmProvider for OllamaProvider {
 
                                     return Some((
                                         Ok(super::provider::StreamChunk::Usage {
-                                            input_tokens: state.usage.input_tokens,
-                                            output_tokens: state.usage.output_tokens,
+                                            usage: state.usage.clone(),
                                         }),
                                         state,
                                     ));
@@ -500,7 +501,7 @@ struct OllamaStreamState {
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<Vec<u8>, reqwest::Error>> + Send>>,
     buffer: super::utf8_stream::Utf8StreamBuffer,
     tool_state: OllamaToolState,
-    usage: Usage,
+    usage: InferenceUsage,
 }
 
 #[derive(Default)]

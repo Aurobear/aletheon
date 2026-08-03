@@ -15,7 +15,8 @@ use fabric::{
 };
 use sha2::{Digest, Sha256};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -25,10 +26,15 @@ struct ProjectionRecordingLlm<'a> {
     inner: &'a dyn fabric::LlmProvider,
     services: &'a dyn TurnServices,
     operation_id: fabric::OperationId,
+    pending: Arc<Mutex<Vec<fabric::InferenceTerminalReceipt>>>,
 }
 
 impl ProjectionRecordingLlm<'_> {
-    async fn record(&self, messages: &[Message], tools: &[fabric::ToolDefinition]) {
+    async fn record(
+        &self,
+        messages: &[Message],
+        tools: &[fabric::ToolDefinition],
+    ) -> anyhow::Result<InferenceMetadata> {
         use fabric::model_projection::{
             ModelContextClassification, ModelContextFragmentReceipt, ModelContextProjectionReceipt,
         };
@@ -68,10 +74,21 @@ impl ProjectionRecordingLlm<'_> {
         let tool_schema_bytes = serde_json::to_vec(tools)
             .map(|bytes| bytes.len() as u64)
             .unwrap_or_default();
+        let inference_id = uuid::Uuid::new_v4().to_string();
+        let system_bytes = serde_json::to_vec(
+            &messages
+                .iter()
+                .filter(|message| message.role == fabric::Role::System)
+                .collect::<Vec<_>>(),
+        )?;
+        let system_prefix_digest = format!("sha256:{:x}", Sha256::digest(system_bytes));
+        let tool_schema_digest = fabric::tool_schema_digest(tools)?;
         self.services
             .record_model_context_projection(ModelContextProjectionReceipt {
-                inference_id: uuid::Uuid::new_v4().to_string(),
+                inference_id: inference_id.clone(),
                 operation_id: format!("{:?}", self.operation_id),
+                system_prefix_digest: system_prefix_digest.clone(),
+                tool_schema_digest: tool_schema_digest.clone(),
                 role: "active_agent".into(),
                 stage: "cognitive_loop".into(),
                 task_node_id: Some(format!("{:?}", self.operation_id)),
@@ -81,6 +98,109 @@ impl ProjectionRecordingLlm<'_> {
                 tool_schema_bytes,
             })
             .await;
+        let facts = self.inner.runtime_facts();
+        Ok(InferenceMetadata {
+            inference_id,
+            operation_id: format!("{:?}", self.operation_id),
+            provider_id: self.inner.name().to_owned(),
+            model_id: facts.effective_model_id,
+            system_prefix_digest,
+            tool_schema_digest,
+        })
+    }
+
+    async fn drain(&self) {
+        let receipts = std::mem::take(&mut *self.pending.lock().expect("receipt queue poisoned"));
+        for receipt in receipts {
+            self.services.record_inference_receipt(receipt).await;
+        }
+    }
+}
+
+#[derive(Clone)]
+struct InferenceMetadata {
+    inference_id: String,
+    operation_id: String,
+    provider_id: String,
+    model_id: String,
+    system_prefix_digest: String,
+    tool_schema_digest: String,
+}
+
+impl InferenceMetadata {
+    fn receipt(
+        &self,
+        status: fabric::InferenceTerminalStatus,
+        usage: fabric::InferenceUsage,
+        failure_kind: Option<&str>,
+    ) -> fabric::InferenceTerminalReceipt {
+        fabric::InferenceTerminalReceipt {
+            schema_version: fabric::INFERENCE_TERMINAL_RECEIPT_SCHEMA_V1,
+            inference_id: self.inference_id.clone(),
+            operation_id: self.operation_id.clone(),
+            provider_id: self.provider_id.clone(),
+            model_id: self.model_id.clone(),
+            system_prefix_digest: self.system_prefix_digest.clone(),
+            tool_schema_digest: self.tool_schema_digest.clone(),
+            status,
+            usage,
+            failure_kind: failure_kind.map(str::to_owned),
+        }
+    }
+}
+
+struct TerminalRecordingStream {
+    inner: fabric::LlmStream,
+    metadata: InferenceMetadata,
+    pending: Arc<Mutex<Vec<fabric::InferenceTerminalReceipt>>>,
+    usage: fabric::InferenceUsage,
+    terminal: bool,
+}
+
+impl TerminalRecordingStream {
+    fn finish(&mut self, status: fabric::InferenceTerminalStatus, failure_kind: Option<&str>) {
+        if self.terminal {
+            return;
+        }
+        self.terminal = true;
+        self.pending
+            .lock()
+            .expect("receipt queue poisoned")
+            .push(
+                self.metadata
+                    .receipt(status, self.usage.clone(), failure_kind),
+            );
+    }
+}
+
+impl futures::Stream for TerminalRecordingStream {
+    type Item = anyhow::Result<fabric::StreamChunk>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.inner.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(fabric::StreamChunk::Usage { usage }))) => {
+                self.usage = usage.clone();
+                Poll::Ready(Some(Ok(fabric::StreamChunk::Usage { usage })))
+            }
+            Poll::Ready(Some(Ok(fabric::StreamChunk::Done { stop_reason }))) => {
+                self.finish(fabric::InferenceTerminalStatus::Succeeded, None);
+                Poll::Ready(Some(Ok(fabric::StreamChunk::Done { stop_reason })))
+            }
+            Poll::Ready(Some(Err(error))) => {
+                self.finish(fabric::InferenceTerminalStatus::Failed, Some("unknown"));
+                Poll::Ready(Some(Err(error)))
+            }
+            other => other,
+        }
+    }
+}
+
+impl Drop for TerminalRecordingStream {
+    fn drop(&mut self) {
+        self.finish(
+            fabric::InferenceTerminalStatus::Cancelled,
+            Some("cancelled"),
+        );
     }
 }
 
@@ -91,8 +211,23 @@ impl fabric::LlmProvider for ProjectionRecordingLlm<'_> {
         messages: &[Message],
         tools: &[fabric::ToolDefinition],
     ) -> anyhow::Result<fabric::LlmResponse> {
-        self.record(messages, tools).await;
-        self.inner.complete(messages, tools).await
+        let tools = fabric::canonicalize_tool_definitions(tools)?;
+        let metadata = self.record(messages, &tools).await?;
+        let result = self.inner.complete(messages, &tools).await;
+        let receipt = match &result {
+            Ok(response) => metadata.receipt(
+                fabric::InferenceTerminalStatus::Succeeded,
+                response.usage.clone(),
+                None,
+            ),
+            Err(_) => metadata.receipt(
+                fabric::InferenceTerminalStatus::Failed,
+                fabric::InferenceUsage::default(),
+                Some("unknown"),
+            ),
+        };
+        self.services.record_inference_receipt(receipt).await;
+        result
     }
 
     async fn complete_stream(
@@ -100,8 +235,27 @@ impl fabric::LlmProvider for ProjectionRecordingLlm<'_> {
         messages: &[Message],
         tools: &[fabric::ToolDefinition],
     ) -> anyhow::Result<fabric::LlmStream> {
-        self.record(messages, tools).await;
-        self.inner.complete_stream(messages, tools).await
+        let tools = fabric::canonicalize_tool_definitions(tools)?;
+        let metadata = self.record(messages, &tools).await?;
+        match self.inner.complete_stream(messages, &tools).await {
+            Ok(inner) => Ok(Box::pin(TerminalRecordingStream {
+                inner,
+                metadata,
+                pending: self.pending.clone(),
+                usage: fabric::InferenceUsage::default(),
+                terminal: false,
+            })),
+            Err(error) => {
+                self.services
+                    .record_inference_receipt(metadata.receipt(
+                        fabric::InferenceTerminalStatus::Failed,
+                        fabric::InferenceUsage::default(),
+                        Some("unknown"),
+                    ))
+                    .await;
+                Err(error)
+            }
+        }
     }
 
     fn name(&self) -> &str {
@@ -628,6 +782,7 @@ impl CognitiveSession for LinearCognitiveSession {
                 inner: llm,
                 services,
                 operation_id: request.operation_id,
+                pending: Arc::new(Mutex::new(Vec::new())),
             };
             let llm = DynLlmRef(&recording_llm);
             let run = self
@@ -650,6 +805,7 @@ impl CognitiveSession for LinearCognitiveSession {
                 });
             let (output, metrics) = tokio::select! {
                 _ = self.cancellation.cancelled() => {
+                    recording_llm.drain().await;
                     events.emit(TurnEvent::Finished {
                         operation_id: request.operation_id,
                         stop: TurnStop::Cancelled,
@@ -659,6 +815,7 @@ impl CognitiveSession for LinearCognitiveSession {
                 result = run => match result {
                     Ok(result) => result,
                     Err(error) => {
+                        recording_llm.drain().await;
                         events.emit(TurnEvent::Finished {
                             operation_id: request.operation_id,
                             stop: TurnStop::Failed,
@@ -667,6 +824,7 @@ impl CognitiveSession for LinearCognitiveSession {
                     }
                 }
             };
+            recording_llm.drain().await;
             TurnResult {
                 output,
                 stop: metrics.stop.clone(),
@@ -772,6 +930,7 @@ impl CognitiveSession for LinearCognitiveSession {
             inner: llm,
             services,
             operation_id: request.operation_id,
+            pending: Arc::new(Mutex::new(Vec::new())),
         };
         let llm = DynLlmRef(&recording_llm);
         let sink = CognitiveStreamAdapter(stream);
@@ -798,6 +957,7 @@ impl CognitiveSession for LinearCognitiveSession {
         );
         let (output, metrics) = tokio::select! {
             _ = self.cancellation.cancelled() => {
+                recording_llm.drain().await;
                 events.emit(TurnEvent::Finished {
                     operation_id: request.operation_id,
                     stop: TurnStop::Cancelled,
@@ -807,6 +967,7 @@ impl CognitiveSession for LinearCognitiveSession {
             result = run => match result {
                 Ok(result) => result,
                 Err(error) => {
+                    recording_llm.drain().await;
                     events.emit(TurnEvent::Finished {
                         operation_id: request.operation_id,
                         stop: TurnStop::Failed,
@@ -815,6 +976,7 @@ impl CognitiveSession for LinearCognitiveSession {
                 }
             }
         };
+        recording_llm.drain().await;
         let result = TurnResult {
             output,
             stop: metrics.stop.clone(),

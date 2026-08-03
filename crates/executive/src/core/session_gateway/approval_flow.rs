@@ -80,6 +80,7 @@ impl SessionGateway {
                             fabric::ItemPayload::ModelContextProjection { .. } => {
                                 "model_context_projection"
                             }
+                            fabric::ItemPayload::InferenceReceipt { .. } => "inference_receipt",
                         };
                         if event_type.is_some_and(|expected| expected != event_type_str) {
                             return None;

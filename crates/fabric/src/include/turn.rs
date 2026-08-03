@@ -269,6 +269,9 @@ pub trait TurnServices: Send + Sync {
     ) {
     }
 
+    /// Persist the terminal outcome paired with a model context projection.
+    async fn record_inference_receipt(&self, _receipt: crate::InferenceTerminalReceipt) {}
+
     fn turn_requirements(&self, request: &TurnRequest) -> Vec<TurnRequirement> {
         request.requirements.clone()
     }

@@ -195,7 +195,9 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use fabric::message::is_tool_message;
-    use fabric::{ContentBlock, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage};
+    use fabric::{
+        ContentBlock, InferenceUsage, LlmResponse, LlmStream, StopReason, ToolDefinition,
+    };
     use kernel::chronos::TestClock;
 
     fn test_clock() -> Arc<dyn Clock> {
@@ -229,9 +231,7 @@ mod tests {
                     text: VALID_CHECKPOINT.into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
 

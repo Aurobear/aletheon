@@ -229,6 +229,11 @@ fn item_content(payload: &ItemPayload) -> (String, String, bool) {
             ),
             true,
         ),
+        ItemPayload::InferenceReceipt { receipt } => (
+            "inference_receipt".into(),
+            format!("{}: {:?}", receipt.inference_id, receipt.status),
+            true,
+        ),
         ItemPayload::ContextProjection { space, .. } => ("context".into(), space.clone(), true),
         ItemPayload::SystemNotice { content } => ("system".into(), content.clone(), false),
     }
