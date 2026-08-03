@@ -1055,6 +1055,9 @@ activation 必须等待这些端口全部完成。
 > - bridge live 集成测试 **6/6 通过**：`kuavo.move_base_timed`（0.05 m/s × 500 ms）真实移动
 >   模拟机器人，`kuavo.stop` 执行成功，`gait_cache_is_stance` 确认机器人处于稳定 stance。
 > - Aletheon gated 测试（`grpc_cross_repo`）**2/2 通过**。
+- **全生产路径 E2E（`robot_bridge_execute_e2e`）通过**：`EmbodimentService`
+  （Kernel admission → Broker → `GrpcEmbodimentProvider`）经隧道连真实 bridge，实际执行
+  `kuavo.stop` **SUCCEEDED** 并读取执行后 observation——治理执行链对真实仿真端到端跑通。
 > - **observation schema**：`base_pose`（position/orientation，z≈0.81）、`base_twist`
 >   （velocity ~1e-05）、`ground_truth_pose`——**无 `mode` 字段**。
 >
