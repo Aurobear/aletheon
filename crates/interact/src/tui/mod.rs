@@ -370,6 +370,8 @@ impl App {
         let mut status = StatusBar::new(caps.clone());
         status.connected = true;
         status.model_name = model_name.clone();
+        let mut app_state = AppState::default();
+        app_state.model_name = model_name.clone();
 
         Self {
             workspace,
@@ -405,7 +407,7 @@ impl App {
             pager: None,
             session_picker: None,
             frame_counter: 0,
-            app_state: AppState::default(),
+            app_state,
             plan_view: PlanViewState::default(),
             sub_agents: Vec::new(),
             current_iteration: 0,

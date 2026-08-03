@@ -122,7 +122,7 @@ impl Renderable for HeaderRenderable<'_> {
             ),
             Span::styled(
                 format!(
-                    "{}  ·  {}  ·  {}",
+                    "{}  ·  route {}  ·  {}",
                     self.state.mode.display_name(),
                     self.state.model_name,
                     provider
