@@ -76,6 +76,33 @@ impl AgentLoader {
         Ok(self.agents.len() - before)
     }
 
+    /// Load an explicit, already-resolved set of Markdown profiles without
+    /// copying them into a second directory authority.
+    pub fn load_from_paths(&mut self, paths: &[PathBuf]) -> Result<usize> {
+        let before = self.agents.len();
+        for path in paths {
+            anyhow::ensure!(
+                path.is_file()
+                    && path
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("md")),
+                "Agent profile path is not a Markdown file: {}",
+                path.display()
+            );
+            let content =
+                fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+            let agent = parse_agent_md(&content, path)
+                .with_context(|| format!("invalid Agent profile Markdown: {}", path.display()))?;
+            anyhow::ensure!(
+                self.get(&agent.name).is_none(),
+                "duplicate Agent profile name '{}'",
+                agent.name
+            );
+            self.agents.push(agent);
+        }
+        Ok(self.agents.len() - before)
+    }
+
     /// Get an agent by name.
     pub fn get(&self, name: &str) -> Option<&AgentRole> {
         self.agents.iter().find(|a| a.name == name)

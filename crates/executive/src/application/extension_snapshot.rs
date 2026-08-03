@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use corpus::extension::resolver::{ResolvedPackageAsset, ResolvedPackageSet};
+use corpus::extension::store::ActivationRecord;
 use fabric::protocol::extension::McpConnectorManifestV1;
 use fabric::types::extension_asset::AssetKind;
 use sha2::{Digest, Sha256};
@@ -19,15 +20,22 @@ pub struct ExtensionConnectorAsset {
 }
 
 #[derive(Debug, Clone)]
+pub struct ExtensionAgentProfileAsset {
+    pub package_id: String,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
 pub struct ExtensionRuntimeSnapshot {
     pub digest: String,
     pub skills: Arc<Vec<corpus::skill::loader::LoadedSkill>>,
     pub skill_plugins: Arc<Vec<corpus::skill::plugin::SkillPlugin>>,
     pub hooks: Arc<Vec<corpus::hook::loader::HookConfig>>,
     pub connectors: Arc<Vec<ExtensionConnectorAsset>>,
-    pub agent_profile_paths: Arc<Vec<PathBuf>>,
+    pub agent_profiles: Arc<Vec<ExtensionAgentProfileAsset>>,
     pub executable_assets: Arc<Vec<ResolvedPackageAsset>>,
     pub package_digests: Arc<BTreeMap<String, String>>,
+    pub activation_records: Arc<BTreeMap<String, ActivationRecord>>,
 }
 
 impl ExtensionRuntimeSnapshot {
@@ -42,9 +50,10 @@ impl ExtensionRuntimeSnapshot {
             skill_plugins: Arc::new(Vec::new()),
             hooks: Arc::new(Vec::new()),
             connectors: Arc::new(Vec::new()),
-            agent_profile_paths: Arc::new(Vec::new()),
+            agent_profiles: Arc::new(Vec::new()),
             executable_assets: Arc::new(Vec::new()),
             package_digests: Arc::new(BTreeMap::new()),
+            activation_records: Arc::new(BTreeMap::new()),
         }
     }
 }
@@ -103,7 +112,7 @@ impl ExtensionSnapshotCompiler {
         let mut skill_plugins = Vec::new();
         let mut hooks = Vec::new();
         let mut connectors = Vec::new();
-        let mut agent_profile_paths = Vec::new();
+        let mut agent_profiles = Vec::new();
         let mut executable_assets = Vec::new();
         let mut public_skill_names = BTreeSet::new();
         let mut connector_ids = BTreeSet::new();
@@ -203,7 +212,10 @@ impl ExtensionSnapshotCompiler {
                         "package": resolved_asset.package_id,
                         "hash": resolved_asset.package_hash,
                     }));
-                    agent_profile_paths.push(resolved_asset.absolute_path.clone());
+                    agent_profiles.push(ExtensionAgentProfileAsset {
+                        package_id: resolved_asset.package_id.clone(),
+                        path: resolved_asset.absolute_path.clone(),
+                    });
                 }
                 AssetKind::Executable => {
                     let content = std::fs::read_to_string(&resolved_asset.absolute_path)?;
@@ -224,8 +236,17 @@ impl ExtensionSnapshotCompiler {
         skill_plugins.sort_by(|left, right| left.name.cmp(&right.name));
         hooks.sort_by(|left, right| left.name.cmp(&right.name));
         connectors.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
-        agent_profile_paths.sort();
+        agent_profiles.sort_by(|left, right| {
+            left.package_id
+                .cmp(&right.package_id)
+                .then(left.path.cmp(&right.path))
+        });
         executable_assets.sort_by(|left, right| left.asset.id.cmp(&right.asset.id));
+        let activation_records = resolved
+            .activation_records
+            .iter()
+            .map(|record| (record.package_id.clone(), record.clone()))
+            .collect::<BTreeMap<_, _>>();
         let digest = digest_json(&serde_json::json!({
             "packages": package_digests,
             "assets": canonical_assets,
@@ -238,9 +259,10 @@ impl ExtensionSnapshotCompiler {
             skill_plugins: Arc::new(skill_plugins),
             hooks: Arc::new(hooks),
             connectors: Arc::new(connectors),
-            agent_profile_paths: Arc::new(agent_profile_paths),
+            agent_profiles: Arc::new(agent_profiles),
             executable_assets: Arc::new(executable_assets),
             package_digests: Arc::new(package_digests),
+            activation_records: Arc::new(activation_records),
         })
     }
 }

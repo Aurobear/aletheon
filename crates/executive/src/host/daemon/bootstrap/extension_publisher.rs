@@ -11,6 +11,7 @@ use corpus::tools::tools::script_tool::ScriptTool;
 use corpus::tools::tools::skill_tools::SharedSkills;
 use corpus::tools::tools::{Tool, ToolRegistry};
 use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use crate::application::extension_coordinator::ExtensionRuntimePublisher;
 use crate::application::extension_snapshot::ExtensionRuntimeSnapshot;
@@ -22,6 +23,8 @@ pub struct DaemonExtensionRuntimePublisher {
     hooks: Arc<Mutex<HookRegistry>>,
     skills: SharedSkills,
     connectors: Arc<ExtensionConnectorRuntime>,
+    profiles: RwLock<Option<PackageProfileRuntime>>,
+    executables: RwLock<Option<Arc<super::extensions::ExtensionExecutableRuntime>>>,
 }
 
 impl DaemonExtensionRuntimePublisher {
@@ -35,7 +38,133 @@ impl DaemonExtensionRuntimePublisher {
             hooks,
             skills,
             connectors: Arc::new(ExtensionConnectorRuntime::default()),
+            profiles: RwLock::new(None),
+            executables: RwLock::new(None),
         }
+    }
+
+    pub async fn bind_profiles(&self, runtime: PackageProfileRuntime) -> Result<()> {
+        let mut profiles = self.profiles.write().await;
+        anyhow::ensure!(
+            profiles.is_none(),
+            "package Profile runtime is already bound"
+        );
+        *profiles = Some(runtime);
+        Ok(())
+    }
+
+    async fn bind_executables(
+        &self,
+        runtime: Arc<super::extensions::ExtensionExecutableRuntime>,
+    ) -> Result<()> {
+        let mut executables = self.executables.write().await;
+        anyhow::ensure!(
+            executables.is_none(),
+            "package executable runtime is already bound"
+        );
+        *executables = Some(runtime);
+        Ok(())
+    }
+
+    pub async fn bind_executable_runtime(
+        &self,
+        data_root: &Path,
+        store_root: &Path,
+        clock: Arc<dyn fabric::Clock>,
+        agent_runtimes: Arc<crate::application::agent_control::AgentRuntimeRegistry>,
+    ) -> Result<Arc<crate::application::extension_runtime_router::ExtensionRuntimeRouter>> {
+        let runtime = Arc::new(
+            super::extensions::ExtensionExecutableRuntime::new(
+                data_root,
+                store_root,
+                clock,
+                agent_runtimes,
+            )
+            .await,
+        );
+        let router = runtime.router();
+        self.bind_executables(runtime).await?;
+        Ok(router)
+    }
+}
+
+pub struct PackageProfileRuntime {
+    registry: Arc<crate::adapters::runtime::AgentProfileRegistry>,
+    inference: Arc<dyn crate::application::inference_port::InferencePort>,
+    default_llm: Arc<dyn fabric::LlmProvider>,
+    config: crate::composition::config::ExecutiveConfig,
+}
+
+impl PackageProfileRuntime {
+    pub fn new(
+        registry: Arc<crate::adapters::runtime::AgentProfileRegistry>,
+        inference: Arc<dyn crate::application::inference_port::InferencePort>,
+        default_llm: Arc<dyn fabric::LlmProvider>,
+        config: crate::composition::config::ExecutiveConfig,
+    ) -> Self {
+        Self {
+            registry,
+            inference,
+            default_llm,
+            config,
+        }
+    }
+
+    async fn prepare(
+        &self,
+        snapshot: &ExtensionRuntimeSnapshot,
+        definitions: &[fabric::ToolDefinition],
+        profile_definitions: &[fabric::ToolDefinition],
+    ) -> Result<Vec<(String, crate::adapters::runtime::ResolvedAgentProfile)>> {
+        let mut paths = BTreeMap::<String, Vec<PathBuf>>::new();
+        for profile in snapshot.agent_profiles.iter() {
+            paths
+                .entry(profile.package_id.clone())
+                .or_default()
+                .push(profile.path.clone());
+        }
+        let mut prepared = Vec::new();
+        for (owner, paths) in paths {
+            let result = super::runtime::load_agent_profiles_from_paths(
+                &paths,
+                self.inference.clone(),
+                self.default_llm.clone(),
+                definitions,
+                profile_definitions,
+                &self.config,
+                &crate::composition::config::AgentProfilesConfig::default(),
+            )
+            .await?;
+            anyhow::ensure!(
+                result.quarantined.is_empty(),
+                "package '{}' Agent Profile failed validation: {}",
+                owner,
+                result
+                    .quarantined
+                    .iter()
+                    .map(|profile| profile.reason.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+            prepared.extend(
+                result
+                    .registry
+                    .resolved_profiles()
+                    .into_iter()
+                    .map(|profile| (owner.clone(), profile)),
+            );
+        }
+        Ok(prepared)
+    }
+
+    fn publish(
+        &self,
+        owners: &[String],
+        prepared: Vec<(String, crate::adapters::runtime::ResolvedAgentProfile)>,
+    ) -> Result<()> {
+        self.registry
+            .replace_package_profiles(owners, prepared)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
     }
 }
 
@@ -58,6 +187,23 @@ impl ExtensionRuntimePublisher for DaemonExtensionRuntimePublisher {
             .await
             .validate_package_tool_sets(&prepared.tool_owners, &prepared.tool_sets)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Some(profiles) = self.profiles.read().await.as_ref() {
+            let (mut definitions, mut profile_definitions) = self
+                .tools
+                .lock()
+                .await
+                .candidate_package_definitions(&prepared.tool_owners, &prepared.tool_sets)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let controls = corpus::tools::tools::agent_control::AgentControlTools::definitions();
+            definitions.extend(controls.clone());
+            profile_definitions.extend(controls);
+            profiles
+                .prepare(candidate, &definitions, &profile_definitions)
+                .await?;
+        }
+        if let Some(executables) = self.executables.read().await.as_ref() {
+            executables.probe(candidate).await?;
+        }
         Ok(())
     }
 
@@ -93,6 +239,25 @@ impl ExtensionRuntimePublisher for DaemonExtensionRuntimePublisher {
         tool_owners.extend(prepared.tool_sets.iter().map(|(owner, _)| owner.clone()));
         let tool_owners: Vec<_> = tool_owners.into_iter().collect();
 
+        let prepared_profiles = if let Some(profiles) = self.profiles.read().await.as_ref() {
+            let (mut definitions, mut profile_definitions) = self
+                .tools
+                .lock()
+                .await
+                .candidate_package_definitions(&tool_owners, &prepared.tool_sets)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let controls = corpus::tools::tools::agent_control::AgentControlTools::definitions();
+            definitions.extend(controls.clone());
+            profile_definitions.extend(controls);
+            Some(
+                profiles
+                    .prepare(&candidate, &definitions, &profile_definitions)
+                    .await?,
+            )
+        } else {
+            None
+        };
+
         let mut tools = self.tools.lock().await;
         let mut hooks = self.hooks.lock().await;
         tools
@@ -106,6 +271,20 @@ impl ExtensionRuntimePublisher for DaemonExtensionRuntimePublisher {
         }
         self.skills
             .replace_extensions(candidate.skills.as_ref().clone())?;
+        if let (Some(profiles), Some(prepared_profiles)) =
+            (self.profiles.read().await.as_ref(), prepared_profiles)
+        {
+            profiles.publish(
+                &previous_packages
+                    .union(&candidate_packages)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                prepared_profiles,
+            )?;
+        }
+        if let Some(executables) = self.executables.read().await.as_ref() {
+            executables.publish(&previous, &candidate).await?;
+        }
         self.connectors
             .publish(&previous.digest, &candidate.digest)
             .await;

@@ -12,6 +12,7 @@
 
 #[doc(hidden)]
 pub(crate) mod adapters;
+pub use adapters::runtime::AgentProfileRegistry;
 pub mod application;
 pub(crate) mod compatibility;
 pub mod composition;

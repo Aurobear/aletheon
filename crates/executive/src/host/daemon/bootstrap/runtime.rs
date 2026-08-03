@@ -1,6 +1,7 @@
 //! Runtime-provider construction for daemon bootstrap.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fabric::{AgentControlPort, Registry};
@@ -59,7 +60,7 @@ pub(super) const UNIVERSAL_TOOLS: &[&str] = &[
 ];
 
 pub(super) async fn load_agent_profiles(
-    agents_dir: &std::path::Path,
+    agents_dir: &Path,
     inference: Arc<dyn InferencePort>,
     default_llm: Arc<dyn LlmProvider>,
     definitions: &[fabric::ToolDefinition],
@@ -72,6 +73,50 @@ pub(super) async fn load_agent_profiles(
         loader.load_from_dir(agents_dir)?;
         loader.validate_legacy_toml_grants(agents_dir)?;
     }
+    load_agent_profiles_from_loader(
+        loader,
+        inference,
+        default_llm,
+        definitions,
+        profile_definitions,
+        config,
+        profiles_config,
+    )
+    .await
+}
+
+pub(super) async fn load_agent_profiles_from_paths(
+    profile_paths: &[PathBuf],
+    inference: Arc<dyn InferencePort>,
+    default_llm: Arc<dyn LlmProvider>,
+    definitions: &[fabric::ToolDefinition],
+    profile_definitions: &[fabric::ToolDefinition],
+    config: &crate::composition::config::ExecutiveConfig,
+    profiles_config: &crate::composition::config::AgentProfilesConfig,
+) -> anyhow::Result<ProfileLoadResult> {
+    let mut loader = AgentLoader::new();
+    loader.load_from_paths(profile_paths)?;
+    load_agent_profiles_from_loader(
+        loader,
+        inference,
+        default_llm,
+        definitions,
+        profile_definitions,
+        config,
+        profiles_config,
+    )
+    .await
+}
+
+async fn load_agent_profiles_from_loader(
+    loader: AgentLoader,
+    inference: Arc<dyn InferencePort>,
+    default_llm: Arc<dyn LlmProvider>,
+    definitions: &[fabric::ToolDefinition],
+    profile_definitions: &[fabric::ToolDefinition],
+    config: &crate::composition::config::ExecutiveConfig,
+    profiles_config: &crate::composition::config::AgentProfilesConfig,
+) -> anyhow::Result<ProfileLoadResult> {
     for profile in profiles_config.overrides.keys() {
         anyhow::ensure!(
             loader.get(profile).is_some(),

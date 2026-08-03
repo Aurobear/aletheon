@@ -567,18 +567,6 @@ impl RequestHandler {
             Arc::new(initial_extension_snapshot.clone()),
         )
         .await?;
-        extension_runtime_view
-            .publish(initial_extension_snapshot)
-            .await;
-        let extension_coordinator = Arc::new(
-            crate::application::extension_coordinator::ExtensionCoordinator::new(
-                &extension_store_root,
-                extension_compiler,
-                extension_publisher,
-                extension_runtime_view.clone(),
-                clock.clone(),
-            )?,
-        );
         if let Some(mcp) = retained_mcp.clone() {
             let registry = tools.clone();
             let registrations = Arc::new(Mutex::new(mcp_registration_ids));
@@ -975,23 +963,6 @@ impl RequestHandler {
         );
         let agent_runtimes =
             Arc::new(crate::application::agent_control::AgentRuntimeRegistry::default());
-        let extension_runtime_composition = super::extensions::register_package_runtimes(
-            agent_runtimes.as_ref(),
-            &data_dir,
-            &corpus::extension::store::PackageStore::configured_user_root(),
-            clock.clone(),
-        )
-        .await?;
-        let extension_runtime_quarantine_count =
-            extension_runtime_composition.quarantined.len() as u64;
-        let extension_runtime_count =
-            extension_runtime_composition.router.registered().len() as u64;
-        let extension_runtime_quarantined_ids: Vec<String> = extension_runtime_composition
-            .quarantined
-            .iter()
-            .map(|value| value.split(':').next().unwrap_or("unknown").to_owned())
-            .collect();
-        let extension_runtime_rolled_back = extension_runtime_composition.rolled_back;
         // Ordinary child Agents use one Cognit session runtime. Goal worker
         // and reviewer attempts remain explicit ProviderWorkerRuntime routes.
         let agent_composition = {
@@ -1033,6 +1004,49 @@ impl RequestHandler {
             )?;
             composition
         };
+        extension_publisher
+            .bind_profiles(super::extension_publisher::PackageProfileRuntime::new(
+                agent_composition.profiles.clone(),
+                inference.clone(),
+                llm.clone(),
+                runtime_config_snapshot.clone(),
+            ))
+            .await?;
+        let extension_runtime_router = extension_publisher
+            .bind_executable_runtime(
+                &data_dir,
+                &corpus::extension::store::PackageStore::configured_user_root(),
+                clock.clone(),
+                agent_runtimes.clone(),
+            )
+            .await?;
+        crate::application::extension_coordinator::ExtensionRuntimePublisher::probe(
+            extension_publisher.as_ref(),
+            &initial_extension_snapshot,
+        )
+        .await?;
+        crate::application::extension_coordinator::ExtensionRuntimePublisher::publish(
+            extension_publisher.as_ref(),
+            extension_runtime_view.load().await,
+            Arc::new(initial_extension_snapshot.clone()),
+        )
+        .await?;
+        extension_runtime_view
+            .publish(initial_extension_snapshot)
+            .await;
+        let extension_coordinator = Arc::new(
+            crate::application::extension_coordinator::ExtensionCoordinator::new(
+                &extension_store_root,
+                extension_compiler,
+                extension_publisher,
+                extension_runtime_view.clone(),
+                clock.clone(),
+            )?,
+        );
+        let extension_runtime_quarantine_count = 0;
+        let extension_runtime_count = extension_runtime_router.registered().len() as u64;
+        let extension_runtime_quarantined_ids: Vec<String> = Vec::new();
+        let extension_runtime_rolled_back: Vec<String> = Vec::new();
         let quarantined_profile_count = agent_composition.quarantined_profiles().len() as u64;
         let quarantined_profile_names: Vec<String> = agent_composition
             .quarantined_profiles()

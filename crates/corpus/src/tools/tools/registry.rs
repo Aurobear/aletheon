@@ -129,6 +129,58 @@ impl ToolRegistry {
         Ok(())
     }
 
+    /// Compile the definitions that would be visible after an atomic package
+    /// replacement, without mutating the live registry. Profiles are validated
+    /// against this candidate catalog so removed capabilities cannot linger.
+    pub fn candidate_package_definitions(
+        &self,
+        replaced_owners: &[String],
+        replacements: &[(String, Vec<Arc<dyn Tool>>)],
+    ) -> Result<(Vec<fabric::ToolDefinition>, Vec<fabric::ToolDefinition>), AgentError> {
+        self.validate_package_tool_sets(replaced_owners, replacements)?;
+        let replaced = replaced_owners
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        let retained = self.tools.iter().filter(|(name, _)| {
+            self.package_tool_owners
+                .get(*name)
+                .is_none_or(|owner| !replaced.contains(owner))
+        });
+        let incoming = replacements
+            .iter()
+            .flat_map(|(_, tools)| tools.iter().map(|tool| (tool.name(), tool.as_ref())));
+        let all = retained
+            .map(|(_, tool)| (tool.name(), tool.as_ref()))
+            .chain(incoming)
+            .collect::<Vec<_>>();
+        let mut visible = all
+            .iter()
+            .filter(|(_, tool)| {
+                matches!(
+                    tool.exposure(),
+                    ToolExposure::Direct | ToolExposure::DirectModelOnly
+                )
+            })
+            .map(|(name, tool)| fabric::ToolDefinition {
+                name: (*name).to_owned(),
+                description: tool.description().to_owned(),
+                input_schema: tool.input_schema(),
+            })
+            .collect::<Vec<_>>();
+        let mut authorized = all
+            .iter()
+            .filter(|(_, tool)| tool.exposure() != ToolExposure::Hidden)
+            .map(|(name, tool)| fabric::ToolDefinition {
+                name: (*name).to_owned(),
+                description: tool.description().to_owned(),
+                input_schema: tool.input_schema(),
+            })
+            .collect::<Vec<_>>();
+        visible.sort_by(|left, right| left.name.cmp(&right.name));
+        authorized.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok((visible, authorized))
+    }
+
     pub fn remove_package_tools(&mut self, owner: &str) -> Result<(), AgentError> {
         self.replace_package_tool_sets(&[owner.to_owned()], Vec::new())
     }

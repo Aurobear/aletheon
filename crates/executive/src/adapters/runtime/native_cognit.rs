@@ -49,6 +49,7 @@ pub struct ResolvedAgentProfile {
 #[derive(Default)]
 pub struct AgentProfileRegistry {
     profiles: RwLock<HashMap<AgentProfileId, ResolvedAgentProfile>>,
+    package_owners: RwLock<HashMap<AgentProfileId, String>>,
 }
 
 impl AgentProfileRegistry {
@@ -86,6 +87,73 @@ impl AgentProfileRegistry {
             ));
         }
         profiles.insert(id, resolved);
+        Ok(())
+    }
+
+    pub fn resolved_profiles(&self) -> Vec<ResolvedAgentProfile> {
+        self.profiles.read().values().cloned().collect()
+    }
+
+    /// Atomically replace package-owned profiles while preserving built-ins
+    /// and package owners outside the candidate snapshot.
+    pub fn replace_package_profiles(
+        &self,
+        replaced_owners: &[String],
+        replacements: Vec<(String, ResolvedAgentProfile)>,
+    ) -> Result<(), AgentControlError> {
+        let replaced = replaced_owners.iter().cloned().collect::<HashSet<_>>();
+        if replaced.iter().any(|owner| owner.trim().is_empty()) {
+            return Err(AgentControlError::invalid(
+                "package profile owner must not be empty",
+            ));
+        }
+        let profiles = self.profiles.read();
+        let owners = self.package_owners.read();
+        let mut candidate_ids = HashSet::new();
+        for (owner, resolved) in &replacements {
+            if !replaced.contains(owner) {
+                return Err(AgentControlError::invalid(format!(
+                    "package profile owner '{owner}' is outside the replacement set"
+                )));
+            }
+            validate_resolved_profile(resolved)?;
+            let id = &resolved.profile.id;
+            if !candidate_ids.insert(id.clone()) {
+                return Err(control_error(
+                    AgentControlErrorKind::Conflict,
+                    format!("duplicate package Agent profile: {}", id.0),
+                ));
+            }
+            if profiles.contains_key(id)
+                && owners
+                    .get(id)
+                    .is_none_or(|existing| !replaced.contains(existing))
+            {
+                return Err(control_error(
+                    AgentControlErrorKind::Conflict,
+                    format!("Agent profile already registered: {}", id.0),
+                ));
+            }
+        }
+        drop(owners);
+        drop(profiles);
+
+        let mut profiles = self.profiles.write();
+        let mut owners = self.package_owners.write();
+        let removed = owners
+            .iter()
+            .filter(|(_, owner)| replaced.contains(*owner))
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in removed {
+            owners.remove(&id);
+            profiles.remove(&id);
+        }
+        for (owner, resolved) in replacements {
+            let id = resolved.profile.id.clone();
+            owners.insert(id.clone(), owner);
+            profiles.insert(id, resolved);
+        }
         Ok(())
     }
 
@@ -129,6 +197,34 @@ impl AgentProfileRegistry {
     pub fn names(&self) -> Vec<String> {
         self.profiles.read().keys().map(|id| id.0.clone()).collect()
     }
+}
+
+fn validate_resolved_profile(resolved: &ResolvedAgentProfile) -> Result<(), AgentControlError> {
+    resolved.profile.validate()?;
+    if resolved.profile.model != resolved.llm.name() {
+        return Err(AgentControlError::invalid(format!(
+            "profile model '{}' does not match resolved provider model '{}'",
+            resolved.profile.model,
+            resolved.llm.name()
+        )));
+    }
+    let declared = resolved
+        .profile
+        .allowed_tools
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let supplied = resolved
+        .authorized_tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect::<HashSet<_>>();
+    if declared != supplied {
+        return Err(AgentControlError::invalid(
+            "profile tool definitions do not match its allow-list",
+        ));
+    }
+    Ok(())
 }
 
 impl AgentProfileCatalogPort for AgentProfileRegistry {
