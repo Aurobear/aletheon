@@ -781,10 +781,17 @@ impl RequestHandler {
             fabric::WorkspacePolicy::from_resolved_roots(data_dir.clone(), Vec::new())
                 .map_err(anyhow::Error::msg)
                 .context("resolving embodiment workspace")?;
+        // Canonical embodiment progress → turn event projection. Surfaces into
+        // daemon logs today; the session/UI event projection replaces the tracing
+        // sink in the robot composition tail.
+        let embodiment_progress: Arc<dyn crate::application::embodiment_progress::EmbodimentProgressPort> =
+            Arc::new(crate::application::embodiment_progress::EventEmbodimentProgress::new(
+                Arc::new(crate::application::embodiment_progress::TracingTurnEventSink),
+            ));
         let embodiment_port = super::embodiment::build_embodiment_port(
             hardware_clock,
             kernel.admission(),
-            Arc::new(crate::application::embodiment_progress::NoopEmbodimentProgress),
+            embodiment_progress,
             fabric::ProcessId::new(),
             fabric::PrincipalId(fabric::LOCAL_OWNER_PRINCIPAL.to_string()),
             embodiment_workspace,

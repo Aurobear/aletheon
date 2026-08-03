@@ -31,7 +31,7 @@
 | 5 | expected outcome 硬编码 `mode == stance` | 🔴 开放：`crates/cognit/src/harness/robot/mod.rs:202,216,244`（Plan 丢弃 proposal outcome，Execute/Verify 各自硬编码） |
 | 6 | operation ID 用 `"op"` 占位 | 🔴 开放：`crates/cognit/src/harness/robot/mod.rs:215`；修复简单，因为 `SkillResult.operation_id: OperationId`（`fabric/src/types/embodiment.rs:84`）已存在 |
 | 7 | world-state ingest 无生产管道 | 🟡 核心已实现：`PollingWorldState` + `observation_to_snapshot` + `WorldStatePump`（`crates/executive/src/application/world_state.rs`，含单调/过期/低置信处理），接线到 daemon 在 PR4 composition |
-| 8 | progress 用 `NoopEmbodimentProgress` | 🔴 开放：`crates/executive/src/host/daemon/bootstrap/request.rs:805` |
+| 8 | progress 用 `NoopEmbodimentProgress` | ✅ 已实现：`EventEmbodimentProgress` 转发 `SkillProgress` → `TurnEvent::EmbodimentProgress`（带真实 operation_id）；request.rs 已替换；session/UI 投影为 composition tail |
 | 9 | report/artifact/rosbag 非端到端完成条件 | 🟡 持久化已实现：SQLite `SqliteEpisodeSink`（幂等 digest）；report builder 待 PR10 |
 
 **因此本计划不新建另一个 `robot-runtime` crate，而是补齐现有 owner。** 剩余工作的主战场在
@@ -984,7 +984,7 @@ activation 必须等待这些端口全部完成。
 
 ---
 
-### PR6 `canonical-embodiment-progress-events`
+### PR6 `canonical-embodiment-progress-events` —— ✅ 已实现
 
 **目标**：`NoopEmbodimentProgress` → 把 `SkillProgress` 发布到 session/event 投影。
 

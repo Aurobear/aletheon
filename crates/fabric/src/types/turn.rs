@@ -83,6 +83,14 @@ pub enum TurnEvent {
         operation_id: OperationId,
         name: String,
     },
+    /// Canonical embodied-skill progress event. Carries the real operation id
+    /// injected by the bounded progress sink — never a provider-generated string.
+    EmbodimentProgress {
+        operation_id: OperationId,
+        skill: String,
+        fraction: f32,
+        note: String,
+    },
 }
 
 #[cfg(test)]
