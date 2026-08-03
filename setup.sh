@@ -484,23 +484,14 @@ setup_systemd
 # ── 7. Shell completions ─────────────────────────────────────────────────
 
 install_completions() {
-    local bash_source="$SCRIPT_DIR/scripts/completions/aletheon.bash"
-    local zsh_source="$SCRIPT_DIR/scripts/completions/aletheon.zsh"
-
     if [[ "$MODE" == "system" ]]; then
-        $USE_SUDO install -Dm644 "$bash_source" \
-            /usr/share/bash-completion/completions/aletheon.sh
-        $USE_SUDO install -Dm644 "$zsh_source" \
-            /usr/share/zsh/site-functions/_aletheon.sh
+        $USE_SUDO bash "$SCRIPT_DIR/scripts/libexec/aletheon/install-completions.sh" \
+            --system /
     else
         local data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
-        install -Dm644 "$bash_source" \
-            "$data_home/bash-completion/completions/aletheon.sh"
-        install -Dm644 "$zsh_source" \
-            "$data_home/zsh/site-functions/_aletheon.sh"
+        bash "$SCRIPT_DIR/scripts/libexec/aletheon/install-completions.sh" \
+            --user "$data_home"
     fi
-
-    log "Bash and Zsh completions installed"
 }
 
 install_completions

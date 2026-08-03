@@ -29,6 +29,7 @@ for secret in provider.env telegram.env gbrain.env; do
 done
 
 install -o root -g root -m 0755 "$binary" /usr/bin/aletheon
+bash "$repo_root/scripts/libexec/aletheon/install-completions.sh" --system /
 install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/verify/systemd.sh" \
   /usr/libexec/aletheon/verify-systemd.sh
 install -D -o root -g root -m 0755 "$repo_root/scripts/libexec/aletheon/secret-audit.sh" \
