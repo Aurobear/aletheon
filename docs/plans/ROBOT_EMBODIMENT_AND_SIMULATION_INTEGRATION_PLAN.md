@@ -1049,7 +1049,19 @@ activation 必须等待这些端口全部完成。
 
 ---
 
-### PR8 `kuavo-mujoco-stance-e2e` —— ✅ simulator 已实现 + gated E2E（stance 执行待 bridge Phase F）
+### PR8 `kuavo-mujoco-stance-e2e` —— ✅ simulator 已实现 + 真实 bridge 只读/执行实测
+
+> **实测（2026-08-04，`software` 主机）**：
+> - bridge live 集成测试 **6/6 通过**：`kuavo.move_base_timed`（0.05 m/s × 500 ms）真实移动
+>   模拟机器人，`kuavo.stop` 执行成功，`gait_cache_is_stance` 确认机器人处于稳定 stance。
+> - Aletheon gated 测试（`grpc_cross_repo`）**2/2 通过**。
+> - **observation schema**：`base_pose`（position/orientation，z≈0.81）、`base_twist`
+>   （velocity ~1e-05）、`ground_truth_pose`——**无 `mode` 字段**。
+>
+> **集成缺口**：harness 的 `StubRobotPolicy` 提议 `Equals("mode","stance")`，与 bridge 实际
+> schema 不匹配。真实 stance E2E 的 `ExpectedOutcome` 必须对齐 bridge 观察（如
+> `base_twist.linear_velocity` 趋零 + 稳定窗口），阈值来自 Kuavo 领域配置（§13），不能用
+> 通用 `mode` 假设。
 
 > **机器测试发现（2026-08-04）**：bridge 当前为 **read-only 阶段**——`list_skills` 只暴露
 > `kuavo.stop`/`kuavo.move_base_timed`，`execute_skill` 不接受 `kuavo.stance`（其余 skill 返回
