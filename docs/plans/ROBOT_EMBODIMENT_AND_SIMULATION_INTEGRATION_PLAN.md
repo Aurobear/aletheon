@@ -656,14 +656,16 @@ criteria；没有“后面再决定”的自由文本关键字段。
 
 ### Phase 2：Kuavo MuJoCo Bridge MVP —— 🔴 bridge 只读阶段：观察链通，stance 执行未实现（Phase F）
 
-bridge 侧已完成：handshake/health、list skills、observe/get state、stance、execute progress、
-cancel/safe-stop，并已通过 live MuJoCo Phase E 验收。Aletheon 侧契约测试
-（`crates/hardware/tests/grpc_contract.rs`）已锁死 proto。
+bridge 侧已完成：handshake/health、list skills、observe/get state（含 stance 姿态观察）、execute
+progress、cancel/safe-stop，并已通过 live MuJoCo Phase E 验收。**stance 执行未实现**——bridge
+只暴露 `kuavo.stop`/`kuavo.move_base_timed`，`execute_skill` 不接受 `kuavo.stance`
+（read-only Phase F，见 PR8）。Aletheon 侧契约测试（`crates/hardware/tests/grpc_contract.rs`）
+已锁死 proto。
 
 剩余：跨仓 E2E（对应 PR8）——Aletheon 的 `GrpcEmbodimentProvider` 连真实 bridge 跑
 `kuavo.stance` 稳定验证。
 
-### Phase 3：RobotHarness production wiring —— 🟡 部分完成：policy/episode identity/稳定验证/progress/settlement 未闭合
+### Phase 3：RobotHarness production wiring —— 🟡 主体闭合：policy fail-closed/episode identity/稳定验证/settlement 已闭合；progress/session 投影待 PR6
 
 - 修复 expected outcome/operation 占位（PR1/PR2）；
 - 接入 world-state observation pump（PR3）；
@@ -1063,7 +1065,7 @@ activation 必须等待这些端口全部完成。
 
 ---
 
-### PR8 `kuavo-mujoco-stance-e2e` —— ✅ simulator 已实现 + 真实 bridge 只读/执行实测
+### PR8 `kuavo-mujoco-stance-e2e` —— 🟡 simulator + 真实 stop E2E 已通；`kuavo.stance` 稳定场景待 bridge 能力
 
 > **实测（2026-08-04，`software` 主机）**：
 > - bridge live 集成测试 **6/6 通过**：`kuavo.move_base_timed`（0.05 m/s × 500 ms）真实移动
