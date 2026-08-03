@@ -85,8 +85,9 @@ impl PlanPort for DefaultPlanPort {
 }
 
 /// Default policy: proposes the first allowed skill with a generic expected
-/// outcome. Production selects `GrpcPolicyProvider`; this is the explicit
-/// fallback until a real VLA/policy endpoint is configured.
+/// outcome. Production now requires a real policy provider (fail closed);
+/// this remains as the explicit dev/test fallback.
+#[allow(dead_code)]
 pub struct StubRobotPolicy;
 #[async_trait]
 impl PolicyProviderPort for StubRobotPolicy {
@@ -229,9 +230,9 @@ mod tests {
     use fabric::types::expected_outcome::ExpectedOutcome;
     use fabric::types::outcome_verification::{VerificationDecision, VerificationReport};
     use fabric::types::perception_observation::PerceptionObservation;
-    use fabric::types::skill_proposal::{PolicyProvenance, SkillProposal};
+    use fabric::types::skill_proposal::SkillProposal;
     use fabric::types::world_state::{WorldSnapshot, WorldStatePort};
-    use fabric::{MonoDeadline, MonoTime};
+    use fabric::MonoDeadline;
 
     struct NoopWorld;
     #[async_trait]

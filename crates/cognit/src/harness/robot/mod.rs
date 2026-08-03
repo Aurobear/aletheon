@@ -162,9 +162,22 @@ impl RobotHarness {
     pub async fn step(&self, mut harness_state: RobotHarnessState) -> RobotHarnessState {
         match harness_state.state {
             RobotState::Observe => {
+                // Observation gate: without a fresh snapshot the harness must
+                // NOT proceed to Plan — a production policy must never receive
+                // empty snapshots.
                 let snap = self.world_state.latest(&harness_state.device).await;
-                harness_state.latest_snapshot = snap;
-                harness_state.state = harness_state.state.next(&VerificationSignal::Matched);
+                match &snap {
+                    Some(snapshot) if !snapshot.stale => {
+                        harness_state.latest_snapshot = snap;
+                        harness_state.state =
+                            harness_state.state.next(&VerificationSignal::Matched);
+                    }
+                    _ => {
+                        harness_state.error =
+                            Some("no fresh observation available before planning".into());
+                        harness_state.state = RobotState::Failed;
+                    }
+                }
             }
             RobotState::Plan => {
                 let snapshots: Vec<WorldSnapshot> =
@@ -240,7 +253,7 @@ impl RobotHarness {
                                 return harness_state;
                             }
                         };
-                        let _ = self
+                        if let Err(reason) = self
                             .episodes
                             .append_attempt(
                                 &harness_state.episode_id,
@@ -253,7 +266,15 @@ impl RobotHarness {
                                 harness_state.latest_skill_result.as_ref(),
                                 None,
                             )
-                            .await;
+                            .await
+                        {
+                            // Persistence is part of the completion condition:
+                            // a failed attempt write must not report success.
+                            harness_state.error =
+                                Some(format!("append_attempt failed: {reason}"));
+                            harness_state.state = RobotState::Failed;
+                            return harness_state;
+                        }
                         harness_state.state =
                             harness_state.state.next(&VerificationSignal::Matched);
                     }
@@ -265,7 +286,7 @@ impl RobotHarness {
                         if let Ok(expected) = self.resolve_expected(&harness_state) {
                             let attempt_id =
                                 format!("attempt:{}-{}", harness_state.episode_id, harness_state.attempt);
-                            let _ = self
+                            if let Err(reason) = self
                                 .episodes
                                 .append_attempt(
                                     &harness_state.episode_id,
@@ -278,7 +299,11 @@ impl RobotHarness {
                                     harness_state.latest_skill_result.as_ref(),
                                     None,
                                 )
-                                .await;
+                                .await
+                            {
+                                harness_state.error =
+                                    Some(format!("failed attempt record error: {reason}"));
+                            }
                         }
                         harness_state.state = RobotState::Failed;
                     }

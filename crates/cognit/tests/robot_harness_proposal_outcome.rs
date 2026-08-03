@@ -23,10 +23,22 @@ use fabric::{MonoDeadline, OperationId};
 use std::sync::{Arc, Mutex};
 
 struct FakeWorldState;
+impl FakeWorldState {
+    fn snapshot() -> WorldSnapshot {
+        WorldSnapshot {
+            device: DeviceId("bot".into()),
+            schema: "robot.state/v1".into(),
+            sequence: 1,
+            payload: serde_json::json!({"mode": "stance2"}),
+            observed_at: fabric::MonoTime(1),
+            stale: false,
+        }
+    }
+}
 #[async_trait::async_trait]
 impl WorldStatePort for FakeWorldState {
     async fn latest(&self, _device: &DeviceId) -> Option<WorldSnapshot> {
-        None
+        Some(Self::snapshot())
     }
     async fn observe_until(
         &self,
@@ -34,7 +46,7 @@ impl WorldStatePort for FakeWorldState {
         _after_sequence: u64,
         _deadline: MonoDeadline,
     ) -> Option<WorldSnapshot> {
-        None
+        Some(Self::snapshot())
     }
 }
 

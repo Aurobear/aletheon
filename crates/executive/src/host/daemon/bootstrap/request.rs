@@ -844,10 +844,10 @@ impl RequestHandler {
                         fabric::types::embodiment::DeviceId(device_id.clone())
                     }
                 };
-                // Policy selection: a configured endpoint uses the real
-                // GrpcPolicyProvider (fail closed if unreachable). Without an
-                // endpoint the stub is an EXPLICIT, warned fallback — never a
-                // silent production degradation.
+                // Policy selection: a production robot harness MUST have a real
+                // policy provider. A configured endpoint uses GrpcPolicyProvider
+                // (fail closed if unreachable); without an endpoint the daemon
+                // fails closed rather than silently degrading to a stub.
                 let policy: Arc<dyn cognit::ports::policy_provider::PolicyProviderPort> =
                     match std::env::var("ALETHEON_POLICY_ENDPOINT") {
                         Ok(endpoint) => Arc::new(
@@ -859,14 +859,9 @@ impl RequestHandler {
                             .map_err(anyhow::Error::msg)
                             .context("robot policy endpoint configured but unreachable")?,
                         ),
-                        Err(_) => {
-                            tracing::warn!(
-                                "robot policy: ALETHEON_POLICY_ENDPOINT unset; using StubRobotPolicy fallback"
-                            );
-                            Arc::new(
-                                crate::application::robot_harness_composition::StubRobotPolicy,
-                            )
-                        }
+                        Err(_) => anyhow::bail!(
+                            "HarnessKind::Robot requires ALETHEON_POLICY_ENDPOINT for a production policy provider"
+                        ),
                     };
                 crate::application::robot_harness_composition::build_robot_session_factory(
                     embodiment_port.clone(),

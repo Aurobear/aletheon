@@ -728,7 +728,7 @@ Production gate 必须继续 fail closed，不能连接失败后静默切 simula
 >   没有真实 gRPC client；Executive 未接线任何 policy provider。
 > - `FabricEventSink::emit`（`executive/src/application/turn_engine.rs:127-128`）目前是 no-op。
 
-### PR1 `robot-harness-carries-proposal-outcome` —— 🟡 部分完成（proposal outcome 已贯穿；硬编码 fallback 未删）
+### PR1 `robot-harness-carries-proposal-outcome` —— ✅ 完成（proposal outcome 贯穿；无 request 时 fail closed，fallback 已删）
 
 **目标**：RobotHarness 使用 proposal 携带的 `expected_outcome`，删除 Execute/Verify 两处硬编码。
 
@@ -775,7 +775,7 @@ executor 调用次数为 0。
 
 ---
 
-### PR2 `robot-harness-real-operation-identity` —— 🟡 部分完成（成功 ID 正确；失败仍伪造 `OperationId`，episode 无独立 attempt ID）
+### PR2 `robot-harness-real-operation-identity` —— ✅ 基本完成（成功用 host 签发 typed `OperationId`；失败用独立 attempt_id + `operation_id=None`）
 
 **目标**：`"op"` 字面量换成 host 签发的真实 `OperationId`。
 
@@ -928,7 +928,7 @@ activation 必须等待这些端口全部完成。
 
 ---
 
-### PR5 `durable-robot-episode-sink` —— 🟡 SQLite 基础有；数据模型不符最终计划（operation_id TEXT NOT NULL，无独立 attempt ID）
+### PR5 `durable-robot-episode-sink` —— ✅ 数据模型已修复（attempt_id + 可空 operation_id）；append_attempt 写失败已 fail closed
 
 **目标**：SQLite `EpisodeSink`，attempt/verification 持久化，重启可重放不重复执行。
 
@@ -1084,7 +1084,7 @@ provisional evidence 缺失任一 → 失败。§12.1 的“report 能打开证�
 
 ---
 
-### PR9 `policy-provider-grpc-protocol` —— 🟡 client 已实现；生产 composition 仍用 `StubRobotPolicy`
+### PR9 `policy-provider-grpc-protocol` —— ✅ client 已接入；缺 endpoint 时 daemon fail closed（无 Stub 降级）
 
 **目标**：真实 gRPC `PolicyProviderPort` client，替换 `StubPolicyProvider`；Executive 接线。
 
