@@ -32,7 +32,7 @@
 | 6 | operation ID 用 `"op"` 占位 | 🔴 开放：`crates/cognit/src/harness/robot/mod.rs:215`；修复简单，因为 `SkillResult.operation_id: OperationId`（`fabric/src/types/embodiment.rs:84`）已存在 |
 | 7 | world-state ingest 无生产管道 | 🟡 核心已实现：`PollingWorldState` + `observation_to_snapshot` + `WorldStatePump`（`crates/executive/src/application/world_state.rs`，含单调/过期/低置信处理），接线到 daemon 在 PR4 composition |
 | 8 | progress 用 `NoopEmbodimentProgress` | 🔴 开放：`crates/executive/src/host/daemon/bootstrap/request.rs:805` |
-| 9 | report/artifact/rosbag 非端到端完成条件 | 🔴 开放 |
+| 9 | report/artifact/rosbag 非端到端完成条件 | 🟡 持久化已实现：SQLite `SqliteEpisodeSink`（幂等 digest）；report builder 待 PR10 |
 
 **因此本计划不新建另一个 `robot-runtime` crate，而是补齐现有 owner。** 剩余工作的主战场在
 Aletheon 侧（PR1–6、9、10 + simulator 升级），bridge 不是瓶颈。
@@ -928,7 +928,7 @@ activation 必须等待这些端口全部完成。
 
 ---
 
-### PR5 `durable-robot-episode-sink`
+### PR5 `durable-robot-episode-sink` —— ✅ 已实现
 
 **目标**：SQLite `EpisodeSink`，attempt/verification 持久化，重启可重放不重复执行。
 
