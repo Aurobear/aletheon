@@ -5,9 +5,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 use fabric::paths::{ProcessRuntimeEnvironment, RuntimeEnvironment, UserRuntimePaths};
-use fabric::protocol::client::{
-    ClientCapabilities, ClientRequest, ClientRpcRequest, InitializeParams, CLIENT_PROTOCOL_VERSION,
-};
+use fabric::protocol::client::ClientRpcRequest;
 use fabric::protocol::extension::{
     ExtensionEnableRequestV1, ExtensionPackageIdRequestV1, ExtensionPackagePathRequestV1,
     EXTENSION_PROTOCOL_SCHEMA_V1,
@@ -164,27 +162,10 @@ impl ExtensionRpcClient {
         let stream = UnixStream::connect(&socket)
             .await
             .map_err(|error| anyhow::anyhow!("connecting {}: {error}", socket.display()))?;
-        let mut client = Self {
+        Ok(Self {
             stream: BufStream::new(stream),
             next_id: 1,
-        };
-        client
-            .versioned_round_trip(ClientRequest::Initialize(InitializeParams {
-                client_version: env!("CARGO_PKG_VERSION").into(),
-                protocol_versions: vec![CLIENT_PROTOCOL_VERSION],
-                capabilities: ClientCapabilities {
-                    item_events: false,
-                    cursors: false,
-                    memory_gateway_v1: false,
-                    memory_maintenance_v1: false,
-                    memory_admin_v1: false,
-                },
-            }))
-            .await?;
-        client
-            .versioned_round_trip(ClientRequest::Initialized)
-            .await?;
-        Ok(client)
+        })
     }
 
     async fn request(&mut self, request: ClientRpcRequest) -> anyhow::Result<serde_json::Value> {
@@ -196,14 +177,6 @@ impl ExtensionRpcClient {
             .get("result")
             .cloned()
             .ok_or_else(|| response_error(&response))
-    }
-
-    async fn versioned_round_trip(
-        &mut self,
-        request: ClientRequest,
-    ) -> anyhow::Result<serde_json::Value> {
-        let id = self.allocate_id();
-        self.round_trip_value(id, request.to_json_rpc(id)?).await
     }
 
     fn allocate_id(&mut self) -> u64 {
