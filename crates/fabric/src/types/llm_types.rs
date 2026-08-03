@@ -5,16 +5,79 @@
 use async_trait::async_trait;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::pin::Pin;
 
 use crate::message::Message;
 
 /// Tool definition sent to the LLM.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ToolDefinitionCanonicalizationError {
+    #[error("tool name is empty or contains control characters")]
+    InvalidName,
+    #[error("duplicate tool name: {0}")]
+    DuplicateName(String),
+    #[error("canonical tool schema serialization failed: {0}")]
+    Serialization(String),
+}
+
+fn canonical_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => BTreeMap::from_iter(
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), canonical_json(value))),
+        )
+        .into_iter()
+        .collect(),
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(canonical_json).collect())
+        }
+        scalar => scalar.clone(),
+    }
+}
+
+pub fn canonicalize_tool_definitions(
+    definitions: &[ToolDefinition],
+) -> Result<Vec<ToolDefinition>, ToolDefinitionCanonicalizationError> {
+    let mut canonical = definitions.to_vec();
+    for definition in &mut canonical {
+        if definition.name.trim().is_empty() || definition.name.chars().any(char::is_control) {
+            return Err(ToolDefinitionCanonicalizationError::InvalidName);
+        }
+        definition.input_schema = canonical_json(&definition.input_schema);
+    }
+    canonical.sort_by(|left, right| left.name.cmp(&right.name));
+    for pair in canonical.windows(2) {
+        if pair[0].name == pair[1].name {
+            return Err(ToolDefinitionCanonicalizationError::DuplicateName(
+                pair[0].name.clone(),
+            ));
+        }
+    }
+    Ok(canonical)
+}
+
+pub fn tool_schema_digest(
+    definitions: &[ToolDefinition],
+) -> Result<String, ToolDefinitionCanonicalizationError> {
+    const DOMAIN: &[u8] = b"aletheon.tool-schema.v1\0";
+    let canonical = canonicalize_tool_definitions(definitions)?;
+    let encoded = serde_json::to_vec(&canonical).map_err(|error| {
+        ToolDefinitionCanonicalizationError::Serialization(error.to_string())
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(DOMAIN);
+    hasher.update(encoded);
+    Ok(format!("sha256:{:x}", hasher.finalize()))
 }
 
 /// A chunk of a streamed LLM response.
