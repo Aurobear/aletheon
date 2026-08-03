@@ -820,7 +820,9 @@ mod tests {
              was returned. Stop searching once the evidence needed to answer is sufficient. \
              Before stating any conclusion about your own runtime state, logs, or configuration, \
              you MUST read the actual logs and the actually-effective config file first — never guess \
-             or invent an explanation."
+             or invent an explanation. Distinguish documented design, observed runtime fact, and \
+             unverified inference in runtime conclusions, and disclose every failed or denied probe \
+             that limits the answer."
         );
     }
 
