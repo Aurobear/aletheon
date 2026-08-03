@@ -1164,7 +1164,21 @@ propose 往返 conversion 测试（frame 摘要、expected_outcome 序列化）�
 
 ---
 
-### PR10 `robot-episode-report-and-artifacts` —— 🟡 报告已成为 Turn 输出（fabric 类型 + session 构建 + `can_promote`）；Mnemosyne promotion 触发待接入
+### PR10 `robot-episode-report-and-artifacts` —— ✅ 完整报告 + Mnemosyne promotion 已接入
+
+> **完成（2026-08-04）**：
+> - **durable attempts 汇入报告**：`EpisodeSink` 新增 `load_attempts` + `update_verification`；
+>   Verify 步把 post-execution verification 回写到 durable attempt 行（此前永不记录，
+>   导致从 durable 重建时 promotion 门禁恒失败）；session 从 durable 重建完整 attempts
+>   （terminal state 只有 latest），失败回退内存 latest。
+> - **artifacts**：从 executed skill 与 verification 的 `EvidenceRef` 收集进报告
+>   （rosbag/log/plot 引用，绝不内联）。
+> - **metadata**：daemon 传真实 `sim_scene_version`（从 provider 配置派生）+ 
+>   `BRIDGE_PROTOCOL_DIGEST`（proto SHA-256，从 grpc_contract 测试提到 `hardware::grpc`
+>   生产常量）。
+> - **Mnemosyne promotion 触发**：`EpisodePromotionPort` + 生产 `MnemosyneEpisodePromoter`
+>   （`mnemosyne::FactUseCases::add` 受治理 fact）；session 仅在 `can_promote()` 成立时调用，
+>   失败 episode 保留证据不提升；未配置时 `None`（不提升）。daemon 用现有 `fact_use_cases` 注入。
 
 **目标**：episode 报告 + artifact 引用（rosbag/log/plot），作为端到端完成条件。
 
