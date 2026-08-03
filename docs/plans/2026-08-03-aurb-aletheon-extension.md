@@ -146,7 +146,7 @@ def test_connector_uses_secret_reference_not_secret_value():
 
 def test_profile_uses_aletheon_tool_names():
     profile = (ROOT / "src/aletheon/agents/reviewer.md").read_text()
-    assert "tools: [file_read, grep, glob, git_diff]" in profile
+    assert "tools: [file_read, grep, glob, git_diff, aurb_gbrain__search, aurb_gbrain__get_page]" in profile
     assert "tools: Read" not in profile
 ```
 
@@ -194,13 +194,15 @@ state, write memory, or access credentials.
 ```
 
 `reviewer.md` reuses the existing reviewer body but has Aletheon-native
-frontmatter:
+frontmatter. The two Connector tools are explicit Profile dependencies so the
+real installed acceptance exercises GBrain through the authorized candidate
+snapshot:
 
 ```yaml
 ---
 name: aurb-reviewer
 description: Independently review changed files and validation evidence
-tools: [file_read, grep, glob, git_diff]
+tools: [file_read, grep, glob, git_diff, aurb_gbrain__search, aurb_gbrain__get_page]
 max_iterations: 20
 ---
 ```

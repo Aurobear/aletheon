@@ -618,7 +618,11 @@ fn authorize_agent_profile_switch(
     current: &fabric::AgentProfile,
     requested: &fabric::AgentProfile,
 ) -> Result<(), AdminServiceError> {
-    if current.id == requested.id || current.allows_child(requested) {
+    // A foreground profile switch is not child delegation: the operator is
+    // replacing the active authority, rather than granting a child a subset of
+    // the current profile's tools.  Reusing `allows_child` here rejects a
+    // strictly safer profile whenever it exposes a different read-only tool.
+    if current.id == requested.id || requested.risk_tier <= current.risk_tier {
         return Ok(());
     }
     Err(AdminServiceError::Operation(format!(
@@ -1000,6 +1004,17 @@ mod profile_switch_tests {
         let safe = profile("safe", RiskTier::ReadOnly, &["file_read"]);
         let admin = profile("admin", RiskTier::Unrestricted, &["file_read", "bash_exec"]);
         assert!(authorize_agent_profile_switch(&admin, &safe).is_ok());
+    }
+
+    #[test]
+    fn sandboxed_to_distinct_read_only_profile_is_allowed() {
+        let general = profile("general", RiskTier::Sandboxed, &["file_read", "bash_exec"]);
+        let reviewer = profile(
+            "reviewer",
+            RiskTier::ReadOnly,
+            &["file_read", "connector_search"],
+        );
+        assert!(authorize_agent_profile_switch(&general, &reviewer).is_ok());
     }
 
     #[test]
