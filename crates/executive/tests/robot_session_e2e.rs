@@ -214,6 +214,9 @@ async fn robot_turn_drives_harness_to_completion() {
         clock,
         CancellationToken::new(),
         device,
+        "mujoco-v1",
+        "abc123",
+        "sha256:proto",
     );
     let result = session
         .run_turn(turn_request(), &StubTurnServices, &NoopTurnEventSink)
@@ -225,7 +228,13 @@ async fn robot_turn_drives_harness_to_completion() {
         "expected completed stop, output: {}",
         result.output
     );
-    assert!(result.output.contains("Completed"), "output: {}", result.output);
+    // The output is the structured EpisodeReport — parse it and verify the
+    // settlement is authoritative.
+    let report: fabric::types::episode_report::EpisodeReport =
+        serde_json::from_str(&result.output)
+            .expect("turn output must be a structured EpisodeReport");
+    assert_eq!(report.settlement, "completed");
+    assert!(report.can_promote(), "matched + settled episode should promote");
     assert!(result.metrics.completed_normally);
 }
 

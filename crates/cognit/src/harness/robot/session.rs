@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fabric::types::embodiment::DeviceId;
+use fabric::types::episode_report::{build_report, AttemptRecord, EpisodeReport};
 use fabric::{Clock, TurnEvent, TurnEventSink, TurnMetrics, TurnRequest, TurnResult, TurnStop};
 use tokio_util::sync::CancellationToken;
 
@@ -17,37 +18,80 @@ use crate::harness::robot::{RobotHarness, RobotHarnessState};
 use crate::harness::session::{CognitiveSession, CognitError};
 
 /// Cognitive-session adapter for a single robot task.
+///
+/// The turn output is the structured `EpisodeReport` — the authoritative record
+/// of the task. The natural-language answer is only a projection of it.
 pub struct RobotCognitiveSession {
     harness: RobotHarness,
     clock: Arc<dyn Clock>,
     cancellation: CancellationToken,
     device: DeviceId,
+    sim_scene_version: String,
+    aletheon_commit: String,
+    bridge_protocol_digest: String,
 }
 
 impl RobotCognitiveSession {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         harness: RobotHarness,
         clock: Arc<dyn Clock>,
         cancellation: CancellationToken,
         device: DeviceId,
+        sim_scene_version: impl Into<String>,
+        aletheon_commit: impl Into<String>,
+        bridge_protocol_digest: impl Into<String>,
     ) -> Self {
         Self {
             harness,
             clock,
             cancellation,
             device,
+            sim_scene_version: sim_scene_version.into(),
+            aletheon_commit: aletheon_commit.into(),
+            bridge_protocol_digest: bridge_protocol_digest.into(),
         }
     }
 
-    fn outcome_summary(&self, state: &RobotHarnessState) -> String {
-        let decision = state
-            .latest_verification
-            .as_ref()
-            .map(|report| format!("{:?}", report.decision))
-            .unwrap_or_else(|| "none".into());
-        format!(
-            "robot episode {} ({}): state={:?}, verification={}",
-            state.episode_id, state.goal, state.state, decision
+    /// Build the authoritative episode report from the terminal harness state.
+    /// Attempts are included only when the plan produced an expected outcome
+    /// (i.e. an attempt was actually recorded).
+    fn build_report(&self, state: &RobotHarnessState) -> EpisodeReport {
+        let settlement = if matches!(state.state, RobotState::Completed) {
+            "completed"
+        } else {
+            "failed"
+        };
+        let attempts = state.latest_expected_outcome.as_ref().map(|expected| {
+            vec![AttemptRecord::from_verification(
+                state.attempt,
+                state
+                    .latest_operation_id
+                    .as_ref()
+                    .map(|op| op.0.to_string())
+                    .unwrap_or_else(|| format!("attempt:{}-{}", state.episode_id, state.attempt)),
+                state.latest_operation_id.as_ref().map(|op| op.0.to_string()),
+                expected.clone(),
+                state
+                    .latest_skill_result
+                    .as_ref()
+                    .map(|result| format!("{:?}", result.outcome)),
+                state.latest_verification.as_ref(),
+                None,
+            )]
+        }).unwrap_or_default();
+        build_report(
+            &state.episode_id,
+            &state.goal,
+            state.device.clone(),
+            &self.sim_scene_version,
+            &self.aletheon_commit,
+            &self.bridge_protocol_digest,
+            state.latest_snapshot.as_ref().map(|snap| snap.sequence),
+            state.latest_verification.as_ref().map(|v| v.evaluated_sequence),
+            settlement,
+            attempts,
+            vec![],
         )
     }
 }
@@ -91,7 +135,9 @@ impl CognitiveSession for RobotCognitiveSession {
             state = self.harness.step(state).await;
         }
 
-        let output = self.outcome_summary(&state);
+        let report = self.build_report(&state);
+        let output = serde_json::to_string(&report)
+            .map_err(|e| CognitError::terminal(format!("report serialization: {e}")))?;
         let completed = matches!(state.state, RobotState::Completed);
         let stop = if completed {
             TurnStop::Completed

@@ -136,6 +136,9 @@ pub struct RobotCognitiveSessionFactory {
     deps: RobotHarnessDependencies,
     clock: Arc<dyn Clock>,
     device: DeviceId,
+    sim_scene_version: String,
+    aletheon_commit: String,
+    bridge_protocol_digest: String,
 }
 
 impl RobotCognitiveSessionFactory {
@@ -143,10 +146,20 @@ impl RobotCognitiveSessionFactory {
         deps: RobotHarnessDependencies,
         clock: Arc<dyn Clock>,
         device: DeviceId,
+        sim_scene_version: impl Into<String>,
+        aletheon_commit: impl Into<String>,
+        bridge_protocol_digest: impl Into<String>,
     ) -> Result<Self, String> {
         // Validate the composition eagerly — fail closed at bootstrap.
         let _ = build_robot_harness(deps.clone())?;
-        Ok(Self { deps, clock, device })
+        Ok(Self {
+            deps,
+            clock,
+            device,
+            sim_scene_version: sim_scene_version.into(),
+            aletheon_commit: aletheon_commit.into(),
+            bridge_protocol_digest: bridge_protocol_digest.into(),
+        })
     }
 }
 
@@ -164,6 +177,9 @@ impl CognitiveSessionFactory for RobotCognitiveSessionFactory {
             self.clock.clone(),
             cancellation,
             self.device.clone(),
+            self.sim_scene_version.clone(),
+            self.aletheon_commit.clone(),
+            self.bridge_protocol_digest.clone(),
         )))
     }
 }
@@ -179,6 +195,9 @@ pub async fn build_robot_session_factory(
     device: DeviceId,
     unsafe_predicates: Vec<OutcomePredicate>,
     policy: Arc<dyn PolicyProviderPort>,
+    sim_scene_version: impl Into<String>,
+    aletheon_commit: impl Into<String>,
+    bridge_protocol_digest: impl Into<String>,
 ) -> Result<Arc<dyn CognitiveSessionFactory>, String> {
     let allowed_skills = executor
         .list_skills(&device)
@@ -216,7 +235,12 @@ pub async fn build_robot_session_factory(
         allowed_skills,
     };
     Ok(Arc::new(RobotCognitiveSessionFactory::new(
-        deps, clock, device,
+        deps,
+        clock,
+        device,
+        sim_scene_version,
+        aletheon_commit,
+        bridge_protocol_digest,
     )?))
 }
 

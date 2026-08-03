@@ -1123,7 +1123,7 @@ propose 往返 conversion 测试（frame 摘要、expected_outcome 序列化）�
 
 ---
 
-### PR10 `robot-episode-report-and-artifacts` —— 🟡 结构+单测有；运行时（session/settlement/Mnemosyne）未接入
+### PR10 `robot-episode-report-and-artifacts` —— 🟡 报告已成为 Turn 输出（fabric 类型 + session 构建 + `can_promote`）；Mnemosyne promotion 触发待接入
 
 **目标**：episode 报告 + artifact 引用（rosbag/log/plot），作为端到端完成条件。
 

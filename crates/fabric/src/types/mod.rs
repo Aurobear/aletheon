@@ -19,6 +19,7 @@ pub mod conscious_field_metrics;
 pub mod context;
 pub mod data_governance;
 pub mod embodiment;
+pub mod episode_report;
 pub mod evaluation;
 pub mod evidence;
 pub mod extension;

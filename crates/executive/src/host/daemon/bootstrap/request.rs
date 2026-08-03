@@ -870,6 +870,9 @@ impl RequestHandler {
                     device,
                     vec![],
                     policy,
+                    "",
+                    option_env!("CARGO_PKG_VERSION").unwrap_or("unknown"),
+                    "",
                 )
                 .await
                 .map_err(anyhow::Error::msg)

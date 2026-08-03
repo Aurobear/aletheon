@@ -91,7 +91,7 @@ impl SqliteEpisodeSink {
     pub fn load_attempts(
         &self,
         episode_id: &str,
-    ) -> Result<Vec<crate::application::episode_report::AttemptRecord>, String> {
+    ) -> Result<Vec<fabric::types::episode_report::AttemptRecord>, String> {
         let connection = self.connection.lock();
         let mut statement = connection
             .prepare(
@@ -135,7 +135,7 @@ impl SqliteEpisodeSink {
                         .map(|json| serde_json::from_str::<VerificationReport>(&json))
                         .transpose()
                         .map_err(|e| format!("verification deserialize: {e}"))?;
-                    Ok(crate::application::episode_report::AttemptRecord::from_verification(
+                    Ok(fabric::types::episode_report::AttemptRecord::from_verification(
                         attempt as u32,
                         attempt_id,
                         operation_id,
