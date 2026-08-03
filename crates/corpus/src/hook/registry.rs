@@ -82,6 +82,8 @@ pub struct RegisteredHook {
     pub point: HookPoint,
     /// Execution priority (lower = earlier).
     pub priority: i32,
+    /// Optional package-declared execution timeout in milliseconds.
+    pub timeout_ms: Option<u64>,
 }
 
 /// Registry of lifecycle hooks.
@@ -272,8 +274,12 @@ impl HookRegistry {
         // Collect both output pipes while the child runs. Waiting before reading
         // can deadlock a hook that fills an OS pipe. `kill_on_drop` guarantees
         // that cancelling the timed future also terminates the child.
+        let execution_timeout = hook
+            .timeout_ms
+            .map(Duration::from_millis)
+            .unwrap_or(self.execution_timeout);
         let deadline =
-            kernel::chronos::SystemTimer.timeout(self.execution_timeout, child.wait_with_output());
+            kernel::chronos::SystemTimer.timeout(execution_timeout, child.wait_with_output());
 
         match deadline.await {
             Ok(Ok(output)) => {
@@ -293,7 +299,7 @@ impl HookRegistry {
                 )
             }
             Err(_) => {
-                warn!(hook = %hook.name, "Hook execution timed out after 30s");
+                warn!(hook = %hook.name, timeout_ms = execution_timeout.as_millis(), "Hook execution timed out");
                 record_hook_metric(&hook.name, started.elapsed(), true, false);
                 Self::execution_failure(
                     &ctx.point,
@@ -433,6 +439,7 @@ mod tests {
             script_path: None,
             point,
             priority,
+            timeout_ms: None,
         }
     }
 
@@ -510,6 +517,7 @@ mod tests {
             script_path: Some(script.clone()),
             point: HookPoint::PreTool,
             priority: 0,
+            timeout_ms: None,
         };
         assert!(is_restricted_repo_hook(&hook, &script, &context));
 
@@ -538,6 +546,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PreTool,
             priority: 0,
+            timeout_ms: None,
         });
         let context = HookContext {
             point: HookPoint::PreTool,
@@ -596,6 +605,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PostTurn,
             priority: 10,
+            timeout_ms: None,
         });
 
         let ctx = HookContext {
@@ -637,6 +647,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PreTool,
             priority: 10,
+            timeout_ms: None,
         });
 
         let ctx = HookContext {
@@ -717,6 +728,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PostTurn,
             priority: 0,
+            timeout_ms: None,
         });
         let context = HookContext {
             point: HookPoint::PostTurn,
@@ -753,6 +765,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PostTurn,
             priority: 0,
+            timeout_ms: None,
         });
         registry
             .execute(&HookContext {
@@ -811,6 +824,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PostTurn,
             priority: 10,
+            timeout_ms: None,
         });
 
         let ctx = HookContext {

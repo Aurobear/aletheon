@@ -254,6 +254,7 @@ pub fn register_skill(
             script_path: Some(script_path),
             point: hook_def.point,
             priority: hook_def.priority,
+            timeout_ms: None,
         });
         info!(skill = %skill.name, hook = %hook_def.name, "Registered skill hook");
     }
