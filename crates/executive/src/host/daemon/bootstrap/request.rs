@@ -844,12 +844,37 @@ impl RequestHandler {
                         fabric::types::embodiment::DeviceId(device_id.clone())
                     }
                 };
+                // Policy selection: a configured endpoint uses the real
+                // GrpcPolicyProvider (fail closed if unreachable). Without an
+                // endpoint the stub is an EXPLICIT, warned fallback — never a
+                // silent production degradation.
+                let policy: Arc<dyn cognit::ports::policy_provider::PolicyProviderPort> =
+                    match std::env::var("ALETHEON_POLICY_ENDPOINT") {
+                        Ok(endpoint) => Arc::new(
+                            cognit::GrpcPolicyProvider::connect(cognit::GrpcPolicyConfig {
+                                endpoint,
+                                ..Default::default()
+                            })
+                            .await
+                            .map_err(anyhow::Error::msg)
+                            .context("robot policy endpoint configured but unreachable")?,
+                        ),
+                        Err(_) => {
+                            tracing::warn!(
+                                "robot policy: ALETHEON_POLICY_ENDPOINT unset; using StubRobotPolicy fallback"
+                            );
+                            Arc::new(
+                                crate::application::robot_harness_composition::StubRobotPolicy,
+                            )
+                        }
+                    };
                 crate::application::robot_harness_composition::build_robot_session_factory(
                     embodiment_port.clone(),
                     clock.clone(),
                     &data_dir,
                     device,
                     vec![],
+                    policy,
                 )
                 .await
                 .map_err(anyhow::Error::msg)

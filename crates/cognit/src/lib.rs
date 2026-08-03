@@ -51,6 +51,9 @@ pub use harness::{
     CognitRetryDisposition, CognitiveSession, CognitiveSessionDependencies, CognitiveStreamEvent,
     CognitiveStreamSink, HarnessKind,
 };
+pub use adapters::policy::grpc_provider::{
+    validate_policy_endpoint, GrpcPolicyConfig, GrpcPolicyProvider, StubPolicyProvider,
+};
 /// Stable inference contracts and the runtime scheduling facade.
 ///
 /// Provider transports remain private under `adapters`; consumers receive only

@@ -169,12 +169,15 @@ impl CognitiveSessionFactory for RobotCognitiveSessionFactory {
 
 /// Assemble the robot session factory from the daemon's embodied execution port.
 /// `HarnessKind::Robot` requires a configured provider; otherwise it fails closed.
+/// The policy provider is injected by the caller — production must supply a real
+/// `GrpcPolicyProvider` (or an explicitly chosen fallback), never a silent stub.
 pub async fn build_robot_session_factory(
     executor: Arc<dyn fabric::types::embodiment::EmbodimentExecutionPort>,
     clock: Arc<dyn Clock>,
     data_dir: &std::path::Path,
     device: DeviceId,
     unsafe_predicates: Vec<OutcomePredicate>,
+    policy: Arc<dyn PolicyProviderPort>,
 ) -> Result<Arc<dyn CognitiveSessionFactory>, String> {
     let allowed_skills = executor
         .list_skills(&device)
@@ -208,7 +211,7 @@ pub async fn build_robot_session_factory(
         verifier,
         planner: Arc::new(DefaultPlanPort),
         episodes,
-        policy: Arc::new(StubRobotPolicy),
+        policy,
         allowed_skills,
     };
     Ok(Arc::new(RobotCognitiveSessionFactory::new(
