@@ -13,7 +13,8 @@ use async_trait::async_trait;
 use cognit::harness::robot::session::RobotCognitiveSession;
 use cognit::harness::robot::state::RobotHarnessConfig;
 use cognit::harness::robot::{
-    EmbodiedExecutionPort, EpisodeSink, OutcomeVerifierPort, PlanPort, RobotHarness,
+    EmbodiedExecutionPort, EpisodePromotionPort, EpisodeSink, OutcomeVerifierPort, PlanPort,
+    RobotHarness,
 };
 use cognit::ports::policy_provider::PolicyProviderPort;
 use fabric::types::embodiment::{DeviceId, SkillDescriptor, SkillRequest};
@@ -139,6 +140,7 @@ pub struct RobotCognitiveSessionFactory {
     sim_scene_version: String,
     aletheon_commit: String,
     bridge_protocol_digest: String,
+    promoter: Option<Arc<dyn EpisodePromotionPort>>,
 }
 
 impl RobotCognitiveSessionFactory {
@@ -149,6 +151,7 @@ impl RobotCognitiveSessionFactory {
         sim_scene_version: impl Into<String>,
         aletheon_commit: impl Into<String>,
         bridge_protocol_digest: impl Into<String>,
+        promoter: Option<Arc<dyn EpisodePromotionPort>>,
     ) -> Result<Self, String> {
         // Validate the composition eagerly — fail closed at bootstrap.
         let _ = build_robot_harness(deps.clone())?;
@@ -159,6 +162,7 @@ impl RobotCognitiveSessionFactory {
             sim_scene_version: sim_scene_version.into(),
             aletheon_commit: aletheon_commit.into(),
             bridge_protocol_digest: bridge_protocol_digest.into(),
+            promoter,
         })
     }
 }
@@ -180,6 +184,7 @@ impl CognitiveSessionFactory for RobotCognitiveSessionFactory {
             self.sim_scene_version.clone(),
             self.aletheon_commit.clone(),
             self.bridge_protocol_digest.clone(),
+            self.promoter.clone(),
         )))
     }
 }
@@ -198,6 +203,7 @@ pub async fn build_robot_session_factory(
     sim_scene_version: impl Into<String>,
     aletheon_commit: impl Into<String>,
     bridge_protocol_digest: impl Into<String>,
+    promoter: Option<Arc<dyn EpisodePromotionPort>>,
 ) -> Result<Arc<dyn CognitiveSessionFactory>, String> {
     let allowed_skills = executor
         .list_skills(&device)
@@ -241,6 +247,7 @@ pub async fn build_robot_session_factory(
         sim_scene_version,
         aletheon_commit,
         bridge_protocol_digest,
+        promoter,
     )?))
 }
 

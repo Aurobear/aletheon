@@ -79,6 +79,7 @@ pub async fn build_robot_cognitive_session_factory(
     embodiment_port: Arc<dyn EmbodimentExecutionPort>,
     clock: Arc<dyn Clock>,
     data_dir: &std::path::Path,
+    promoter: Option<Arc<dyn cognit::harness::robot::EpisodePromotionPort>>,
 ) -> anyhow::Result<Arc<dyn CognitiveSessionFactory>> {
     let device = match provider_config {
         EmbodimentProviderConfig::Simulator { device_id } => DeviceId(device_id.clone()),
@@ -112,6 +113,7 @@ pub async fn build_robot_cognitive_session_factory(
         sim_scene_version,
         option_env!("CARGO_PKG_VERSION").unwrap_or("unknown"),
         hardware::grpc::BRIDGE_PROTOCOL_DIGEST,
+        promoter,
     )
     .await
     .map_err(anyhow::Error::msg)

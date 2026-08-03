@@ -92,6 +92,28 @@ pub trait EpisodeSink: Send + Sync {
     ) -> Result<Vec<fabric::types::episode_report::AttemptRecord>, String>;
 }
 
+/// Port for distilling a settled, matched robot episode into long-term memory.
+/// Only reports where `EpisodeReport::can_promote()` holds are presented.
+#[async_trait]
+pub trait EpisodePromotionPort: Send + Sync {
+    async fn promote(&self, report: &fabric::types::episode_report::EpisodeReport)
+        -> Result<(), String>;
+}
+
+/// No-op promoter for tests and unconfigured compositions — promotion stays
+/// absent rather than silently failing.
+pub struct NoopEpisodePromotion;
+
+#[async_trait]
+impl EpisodePromotionPort for NoopEpisodePromotion {
+    async fn promote(
+        &self,
+        _report: &fabric::types::episode_report::EpisodeReport,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RobotHarnessState {
     pub state: RobotState,

@@ -821,11 +821,17 @@ impl RequestHandler {
                 dasein_handle.clone(),
             ),
             cognit::harness::HarnessKind::Robot => {
+                let promoter = Some(Arc::new(
+                    crate::application::robot_episode_promotion::MnemosyneEpisodePromoter::new(
+                        fact_use_cases.clone(),
+                    ),
+                ) as Arc<dyn cognit::harness::robot::EpisodePromotionPort>);
                 super::robot::build_robot_cognitive_session_factory(
                     &config.embodiment_provider,
                     embodiment_port.clone(),
                     clock.clone(),
                     &data_dir,
+                    promoter,
                 )
                 .await?
             }

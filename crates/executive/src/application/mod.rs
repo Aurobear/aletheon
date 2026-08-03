@@ -96,5 +96,6 @@ pub mod post_turn_projection;
 pub mod request_use_cases;
 
 pub mod robot_audit;
+pub mod robot_episode_promotion;
 
 pub mod turn_runtime_ports;

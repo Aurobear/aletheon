@@ -219,6 +219,7 @@ async fn robot_turn_drives_harness_to_completion() {
         "mujoco-v1",
         "abc123",
         "sha256:proto",
+        None,
     );
     let result = session
         .run_turn(turn_request(), &StubTurnServices, &NoopTurnEventSink)

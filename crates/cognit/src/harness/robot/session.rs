@@ -14,7 +14,7 @@ use fabric::{Clock, TurnEvent, TurnEventSink, TurnMetrics, TurnRequest, TurnResu
 use tokio_util::sync::CancellationToken;
 
 use crate::harness::robot::state::RobotState;
-use crate::harness::robot::{RobotHarness, RobotHarnessState};
+use crate::harness::robot::{EpisodePromotionPort, RobotHarness, RobotHarnessState};
 use crate::harness::session::{CognitiveSession, CognitError};
 
 /// Cognitive-session adapter for a single robot task.
@@ -29,6 +29,9 @@ pub struct RobotCognitiveSession {
     sim_scene_version: String,
     aletheon_commit: String,
     bridge_protocol_digest: String,
+    /// Distillation of settled+matched episodes into long-term memory. `None`
+    /// in tests/unconfigured compositions (promotion stays absent).
+    promoter: Option<Arc<dyn EpisodePromotionPort>>,
 }
 
 impl RobotCognitiveSession {
@@ -41,6 +44,7 @@ impl RobotCognitiveSession {
         sim_scene_version: impl Into<String>,
         aletheon_commit: impl Into<String>,
         bridge_protocol_digest: impl Into<String>,
+        promoter: Option<Arc<dyn EpisodePromotionPort>>,
     ) -> Self {
         Self {
             harness,
@@ -50,6 +54,7 @@ impl RobotCognitiveSession {
             sim_scene_version: sim_scene_version.into(),
             aletheon_commit: aletheon_commit.into(),
             bridge_protocol_digest: bridge_protocol_digest.into(),
+            promoter,
         }
     }
 
@@ -155,6 +160,19 @@ impl CognitiveSession for RobotCognitiveSession {
         }
 
         let report = self.build_report(&state).await;
+        // Distill only a matched + settled episode into long-term memory; failed
+        // episodes keep their evidence but are never promoted.
+        if report.can_promote() {
+            if let Some(promoter) = &self.promoter {
+                if let Err(reason) = promoter.promote(&report).await {
+                    tracing::warn!(
+                        episode_id = %report.episode_id,
+                        error = %reason,
+                        "episode promotion failed"
+                    );
+                }
+            }
+        }
         let output = serde_json::to_string(&report)
             .map_err(|e| CognitError::terminal(format!("report serialization: {e}")))?;
         let completed = matches!(state.state, RobotState::Completed);
