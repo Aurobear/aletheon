@@ -775,7 +775,9 @@ impl RequestHandler {
             clock.clone(),
             durable_budget,
         ));
-        let embodiment_port = super::robot::build_robot_embodiment_port(
+        // Robot progress is projected via a deferred sink bound to the session
+        // event spine once it exists (the embodiment port is built earlier).
+        let (embodiment_port, progress_sink) = super::robot::build_robot_embodiment_port(
             clock.clone(),
             kernel.admission(),
             &data_dir,
@@ -1136,6 +1138,8 @@ impl RequestHandler {
         .await?;
         let memory_agent_control = agent_svc.agent_control.clone();
         let canonical_event_spine = agent_svc.canonical_event_spine;
+        // Bind robot progress to the session event spine (turns run after this).
+        super::robot::bind_robot_progress_spine(&progress_sink, canonical_event_spine.clone(), session_id.clone()).await;
         corpus_group
             .hook_registry
             .lock()

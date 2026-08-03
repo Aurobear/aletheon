@@ -986,7 +986,15 @@ activation 必须等待这些端口全部完成。
 
 ---
 
-### PR6 `canonical-embodiment-progress-events` —— 🟡 typed event 有；仅进日志，未进 session/UI 投影
+### PR6 `canonical-embodiment-progress-events` —— ✅ 已进入 session event spine
+
+> **完成（2026-08-04）**：`SpineTurnEventSink` 把 `EmbodimentProgress`（带真实 operation_id）
+> append 到 canonical `fabric::EventSpine`（root 在 daemon session tree，schema
+> `aletheon.event.embodiment_progress/v1`）；`DeferredTurnEventSink` 解决 embodiment port
+> 早于 spine 存在的顺序问题——port 构建时未绑定则回退 tracing 日志，daemon 拿到
+> `canonical_event_spine` 后经 `bind_robot_progress_spine` 绑定（任何 robot turn 都在 daemon
+> 完整启动后才执行，不会丢事件）。关闭判定达成：session event spine 出现带 operation_id 的
+> `embodiment.skill.progress` 事件。
 
 **目标**：`NoopEmbodimentProgress` → 把 `SkillProgress` 发布到 session/event 投影。
 
