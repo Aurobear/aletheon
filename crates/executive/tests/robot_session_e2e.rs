@@ -184,7 +184,7 @@ async fn robot_turn_drives_harness_to_completion() {
     });
     let adapter: Arc<dyn EmbodiedExecutionPort> = Arc::new(EmbodiedExecutionAdapter::new(executor));
     let verifier: Arc<dyn OutcomeVerifierPort> =
-        Arc::new(DeterministicOutcomeVerifier::new(clock.clone(), vec![]));
+        Arc::new(DeterministicOutcomeVerifier::new(world.clone(), clock.clone(), vec![]));
     let episodes: Arc<dyn EpisodeSink> = Arc::new(RecordingEpisodes);
     let allowed_skills = vec![SkillDescriptor {
         skill: SkillId("kuavo.stance".into()),

@@ -849,7 +849,7 @@ operation 的失败 attempt 明确为 `None`，但仍有独立 typed attempt/inv
 
 ---
 
-### PR4 `deterministic-outcome-verifier-wiring` + 生产 composition —— 🟡 composition root 有；稳定窗口 verifier 不完整（仅 before/after 时间差，非连续采样）
+### PR4 `deterministic-outcome-verifier-wiring` + 生产 composition —— 🟡 稳定窗口已实现（`observe_until` 连续采样，`9bdf211`+`16382dd`）；生产 E2E 仍需真实 policy/event 链
 
 **目标**：确定性 `OutcomeVerifierPort` 实现 + `HarnessKind::Robot` 的生产构造与 fail-closed 选择。
 

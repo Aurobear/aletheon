@@ -24,12 +24,15 @@ pub trait EmbodiedExecutionPort: Send + Sync {
     async fn safe_stop(&self, device: &DeviceId) -> Result<(), String>;
 }
 
-/// Port for verifying outcomes. Injected by Executive (delegates to Metacog).
+/// Port for verifying outcomes. Injected by Executive.
+/// The `device` lets the verifier wait for post-execution observations via the
+/// world state (`observe_until`) to satisfy a continuous stable window.
 #[async_trait]
 pub trait OutcomeVerifierPort: Send + Sync {
     async fn verify(
         &self,
         expected: &ExpectedOutcome,
+        device: &DeviceId,
         before: Option<&WorldSnapshot>,
         after: Option<&WorldSnapshot>,
         attempt: u32,
@@ -295,6 +298,7 @@ impl RobotHarness {
                     .verifier
                     .verify(
                         &expected,
+                        &harness_state.device,
                         harness_state.latest_snapshot.as_ref(),
                         after_snap.as_ref(),
                         harness_state.attempt,

@@ -197,7 +197,7 @@ pub async fn build_robot_session_factory(
     let executor_adapter: Arc<dyn EmbodiedExecutionPort> =
         Arc::new(EmbodiedExecutionAdapter::new(executor));
     let verifier: Arc<dyn OutcomeVerifierPort> =
-        Arc::new(DeterministicOutcomeVerifier::new(clock.clone(), unsafe_predicates));
+        Arc::new(DeterministicOutcomeVerifier::new(world.clone(), clock.clone(), unsafe_predicates));
     let episodes: Arc<dyn EpisodeSink> = Arc::new(
         crate::adapters::episode::sqlite_episode_sink::SqliteEpisodeSink::open(
             data_dir.join("robot-episodes.db"),
@@ -267,6 +267,7 @@ mod tests {
         async fn verify(
             &self,
             _e: &ExpectedOutcome,
+            _d: &DeviceId,
             _b: Option<&WorldSnapshot>,
             _a: Option<&WorldSnapshot>,
             _attempt: u32,

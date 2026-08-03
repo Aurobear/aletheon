@@ -68,6 +68,7 @@ impl OutcomeVerifierPort for RecordingVerifier {
     async fn verify(
         &self,
         expected: &ExpectedOutcome,
+        _device: &DeviceId,
         _before: Option<&WorldSnapshot>,
         _after: Option<&WorldSnapshot>,
         _attempt: u32,
