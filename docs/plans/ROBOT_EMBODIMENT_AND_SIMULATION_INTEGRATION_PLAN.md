@@ -28,11 +28,11 @@
 | 2 | gRPC 协议兼容未落地 | ✅ **已关闭**：`crates/hardware/proto/.../gateway.proto` 与 bridge 逐字节一致，且 `crates/hardware/tests/grpc_contract.rs` 用 SHA-256 锁死防漂移；`runtime_embodiment_selection.rs` 证明配置接线完整 |
 | 3 | `RobotHarness` 无生产 composition | ✅ 已实现：`EmbodiedExecutionAdapter` + `build_robot_harness` + `RobotCognitiveSession`（CognitiveSession 适配）+ `build_robot_session_factory` + daemon `HarnessKind::Robot` 分支（request.rs:828，provider 缺失 fail closed） |
 | 4 | gRPC Policy Provider 是 Stub | ✅ 已实现真实 client：`GrpcPolicyProvider`（tonic 连 `PolicyGateway`，propose/health，Struct↔ExpectedOutcome 转换）；`StubPolicyProvider` 保留为显式降级；composition 接线待核心链收尾 |
-| 5 | expected outcome 硬编码 `mode == stance` | 🔴 开放：`crates/cognit/src/harness/robot/mod.rs:202,216,244`（Plan 丢弃 proposal outcome，Execute/Verify 各自硬编码） |
-| 6 | operation ID 用 `"op"` 占位 | 🔴 开放：`crates/cognit/src/harness/robot/mod.rs:215`；修复简单，因为 `SkillResult.operation_id: OperationId`（`fabric/src/types/embodiment.rs:84`）已存在 |
+| 5 | expected outcome 硬编码 `mode == stance` | ✅ 已修复：Plan 存 proposal outcome，Execute/Verify 用 `resolve_expected`，无 request/outcome 时 fail closed（`9bdf211`） |
+| 6 | operation ID 用 `"op"` 占位 | ✅ 已修复：成功 attempt 用 host 签发 `OperationId`；失败 attempt 用独立 attempt_id + `operation_id=None`（不伪造）（`9bdf211`） |
 | 7 | world-state ingest 无生产管道 | 🟡 核心已实现：`PollingWorldState` + `observation_to_snapshot` + `WorldStatePump`（`crates/executive/src/application/world_state.rs`，含单调/过期/低置信处理），接线到 daemon 在 PR4 composition |
-| 8 | progress 用 `NoopEmbodimentProgress` | ✅ 已实现：`EventEmbodimentProgress` 转发 `SkillProgress` → `TurnEvent::EmbodimentProgress`（带真实 operation_id）；request.rs 已替换；session/UI 投影为 composition tail |
-| 9 | report/artifact/rosbag 非端到端完成条件 | ✅ 已实现：`SqliteEpisodeSink` + `EpisodeReport` builder + `load_attempts` + promotion 门禁（`can_promote` 仅 Matched+settled）；artifact 走 `EvidenceRef` 引用 |
+| 8 | progress 用 `NoopEmbodimentProgress` | 🟡 已替换为 `EventEmbodimentProgress`（typed event + 真实 operation_id）；但当前只到 tracing 日志，session/UI 投影未接入 |
+| 9 | report/artifact/rosbag 非端到端完成条件 | 🟡 类型/持久化/门禁已有（`SqliteEpisodeSink` + `EpisodeReport` + `can_promote`）；运行时接入（session 输出 report、settlement 关联、Mnemosyne promotion 触发）未完成 |
 
 **因此本计划不新建另一个 `robot-runtime` crate，而是补齐现有 owner。** 剩余工作的主战场在
 Aletheon 侧（PR1–6、9、10 + simulator 升级），bridge 不是瓶颈。
