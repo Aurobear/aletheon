@@ -217,7 +217,10 @@ impl TurnServices for RecordingTurnServices {
             });
         self.inner.record_model_context_projection(receipt).await;
     }
-    async fn record_inference_receipt(&self, receipt: fabric::InferenceTerminalReceipt) {
+    async fn record_inference_receipt(
+        &self,
+        receipt: fabric::types::inference_receipt::InferenceTerminalReceipt,
+    ) {
         self.items.lock().await.push(ItemPayload::InferenceReceipt {
             receipt: receipt.clone(),
         });

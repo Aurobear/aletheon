@@ -74,7 +74,6 @@ pub use types::goal;
 pub use types::grounding;
 pub use types::hook;
 pub use types::hook_ext;
-pub use types::inference_receipt;
 pub use types::llm_types;
 pub use types::message;
 pub use types::model_projection;
@@ -271,9 +270,6 @@ pub use types::goal::{
 };
 pub use types::hook::{HookContext, HookMode, HookPoint, HookResult, HookToolResult};
 pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};
-pub use types::inference_receipt::{
-    InferenceTerminalReceipt, InferenceTerminalStatus, INFERENCE_TERMINAL_RECEIPT_SCHEMA_V1,
-};
 pub use types::llm_types::{
     canonicalize_tool_definitions, tool_schema_digest, CacheTelemetry, InferenceCapabilities,
     InferenceUsage, LlmProvider, LlmResponse, LlmStream, ModelInfo, ModelRuntimeFacts, StopReason,

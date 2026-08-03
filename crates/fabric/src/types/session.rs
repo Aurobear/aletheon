@@ -137,7 +137,7 @@ pub enum ItemPayload {
         receipt: crate::model_projection::ModelContextProjectionReceipt,
     },
     InferenceReceipt {
-        receipt: crate::InferenceTerminalReceipt,
+        receipt: crate::types::inference_receipt::InferenceTerminalReceipt,
     },
     ContextProjection {
         space: String,

@@ -8,6 +8,9 @@ use crate::harness::config::HarnessConfig;
 use crate::harness::linear::DynLlmRef;
 use crate::harness::linear::{BatchPlanner, CompactorTrait, ReActLoop};
 use async_trait::async_trait;
+use fabric::types::inference_receipt::{
+    InferenceTerminalReceipt, InferenceTerminalStatus, INFERENCE_TERMINAL_RECEIPT_SCHEMA_V1,
+};
 use fabric::{
     CapabilityCall, CapabilityErrorClass, CapabilityReceiptDetails, CapabilityRetryDisposition,
     CapabilityTerminalReceipt, CapabilityTerminalStatus, Message, TurnEvent, TurnEventSink,
@@ -26,7 +29,7 @@ struct ProjectionRecordingLlm<'a> {
     inner: &'a dyn fabric::LlmProvider,
     services: &'a dyn TurnServices,
     operation_id: fabric::OperationId,
-    pending: Arc<Mutex<Vec<fabric::InferenceTerminalReceipt>>>,
+    pending: Arc<Mutex<Vec<InferenceTerminalReceipt>>>,
 }
 
 impl ProjectionRecordingLlm<'_> {
@@ -130,12 +133,12 @@ struct InferenceMetadata {
 impl InferenceMetadata {
     fn receipt(
         &self,
-        status: fabric::InferenceTerminalStatus,
+        status: InferenceTerminalStatus,
         usage: fabric::InferenceUsage,
         failure_kind: Option<&str>,
-    ) -> fabric::InferenceTerminalReceipt {
-        fabric::InferenceTerminalReceipt {
-            schema_version: fabric::INFERENCE_TERMINAL_RECEIPT_SCHEMA_V1,
+    ) -> InferenceTerminalReceipt {
+        InferenceTerminalReceipt {
+            schema_version: INFERENCE_TERMINAL_RECEIPT_SCHEMA_V1,
             inference_id: self.inference_id.clone(),
             operation_id: self.operation_id.clone(),
             provider_id: self.provider_id.clone(),
@@ -152,13 +155,13 @@ impl InferenceMetadata {
 struct TerminalRecordingStream {
     inner: fabric::LlmStream,
     metadata: InferenceMetadata,
-    pending: Arc<Mutex<Vec<fabric::InferenceTerminalReceipt>>>,
+    pending: Arc<Mutex<Vec<InferenceTerminalReceipt>>>,
     usage: fabric::InferenceUsage,
     terminal: bool,
 }
 
 impl TerminalRecordingStream {
-    fn finish(&mut self, status: fabric::InferenceTerminalStatus, failure_kind: Option<&str>) {
+    fn finish(&mut self, status: InferenceTerminalStatus, failure_kind: Option<&str>) {
         if self.terminal {
             return;
         }
@@ -183,11 +186,11 @@ impl futures::Stream for TerminalRecordingStream {
                 Poll::Ready(Some(Ok(fabric::StreamChunk::Usage { usage })))
             }
             Poll::Ready(Some(Ok(fabric::StreamChunk::Done { stop_reason }))) => {
-                self.finish(fabric::InferenceTerminalStatus::Succeeded, None);
+                self.finish(InferenceTerminalStatus::Succeeded, None);
                 Poll::Ready(Some(Ok(fabric::StreamChunk::Done { stop_reason })))
             }
             Poll::Ready(Some(Err(error))) => {
-                self.finish(fabric::InferenceTerminalStatus::Failed, Some("unknown"));
+                self.finish(InferenceTerminalStatus::Failed, Some("unknown"));
                 Poll::Ready(Some(Err(error)))
             }
             other => other,
@@ -197,10 +200,7 @@ impl futures::Stream for TerminalRecordingStream {
 
 impl Drop for TerminalRecordingStream {
     fn drop(&mut self) {
-        self.finish(
-            fabric::InferenceTerminalStatus::Cancelled,
-            Some("cancelled"),
-        );
+        self.finish(InferenceTerminalStatus::Cancelled, Some("cancelled"));
     }
 }
 
@@ -216,12 +216,12 @@ impl fabric::LlmProvider for ProjectionRecordingLlm<'_> {
         let result = self.inner.complete(messages, &tools).await;
         let receipt = match &result {
             Ok(response) => metadata.receipt(
-                fabric::InferenceTerminalStatus::Succeeded,
+                InferenceTerminalStatus::Succeeded,
                 response.usage.clone(),
                 None,
             ),
             Err(_) => metadata.receipt(
-                fabric::InferenceTerminalStatus::Failed,
+                InferenceTerminalStatus::Failed,
                 fabric::InferenceUsage::default(),
                 Some("unknown"),
             ),
@@ -248,7 +248,7 @@ impl fabric::LlmProvider for ProjectionRecordingLlm<'_> {
             Err(error) => {
                 self.services
                     .record_inference_receipt(metadata.receipt(
-                        fabric::InferenceTerminalStatus::Failed,
+                        InferenceTerminalStatus::Failed,
                         fabric::InferenceUsage::default(),
                         Some("unknown"),
                     ))

@@ -2,7 +2,7 @@ use fabric::llm_types::{
     canonicalize_tool_definitions, tool_schema_digest, CacheTelemetry, InferenceUsage,
     ToolDefinition,
 };
-use fabric::{
+use fabric::types::inference_receipt::{
     InferenceTerminalReceipt, InferenceTerminalStatus, INFERENCE_TERMINAL_RECEIPT_SCHEMA_V1,
 };
 use serde_json::json;
