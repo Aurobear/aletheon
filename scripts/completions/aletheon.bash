@@ -1,59 +1,58 @@
-# Bash completion for scripts/aletheon.sh.
+# Bash completion for the installed Aletheon CLI.
 
-_aletheon_operations_completion() {
-    local cur command
+_aletheon_cli_completion() {
+    local cur prev command sub
+    COMPREPLY=()
     cur=${COMP_WORDS[COMP_CWORD]}
+    prev=${COMP_WORDS[COMP_CWORD-1]:-}
     command=${COMP_WORDS[1]:-}
+    sub=${COMP_WORDS[2]:-}
+
+    case "$prev" in
+        -C|--working-dir|--add-dir|--config|-c|--env|--project-dir|-d)
+            COMPREPLY=($(compgen -d -- "$cur")); return ;;
+        path)
+            COMPREPLY=($(compgen -f -- "$cur")); return ;;
+        -P|--permission-mode)
+            COMPREPLY=($(compgen -W "safe dev full" -- "$cur")); return ;;
+        --output)
+            COMPREPLY=($(compgen -W "text json" -- "$cur")); return ;;
+        --sandbox)
+            COMPREPLY=($(compgen -W "auto require forbid" -- "$cur")); return ;;
+    esac
 
     if ((COMP_CWORD == 1)); then
-        COMPREPLY=($(compgen -W \
-            "build install deploy configure status health restart logs backup restore upgrade cleanup secrets database verify acceptance test closure completion help" \
-            -- "$cur"))
+        COMPREPLY=($(compgen -W "core daemon exec version restore-terminal config doctor extension memory-agent memory --help --version --full --permission-mode --message --socket --task-kind -C --add-dir" -- "$cur"))
         return
     fi
 
     case "$command" in
-        install)
-            COMPREPLY=($(compgen -W "--no-enable" -- "$cur"))
+        config)
+            ((COMP_CWORD == 2)) && COMPREPLY=($(compgen -W "effective layers" -- "$cur"))
             ;;
-        deploy)
-            COMPREPLY=($(compgen -W "--no-build --no-restart --no-enable" -- "$cur"))
+        extension)
+            ((COMP_CWORD == 2)) && COMPREPLY=($(compgen -W "inspect validate install list show enable disable upgrade rollback remove purge doctor import-legacy" -- "$cur"))
             ;;
-        configure)
-            COMPREPLY=($(compgen -W "show check" -- "$cur"))
+        memory-agent)
+            ((COMP_CWORD == 2)) && COMPREPLY=($(compgen -W "serve run" -- "$cur"))
             ;;
-        logs)
-            COMPREPLY=($(compgen -W "core user closure" -- "$cur"))
-            ;;
-        cleanup)
-            COMPREPLY=($(compgen -W "runtime cargo" -- "$cur"))
-            ;;
-        secrets)
-            COMPREPLY=($(compgen -W "init audit" -- "$cur"))
-            ;;
-        database)
+        memory)
             if ((COMP_CWORD == 2)); then
-                COMPREPLY=($(compgen -W "check" -- "$cur"))
-            else
-                COMPREPLY=($(compgen -f -- "$cur"))
+                COMPREPLY=($(compgen -W "observe recall receipt workspace" -- "$cur"))
+            elif [[ $sub == workspace && $COMP_CWORD -eq 3 ]]; then
+                COMPREPLY=($(compgen -W "preview-bind bind unbind" -- "$cur"))
             fi
             ;;
-        verify)
-            COMPREPLY=($(compgen -W "systemd network compose migration multi-user" -- "$cur"))
+        exec)
+            COMPREPLY=($(compgen -W "--prompt --model --max-turns --sandbox --config --output" -- "$cur"))
             ;;
-        acceptance)
-            COMPREPLY=($(compgen -W "architecture release" -- "$cur"))
+        daemon)
+            COMPREPLY=($(compgen -W "--config --env --socket --container --image --enable-evolution --execd" -- "$cur"))
             ;;
-        test)
-            COMPREPLY=($(compgen -W "unit operations deployment architecture all" -- "$cur"))
-            ;;
-        closure)
-            COMPREPLY=($(compgen -W "install run status" -- "$cur"))
-            ;;
-        completion)
-            COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))
+        doctor)
+            COMPREPLY=($(compgen -W "--json --config --project-dir" -- "$cur"))
             ;;
     esac
 }
 
-complete -F _aletheon_operations_completion aletheon.sh
+complete -F _aletheon_cli_completion aletheon

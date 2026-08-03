@@ -1,58 +1,36 @@
-#compdef aletheon.sh
+#compdef aletheon
 
-_aletheon_operations_completion() {
-  local command
-
-  _arguments -C \
-    '1:command:(build install deploy configure status health restart logs backup restore upgrade cleanup secrets database verify acceptance test closure completion help)' \
-    '*::argument:->arguments'
-
-  command=${words[2]:-}
-  case "$command" in
-    install)
-      _arguments '--no-enable[install without enabling services]'
-      ;;
-    deploy)
-      _arguments \
-        '--no-build[skip the release build]' \
-        '--no-restart[do not restart services]' \
-        '--no-enable[install without enabling services]'
-      ;;
-    configure)
-      _values 'action' show check
-      ;;
-    logs)
-      _values 'service' core user closure
-      ;;
-    cleanup)
-      _values 'target' runtime cargo
-      ;;
-    secrets)
-      _values 'action' init audit
-      ;;
-    database)
-      if ((CURRENT == 3)); then
-        _values 'action' check
-      else
-        _files
+_aletheon_cli_completion() {
+  local -a commands
+  commands=(
+    'core:start the machine inference core'
+    'daemon:start the user daemon'
+    'exec:run a non-interactive task'
+    'version:print version information'
+    'restore-terminal:restore terminal modes'
+    'config:inspect effective configuration'
+    'doctor:run diagnostics'
+    'extension:manage extensions'
+    'memory-agent:run memory maintenance'
+    'memory:use the governed Memory Gateway'
+  )
+  if (( CURRENT == 2 )); then
+    _describe 'command' commands
+    return
+  fi
+  case ${words[2]:-} in
+    config) _values 'action' effective layers ;;
+    extension) _values 'action' inspect validate install list show enable disable upgrade rollback remove purge doctor import-legacy ;;
+    memory-agent) _values 'action' serve run ;;
+    memory)
+      if (( CURRENT == 3 )); then
+        _values 'action' observe recall receipt workspace
+      elif [[ ${words[3]:-} == workspace && CURRENT == 4 ]]; then
+        _values 'action' preview-bind bind unbind
       fi
       ;;
-    verify)
-      _values 'target' systemd network compose migration multi-user
-      ;;
-    acceptance)
-      _values 'target' architecture release
-      ;;
-    test)
-      _values 'suite' unit operations deployment architecture all
-      ;;
-    closure)
-      _values 'action' install run status
-      ;;
-    completion)
-      _values 'shell' bash zsh
-      ;;
+    exec) _arguments '--prompt[task prompt]:' '--model[model route]:' '--max-turns[maximum turns]:' '--sandbox[sandbox preference]:(auto require forbid)' '--config[config file]:_files' '--output[output format]:(text json)' ;;
   esac
 }
 
-compdef _aletheon_operations_completion aletheon.sh
+compdef _aletheon_cli_completion aletheon
