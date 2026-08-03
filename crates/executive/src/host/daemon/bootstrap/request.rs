@@ -775,27 +775,11 @@ impl RequestHandler {
             clock.clone(),
             durable_budget,
         ));
-        let hardware_clock: Arc<dyn hardware::MonotonicClock> =
-            Arc::new(super::embodiment::HardwareClockAdapter(clock.clone()));
-        let embodiment_workspace =
-            fabric::WorkspacePolicy::from_resolved_roots(data_dir.clone(), Vec::new())
-                .map_err(anyhow::Error::msg)
-                .context("resolving embodiment workspace")?;
-        // Canonical embodiment progress → turn event projection. Surfaces into
-        // daemon logs today; the session/UI event projection replaces the tracing
-        // sink in the robot composition tail.
-        let embodiment_progress: Arc<dyn crate::application::embodiment_progress::EmbodimentProgressPort> =
-            Arc::new(crate::application::embodiment_progress::EventEmbodimentProgress::new(
-                Arc::new(crate::application::embodiment_progress::TracingTurnEventSink),
-            ));
-        let embodiment_port = super::embodiment::build_embodiment_port(
-            hardware_clock,
+        let embodiment_port = super::robot::build_robot_embodiment_port(
+            clock.clone(),
             kernel.admission(),
-            embodiment_progress,
-            fabric::ProcessId::new(),
-            fabric::PrincipalId(fabric::LOCAL_OWNER_PRINCIPAL.to_string()),
-            embodiment_workspace,
-            Some(config.embodiment_provider.clone()),
+            &data_dir,
+            &config.embodiment_provider,
         )
         .await?;
         tools
@@ -835,48 +819,13 @@ impl RequestHandler {
                 dasein_handle.clone(),
             ),
             cognit::harness::HarnessKind::Robot => {
-                use crate::composition::config::EmbodimentProviderConfig;
-                let device = match &config.embodiment_provider {
-                    EmbodimentProviderConfig::Simulator { device_id } => {
-                        fabric::types::embodiment::DeviceId(device_id.clone())
-                    }
-                    EmbodimentProviderConfig::Grpc { device_id, .. } => {
-                        fabric::types::embodiment::DeviceId(device_id.clone())
-                    }
-                };
-                // Policy selection: a production robot harness MUST have a real
-                // policy provider. A configured endpoint uses GrpcPolicyProvider
-                // (fail closed if unreachable); without an endpoint the daemon
-                // fails closed rather than silently degrading to a stub.
-                let policy: Arc<dyn cognit::ports::policy_provider::PolicyProviderPort> =
-                    match std::env::var("ALETHEON_POLICY_ENDPOINT") {
-                        Ok(endpoint) => Arc::new(
-                            cognit::GrpcPolicyProvider::connect(cognit::GrpcPolicyConfig {
-                                endpoint,
-                                ..Default::default()
-                            })
-                            .await
-                            .map_err(anyhow::Error::msg)
-                            .context("robot policy endpoint configured but unreachable")?,
-                        ),
-                        Err(_) => anyhow::bail!(
-                            "HarnessKind::Robot requires ALETHEON_POLICY_ENDPOINT for a production policy provider"
-                        ),
-                    };
-                crate::application::robot_harness_composition::build_robot_session_factory(
+                super::robot::build_robot_cognitive_session_factory(
+                    &config.embodiment_provider,
                     embodiment_port.clone(),
                     clock.clone(),
                     &data_dir,
-                    device,
-                    vec![],
-                    policy,
-                    "",
-                    option_env!("CARGO_PKG_VERSION").unwrap_or("unknown"),
-                    "",
                 )
-                .await
-                .map_err(anyhow::Error::msg)
-                .context("robot harness composition failed")?
+                .await?
             }
         };
         let conscious_registry = Arc::new(
