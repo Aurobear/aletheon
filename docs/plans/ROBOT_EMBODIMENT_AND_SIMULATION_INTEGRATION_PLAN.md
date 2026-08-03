@@ -1022,7 +1022,14 @@ activation 必须等待这些端口全部完成。
 
 ---
 
-### PR7 `kuavo-bridge-contract-fixtures`（维护 + 跨仓 fixture）—— ✅ fixture 已写
+### PR7 `kuavo-bridge-contract-fixtures`（维护 + 跨仓 fixture）—— ✅ fixture 已写 + 已对真实 bridge 验证
+
+> **机器测试（2026-08-04，`software` 主机）**：部署 bridge 到远程 `rj001@100.65.72.58`，
+> `xvfb-run` 无头启动 Kuavo MuJoCo 仿真（`load_kuavo_mujoco_sim.launch`，roscore 为 root），
+> `grpc_cross_repo.rs` 两个 gated 测试对真实 bridge **全部通过**：
+> GetCapabilities 握手、skill manifest（read-only 阶段暴露 `kuavo.stop`/`kuavo.move_base_timed`）、
+> 新鲜单调 observation（base_pose/base_twist/ground_truth_pose）。
+> 修复 bridge 真实 bug：`rospy.init_node` 需在 `GaitCache` 服务查询**之前**（`366efe5`）。
 
 
 
@@ -1042,7 +1049,13 @@ activation 必须等待这些端口全部完成。
 
 ---
 
-### PR8 `kuavo-mujoco-stance-e2e` —— ✅ simulator 已实现 + gated E2E
+### PR8 `kuavo-mujoco-stance-e2e` —— ✅ simulator 已实现 + gated E2E（stance 执行待 bridge Phase F）
+
+> **机器测试发现（2026-08-04）**：bridge 当前为 **read-only 阶段**——`list_skills` 只暴露
+> `kuavo.stop`/`kuavo.move_base_timed`，`execute_skill` 不接受 `kuavo.stance`（其余 skill 返回
+> "not available in read-only phase"）。观察链路已对真实仿真验证通过；**`kuavo.stance` 执行是
+> bridge 的下一阶段**，E2E 的 stance 场景（保持 3 秒稳定）等 bridge 实现 stance 后可跑。
+> 仿真稳定性：`/sim_start` 步进后机器人摔倒触发方向安全检查停机，需 Kuavo 团队提供正确的站立控制流程。
 
 
 
