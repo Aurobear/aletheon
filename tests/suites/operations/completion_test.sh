@@ -12,6 +12,15 @@ COMP_WORDS=(aletheon mem); COMP_CWORD=1
 _aletheon_cli_completion
 printf '%s\n' "${COMPREPLY[@]}" | grep -qx memory
 
+COMP_WORDS=(aletheon ''); COMP_CWORD=1
+_aletheon_cli_completion
+for retired in reflect reflect_now evolution genome hooks task evaluation approve plan computer; do
+  if printf '%s\n' "${COMPREPLY[@]}" | grep -qx "$retired"; then
+    echo "retired governance command remains in CLI completion: $retired" >&2
+    exit 1
+  fi
+done
+
 COMP_WORDS=(aletheon memory ''); COMP_CWORD=2
 _aletheon_cli_completion
 for expected in observe recall receipt workspace; do

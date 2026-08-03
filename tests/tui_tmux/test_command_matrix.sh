@@ -42,23 +42,23 @@ tui_key C-u
 case_rendered "/copy" "没有可复制的内容|已复制到剪贴板"
 case_rendered "/agents" "No active sub-agents|Active sub-agents"
 case_rendered "/agent missing" "Agent not found"
-case_rendered "/computer" "用法: /computer"
 case_rendered "/definitely-unknown" "未知命令"
 
 # Daemon-backed inventory and information commands.
 case_rendered "/status" "Aletheon Status"
 case_rendered "/sessions" "Sessions|会话"
 case_rendered "/model" "Models|模型"
-case_rendered "/hooks" "Hooks|hooks"
 case_rendered "/skills" "Skills|Skill|/[[:alnum:]_-]+[[:space:]](—|-)" 30
 case_rendered "/profile" "profiles|Profiles|profile"
-case_rendered "/reflect" "Reflections|reflection|反思|learned:"
-case_rendered "/reflect_now" "reflection|反思"
-case_rendered "/evolution" "Evolution|evolution|演化"
-case_rendered "/genome" "Genome|genome|基因"
+
+# Host-owned governance must be unavailable from ordinary chat input.
+for retired in reflect reflect_now evolution genome hooks task evaluation approve plan computer; do
+    case_rendered "/$retired" "未知命令 /$retired"
+done
 
 # Session and control commands, including their explicit negative paths.
-case_rendered "/resume" "用法: /resume"
+case_rendered "/resume" "查询可恢复会话中|Sessions|no resumable sessions"
+tui_key Escape
 case_rendered "/fork" "无法创建分支|Error:|session"
 case_rendered "/memory" "Memory Facts|facts|memory" 15
 case_rendered "/memory search deployment" "Memory Facts|facts|memory" 15
@@ -66,8 +66,6 @@ case_rendered "/memory status" "Memory Status|Provider: composite" 15
 case_rendered "/compact" "压缩上下文中|compacted|Error:"
 case_rendered "/interrupt" "Interrupt sent"
 case_rendered "/mode plan" "Plan|plan"
-case_rendered "/plan" "Default|default|Plan|plan"
-case_rendered "/approve" "Plan approved"
 case_rendered "/new" "已创建新会话"
 case_rendered "/clear" "已创建新会话"
 

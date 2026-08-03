@@ -5,6 +5,27 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::command::{BuiltinCommand, CommandType};
 
+const RETIRED_GOVERNANCE_COMMAND_NAMES: &[&str] = &[
+    "reflect",
+    "r",
+    "reflect_now",
+    "rn",
+    "evolution",
+    "evo",
+    "genome",
+    "gene",
+    "hooks",
+    "hk",
+    "task",
+    "evaluation",
+    "eval",
+    "approve",
+    "a",
+    "plan",
+    "p",
+    "computer",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandExecutor {
     Local,
@@ -488,13 +509,18 @@ impl CommandRegistry {
             self.stale = true;
             return;
         };
-        let reserved: BTreeSet<String> = self
+        let mut reserved: BTreeSet<String> = self
             .builtins
             .iter()
             .flat_map(|command| {
                 std::iter::once(command.name.clone()).chain(command.aliases.clone())
             })
             .collect();
+        reserved.extend(
+            RETIRED_GOVERNANCE_COMMAND_NAMES
+                .iter()
+                .map(|name| (*name).to_string()),
+        );
         let mut skills = Vec::new();
         let mut diagnostics = Vec::new();
         let mut seen = BTreeSet::new();
@@ -699,26 +725,7 @@ mod tests {
                 "status",
             ]
         );
-        for retired in [
-            "reflect",
-            "r",
-            "reflect_now",
-            "rn",
-            "evolution",
-            "evo",
-            "genome",
-            "gene",
-            "hooks",
-            "hk",
-            "task",
-            "evaluation",
-            "eval",
-            "approve",
-            "a",
-            "plan",
-            "p",
-            "computer",
-        ] {
+        for retired in RETIRED_GOVERNANCE_COMMAND_NAMES {
             assert!(
                 !registry.is_builtin(retired),
                 "retired /{retired} remains public"
@@ -781,6 +788,27 @@ mod tests {
         assert!(
             matches!(registry.parse("/review src"), Some(CommandType::Skill { name, args }) if name == "skill.review" && args == "src")
         );
+    }
+
+    #[test]
+    fn retired_governance_names_cannot_be_reintroduced_by_skills() {
+        let mut registry = CommandRegistry::new();
+        registry.set_skills_from_json(&serde_json::json!([
+            {"id":"skill.reflect","name":"reflect","extension_id":"pack","enabled":true},
+            {"id":"skill.hooks","name":"hooks","enabled":true}
+        ]));
+
+        assert!(registry.is_skill("pack:reflect"));
+        assert!(!registry.is_skill("reflect"));
+        assert!(!registry.is_skill("hooks"));
+        assert!(matches!(
+            registry.parse("/reflect"),
+            Some(CommandType::Unknown { .. })
+        ));
+        assert!(matches!(
+            registry.parse("/hooks"),
+            Some(CommandType::Unknown { .. })
+        ));
     }
 
     #[test]
