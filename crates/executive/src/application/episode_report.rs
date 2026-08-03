@@ -14,8 +14,12 @@ use fabric::types::outcome_verification::{VerificationDecision, VerificationRepo
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttemptRecord {
     pub attempt: u32,
-    /// Host/provider-issued operation id (typed `OperationId`, never a placeholder).
-    pub operation_id: String,
+    /// Independent attempt identifier — always present, even when the
+    /// underlying operation was never created.
+    pub attempt_id: String,
+    /// Host/provider-issued typed operation id, if the operation was created.
+    /// `None` for pre-execution failures — never a fabricated id.
+    pub operation_id: Option<String>,
     /// Expected outcome carried by the proposal for this attempt.
     pub expected: ExpectedOutcome,
     /// Provider terminal outcome (e.g. "succeeded"), if the attempt executed.
@@ -29,7 +33,8 @@ pub struct AttemptRecord {
 impl AttemptRecord {
     pub fn from_verification(
         attempt: u32,
-        operation_id: String,
+        attempt_id: String,
+        operation_id: Option<String>,
         expected: ExpectedOutcome,
         result_outcome: Option<String>,
         verification: Option<&VerificationReport>,
@@ -37,6 +42,7 @@ impl AttemptRecord {
     ) -> Self {
         Self {
             attempt,
+            attempt_id,
             operation_id,
             expected,
             result_outcome,
@@ -152,7 +158,8 @@ mod tests {
             settlement,
             vec![AttemptRecord::from_verification(
                 1,
-                "00000000-0000-0000-0000-000000000001".into(),
+                "attempt:ep-1:1".into(),
+                Some("00000000-0000-0000-0000-000000000001".into()),
                 expected(),
                 Some("succeeded".into()),
                 Some(&matched_report()),

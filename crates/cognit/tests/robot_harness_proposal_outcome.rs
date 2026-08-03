@@ -106,7 +106,8 @@ impl PlanPort for UnusedPlanner {
 
 #[derive(Default)]
 struct RecordingEpisodes {
-    operation_ids: Mutex<Vec<String>>,
+    attempt_ids: Mutex<Vec<String>>,
+    operation_ids: Mutex<Vec<Option<String>>>,
 }
 #[async_trait::async_trait]
 impl EpisodeSink for RecordingEpisodes {
@@ -114,17 +115,22 @@ impl EpisodeSink for RecordingEpisodes {
         &self,
         _episode_id: &str,
         _attempt: u32,
-        operation_id: &str,
+        attempt_id: &str,
+        operation_id: Option<&OperationId>,
         _expected: &ExpectedOutcome,
         _before: Option<&WorldSnapshot>,
         _after: Option<&WorldSnapshot>,
         _result: Option<&SkillResult>,
         _verification: Option<&VerificationReport>,
     ) -> Result<(), String> {
+        self.attempt_ids
+            .lock()
+            .unwrap()
+            .push(attempt_id.to_string());
         self.operation_ids
             .lock()
             .unwrap()
-            .push(operation_id.to_string());
+            .push(operation_id.map(|id| id.0.to_string()));
         Ok(())
     }
     async fn close_episode(&self, _episode_id: &str, _outcome: &str) -> Result<(), String> {
@@ -232,17 +238,20 @@ async fn verify_uses_proposal_expected_outcome_not_hardcoded_stance() {
         "verify must use the proposal's expected outcome, not a hardcoded stance"
     );
 
-    // PR2: every recorded attempt carries a real UUID operation id, never "op".
+    // PR2: every successful attempt carries a real typed operation id, never
+    // "op"; the attempt is also recorded under an independent attempt id.
+    let attempt_ids = episodes.attempt_ids.lock().unwrap();
+    assert!(!attempt_ids.is_empty(), "at least one attempt should be recorded");
     let ops = episodes.operation_ids.lock().unwrap();
-    assert!(!ops.is_empty(), "at least one attempt should be recorded");
     assert!(
-        !ops.iter().any(|id| id == "op"),
-        "legacy \"op\" placeholder must not be recorded"
+        ops.iter().all(|op| op.is_some()),
+        "successful attempts must carry a typed operation id"
     );
-    for id in ops.iter() {
+    for op in ops.iter().flatten() {
+        assert_ne!(op, "op", "legacy \"op\" placeholder must not be recorded");
         assert!(
-            id.parse::<OperationId>().is_ok(),
-            "recorded operation id must be a valid OperationId: {id}"
+            op.parse::<OperationId>().is_ok(),
+            "recorded operation id must be a valid OperationId: {op}"
         );
     }
 }

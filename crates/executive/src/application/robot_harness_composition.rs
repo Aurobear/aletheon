@@ -292,7 +292,7 @@ mod tests {
     impl EpisodeSink for NoopEpisodes {
         async fn append_attempt(
             &self,
-            _e: &str, _a: u32, _o: &str, _x: &ExpectedOutcome,
+            _e: &str, _a: u32, _ai: &str, _o: Option<&fabric::OperationId>, _x: &ExpectedOutcome,
             _b: Option<&WorldSnapshot>, _af: Option<&WorldSnapshot>,
             _r: Option<&SkillResult>, _v: Option<&VerificationReport>,
         ) -> Result<(), String> {

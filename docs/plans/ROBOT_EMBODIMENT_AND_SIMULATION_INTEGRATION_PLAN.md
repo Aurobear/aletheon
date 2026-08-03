@@ -654,7 +654,7 @@ criteria；没有“后面再决定”的自由文本关键字段。
 - disconnect/timeout 触发 safe-stop；
 - terminal receipt 可重放且不重复执行。
 
-### Phase 2：Kuavo MuJoCo Bridge MVP —— 🟡 bridge 侧已过验收，Aletheon 侧 E2E 待办
+### Phase 2：Kuavo MuJoCo Bridge MVP —— 🔴 bridge 只读阶段：观察链通，stance 执行未实现（Phase F）
 
 bridge 侧已完成：handshake/health、list skills、observe/get state、stance、execute progress、
 cancel/safe-stop，并已通过 live MuJoCo Phase E 验收。Aletheon 侧契约测试
@@ -663,7 +663,7 @@ cancel/safe-stop，并已通过 live MuJoCo Phase E 验收。Aletheon 侧契约�
 剩余：跨仓 E2E（对应 PR8）——Aletheon 的 `GrpcEmbodimentProvider` 连真实 bridge 跑
 `kuavo.stance` 稳定验证。
 
-### Phase 3：RobotHarness production wiring —— ✅ 完成（PR1–6 + composition + daemon 分支）
+### Phase 3：RobotHarness production wiring —— 🟡 部分完成：policy/episode identity/稳定验证/progress/settlement 未闭合
 
 - 修复 expected outcome/operation 占位（PR1/PR2）；
 - 接入 world-state observation pump（PR3）；
@@ -728,7 +728,7 @@ Production gate 必须继续 fail closed，不能连接失败后静默切 simula
 >   没有真实 gRPC client；Executive 未接线任何 policy provider。
 > - `FabricEventSink::emit`（`executive/src/application/turn_engine.rs:127-128`）目前是 no-op。
 
-### PR1 `robot-harness-carries-proposal-outcome`
+### PR1 `robot-harness-carries-proposal-outcome` —— 🟡 部分完成（proposal outcome 已贯穿；硬编码 fallback 未删）
 
 **目标**：RobotHarness 使用 proposal 携带的 `expected_outcome`，删除 Execute/Verify 两处硬编码。
 
@@ -775,7 +775,7 @@ executor 调用次数为 0。
 
 ---
 
-### PR2 `robot-harness-real-operation-identity`
+### PR2 `robot-harness-real-operation-identity` —— 🟡 部分完成（成功 ID 正确；失败仍伪造 `OperationId`，episode 无独立 attempt ID）
 
 **目标**：`"op"` 字面量换成 host 签发的真实 `OperationId`。
 
@@ -810,7 +810,7 @@ operation 的失败 attempt 明确为 `None`，但仍有独立 typed attempt/inv
 
 ---
 
-### PR3 `embodiment-observation-to-world-state-pump` —— ✅ 核心已实现
+### PR3 `embodiment-observation-to-world-state-pump` —— 🟡 核心已实现，生产接线待 composition 收尾
 
 **目标**：持续 observation → 可查询的 `WorldStatePort`，供 Verify 做 `observe_until` 等待新快照。
 
@@ -849,7 +849,7 @@ operation 的失败 attempt 明确为 `None`，但仍有独立 typed attempt/inv
 
 ---
 
-### PR4 `deterministic-outcome-verifier-wiring` + 生产 composition —— ✅ 全部实现（verifier + composition root + RobotCognitiveSession + daemon 分支）
+### PR4 `deterministic-outcome-verifier-wiring` + 生产 composition —— 🟡 composition root 有；稳定窗口 verifier 不完整（仅 before/after 时间差，非连续采样）
 
 **目标**：确定性 `OutcomeVerifierPort` 实现 + `HarnessKind::Robot` 的生产构造与 fail-closed 选择。
 
@@ -928,7 +928,7 @@ activation 必须等待这些端口全部完成。
 
 ---
 
-### PR5 `durable-robot-episode-sink` —— ✅ 已实现
+### PR5 `durable-robot-episode-sink` —— 🟡 SQLite 基础有；数据模型不符最终计划（operation_id TEXT NOT NULL，无独立 attempt ID）
 
 **目标**：SQLite `EpisodeSink`，attempt/verification 持久化，重启可重放不重复执行。
 
@@ -984,7 +984,7 @@ activation 必须等待这些端口全部完成。
 
 ---
 
-### PR6 `canonical-embodiment-progress-events` —— ✅ 已实现
+### PR6 `canonical-embodiment-progress-events` —— 🟡 typed event 有；仅进日志，未进 session/UI 投影
 
 **目标**：`NoopEmbodimentProgress` → 把 `SkillProgress` 发布到 session/event 投影。
 
@@ -1084,7 +1084,7 @@ provisional evidence 缺失任一 → 失败。§12.1 的“report 能打开证�
 
 ---
 
-### PR9 `policy-provider-grpc-protocol` —— ✅ client 已实现
+### PR9 `policy-provider-grpc-protocol` —— 🟡 client 已实现；生产 composition 仍用 `StubRobotPolicy`
 
 **目标**：真实 gRPC `PolicyProviderPort` client，替换 `StubPolicyProvider`；Executive 接线。
 
@@ -1123,7 +1123,7 @@ propose 往返 conversion 测试（frame 摘要、expected_outcome 序列化）�
 
 ---
 
-### PR10 `robot-episode-report-and-artifacts` —— ✅ 已实现
+### PR10 `robot-episode-report-and-artifacts` —— 🟡 结构+单测有；运行时（session/settlement/Mnemosyne）未接入
 
 **目标**：episode 报告 + artifact 引用（rosbag/log/plot），作为端到端完成条件。
 
