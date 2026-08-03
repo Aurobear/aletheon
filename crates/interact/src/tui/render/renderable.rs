@@ -14,6 +14,7 @@ use ratatui::{
 
 use super::super::chat::ChatWidget;
 use super::super::completion::CompletionPopup;
+use super::super::state::AppState;
 use super::super::status::StatusBar;
 use super::super::term_compat::TermCaps;
 
@@ -104,16 +105,31 @@ impl Renderable for LayoutHelper<'_> {
 /// Renders the top header bar (1 or 3 rows depending on first-render state).
 pub struct HeaderRenderable<'a> {
     pub caps: &'a TermCaps,
+    pub state: &'a AppState,
 }
 
 impl Renderable for HeaderRenderable<'_> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let bg = self.caps.color(20, 20, 60);
 
-        let line = Line::from(Span::styled(
-            "  aletheon",
-            Style::default().fg(Color::White),
-        ));
+        let provider = self.state.provider_name.as_deref().unwrap_or("provider —");
+        let line = Line::from(vec![
+            Span::styled(
+                "  ALETHEON  ",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(
+                    "{}  ·  {}  ·  {}",
+                    self.state.mode.display_name(),
+                    self.state.model_name,
+                    provider
+                ),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]);
         Paragraph::new(line)
             .style(Style::default().bg(bg))
             .render(area, buf);

@@ -280,7 +280,7 @@ impl StreamController {
             let elapsed_ms = self.clock.mono_now().0.saturating_sub(start.0);
             let elapsed = elapsed_ms as f64 / 1000.0;
             self.committed
-                .push_str(&format!("✻ Thought for {elapsed:.1}s\n\n"));
+                .push_str(&format!("· Reasoning completed in {elapsed:.1}s\n\n"));
         }
         self.thinking = false;
         self.thinking_collapsed = true;

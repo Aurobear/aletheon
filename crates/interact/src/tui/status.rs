@@ -154,15 +154,32 @@ impl<'a> Widget for StatusBarStateWidget<'a> {
         if self.state.turn_tool_count > 0 {
             spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
             spans.push(Span::styled(
-                format!("{} tools", self.state.turn_tool_count),
+                format!(
+                    "tools {}/{}",
+                    self.state.turn_activity.succeeded, self.state.turn_activity.tool_calls
+                ),
                 Style::default().fg(Color::DarkGray),
             ));
+            if self.state.turn_activity.denied > 0 {
+                spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled(
+                    format!("denied {}", self.state.turn_activity.denied),
+                    Style::default().fg(Color::Yellow),
+                ));
+            }
+            if self.state.turn_activity.failed > 0 {
+                spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled(
+                    format!("failed {}", self.state.turn_activity.failed),
+                    Style::default().fg(Color::Red),
+                ));
+            }
         }
 
         if self.state.current_iteration > 0 {
             spans.push(Span::styled(sep, Style::default().fg(Color::DarkGray)));
             spans.push(Span::styled(
-                format!("turn {}", self.state.current_iteration),
+                format!("infer {}", self.state.turn_activity.inference_rounds),
                 Style::default().fg(Color::DarkGray),
             ));
         }

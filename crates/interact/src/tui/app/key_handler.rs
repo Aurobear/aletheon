@@ -249,8 +249,21 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Ctrl+B: toggle last tool card (find last ExecEntry in chat history)
+    // Alt+Up/Down: navigate the complete tool activity timeline.
+    if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Up {
+        app.chat.select_previous_exec();
+        return;
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Down {
+        app.chat.select_next_exec();
+        return;
+    }
+
+    // Ctrl+B: toggle selected tool card, falling back to the last card.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
+        if app.chat.toggle_selected_exec() {
+            return;
+        }
         // Iterate entries in reverse, find the last ExecEntry and toggle it
         let call_id = {
             let mut found = None;

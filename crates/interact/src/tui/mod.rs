@@ -8,6 +8,7 @@ pub mod response;
 pub mod session_protocol;
 pub mod test_infra;
 
+pub mod activity_detail;
 pub mod approval_dialog;
 pub mod awareness;
 pub mod chat;

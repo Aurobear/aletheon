@@ -103,6 +103,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.streaming = true;
             app.app_state.streaming = true;
             app.app_state.turn_tool_count = 0;
+            app.app_state.turn_activity = super::state::TurnActivity::default();
             app.turn_tokens = None;
             app.current_iteration = iteration;
         }
@@ -130,6 +131,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             let args_str = serde_json::to_string(&args).unwrap_or_default();
             app.chat.add_exec(call_id.clone(), tool.clone(), args_str);
             app.app_state.turn_tool_count += 1;
+            app.app_state.turn_activity.tool_calls += 1;
         }
         ClientEvent::ToolCallComplete {
             call_id,
@@ -154,6 +156,18 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             }
             app.chat
                 .update_exec_with_delta(&call_id, &output, is_error, patch_delta);
+            if is_error {
+                if output.starts_with("Policy denied:")
+                    || output.starts_with("Policy guidance:")
+                    || output.contains("Policy denied")
+                {
+                    app.app_state.turn_activity.denied += 1;
+                } else {
+                    app.app_state.turn_activity.failed += 1;
+                }
+            } else {
+                app.app_state.turn_activity.succeeded += 1;
+            }
         }
         ClientEvent::ToolProgress {
             call_id, payload, ..
@@ -186,6 +200,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             );
         }
         ClientEvent::Usage { usage } => {
+            app.app_state.turn_activity.inference_rounds += 1;
             let tokens_in = usage.total_input_tokens.unwrap_or(0);
             let tokens_out = usage.output_tokens.unwrap_or(0);
             app.turn_tokens = Some((tokens_in as u32, tokens_out as u32));
