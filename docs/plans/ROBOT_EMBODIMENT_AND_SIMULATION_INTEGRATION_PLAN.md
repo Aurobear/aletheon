@@ -44,12 +44,12 @@ Aletheon 侧（PR1–6、9、10 + simulator 升级），bridge 不是瓶颈。
 
 | 开放差距 | 当前代码证据（为何还开放） | 关闭 PR | 关闭判定（✅ 当且仅当） |
 |---|---|---|---|
-| 3 无生产 composition | `RobotHarness::new` 生产代码 0 调用；`robot_harness_factory.rs` 只测 `HarnessKind::Robot` 枚举可选性 | PR4 + PR6 | daemon 启动即构造 `RobotHarness`；`HarnessKind::Robot` 配置失败 fail closed，不回落 Linear |
-| 5 硬编码 `mode==stance` | `mod.rs:216-225`（Execute `append_attempt`）、`mod.rs:244-252`（Verify）仍是 `Equals("mode","stance")`；Plan 态 `mod.rs:147-190` 丢弃 proposal outcome | PR1 | 注入带非 stance outcome 的 `SkillProposal`，fake verifier 断言收到的是 proposal 的 outcome |
-| 6 `"op"` 占位 | `mod.rs:215` 仍是字面量 `"op"` | PR2 | 已创建 operation 的 attempt 保存 host/provider 返回的 typed `OperationId`；创建前失败保持 `None` 并使用独立 attempt ID |
+| 3 无生产 composition | `RobotHarness::new` 生产代码 0 调用；`robot_harness_factory.rs` 只测 `HarnessKind::Robot` 枚举可选性 | PR4 ✅ + PR6 | `build_robot_harness` composition root + `EmbodiedExecutionAdapter` 已实现，空 allowlist fail closed；daemon `HarnessKind::Robot` 的 CognitiveSession 适配为最后一步 |
+| 5 硬编码 `mode==stance` | `mod.rs:216-225`（Execute `append_attempt`）、`mod.rs:244-252`（Verify）仍是 `Equals("mode","stance")`；Plan 态 `mod.rs:147-190` 丢弃 proposal outcome | PR1 ✅ | 注入带非 stance outcome 的 `SkillProposal`，fake verifier 断言收到的是 proposal 的 outcome |
+| 6 `"op"` 占位 | `mod.rs:215` 仍是字面量 `"op"` | PR2 ✅ | 已创建 operation 的 attempt 保存 host/provider 返回的 typed `OperationId`；创建前失败保持 `None` 并使用独立 attempt ID |
 | 7 无 world-state 管道 | 无 pump 模块；RobotHarness 只在 Observe 态 `world_state.latest()` 拉一次快照 | PR3 ✅ | `PollingWorldState`/`WorldStatePump` 实现：单调 sequence 由 ingest 强制；过期/低置信标记 `stale` 且不进入稳定窗口（verifier 侧拒绝） |
-| 8 `NoopEmbodimentProgress` | `request.rs:805` 仍把 `NoopEmbodimentProgress` 注入 `build_embodiment_port` | PR6 | session log 出现带真实 operation_id 的 `SkillProgress` 事件 |
-| 9 无报告/artifact | 无 report builder；`EpisodeSink::close_episode` 只写 `"completed"` 字符串 | PR5 + PR10 | 端到端报告能打开 `EvidenceRef` 引用的 artifact |
+| 8 `NoopEmbodimentProgress` | `request.rs:805` 仍把 `NoopEmbodimentProgress` 注入 `build_embodiment_port` | PR6 ✅ | `EventEmbodimentProgress` 转发 `SkillProgress` → `TurnEvent::EmbodimentProgress`（真实 operation_id），session log 可见 |
+| 9 无报告/artifact | 无 report builder；`EpisodeSink::close_episode` 只写 `"completed"` 字符串 | PR5 ✅ + PR10 ✅ | `SqliteEpisodeSink` + `EpisodeReport` + `load_attempts` + `can_promote` 门禁；artifact 走 `EvidenceRef` 引用 |
 
 > **10 个 PR 的完整归属**：上表只覆盖 6 个开放项。剩余 PR 关闭另外 3 项——#2（已关闭）→ PR7
 > 维护项、#4（开放）→ PR9、#1（单独仓库）→ PR8。即：PR1–6 关 #5/#6/#7/#3/#8，#9 跨 PR5+PR10，
