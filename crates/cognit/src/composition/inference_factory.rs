@@ -20,6 +20,8 @@ use crate::adapters::inference::{
 };
 use crate::config::{ProviderConfig, ProviderPricing, ProviderTimeoutConfig, Transport};
 
+use super::model_catalog;
+
 /// Concrete protocol selected after resolving the compatibility-only `Auto` mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderKind {
@@ -82,35 +84,54 @@ pub fn create_provider(
 ) -> Result<Arc<dyn LlmProvider>> {
     let resolved = resolve_provider_definition(config)?;
     let api_key = resolve_api_key(config, &resolved.credential_env_name);
+    let catalog_entry = model_catalog::resolve(model)?;
+    let (max_context, catalog_max_output) = match catalog_entry {
+        Some(entry) => {
+            if let Some(configured) = resolved.max_context_length {
+                anyhow::ensure!(
+                    configured == entry.context_window_tokens,
+                    "configured context length for model '{}' conflicts with the model catalog",
+                    model
+                );
+            }
+            (entry.context_window_tokens, entry.max_output_tokens)
+        }
+        None => {
+            let context = resolved.max_context_length.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "model '{}' is absent from the model catalog and has no explicit context length",
+                    model
+                )
+            })?;
+            (context, None)
+        }
+    };
+    let max_tokens = catalog_max_output
+        .and_then(|limit| u32::try_from(limit).ok())
+        .map_or(options.max_tokens, |limit| options.max_tokens.min(limit));
 
     let provider: Arc<dyn LlmProvider> = match resolved.kind {
         ProviderKind::Anthropic => {
-            let mut provider = AnthropicProvider::new(&api_key, model)
+            let provider = AnthropicProvider::new(&api_key, model)
                 .with_base_url(&config.base_url)
                 .with_timeouts(options.timeouts)
-                .with_max_tokens(options.max_tokens);
-            if let Some(context) = resolved.max_context_length {
-                provider = provider.with_max_context(context);
-            }
+                .with_max_tokens(max_tokens)
+                .with_max_context(max_context);
             Arc::new(provider)
         }
         ProviderKind::OpenAi => {
-            let mut provider = OpenAiProvider::new(&api_key, model, &config.base_url)
+            let provider = OpenAiProvider::new(&api_key, model, &config.base_url)
                 .with_timeouts(options.timeouts)
-                .with_max_tokens(options.max_tokens);
-            if let Some(context) = resolved.max_context_length {
-                provider = provider.with_max_context(context);
-            }
+                .with_max_tokens(max_tokens)
+                .with_max_context(max_context);
             Arc::new(provider)
         }
         ProviderKind::Ollama => {
-            let mut provider = OllamaProvider::new(model)
+            let provider = OllamaProvider::new(model)
                 .with_base_url(&config.base_url)
                 .with_timeouts(options.timeouts)?
-                .with_max_tokens(options.max_tokens);
-            if let Some(context) = resolved.max_context_length {
-                provider = provider.with_max_context(context);
-            }
+                .with_max_tokens(max_tokens)
+                .with_max_context(max_context);
             Arc::new(provider)
         }
     };
@@ -284,6 +305,35 @@ mod tests {
             .unwrap();
             assert_eq!(provider.name(), "model");
         }
+    }
+
+    #[test]
+    fn catalog_derives_context_without_rewriting_provider_model_id() {
+        let mut config = definition(Transport::Openai, "https://aiapi.lejurobot.com");
+        config.max_context_length = None;
+        let provider = create_provider(
+            &config,
+            "deepseek/deepseek-v4-flash",
+            ProviderBuildOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(provider.name(), "deepseek/deepseek-v4-flash");
+        assert_eq!(provider.max_context_length(), 1_000_000);
+    }
+
+    #[test]
+    fn known_model_rejects_conflicting_manual_context_override() {
+        let config = definition(Transport::Openai, "https://aiapi.lejurobot.com");
+        let error = create_provider(
+            &config,
+            "deepseek/deepseek-v4-flash",
+            ProviderBuildOptions::default(),
+        )
+        .err()
+        .unwrap();
+        assert!(error
+            .to_string()
+            .contains("conflicts with the model catalog"));
     }
 
     #[test]

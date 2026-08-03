@@ -13,7 +13,6 @@ base_url = "https://aiapi.lejurobot.com"
 api_key = ""
 transport = "openai"
 models = ["deepseek/deepseek-v4-flash"]
-max_context_length = 1000000
 
 [providers.backpressure]
 min_request_interval_ms = 15000

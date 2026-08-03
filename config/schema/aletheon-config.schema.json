@@ -2224,7 +2224,7 @@
         },
         "max_context_length": {
           "default": null,
-          "description": "Override the default max context length for this provider's models.\nIf not set, the provider uses its built-in default (128K for OpenAI, 200K for Anthropic).",
+          "description": "Context length for a private model absent from the embedded catalog.\nKnown models derive this value from their canonical capability record; a conflicting override is rejected rather than silently changing reality.",
           "format": "uint",
           "minimum": 0,
           "type": [

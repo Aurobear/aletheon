@@ -45,7 +45,6 @@ base_url = "https://aiapi.lejurobot.com"
 api_key = ""
 transport = "openai"
 models = ["deepseek/deepseek-v4-flash"]
-max_context_length = 1000000
 
 [providers.backpressure]
 # This account is governed by a rolling request-rate limit. Coordinate request
@@ -66,6 +65,8 @@ min_request_interval_ms = 15000
 # api_key = "ollama"           # placeholder — Ollama ignores it
 # transport = "openai"
 # models = ["qwen2.5-coder"]
+# Unknown/private models must declare max_context_length explicitly; common
+# models resolve it from crates/cognit/resources/model_catalog.json.
 # max_context_length = 32768
 
 [sandbox]

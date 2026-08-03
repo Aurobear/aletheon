@@ -233,7 +233,7 @@ fn checked_in_lejurobot_deepseek_flash_uses_the_openai_transport() {
             .models
             .iter()
             .any(|model| model == "deepseek/deepseek-v4-flash"));
-        assert_eq!(provider.max_context_length, Some(1_000_000));
+        assert_eq!(provider.max_context_length, None);
         assert_eq!(
             provider.backpressure.min_request_interval_ms,
             15_000,
