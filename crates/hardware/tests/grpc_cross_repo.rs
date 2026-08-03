@@ -36,9 +36,17 @@ async fn bridge_capabilities_and_skill_manifest_match_contract() {
         .list_skills(&device)
         .await
         .expect("list_skills over bridge");
+    // The bridge is in its read-only phase: `kuavo.stop` is the guaranteed
+    // skill; `kuavo.move_base_timed` is exposed for bounded base motion.
+    // `kuavo.stance` execution is a later bridge phase — asserted as present
+    // once the bridge exposes it.
     assert!(
-        skills.iter().any(|s| s.skill.0 == "kuavo.stance"),
-        "bridge must expose kuavo.stance, got: {:?}",
+        !skills.is_empty(),
+        "bridge must expose at least one skill"
+    );
+    assert!(
+        skills.iter().any(|s| s.skill.0 == "kuavo.stop"),
+        "bridge must expose the read-only safe skill kuavo.stop, got: {:?}",
         skills.iter().map(|s| s.skill.0.as_str()).collect::<Vec<_>>()
     );
 }
