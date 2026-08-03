@@ -20,6 +20,8 @@ use crate::adapters::inference::{
 };
 use crate::config::{ProviderConfig, ProviderPricing, ProviderTimeoutConfig, Transport};
 
+use super::model_catalog;
+
 /// Concrete protocol selected after resolving the compatibility-only `Auto` mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderKind {
@@ -82,42 +84,41 @@ pub fn create_provider(
 ) -> Result<Arc<dyn LlmProvider>> {
     let resolved = resolve_provider_definition(config)?;
     let api_key = resolve_api_key(config, &resolved.credential_env_name);
+    let model_spec = model_catalog::resolve_spec(model, resolved.max_context_length)?;
+    let max_tokens = model_spec
+        .max_output_tokens
+        .and_then(|limit| u32::try_from(limit).ok())
+        .map_or(options.max_tokens, |limit| options.max_tokens.min(limit));
 
     let provider: Arc<dyn LlmProvider> = match resolved.kind {
         ProviderKind::Anthropic => {
-            let mut provider = AnthropicProvider::new(&api_key, model)
+            let provider = AnthropicProvider::new(&api_key, &model_spec.wire_id)
                 .with_base_url(&config.base_url)
                 .with_timeouts(options.timeouts)
-                .with_max_tokens(options.max_tokens);
-            if let Some(context) = resolved.max_context_length {
-                provider = provider.with_max_context(context);
-            }
+                .with_max_tokens(max_tokens)
+                .with_max_context(model_spec.context_window_tokens);
             Arc::new(provider)
         }
         ProviderKind::OpenAi => {
-            let mut provider = OpenAiProvider::new(&api_key, model, &config.base_url)
+            let provider = OpenAiProvider::new(&api_key, &model_spec.wire_id, &config.base_url)
                 .with_timeouts(options.timeouts)
-                .with_max_tokens(options.max_tokens);
-            if let Some(context) = resolved.max_context_length {
-                provider = provider.with_max_context(context);
-            }
+                .with_max_tokens(max_tokens)
+                .with_max_context(model_spec.context_window_tokens);
             Arc::new(provider)
         }
         ProviderKind::Ollama => {
-            let mut provider = OllamaProvider::new(model)
+            let provider = OllamaProvider::new(&model_spec.wire_id)
                 .with_base_url(&config.base_url)
                 .with_timeouts(options.timeouts)?
-                .with_max_tokens(options.max_tokens);
-            if let Some(context) = resolved.max_context_length {
-                provider = provider.with_max_context(context);
-            }
+                .with_max_tokens(max_tokens)
+                .with_max_context(model_spec.context_window_tokens);
             Arc::new(provider)
         }
     };
     Ok(Arc::new(BackpressuredProvider {
         inner: provider,
         state: backpressure::state_for(
-            &fabric::memory::provider_backpressure_key(&config.base_url, model),
+            &fabric::memory::provider_backpressure_key(&config.base_url, &model_spec.wire_id),
             config.backpressure,
         ),
     }))
@@ -284,6 +285,35 @@ mod tests {
             .unwrap();
             assert_eq!(provider.name(), "model");
         }
+    }
+
+    #[test]
+    fn catalog_derives_context_without_rewriting_provider_model_id() {
+        let mut config = definition(Transport::Openai, "https://aiapi.lejurobot.com");
+        config.max_context_length = None;
+        let provider = create_provider(
+            &config,
+            "deepseek/deepseek-v4-flash[1m]",
+            ProviderBuildOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(provider.name(), "deepseek/deepseek-v4-flash");
+        assert_eq!(provider.max_context_length(), 1_000_000);
+    }
+
+    #[test]
+    fn known_model_rejects_conflicting_manual_context_override() {
+        let config = definition(Transport::Openai, "https://aiapi.lejurobot.com");
+        let error = create_provider(
+            &config,
+            "deepseek/deepseek-v4-flash[512k]",
+            ProviderBuildOptions::default(),
+        )
+        .err()
+        .unwrap();
+        assert!(error
+            .to_string()
+            .contains("conflicts with the model catalog"));
     }
 
     #[test]

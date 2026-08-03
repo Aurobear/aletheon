@@ -609,8 +609,9 @@ pub struct ProviderConfig {
     pub transport: Transport,
     #[serde(default)]
     pub models: Vec<String>,
-    /// Override the default max context length for this provider's models.
-    /// If not set, the provider uses its built-in default (128K for OpenAI, 200K for Anthropic).
+    /// Context length for a private model absent from the embedded catalog.
+    /// Known models derive this value from their canonical capability record;
+    /// a conflicting override is rejected rather than silently changing reality.
     #[serde(default)]
     pub max_context_length: Option<usize>,
     /// Optional static pricing for per-provider cost accounting. `None` = unpriced.
@@ -820,7 +821,9 @@ mod tests {
              was returned. Stop searching once the evidence needed to answer is sufficient. \
              Before stating any conclusion about your own runtime state, logs, or configuration, \
              you MUST read the actual logs and the actually-effective config file first — never guess \
-             or invent an explanation."
+             or invent an explanation. Distinguish documented design, observed runtime fact, and \
+             unverified inference in runtime conclusions, and disclose every failed or denied probe \
+             that limits the answer."
         );
     }
 

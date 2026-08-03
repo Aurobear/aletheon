@@ -27,6 +27,10 @@ pub struct ComponentHealth {
     pub error_category: Option<&'static str>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub asset_counts: BTreeMap<String, u64>,
 }
 
 impl ComponentHealth {
@@ -37,6 +41,8 @@ impl ComponentHealth {
             age_seconds: None,
             error_category: None,
             items: Vec::new(),
+            snapshot_digest: None,
+            asset_counts: BTreeMap::new(),
         }
     }
 
@@ -47,6 +53,8 @@ impl ComponentHealth {
             age_seconds: None,
             error_category: None,
             items: Vec::new(),
+            snapshot_digest: None,
+            asset_counts: BTreeMap::new(),
         }
     }
 
@@ -57,6 +65,8 @@ impl ComponentHealth {
             age_seconds: None,
             error_category: Some(category),
             items: Vec::new(),
+            snapshot_digest: None,
+            asset_counts: BTreeMap::new(),
         }
     }
 
@@ -67,6 +77,8 @@ impl ComponentHealth {
             age_seconds: None,
             error_category: Some(category),
             items: Vec::new(),
+            snapshot_digest: None,
+            asset_counts: BTreeMap::new(),
         }
     }
 }

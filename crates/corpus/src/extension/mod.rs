@@ -6,6 +6,7 @@
 
 pub mod inspector;
 pub mod manifest;
+pub mod resolver;
 pub mod store;
 pub mod validation;
 

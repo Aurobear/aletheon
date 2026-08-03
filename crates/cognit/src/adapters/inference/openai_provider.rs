@@ -168,6 +168,25 @@ struct ApiUsage {
     prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
+fn openai_usage(usage: &ApiUsage) -> anyhow::Result<InferenceUsage> {
+    let total = u64::from(usage.prompt_tokens);
+    let read = usage
+        .prompt_tokens_details
+        .as_ref()
+        .and_then(|details| details.cached_tokens)
+        .map(u64::from);
+    if read.is_some_and(|cached| cached > total) {
+        anyhow::bail!("OpenAI cached input exceeds total prompt input");
+    }
+    Ok(InferenceUsage::reported(
+        total,
+        u64::from(usage.completion_tokens),
+        read.map(|cached| total.saturating_sub(cached)),
+        read,
+        None,
+    ))
+}
+
 /// SSE streaming response structures
 #[derive(Deserialize)]
 struct StreamResponse {
@@ -394,10 +413,11 @@ impl LlmProvider for OpenAiProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmResponse> {
+        let tools = canonicalize_tool_definitions(tools)?;
         let request = ChatRequest {
             model: self.model.clone(),
             messages: messages_to_chat(messages),
-            tools: tools_to_chat(tools),
+            tools: tools_to_chat(&tools),
             max_tokens: Some(self.max_tokens),
             stream: None,
         };
@@ -477,31 +497,16 @@ impl LlmProvider for OpenAiProvider {
             _ => StopReason::EndTurn,
         };
 
-        let (cache_hit, cache_miss, usage) = if let Some(u) = api_resp.usage {
-            let hit = u
-                .prompt_tokens_details
-                .as_ref()
-                .and_then(|d| d.cached_tokens)
-                .unwrap_or(0);
-            let miss = u.prompt_tokens.saturating_sub(hit);
-            (
-                hit,
-                miss,
-                Usage {
-                    input_tokens: u.prompt_tokens,
-                    output_tokens: u.completion_tokens,
-                },
-            )
+        let usage = if let Some(u) = api_resp.usage {
+            openai_usage(&u)?
         } else {
-            (0, 0, Usage::default())
+            InferenceUsage::default()
         };
 
         Ok(LlmResponse {
             content,
             stop_reason,
             usage,
-            cache_hit_tokens: cache_hit,
-            cache_miss_tokens: cache_miss,
         })
     }
 
@@ -510,10 +515,11 @@ impl LlmProvider for OpenAiProvider {
         messages: &[Message],
         tools: &[ToolDefinition],
     ) -> anyhow::Result<LlmStream> {
+        let tools = canonicalize_tool_definitions(tools)?;
         let request = ChatRequest {
             model: self.model.clone(),
             messages: messages_to_chat(messages),
-            tools: tools_to_chat(tools),
+            tools: tools_to_chat(&tools),
             max_tokens: Some(self.max_tokens),
             stream: Some(true),
         };
@@ -622,10 +628,8 @@ impl LlmProvider for OpenAiProvider {
                                 Ok(resp) => {
                                     if let Some(usage) = &resp.usage {
                                         return Some((
-                                            Ok(StreamChunk::Usage {
-                                                input_tokens: usage.prompt_tokens,
-                                                output_tokens: usage.completion_tokens,
-                                            }),
+                                            openai_usage(usage)
+                                                .map(|usage| StreamChunk::Usage { usage }),
                                             (byte_stream, buffer, tool_state),
                                         ));
                                     }

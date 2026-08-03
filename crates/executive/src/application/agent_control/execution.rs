@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -396,6 +396,7 @@ pub trait AgentRuntimeLauncher: Send + Sync {
 pub struct AgentRuntimeRegistry {
     runtimes: RwLock<HashMap<RuntimeId, Arc<dyn AgentRuntimeLauncher>>>,
     manifests: RwLock<HashMap<RuntimeId, runtime::RuntimeManifest>>,
+    package_owners: RwLock<HashMap<RuntimeId, String>>,
 }
 
 impl AgentRuntimeRegistry {
@@ -419,8 +420,70 @@ impl AgentRuntimeRegistry {
     }
 
     pub fn unregister(&self, id: &RuntimeId) -> bool {
+        self.package_owners.write().remove(id);
         self.manifests.write().remove(id);
         self.runtimes.write().remove(id).is_some()
+    }
+
+    pub fn validate_package_runtimes(
+        &self,
+        replaced_owners: &[String],
+        replacements: &[(String, RuntimeId, Arc<dyn AgentRuntimeLauncher>)],
+    ) -> Result<(), AgentControlError> {
+        let replaced = replaced_owners.iter().collect::<HashSet<_>>();
+        let runtimes = self.runtimes.read();
+        let owners = self.package_owners.read();
+        let mut ids = HashSet::new();
+        for (owner, id, _) in replacements {
+            if !replaced.contains(owner) || id.0.trim().is_empty() {
+                return Err(AgentControlError::invalid(
+                    "invalid package runtime replacement",
+                ));
+            }
+            if !ids.insert(id.clone()) {
+                return Err(AgentControlError {
+                    kind: AgentControlErrorKind::Conflict,
+                    message: format!("duplicate package runtime: {}", id.0),
+                });
+            }
+            if runtimes.contains_key(id)
+                && owners
+                    .get(id)
+                    .is_none_or(|existing| !replaced.contains(existing))
+            {
+                return Err(AgentControlError {
+                    kind: AgentControlErrorKind::Conflict,
+                    message: format!("runtime already registered: {}", id.0),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn replace_package_runtimes(
+        &self,
+        replaced_owners: &[String],
+        replacements: Vec<(String, RuntimeId, Arc<dyn AgentRuntimeLauncher>)>,
+    ) -> Result<(), AgentControlError> {
+        self.validate_package_runtimes(replaced_owners, &replacements)?;
+        let replaced = replaced_owners.iter().collect::<HashSet<_>>();
+        let mut runtimes = self.runtimes.write();
+        let mut owners = self.package_owners.write();
+        let removed = owners
+            .iter()
+            .filter(|(_, owner)| replaced.contains(owner))
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in removed {
+            owners.remove(&id);
+            runtimes.remove(&id);
+            self.manifests.write().remove(&id);
+        }
+        for (owner, id, launcher) in replacements {
+            owners.insert(id.clone(), owner);
+            runtimes.insert(id, launcher);
+        }
+        Ok(())
     }
 
     /// Register a selectable runtime contract alongside the Executive-owned

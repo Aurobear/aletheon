@@ -73,6 +73,17 @@ impl McpManager {
         wrappers
     }
 
+    /// Return only statically enumerated resource wrappers. Package connectors
+    /// use this surface so a generic URI reader cannot widen their manifest
+    /// resource allowlist.
+    pub fn resource_provider_wrappers(&self) -> Vec<Box<dyn Tool>> {
+        self.inner
+            .get_all_resource_providers()
+            .into_iter()
+            .map(|provider| provider.boxed_clone())
+            .collect()
+    }
+
     /// List resources from a named server.
     pub async fn list_resources(&self, server_name: &str) -> Result<Vec<McpResource>> {
         self.inner.list_resources(server_name).await
@@ -447,6 +458,7 @@ mod tests {
                 health_check_interval_sec: 0,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -493,6 +505,7 @@ mod tests {
                 health_check_interval_sec: 0,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -548,6 +561,7 @@ mod tests {
                 health_check_interval_sec: 0,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -585,6 +599,7 @@ mod tests {
                 health_check_interval_sec: 0,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -642,6 +657,7 @@ mod tests {
             health_check_interval_sec: 0,
             allowlist: Vec::new(),
             denylist: Vec::new(),
+            resource_allowlist: Vec::new(),
             permission_overrides: std::collections::HashMap::new(),
         };
 
@@ -688,6 +704,7 @@ mod tests {
                 health_check_interval_sec: 0,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -725,6 +742,7 @@ mod tests {
                 health_check_interval_sec: 0,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -781,6 +799,7 @@ mod tests {
                 health_check_interval_sec: 0,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -819,6 +838,7 @@ mod tests {
                 health_check_interval_sec: 0,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -856,6 +876,7 @@ mod tests {
                 health_check_interval_sec: 0,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -916,6 +937,7 @@ mod tests {
                 health_check_interval_sec: 0,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -959,6 +981,7 @@ mod tests {
                 health_check_interval_sec: 0,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -1002,6 +1025,7 @@ mod tests {
                 health_check_interval_sec: 1,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()
@@ -1059,6 +1083,7 @@ mod tests {
                 health_check_interval_sec: 1,
                 allowlist: Vec::new(),
                 denylist: Vec::new(),
+                resource_allowlist: Vec::new(),
                 permission_overrides: std::collections::HashMap::new(),
             }],
             ..McpConfig::default()

@@ -44,8 +44,7 @@ pub async fn discover_tool_extensions(
     registry: &Arc<tokio::sync::Mutex<ToolRegistry>>,
 ) -> Result<Vec<ExtensionDescriptor>, CorpusError> {
     let registry = registry.lock().await;
-    let mut definitions = registry.definitions();
-    definitions.sort_by(|left, right| left.name.cmp(&right.name));
+    let definitions = registry.definitions();
     definitions
         .into_iter()
         .map(|definition| {

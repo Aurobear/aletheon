@@ -557,7 +557,7 @@ fn is_context_overflow(err: &anyhow::Error) -> bool {
 mod tests {
     use super::*;
     use crate::adapters::inference::provider::{
-        LlmProvider, LlmResponse, LlmStream, StopReason, StreamChunk, Usage,
+        InferenceUsage, LlmProvider, LlmResponse, LlmStream, StopReason, StreamChunk,
     };
     use async_trait::async_trait;
     use fabric::message::{ContentBlock, Message};
@@ -802,9 +802,7 @@ mod tests {
                     text: "done".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
 
@@ -842,9 +840,7 @@ mod tests {
                         input: serde_json::json!({"text": "hi"}),
                     }],
                     stop_reason: StopReason::ToolUse,
-                    usage: Usage::default(),
-                    cache_hit_tokens: 0,
-                    cache_miss_tokens: 0,
+                    usage: InferenceUsage::default(),
                 })
             } else {
                 Ok(LlmResponse {
@@ -852,9 +848,7 @@ mod tests {
                         text: "done: hi".into(),
                     }],
                     stop_reason: StopReason::EndTurn,
-                    usage: Usage::default(),
-                    cache_hit_tokens: 0,
-                    cache_miss_tokens: 0,
+                    usage: InferenceUsage::default(),
                 })
             }
         }
@@ -944,9 +938,7 @@ mod tests {
                         input: serde_json::json!({"data": big_text}),
                     }],
                     stop_reason: StopReason::ToolUse,
-                    usage: Usage::default(),
-                    cache_hit_tokens: 0,
-                    cache_miss_tokens: 0,
+                    usage: InferenceUsage::default(),
                 })
             } else {
                 Ok(LlmResponse {
@@ -954,9 +946,7 @@ mod tests {
                         text: "done".into(),
                     }],
                     stop_reason: StopReason::EndTurn,
-                    usage: Usage::default(),
-                    cache_hit_tokens: 0,
-                    cache_miss_tokens: 0,
+                    usage: InferenceUsage::default(),
                 })
             }
         }
@@ -1095,9 +1085,7 @@ mod tests {
                         text: "recovered after compaction".into(),
                     }],
                     stop_reason: StopReason::EndTurn,
-                    usage: Usage::default(),
-                    cache_hit_tokens: 0,
-                    cache_miss_tokens: 0,
+                    usage: InferenceUsage::default(),
                 })
             }
         }
@@ -1183,9 +1171,7 @@ mod tests {
                 Ok(LlmResponse {
                     content: vec![],
                     stop_reason: StopReason::EndTurn,
-                    usage: Usage::default(),
-                    cache_hit_tokens: 0,
-                    cache_miss_tokens: 0,
+                    usage: InferenceUsage::default(),
                 })
             } else {
                 Ok(LlmResponse {
@@ -1193,9 +1179,7 @@ mod tests {
                         text: "finally text".into(),
                     }],
                     stop_reason: StopReason::EndTurn,
-                    usage: Usage::default(),
-                    cache_hit_tokens: 0,
-                    cache_miss_tokens: 0,
+                    usage: InferenceUsage::default(),
                 })
             }
         }
@@ -1582,9 +1566,7 @@ mod tests {
                     text: format!("answer {n}"),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
         async fn complete_stream(
@@ -1937,9 +1919,7 @@ mod tests {
                     input: serde_json::json!({"question": "Which behavior?"}),
                 }],
                 stop_reason: StopReason::ToolUse,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
 
@@ -2055,9 +2035,7 @@ mod tests {
                     StopReason::EndTurn
                 },
                 content: vec![response],
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
 

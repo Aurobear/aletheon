@@ -78,7 +78,7 @@ EOF
 cmd_completion() {
   local shell=${1:-}
   case "$shell" in
-    bash|zsh) cat "$SCRIPT_DIR/completions/aletheon.$shell" ;;
+    bash|zsh) cat "$SCRIPT_DIR/completions/aletheon-ops.$shell" ;;
     *) aletheon_die "usage: aletheon.sh completion {bash|zsh}" || return 2 ;;
   esac
 }

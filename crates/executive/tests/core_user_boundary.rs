@@ -5,7 +5,7 @@ use executive::application::inference_port::{
 };
 use executive::composition::user_runtime::{UserRuntime, UserRuntimeConfig};
 use executive::core::{RegistryInferencePort, SystemCoreRuntime};
-use fabric::{LlmResponse, LlmStream, StopReason, Usage};
+use fabric::{InferenceUsage, LlmResponse, LlmStream, StopReason};
 use futures::stream;
 
 #[derive(Default)]
@@ -41,9 +41,7 @@ fn response() -> LlmResponse {
     LlmResponse {
         content: Vec::new(),
         stop_reason: StopReason::EndTurn,
-        usage: Usage::default(),
-        cache_hit_tokens: 0,
-        cache_miss_tokens: 0,
+        usage: InferenceUsage::default(),
     }
 }
 

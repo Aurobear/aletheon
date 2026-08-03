@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 use super::manifest::parse_skill_md;
@@ -118,15 +118,11 @@ impl SkillLoader {
                 // Multi-file skill directory
                 let skill_md = path.join("SKILL.md");
                 if skill_md.exists() {
-                    match Self::parse_skill_dir(&path) {
-                        Ok(plugin) => {
+                    match load_skill_dir(&path) {
+                        Ok((mut loaded, plugin)) => {
                             debug!(name = %plugin.name, path = %path.display(), "Loaded skill directory");
-                            skills.push(LoadedSkill {
-                                name: plugin.name.clone(),
-                                description: plugin.description.clone(),
-                                content: plugin.system_prompt.clone(),
-                                source: "system".into(),
-                            });
+                            loaded.source = "system".into();
+                            skills.push(loaded);
                             plugins.push(plugin);
                         }
                         Err(e) => {
@@ -155,14 +151,6 @@ impl SkillLoader {
             info!(count = count, "Skills loaded");
         }
         count
-    }
-
-    /// Parse a skill directory containing SKILL.md.
-    fn parse_skill_dir(dir: &std::path::Path) -> anyhow::Result<SkillPlugin> {
-        let skill_md = dir.join("SKILL.md");
-        let raw = std::fs::read_to_string(&skill_md)?;
-        let (manifest, body) = parse_skill_md(&raw)?;
-        Ok(build_skill_plugin(manifest, body, dir.to_path_buf()))
     }
 
     /// Parse a single skill markdown file into a `LoadedSkill`.
@@ -240,6 +228,21 @@ impl SkillLoader {
             source: source.to_string(),
         })
     }
+}
+
+/// Load one multi-file Skill directly from its package directory.
+pub fn load_skill_dir(dir: &Path) -> anyhow::Result<(LoadedSkill, SkillPlugin)> {
+    let skill_md = dir.join("SKILL.md");
+    let raw = std::fs::read_to_string(&skill_md)?;
+    let (manifest, body) = parse_skill_md(&raw)?;
+    let plugin = build_skill_plugin(manifest, body, dir.to_path_buf());
+    let loaded = LoadedSkill {
+        name: plugin.name.clone(),
+        description: plugin.description.clone(),
+        content: plugin.system_prompt.clone(),
+        source: "package".into(),
+    };
+    Ok((loaded, plugin))
 }
 
 #[cfg(test)]

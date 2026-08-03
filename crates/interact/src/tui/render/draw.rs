@@ -52,7 +52,13 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
         // Build composable layout: header | chat (flex) | input | status
         let header_rows: u16 = 1;
         let mut layout = LayoutHelper::new();
-        layout.push_fixed(header_rows, HeaderRenderable { caps: caps_ref });
+        layout.push_fixed(
+            header_rows,
+            HeaderRenderable {
+                caps: caps_ref,
+                state: &app.app_state,
+            },
+        );
         layout.push_flex(ChatRenderable {
             chat: chat_ref,
             frame_counter,
@@ -71,7 +77,22 @@ pub fn draw_with_recorder<B: ratatui::backend::Backend>(
         layout.push_fixed(1, StatusRenderable { status: status_ref });
         layout.render(size, f.buffer_mut());
         if size.width >= 100 {
-            if let Some(detail) = detail_ref {
+            if let Some(entry) = chat_ref.selected_exec() {
+                let area = ratatui::layout::Rect::new(
+                    size.x + size.width * 62 / 100,
+                    size.y + 1,
+                    size.width * 38 / 100,
+                    size.height.saturating_sub(4),
+                );
+                ratatui::widgets::Widget::render(
+                    super::super::activity_detail::ActivityDetail {
+                        entry,
+                        caps: caps_ref,
+                    },
+                    area,
+                    f.buffer_mut(),
+                );
+            } else if let Some(detail) = detail_ref {
                 let area = ratatui::layout::Rect::new(
                     size.x + size.width * 55 / 100,
                     size.y + 1,

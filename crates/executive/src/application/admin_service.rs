@@ -594,11 +594,23 @@ pub type RuntimeShutdownFuture =
 
 pub struct AdminService {
     resources: AdminResources,
+    extension_runtime: Option<super::extension_snapshot::ExtensionRuntimeView>,
 }
 
 impl AdminService {
     pub fn new(resources: AdminResources) -> Self {
-        Self { resources }
+        Self {
+            resources,
+            extension_runtime: None,
+        }
+    }
+
+    pub fn with_extension_runtime(
+        mut self,
+        runtime: super::extension_snapshot::ExtensionRuntimeView,
+    ) -> Self {
+        self.extension_runtime = Some(runtime);
+        self
     }
 }
 
@@ -606,7 +618,11 @@ fn authorize_agent_profile_switch(
     current: &fabric::AgentProfile,
     requested: &fabric::AgentProfile,
 ) -> Result<(), AdminServiceError> {
-    if current.id == requested.id || current.allows_child(requested) {
+    // A foreground profile switch is not child delegation: the operator is
+    // replacing the active authority, rather than granting a child a subset of
+    // the current profile's tools.  Reusing `allows_child` here rejects a
+    // strictly safer profile whenever it exposes a different read-only tool.
+    if current.id == requested.id || requested.risk_tier <= current.risk_tier {
         return Ok(());
     }
     Err(AdminServiceError::Operation(format!(
@@ -787,7 +803,24 @@ impl AdminUseCases for AdminService {
     }
 
     async fn list_skills(&self) -> Vec<SkillDescriptor> {
-        self.resources.skills.list().await
+        let mut skills = self.resources.skills.list().await;
+        if let Some(runtime) = &self.extension_runtime {
+            let snapshot = runtime.load().await;
+            skills.extend(snapshot.skills.iter().filter_map(|skill| {
+                let package_asset = skill.source.strip_prefix("package:")?;
+                let (package_id, _) = package_asset.rsplit_once(':')?;
+                Some(SkillDescriptor {
+                    id: format!("{package_id}:{}", skill.name),
+                    name: skill.name.clone(),
+                    description: skill.description.clone(),
+                    enabled: true,
+                    extension_id: package_id.to_owned(),
+                })
+            }));
+        }
+        skills.sort_by(|left, right| left.id.cmp(&right.id));
+        skills.truncate(MAX_ADMIN_ITEMS);
+        skills
     }
 
     async fn sub_agents(&self) -> Result<Vec<SubAgentSummary>, AdminServiceError> {
@@ -971,6 +1004,17 @@ mod profile_switch_tests {
         let safe = profile("safe", RiskTier::ReadOnly, &["file_read"]);
         let admin = profile("admin", RiskTier::Unrestricted, &["file_read", "bash_exec"]);
         assert!(authorize_agent_profile_switch(&admin, &safe).is_ok());
+    }
+
+    #[test]
+    fn sandboxed_to_distinct_read_only_profile_is_allowed() {
+        let general = profile("general", RiskTier::Sandboxed, &["file_read", "bash_exec"]);
+        let reviewer = profile(
+            "reviewer",
+            RiskTier::ReadOnly,
+            &["file_read", "connector_search"],
+        );
+        assert!(authorize_agent_profile_switch(&general, &reviewer).is_ok());
     }
 
     #[test]

@@ -4,17 +4,80 @@
 
 use async_trait::async_trait;
 use futures::Stream;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::pin::Pin;
 
 use crate::message::Message;
 
 /// Tool definition sent to the LLM.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ToolDefinitionCanonicalizationError {
+    #[error("tool name is empty or contains control characters")]
+    InvalidName,
+    #[error("duplicate tool name: {0}")]
+    DuplicateName(String),
+    #[error("canonical tool schema serialization failed: {0}")]
+    Serialization(String),
+}
+
+fn canonical_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => BTreeMap::from_iter(
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), canonical_json(value))),
+        )
+        .into_iter()
+        .collect(),
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.iter().map(canonical_json).collect())
+        }
+        scalar => scalar.clone(),
+    }
+}
+
+pub fn canonicalize_tool_definitions(
+    definitions: &[ToolDefinition],
+) -> Result<Vec<ToolDefinition>, ToolDefinitionCanonicalizationError> {
+    let mut canonical = definitions.to_vec();
+    for definition in &mut canonical {
+        if definition.name.trim().is_empty() || definition.name.chars().any(char::is_control) {
+            return Err(ToolDefinitionCanonicalizationError::InvalidName);
+        }
+        definition.input_schema = canonical_json(&definition.input_schema);
+    }
+    canonical.sort_by(|left, right| left.name.cmp(&right.name));
+    for pair in canonical.windows(2) {
+        if pair[0].name == pair[1].name {
+            return Err(ToolDefinitionCanonicalizationError::DuplicateName(
+                pair[0].name.clone(),
+            ));
+        }
+    }
+    Ok(canonical)
+}
+
+pub fn tool_schema_digest(
+    definitions: &[ToolDefinition],
+) -> Result<String, ToolDefinitionCanonicalizationError> {
+    const DOMAIN: &[u8] = b"aletheon.tool-schema.v1\0";
+    let canonical = canonicalize_tool_definitions(definitions)?;
+    let encoded = serde_json::to_vec(&canonical)
+        .map_err(|error| ToolDefinitionCanonicalizationError::Serialization(error.to_string()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(DOMAIN);
+    hasher.update(encoded);
+    Ok(format!("sha256:{:x}", hasher.finalize()))
 }
 
 /// A chunk of a streamed LLM response.
@@ -34,10 +97,7 @@ pub enum StreamChunk {
         input: serde_json::Value,
     },
     /// Usage update
-    Usage {
-        input_tokens: u32,
-        output_tokens: u32,
-    },
+    Usage { usage: InferenceUsage },
     /// Stream complete
     Done { stop_reason: StopReason },
 }
@@ -131,11 +191,7 @@ pub trait LlmProvider: Send + Sync {
 pub struct LlmResponse {
     pub content: Vec<crate::message::ContentBlock>,
     pub stop_reason: StopReason,
-    pub usage: Usage,
-    /// Tokens that hit the provider's cache (e.g. DeepSeek cached_tokens, Anthropic cache_read)
-    pub cache_hit_tokens: u32,
-    /// Tokens that missed the cache and were processed fresh
-    pub cache_miss_tokens: u32,
+    pub usage: InferenceUsage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,10 +201,57 @@ pub enum StopReason {
     MaxTokens,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Usage {
-    pub input_tokens: u32,
-    pub output_tokens: u32,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheTelemetry {
+    Reported,
+    Unsupported,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct InferenceUsage {
+    #[serde(default, alias = "input_tokens", alias = "tokens_in")]
+    pub total_input_tokens: Option<u64>,
+    #[serde(default, alias = "tokens_out")]
+    pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub uncached_input_tokens: Option<u64>,
+    #[serde(default, alias = "cache_hit_tokens")]
+    pub cache_read_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_write_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_telemetry: CacheTelemetry,
+}
+
+impl InferenceUsage {
+    pub fn reported(
+        total_input_tokens: u64,
+        output_tokens: u64,
+        uncached_input_tokens: Option<u64>,
+        cache_read_tokens: Option<u64>,
+        cache_write_tokens: Option<u64>,
+    ) -> Self {
+        Self {
+            total_input_tokens: Some(total_input_tokens),
+            output_tokens: Some(output_tokens),
+            uncached_input_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            cache_telemetry: CacheTelemetry::Reported,
+        }
+    }
+
+    pub fn unsupported(total_input_tokens: Option<u64>, output_tokens: Option<u64>) -> Self {
+        Self {
+            total_input_tokens,
+            output_tokens,
+            cache_telemetry: CacheTelemetry::Unsupported,
+            ..Self::default()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -161,19 +264,13 @@ mod tests {
         let response = LlmResponse {
             content: vec![ContentBlock::Text { text: "ok".into() }],
             stop_reason: StopReason::EndTurn,
-            usage: Usage {
-                input_tokens: 3,
-                output_tokens: 2,
-            },
-            cache_hit_tokens: 1,
-            cache_miss_tokens: 2,
+            usage: InferenceUsage::reported(3, 2, Some(2), Some(1), None),
         };
         let response_json = serde_json::to_value(&response).unwrap();
         let decoded: LlmResponse = serde_json::from_value(response_json).unwrap();
         assert_eq!(decoded.stop_reason, StopReason::EndTurn);
         assert_eq!(decoded.usage, response.usage);
-        assert_eq!(decoded.cache_hit_tokens, 1);
-        assert_eq!(decoded.cache_miss_tokens, 2);
+        assert_eq!(decoded.usage.cache_read_tokens, Some(1));
 
         for chunk in [
             StreamChunk::TextDelta { text: "a".into() },

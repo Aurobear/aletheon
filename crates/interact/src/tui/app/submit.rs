@@ -135,43 +135,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                 .await;
                 return;
             }
-            Some(CommandType::Builtin(BuiltinCommand::Reflect)) => {
-                send_request(app, ClientRpcRequest::Reflect).await;
-                app.chat
-                    .add_text(ChatRole::System, "查询反思记录中...".to_string());
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::ReflectNow)) => {
-                let Some(session_id) = app.app_state.session_id.clone() else {
-                    app.chat.add_text(
-                        ChatRole::System,
-                        "会话仍在初始化，请稍后重试 /reflect_now".to_string(),
-                    );
-                    return;
-                };
-                send_request(
-                    app,
-                    ClientRpcRequest::ReflectNowFor(fabric::protocol::client::SessionParams {
-                        session_id,
-                    }),
-                )
-                .await;
-                app.chat
-                    .add_text(ChatRole::System, "执行即时反思中...".to_string());
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Evolution)) => {
-                send_request(app, ClientRpcRequest::Evolution).await;
-                app.chat
-                    .add_text(ChatRole::System, "查询演化历史中...".to_string());
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Genome)) => {
-                send_request(app, ClientRpcRequest::Genome).await;
-                app.chat
-                    .add_text(ChatRole::System, "查询基因组中...".to_string());
-                return;
-            }
             Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
                 let request_id = write_request(app, ClientRpcRequest::Sessions).await;
                 app.pending_commands
@@ -184,20 +147,18 @@ pub async fn submit_message(app: &mut App, text: String) {
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Resume { id })) => {
-                let request = if id.is_empty() {
-                    let Some(session_id) = app.app_state.session_id.clone() else {
-                        app.chat.add_text(
-                            ChatRole::System,
-                            "会话仍在初始化，请稍后重试 /resume".to_string(),
-                        );
-                        return;
-                    };
-                    ClientRpcRequest::SessionLoadPrevious(fabric::protocol::client::SessionParams {
-                        session_id,
-                    })
-                } else {
-                    ClientRpcRequest::resume(id.clone())
-                };
+                if id.is_empty() {
+                    let request_id = write_request(app, ClientRpcRequest::Sessions).await;
+                    app.pending_commands
+                        .insert(request_id, super::super::PendingCommand::OpenSessionPicker);
+                    app.pending_non_turn.insert(request_id);
+                    app.streaming = true;
+                    app.status.waiting = true;
+                    app.chat
+                        .add_text(ChatRole::System, "查询可恢复会话中...".to_string());
+                    return;
+                }
+                let request = ClientRpcRequest::resume(id.clone());
                 let request_id = write_request(app, request).await;
                 app.pending_commands.insert(
                     request_id,
@@ -205,14 +166,8 @@ pub async fn submit_message(app: &mut App, text: String) {
                         previous_session_id: app.app_state.session_id.clone(),
                     },
                 );
-                app.chat.add_text(
-                    ChatRole::System,
-                    if id.is_empty() {
-                        "恢复最近的上一会话...".to_string()
-                    } else {
-                        format!("恢复会话 {id}...")
-                    },
-                );
+                app.chat
+                    .add_text(ChatRole::System, format!("恢复会话 {id}..."));
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Compact)) => {
@@ -304,25 +259,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                 );
                 return;
             }
-            Some(CommandType::Builtin(BuiltinCommand::Plan)) => {
-                let target = if app.app_state.mode == CollaborationMode::Plan {
-                    CollaborationMode::Default
-                } else {
-                    CollaborationMode::Plan
-                };
-                write_request(app, ClientRpcRequest::mode_switch(target)).await;
-                app.chat.add_text(
-                    ChatRole::System,
-                    format!("Switching to {} mode", target.display_name()),
-                );
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Approve)) => {
-                write_request(app, ClientRpcRequest::PlanApprove).await;
-                app.chat
-                    .add_text(ChatRole::System, "Plan approved".to_string());
-                return;
-            }
             Some(CommandType::Builtin(BuiltinCommand::Agents)) => {
                 if app.sub_agents.is_empty() {
                     app.chat
@@ -351,12 +287,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                     app.chat
                         .add_text(ChatRole::System, format!("Agent not found: {id}"));
                 }
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Hooks)) => {
-                send_request(app, ClientRpcRequest::HooksList).await;
-                app.chat
-                    .add_text(ChatRole::System, "Querying hooks...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Skills)) => {
@@ -439,41 +369,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                 app.chat.add_text(ChatRole::System, msg);
                 return;
             }
-            Some(CommandType::Builtin(BuiltinCommand::Task { kind })) => {
-                let message = match kind.as_str() {
-                    "coding" => {
-                        app.requested_task_kind = Some(fabric::TaskKind::Coding);
-                        "Task kind: coding"
-                    }
-                    "off" => {
-                        app.requested_task_kind = None;
-                        "Task kind: off"
-                    }
-                    _ => "用法: /task coding|off",
-                };
-                app.chat.add_text(ChatRole::System, message.to_string());
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Evaluation)) => {
-                if let Some(receipt) = app.app_state.latest_evaluation.as_ref() {
-                    app.chat.add_text(
-                        ChatRole::System,
-                        super::super::reducer::format_evaluation_receipt_ref(receipt),
-                    );
-                } else if let Some(session_id) = app.app_state.session_id.clone() {
-                    send_request(app, ClientRpcRequest::evaluation_latest(session_id, false)).await;
-                    app.chat.add_text(
-                        ChatRole::System,
-                        "Querying latest evaluation receipt...".to_string(),
-                    );
-                } else {
-                    app.chat.add_text(
-                        ChatRole::System,
-                        "No evaluation receipt is cached for this session.".to_string(),
-                    );
-                }
-                return;
-            }
             Some(CommandType::Builtin(BuiltinCommand::Profile)) => {
                 write_request(app, ClientRpcRequest::AgentProfileList).await;
                 app.chat
@@ -486,18 +381,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                     ChatRole::System,
                     format!("Switching agent profile to: {name}"),
                 );
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Computer { args })) => {
-                match super::super::computer::ComputerHostRequest::parse(&args) {
-                    Ok(request) => {
-                        send_request(app, ClientRpcRequest::HostComputer(request.0)).await;
-                    }
-                    Err(_) => app.chat.add_text(
-                        ChatRole::System,
-                        "用法: /computer <operation> [args...]".to_string(),
-                    ),
-                }
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Diff)) => {
@@ -653,103 +536,29 @@ fn base64_encode(input: &str) -> String {
 }
 
 #[cfg(test)]
-mod task_kind_tests {
-    use std::sync::Arc;
+mod governance_command_tests {
+    use super::super::super::command::CommandType;
+    use super::super::super::registry::CommandRegistry;
 
-    use tokio::io::{AsyncBufReadExt, BufReader};
-
-    use super::*;
-    use crate::tui::host_time::ClientClock;
-    use crate::tui::term_compat::TermCaps;
-
-    fn fixture_app() -> (App, tokio::net::UnixStream) {
-        let (stream, peer) = tokio::net::UnixStream::pair().unwrap();
-        let workspace =
-            fabric::WorkspacePolicy::from_resolved_roots("/tmp".into(), vec![]).unwrap();
-        let app = App::new(
-            stream,
-            TermCaps {
-                true_color: false,
-                unicode: false,
-                width: 80,
-                height: 24,
-            },
-            "test".into(),
-            Arc::new(ClientClock::new()),
-            workspace,
-            Vec::new(),
-        );
-        (app, peer)
-    }
-
-    #[tokio::test]
-    async fn task_slash_command_changes_only_typed_client_state() {
-        let (mut app, _peer) = fixture_app();
-
-        submit_message(&mut app, "/task coding".into()).await;
-        assert_eq!(app.requested_task_kind(), Some(fabric::TaskKind::Coding));
-
-        submit_message(&mut app, "/task off".into()).await;
-        assert_eq!(app.requested_task_kind(), None);
-    }
-
-    #[tokio::test]
-    async fn selected_task_kind_is_serialized_on_regular_chat() {
-        let (mut app, peer) = fixture_app();
-        submit_message(&mut app, "/task coding".into()).await;
-
-        submit_message(&mut app, "implement it".into()).await;
-
-        let mut reader = BufReader::new(peer);
-        let mut line = String::new();
-        reader.read_line(&mut line).await.unwrap();
-        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(request["params"]["task_kind"], "coding");
-    }
-
-    #[tokio::test]
-    async fn evaluation_command_renders_cached_receipt_without_rpc() {
-        let (mut app, _peer) = fixture_app();
-        app.app_state.latest_evaluation = Some(fabric::EvaluationReceiptRef {
-            schema_version: 1,
-            receipt_id: fabric::EvaluationReceiptId(uuid::Uuid::from_u128(2)),
-            contract_id: fabric::EvaluationContractId(uuid::Uuid::from_u128(3)),
-            subject_kind: "turn".into(),
-            subject_id: "turn-1".into(),
-            decision: fabric::EvaluationDecision::Accepted,
-            weighted_total_millis: Some(90_000),
-            evidence_coverage_millis: 950,
-            confidence_millis: 900,
-            failed_gates: Vec::new(),
-            created_at_ms: 1,
-        });
-
-        submit_message(&mut app, "/evaluation".into()).await;
-
-        assert_eq!(app.next_request_id, 1);
-        let last = app.chat.entries.last().expect("evaluation output");
-        let super::super::super::chat::ChatEntry::Text(message) = last else {
-            panic!("evaluation output should be text");
-        };
-        assert_eq!(message.role, ChatRole::System);
-        assert!(message.content.contains("decision=accepted"));
-        assert!(message.content.contains("score=90.0"));
-    }
-
-    #[tokio::test]
-    async fn evaluation_command_queries_latest_receipt_when_cache_is_empty() {
-        let (mut app, peer) = fixture_app();
-        app.app_state.session_id = Some("session-a".into());
-
-        submit_message(&mut app, "/evaluation".into()).await;
-
-        let mut reader = BufReader::new(peer);
-        let mut line = String::new();
-        reader.read_line(&mut line).await.unwrap();
-        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(request["method"], "evaluation.latest");
-        assert_eq!(request["params"]["session_id"], "session-a");
-        assert_eq!(app.next_request_id, 2);
-        assert!(app.pending_non_turn.contains(&1));
+    #[test]
+    fn internal_governance_text_has_no_tui_dispatch() {
+        let registry = CommandRegistry::new();
+        for command in [
+            "/reflect",
+            "/reflect_now",
+            "/evolution",
+            "/genome",
+            "/hooks",
+            "/task coding",
+            "/evaluation",
+            "/approve",
+            "/plan",
+            "/computer",
+        ] {
+            assert!(
+                matches!(registry.parse(command), Some(CommandType::Unknown { .. })),
+                "{command} still has a TUI dispatch path"
+            );
+        }
     }
 }

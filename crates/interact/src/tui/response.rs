@@ -103,6 +103,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             app.streaming = true;
             app.app_state.streaming = true;
             app.app_state.turn_tool_count = 0;
+            app.app_state.turn_activity = super::state::TurnActivity::default();
             app.turn_tokens = None;
             app.current_iteration = iteration;
         }
@@ -130,6 +131,7 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             let args_str = serde_json::to_string(&args).unwrap_or_default();
             app.chat.add_exec(call_id.clone(), tool.clone(), args_str);
             app.app_state.turn_tool_count += 1;
+            app.app_state.turn_activity.tool_calls += 1;
         }
         ClientEvent::ToolCallComplete {
             call_id,
@@ -154,6 +156,18 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
             }
             app.chat
                 .update_exec_with_delta(&call_id, &output, is_error, patch_delta);
+            if is_error {
+                if output.starts_with("Policy denied:")
+                    || output.starts_with("Policy guidance:")
+                    || output.contains("Policy denied")
+                {
+                    app.app_state.turn_activity.denied += 1;
+                } else {
+                    app.app_state.turn_activity.failed += 1;
+                }
+            } else {
+                app.app_state.turn_activity.succeeded += 1;
+            }
         }
         ClientEvent::ToolProgress {
             call_id, payload, ..
@@ -185,11 +199,10 @@ pub fn handle_event(app: &mut App, params: &serde_json::Value) {
                     .to_owned(),
             );
         }
-        ClientEvent::Usage {
-            tokens_in,
-            tokens_out,
-            ..
-        } => {
+        ClientEvent::Usage { usage } => {
+            app.app_state.turn_activity.inference_rounds += 1;
+            let tokens_in = usage.total_input_tokens.unwrap_or(0);
+            let tokens_out = usage.output_tokens.unwrap_or(0);
             app.turn_tokens = Some((tokens_in as u32, tokens_out as u32));
             app.total_tokens = app
                 .total_tokens
@@ -400,18 +413,6 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
             // Some models repeat thinking/reasoning text
             let deduped = deduplicate_consecutive_text(text);
             app.chat.set_assistant_stream(deduped);
-        } else if let Some(entries) = result.get("reflections") {
-            // /reflect response — format reflection entries
-            let formatted = format_reflections(entries);
-            app.chat.set_assistant_stream(formatted);
-        } else if let Some(genome) = result.get("genome") {
-            // /genome response — format genome JSON
-            let formatted = format_genome(genome);
-            app.chat.set_assistant_stream(formatted);
-        } else if let Some(evo) = result.get("evolution") {
-            // /evolution response — format evolution history
-            let formatted = format_evolution(evo);
-            app.chat.set_assistant_stream(formatted);
         } else if let Some(status) = result.get("status") {
             // /status response — rich self-evolution state
             let formatted = format_status(status);
@@ -423,10 +424,6 @@ pub fn process_response(app: &mut App, msg: serde_json::Value) {
         } else if let Some(_models) = result.get("models") {
             // /model response
             let formatted = format_models(result);
-            app.chat.set_assistant_stream(formatted);
-        } else if let Some(hooks) = result.get("hooks") {
-            // /hooks response
-            let formatted = format_hooks(hooks);
             app.chat.set_assistant_stream(formatted);
         } else if let Some(skills) = result.get("skills") {
             // Phase B: SkillsCatalog response — populate the command registry
@@ -685,121 +682,6 @@ pub fn deduplicate_consecutive_text(text: &str) -> String {
     text.to_string()
 }
 
-/// Format reflection entries for display.
-pub fn format_reflections(entries: &serde_json::Value) -> String {
-    let empty = vec![];
-    let arr = entries.as_array().unwrap_or(&empty);
-    if arr.is_empty() {
-        return "No reflections found.".to_string();
-    }
-    let mut lines = Vec::new();
-    lines.push(format!("=== Reflections ({}) ===\n", arr.len()));
-    for (i, entry) in arr.iter().enumerate() {
-        let _trigger = entry
-            .get("trigger")
-            .and_then(|v| {
-                if let Some(s) = v.as_str() {
-                    Some(s.to_string())
-                } else {
-                    serde_json::to_string(v).ok()
-                }
-            })
-            .unwrap_or_else(|| "unknown".to_string());
-        let task = entry
-            .get("task_summary")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let outcome = entry
-            .get("outcome")
-            .and_then(|v| {
-                if let Some(s) = v.as_str() {
-                    Some(s.to_string())
-                } else {
-                    serde_json::to_string(v).ok()
-                }
-            })
-            .unwrap_or_else(|| "unknown".to_string());
-        let confidence = entry
-            .get("confidence")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        let timestamp = entry
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        lines.push(format!(
-            "[{}] #{} {} ({}) conf={:.0}%",
-            timestamp,
-            i + 1,
-            task,
-            outcome,
-            confidence * 100.0
-        ));
-
-        if let Some(arr) = entry.get("learned").and_then(|v| v.as_array()) {
-            for l in arr {
-                if let Some(s) = l.as_str() {
-                    lines.push(format!("  learned: {s}"));
-                }
-            }
-        }
-        if let Some(arr) = entry.get("behavior_changes").and_then(|v| v.as_array()) {
-            for c in arr {
-                if let Some(s) = c.as_str() {
-                    lines.push(format!("  changed: {s}"));
-                }
-            }
-        }
-        if let Some(arr) = entry.get("what_worked").and_then(|v| v.as_array()) {
-            for w in arr {
-                if let Some(s) = w.as_str() {
-                    lines.push(format!("  worked: {s}"));
-                }
-            }
-        }
-        if let Some(arr) = entry.get("what_failed").and_then(|v| v.as_array()) {
-            for f in arr {
-                if let Some(s) = f.as_str() {
-                    lines.push(format!("  failed: {s}"));
-                }
-            }
-        }
-        lines.push(String::new());
-    }
-    lines.join("\n")
-}
-
-/// Format genome for display.
-pub fn format_genome(genome: &serde_json::Value) -> String {
-    if let Some(s) = genome.as_str() {
-        return s.to_string();
-    }
-    serde_json::to_string_pretty(genome).unwrap_or_else(|_| format!("{genome:?}"))
-}
-
-/// Format evolution history for display.
-pub fn format_evolution(evo: &serde_json::Value) -> String {
-    if let Some(s) = evo.as_str() {
-        return s.to_string();
-    }
-    if let Some(arr) = evo.as_array() {
-        if arr.is_empty() {
-            return "No evolution history found.".to_string();
-        }
-        let mut lines = Vec::new();
-        lines.push(format!("=== Evolution History ({}) ===\n", arr.len()));
-        for entry in arr {
-            lines
-                .push(serde_json::to_string_pretty(entry).unwrap_or_else(|_| format!("{entry:?}")));
-            lines.push(String::new());
-        }
-        return lines.join("\n");
-    }
-    // Handle object form with version/message fields
-    serde_json::to_string_pretty(evo).unwrap_or_else(|_| format!("{evo:?}"))
-}
-
 /// Format sessions list for display.
 pub fn format_sessions(sessions: &serde_json::Value) -> String {
     let empty = vec![];
@@ -978,26 +860,6 @@ pub fn format_status(status: &serde_json::Value) -> String {
     };
     lines.push(format!("Attention Focus: {focus_display}"));
 
-    lines.join("\n")
-}
-
-pub fn format_hooks(hooks: &serde_json::Value) -> String {
-    let empty = vec![];
-    let arr = hooks.as_array().unwrap_or(&empty);
-    if arr.is_empty() {
-        return "No hooks registered.".to_string();
-    }
-    let mut lines = Vec::new();
-    lines.push(format!("=== Hooks ({}) ===\n", arr.len()));
-    for h in arr {
-        let name = h.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-        let point = h.get("point").and_then(|v| v.as_str()).unwrap_or("?");
-        let source = h.get("source").and_then(|v| v.as_str()).unwrap_or("?");
-        let priority = h.get("priority").and_then(|v| v.as_i64()).unwrap_or(0);
-        lines.push(format!(
-            "  {name} [{point}] (priority: {priority}, source: {source})"
-        ));
-    }
     lines.join("\n")
 }
 

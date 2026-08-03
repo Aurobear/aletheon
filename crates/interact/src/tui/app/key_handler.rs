@@ -18,6 +18,17 @@ pub(crate) fn refresh_command_completion(app: &mut App) {
     }
 }
 
+fn accept_selected_completion(app: &mut App) -> bool {
+    let Some(selected) = app.completion.selected().map(ToOwned::to_owned) else {
+        return false;
+    };
+    app.input_buf = selected;
+    app.cursor = app.input_buf.len();
+    app.completion.hide();
+    app.check_cjk();
+    true
+}
+
 pub async fn handle_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
     use crossterm::event::MouseEventKind;
     match mouse.kind {
@@ -249,8 +260,21 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Ctrl+B: toggle last tool card (find last ExecEntry in chat history)
+    // Alt+Up/Down: navigate the complete tool activity timeline.
+    if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Up {
+        app.chat.select_previous_exec();
+        return;
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Down {
+        app.chat.select_next_exec();
+        return;
+    }
+
+    // Ctrl+B: toggle selected tool card, falling back to the last card.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
+        if app.chat.toggle_selected_exec() {
+            return;
+        }
         // Iterate entries in reverse, find the last ExecEntry and toggle it
         let call_id = {
             let mut found = None;
@@ -365,11 +389,21 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     match key.code {
-        // Tab: trigger completion for slash commands
+        // Tab: accept the selected slash-command completion.
         KeyCode::Tab => {
             if app.input_buf.starts_with('/') {
                 app.completion
                     .show_commands(&app.input_buf, &app.registry, app.turn_active);
+                accept_selected_completion(app);
+            }
+        }
+
+        // Shift+Tab: move backward without accepting so users can inspect options.
+        KeyCode::BackTab => {
+            if app.input_buf.starts_with('/') {
+                app.completion
+                    .show_commands(&app.input_buf, &app.registry, app.turn_active);
+                app.completion.prev();
             }
         }
 
@@ -377,15 +411,10 @@ pub async fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             // Accept completion if visible
             if app.completion.visible {
-                if let Some(selected) = app.completion.selected() {
-                    if selected != app.input_buf {
-                        app.input_buf = selected.to_string();
-                        app.cursor = app.input_buf.len();
-                        app.completion.hide();
-                        return;
-                    }
-                    app.completion.hide();
+                if accept_selected_completion(app) {
+                    return;
                 }
+                app.completion.hide();
             }
 
             // Shift+Enter or Alt+Enter → newline
@@ -562,6 +591,12 @@ mod tests {
         app
     }
 
+    async fn idle_app() -> App {
+        let mut app = streaming_app().await;
+        app.streaming = false;
+        app
+    }
+
     fn ctrl_c() -> KeyEvent {
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
     }
@@ -584,5 +619,19 @@ mod tests {
         handle_key(&mut app, ctrl_c()).await;
 
         assert!(!app.running);
+    }
+
+    #[tokio::test]
+    async fn tab_accepts_selected_slash_command_completion() {
+        let mut app = idle_app().await;
+        app.input_buf = "/mem".to_string();
+        app.cursor = app.input_buf.len();
+        refresh_command_completion(&mut app);
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Tab)).await;
+
+        assert_eq!(app.input_buf, "/memory");
+        assert_eq!(app.cursor, app.input_buf.len());
+        assert!(!app.completion.visible);
     }
 }

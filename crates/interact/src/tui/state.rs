@@ -92,6 +92,16 @@ pub struct UiItem {
     pub collapsed: bool,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TurnActivity {
+    pub inference_rounds: usize,
+    pub provider_retries: usize,
+    pub tool_calls: usize,
+    pub succeeded: usize,
+    pub denied: usize,
+    pub failed: usize,
+}
+
 impl UiItem {
     pub fn streaming(id: String) -> Self {
         Self {
@@ -120,6 +130,8 @@ pub struct AppState {
     pub total_tokens: u32,
     /// Tools used in current turn.
     pub turn_tool_count: usize,
+    /// Authoritative per-turn activity counters; never inferred from prose.
+    pub turn_activity: TurnActivity,
     /// Whether currently streaming a response.
     pub streaming: bool,
     /// Whether a turn is active (between turn_start and turn_done).
@@ -152,6 +164,7 @@ impl Default for AppState {
             model_name: "unknown".to_string(),
             total_tokens: 0,
             turn_tool_count: 0,
+            turn_activity: TurnActivity::default(),
             streaming: false,
             turn_active: false,
             current_iteration: 0,

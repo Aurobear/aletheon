@@ -355,8 +355,8 @@ async fn no_orphan_tasks_after_cancel_and_drain() {
 async fn deadline_exceeded_sets_operation_to_cancelled() {
     use async_trait::async_trait;
     use fabric::{
-        CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
-        Message, RecallRequest, RecallSet, StopReason, ToolDefinition, TurnServices, Usage,
+        CapabilityCall, CapabilityResult, ContentBlock, InferenceUsage, LlmProvider, LlmResponse,
+        LlmStream, Message, RecallRequest, RecallSet, StopReason, ToolDefinition, TurnServices,
     };
 
     /// LLM that hangs for `hang_ms` ms, simulating a long-running model call.
@@ -375,9 +375,7 @@ async fn deadline_exceeded_sets_operation_to_cancelled() {
             Ok(LlmResponse {
                 content: vec![ContentBlock::Text { text: "ok".into() }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
         async fn complete_stream(

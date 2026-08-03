@@ -9,8 +9,8 @@ use executive::host::legacy_session::{
 use executive::runtime::session::canonical_store::CanonicalSessionStore;
 use executive::runtime::session::store::SessionStore;
 use fabric::{
-    Clock, ContentBlock, LlmProvider, LlmResponse, LlmStream, Message, SessionAppendStore,
-    SessionId, StopReason, ToolDefinition, Usage,
+    Clock, ContentBlock, InferenceUsage, LlmProvider, LlmResponse, LlmStream, Message,
+    SessionAppendStore, SessionId, StopReason, ToolDefinition,
 };
 use kernel::chronos::TestClock;
 use tokio::sync::Mutex;
@@ -42,9 +42,7 @@ impl LlmProvider for SummaryLlm {
                 .join("\n\n"),
             }],
             stop_reason: StopReason::EndTurn,
-            usage: Usage::default(),
-            cache_hit_tokens: 0,
-            cache_miss_tokens: 0,
+            usage: InferenceUsage::default(),
         })
     }
 

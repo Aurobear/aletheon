@@ -11,6 +11,7 @@ pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
     proposal_confidences: HashMap<String, f32>,
     id_map: HashMap<RegistrationId, String>,
+    package_tool_owners: HashMap<String, String>,
     next_id: u64,
     search_catalog: Option<Arc<RwLock<BM25Catalog>>>,
 }
@@ -21,6 +22,7 @@ impl ToolRegistry {
             tools: HashMap::new(),
             proposal_confidences: HashMap::new(),
             id_map: HashMap::new(),
+            package_tool_owners: HashMap::new(),
             next_id: 1,
             search_catalog: None,
         }
@@ -35,9 +37,162 @@ impl ToolRegistry {
         self.tools.keys().map(|s| s.as_str()).collect()
     }
 
+    /// Atomically replace every tool owned by one extension package.
+    pub fn replace_package_tools(
+        &mut self,
+        owner: &str,
+        tools: Vec<Arc<dyn Tool>>,
+    ) -> Result<(), AgentError> {
+        self.replace_package_tool_sets(&[owner.to_owned()], vec![(owner.to_owned(), tools)])
+    }
+
+    /// Atomically replace a set of package owners while preserving built-ins,
+    /// legacy tools, and package owners outside the supplied replacement set.
+    pub fn replace_package_tool_sets(
+        &mut self,
+        replaced_owners: &[String],
+        replacements: Vec<(String, Vec<Arc<dyn Tool>>)>,
+    ) -> Result<(), AgentError> {
+        self.validate_package_tool_sets(replaced_owners, &replacements)?;
+        let replaced: std::collections::HashSet<_> = replaced_owners.iter().cloned().collect();
+        let mut incoming = HashMap::<String, (String, Arc<dyn Tool>)>::new();
+        for (owner, tools) in replacements {
+            for tool in tools {
+                let name = tool.name().to_owned();
+                incoming.insert(name, (owner.clone(), tool));
+            }
+        }
+
+        let removed_names: Vec<_> = self
+            .package_tool_owners
+            .iter()
+            .filter(|(_, owner)| replaced.contains(*owner))
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in removed_names {
+            self.tools.remove(&name);
+            self.proposal_confidences.remove(&name);
+            self.package_tool_owners.remove(&name);
+            self.id_map
+                .retain(|_, registered_name| registered_name != &name);
+        }
+
+        for (name, (owner, tool)) in incoming {
+            let id = RegistrationId(self.next_id);
+            self.next_id += 1;
+            self.id_map.insert(id, name.clone());
+            self.package_tool_owners.insert(name.clone(), owner);
+            self.tools.insert(name.clone(), tool);
+            // Package tools are admitted by the host's extension validator, so
+            // they receive the same conservative host-authored planning baseline
+            // as built-ins. This metadata is never supplied by the package.
+            self.proposal_confidences.insert(name, 0.5);
+        }
+        self.refresh_search_catalog();
+        Ok(())
+    }
+
+    pub fn validate_package_tool_sets(
+        &self,
+        replaced_owners: &[String],
+        replacements: &[(String, Vec<Arc<dyn Tool>>)],
+    ) -> Result<(), AgentError> {
+        let replaced: std::collections::HashSet<_> = replaced_owners.iter().cloned().collect();
+        if replaced.iter().any(|owner| owner.trim().is_empty()) {
+            return Err(AgentError::config_missing(
+                "package tool owner cannot be empty",
+            ));
+        }
+        let mut incoming = std::collections::HashSet::new();
+        for (owner, tools) in replacements {
+            if !replaced.contains(owner) {
+                return Err(AgentError::config_missing(&format!(
+                    "package tool replacement owner '{owner}' is outside its replacement set"
+                )));
+            }
+            for tool in tools {
+                let name = tool.name();
+                if name.trim().is_empty() {
+                    return Err(AgentError::config_missing(
+                        "package tool name cannot be empty",
+                    ));
+                }
+                if !incoming.insert(name.to_owned()) {
+                    return Err(AgentError::already_exists(name));
+                }
+                if self.tools.contains_key(name)
+                    && self
+                        .package_tool_owners
+                        .get(name)
+                        .is_none_or(|registered_owner| !replaced.contains(registered_owner))
+                {
+                    return Err(AgentError::already_exists(name));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Compile the definitions that would be visible after an atomic package
+    /// replacement, without mutating the live registry. Profiles are validated
+    /// against this candidate catalog so removed capabilities cannot linger.
+    pub fn candidate_package_definitions(
+        &self,
+        replaced_owners: &[String],
+        replacements: &[(String, Vec<Arc<dyn Tool>>)],
+    ) -> Result<(Vec<fabric::ToolDefinition>, Vec<fabric::ToolDefinition>), AgentError> {
+        self.validate_package_tool_sets(replaced_owners, replacements)?;
+        let replaced = replaced_owners
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        let retained = self.tools.iter().filter(|(name, _)| {
+            self.package_tool_owners
+                .get(*name)
+                .is_none_or(|owner| !replaced.contains(owner))
+        });
+        let incoming = replacements
+            .iter()
+            .flat_map(|(_, tools)| tools.iter().map(|tool| (tool.name(), tool.as_ref())));
+        let all = retained
+            .map(|(_, tool)| (tool.name(), tool.as_ref()))
+            .chain(incoming)
+            .collect::<Vec<_>>();
+        let mut visible = all
+            .iter()
+            .filter(|(_, tool)| {
+                matches!(
+                    tool.exposure(),
+                    ToolExposure::Direct | ToolExposure::DirectModelOnly
+                )
+            })
+            .map(|(name, tool)| fabric::ToolDefinition {
+                name: (*name).to_owned(),
+                description: tool.description().to_owned(),
+                input_schema: tool.input_schema(),
+            })
+            .collect::<Vec<_>>();
+        let mut authorized = all
+            .iter()
+            .filter(|(_, tool)| tool.exposure() != ToolExposure::Hidden)
+            .map(|(name, tool)| fabric::ToolDefinition {
+                name: (*name).to_owned(),
+                description: tool.description().to_owned(),
+                input_schema: tool.input_schema(),
+            })
+            .collect::<Vec<_>>();
+        visible.sort_by(|left, right| left.name.cmp(&right.name));
+        authorized.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok((visible, authorized))
+    }
+
+    pub fn remove_package_tools(&mut self, owner: &str) -> Result<(), AgentError> {
+        self.replace_package_tool_sets(&[owner.to_owned()], Vec::new())
+    }
+
     /// Get tool definitions for LLM (name, description, schema).
     pub fn definitions(&self) -> Vec<fabric::ToolDefinition> {
-        self.tools
+        let mut definitions: Vec<_> = self
+            .tools
             .values()
             .filter(|tool| {
                 matches!(
@@ -50,14 +205,17 @@ impl ToolRegistry {
                 description: t.description().to_string(),
                 input_schema: t.input_schema(),
             })
-            .collect()
+            .collect();
+        definitions.sort_by(|left, right| left.name.cmp(&right.name));
+        definitions
     }
 
     /// Snapshot every executable tool for host-side authorization and profile
     /// validation. Unlike [`Self::definitions`], this includes deferred tools;
     /// callers must not pass this catalog wholesale to a model request.
     pub fn profile_definitions(&self) -> Vec<fabric::ToolDefinition> {
-        self.tools
+        let mut definitions: Vec<_> = self
+            .tools
             .values()
             .filter(|tool| tool.exposure() != ToolExposure::Hidden)
             .map(|tool| fabric::ToolDefinition {
@@ -65,7 +223,9 @@ impl ToolRegistry {
                 description: tool.description().to_string(),
                 input_schema: tool.input_schema(),
             })
-            .collect()
+            .collect();
+        definitions.sort_by(|left, right| left.name.cmp(&right.name));
+        definitions
     }
 
     /// Bind the existing BM25 catalog to this registry and expose its single
@@ -581,6 +741,53 @@ mod tests {
         let err = result.unwrap_err();
         assert!(err.message.contains("dup_tool"));
         assert!(err.message.contains("already registered"));
+    }
+
+    #[test]
+    fn package_tool_replacement_is_owner_scoped_and_protects_builtins() {
+        let mut reg = ToolRegistry::new();
+        Registry::<Arc<dyn Tool>>::register(&mut reg, Arc::new(MockTool::new("builtin"))).unwrap();
+        reg.replace_package_tools("pkg.one", vec![Arc::new(MockTool::new("pkg_tool"))])
+            .unwrap();
+        assert!(reg.contains("builtin"));
+        assert!(reg.contains("pkg_tool"));
+        assert_eq!(reg.proposal_confidences()["pkg_tool"], 0.5);
+
+        reg.replace_package_tools("pkg.one", vec![Arc::new(MockTool::new("replacement"))])
+            .unwrap();
+        assert!(reg.contains("builtin"));
+        assert!(!reg.contains("pkg_tool"));
+        assert!(reg.contains("replacement"));
+        assert!(!reg.proposal_confidences().contains_key("pkg_tool"));
+        assert_eq!(reg.proposal_confidences()["replacement"], 0.5);
+
+        let collision =
+            reg.replace_package_tools("pkg.one", vec![Arc::new(MockTool::new("builtin"))]);
+        assert!(collision.is_err());
+        assert!(reg.contains("replacement"));
+        reg.remove_package_tools("pkg.one").unwrap();
+        assert!(reg.contains("builtin"));
+        assert!(!reg.contains("replacement"));
+    }
+
+    #[test]
+    fn definition_snapshots_are_sorted_by_name() {
+        let mut reg = ToolRegistry::new();
+        for name in ["zeta", "alpha", "middle"] {
+            Registry::<Arc<dyn Tool>>::register(&mut reg, Arc::new(MockTool::new(name))).unwrap();
+        }
+
+        let names = |definitions: Vec<fabric::ToolDefinition>| {
+            definitions
+                .into_iter()
+                .map(|definition| definition.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(reg.definitions()), ["alpha", "middle", "zeta"]);
+        assert_eq!(
+            names(reg.profile_definitions()),
+            ["alpha", "middle", "zeta"]
+        );
     }
 
     #[test]

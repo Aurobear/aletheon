@@ -1,8 +1,8 @@
 [agent]
 # Compiled defaults — override in /etc/aletheon, ~/.aletheon, or project config.
 # default_provider and default_model match the first configured provider below.
-default_provider = "leju"
-default_model = "deepseek/deepseek-v4-pro"
+default_provider = "lejurobot_deepseek"
+default_model = "deepseek/deepseek-v4-flash[1m]"
 # Bound cumulative provider/tool rounds for every top-level turn. Set 0 only in
 # an explicitly reviewed override when another authoritative budget is present.
 max_iterations = 50
@@ -40,18 +40,26 @@ default = "general-agent"
 # At least one provider is required for the daemon to start.
 # Fill in api_key (or set it via your local override config), then run the daemon.
 [[providers]]
-name = "leju"
+name = "lejurobot_deepseek"
 base_url = "https://aiapi.lejurobot.com"
 api_key = ""
 transport = "openai"
-models = ["deepseek/deepseek-v4-pro"]
-max_context_length = 1000000
+models = ["deepseek/deepseek-v4-flash[1m]"]
 
 [providers.backpressure]
 # This account is governed by a rolling request-rate limit. Coordinate request
 # starts in the machine core so sessions, role children, and embedding work do
 # not independently burst the same endpoint/model.
 min_request_interval_ms = 15000
+
+# Official DeepSeek endpoint. Its unprefixed model IDs are distinct from the
+# LejuRobot proxy namespace above. Set DEEPSEEK_API_KEY to select this provider.
+[[providers]]
+name = "deepseek"
+base_url = "https://api.deepseek.com"
+api_key = ""
+transport = "openai"
+models = ["deepseek-v4-flash[1m]", "deepseek-v4-pro[1m]"]
 
 # Optional local/offline fallback provider.
 # The LLM scheduler fails over to the next configured provider when the primary
@@ -66,6 +74,8 @@ min_request_interval_ms = 15000
 # api_key = "ollama"           # placeholder — Ollama ignores it
 # transport = "openai"
 # models = ["qwen2.5-coder"]
+# Unknown/private models must declare max_context_length explicitly; common
+# models resolve it from crates/cognit/resources/model_catalog.json.
 # max_context_length = 32768
 
 [sandbox]

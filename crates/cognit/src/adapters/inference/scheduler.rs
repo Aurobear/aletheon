@@ -416,7 +416,7 @@ impl LlmScheduler {
 
 #[cfg(test)]
 mod tests {
-    use super::super::provider::{LlmResponse, LlmStream, StopReason, Usage};
+    use super::super::provider::{InferenceUsage, LlmResponse, LlmStream, StopReason};
     use super::*;
     use fabric::message::ContentBlock;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -511,9 +511,7 @@ mod tests {
                     text: format!("ok-{}", self.name),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
         async fn complete_stream(

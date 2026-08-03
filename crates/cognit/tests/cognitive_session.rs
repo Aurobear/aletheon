@@ -4,9 +4,9 @@ use cognit::harness::{
     HarnessConfig, LinearCognitiveSession,
 };
 use fabric::{
-    CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
-    NoopTurnEventSink, OperationId, ProcessId, StopReason, StubTurnServices, ToolDefinition,
-    TurnRequest, TurnServices, TurnStop, Usage,
+    CapabilityCall, CapabilityResult, ContentBlock, InferenceUsage, LlmProvider, LlmResponse,
+    LlmStream, NoopTurnEventSink, OperationId, ProcessId, StopReason, StubTurnServices,
+    ToolDefinition, TurnRequest, TurnServices, TurnStop,
 };
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -123,9 +123,7 @@ impl LlmProvider for ScriptedLlm {
                     input: serde_json::json!({"text": "hi"}),
                 }],
                 stop_reason: StopReason::ToolUse,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         } else {
             Ok(LlmResponse {
@@ -133,9 +131,7 @@ impl LlmProvider for ScriptedLlm {
                     text: "done: hi".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
     }
@@ -318,9 +314,7 @@ async fn streaming_session_keeps_thinking_out_of_visible_and_final_text() {
             },
         ],
         stop_reason: StopReason::EndTurn,
-        usage: Usage::default(),
-        cache_hit_tokens: 0,
-        cache_miss_tokens: 0,
+        usage: InferenceUsage::default(),
     });
     let services = StreamingServices { llm };
     let stream = RecordingStream::default();
@@ -500,9 +494,7 @@ async fn terminal_validation_satisfies_enforced_coding_contract() {
             input: serde_json::json!({}),
         }],
         stop_reason: StopReason::ToolUse,
-        usage: Usage::default(),
-        cache_hit_tokens: 0,
-        cache_miss_tokens: 0,
+        usage: InferenceUsage::default(),
     });
     llm.push_text_response("verified change", StopReason::EndTurn);
     let services = CodingContractServices {
@@ -769,9 +761,7 @@ async fn tool_interjection_is_injected_only_after_tool_result_is_absorbed() {
             input: serde_json::json!({}),
         }],
         stop_reason: StopReason::ToolUse,
-        usage: Usage::default(),
-        cache_hit_tokens: 0,
-        cache_miss_tokens: 0,
+        usage: InferenceUsage::default(),
     });
     llm.push_text_response("final", StopReason::EndTurn);
     let services = InterjectingServices {

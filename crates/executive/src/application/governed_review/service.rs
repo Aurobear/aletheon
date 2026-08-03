@@ -384,8 +384,8 @@ impl GovernedReviewService {
             Ok(Ok(response)) => response,
         };
         let usage = ReviewUsage {
-            input_tokens: response.usage.input_tokens.into(),
-            output_tokens: response.usage.output_tokens.into(),
+            input_tokens: response.usage.total_input_tokens.unwrap_or(0),
+            output_tokens: response.usage.output_tokens.unwrap_or(0),
             inference_requests: 1,
             elapsed_ms: u64::try_from(before.elapsed().as_millis()).unwrap_or(u64::MAX),
         };

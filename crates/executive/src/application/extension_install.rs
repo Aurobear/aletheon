@@ -34,6 +34,11 @@ impl ExtensionInstallService {
 
     /// Inspect a package without installing.
     pub fn inspect(&self, package_path: &Path) -> Result<inspector::InspectionResult> {
+        Self::inspect_archive(package_path)
+    }
+
+    /// Read-only package inspection that does not open or initialize a store.
+    pub fn inspect_archive(package_path: &Path) -> Result<inspector::InspectionResult> {
         inspector::inspect_package(package_path)
     }
 

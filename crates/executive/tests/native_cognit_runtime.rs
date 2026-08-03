@@ -18,9 +18,9 @@ use fabric::cognitive_workflow::{
 use fabric::{
     AgentApprovalPolicy, AgentBudget, AgentContextFork, AgentControlErrorKind, AgentHandle,
     AgentId, AgentMessageKind, AgentMessagePayload, AgentProfile, AgentProfileId,
-    AgentSpawnRequest, CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse,
-    LlmStream, OperationId, ParentRestriction, ProcessId, RiskTier, RuntimeId, StopReason,
-    ToolDefinition, Usage, AGENT_MESSAGE_SCHEMA_V1,
+    AgentSpawnRequest, CapabilityCall, CapabilityResult, ContentBlock, InferenceUsage, LlmProvider,
+    LlmResponse, LlmStream, OperationId, ParentRestriction, ProcessId, RiskTier, RuntimeId,
+    StopReason, ToolDefinition, AGENT_MESSAGE_SCHEMA_V1,
 };
 use kernel::chronos::TestClock;
 use tokio_util::sync::CancellationToken;
@@ -149,12 +149,7 @@ fn response(content: Vec<ContentBlock>, stop_reason: StopReason) -> anyhow::Resu
     Ok(LlmResponse {
         content,
         stop_reason,
-        usage: Usage {
-            input_tokens: 10,
-            output_tokens: 4,
-        },
-        cache_hit_tokens: 0,
-        cache_miss_tokens: 0,
+        usage: InferenceUsage::unsupported(Some(10), Some(4)),
     })
 }
 

@@ -82,13 +82,17 @@ pub struct RegisteredHook {
     pub point: HookPoint,
     /// Execution priority (lower = earlier).
     pub priority: i32,
+    /// Optional package-declared execution timeout in milliseconds.
+    pub timeout_ms: Option<u64>,
 }
 
 /// Registry of lifecycle hooks.
 pub struct HookRegistry {
     hooks: HashMap<HookPoint, Vec<RegisteredHook>>,
+    package_hook_owners: HashMap<String, String>,
     clock: Arc<dyn Clock>,
     event_bus: Option<Arc<fabric::CanonicalEventBus>>,
+    event_spine: Option<Arc<dyn fabric::EventSpine>>,
     execution_timeout: Duration,
 }
 
@@ -106,8 +110,10 @@ impl HookRegistry {
     pub fn new(clock: Arc<dyn Clock>) -> Self {
         Self {
             hooks: HashMap::new(),
+            package_hook_owners: HashMap::new(),
             clock,
             event_bus: None,
+            event_spine: None,
             execution_timeout: Duration::from_secs(30),
         }
     }
@@ -117,11 +123,54 @@ impl HookRegistry {
         self
     }
 
+    /// Attach the durable event spine used for terminal Hook receipts.
+    pub fn with_event_spine(mut self, event_spine: Option<Arc<dyn fabric::EventSpine>>) -> Self {
+        self.event_spine = event_spine;
+        self
+    }
+
+    /// Attach or replace the durable event spine after composition completes.
+    pub fn set_event_spine(&mut self, event_spine: Option<Arc<dyn fabric::EventSpine>>) {
+        self.event_spine = event_spine;
+    }
+
     /// Register a hook. Hooks are kept sorted by priority.
     pub fn register(&mut self, hook: RegisteredHook) {
         let entry = self.hooks.entry(hook.point).or_default();
         entry.push(hook);
         entry.sort_by_key(|h| h.priority);
+    }
+
+    /// Replace only hooks owned by the named extension package.
+    pub fn replace_package_hooks(&mut self, owner: &str, mut hooks: Vec<RegisteredHook>) {
+        self.remove_package_hooks(owner);
+        for hook in &mut hooks {
+            hook.source = format!("package:{owner}");
+            self.package_hook_owners
+                .insert(hook.name.clone(), owner.to_owned());
+        }
+        for hook in hooks {
+            self.register(hook);
+        }
+    }
+
+    /// Remove package-owned hooks without affecting built-in, configured, or
+    /// legacy hooks that happen to share the same source conventions.
+    pub fn remove_package_hooks(&mut self, owner: &str) {
+        let names: std::collections::HashSet<_> = self
+            .package_hook_owners
+            .iter()
+            .filter(|(_, registered_owner)| registered_owner.as_str() == owner)
+            .map(|(name, _)| name.clone())
+            .collect();
+        if names.is_empty() {
+            return;
+        }
+        for hooks in self.hooks.values_mut() {
+            hooks.retain(|hook| !names.contains(&hook.name));
+        }
+        self.package_hook_owners
+            .retain(|_, registered_owner| registered_owner != owner);
     }
 
     /// List all registered hooks.
@@ -138,6 +187,9 @@ impl HookRegistry {
             if hooks.len() < before {
                 removed = true;
             }
+        }
+        if removed {
+            self.package_hook_owners.remove(name);
         }
         removed
     }
@@ -213,8 +265,12 @@ impl HookRegistry {
         let script = match hook.script_path {
             Some(ref s) => s,
             None => {
-                record_hook_metric(&hook.name, started.elapsed(), false, false);
-                return HookResult::Continue;
+                let elapsed = started.elapsed();
+                let result = HookResult::Continue;
+                record_hook_metric(&hook.name, elapsed, false, false);
+                self.publish_terminal_receipt(hook, ctx, "succeeded", &result, elapsed)
+                    .await;
+                return result;
             }
         };
 
@@ -237,8 +293,12 @@ impl HookRegistry {
                     )
                     .await;
             }
-            record_hook_metric(&hook.name, started.elapsed(), false, true);
-            return HookResult::Continue;
+            let elapsed = started.elapsed();
+            let result = HookResult::Continue;
+            record_hook_metric(&hook.name, elapsed, false, true);
+            self.publish_terminal_receipt(hook, ctx, "restricted", &result, elapsed)
+                .await;
+            return result;
         }
 
         let ctx_json = hook_envelope_json(ctx, self.clock.wall_now().0);
@@ -255,11 +315,15 @@ impl HookRegistry {
             Ok(c) => c,
             Err(e) => {
                 warn!(hook = %hook.name, error = %e, "Hook spawn failed");
-                record_hook_metric(&hook.name, started.elapsed(), true, false);
-                return Self::execution_failure(
+                let elapsed = started.elapsed();
+                let result = Self::execution_failure(
                     &ctx.point,
                     format!("hook '{}' could not start", hook.name),
                 );
+                record_hook_metric(&hook.name, elapsed, true, false);
+                self.publish_terminal_receipt(hook, ctx, "failed", &result, elapsed)
+                    .await;
+                return result;
             }
         };
 
@@ -272,8 +336,12 @@ impl HookRegistry {
         // Collect both output pipes while the child runs. Waiting before reading
         // can deadlock a hook that fills an OS pipe. `kill_on_drop` guarantees
         // that cancelling the timed future also terminates the child.
+        let execution_timeout = hook
+            .timeout_ms
+            .map(Duration::from_millis)
+            .unwrap_or(self.execution_timeout);
         let deadline =
-            kernel::chronos::SystemTimer.timeout(self.execution_timeout, child.wait_with_output());
+            kernel::chronos::SystemTimer.timeout(execution_timeout, child.wait_with_output());
 
         match deadline.await {
             Ok(Ok(output)) => {
@@ -281,25 +349,102 @@ impl HookRegistry {
                 if failed {
                     warn!(hook = %hook.name, status = ?output.status, "Hook exited unsuccessfully");
                 }
-                record_hook_metric(&hook.name, started.elapsed(), failed, false);
-                parse_hook_output(&output.stdout)
+                let elapsed = started.elapsed();
+                let result = parse_hook_output(&output.stdout);
+                record_hook_metric(&hook.name, elapsed, failed, false);
+                self.publish_terminal_receipt(
+                    hook,
+                    ctx,
+                    if failed { "failed" } else { "succeeded" },
+                    &result,
+                    elapsed,
+                )
+                .await;
+                result
             }
             Ok(Err(e)) => {
                 warn!(hook = %hook.name, error = %e, "Hook execution failed");
-                record_hook_metric(&hook.name, started.elapsed(), true, false);
-                Self::execution_failure(
+                let elapsed = started.elapsed();
+                let result = Self::execution_failure(
                     &ctx.point,
                     format!("hook '{}' execution failed", hook.name),
-                )
+                );
+                record_hook_metric(&hook.name, elapsed, true, false);
+                self.publish_terminal_receipt(hook, ctx, "failed", &result, elapsed)
+                    .await;
+                result
             }
             Err(_) => {
-                warn!(hook = %hook.name, "Hook execution timed out after 30s");
-                record_hook_metric(&hook.name, started.elapsed(), true, false);
-                Self::execution_failure(
+                warn!(hook = %hook.name, timeout_ms = execution_timeout.as_millis(), "Hook execution timed out");
+                let elapsed = started.elapsed();
+                let result = Self::execution_failure(
                     &ctx.point,
                     format!("hook '{}' execution timed out", hook.name),
-                )
+                );
+                record_hook_metric(&hook.name, elapsed, true, false);
+                self.publish_terminal_receipt(hook, ctx, "failed", &result, elapsed)
+                    .await;
+                result
             }
+        }
+    }
+
+    async fn publish_terminal_receipt(
+        &self,
+        hook: &RegisteredHook,
+        ctx: &HookContext,
+        status: &str,
+        result: &HookResult,
+        elapsed: Duration,
+    ) {
+        if self.event_bus.is_none() && self.event_spine.is_none() {
+            return;
+        }
+        let result_kind = match result {
+            HookResult::Continue => "continue",
+            HookResult::Block { .. } => "block",
+            HookResult::ModifyInput(_) => "modify_input",
+            HookResult::Inject(_) => "inject",
+        };
+        let payload = serde_json::json!({
+            "hook": hook.name,
+            "source": hook.source,
+            "hook_event_name": ctx.point.event_name(),
+            "session_id": ctx.session_id,
+            "turn_count": ctx.turn_count,
+            "status": status,
+            "result_kind": result_kind,
+            "elapsed_micros": elapsed.as_micros().try_into().unwrap_or(u64::MAX),
+        });
+        let event_id = fabric::EventId::new();
+        let mut envelope = fabric::EnvelopeV2::new(
+            fabric::SchemaId::from("aletheon.event.hook_completed/v1"),
+            fabric::EnvelopeV2Target(format!("session:{}", ctx.session_id)),
+            fabric::EnvelopeV2Target("broadcast".into()),
+            fabric::EnvelopeV2Delivery::FanOut,
+            fabric::NamespaceId("default".into()),
+            payload.clone(),
+        );
+        envelope.id = fabric::MessageId(event_id.0);
+        if let Some(spine) = &self.event_spine {
+            let _ = spine.append(fabric::UnsequencedEvent {
+                tree_id: fabric::EventTreeId::for_root_session(&ctx.session_id),
+                event_id,
+                parent: None,
+                identity: fabric::EventIdentity {
+                    root_session_id: ctx.session_id.clone(),
+                    session_id: ctx.session_id.clone(),
+                    agent_id: None,
+                },
+                envelope: envelope.clone(),
+                visibility: fabric::EventVisibility::Control,
+                payload: fabric::EventPayload::Inline {
+                    value: payload.clone(),
+                },
+            });
+        }
+        if let Some(bus) = &self.event_bus {
+            let _ = bus.publish(envelope).await;
         }
     }
 }
@@ -426,6 +571,36 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    #[derive(Default)]
+    struct RecordingSpine(Mutex<Vec<fabric::UnsequencedEvent>>);
+
+    impl fabric::EventSpine for RecordingSpine {
+        fn append(&self, event: fabric::UnsequencedEvent) -> anyhow::Result<fabric::SpineEvent> {
+            event.validate()?;
+            let sequence = {
+                let mut events = self
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                events.push(event.clone());
+                events.len() as u64
+            };
+            Ok(fabric::SpineEvent {
+                position: fabric::EventPosition {
+                    tree_id: event.tree_id,
+                    event_id: event.event_id,
+                    parent: event.parent,
+                    sequence: fabric::TreeSequence(sequence),
+                },
+                identity: event.identity,
+                schema: event.envelope.schema.clone(),
+                visibility: event.visibility,
+                envelope: event.envelope,
+                payload: event.payload,
+            })
+        }
+    }
+
     fn make_hook(name: &str, point: HookPoint, priority: i32) -> RegisteredHook {
         RegisteredHook {
             name: name.into(),
@@ -433,6 +608,7 @@ mod tests {
             script_path: None,
             point,
             priority,
+            timeout_ms: None,
         }
     }
 
@@ -510,6 +686,7 @@ mod tests {
             script_path: Some(script.clone()),
             point: HookPoint::PreTool,
             priority: 0,
+            timeout_ms: None,
         };
         assert!(is_restricted_repo_hook(&hook, &script, &context));
 
@@ -538,6 +715,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PreTool,
             priority: 0,
+            timeout_ms: None,
         });
         let context = HookContext {
             point: HookPoint::PreTool,
@@ -560,6 +738,47 @@ mod tests {
         let receipt = receipts.recv().await.unwrap();
         assert_eq!(receipt.source.0, "session:session-a");
         assert_eq!(receipt.payload["reason"], "untrusted_repository_hook");
+    }
+
+    #[tokio::test]
+    async fn completed_hook_emits_broadcast_and_durable_terminal_receipt() {
+        let bus = Arc::new(fabric::CanonicalEventBus::new(8));
+        let mut receipts =
+            bus.subscribe_channel(fabric::SchemaId::from("aletheon.event.hook_completed/v1"));
+        let spine = Arc::new(RecordingSpine::default());
+        let mut registry = HookRegistry::default()
+            .with_event_bus(Some(bus))
+            .with_event_spine(Some(spine.clone()));
+        registry.register(make_hook("package:post-turn", HookPoint::PostTurn, 0));
+        let context = HookContext {
+            point: HookPoint::PostTurn,
+            session_id: "session-a".into(),
+            turn_count: 3,
+            tool_name: None,
+            tool_input: None,
+            tool_result: None,
+            message: None,
+            metadata: HashMap::new(),
+        };
+
+        assert!(matches!(
+            registry.execute(&context).await,
+            HookResult::Continue
+        ));
+        let receipt = receipts.recv().await.unwrap();
+        assert_eq!(receipt.payload["hook"], "package:post-turn");
+        assert_eq!(receipt.payload["status"], "succeeded");
+        assert_eq!(receipt.payload["result_kind"], "continue");
+        let events = spine
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].envelope.schema.0,
+            "aletheon.event.hook_completed/v1"
+        );
+        assert_eq!(events[0].identity.session_id, "session-a");
     }
 
     #[tokio::test]
@@ -596,6 +815,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PostTurn,
             priority: 10,
+            timeout_ms: None,
         });
 
         let ctx = HookContext {
@@ -637,6 +857,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PreTool,
             priority: 10,
+            timeout_ms: None,
         });
 
         let ctx = HookContext {
@@ -717,6 +938,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PostTurn,
             priority: 0,
+            timeout_ms: None,
         });
         let context = HookContext {
             point: HookPoint::PostTurn,
@@ -753,6 +975,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PostTurn,
             priority: 0,
+            timeout_ms: None,
         });
         registry
             .execute(&HookContext {
@@ -789,6 +1012,34 @@ mod tests {
         assert!(!reg.unregister("nonexistent"));
     }
 
+    #[test]
+    fn package_hook_replacement_preserves_non_package_entries() {
+        let mut reg = HookRegistry::default();
+        reg.register(make_hook("builtin:audit", HookPoint::PostTurn, 10));
+        reg.replace_package_hooks(
+            "pkg.one",
+            vec![make_hook("pkg.one:audit", HookPoint::PostTurn, 20)],
+        );
+        assert_eq!(reg.total_count(), 2);
+
+        reg.replace_package_hooks(
+            "pkg.one",
+            vec![make_hook("pkg.one:review", HookPoint::PreTool, 5)],
+        );
+        let names: std::collections::HashSet<_> = reg
+            .list()
+            .into_iter()
+            .map(|hook| hook.name.as_str())
+            .collect();
+        assert!(names.contains("builtin:audit"));
+        assert!(names.contains("pkg.one:review"));
+        assert!(!names.contains("pkg.one:audit"));
+
+        reg.remove_package_hooks("pkg.one");
+        assert_eq!(reg.total_count(), 1);
+        assert_eq!(reg.list()[0].name, "builtin:audit");
+    }
+
     #[tokio::test]
     async fn hook_timeout_kills_hanging_script() {
         let dir = TempDir::new().unwrap();
@@ -811,6 +1062,7 @@ mod tests {
             script_path: Some(script),
             point: HookPoint::PostTurn,
             priority: 10,
+            timeout_ms: None,
         });
 
         let ctx = HookContext {

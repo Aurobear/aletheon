@@ -81,7 +81,7 @@ fuzz_target!(|data: &[u8]| {
         4 => ClientRpcRequest::Sessions,
         5 => ClientRpcRequest::Compact,
         6 => ClientRpcRequest::DaemonShutdown,
-        _ => ClientRpcRequest::HooksList,
+        _ => ClientRpcRequest::SkillsList,
     };
     if let Ok(envelope) = typed.to_json_rpc(Some(data.len() as u64)) {
         let typed_method = envelope

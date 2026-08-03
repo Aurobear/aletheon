@@ -2,21 +2,29 @@
 # root:aletheon). Secret fields are file references only; never put values here.
 
 [agent]
-default_provider = "leju"
-default_model = "deepseek/deepseek-v4-pro"
+default_provider = "lejurobot_deepseek"
+default_model = "deepseek/deepseek-v4-flash[1m]"
 
-# The service loads LEJU_API_KEY from deployment.secrets.provider through its
+# The service loads LEJUROBOT_DEEPSEEK_API_KEY from provider.env through its
 # EnvironmentFile. Keep the credential out of this checked-in configuration.
 [[providers]]
-name = "leju"
+name = "lejurobot_deepseek"
 base_url = "https://aiapi.lejurobot.com"
 api_key = ""
 transport = "openai"
-models = ["deepseek/deepseek-v4-pro"]
-max_context_length = 1000000
+models = ["deepseek/deepseek-v4-flash[1m]"]
 
 [providers.backpressure]
 min_request_interval_ms = 15000
+
+# Optional official endpoint. The service resolves DEEPSEEK_API_KEY from the
+# provider EnvironmentFile when this route is selected.
+[[providers]]
+name = "deepseek"
+base_url = "https://api.deepseek.com"
+api_key = ""
+transport = "openai"
+models = ["deepseek-v4-flash[1m]", "deepseek-v4-pro[1m]"]
 
 # Production rollout starts in observation-only mode. Enforce remains an
 # explicit trusted-host decision after shadow calibration.

@@ -13,8 +13,7 @@ use crate::tui::host_time::ClientTimer;
 use fabric::Timer;
 
 use super::super::response::{
-    format_evolution, format_genome, format_models, format_reflections, format_sessions,
-    format_status, try_read_socket_with_recorder,
+    format_models, format_sessions, format_status, try_read_socket_with_recorder,
 };
 use super::super::term_compat::TermCaps;
 use super::super::test_infra::{EventRecorder, FrameRecorder, TestConfig, TestInputReader};
@@ -184,11 +183,12 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             // Use turn_active (set by turn_start, cleared by turn_done) instead
             // of streaming (which is also cleared by process_response and would
             // trigger premature auto-submit before the turn actually completes).
-            if !app.turn_active && !reader.is_exhausted() {
+            if !app.turn_active {
                 if let Some(next) = reader.on_turn_done() {
                     // Small delay to let the UI update before next turn
                     ClientTimer.sleep(Duration::from_millis(100)).await;
                     submit_message(&mut app, next).await;
+                    needs_redraw = true;
                 }
             }
             // All inputs consumed and last turn done
@@ -214,7 +214,7 @@ pub async fn simple_line_mode(
     _clock: Arc<dyn Clock>,
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
-    mut task_kind: Option<fabric::TaskKind>,
+    task_kind: Option<fabric::TaskKind>,
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
 
@@ -224,7 +224,6 @@ pub async fn simple_line_mode(
     let stdin = io::stdin();
     let mut read_buf = vec![0u8; 8192];
     let mut response_buf = super::super::json_lines::JsonLineBuffer::default();
-    let mut latest_evaluation: Option<fabric::EvaluationReceiptRef> = None;
 
     loop {
         print!("> ");
@@ -253,10 +252,6 @@ pub async fn simple_line_mode(
                 None => (cmd, ""),
             };
             match name {
-                "reflect" | "r" => ClientRpcRequest::Reflect,
-                "reflect_now" | "rn" => ClientRpcRequest::ReflectNow,
-                "evolution" | "evo" => ClientRpcRequest::Evolution,
-                "genome" | "gene" => ClientRpcRequest::Genome,
                 "clear" => ClientRpcRequest::Clear,
                 "status" | "st" => ClientRpcRequest::Status,
                 "sessions" | "sess" => ClientRpcRequest::Sessions,
@@ -267,28 +262,10 @@ pub async fn simple_line_mode(
                     println!("{}", workspace.cwd().display());
                     continue;
                 }
-                "task" => {
-                    match _args {
-                        "coding" => {
-                            task_kind = Some(fabric::TaskKind::Coding);
-                            println!("Task kind: coding");
-                        }
-                        "off" => {
-                            task_kind = None;
-                            println!("Task kind: off");
-                        }
-                        _ => println!("Usage: /task coding|off"),
-                    }
-                    continue;
-                }
-                "evaluation" | "eval" => {
-                    let message = latest_evaluation
-                        .as_ref()
-                        .map(super::super::reducer::format_evaluation_receipt_ref)
-                        .unwrap_or_else(|| {
-                            "No evaluation receipt is cached for this session.".to_string()
-                        });
-                    println!("{message}");
+                "reflect" | "r" | "reflect_now" | "rn" | "evolution" | "evo" | "genome"
+                | "gene" | "hooks" | "hk" | "task" | "evaluation" | "eval" | "approve" | "a"
+                | "plan" | "p" | "computer" => {
+                    println!("Unknown command: /{name}");
                     continue;
                 }
                 _ => ClientRpcRequest::chat_with_task_kind(
@@ -403,7 +380,6 @@ pub async fn simple_line_mode(
                                             &receipt
                                         )
                                     );
-                                    latest_evaluation = Some(receipt);
                                 }
                                 // Print streaming events that carry text content
                                 if let Some(event_type) = msg.pointer("/params/type").and_then(|v| v.as_str()) {
@@ -435,12 +411,6 @@ pub async fn simple_line_mode(
                             // This is the actual JSON-RPC response — process it
                             if let Some(text) = msg["result"]["response"].as_str() {
                                 println!("\n{text}\n");
-                            } else if !msg["result"]["reflections"].is_null() {
-                                println!("\n{}\n", format_reflections(&msg["result"]["reflections"]));
-                            } else if !msg["result"]["genome"].is_null() {
-                                println!("\n{}\n", format_genome(&msg["result"]["genome"]));
-                            } else if !msg["result"]["evolution"].is_null() {
-                                println!("\n{}\n", format_evolution(&msg["result"]["evolution"]));
                             } else if !msg["result"]["status"].is_null() {
                                 println!("\n{}\n", format_status(&msg["result"]["status"]));
                             } else if !msg["result"]["sessions"].is_null() {

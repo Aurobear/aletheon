@@ -5,9 +5,9 @@ use async_trait::async_trait;
 use executive::application::{PostTurnPipeline, PreTurnPipeline};
 use executive::TurnService;
 use fabric::{
-    CapabilityCall, CapabilityResult, ContentBlock, LlmProvider, LlmResponse, LlmStream,
-    NoopTurnEventSink, OperationId, ProcessId, RecallRequest, RecallSet, StopReason,
-    ToolDefinition, TurnRequest, TurnServices, Usage,
+    CapabilityCall, CapabilityResult, ContentBlock, InferenceUsage, LlmProvider, LlmResponse,
+    LlmStream, NoopTurnEventSink, OperationId, ProcessId, RecallRequest, RecallSet, StopReason,
+    ToolDefinition, TurnRequest, TurnServices,
 };
 use kernel::chronos::TestClock;
 use kernel::KernelRuntime;
@@ -57,9 +57,7 @@ impl LlmProvider for ScriptedLlm {
                     input: serde_json::json!({"text": "hi"}),
                 }],
                 stop_reason: StopReason::ToolUse,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         } else {
             Ok(LlmResponse {
@@ -67,9 +65,7 @@ impl LlmProvider for ScriptedLlm {
                     text: "done: hi".into(),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::default(),
             })
         }
     }

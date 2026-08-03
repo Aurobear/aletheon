@@ -100,6 +100,8 @@ cmd_install_user() {
   aletheon_info "installing user-mode assets under \$HOME (rootless)"
   install -d -m 0755 "$bin_dir" "$unit_dir"
   install -m 0755 "$ALETHEON_RELEASE_BINARY" "$bin_dir/aletheon"
+  bash "$ALETHEON_LIBEXEC/install-completions.sh" --user \
+    "${XDG_DATA_HOME:-$HOME/.local/share}"
   # The reviewed unit ships with a %h-relative ExecStart; pin it to the concrete
   # install directory so the running executable path matches provenance checks.
   sed "s|ExecStart=%h/.local/bin/aletheon daemon|ExecStart=$bin_dir/aletheon daemon|" \

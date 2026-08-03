@@ -29,7 +29,9 @@ pub(crate) struct HandlerPorts {
     pub(crate) sessions: Arc<dyn LegacySessionUseCases>,
     pub(crate) session_lifecycle: Arc<dyn SessionLifecycleUseCases>,
     pub(crate) health: Arc<dyn HealthUseCases>,
-    pub(crate) reflection: Arc<dyn ReflectionUseCases>,
+    // Retained for host-owned governance/diagnostics; no public RPC route may
+    // call this port directly.
+    pub(crate) _reflection: Arc<dyn ReflectionUseCases>,
     pub(crate) google: Arc<dyn ExternalSourceUseCases>,
     pub(crate) workflow: Arc<dyn WorkflowUseCases>,
     pub(crate) turn: Arc<dyn TurnUseCases>,
@@ -46,6 +48,7 @@ pub(crate) struct HandlerPorts {
     pub(crate) memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
     pub(crate) inference: Arc<dyn crate::application::inference_port::InferencePort>,
     pub(crate) review: Option<Arc<crate::application::governed_review::GovernedReviewService>>,
+    pub(crate) extensions: Arc<crate::application::extension_coordinator::ExtensionCoordinator>,
     pub(crate) transport: Arc<TransportPorts>,
 }
 
@@ -86,6 +89,7 @@ impl HandlerPorts {
         memory_health: Arc<std::sync::Mutex<mnemosyne::CompositeMemoryHealth>>,
         inference: Arc<dyn crate::application::inference_port::InferencePort>,
         review: Option<Arc<crate::application::governed_review::GovernedReviewService>>,
+        extensions: Arc<crate::application::extension_coordinator::ExtensionCoordinator>,
         transport: Arc<TransportPorts>,
     ) -> Self {
         Self {
@@ -98,7 +102,7 @@ impl HandlerPorts {
             sessions,
             session_lifecycle,
             health,
-            reflection,
+            _reflection: reflection,
             google,
             workflow,
             turn,
@@ -113,6 +117,7 @@ impl HandlerPorts {
             memory_health,
             inference,
             review,
+            extensions,
             transport,
         }
     }

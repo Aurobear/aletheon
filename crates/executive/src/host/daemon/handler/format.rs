@@ -49,16 +49,8 @@ pub fn event_to_client_event(event: &Event) -> Option<ClientEvent> {
             elapsed_ms: result.execution_time_ms,
             patch_delta: result.patch_delta.clone(),
         }),
-        Event::Usage {
-            tokens_in,
-            tokens_out,
-            cache_hit_tokens,
-            cache_miss_tokens,
-        } => Some(ClientEvent::Usage {
-            tokens_in: *tokens_in as u64,
-            tokens_out: *tokens_out as u64,
-            cache_hit_tokens: *cache_hit_tokens as u64,
-            cache_miss_tokens: *cache_miss_tokens as u64,
+        Event::Usage { usage } => Some(ClientEvent::Usage {
+            usage: usage.clone(),
         }),
         Event::TurnDone { .. } => Some(ClientEvent::TurnDone),
         Event::Error { message } => Some(ClientEvent::Error {

@@ -139,18 +139,11 @@ impl ReActLoop {
                             });
                         }
                     }
-                    StreamChunk::Usage {
-                        input_tokens,
-                        output_tokens,
-                    } => {
-                        self.turn_input_tokens =
-                            self.turn_input_tokens.saturating_add(input_tokens as u64);
-                        event_sink.emit(Event::Usage {
-                            tokens_in: input_tokens,
-                            tokens_out: output_tokens,
-                            cache_hit_tokens: 0,
-                            cache_miss_tokens: 0,
-                        });
+                    StreamChunk::Usage { usage } => {
+                        self.turn_input_tokens = self
+                            .turn_input_tokens
+                            .saturating_add(usage.total_input_tokens.unwrap_or(0));
+                        event_sink.emit(Event::Usage { usage });
                         // Emit context window usage so TUI can display it
                         let total_estimate = self
                             .messages

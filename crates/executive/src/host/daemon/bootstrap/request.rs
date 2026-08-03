@@ -502,12 +502,14 @@ impl RequestHandler {
         }
         // Dynamic skill access: the prefix carries only a catalog; skill_get
         // loads full instructions on demand.
-        let skills_snapshot = std::sync::Arc::new(skill_loader.skills().to_vec());
+        let skills_snapshot = corpus::tools::tools::skill_tools::SharedSkills::new(
+            std::sync::Arc::new(skill_loader.skills().to_vec()),
+        );
         let _ = tools.register(std::sync::Arc::new(
             corpus::tools::tools::skill_tools::SkillListTool::new(skills_snapshot.clone()),
         ));
         let _ = tools.register(std::sync::Arc::new(
-            corpus::tools::tools::skill_tools::SkillGetTool::new(skills_snapshot),
+            corpus::tools::tools::skill_tools::SkillGetTool::new(skills_snapshot.clone()),
         ));
         // Match the built-in proposal-confidence baseline (else runtime rejects).
         let _ = tools.set_proposal_confidence("skill_list", 0.5);
@@ -535,6 +537,14 @@ impl RequestHandler {
         info!(len = cached_prefix.len(), "Cache-stable prefix built");
 
         let tools = Arc::new(Mutex::new(tools));
+        let pending_extension_runtime =
+            super::extension_bootstrap::PendingExtensionRuntime::prepare(
+                tools.clone(),
+                hook_registry.clone(),
+                skills_snapshot,
+                config.mcp_servers.iter().map(|server| server.name.clone()),
+            )
+            .await?;
         if let Some(mcp) = retained_mcp.clone() {
             let registry = tools.clone();
             let registrations = Arc::new(Mutex::new(mcp_registration_ids));
@@ -931,23 +941,6 @@ impl RequestHandler {
         );
         let agent_runtimes =
             Arc::new(crate::application::agent_control::AgentRuntimeRegistry::default());
-        let extension_runtime_composition = super::extensions::register_package_runtimes(
-            agent_runtimes.as_ref(),
-            &data_dir,
-            &corpus::extension::store::PackageStore::configured_user_root(),
-            clock.clone(),
-        )
-        .await?;
-        let extension_runtime_quarantine_count =
-            extension_runtime_composition.quarantined.len() as u64;
-        let extension_runtime_count =
-            extension_runtime_composition.router.registered().len() as u64;
-        let extension_runtime_quarantined_ids: Vec<String> = extension_runtime_composition
-            .quarantined
-            .iter()
-            .map(|value| value.split(':').next().unwrap_or("unknown").to_owned())
-            .collect();
-        let extension_runtime_rolled_back = extension_runtime_composition.rolled_back;
         // Ordinary child Agents use one Cognit session runtime. Goal worker
         // and reviewer attempts remain explicit ProviderWorkerRuntime routes.
         let agent_composition = {
@@ -989,6 +982,19 @@ impl RequestHandler {
             )?;
             composition
         };
+        let extension_runtime = pending_extension_runtime
+            .finish(
+                &data_dir,
+                clock.clone(),
+                agent_runtimes.clone(),
+                agent_composition.profiles.clone(),
+                inference.clone(),
+                llm.clone(),
+                runtime_config_snapshot.clone(),
+            )
+            .await?;
+        let extension_runtime_view = extension_runtime.view.clone();
+        let extension_coordinator = extension_runtime.coordinator.clone();
         let quarantined_profile_count = agent_composition.quarantined_profiles().len() as u64;
         let quarantined_profile_names: Vec<String> = agent_composition
             .quarantined_profiles()
@@ -1126,6 +1132,11 @@ impl RequestHandler {
         .await?;
         let memory_agent_control = agent_svc.agent_control.clone();
         let canonical_event_spine = agent_svc.canonical_event_spine;
+        corpus_group
+            .hook_registry
+            .lock()
+            .await
+            .set_event_spine(Some(canonical_event_spine.clone()));
         let agent_recovery = agent_svc.agent_recovery;
         let agent_repository = agent_svc.agent_repository;
         let turn_svc = super::services::build_turn_services(
@@ -1240,8 +1251,8 @@ impl RequestHandler {
                 ),
             )),
         );
-        let admin_use_cases: Arc<dyn crate::application::AdminUseCases> =
-            Arc::new(crate::application::AdminService::new(
+        let admin_use_cases: Arc<dyn crate::application::AdminUseCases> = Arc::new(
+            crate::application::AdminService::new(
                 crate::application::admin_service::AdminResources {
                     runtime: admin_runtime_port(admin_runtime),
                     skills: Arc::new(crate::composition::skill_admin::DefaultSkillAdmin::new(
@@ -1310,7 +1321,9 @@ impl RequestHandler {
                         ),
                     )),
                 },
-            ));
+            )
+            .with_extension_runtime(extension_runtime_view),
+        );
         let legacy_sessions: Arc<
             dyn crate::compatibility::legacy_session_service::LegacySessionUseCases,
         > = Arc::new(
@@ -1346,30 +1359,7 @@ impl RequestHandler {
                 crate::application::health::ComponentHealth::ready(),
             );
         }
-        if extension_runtime_quarantine_count > 0 {
-            let mut health = crate::application::health::ComponentHealth::degraded(
-                "extension_runtimes_quarantined",
-            );
-            health.count = Some(extension_runtime_quarantine_count);
-            health.items = extension_runtime_quarantined_ids;
-            health_registry.set("extension_runtimes", health);
-        } else {
-            let mut health = crate::application::health::ComponentHealth::ready();
-            health.count = Some(extension_runtime_count);
-            health_registry.set("extension_runtimes", health);
-        }
-        if extension_runtime_rolled_back.is_empty() {
-            health_registry.set(
-                "extension_rollbacks",
-                crate::application::health::ComponentHealth::ready(),
-            );
-        } else {
-            let mut health =
-                crate::application::health::ComponentHealth::degraded("extension_rolled_back");
-            health.count = Some(extension_runtime_rolled_back.len() as u64);
-            health.items = extension_runtime_rolled_back;
-            health_registry.set("extension_rollbacks", health);
-        }
+        extension_runtime.publish_health(&health_registry);
         let channel_task = Arc::new(Mutex::new(None));
         let request_facades = RequestFacadePorts::new(
             runtime.clone(),
@@ -1529,6 +1519,7 @@ impl RequestHandler {
             memory_group.supplemental_memory_health.clone(),
             inference.clone(),
             review,
+            extension_coordinator,
             transport_ports,
         ));
         let workspace_trust =

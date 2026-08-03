@@ -224,6 +224,7 @@ async fn build_manager(state: FakeState) -> (Arc<McpManager>, FakeState) {
             health_check_interval_sec: 0,
             allowlist: Vec::new(),
             denylist: Vec::new(),
+            resource_allowlist: Vec::new(),
             permission_overrides: std::collections::HashMap::new(),
         }],
         ..Default::default()

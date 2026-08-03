@@ -8,12 +8,12 @@ pub mod response;
 pub mod session_protocol;
 pub mod test_infra;
 
+pub mod activity_detail;
 pub mod approval_dialog;
 pub mod awareness;
 pub mod chat;
 pub mod command;
 pub mod completion;
-pub mod computer;
 pub mod conscious_core;
 pub mod diff_view;
 
@@ -369,6 +369,8 @@ impl App {
         let mut status = StatusBar::new(caps.clone());
         status.connected = true;
         status.model_name = model_name.clone();
+        let mut app_state = AppState::default();
+        app_state.model_name = model_name.clone();
 
         Self {
             workspace,
@@ -404,7 +406,7 @@ impl App {
             pager: None,
             session_picker: None,
             frame_counter: 0,
-            app_state: AppState::default(),
+            app_state,
             plan_view: PlanViewState::default(),
             sub_agents: Vec::new(),
             current_iteration: 0,
@@ -425,11 +427,6 @@ impl App {
                 || (0x3040..=0x309F).contains(&cp)  // Hiragana
                 || (0x30A0..=0x30FF).contains(&cp) // Katakana
         });
-    }
-
-    #[cfg(test)]
-    fn requested_task_kind(&self) -> Option<fabric::TaskKind> {
-        self.requested_task_kind
     }
 }
 

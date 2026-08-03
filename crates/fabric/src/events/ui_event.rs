@@ -274,12 +274,8 @@ pub enum ClientEvent {
 
     // ── Bookkeeping ──
     Usage {
-        tokens_in: u64,
-        tokens_out: u64,
-        #[serde(default)]
-        cache_hit_tokens: u64,
-        #[serde(default)]
-        cache_miss_tokens: u64,
+        #[serde(flatten)]
+        usage: crate::InferenceUsage,
     },
     ContextUpdate {
         max_tokens: u64,

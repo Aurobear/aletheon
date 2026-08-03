@@ -5,7 +5,7 @@
 //! with `skill_get` instead of every skill's content being injected up front.
 //! Two L0 read-only tools: `SkillListTool` and `SkillGetTool`.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use serde_json::json;
@@ -14,8 +14,60 @@ use crate::skill::loader::LoadedSkill;
 
 use super::{ConcurrencyClass, PermissionLevel, Tool, ToolContext, ToolResult, ToolResultMeta};
 
-/// Immutable snapshot of the skills loaded at daemon start.
-pub type SharedSkills = Arc<Vec<LoadedSkill>>;
+/// Atomically replaceable Skill catalog shared by model tools and extension
+/// runtime publication. Legacy entries remain immutable; package entries are
+/// replaced as one snapshot.
+#[derive(Clone)]
+pub struct SharedSkills {
+    legacy: Arc<Vec<LoadedSkill>>,
+    current: Arc<RwLock<Arc<Vec<LoadedSkill>>>>,
+}
+
+impl SharedSkills {
+    pub fn new(legacy: Arc<Vec<LoadedSkill>>) -> Self {
+        Self {
+            current: Arc::new(RwLock::new(legacy.clone())),
+            legacy,
+        }
+    }
+
+    pub fn snapshot(&self) -> Arc<Vec<LoadedSkill>> {
+        self.current
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    pub fn validate_extensions(&self, extensions: &[LoadedSkill]) -> anyhow::Result<()> {
+        let mut names = std::collections::BTreeSet::new();
+        for skill in self.legacy.iter().chain(extensions) {
+            anyhow::ensure!(
+                names.insert(skill.name.to_ascii_lowercase()),
+                "duplicate public skill name '{}'",
+                skill.name
+            );
+        }
+        Ok(())
+    }
+
+    pub fn replace_extensions(&self, mut extensions: Vec<LoadedSkill>) -> anyhow::Result<()> {
+        self.validate_extensions(&extensions)?;
+        let mut combined = self.legacy.as_ref().clone();
+        combined.append(&mut extensions);
+        combined.sort_by(|left, right| left.name.cmp(&right.name));
+        *self
+            .current
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(combined);
+        Ok(())
+    }
+}
+
+impl From<Arc<Vec<LoadedSkill>>> for SharedSkills {
+    fn from(skills: Arc<Vec<LoadedSkill>>) -> Self {
+        Self::new(skills)
+    }
+}
 
 fn result(
     ctx: &ToolContext,
@@ -41,8 +93,10 @@ pub struct SkillListTool {
 }
 
 impl SkillListTool {
-    pub fn new(skills: SharedSkills) -> Self {
-        Self { skills }
+    pub fn new(skills: impl Into<SharedSkills>) -> Self {
+        Self {
+            skills: skills.into(),
+        }
     }
 }
 
@@ -71,11 +125,12 @@ impl Tool for SkillListTool {
 
     async fn execute(&self, _input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let start = ctx.clock.mono_now();
-        if self.skills.is_empty() {
+        let skills = self.skills.snapshot();
+        if skills.is_empty() {
             return result(ctx, start, "(no skills available)".to_string(), false);
         }
         let mut out = String::new();
-        for s in self.skills.iter() {
+        for s in skills.iter() {
             out.push_str(&format!("- {} [{}]: {}\n", s.name, s.source, s.description));
         }
         result(ctx, start, out, false)
@@ -88,8 +143,10 @@ pub struct SkillGetTool {
 }
 
 impl SkillGetTool {
-    pub fn new(skills: SharedSkills) -> Self {
-        Self { skills }
+    pub fn new(skills: impl Into<SharedSkills>) -> Self {
+        Self {
+            skills: skills.into(),
+        }
     }
 }
 
@@ -131,15 +188,11 @@ impl Tool for SkillGetTool {
                 true,
             );
         }
-        match self
-            .skills
-            .iter()
-            .find(|s| s.name.eq_ignore_ascii_case(name))
-        {
+        let skills = self.skills.snapshot();
+        match skills.iter().find(|s| s.name.eq_ignore_ascii_case(name)) {
             Some(s) => result(ctx, start, format!("# {}\n{}", s.name, s.content), false),
             None => {
-                let available = self
-                    .skills
+                let available = skills
                     .iter()
                     .map(|s| s.name.as_str())
                     .collect::<Vec<_>>()
@@ -161,12 +214,12 @@ mod tests {
     use kernel::chronos::TestClock;
 
     fn skills() -> SharedSkills {
-        Arc::new(vec![LoadedSkill {
+        SharedSkills::new(Arc::new(vec![LoadedSkill {
             name: "commit".to_string(),
             description: "Commit, push, PR".to_string(),
             content: "Full commit instructions here.".to_string(),
             source: "system".to_string(),
-        }])
+        }]))
     }
 
     fn ctx() -> ToolContext {
@@ -207,5 +260,27 @@ mod tests {
             .await;
         assert!(out.is_error);
         assert!(out.content.contains("commit"));
+    }
+
+    #[tokio::test]
+    async fn shared_catalog_replaces_extension_skills_without_touching_legacy() {
+        let catalog = skills();
+        let tool = SkillListTool::new(catalog.clone());
+        catalog
+            .replace_extensions(vec![LoadedSkill {
+                name: "package-review".into(),
+                description: "Packaged review".into(),
+                content: "Review from package".into(),
+                source: "package:test.pkg:skill.review".into(),
+            }])
+            .unwrap();
+        let first = tool.execute(json!({}), &ctx()).await;
+        assert!(first.content.contains("commit"));
+        assert!(first.content.contains("package-review"));
+
+        catalog.replace_extensions(Vec::new()).unwrap();
+        let second = tool.execute(json!({}), &ctx()).await;
+        assert!(second.content.contains("commit"));
+        assert!(!second.content.contains("package-review"));
     }
 }

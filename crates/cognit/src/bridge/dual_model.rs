@@ -88,7 +88,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::adapters::inference::{
-        LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition, Usage,
+        InferenceUsage, LlmProvider, LlmResponse, LlmStream, StopReason, ToolDefinition,
     };
     use fabric::message::{ContentBlock, Message};
 
@@ -109,12 +109,7 @@ mod tests {
                     text: format!("{}: ok", self.name),
                 }],
                 stop_reason: StopReason::EndTurn,
-                usage: Usage {
-                    input_tokens: 1,
-                    output_tokens: 1,
-                },
-                cache_hit_tokens: 0,
-                cache_miss_tokens: 0,
+                usage: InferenceUsage::unsupported(Some(1), Some(1)),
             })
         }
 

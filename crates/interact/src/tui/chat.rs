@@ -146,6 +146,8 @@ pub struct ExecEntry {
     pub is_error: bool,
     pub finished: bool,
     pub expanded: bool,
+    /// Whether keyboard activity navigation currently targets this entry.
+    pub selected: bool,
     /// Structured filesystem delta from apply_patch (None for other tools).
     pub patch_delta: Option<fabric::PatchDelta>,
 }
@@ -164,6 +166,7 @@ impl ExecEntry {
             is_error: false,
             finished: false,
             expanded: false,
+            selected: false,
             patch_delta: None,
         }
     }
@@ -230,10 +233,30 @@ impl ExecEntry {
             String::new()
         };
 
-        let header = format!("{}{}", tool_action(&self.tool, &self.args), status);
+        let terminal = if self.finished && !self.is_error {
+            " ✓"
+        } else {
+            ""
+        };
+        let header = format!(
+            "{}{}{}",
+            tool_action(&self.tool, &self.args),
+            status,
+            terminal
+        );
+        let marker = if self.selected { "› " } else { "• " };
         let mut lines = vec![Line::from(vec![
-            Span::styled("• ", Style::default().fg(dot_color)),
-            Span::raw(header),
+            Span::styled(marker, Style::default().fg(dot_color)),
+            Span::styled(
+                header,
+                if self.selected {
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                },
+            ),
         ])];
 
         if self.expanded && !self.output.is_empty() {
@@ -403,6 +426,7 @@ pub struct ChatWidget {
     pub scroll_offset: u16,
     /// Whether the user has manually scrolled away from the bottom.
     pub user_scrolled: bool,
+    selected_exec_id: Option<String>,
     render_width: u16,
     caps: TermCaps,
     revision: Cell<u64>,
@@ -423,6 +447,7 @@ impl ChatWidget {
             entries: Vec::new(),
             scroll_offset: 0,
             user_scrolled: false,
+            selected_exec_id: None,
             render_width: 80,
             caps,
             revision: Cell::new(0),
@@ -584,6 +609,66 @@ impl ChatWidget {
             self.invalidate_layout();
         }
         changed
+    }
+
+    pub fn selected_exec_id(&self) -> Option<&str> {
+        self.selected_exec_id.as_deref()
+    }
+
+    pub fn selected_exec(&self) -> Option<&ExecEntry> {
+        let selected = self.selected_exec_id.as_deref()?;
+        self.entries.iter().find_map(|entry| match entry {
+            ChatEntry::Exec(exec) if exec.call_id == selected => Some(exec),
+            _ => None,
+        })
+    }
+
+    pub fn toggle_selected_exec(&mut self) -> bool {
+        let Some(call_id) = self.selected_exec_id.clone() else {
+            return false;
+        };
+        self.toggle_exec(&call_id)
+    }
+
+    pub fn select_next_exec(&mut self) -> bool {
+        self.move_exec_selection(1)
+    }
+
+    pub fn select_previous_exec(&mut self) -> bool {
+        self.move_exec_selection(-1)
+    }
+
+    fn move_exec_selection(&mut self, direction: isize) -> bool {
+        let ids = self
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ChatEntry::Exec(exec) => Some(exec.call_id.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return false;
+        }
+        let current = self
+            .selected_exec_id
+            .as_ref()
+            .and_then(|id| ids.iter().position(|candidate| candidate == id));
+        let next = match (current, direction.is_positive()) {
+            (Some(index), true) => (index + 1).min(ids.len() - 1),
+            (Some(index), false) => index.saturating_sub(1),
+            (None, true) => 0,
+            (None, false) => ids.len() - 1,
+        };
+        let selected = ids[next].clone();
+        for entry in &mut self.entries {
+            if let ChatEntry::Exec(exec) = entry {
+                exec.selected = exec.call_id == selected;
+            }
+        }
+        self.selected_exec_id = Some(selected);
+        self.invalidate_layout();
+        true
     }
 
     /// Count unfinished exec entries (still running).
@@ -1207,7 +1292,7 @@ mod tests {
             .map(|s| s.content.as_ref())
             .collect::<Vec<_>>()
             .join("");
-        assert_eq!(header2, "• Ran ls");
+        assert_eq!(header2, "• Ran ls ✓");
     }
 
     #[test]
@@ -1241,7 +1326,7 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
 
-        assert_eq!(text, "• Searched google_gmail_search");
+        assert_eq!(text, "• Searched google_gmail_search ✓");
         assert!(!text.contains(&"x".repeat(100)));
     }
 
@@ -1352,6 +1437,27 @@ mod tests {
         widget.add_exec("c1".into(), "file_read".into(), "{}".into());
         assert_eq!(widget.entries.len(), 1);
         assert!(matches!(widget.entries[0], ChatEntry::Exec(_)));
+    }
+
+    #[test]
+    fn tool_activity_navigation_selects_and_expands_any_entry() {
+        let caps = TermCaps::detect();
+        let mut widget = ChatWidget::new(caps);
+        widget.add_exec("c1".into(), "glob".into(), r#"{"patterns":["a"]}"#.into());
+        widget.add_exec(
+            "c2".into(),
+            "exec_command".into(),
+            r#"{"command":"pwd"}"#.into(),
+        );
+
+        assert!(widget.select_next_exec());
+        assert_eq!(widget.selected_exec_id(), Some("c1"));
+        assert!(widget.select_next_exec());
+        assert_eq!(widget.selected_exec_id(), Some("c2"));
+        assert!(widget.toggle_selected_exec());
+        assert!(widget.selected_exec().unwrap().expanded);
+        assert!(widget.select_previous_exec());
+        assert_eq!(widget.selected_exec_id(), Some("c1"));
     }
 
     #[test]

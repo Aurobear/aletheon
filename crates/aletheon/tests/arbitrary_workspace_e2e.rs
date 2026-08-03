@@ -6,7 +6,7 @@ use executive::application::inference_port::{
 };
 use executive::host::core_rpc::{CorePeerPolicy, CoreRpcServer};
 use executive::{
-    ContentBlock, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk, Usage,
+    ContentBlock, InferenceUsage, LlmResponse, LlmStream, LocalOsPrincipal, StopReason, StreamChunk,
 };
 use futures::stream;
 use tempfile::TempDir;
@@ -33,9 +33,7 @@ impl InferencePort for FakeInference {
         Ok(LlmResponse {
             content: vec![ContentBlock::Text { text: "ok".into() }],
             stop_reason: StopReason::EndTurn,
-            usage: Usage::default(),
-            cache_hit_tokens: 0,
-            cache_miss_tokens: 0,
+            usage: InferenceUsage::default(),
         })
     }
 

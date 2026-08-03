@@ -49,6 +49,7 @@ pub struct ResolvedAgentProfile {
 #[derive(Default)]
 pub struct AgentProfileRegistry {
     profiles: RwLock<HashMap<AgentProfileId, ResolvedAgentProfile>>,
+    package_owners: RwLock<HashMap<AgentProfileId, String>>,
 }
 
 impl AgentProfileRegistry {
@@ -86,6 +87,73 @@ impl AgentProfileRegistry {
             ));
         }
         profiles.insert(id, resolved);
+        Ok(())
+    }
+
+    pub fn resolved_profiles(&self) -> Vec<ResolvedAgentProfile> {
+        self.profiles.read().values().cloned().collect()
+    }
+
+    /// Atomically replace package-owned profiles while preserving built-ins
+    /// and package owners outside the candidate snapshot.
+    pub fn replace_package_profiles(
+        &self,
+        replaced_owners: &[String],
+        replacements: Vec<(String, ResolvedAgentProfile)>,
+    ) -> Result<(), AgentControlError> {
+        let replaced = replaced_owners.iter().cloned().collect::<HashSet<_>>();
+        if replaced.iter().any(|owner| owner.trim().is_empty()) {
+            return Err(AgentControlError::invalid(
+                "package profile owner must not be empty",
+            ));
+        }
+        let profiles = self.profiles.read();
+        let owners = self.package_owners.read();
+        let mut candidate_ids = HashSet::new();
+        for (owner, resolved) in &replacements {
+            if !replaced.contains(owner) {
+                return Err(AgentControlError::invalid(format!(
+                    "package profile owner '{owner}' is outside the replacement set"
+                )));
+            }
+            validate_resolved_profile(resolved)?;
+            let id = &resolved.profile.id;
+            if !candidate_ids.insert(id.clone()) {
+                return Err(control_error(
+                    AgentControlErrorKind::Conflict,
+                    format!("duplicate package Agent profile: {}", id.0),
+                ));
+            }
+            if profiles.contains_key(id)
+                && owners
+                    .get(id)
+                    .is_none_or(|existing| !replaced.contains(existing))
+            {
+                return Err(control_error(
+                    AgentControlErrorKind::Conflict,
+                    format!("Agent profile already registered: {}", id.0),
+                ));
+            }
+        }
+        drop(owners);
+        drop(profiles);
+
+        let mut profiles = self.profiles.write();
+        let mut owners = self.package_owners.write();
+        let removed = owners
+            .iter()
+            .filter(|(_, owner)| replaced.contains(*owner))
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in removed {
+            owners.remove(&id);
+            profiles.remove(&id);
+        }
+        for (owner, resolved) in replacements {
+            let id = resolved.profile.id.clone();
+            owners.insert(id.clone(), owner);
+            profiles.insert(id, resolved);
+        }
         Ok(())
     }
 
@@ -129,6 +197,34 @@ impl AgentProfileRegistry {
     pub fn names(&self) -> Vec<String> {
         self.profiles.read().keys().map(|id| id.0.clone()).collect()
     }
+}
+
+fn validate_resolved_profile(resolved: &ResolvedAgentProfile) -> Result<(), AgentControlError> {
+    resolved.profile.validate()?;
+    if resolved.profile.model != resolved.llm.name() {
+        return Err(AgentControlError::invalid(format!(
+            "profile model '{}' does not match resolved provider model '{}'",
+            resolved.profile.model,
+            resolved.llm.name()
+        )));
+    }
+    let declared = resolved
+        .profile
+        .allowed_tools
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let supplied = resolved
+        .authorized_tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect::<HashSet<_>>();
+    if declared != supplied {
+        return Err(AgentControlError::invalid(
+            "profile tool definitions do not match its allow-list",
+        ));
+    }
+    Ok(())
 }
 
 impl AgentProfileCatalogPort for AgentProfileRegistry {
@@ -666,7 +762,8 @@ struct MeteredLlm {
     active_context_tokens: Arc<AtomicU64>,
     cache_read_tokens: Arc<AtomicU64>,
     cache_write_tokens: Arc<AtomicU64>,
-    cache_observable: Arc<AtomicBool>,
+    cache_read_observable: Arc<AtomicBool>,
+    cache_write_observable: Arc<AtomicBool>,
 }
 
 struct MeteredLlmUsage {
@@ -688,22 +785,24 @@ impl MeteredLlm {
             active_context_tokens: Arc::new(AtomicU64::new(0)),
             cache_read_tokens: Arc::new(AtomicU64::new(0)),
             cache_write_tokens: Arc::new(AtomicU64::new(0)),
-            cache_observable: Arc::new(AtomicBool::new(true)),
+            cache_read_observable: Arc::new(AtomicBool::new(true)),
+            cache_write_observable: Arc::new(AtomicBool::new(true)),
         }
     }
 
     fn usage(&self) -> MeteredLlmUsage {
         let rounds = self.inference_rounds.load(Ordering::Relaxed);
-        let cache_observable = self.cache_observable.load(Ordering::Relaxed);
+        let cache_read_observable = self.cache_read_observable.load(Ordering::Relaxed);
+        let cache_write_observable = self.cache_write_observable.load(Ordering::Relaxed);
         MeteredLlmUsage {
             input_tokens: self.input_tokens.load(Ordering::Relaxed),
             output_tokens: self.output_tokens.load(Ordering::Relaxed),
             inference_rounds: rounds,
             active_context_tokens: (rounds > 0)
                 .then(|| self.active_context_tokens.load(Ordering::Relaxed)),
-            cache_read_tokens: cache_observable
+            cache_read_tokens: cache_read_observable
                 .then(|| self.cache_read_tokens.load(Ordering::Relaxed)),
-            cache_write_tokens: cache_observable
+            cache_write_tokens: cache_write_observable
                 .then(|| self.cache_write_tokens.load(Ordering::Relaxed)),
         }
     }
@@ -718,16 +817,26 @@ impl LlmProvider for MeteredLlm {
     ) -> anyhow::Result<fabric::LlmResponse> {
         self.inference_rounds.fetch_add(1, Ordering::Relaxed);
         let response = self.inner.complete(messages, tools).await?;
-        self.input_tokens
-            .fetch_add(response.usage.input_tokens.into(), Ordering::Relaxed);
+        self.input_tokens.fetch_add(
+            response.usage.total_input_tokens.unwrap_or(0),
+            Ordering::Relaxed,
+        );
         self.output_tokens
-            .fetch_add(response.usage.output_tokens.into(), Ordering::Relaxed);
-        self.active_context_tokens
-            .store(response.usage.input_tokens.into(), Ordering::Relaxed);
-        self.cache_read_tokens
-            .fetch_add(response.cache_hit_tokens.into(), Ordering::Relaxed);
-        self.cache_write_tokens
-            .fetch_add(response.cache_miss_tokens.into(), Ordering::Relaxed);
+            .fetch_add(response.usage.output_tokens.unwrap_or(0), Ordering::Relaxed);
+        self.active_context_tokens.store(
+            response.usage.total_input_tokens.unwrap_or(0),
+            Ordering::Relaxed,
+        );
+        if let Some(read) = response.usage.cache_read_tokens {
+            self.cache_read_tokens.fetch_add(read, Ordering::Relaxed);
+        } else {
+            self.cache_read_observable.store(false, Ordering::Relaxed);
+        }
+        if let Some(write) = response.usage.cache_write_tokens {
+            self.cache_write_tokens.fetch_add(write, Ordering::Relaxed);
+        } else {
+            self.cache_write_observable.store(false, Ordering::Relaxed);
+        }
         Ok(response)
     }
 
@@ -737,20 +846,30 @@ impl LlmProvider for MeteredLlm {
         tools: &[ToolDefinition],
     ) -> anyhow::Result<fabric::LlmStream> {
         self.inference_rounds.fetch_add(1, Ordering::Relaxed);
-        self.cache_observable.store(false, Ordering::Relaxed);
         let stream = self.inner.complete_stream(messages, tools).await?;
         let input_tokens = self.input_tokens.clone();
         let output_tokens = self.output_tokens.clone();
         let active_context_tokens = self.active_context_tokens.clone();
+        let cache_read_tokens = self.cache_read_tokens.clone();
+        let cache_write_tokens = self.cache_write_tokens.clone();
+        let cache_read_observable = self.cache_read_observable.clone();
+        let cache_write_observable = self.cache_write_observable.clone();
         Ok(Box::pin(stream.map(move |chunk| {
-            if let Ok(fabric::StreamChunk::Usage {
-                input_tokens: input,
-                output_tokens: output,
-            }) = &chunk
-            {
-                input_tokens.fetch_add((*input).into(), Ordering::Relaxed);
-                output_tokens.fetch_add((*output).into(), Ordering::Relaxed);
-                active_context_tokens.store((*input).into(), Ordering::Relaxed);
+            if let Ok(fabric::StreamChunk::Usage { usage }) = &chunk {
+                input_tokens.fetch_add(usage.total_input_tokens.unwrap_or(0), Ordering::Relaxed);
+                output_tokens.fetch_add(usage.output_tokens.unwrap_or(0), Ordering::Relaxed);
+                active_context_tokens
+                    .store(usage.total_input_tokens.unwrap_or(0), Ordering::Relaxed);
+                if let Some(read) = usage.cache_read_tokens {
+                    cache_read_tokens.fetch_add(read, Ordering::Relaxed);
+                } else {
+                    cache_read_observable.store(false, Ordering::Relaxed);
+                }
+                if let Some(write) = usage.cache_write_tokens {
+                    cache_write_tokens.fetch_add(write, Ordering::Relaxed);
+                } else {
+                    cache_write_observable.store(false, Ordering::Relaxed);
+                }
             }
             chunk
         })))

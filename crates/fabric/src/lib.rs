@@ -271,8 +271,9 @@ pub use types::goal::{
 pub use types::hook::{HookContext, HookMode, HookPoint, HookResult, HookToolResult};
 pub use types::hook_ext::{CommandHookResult, HookConfig, HookType};
 pub use types::llm_types::{
-    InferenceCapabilities, LlmProvider, LlmResponse, LlmStream, ModelInfo, ModelRuntimeFacts,
-    StopReason, StreamChunk, ToolDefinition, Usage,
+    canonicalize_tool_definitions, tool_schema_digest, CacheTelemetry, InferenceCapabilities,
+    InferenceUsage, LlmProvider, LlmResponse, LlmStream, ModelInfo, ModelRuntimeFacts, StopReason,
+    StreamChunk, ToolDefinition, ToolDefinitionCanonicalizationError,
 };
 pub use types::local_authority::{
     ApprovalPolicy, ConnectionId, LocalOsPrincipal, PermissionProfileId, PrincipalContext,

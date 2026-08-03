@@ -64,6 +64,7 @@ pub(super) fn register_configured_hooks(
                 ),
                 point,
                 priority: 100,
+                timeout_ms: None,
             });
         }
     }

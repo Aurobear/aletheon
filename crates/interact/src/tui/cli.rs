@@ -8,7 +8,7 @@ use super::goal;
 use super::workflow;
 
 use super::response::deduplicate_consecutive_text as deduplicate_response;
-use super::response::{format_evolution, format_genome, format_reflections, format_status};
+use super::response::format_status;
 use fabric::protocol::client::{ClientRpcRequest, TransientApprovalDecision};
 use fabric::ui_event::ClientEvent;
 
@@ -113,22 +113,6 @@ pub enum Command {
         #[command(subcommand)]
         action: DaemonAction,
     },
-
-    /// Show reflections
-    #[command(alias = "r")]
-    Reflect,
-
-    /// Show reflection history (alias: rn)
-    #[command(alias = "rn")]
-    ReflectNow,
-
-    /// Show evolution history (alias: evo)
-    #[command(alias = "evo")]
-    Evolution,
-
-    /// Show genome (alias: gene)
-    #[command(alias = "gene")]
-    Genome,
 
     /// Show daemon status (alias: st)
     #[command(alias = "st")]
@@ -310,10 +294,6 @@ pub async fn run() -> Result<()> {
 async fn handle_command(socket: &PathBuf, cmd: Command) -> Result<()> {
     match cmd {
         Command::Daemon { action } => handle_daemon_action(socket, action).await,
-        Command::Reflect => single_message(socket, "/reflect").await,
-        Command::ReflectNow => single_message(socket, "/reflect_now").await,
-        Command::Evolution => single_message(socket, "/evolution").await,
-        Command::Genome => single_message(socket, "/genome").await,
         Command::Status => single_message(socket, "/status").await,
         Command::RestoreTerminal => {
             super::restore_terminal();
@@ -547,10 +527,6 @@ pub async fn single_message_with_workspace_requirements_and_task_kind(
             None => (cmd, ""),
         };
         match name {
-            "reflect" | "r" => ClientRpcRequest::Reflect,
-            "reflect_now" | "rn" => ClientRpcRequest::ReflectNow,
-            "evolution" | "evo" => ClientRpcRequest::Evolution,
-            "genome" | "gene" => ClientRpcRequest::Genome,
             "status" | "st" => ClientRpcRequest::Status,
             "cwd" => {
                 println!("{}", workspace.cwd().display());
@@ -572,7 +548,7 @@ pub async fn single_message_with_workspace_requirements_and_task_kind(
     let started_at = std::time::Instant::now();
     let mut tokens_in = 0u64;
     let mut tokens_out = 0u64;
-    let mut cache_hit_tokens = 0u64;
+    let mut cache_read_tokens = 0u64;
     let mut tool_calls = 0u64;
 
     // Use Timer::timeout to wrap the entire response reading loop.
@@ -643,16 +619,14 @@ pub async fn single_message_with_workspace_requirements_and_task_kind(
                                 tool_calls = tool_calls.saturating_add(1);
                                 eprintln!("[tool] {} {}", tool, serde_json::to_string(&args).unwrap_or_default());
                             }
-                            ClientEvent::Usage {
-                                tokens_in: event_tokens_in,
-                                tokens_out: event_tokens_out,
-                                cache_hit_tokens: event_cache_hit_tokens,
-                                ..
-                            } => {
+                            ClientEvent::Usage { usage } => {
+                                let event_tokens_in = usage.total_input_tokens.unwrap_or(0);
+                                let event_tokens_out = usage.output_tokens.unwrap_or(0);
+                                let event_cache_read_tokens = usage.cache_read_tokens.unwrap_or(0);
                                 tokens_in = tokens_in.saturating_add(event_tokens_in);
                                 tokens_out = tokens_out.saturating_add(event_tokens_out);
-                                cache_hit_tokens =
-                                    cache_hit_tokens.saturating_add(event_cache_hit_tokens);
+                                cache_read_tokens =
+                                    cache_read_tokens.saturating_add(event_cache_read_tokens);
                             }
                             ClientEvent::ToolProgress { tool, payload, .. } => {
                                 eprintln!("[tool:{tool}] {payload}");
@@ -685,12 +659,6 @@ pub async fn single_message_with_workspace_requirements_and_task_kind(
                 return Err(anyhow::anyhow!(
                     "request was queued as {prompt_id}; this one-shot client did not observe a terminal result"
                 ));
-            } else if !resp["result"]["reflections"].is_null() {
-                println!("{}", format_reflections(&resp["result"]["reflections"]));
-            } else if !resp["result"]["genome"].is_null() {
-                println!("{}", format_genome(&resp["result"]["genome"]));
-            } else if !resp["result"]["evolution"].is_null() {
-                println!("{}", format_evolution(&resp["result"]["evolution"]));
             } else if let Some(_status) = resp["result"]["status"].as_object() {
                 println!("{}", format_status(&resp["result"]["status"]));
             } else if let Some(err) = resp["error"]["message"].as_str() {
@@ -700,9 +668,9 @@ pub async fn single_message_with_workspace_requirements_and_task_kind(
                 eprintln!(
                     "ALETHEON_BENCHMARK_METRICS={}",
                     serde_json::json!({
-                        "input_tokens": tokens_in,
+                        "total_input_tokens": tokens_in,
                         "output_tokens": tokens_out,
-                        "cache_hit_tokens": cache_hit_tokens,
+                        "cache_read_tokens": cache_read_tokens,
                         "latency_ms": started_at.elapsed().as_millis() as u64,
                         "tool_calls": tool_calls,
                     })
