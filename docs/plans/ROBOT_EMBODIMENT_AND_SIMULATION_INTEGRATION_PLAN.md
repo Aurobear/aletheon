@@ -26,7 +26,7 @@
 |---|---|---|
 | 1 | Kuavo bridge 不在本仓库 | ⚠️ 仍在独立仓库，但已存在且可复现（`aletheon-kuavo-bridge`，`scripts/bootstrap.sh`），并已通过 live MuJoCo Phase E 验收 |
 | 2 | gRPC 协议兼容未落地 | ✅ **已关闭**：`crates/hardware/proto/.../gateway.proto` 与 bridge 逐字节一致，且 `crates/hardware/tests/grpc_contract.rs` 用 SHA-256 锁死防漂移；`runtime_embodiment_selection.rs` 证明配置接线完整 |
-| 3 | `RobotHarness` 无生产 composition | 🔴 开放：`RobotHarness::new` 目前只在测试里被调用，生产代码无 composition root |
+| 3 | `RobotHarness` 无生产 composition | 🟡 部分完成：确定性 verifier（PR4）已实现；`HarnessKind::Robot` 的 daemon composition（CognitiveSession 适配 + fail-closed 分支）仍待核心链收尾 |
 | 4 | gRPC Policy Provider 是 Stub | 🔴 开放：`crates/cognit/src/adapters/policy/grpc_provider.rs` **只有 `StubPolicyProvider`**（`propose`@65 返回硬编码 stance proposal），无真实 gRPC client；Executive 未接线任何 policy provider（`GrpcPolicyConfig` + 非 loopback 强制 TLS 已有） |
 | 5 | expected outcome 硬编码 `mode == stance` | 🔴 开放：`crates/cognit/src/harness/robot/mod.rs:202,216,244`（Plan 丢弃 proposal outcome，Execute/Verify 各自硬编码） |
 | 6 | operation ID 用 `"op"` 占位 | 🔴 开放：`crates/cognit/src/harness/robot/mod.rs:215`；修复简单，因为 `SkillResult.operation_id: OperationId`（`fabric/src/types/embodiment.rs:84`）已存在 |
@@ -849,7 +849,7 @@ operation 的失败 attempt 明确为 `None`，但仍有独立 typed attempt/inv
 
 ---
 
-### PR4 `deterministic-outcome-verifier-wiring` + 生产 composition
+### PR4 `deterministic-outcome-verifier-wiring` + 生产 composition —— 🟡 verifier 已实现，composition 待核心链收尾
 
 **目标**：确定性 `OutcomeVerifierPort` 实现 + `HarnessKind::Robot` 的生产构造与 fail-closed 选择。
 
