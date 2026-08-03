@@ -214,7 +214,7 @@ pub async fn simple_line_mode(
     _clock: Arc<dyn Clock>,
     workspace: fabric::WorkspacePolicy,
     turn_requirements: Vec<fabric::TurnRequirement>,
-    mut task_kind: Option<fabric::TaskKind>,
+    task_kind: Option<fabric::TaskKind>,
 ) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
 
@@ -224,7 +224,6 @@ pub async fn simple_line_mode(
     let stdin = io::stdin();
     let mut read_buf = vec![0u8; 8192];
     let mut response_buf = super::super::json_lines::JsonLineBuffer::default();
-    let mut latest_evaluation: Option<fabric::EvaluationReceiptRef> = None;
 
     loop {
         print!("> ");
@@ -253,10 +252,6 @@ pub async fn simple_line_mode(
                 None => (cmd, ""),
             };
             match name {
-                "reflect" | "r" => ClientRpcRequest::Reflect,
-                "reflect_now" | "rn" => ClientRpcRequest::ReflectNow,
-                "evolution" | "evo" => ClientRpcRequest::Evolution,
-                "genome" | "gene" => ClientRpcRequest::Genome,
                 "clear" => ClientRpcRequest::Clear,
                 "status" | "st" => ClientRpcRequest::Status,
                 "sessions" | "sess" => ClientRpcRequest::Sessions,
@@ -267,28 +262,10 @@ pub async fn simple_line_mode(
                     println!("{}", workspace.cwd().display());
                     continue;
                 }
-                "task" => {
-                    match _args {
-                        "coding" => {
-                            task_kind = Some(fabric::TaskKind::Coding);
-                            println!("Task kind: coding");
-                        }
-                        "off" => {
-                            task_kind = None;
-                            println!("Task kind: off");
-                        }
-                        _ => println!("Usage: /task coding|off"),
-                    }
-                    continue;
-                }
-                "evaluation" | "eval" => {
-                    let message = latest_evaluation
-                        .as_ref()
-                        .map(super::super::reducer::format_evaluation_receipt_ref)
-                        .unwrap_or_else(|| {
-                            "No evaluation receipt is cached for this session.".to_string()
-                        });
-                    println!("{message}");
+                "reflect" | "r" | "reflect_now" | "rn" | "evolution" | "evo" | "genome"
+                | "gene" | "hooks" | "hk" | "task" | "evaluation" | "eval" | "approve" | "a"
+                | "plan" | "p" | "computer" => {
+                    println!("Unknown command: /{name}");
                     continue;
                 }
                 _ => ClientRpcRequest::chat_with_task_kind(
@@ -403,7 +380,6 @@ pub async fn simple_line_mode(
                                             &receipt
                                         )
                                     );
-                                    latest_evaluation = Some(receipt);
                                 }
                                 // Print streaming events that carry text content
                                 if let Some(event_type) = msg.pointer("/params/type").and_then(|v| v.as_str()) {

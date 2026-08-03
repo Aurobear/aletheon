@@ -135,43 +135,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                 .await;
                 return;
             }
-            Some(CommandType::Builtin(BuiltinCommand::Reflect)) => {
-                send_request(app, ClientRpcRequest::Reflect).await;
-                app.chat
-                    .add_text(ChatRole::System, "查询反思记录中...".to_string());
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::ReflectNow)) => {
-                let Some(session_id) = app.app_state.session_id.clone() else {
-                    app.chat.add_text(
-                        ChatRole::System,
-                        "会话仍在初始化，请稍后重试 /reflect_now".to_string(),
-                    );
-                    return;
-                };
-                send_request(
-                    app,
-                    ClientRpcRequest::ReflectNowFor(fabric::protocol::client::SessionParams {
-                        session_id,
-                    }),
-                )
-                .await;
-                app.chat
-                    .add_text(ChatRole::System, "执行即时反思中...".to_string());
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Evolution)) => {
-                send_request(app, ClientRpcRequest::Evolution).await;
-                app.chat
-                    .add_text(ChatRole::System, "查询演化历史中...".to_string());
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Genome)) => {
-                send_request(app, ClientRpcRequest::Genome).await;
-                app.chat
-                    .add_text(ChatRole::System, "查询基因组中...".to_string());
-                return;
-            }
             Some(CommandType::Builtin(BuiltinCommand::Sessions)) => {
                 let request_id = write_request(app, ClientRpcRequest::Sessions).await;
                 app.pending_commands
@@ -296,25 +259,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                 );
                 return;
             }
-            Some(CommandType::Builtin(BuiltinCommand::Plan)) => {
-                let target = if app.app_state.mode == CollaborationMode::Plan {
-                    CollaborationMode::Default
-                } else {
-                    CollaborationMode::Plan
-                };
-                write_request(app, ClientRpcRequest::mode_switch(target)).await;
-                app.chat.add_text(
-                    ChatRole::System,
-                    format!("Switching to {} mode", target.display_name()),
-                );
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Approve)) => {
-                write_request(app, ClientRpcRequest::PlanApprove).await;
-                app.chat
-                    .add_text(ChatRole::System, "Plan approved".to_string());
-                return;
-            }
             Some(CommandType::Builtin(BuiltinCommand::Agents)) => {
                 if app.sub_agents.is_empty() {
                     app.chat
@@ -343,12 +287,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                     app.chat
                         .add_text(ChatRole::System, format!("Agent not found: {id}"));
                 }
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Hooks)) => {
-                send_request(app, ClientRpcRequest::HooksList).await;
-                app.chat
-                    .add_text(ChatRole::System, "Querying hooks...".to_string());
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Skills)) => {
@@ -431,41 +369,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                 app.chat.add_text(ChatRole::System, msg);
                 return;
             }
-            Some(CommandType::Builtin(BuiltinCommand::Task { kind })) => {
-                let message = match kind.as_str() {
-                    "coding" => {
-                        app.requested_task_kind = Some(fabric::TaskKind::Coding);
-                        "Task kind: coding"
-                    }
-                    "off" => {
-                        app.requested_task_kind = None;
-                        "Task kind: off"
-                    }
-                    _ => "用法: /task coding|off",
-                };
-                app.chat.add_text(ChatRole::System, message.to_string());
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Evaluation)) => {
-                if let Some(receipt) = app.app_state.latest_evaluation.as_ref() {
-                    app.chat.add_text(
-                        ChatRole::System,
-                        super::super::reducer::format_evaluation_receipt_ref(receipt),
-                    );
-                } else if let Some(session_id) = app.app_state.session_id.clone() {
-                    send_request(app, ClientRpcRequest::evaluation_latest(session_id, false)).await;
-                    app.chat.add_text(
-                        ChatRole::System,
-                        "Querying latest evaluation receipt...".to_string(),
-                    );
-                } else {
-                    app.chat.add_text(
-                        ChatRole::System,
-                        "No evaluation receipt is cached for this session.".to_string(),
-                    );
-                }
-                return;
-            }
             Some(CommandType::Builtin(BuiltinCommand::Profile)) => {
                 write_request(app, ClientRpcRequest::AgentProfileList).await;
                 app.chat
@@ -478,18 +381,6 @@ pub async fn submit_message(app: &mut App, text: String) {
                     ChatRole::System,
                     format!("Switching agent profile to: {name}"),
                 );
-                return;
-            }
-            Some(CommandType::Builtin(BuiltinCommand::Computer { args })) => {
-                match super::super::computer::ComputerHostRequest::parse(&args) {
-                    Ok(request) => {
-                        send_request(app, ClientRpcRequest::HostComputer(request.0)).await;
-                    }
-                    Err(_) => app.chat.add_text(
-                        ChatRole::System,
-                        "用法: /computer <operation> [args...]".to_string(),
-                    ),
-                }
                 return;
             }
             Some(CommandType::Builtin(BuiltinCommand::Diff)) => {
